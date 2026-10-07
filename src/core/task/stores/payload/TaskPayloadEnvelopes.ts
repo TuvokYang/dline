@@ -281,9 +281,10 @@ export interface CompactionContinuation {
 	/**
 	 * The call the reply answers through the reply itself, as the provider saw them.
 	 *
-	 * Replaying the exchange keeps the reply the result of the call it answers,
-	 * as main does with the pending result after a compaction. Summaries landed
-	 * before the exchange was recorded replay `text` as ordinary input instead.
+	 * Recorded only for a reply the model has not answered yet: replaying the
+	 * exchange keeps it the result of its call, as dev keeps the call a pending
+	 * result answers. A reply the model already went on from, and summaries
+	 * landed before the exchange was recorded, replay `text` as ordinary input.
 	 */
 	readonly exchange?: readonly ClineStorageMessage[]
 }

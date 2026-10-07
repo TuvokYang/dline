@@ -324,7 +324,7 @@ describe("JournalCompactionConversation", () => {
 		expect(written.map((entry) => entry.kind)).toEqual(["supersede_range"])
 	})
 
-	it("keeps the reply that opened the unfinished turn out of the summary, and replays it verbatim after it", async () => {
+	it("keeps the reply that opened the unfinished turn out of the summary, and replays it as ordinary input after it", async () => {
 		const { journal, payloads, conversation } = open()
 		const image = {
 			type: "image" as const,
@@ -342,7 +342,8 @@ describe("JournalCompactionConversation", () => {
 		expect(source.messages.some((message) => mentions(message, "ENVIRONMENT_SNAPSHOT"))).toBe(false)
 		expect(source.messages.some((message) => mentions(message, "call-ready"))).toBe(false)
 		expect(source.continuation).toMatchObject({ text: LATEST_REPLY, images: ["data:image/png;base64,AAAA"] })
-		expect(source.continuation?.exchange?.map((message) => message.role)).toEqual(["assistant", "user"])
+		// The model already went on from the reply, so the call it answered stays summarized.
+		expect(source.continuation?.exchange).toBeUndefined()
 
 		await conversation.land({
 			compactionId: "compaction:1",
@@ -353,15 +354,15 @@ describe("JournalCompactionConversation", () => {
 		})
 
 		const messages = await visible(journal, payloads)
-		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "user", "assistant"])
+		expect(messages.map((message) => message.role)).toEqual(["user", "user", "user", "assistant"])
 		expect(texts(messages.slice(0, 1))).toEqual(["condensed so far"])
-		// The reply returns as the result of the call it answers, image included.
-		expect(mentions(messages[1], "call-history")).toBe(true)
-		expect(mentions(messages[2], "call-history")).toBe(true)
-		expect(mentions(messages[2], LATEST_REPLY)).toBe(true)
-		expect(mentions(messages[2], "AAAA")).toBe(true)
-		expect(mentions(messages[3], "ENVIRONMENT_SNAPSHOT")).toBe(true)
-		expect(mentions(messages[4], "call-ready")).toBe(true)
+		// The reply returns as ordinary input, image included, as dev demotes a
+		// result whose call the summary replaced; the summarized call stays out.
+		expect(mentions(messages[1], LATEST_REPLY)).toBe(true)
+		expect(mentions(messages[1], "AAAA")).toBe(true)
+		expect(messages.some((message) => mentions(message, "call-history"))).toBe(false)
+		expect(mentions(messages[2], "ENVIRONMENT_SNAPSHOT")).toBe(true)
+		expect(mentions(messages[3], "call-ready")).toBe(true)
 		expect(JSON.stringify(messages).split(LATEST_REPLY)).toHaveLength(2)
 	})
 
@@ -387,12 +388,11 @@ describe("JournalCompactionConversation", () => {
 		})
 
 		const messages = await visible(journal, payloads)
-		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"])
+		expect(messages.map((message) => message.role)).toEqual(["user", "user", "assistant"])
 		expect(texts(messages.slice(0, 1))).toEqual(["condensed so far"])
-		expect(mentions(messages[1], "call-question")).toBe(true)
-		expect(mentions(messages[2], "call-question")).toBe(true)
-		expect(mentions(messages[2], LATEST_REPLY)).toBe(true)
-		expect(mentions(messages[3], "call-next")).toBe(true)
+		expect(mentions(messages[1], LATEST_REPLY)).toBe(true)
+		expect(messages.some((message) => mentions(message, "call-question"))).toBe(false)
+		expect(mentions(messages[2], "call-next")).toBe(true)
 	})
 
 	it("summarizes the only round a reply completes, and replays the reply after the summary", async () => {
@@ -441,7 +441,8 @@ describe("JournalCompactionConversation", () => {
 		const source = await conversation.read()
 
 		expect(source.replies).toMatchObject([{ callSeq: 2, replySeq: 3, continuation: { text: LATEST_REPLY } }])
-		expect(source.replies?.[0]?.continuation.exchange).toHaveLength(2)
+		// The model went on from the reply, so the call it answered is summarized with turn A.
+		expect(source.replies?.[0]?.continuation.exchange).toBeUndefined()
 		const [boundary] = source.replies ?? []
 		if (!source.span || !boundary) throw new Error("expected a span with a reply")
 		// What a summary that covered only the first turn lands on.
@@ -455,12 +456,40 @@ describe("JournalCompactionConversation", () => {
 
 		const messages = await visible(journal, payloads)
 		expect(texts(messages.slice(0, 1))).toEqual(["turn A"])
-		// The answer returns with the call it answers rather than as a result without one.
-		expect(mentions(messages[1], "call-a")).toBe(true)
-		expect(mentions(messages[2], "call-a")).toBe(true)
-		expect(mentions(messages[2], LATEST_REPLY)).toBe(true)
-		expect(mentions(messages[3], "call-b")).toBe(true)
-		expect(mentions(messages[4], "FILE_CONTENTS")).toBe(true)
+		// The answer returns as ordinary input rather than as a result without its call.
+		expect(mentions(messages[1], LATEST_REPLY)).toBe(true)
+		expect(messages.some((message) => mentions(message, "call-a"))).toBe(false)
+		expect(mentions(messages[2], "call-b")).toBe(true)
+		expect(mentions(messages[3], "FILE_CONTENTS")).toBe(true)
+	})
+
+	// Iterative compaction: the next summary reads the reply with the turn it
+	// opened, and never the call the previous summary already stands for.
+	it("hands a reply the model went on from to the next summary without the call it answered", async () => {
+		const { journal, payloads, conversation } = open()
+		await write(journal, payloads, "intake:1", { kind: "user_input", text: "original task" })
+		await write(journal, payloads, "provider:1", call("call-a"), "provider")
+		await write(journal, payloads, "tool.result:a", result("call-a", [feedback(LATEST_REPLY)]), "tool")
+		await write(journal, payloads, "provider:2", call("call-b"), "provider")
+		await write(journal, payloads, "tool.result:b", result("call-b", [feedback("E2E_NEXT_REPLY")]), "tool")
+		await write(journal, payloads, "provider:3", call("call-c"), "provider")
+		const first = await conversation.read()
+		const [boundary] = first.replies ?? []
+		if (!first.span || !boundary) throw new Error("expected a span with a reply")
+		await conversation.land({
+			compactionId: "compaction:1",
+			attempt: "compaction:1:1",
+			summary: "turn A",
+			span: { from: first.span.from, to: { seq: boundary.replySeq } },
+			continuation: boundary.continuation,
+		})
+
+		const second = await conversation.read()
+
+		expect(mentions(second.messages[0], "turn A")).toBe(true)
+		expect(second.messages.some((message) => mentions(message, LATEST_REPLY))).toBe(true)
+		expect(second.messages.some((message) => mentions(message, "call-b"))).toBe(true)
+		expect(second.messages.some((message) => mentions(message, "call-a"))).toBe(false)
 	})
 
 	it("condenses a finished tool round before the call that is still waiting on the user", async () => {
@@ -526,7 +555,7 @@ describe("JournalCompactionConversation", () => {
 		expect(mentions(second.messages[0], "first summary")).toBe(true)
 		expect(second.messages.some((message) => mentions(message, LATEST_REPLY))).toBe(false)
 		expect(second.continuation).toMatchObject({ text: LATEST_REPLY })
-		expect(second.continuation?.exchange).toHaveLength(2)
+		expect(second.continuation?.exchange).toBeUndefined()
 
 		await conversation.land({
 			compactionId: "compaction:2",
@@ -537,10 +566,10 @@ describe("JournalCompactionConversation", () => {
 		})
 
 		const messages = await visible(journal, payloads)
-		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "user", "assistant"])
+		expect(messages.map((message) => message.role)).toEqual(["user", "user", "user", "assistant"])
 		expect(texts(messages.slice(0, 1))).toEqual(["second summary"])
-		expect(mentions(messages[2], LATEST_REPLY)).toBe(true)
-		expect(mentions(messages[4], "call-ready")).toBe(true)
+		expect(mentions(messages[1], LATEST_REPLY)).toBe(true)
+		expect(mentions(messages[3], "call-ready")).toBe(true)
 		expect(JSON.stringify(messages).split(LATEST_REPLY)).toHaveLength(2)
 	})
 

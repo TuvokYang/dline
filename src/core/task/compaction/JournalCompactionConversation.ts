@@ -352,13 +352,28 @@ function replyExchange(
 	return undefined
 }
 
+/** Whether the model answered anything after `index`; a reply nothing answered yet is still pending. */
+function answeredAfter(items: readonly ConversationItem[], index: number): boolean {
+	return items.slice(index + 1).some((item) => item.message.role === "assistant")
+}
+
+/** The continuation without the call it answers, for a reply the model already went on from. */
+function withoutExchange(continuation: CompactionContinuation): CompactionContinuation {
+	const { exchange: _exchange, ...reply } = continuation
+	return reply
+}
+
 /**
  * The reply at `replyIndex`, to be replayed after the summary.
  *
- * The exchange carries the reply as the result of its call. The user-authored
- * part is kept as well: the body of the first wrapped reply and the files they
- * attached, kept verbatim even if a file happens to contain a tag, without the
- * handler's own framing ("Result: Done", "User continued the conversation.").
+ * The user-authored part is kept: the body of the first wrapped reply and the
+ * files they attached, kept verbatim even if a file happens to contain a tag,
+ * without the handler's own framing ("Result: Done", "User continued the
+ * conversation."). Only a reply the model has not answered yet keeps the call
+ * it answers, as dev keeps the call a pending result answers; a reply the
+ * model already went on from returns as ordinary input, as dev demotes a
+ * result whose call the summary replaced, so the summarized call never comes
+ * back with it.
  */
 function replyContinuation(items: readonly ConversationItem[], replyIndex: number, names: ToolNames): CompactionContinuation {
 	const message = items[replyIndex]?.message
@@ -384,7 +399,7 @@ function replyContinuation(items: readonly ConversationItem[], replyIndex: numbe
 		}
 	}
 	const text = texts.filter((value) => value.trim().length > 0).join("\n\n")
-	const exchange = replyExchange(items, replyIndex, names)
+	const exchange = answeredAfter(items, replyIndex) ? undefined : replyExchange(items, replyIndex, names)
 	return { text, ...(images.length > 0 ? { images } : {}), ...(exchange ? { exchange } : {}) }
 }
 
@@ -402,8 +417,9 @@ function withoutReplies(message: ClineStorageMessage, names: ToolNames): ClineSt
 	}
 }
 
-/** Each reply the span holds, located by the call it answers. */
-function replyBoundaries(covered: readonly ConversationItem[], names: ToolNames): CompactionReplyBoundary[] {
+/** Each reply the span ending at `end` holds, located by the call it answers. */
+function replyBoundaries(items: readonly ConversationItem[], end: number, names: ToolNames): CompactionReplyBoundary[] {
+	const covered = items.slice(0, end + 1)
 	return covered.flatMap((item, index) => {
 		const answered = new Set(userReplies(item.message, names).map((block) => block.function_id))
 		if (answered.size === 0) return []
@@ -413,7 +429,7 @@ function replyBoundaries(covered: readonly ConversationItem[], names: ToolNames)
 			{
 				callSeq: call.entry.watermark.seq,
 				replySeq: item.entry.watermark.seq,
-				continuation: replyContinuation(covered, index, names),
+				continuation: replyContinuation(items, index, names),
 			},
 		]
 	})
@@ -465,10 +481,18 @@ function truncationCut(items: readonly ConversationItem[], first: number, target
 	return -1
 }
 
-/** A reply a landed summary already carries, which a span ending on that summary has to carry on. */
+/**
+ * A reply a landed summary already carries, which a span ending on that summary has to carry on.
+ *
+ * Once the model has answered it, the reply goes on without the call it
+ * answered, as a reply that was never pending would.
+ */
 function carriedContinuation(items: readonly ConversationItem[], end: number): CompactionContinuation | undefined {
 	const next = items[end + 1]
-	return next?.continuation !== undefined && next.entry === items[end]?.entry ? next.continuation : undefined
+	if (next?.continuation === undefined || next.entry !== items[end]?.entry) return undefined
+	let last = end + 1
+	while (items[last + 1]?.entry === next.entry) last++
+	return answeredAfter(items, last) ? withoutExchange(next.continuation) : next.continuation
 }
 
 /**
@@ -515,7 +539,7 @@ export class JournalCompactionConversation implements CompactionConversationPort
 		const tail = items.slice(end + 1).map((item) => item.message)
 		const span = { from: first.entry.watermark, to: last.entry.watermark }
 		const continuation = reply ? replyContinuation(items, end, names) : carriedContinuation(items, end)
-		const replies = replyBoundaries(covered, names)
+		const replies = replyBoundaries(items, end, names)
 		return {
 			messages,
 			sourceRanges,
