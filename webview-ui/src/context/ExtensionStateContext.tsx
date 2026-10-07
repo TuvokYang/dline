@@ -122,6 +122,11 @@ const applyFetchedMessageWindow = (
 	return { messages: reconciled.messages, startIndex: reconciled.startIndex }
 }
 
+/** First step of a tail sync: merge the latest page, or only page forward from the window end. */
+type TailSyncFirstStep = "latest" | "follow"
+const TAIL_PAGE_SIZE = 200
+const TAIL_SYNC_RETRY_DELAYS_MS = [100, 300, 750] as const
+
 const hasExactInteractionAnchor = (messages: readonly UiMessage[], interaction: ActiveInteractionView): boolean =>
 	messages.some(
 		(message) =>
@@ -467,7 +472,9 @@ export const ExtensionStateContextProvider: React.FC<{
 
 	const prevTotalRef = useRef(0)
 	const prevMessageWindowRevisionRef = useRef(0)
-	const refetchLockRef = useRef(false)
+	// Owner token of the running window fetch. A fresh token per fetch lets a
+	// newer tail sync take over, and keeps a superseded one from releasing it.
+	const refetchLockRef = useRef<symbol | null>(null)
 	// A total shrink can arrive while a durable-tail fetch owns the single
 	// reconciliation slot. Remember it so releasing that slot cannot consume the
 	// lower total without removing the row that disappeared.
@@ -622,12 +629,96 @@ export const ExtensionStateContextProvider: React.FC<{
 		const runDeferredWindowReconciliation = () => {
 			if (!refetchAfterUnlockRef.current || refetchLockRef.current) return
 			const scheduledTaskViewKey = currentTaskViewKeyRef.current
+			const owner = Symbol("deferred-reconciliation")
 			refetchAfterUnlockRef.current = false
-			refetchLockRef.current = true
+			refetchLockRef.current = owner
 			void fetchLatestWindow(scheduledTaskViewKey).finally(() => {
-				refetchLockRef.current = false
+				if (refetchLockRef.current !== owner) return
+				refetchLockRef.current = null
 				runDeferredWindowReconciliation()
 			})
+		}
+
+		/**
+		 * Own the window until it reaches the live tail.
+		 *
+		 * Every effect run advances `prevTotalRef` to the newest total, and the
+		 * window counts as following the tail only while it still reaches that
+		 * mark. A page that was in flight while the total grew therefore lands
+		 * below it, and once the task waits for the user no further state change
+		 * arrives to fetch the rows it missed. A sync keeps the chase until the
+		 * window reaches the latest total, whichever request started it.
+		 *
+		 * A sync that gives up short of the tail lowers the mark to the window
+		 * end, so the next state change resumes the chase instead of abandoning
+		 * it. A reader that trimmed the window ends the chase and keeps the
+		 * browsing classification.
+		 */
+		const syncTailWindow = async (scheduledTaskViewKey: string | undefined, firstStep: TailSyncFirstStep) => {
+			const owner = Symbol("tail-sync")
+			const scheduledGeneration = messageFetchGenerationRef.current
+			refetchLockRef.current = owner
+			const isCurrentView = () =>
+				currentTaskViewKeyRef.current === scheduledTaskViewKey &&
+				messageFetchGenerationRef.current === scheduledGeneration
+			const ownsSync = () => refetchLockRef.current === owner && isCurrentView()
+			const windowEnd = () => firstItemIndexRef.current + clineMessagesRef.current.length
+			let firstStepPending = firstStep === "latest"
+			let followedEnd = windowEnd()
+			let readerMovedAway = false
+			let retries = 0
+			try {
+				while (ownsSync()) {
+					const knownEnd = windowEnd()
+					if (knownEnd < followedEnd) {
+						readerMovedAway = true
+						return
+					}
+					const latestTotal = totalMessageCountRef.current
+					if (!firstStepPending && knownEnd >= latestTotal) return
+					// The latest page overlaps the window, so it also repairs a missed
+					// or stale message near the tail. Only an older gap pages forward.
+					const fetchLatest = firstStepPending || latestTotal - knownEnd <= TAIL_PAGE_SIZE
+					const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
+					let progressed = false
+					try {
+						const resp = await TaskServiceClient.fetchMessage(
+							FetchMessageRequest.create({ referenceIndex: fetchLatest ? -1 : knownEnd, count: TAIL_PAGE_SIZE }),
+						)
+						if (!ownsSync()) return
+						const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
+						const reconciled = applyFetchedMessageWindow(
+							clineMessagesRef.current,
+							firstItemIndexRef.current,
+							converted,
+							Math.max(0, resp.startIndex),
+							Number(resp.totalCount ?? 0),
+							localTimestampsAtFetchStart,
+							preserveOmittedPartials,
+						)
+						commitMessageWindow(reconciled.messages, reconciled.startIndex)
+						progressed = firstStepPending || windowEnd() > knownEnd
+						firstStepPending = false
+					} catch {
+						// A failed page is retried like one that made no progress.
+					}
+					followedEnd = windowEnd()
+					if (progressed) {
+						retries = 0
+						continue
+					}
+					if (retries >= TAIL_SYNC_RETRY_DELAYS_MS.length) return
+					await new Promise<void>((resolve) => setTimeout(resolve, TAIL_SYNC_RETRY_DELAYS_MS[retries++]))
+				}
+			} finally {
+				if (refetchLockRef.current === owner) {
+					refetchLockRef.current = null
+					if (isCurrentView() && !readerMovedAway && windowEnd() < totalMessageCountRef.current) {
+						prevTotalRef.current = Math.min(prevTotalRef.current, windowEnd())
+					}
+					runDeferredWindowReconciliation()
+				}
+			}
 		}
 
 		if (currentTaskViewKey !== prevRefetchTaskViewKeyRef.current) {
@@ -638,7 +729,7 @@ export const ExtensionStateContextProvider: React.FC<{
 				clearTimeout(cancelStabilizeTimerRef.current)
 				cancelStabilizeTimerRef.current = null
 			}
-			refetchLockRef.current = false
+			refetchLockRef.current = null
 			refetchAfterUnlockRef.current = false
 			lastInteractionFetchKeyRef.current = undefined
 			inFlightInteractionFetchRef.current = undefined
@@ -695,61 +786,9 @@ export const ExtensionStateContextProvider: React.FC<{
 		const durableTailMayHaveReplacedPartial =
 			total > prevTotalRef.current && knownEndIndex === total && localTailMessage?.partial === true
 		if (durableTailMayHaveReplacedPartial && !refetchLockRef.current) {
-			const scheduledTaskViewKey = currentTaskViewKeyRef.current
-			const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
-			refetchLockRef.current = true
-			TaskServiceClient.fetchMessage(FetchMessageRequest.create({ referenceIndex: -1, count: 200 }))
-				.then((resp) => {
-					if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
-						return
-					}
-					const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
-					const startIndex = Math.max(0, resp.startIndex)
-					const reconciled = applyFetchedMessageWindow(
-						clineMessagesRef.current,
-						firstItemIndexRef.current,
-						converted,
-						startIndex,
-						Number(resp.totalCount ?? 0),
-						localTimestampsAtFetchStart,
-						preserveOmittedPartials,
-					)
-					commitMessageWindow(reconciled.messages, reconciled.startIndex)
-				})
-				.catch(() => {})
-				.finally(() => {
-					refetchLockRef.current = false
-					runDeferredWindowReconciliation()
-				})
+			void syncTailWindow(currentTaskViewKeyRef.current, "latest")
 		} else if (knownEndIndex < total && windowCoveredPreviousTail && !refetchLockRef.current) {
-			const scheduledTaskViewKey = currentTaskViewKeyRef.current
-			const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
-			refetchLockRef.current = true
-			TaskServiceClient.fetchMessage(
-				FetchMessageRequest.create({ referenceIndex: knownEndIndex, count: Math.min(200, total - knownEndIndex) }),
-			)
-				.then((resp) => {
-					if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
-						return
-					}
-					const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
-					const startIndex = Math.max(0, resp.startIndex)
-					const reconciled = applyFetchedMessageWindow(
-						clineMessagesRef.current,
-						firstItemIndexRef.current,
-						converted,
-						startIndex,
-						Number(resp.totalCount ?? 0),
-						localTimestampsAtFetchStart,
-						preserveOmittedPartials,
-					)
-					commitMessageWindow(reconciled.messages, reconciled.startIndex)
-				})
-				.catch(() => {})
-				.finally(() => {
-					refetchLockRef.current = false
-					runDeferredWindowReconciliation()
-				})
+			void syncTailWindow(currentTaskViewKeyRef.current, "follow")
 		}
 		// Refetch when the local window can no longer be reconciled from state
 		// alone: the total shrank, or it claims more messages than exist because
@@ -772,31 +811,9 @@ export const ExtensionStateContextProvider: React.FC<{
 					if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
 						return
 					}
-					const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
-					refetchLockRef.current = true
-					TaskServiceClient.fetchMessage(FetchMessageRequest.create({ referenceIndex: -1, count: 200 }))
-						.then((resp) => {
-							if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
-								return
-							}
-							const converted = resp.messages.map((m) => convertProtoToClineMessage(m))
-							const startIndex = Math.max(0, resp.startIndex)
-							const reconciled = applyFetchedMessageWindow(
-								clineMessagesRef.current,
-								firstItemIndexRef.current,
-								converted,
-								startIndex,
-								Number(resp.totalCount ?? 0),
-								localTimestampsAtFetchStart,
-								preserveOmittedPartials,
-							)
-							commitMessageWindow(reconciled.messages, reconciled.startIndex)
-						})
-						.catch(() => {})
-						.finally(() => {
-							refetchLockRef.current = false
-							runDeferredWindowReconciliation()
-						})
+					// The latest page takes over any sync in flight, which would
+					// otherwise keep merging against a window the total contradicts.
+					void syncTailWindow(scheduledTaskViewKey, "latest")
 				}, 200)
 			}
 		}
