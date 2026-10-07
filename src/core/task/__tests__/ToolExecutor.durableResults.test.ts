@@ -183,6 +183,48 @@ describe("ToolExecutor durable tool results", () => {
 		expect(partialRender).not.toHaveBeenCalled()
 	})
 
+	it("refuses an unauthorized handler-less summarize_task through the explicit gate", async () => {
+		const { coordinator, executor, userMessageContent } = createHarness({ coordinatorHas: false })
+		const block = createBlock(ClineDefaultTool.SUMMARIZE_TASK, { context: "UNAUTHORIZED_SUMMARY_MUST_NOT_RENDER" })
+		block.isNativeToolCall = false
+
+		await expect(executor.execute(block, { explicitInstructions: undefined })).resolves.toBe(true)
+
+		const result = requireCanonicalResult(userMessageContent)
+		expect(result.is_error).toBe(true)
+		expect(JSON.stringify(result.content)).toContain("explicit_instruction_missing")
+		expect(JSON.stringify(result.content)).not.toContain("No handler registered")
+		expect(coordinator.execute).not.toHaveBeenCalled()
+	})
+
+	it("rejects an unauthorized handler-less summarize_task at admission with the explicit gate code", () => {
+		const { executor } = createHarness({ coordinatorHas: false })
+		const block = createBlock(ClineDefaultTool.SUMMARIZE_TASK, { context: "UNAUTHORIZED_SUMMARY_MUST_NOT_RENDER" })
+		block.isNativeToolCall = false
+
+		const admission = (executor as unknown as ToolExecutor).prepareAdmission(block)
+
+		expect(admission).toMatchObject({
+			outcome: "rejected",
+			rejection: { message: "Explicit-only tool 'summarize_task' was rejected: explicit_instruction_missing." },
+		})
+	})
+
+	it("leaves a handler-less explicit tool with pending authority on its existing path without consuming it", async () => {
+		const { executor, userMessageContent } = createHarness({ coordinatorHas: false })
+		const block = createBlock(ClineDefaultTool.SUMMARIZE_TASK, { context: "AUTHORIZED_SUMMARY" })
+		block.isNativeToolCall = false
+		const port = {
+			getPendingToolAuthorization: vi.fn(() => ({ state: "pending" })),
+			consumeTool: vi.fn(),
+		}
+
+		await expect(executor.execute(block, { explicitInstructions: port })).resolves.toBe(false)
+
+		expect(port.consumeTool).not.toHaveBeenCalled()
+		expect(userMessageContent).toEqual([])
+	})
+
 	it("keeps an advertised read_file on its registered execution path", async () => {
 		const { coordinator, executor, say } = createHarness({
 			allowedNativeToolNames: [ClineDefaultTool.FILE_READ],

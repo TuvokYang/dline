@@ -65,7 +65,7 @@ import type { ToolAdmissionSnapshot } from "./executors/tool/ToolAdmissionRegist
 import { rejectToolCall, type ToolPreflightResult, type ToolSideEffect } from "./executors/tool/ToolPreflight"
 import { authorizeExplicitToolExecution } from "./explicit-instructions/explicit-tool-gate"
 import { isExplicitOnlyTool } from "./explicit-instructions/policy"
-import type { ExplicitInstructionConsumePort } from "./explicit-instructions/types"
+import type { ExplicitInstructionConsumePort, ExplicitInstructionFailureCode } from "./explicit-instructions/types"
 import { hasValidTodoItem, isAllItemsCompleted } from "./focus-chain/file-utils"
 import type { InteractionKind } from "./interaction/Interaction"
 import { isInteractionCancellationError } from "./interaction/InteractionCancellationError"
@@ -249,6 +249,11 @@ function hostedProviderLabel(providerId: string): string {
 	return HOSTED_PROVIDER_LABELS[providerId] ?? providerId
 }
 
+/** Model-visible refusal shared by the admission and execution paths of the explicit gate. */
+function explicitToolRefusalMessage(toolName: string, code: ExplicitInstructionFailureCode): string {
+	return `Explicit-only tool '${toolName}' was rejected: ${code}.`
+}
+
 export class ToolExecutor {
 	/** Assigned by the Task composition root after construction. */
 	private _controllerContext?: ClineExtensionContext
@@ -296,6 +301,13 @@ export class ToolExecutor {
 
 	/** Prepare one pure admission and retain execution as an unstarted closure. */
 	public prepareAdmission(block: ToolUse): ToolPreflightResult<void> {
+		const explicitRefusal = this.findHandlerlessExplicitRefusal(block, this.explicitInstructions)
+		if (explicitRefusal) {
+			return rejectToolCall({
+				reason: "unsupported_tool",
+				message: explicitToolRefusalMessage(block.name, explicitRefusal),
+			})
+		}
 		const snapshot = this.buildAdmissionSnapshot(block)
 		const initialAdmission = this.coordinator.prepareAdmission(
 			block,
@@ -391,6 +403,35 @@ export class ToolExecutor {
 	private canRenderExplicitTool(toolName: ClineDefaultTool): boolean {
 		if (!isExplicitOnlyTool(toolName)) return true
 		return this.explicitInstructions?.getPendingToolAuthorization(toolName) !== undefined
+	}
+
+	/**
+	 * Explicit-only and retired tools may intentionally have no handler: summarize_task text is owned by
+	 * ContextCompactionSession. Without pending authority such a call must still surface the explicit gate's
+	 * refusal; a "no handler" failure would hide the policy reason the model has to act on.
+	 */
+	private findHandlerlessExplicitRefusal(
+		block: ToolUse,
+		port: ExplicitInstructionConsumePort | undefined,
+	): ExplicitInstructionFailureCode | undefined {
+		// Ordinary tools never reach the explicit gate, so their admission must not depend on handler lookup.
+		if (!isExplicitOnlyTool(block.name) && block.name !== ClineDefaultTool.CONDENSE) return undefined
+		if (this.coordinator.has(block.name)) return undefined
+		if (port?.getPendingToolAuthorization(block.name) !== undefined) return undefined
+		// Nothing is pending, so the gate cannot consume authority here; it only names the refusal.
+		const refusal = authorizeExplicitToolExecution(block.name, port)
+		return refusal.ok ? undefined : refusal.code
+	}
+
+	private async refuseHandlerlessExplicitTool(block: ToolUse, config: TaskConfig): Promise<boolean> {
+		const refusal = this.findHandlerlessExplicitRefusal(block, config.explicitInstructions)
+		if (!refusal) return false
+		if (!block.partial) await this.commitExplicitToolRefusal(block, refusal)
+		return true
+	}
+
+	private async commitExplicitToolRefusal(block: ToolUse, code: ExplicitInstructionFailureCode): Promise<void> {
+		await this.commitToolResult(formatResponse.toolError(explicitToolRefusalMessage(block.name, code)), block, true)
 	}
 
 	/** Freeze the complete prompt-visible execution projection for the current Provider input. */
@@ -1196,6 +1237,7 @@ export class ToolExecutor {
 			}
 
 			if (!this.coordinator.has(block.name)) {
+				if (await this.refuseHandlerlessExplicitTool(block, config)) return true
 				if (block.isNativeToolCall && !block.partial) {
 					const message = `Native tool '${block.name}' has no registered handler. The call was ignored.`
 					await this.commitToolResult(formatResponse.toolError(message), block, true)
@@ -1262,8 +1304,7 @@ export class ToolExecutor {
 
 			const explicitAuthorization = authorizeExplicitToolExecution(block.name, config.explicitInstructions)
 			if (!explicitAuthorization.ok) {
-				const message = `Explicit-only tool '${block.name}' was rejected: ${explicitAuthorization.code}.`
-				await this.commitToolResult(formatResponse.toolError(message), block, true)
+				await this.commitExplicitToolRefusal(block, explicitAuthorization.code)
 				return true
 			}
 			if (explicitAuthorization.authorization) {
