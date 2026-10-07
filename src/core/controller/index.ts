@@ -1164,6 +1164,13 @@ export class Controller {
 				taskIsFavorited: historyItem?.isFavorited,
 				updateTaskHistory: (item) => workspaceHistoryManager.publishMetadata(item, workspaceHistorySession),
 				publishTaskHistoryClose: () => workspaceHistoryManager.closeTask(workspaceHistorySession),
+				completion: {
+					initial:
+						historyItem?.isCompleted === undefined
+							? undefined
+							: { isCompleted: historyItem.isCompleted, revision: historyItem.completionStateRevision ?? -1 },
+					persist: (update) => this.persistTaskCompletionState(update.taskId, update.isCompleted, update.revision),
+				},
 			},
 			prompt: {
 				ports: new ControllerTaskSessionPorts(this),

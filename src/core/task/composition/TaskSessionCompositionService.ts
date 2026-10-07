@@ -40,6 +40,11 @@ import { DefaultProductionToolExecutionService } from "../executors/tool/product
 import { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
 import { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
 import {
+	type TaskCompletionProjection,
+	type TaskCompletionProjectionUpdate,
+	TaskCompletionProjector,
+} from "../history/TaskCompletionProjector"
+import {
 	LegacyInputQueueCleanupPendingError,
 	legacyInputQueueSource,
 	migrateLegacyInputQueue,
@@ -106,6 +111,16 @@ export interface TaskSessionMessageHost {
 	readonly taskIsFavorited?: boolean
 	readonly updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
 	readonly publishTaskHistoryClose?: () => void
+	/**
+	 * Where the task's completion verdict is kept in History.
+	 *
+	 * `initial` is the verdict History already holds, so reopening a finished
+	 * task does not rewrite it; `persist` accepts a changed verdict.
+	 */
+	readonly completion?: {
+		readonly initial?: TaskCompletionProjection
+		readonly persist: (update: TaskCompletionProjectionUpdate) => Promise<boolean>
+	}
 }
 
 export interface TaskSessionPromptHost {
@@ -276,6 +291,14 @@ export class TaskSessionCompositionService {
 			onChanged: () => void options.publishState().catch(() => undefined),
 		})
 		resources.add({ release: () => performance.release() })
+		const completionHost = options.messages.completion
+		const completion = completionHost
+			? new TaskCompletionProjector({
+					taskId: options.taskId,
+					initial: completionHost.initial,
+					persist: completionHost.persist,
+				})
+			: undefined
 		const promptContext = new TaskPromptContextOwner({
 			identity: { taskId: options.taskId, cwd: options.cwd },
 			host: options.prompt.ports.promptContext,
@@ -606,6 +629,12 @@ export class TaskSessionCompositionService {
 					compaction.committed(state)
 					collaboration?.committed(state)
 					performance.committed(state)
+					// The verdict reaches History before the view reads it back.
+					await completion?.sync(state).catch((error: unknown) => {
+						Logger.warn(
+							`[TaskSessionComposition] ${options.taskId}: completion projection failed: ${error instanceof Error ? error.message : String(error)}`,
+						)
+					})
 					await options.taskView.notifyCommitted(state)
 				},
 				notifyTransient: (taskId, projection) => options.taskView.notifyTransient(taskId, projection),
