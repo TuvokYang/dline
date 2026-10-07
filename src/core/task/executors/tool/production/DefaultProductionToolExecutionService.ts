@@ -7,6 +7,7 @@ import { ClineDefaultTool } from "@shared/tools"
 import { serializeDurableToolResult, toolResultReplayOf } from "../../../DurableToolResult"
 import { LOOP_DETECTION_SOFT_THRESHOLD, recordToolCall, toolCallSignature } from "../../../loop-detection"
 import type { ToolInvocationEnvelope } from "../../../stores/payload/TaskPayloadEnvelopes"
+import { approvalInteractionId } from "../../../tools/approval-interaction"
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "../../../tools/ToolExecutionResult"
 import type { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import type { TaskConfig } from "../../../tools/types/TaskConfig"
@@ -188,7 +189,7 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
 		let config = this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator })
 		const block = materializeToolInvocation(input.invocation)
 		const approvalAnchor = config.messageState?.clineMessages.find(
-			(message) => message.interactionId === `approval:${input.invocation.dlineTid}`,
+			(message) => message.interactionId === approvalInteractionId(input.invocation.dlineTid),
 		)
 		if (approvalAnchor) block.ts = approvalAnchor.ts
 		const description = ToolDisplayUtils.getToolDescription(block, this.options.runtime.coordinator)

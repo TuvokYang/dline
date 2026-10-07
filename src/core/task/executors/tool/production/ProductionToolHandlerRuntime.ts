@@ -3,6 +3,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { ClineDefaultTool, getToolUseNames } from "@shared/tools"
 import { isTurnEndingToolUse } from "../../../assistant-message-order"
 import { type ProviderTurnApproval, resolveLaneContext, resolveToolLanes } from "../../../kernel"
+import { approvalInteractionId } from "../../../tools/approval-interaction"
 import type { ToolHandlerResult } from "../../../tools/ToolExecutionResult"
 import { describeToolDenial, presentToolDenial, ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import { ToolValidator } from "../../../tools/ToolValidator"
@@ -38,7 +39,7 @@ function riskFacts(
 
 function approval(block: ToolUse, result: ReturnType<ToolExecutorCoordinator["prepareAdmission"]>): ProviderTurnApproval {
 	if (result.outcome === "rejected" || result.decision.kind === "none") return { kind: "none" }
-	const interactionId = `approval:${block.dline_tid}`
+	const interactionId = approvalInteractionId(block.dline_tid)
 	if (result.decision.kind === "automatic" || result.decision.kind === "ai_approver") {
 		return {
 			kind: "automatic",
