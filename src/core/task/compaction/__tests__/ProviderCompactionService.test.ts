@@ -195,7 +195,9 @@ describe("ProviderCompactionService", () => {
 		expect(calls).toHaveLength(0)
 	})
 
-	it("appends the user's guidance after the instruction of this request only", async () => {
+	// Guidance is never a turn of its own: the provider sees it inside the
+	// compaction instruction, not as a block a model could answer by itself.
+	it("folds the user's guidance into the instruction of this request only", async () => {
 		const { frame, calls } = probe([{ type: "text", text: SUMMARY_TEXT }])
 
 		await run(service(frame), { sourceHistory: SOURCE, guidance: " keep the audit " })
@@ -206,8 +208,12 @@ describe("ProviderCompactionService", () => {
 		expect(messages[messages.length - 1]).toMatchObject({
 			role: "user",
 			content: [
-				{ type: "text", text: expect.stringMatching(/^SUMMARIZE_INSTRUCTION:lite/) },
-				{ type: "text", text: "<user_guidance>\nkeep the audit\n</user_guidance>" },
+				{
+					type: "text",
+					text: expect.stringMatching(
+						/^SUMMARIZE_INSTRUCTION:lite[\s\S]*\n\n<user_guidance>\nkeep the audit\n<\/user_guidance>$/,
+					),
+				},
 			],
 		})
 	})
@@ -221,8 +227,12 @@ describe("ProviderCompactionService", () => {
 
 		const messages = calls[0]?.[1] as ClineStorageMessage[]
 		expect(messages[messages.length - 1]?.content).toEqual([
-			{ type: "text", text: expect.stringMatching(/^SUMMARIZE_INSTRUCTION:lite/) },
-			{ type: "text", text: "<summary_feedback>\nmention the tests\n</summary_feedback>" },
+			{
+				type: "text",
+				text: expect.stringMatching(
+					/^SUMMARIZE_INSTRUCTION:lite[\s\S]*\n\n<summary_feedback>\nmention the tests\n<\/summary_feedback>$/,
+				),
+			},
 		])
 	})
 

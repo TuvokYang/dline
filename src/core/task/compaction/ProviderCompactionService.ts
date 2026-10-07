@@ -122,6 +122,19 @@ function passGuidanceOf(context: CompactionContext): ClineContent[] {
 	return []
 }
 
+/**
+ * The closing message of a Pass: the instruction with the run's words folded in.
+ *
+ * Guidance and feedback are never a turn of their own, so their text joins the
+ * instruction rather than standing as a block a model could answer by itself.
+ * Anything that is not text, such as an attached image, stays its own block.
+ */
+function closingContentOf(instruction: string, closing: readonly ClineContent[]): ClineContent[] {
+	const texts = closing.flatMap((block) => (block.type === "text" ? [block.text] : []))
+	const others = closing.filter((block) => block.type !== "text")
+	return [{ type: "text", text: [instruction, ...texts].join("\n\n") }, ...others]
+}
+
 /** A manual run is reviewed by the user, so a failure is theirs to retry rather than the run's. */
 function sessionTriggerOf(trigger: CompactionTrigger | undefined): ContextCompactionTriggerKind {
 	return trigger === "manual" ? "manual_compact_command" : "auto_compaction"
@@ -358,12 +371,12 @@ export class ProviderCompactionService implements ProductionCompactionService {
 		})
 		try {
 			const ts = Date.now()
-			const closing = [...(feedback ?? input.passGuidance ?? [])]
+			const closing = feedback ?? input.passGuidance ?? []
 			const buildMessages = (budgetGuidance: string): ClineStorageMessage[] => [
 				...passHistory,
 				{
 					role: "user",
-					content: [{ type: "text", text: this.options.instruction(frame, budgetGuidance) }, ...closing],
+					content: closingContentOf(this.options.instruction(frame, budgetGuidance), closing),
 					ts,
 				},
 			]
