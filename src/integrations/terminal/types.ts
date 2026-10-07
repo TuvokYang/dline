@@ -370,6 +370,13 @@ export interface BackgroundCommand {
 	lineCount: number
 	/** Output line count represented in the most recent successful API request. */
 	lastApiSentLineCount?: number
+	/**
+	 * A successful API request has reported this command's terminal status.
+	 *
+	 * A settled command stays in the environment's background command list
+	 * until one request has told the model how it ended, then drops out.
+	 */
+	finalStatusReported?: boolean
 	/** Exit code if the command completed or errored */
 	exitCode?: number
 	/**

@@ -990,7 +990,7 @@ export class CommandExecutor {
 	}
 
 	/** Advance output baselines after their Environment metadata reaches the model. */
-	markBackgroundCommandOutputSent(snapshots: readonly { id: string; lineCount: number }[]): void {
+	markBackgroundCommandOutputSent(snapshots: readonly { id: string; lineCount: number; settled?: boolean }[]): void {
 		this.standaloneManager.markBackgroundCommandOutputSent(snapshots)
 	}
 

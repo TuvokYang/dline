@@ -63,7 +63,7 @@ describe("BackgroundContextInjector", () => {
 		assert.equal(subagentProvider.getSubagentJobManager(), subagentJobManager)
 	})
 
-	it("projects only currently running background work", async () => {
+	it("projects running background work and drops commands whose final status was reported", async () => {
 		const subagentJobManager = new SubagentJobManager()
 		const runningJob = subagentJobManager.startJob({
 			task: "review running state",
@@ -79,7 +79,10 @@ describe("BackgroundContextInjector", () => {
 		})
 		await flushJobs()
 		const runningCommand = createCommand("command_running", "npm run build", "running")
-		const completedCommand = createCommand("command_completed", "npm test", "completed")
+		const completedCommand = {
+			...createCommand("command_completed", "npm test", "completed"),
+			finalStatusReported: true,
+		}
 
 		const details = buildTaskBackgroundSection(
 			{ getSubagentJobManager: () => subagentJobManager },
@@ -117,18 +120,41 @@ describe("BackgroundContextInjector", () => {
 		assert.doesNotMatch(details, new RegExp(finalJob.jobId))
 	})
 
-	it("captures output baselines only for the running commands represented by the environment text", () => {
+	it("captures output baselines only for the commands represented by the environment text", () => {
 		const subagentJobManager = new SubagentJobManager()
 		const runningCommand = createCommand("command_running", "npm run build", "running")
-		const completedCommand = createCommand("command_completed", "npm test", "completed")
+		const reportedCommand = {
+			...createCommand("command_reported", "npm test", "completed"),
+			finalStatusReported: true,
+		}
 
 		const section = buildTaskBackgroundEnvironmentSection(
 			{ getSubagentJobManager: () => subagentJobManager },
-			{ listBackgroundCommands: () => [runningCommand, completedCommand] },
+			{ listBackgroundCommands: () => [runningCommand, reportedCommand] },
 		)
 
-		assert.deepEqual(section.commandLineCounts, [{ id: runningCommand.id, lineCount: runningCommand.lineCount }])
+		assert.deepEqual(section.commandLineCounts, [
+			{ id: runningCommand.id, lineCount: runningCommand.lineCount, settled: false },
+		])
 		assert.match(section.text, /command: npm run build/)
 		assert.doesNotMatch(section.text, /npm test/)
+	})
+
+	// A settled command is listed once more so the model learns how it ended,
+	// and the request that carries that status retires it.
+	it("lists a settled command until its final status is reported", () => {
+		const subagentJobManager = new SubagentJobManager()
+		const settledCommand = createCommand("command_settled", "npm test", "completed")
+
+		const section = buildTaskBackgroundEnvironmentSection(
+			{ getSubagentJobManager: () => subagentJobManager },
+			{ listBackgroundCommands: () => [settledCommand] },
+		)
+
+		assert.deepEqual(section.commandLineCounts, [
+			{ id: settledCommand.id, lineCount: settledCommand.lineCount, settled: true },
+		])
+		assert.match(section.text, /status: completed/)
+		assert.match(section.text, /command: npm test/)
 	})
 })

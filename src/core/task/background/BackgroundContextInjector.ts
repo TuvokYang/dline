@@ -12,7 +12,7 @@ export interface BackgroundContextInjectorOptions {
 
 export interface BackgroundEnvironmentSection {
 	text: string
-	commandLineCounts: Array<{ id: string; lineCount: number }>
+	commandLineCounts: Array<{ id: string; lineCount: number; settled: boolean }>
 }
 
 export interface BackgroundSubagentProvider {
@@ -99,7 +99,11 @@ export class BackgroundContextInjector {
 		const sections = [this.buildSubagentSection(), this.buildCommandSection(commands)].filter((section) => section.length > 0)
 		return {
 			text: sections.join("\n\n"),
-			commandLineCounts: commands.map((command) => ({ id: command.id, lineCount: command.lineCount })),
+			commandLineCounts: commands.map((command) => ({
+				id: command.id,
+				lineCount: command.lineCount,
+				settled: command.status !== "running",
+			})),
 		}
 	}
 
@@ -131,7 +135,12 @@ export class BackgroundContextInjector {
 	 * @returns Markdown section for visible background commands.
 	 */
 	private listVisibleCommands(): BackgroundCommand[] {
-		return this.commandProvider?.listBackgroundCommands().filter((command) => command.status === "running") ?? []
+		// A settled command stays listed until one successful request reports how it ended.
+		return (
+			this.commandProvider
+				?.listBackgroundCommands()
+				.filter((command) => command.status === "running" || !command.finalStatusReported) ?? []
+		)
 	}
 
 	private buildCommandSection(commands: BackgroundCommand[]): string {

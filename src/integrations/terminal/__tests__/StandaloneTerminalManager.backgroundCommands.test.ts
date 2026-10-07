@@ -351,4 +351,25 @@ describe("StandaloneTerminalManager background command lifecycle", () => {
 			await manager.disposeBackgroundCommands()
 		}
 	})
+
+	// The request that reports a settled command's final status is the last one
+	// to list it; a snapshot taken while it ran must not retire it.
+	it("records a settled command's final status as reported only from a settled snapshot", async () => {
+		const manager = new StandaloneTerminalManager()
+		const process = new EventEmitter() as TerminalProcessResultPromise
+
+		try {
+			const command = manager.trackBackgroundCommand(process, "npm test", "command_final_status", [], {
+				origin: "explicit_background",
+				cancellationOwner: "explicit",
+			})
+			manager.markBackgroundCommandOutputSent([{ id: command.id, lineCount: 0, settled: false }])
+			assert.equal(command.finalStatusReported, undefined)
+
+			manager.markBackgroundCommandOutputSent([{ id: command.id, lineCount: 0, settled: true }])
+			assert.equal(command.finalStatusReported, true)
+		} finally {
+			await manager.disposeBackgroundCommands()
+		}
+	})
 })

@@ -88,7 +88,7 @@ export interface EnvironmentDetailsOptions {
 
 /** Builds environment details and owns the dynamic snapshots represented in the next request. */
 export class TaskEnvironmentProjection {
-	private pendingCommandLineCounts?: Array<{ id: string; lineCount: number }>
+	private pendingCommandLineCounts?: Array<{ id: string; lineCount: number; settled?: boolean }>
 	private pendingRecentlyModifiedFiles?: RecentlyModifiedFilesSnapshot
 
 	constructor(private readonly options: TaskEnvironmentProjectionOptions) {}

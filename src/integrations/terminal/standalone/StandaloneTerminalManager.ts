@@ -810,13 +810,14 @@ export class StandaloneTerminalManager implements ITerminalManager {
 	}
 
 	/** Advance output baselines to the line counts represented in a successful API request. */
-	markBackgroundCommandOutputSent(snapshots: readonly { id: string; lineCount: number }[]): void {
+	markBackgroundCommandOutputSent(snapshots: readonly { id: string; lineCount: number; settled?: boolean }[]): void {
 		for (const snapshot of snapshots) {
 			const command = this.backgroundCommands.get(snapshot.id)
 			if (!command) continue
 			const currentBaseline = command.lastApiSentLineCount ?? 0
 			const sentLineCount = Math.max(0, Math.min(snapshot.lineCount, command.lineCount))
 			command.lastApiSentLineCount = Math.max(currentBaseline, sentLineCount)
+			if (snapshot.settled) command.finalStatusReported = true
 		}
 	}
 
