@@ -127,7 +127,11 @@ export async function materializeToolTerminalManifest(input: {
 			}
 		}
 		if (entry.source === "dialog" && entry.causation?.interactionId) {
-			feedback.set(entry.causation.interactionId, entry.payloadRef)
+			// A completion's dialog is keyed by its block, so the dialog's own
+			// presentation shares the call's turn and interaction. Only a draft the
+			// user wrote is that call's approval feedback.
+			const payload = decodeTaskPayload<{ readonly kind: string }>(await input.payloads.read(entry.payloadRef))
+			if (payload.kind === "dialog_draft") feedback.set(entry.causation.interactionId, entry.payloadRef)
 		}
 	}
 

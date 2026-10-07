@@ -5,6 +5,7 @@ import { InMemoryConversationJournal, InMemoryTaskPayloadStore } from "../../sto
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
 	DialogDraftEnvelope,
+	DialogPresentationEnvelope,
 	ProviderDraftEnvelope,
 	ToolInvocationEnvelope,
 	ToolResultEnvelope,
@@ -245,6 +246,59 @@ describe("ToolTerminalManifestMaterializer", () => {
 		expect(envelope.results[0]?.content).not.toContain("Tool call cancelled")
 		expect(envelope.results[0]?.failed).toBeUndefined()
 		expect(new Set(envelope.supersededPayloadRefs)).toEqual(new Set([failedRef, restoredRef]))
+	})
+
+	// A completion's dialog is keyed by its block, so the dialog's own presentation
+	// shares the call's turn and interaction. Reading it as the user's approval
+	// feedback made the next request fail to materialize, and a restored
+	// completion answered from a panel never reached the provider.
+	it("does not mistake a dialog's own presentation for the call's approval feedback", async () => {
+		const payloads = new InMemoryTaskPayloadStore()
+		const journal = new InMemoryConversationJournal()
+		const invocationRef = await payloads.put(encodeTaskPayload(invocation("b0")))
+		await appendRawResult(journal, payloads, "b0", "completed:b0")
+		const presentationRef = await payloads.put(
+			encodeTaskPayload<DialogPresentationEnvelope>({
+				kind: "dialog_presentation",
+				presentationKind: "completion",
+				body: "E2E completion result",
+			}),
+		)
+		await journal.append({
+			operationId: "dialog.prepare:b0",
+			payloadRef: presentationRef,
+			source: "dialog",
+			causation: { turnId: TURN_ID, interactionId: "b0" },
+		})
+		const adapter = new ProductionComposeAdapter({
+			payloads,
+			journal,
+			readState: () => createInitialTaskState("task-1"),
+		})
+
+		const composed = await adapter.compose({
+			turnId: "turn-next",
+			admittedEntryIds: [],
+			toolTerminals: { turnId: TURN_ID, blocks: [{ blockId: "b0", phase: "completed", invocationRef }] },
+			signal: new AbortController().signal,
+		})
+		if (!("draftRef" in composed)) throw new Error("Expected a provider draft")
+		const draft = decodeTaskPayload<ProviderDraftEnvelope>(await payloads.read(composed.draftRef))
+
+		const manifestEntry = await journal.findByOperation(`tool.terminal_manifest:${TURN_ID}`)
+		if (!manifestEntry?.payloadRef) throw new Error("Missing terminal manifest")
+		const envelope = decodeTaskPayload<ToolTerminalManifestEnvelope>(await payloads.read(manifestEntry.payloadRef))
+		expect(envelope.results.map(({ blockId, feedbackRef }) => ({ blockId, feedbackRef }))).toEqual([
+			{ blockId: "b0", feedbackRef: undefined },
+		])
+		expect(envelope.supersededPayloadRefs).not.toContain(presentationRef)
+
+		const view = new JournalConversationView(journal, new ProviderJournalMessageMaterializer(payloads))
+		const messages = await view.messages(draft.journalThrough)
+		const toolResults = messages
+			.flatMap((message) => (message.content ?? []) as readonly MaterializedContent[])
+			.filter((block) => block.type === "tool_result")
+		expect(toolResults.map(resultText)).toEqual(["completed:b0"])
 	})
 
 	it("lands the terminal batch before compaction reads the round and reports its unsent growth", async () => {
