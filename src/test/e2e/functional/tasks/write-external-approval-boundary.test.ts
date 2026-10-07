@@ -32,6 +32,7 @@ e2e(
 
 		const siblingDirectory = path.join(path.dirname(workspaceDir), "u000workspace")
 		const externalPath = path.join(siblingDirectory, "proof.txt")
+		const externalRelativePath = path.relative(workspaceDir, externalPath)
 		server.resetOpenAiMock()
 		server.enqueueOpenAiResponses(
 			{
@@ -39,7 +40,7 @@ e2e(
 				id: "call_external_write_before_approval",
 				name: "write_to_file",
 				arguments: {
-					absolutePath: externalPath,
+					path: externalRelativePath,
 					content: "E2E_EXTERNAL_WRITE_MUST_WAIT_FOR_APPROVAL\n",
 				},
 			},
@@ -97,6 +98,7 @@ e2e(
 		const siblingDirectory = path.join(path.dirname(workspaceDir), "u000workspace-junction")
 		const linkedDirectory = path.join(workspaceDir, "linked-outside")
 		const linkedPath = path.join(linkedDirectory, "proof.txt")
+		const linkedRelativePath = path.relative(workspaceDir, linkedPath)
 		const externalPath = path.join(siblingDirectory, "proof.txt")
 		await mkdir(siblingDirectory)
 		await symlink(siblingDirectory, linkedDirectory, process.platform === "win32" ? "junction" : "dir")
@@ -108,7 +110,7 @@ e2e(
 				id: "call_junction_external_write",
 				name: "write_to_file",
 				arguments: {
-					absolutePath: linkedPath,
+					path: linkedRelativePath,
 					content: "E2E_JUNCTION_EXTERNAL_WRITE_MUST_WAIT_FOR_APPROVAL\n",
 				},
 			},
