@@ -146,7 +146,7 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 		if (!kind || kind !== resolution.kind || invocation.dlineTid !== block.blockId) return undefined
 		const turnId = this.ports.state().turn.turnId
 		const operationId = `tool.restored_result:${turnId ?? "none"}:${block.blockId}`
-		return { invocation, kind, turnId, operationId, recorded: await this.recordedResult(operationId, turnId, block.blockId) }
+		return { invocation, kind, turnId, operationId, recorded: await this.recordedResult(operationId, turnId, block) }
 	}
 
 	/**
@@ -157,8 +157,13 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 	 * the runner instead journaled the interruption as the tool's failed
 	 * result; the call is then settled and a later answer cannot become its
 	 * result, so it has to reach the model as new input.
+	 *
+	 * A completion the user had already been shown is the exception: stopping
+	 * the task keeps it open as the task's dialog, so the failure written for
+	 * the stopped block does not settle it and the reply becomes its result,
+	 * as dev restores a presented completion and commits its feedback.
 	 */
-	private async recordedResult(operationId: string, turnId: string | undefined, blockId: string): Promise<RecordedResult> {
+	private async recordedResult(operationId: string, turnId: string | undefined, block: KernelBlock): Promise<RecordedResult> {
 		if (await this.ports.journal.findByOperation(operationId)) return "answered"
 		const state = this.ports.state()
 		const lowerBound = state.dialog.primary?.journalWatermark ?? state.journalWatermark
@@ -166,7 +171,9 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
 			if (entry.kind !== "message" || entry.source !== "tool" || !entry.payloadRef || entry.causation?.turnId !== turnId)
 				continue
 			const payload = decodeTaskPayload<ToolResultEnvelope>(await this.ports.payloads.read(entry.payloadRef))
-			if (payload.kind === "tool_result" && payload.blockId === blockId) return payload.failed ? "failed" : "answered"
+			if (payload.kind !== "tool_result" || payload.blockId !== block.blockId) continue
+			if (!payload.failed) return "answered"
+			if (!block.presentedCompletion) return "failed"
 		}
 		return "none"
 	}

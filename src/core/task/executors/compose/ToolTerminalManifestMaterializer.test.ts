@@ -13,6 +13,7 @@ import type {
 import { JournalConversationView } from "../provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../provider/service/ProviderJournalMessageMaterializer"
 import { ProductionComposeAdapter } from "./ProductionComposeAdapter"
+import { materializeToolTerminalManifest } from "./ToolTerminalManifestMaterializer"
 
 const TURN_ID = "turn-tools"
 
@@ -179,6 +180,37 @@ describe("ToolTerminalManifestMaterializer", () => {
 		expect(JSON.stringify(decodeTaskPayload(await payloads.read(lateSuccessRef)))).toContain(
 			"late success must not become canonical",
 		)
+	})
+
+	// A completion stopping kept open is answered after the stop already wrote
+	// its failure: the answer is the call's one result, as dev replaces the
+	// interrupted result with the restored completion feedback.
+	it("projects the restored answer of a cancelled block as its only result", async () => {
+		const payloads = new InMemoryTaskPayloadStore()
+		const journal = new InMemoryConversationJournal()
+		const invocationRef = await payloads.put(encodeTaskPayload(invocation("b0")))
+		const failedRef = await appendRawResult(journal, payloads, "b0", "dialog_terminate", true)
+		const restoredRef = await payloads.put(encodeTaskPayload(result("b0", "<feedback>\nRESTORED_REPLY\n</feedback>")))
+		await journal.append({
+			operationId: `tool.restored_result:${TURN_ID}:b0`,
+			payloadRef: restoredRef,
+			source: "tool",
+			causation: { turnId: TURN_ID },
+		})
+
+		await materializeToolTerminalManifest({
+			manifest: { turnId: TURN_ID, blocks: [{ blockId: "b0", phase: "cancelled", invocationRef }] } as never,
+			payloads,
+			journal,
+		})
+
+		const manifestEntry = await journal.findByOperation(`tool.terminal_manifest:${TURN_ID}`)
+		const envelope = decodeTaskPayload<ToolTerminalManifestEnvelope>(await payloads.read(manifestEntry!.payloadRef!))
+		expect(envelope.results).toHaveLength(1)
+		expect(envelope.results[0]?.content).toContain("RESTORED_REPLY")
+		expect(envelope.results[0]?.content).not.toContain("Tool call cancelled")
+		expect(envelope.results[0]?.failed).toBeUndefined()
+		expect(new Set(envelope.supersededPayloadRefs)).toEqual(new Set([failedRef, restoredRef]))
 	})
 
 	it("lands the terminal batch before compaction reads the round and reports its unsent growth", async () => {

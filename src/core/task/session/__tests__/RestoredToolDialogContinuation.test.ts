@@ -31,6 +31,8 @@ function harness(options: {
 	/** The runner journaled the interruption as the tool's failed result before the process died. */
 	readonly interrupted?: boolean
 	readonly fallbackAccepts?: boolean
+	/** Termination kept the block's shown completion open as the task's dialog. */
+	readonly presentedCompletion?: boolean
 }) {
 	const interruption: ToolResultEnvelope = { kind: "tool_result", blockId: TID, content: "interrupted", failed: true }
 	const stored = new Map<string, unknown>([
@@ -71,7 +73,16 @@ function harness(options: {
 		turn: {
 			...initial.turn,
 			turnId: "turn-1",
-			blocks: [{ blockId: TID, phase: options.phase ?? "cancelled", invocationRef: "ref:invocation" }],
+			blocks: [
+				{
+					blockId: TID,
+					phase: options.phase ?? "cancelled",
+					invocationRef: "ref:invocation",
+					...(options.presentedCompletion
+						? { presentedCompletion: { presentationRef: "presentation:completion", actionRules: [] } }
+						: {}),
+				},
+			],
 		},
 	} as unknown as TaskState
 	const input: TaskInput = { entryId: "entry-1", payloadRef: "sha256:input" }
@@ -156,6 +167,35 @@ describe("RestoredToolDialogContinuation", () => {
 		expect(h.journal.append).not.toHaveBeenCalled()
 		expect(h.messages.addToClineMessages).not.toHaveBeenCalled()
 		expect(h.resumption.materialize).not.toHaveBeenCalled()
+	})
+
+	// Termination keeps a shown completion answerable, so the failure it wrote
+	// for the stopped block does not settle the call: the reply replaces it,
+	// as dev restores a presented completion and commits its feedback as the result.
+	it("records the reply to a completion kept open by termination as the call's result", async () => {
+		const h = harness({
+			toolName: "attempt_completion",
+			interrupted: true,
+			fallbackAccepts: true,
+			presentedCompletion: true,
+		})
+		const resolution = {
+			interactionId: TID,
+			kind: "completion",
+			outcome: { actionId: "reply" as const, draft: { text: "REPLY_TO_RESTORED_COMPLETION", images: [], files: [] } },
+		}
+
+		expect(h.continuation.accepts(resolution)).toBe(true)
+		await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+
+		expect(h.journaledResult()).toMatchObject({ kind: "tool_result", blockId: TID })
+		expect(h.journaledResult().content).toContain("REPLY_TO_RESTORED_COMPLETION")
+		expect(h.journal.append).toHaveBeenCalledWith(
+			expect.objectContaining({ operationId: `tool.restored_result:turn-1:${TID}`, source: "tool" }),
+		)
+		expect(h.fallback.continue).not.toHaveBeenCalled()
+		expect(h.resumption.materialize).toHaveBeenCalledWith({})
+		expect(h.resumption.submit).toHaveBeenCalledOnce()
 	})
 
 	it("still resumes without new input when the generic path declines an interrupted tool's answer", async () => {

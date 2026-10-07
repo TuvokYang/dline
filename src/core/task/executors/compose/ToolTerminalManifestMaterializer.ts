@@ -17,6 +17,16 @@ function hasPayload(entry: JournalEntry): entry is JournalEntry & { readonly pay
 	return entry.payloadRef !== undefined
 }
 
+/**
+ * The answer a restored dialog recorded as its tool's result.
+ *
+ * It is written after the block ended, typically for a completion that
+ * stopping kept open, so it is the call's result whatever the block's phase
+ * and whatever the stop wrote before it, as dev replaces an interrupted
+ * result with the restored feedback.
+ */
+const RESTORED_RESULT_OPERATION_PREFIX = "tool.restored_result:"
+
 function terminalText(phase: ToolTerminalPhase): string {
 	switch (phase) {
 		case "rejected":
@@ -76,12 +86,18 @@ export async function materializeToolTerminalManifest(input: {
 	}
 
 	const rawResults = new Map<string, JournalPayloadEntry>()
+	const restoredResults = new Map<string, JournalPayloadEntry>()
+	const rawRefs = new Map<string, string[]>()
 	const feedback = new Map<string, string>()
 	for (const entry of await input.journal.read()) {
 		if (!hasPayload(entry) || entry.causation?.turnId !== input.manifest.turnId) continue
 		if (entry.source === "tool") {
 			const payload = decodeTaskPayload<ToolResultEnvelope>(await input.payloads.read(entry.payloadRef))
-			if (payload.kind === "tool_result") rawResults.set(payload.blockId, { entry, payload })
+			if (payload.kind === "tool_result") {
+				const results = entry.operationId.startsWith(RESTORED_RESULT_OPERATION_PREFIX) ? restoredResults : rawResults
+				results.set(payload.blockId, { entry, payload })
+				rawRefs.set(payload.blockId, [...(rawRefs.get(payload.blockId) ?? []), entry.payloadRef])
+			}
 		}
 		if (entry.source === "dialog" && entry.causation?.interactionId) {
 			feedback.set(entry.causation.interactionId, entry.payloadRef)
@@ -95,11 +111,15 @@ export async function materializeToolTerminalManifest(input: {
 		if (invocation.kind !== "tool_invocation" || invocation.dlineTid !== block.blockId)
 			throw new Error(`InvalidToolTerminalInvocation:${block.blockId}`)
 		const raw = rawResults.get(block.blockId)
-		if (raw) superseded.add(raw.entry.payloadRef)
+		const restored = restoredResults.get(block.blockId)
+		for (const ref of rawRefs.get(block.blockId) ?? []) superseded.add(ref)
 		const recordedFeedback = feedback.get(block.blockId)
 		if (recordedFeedback) superseded.add(recordedFeedback)
-		const result =
-			(block.phase === "completed" || block.phase === "failed") && raw ? raw.payload : syntheticResult(block, invocation)
+		const result = restored
+			? restored.payload
+			: (block.phase === "completed" || block.phase === "failed") && raw
+				? raw.payload
+				: syntheticResult(block, invocation)
 		const feedbackRef = block.approvalFeedbackRef ?? recordedFeedback
 		results.push({
 			blockId: block.blockId,
