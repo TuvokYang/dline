@@ -1,6 +1,6 @@
 import { cpSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import * as path from "node:path"
-import type { TestInfo } from "@playwright/test"
+import { expect, type TestInfo } from "@playwright/test"
 import { downloadAndUnzipVSCode, SilentReporter } from "@vscode/test-electron"
 import { _electron, type ElectronApplication, type Frame, type Page } from "playwright"
 import type { ClineApiServerMock } from "../fixtures/server"
@@ -24,6 +24,20 @@ export interface MultiInstanceSurface {
 	readonly userDataDir: string
 	/** Portable root owning every persistent artifact of this instance. */
 	readonly portableRoot: string
+}
+
+/**
+ * Give this instance's window system focus before keyboard-driven workbench UI. Separate VS Code
+ * processes do not share focus, and on a display without a window manager the most recently
+ * activated instance keeps it, so QuickInput opened in another instance closes on focus loss.
+ */
+export async function focusInstanceWindow(surface: MultiInstanceSurface): Promise<void> {
+	await surface.app.evaluate(({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows()[0]
+		window?.show()
+		window?.focus()
+	})
+	await expect.poll(() => surface.page.evaluate(() => document.hasFocus()), { timeout: 60_000 }).toBe(true)
 }
 
 export interface MultiInstanceLauncherOptions {

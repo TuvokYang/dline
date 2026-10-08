@@ -14,7 +14,7 @@ import {
 import { rm } from "node:fs/promises"
 import * as os from "node:os"
 import * as path from "node:path"
-import { type ElectronApplication, expect, type Frame, type Page, test } from "@playwright/test"
+import { type ElectronApplication, expect, type Frame, type Locator, type Page, test } from "@playwright/test"
 import { downloadAndUnzipVSCode, SilentReporter } from "@vscode/test-electron"
 import { _electron } from "playwright"
 import { ClineApiServerMock } from "../fixtures/server"
@@ -334,7 +334,33 @@ export class E2ETestHelper {
 		}
 	}
 
+	/**
+	 * Run one workbench command through the Command Palette. An asynchronous focus transfer into a
+	 * webview can close QuickInput before the option is chosen; nothing executes until the click, so
+	 * the palette is reopened instead of failing on a race the command never observed.
+	 */
 	public static async runCommandPalette(page: Page, command: string): Promise<void> {
+		const maxAttempts = 3
+		for (let attempt = 1; ; attempt++) {
+			try {
+				const commandOption = await E2ETestHelper.openCommandPaletteOption(page, command)
+				await commandOption.click()
+				return
+			} catch (error) {
+				if (attempt === maxAttempts) throw error
+				await E2ETestHelper.closeQuickInput(page)
+			}
+		}
+	}
+
+	private static async closeQuickInput(page: Page): Promise<void> {
+		const quickInput = page.locator(".quick-input-widget:visible")
+		if ((await quickInput.count()) === 0) return
+		await page.keyboard.press("Escape")
+		await expect(quickInput).toHaveCount(0)
+	}
+
+	private static async openCommandPaletteOption(page: Page, command: string): Promise<Locator> {
 		await page.keyboard.press("ControlOrMeta+Shift+p")
 		const commandPalette = page.locator(".quick-input-widget:visible")
 		await expect(commandPalette).toHaveCount(1)
@@ -349,7 +375,7 @@ export class E2ETestHelper {
 		const commandOption = commandPalette.locator(".monaco-list-row").filter({ has: page.getByText(command, { exact: true }) })
 		await expect(commandOption).toHaveCount(1)
 		await expect(commandOption).toBeVisible()
-		await commandOption.click()
+		return commandOption
 	}
 
 	private static findDlineOutputLogs(directory: string): string[] {
