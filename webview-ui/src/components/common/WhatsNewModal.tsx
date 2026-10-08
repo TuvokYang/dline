@@ -2,7 +2,7 @@ import React from "react"
 import { useMount } from "react-use"
 import GitHubIcon from "@/assets/GitHubIcon"
 import WhatsNewItems from "@/components/common/WhatsNewItems"
-import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { DLINE_REPOSITORY_URL } from "@/config/source-links"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 
@@ -28,18 +28,18 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ open, onClose, ver
 
 	return (
 		<Dialog onOpenChange={(isOpen) => !isOpen && onClose()} open={open}>
+			{/* Bound the dialog to the webview and scroll only the body, so the title and the
+			    close button stay on screen in a short or narrow sidebar. */}
 			<DialogContent
 				aria-describedby="whats-new-description"
-				aria-labelledby="whats-new-title"
-				className="pt-5 px-5 pb-4 gap-0">
-				<div id="whats-new-description">
-					<h2
-						className="text-lg font-semibold mb-3 pr-6"
-						id="whats-new-title"
-						style={{ color: "var(--vscode-editor-foreground)" }}>
-						🎉 New in v{version}
-					</h2>
+				className="pt-5 px-5 pb-4 gap-0 flex flex-col max-h-[calc(100vh-2rem)]">
+				<DialogTitle
+					className="shrink-0 leading-normal tracking-normal mb-3 pr-6"
+					style={{ color: "var(--vscode-editor-foreground)" }}>
+					🎉 New in v{version}
+				</DialogTitle>
 
+				<div className="min-h-0 overflow-y-auto" id="whats-new-description">
 					<WhatsNewItems inlineCodeStyle={inlineCodeStyle} onClose={onClose} />
 
 					{/* Repository Section */}
