@@ -1,8 +1,8 @@
-import { readFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
-import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { focusInstanceWindow, MultiInstanceLauncher, type MultiInstanceSurface } from "@e2e/utils/multi-instance"
+import { e2e } from "@e2e/utils/helpers"
+import { MultiInstanceLauncher, type MultiInstanceSurface } from "@e2e/utils/multi-instance"
 import { expect } from "@playwright/test"
 
 interface StoredProfile {
@@ -70,17 +70,32 @@ async function expectResponsiveProfileLayout(surface: MultiInstanceSurface): Pro
 	)
 }
 
-async function selectColorTheme(surface: MultiInstanceSurface, themeName: string, themeKind: string): Promise<void> {
-	await focusInstanceWindow(surface)
-	await E2ETestHelper.runCommandPalette(surface.page, "Preferences: Color Theme")
-	const themeInput = surface.page.locator(".quick-input-widget input").last()
-	await expect(themeInput).toBeVisible()
-	await themeInput.fill(themeName)
-	const themeOption = surface.page
-		.locator(".quick-input-widget .monaco-list-row")
-		.filter({ has: surface.page.getByText(themeName, { exact: true }) })
-	await expect(themeOption).toHaveCount(1)
-	await themeOption.click()
+/**
+ * Switch the color theme through this instance's user settings.
+ *
+ * The Color Theme picker is a QuickInput that closes when its window loses OS focus, and a display
+ * without a window manager (CI xvfb) never grants focus to a second VS Code process, so the picker
+ * cannot drive a multi-instance test. The setting reaches the same workbench theme service and
+ * Webview theme-kind propagation that this test asserts. The setting takes the theme's settings
+ * ID, which for built-in themes differs from the picker label (for example `Default High Contrast`
+ * is shown as `Dark High Contrast`).
+ */
+async function selectColorTheme(surface: MultiInstanceSurface, themeSettingsId: string, themeKind: string): Promise<void> {
+	const settingsDirectory = path.join(surface.userDataDir, "User")
+	const settingsPath = path.join(settingsDirectory, "settings.json")
+	const settings = await readFile(settingsPath, "utf8").then(
+		(raw) => JSON.parse(raw) as Record<string, unknown>,
+		(error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return {}
+			throw error
+		},
+	)
+	await mkdir(settingsDirectory, { recursive: true })
+	await writeFile(
+		settingsPath,
+		`${JSON.stringify({ ...settings, "workbench.colorTheme": themeSettingsId }, null, "\t")}\n`,
+		"utf8",
+	)
 	await expect
 		.poll(() => surface.sidebar.locator("body").getAttribute("data-vscode-theme-kind"), { timeout: 15_000 })
 		.toBe(themeKind)
@@ -198,9 +213,9 @@ e2e(
 			await expectProfileOrder(instanceA, expectedNames)
 			await expectProfileOrder(instanceB, expectedNames)
 			await expectResponsiveProfileLayout(instanceB)
-			await selectColorTheme(instanceB, "Light Modern", "vscode-light")
+			await selectColorTheme(instanceB, "Default Light Modern", "vscode-light")
 			await expectResponsiveProfileLayout(instanceB)
-			await selectColorTheme(instanceB, "Dark High Contrast", "vscode-high-contrast")
+			await selectColorTheme(instanceB, "Default High Contrast", "vscode-high-contrast")
 			await expectResponsiveProfileLayout(instanceB)
 
 			await launcher.close(instanceA)

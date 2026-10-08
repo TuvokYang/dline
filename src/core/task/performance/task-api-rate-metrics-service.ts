@@ -184,14 +184,9 @@ export class TaskApiRateMetricsService {
 		const exactBucket = this.ensureCurrentBucket()
 		if (this.taskLoopActive) exactBucket.signals.add("task_active")
 		exactBucket.signals.add("exact_usage")
-		const inputTokens =
-			sanitizeTokenCount(usage.inputTokens) +
-			sanitizeTokenCount(usage.cacheWriteTokens ?? 0) +
-			sanitizeTokenCount(usage.cacheReadTokens ?? 0)
-		// Output already includes its reasoning share.
+		// Exact output replaces the streamed estimates in the seconds that produced them.
 		const streamedTokens = sanitizeTokenCount(usage.outputTokens)
 		const allocations = new Map<number, number>()
-		addAllocation(allocations, request.startSecond, inputTokens)
 		const weightedAllocations = allocateByLargestRemainder(streamedTokens, request.estimatedBySecond)
 		if (weightedAllocations.size === 0) addAllocation(allocations, request.lastProviderSecond, streamedTokens)
 		else for (const [second, tokens] of weightedAllocations) addAllocation(allocations, second, tokens)

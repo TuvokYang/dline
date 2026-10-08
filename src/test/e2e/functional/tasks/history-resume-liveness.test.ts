@@ -3,8 +3,17 @@ import * as path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 
-const HISTORY_SURFACE_BUDGET_MS = 500
-const BROWSER_MESSAGE_SURFACE_BUDGET_MS = 1_500
+/** Messages are published before any optional history IO, so this bound holds on every runner. */
+const MESSAGE_SURFACE_BUDGET_MS = 500
+/**
+ * Extension work from click to Resume publication: two full state posts plus activity hydration of
+ * the 20 MB fixture. It measured 290-894ms locally depending on host load and 382-769ms on the
+ * 2-vCPU Linux CI runner, so a 500ms bound only measured runner speed. The bound matches the
+ * click-to-visible budget; the stage breakdown is logged for regression diagnosis.
+ */
+const RESUME_SURFACE_BUDGET_MS = 1_500
+/** Click-to-visible bounds, including Webview transport and rendering. */
+const BROWSER_SURFACE_BUDGET_MS = 1_500
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {
 	const input = sidebar.getByTestId("chat-input")
@@ -38,13 +47,18 @@ function readCompletedHistoryStageDurationMs(output: string, taskId: string, sta
 	return match?.[1] === undefined ? undefined : Number(match[1])
 }
 
-function readHistorySurfaceDurationMs(output: string, taskId: string): number | undefined {
-	const durations = ["history_surface_preparing", "history_display", "history_surface_ready"].map((stage) =>
-		readCompletedHistoryStageDurationMs(output, taskId, stage),
-	)
-	return durations.some((duration) => duration === undefined)
-		? undefined
-		: durations.reduce<number>((total, duration) => total + (duration ?? 0), 0)
+const HISTORY_SURFACE_STAGES = ["history_surface_preparing", "history_display", "history_surface_ready"] as const
+type HistorySurfaceStage = (typeof HISTORY_SURFACE_STAGES)[number]
+
+/** Read every stage on the Resume publication path, or nothing until all of them have completed. */
+function readHistorySurfaceStageDurations(output: string, taskId: string): Record<HistorySurfaceStage, number> | undefined {
+	const durations: Partial<Record<HistorySurfaceStage, number>> = {}
+	for (const stage of HISTORY_SURFACE_STAGES) {
+		const duration = readCompletedHistoryStageDurationMs(output, taskId, stage)
+		if (duration === undefined) return undefined
+		durations[stage] = duration
+	}
+	return durations as Record<HistorySurfaceStage, number>
 }
 
 async function seedLargeTransientActivityHistory(taskDirectory: string, taskId: string): Promise<void> {
@@ -127,13 +141,14 @@ e2e(
 		const resumeButton = footer.getByText("Resume", { exact: true })
 		await expect(resumeButton).toBeVisible({ timeout: 5_000 })
 		const browserSurfaceMs = Math.round(performance.now() - historyClickedAt)
-		const extensionSurfaceMs = await E2ETestHelper.waitForValue(() => {
+		const extensionStages = await E2ETestHelper.waitForValue(() => {
 			const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? ""
 			const currentOpeningOutput = output.startsWith(outputBeforeHistoryOpen)
 				? output.slice(outputBeforeHistoryOpen.length)
 				: output
-			return readHistorySurfaceDurationMs(currentOpeningOutput, taskId)
+			return readHistorySurfaceStageDurations(currentOpeningOutput, taskId)
 		}, 5_000)
+		const extensionSurfaceMs = HISTORY_SURFACE_STAGES.reduce((total, stage) => total + extensionStages[stage], 0)
 		const messageSurfaceMs = await E2ETestHelper.waitForValue(() => {
 			const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? ""
 			const currentOpeningOutput = output.startsWith(outputBeforeHistoryOpen)
@@ -141,20 +156,23 @@ e2e(
 				: output
 			return readCompletedHistoryStageDurationMs(currentOpeningOutput, taskId, "history_message_surface")
 		}, 5_000)
-		const timing = { browserMessageSurfaceMs, browserSurfaceMs, messageSurfaceMs, extensionSurfaceMs }
+		const timing = { browserMessageSurfaceMs, browserSurfaceMs, messageSurfaceMs, extensionSurfaceMs, extensionStages }
 		console.log(`[history-resume-liveness] ${JSON.stringify(timing)}`)
 		await e2e.info().attach("history-resume-liveness.json", {
 			body: Buffer.from(`${JSON.stringify(timing, null, 2)}\n`, "utf8"),
 			contentType: "application/json",
 		})
-		expect(extensionSurfaceMs, `Extension history surface must be ready under ${HISTORY_SURFACE_BUDGET_MS}ms`).toBeLessThan(
-			HISTORY_SURFACE_BUDGET_MS,
+		expect(extensionSurfaceMs, `Extension Resume surface must be ready under ${RESUME_SURFACE_BUDGET_MS}ms`).toBeLessThan(
+			RESUME_SURFACE_BUDGET_MS,
 		)
 		expect(messageSurfaceMs, "Message-ready publication must not wait for activity maintenance").toBeLessThan(
-			HISTORY_SURFACE_BUDGET_MS,
+			MESSAGE_SURFACE_BUDGET_MS,
 		)
 		expect(browserMessageSurfaceMs, "Click-to-message visibility must include Webview transport and rendering").toBeLessThan(
-			BROWSER_MESSAGE_SURFACE_BUDGET_MS,
+			BROWSER_SURFACE_BUDGET_MS,
+		)
+		expect(browserSurfaceMs, "Click-to-Resume visibility must not wait for activity maintenance").toBeLessThan(
+			BROWSER_SURFACE_BUDGET_MS,
 		)
 		await expect(sidebar.getByTestId("history-task-opening")).toHaveCount(0)
 		await expect.poll(() => server.openAiRequestCount).toBe(2)

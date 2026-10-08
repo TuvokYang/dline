@@ -9562,13 +9562,7 @@ export class Task {
 					})
 				}
 				if (!hasUsage) return
-				this.apiRateMetricsService.recordExactUsage({
-					inputTokens: finalUsage.inputTokens,
-					outputTokens: finalUsage.outputTokens,
-					cacheWriteTokens: finalUsage.cacheWriteTokens,
-					cacheReadTokens: finalUsage.cacheReadTokens,
-					thoughtsTokens: finalUsage.thoughtsTokens,
-				})
+				this.apiRateMetricsService.recordExactUsage({ outputTokens: finalUsage.outputTokens })
 				this.recordProfileDailyTokens(finalUsage)
 				const rateMetrics = this.apiRateMetricsService.getSnapshot()
 				telemetryService.captureTokenUsage(
