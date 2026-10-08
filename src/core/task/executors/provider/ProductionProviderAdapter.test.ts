@@ -35,7 +35,6 @@ describe("ProductionProviderAdapter", () => {
 			kind: "provider_draft",
 			admittedEntryIds: ["entry-1"],
 			inputPayloadRefs: ["input:1"],
-			journalPayloadRefs: [],
 		}
 		const draftRef = await payloads.put(encodeTaskPayload(draft))
 		const adapter = new ProductionProviderAdapter({

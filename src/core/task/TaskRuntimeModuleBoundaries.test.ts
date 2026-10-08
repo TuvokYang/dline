@@ -11,13 +11,13 @@ const MODULES = [
 	"intake",
 	"executors/background",
 	"executors/cotask",
-	"executors/inbound",
+	"executors/shared",
 ]
 const project = new Project({ tsConfigFilePath: path.resolve(ROOT, "../../../tsconfig.json"), skipAddingFilesFromTsConfig: true })
 project.addSourceFilesAtPaths(MODULES.map((module) => path.join(ROOT, module, "**/*.ts")))
 const production = project.getSourceFiles().filter((source) => !source.getBaseName().endsWith(".test.ts"))
 
-describe("TASK-106 module architecture", () => {
+describe("task runtime module boundaries", () => {
 	it("keeps new modules detached from production composition and legacy authorities", () => {
 		const forbidden = [
 			/core\/task\/index/,

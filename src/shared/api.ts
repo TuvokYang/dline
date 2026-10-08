@@ -88,14 +88,6 @@ export interface ApiConfiguration {
 	onStreamEstimatedTokens?: (tokens: number) => void
 }
 
-/**
- * @deprecated Legacy flat-field config, replaced by ApiConfiguration.
- * Kept for gradual migration — will be removed.
- */
-export interface ApiHandlerOptions extends ApiConfiguration {
-	[key: string]: any
-}
-
 // ModelInfo type re-exported from proto/dline/models (canonical source)
 export type { ModelInfo } from "./proto/dline/models"
 export type { ModelCapabilities, ModelPricing, ThinkingConfig } from "./proto/dline/models/metadata"

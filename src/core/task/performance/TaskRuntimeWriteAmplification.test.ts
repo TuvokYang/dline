@@ -95,7 +95,6 @@ async function runStreamingTurn(chunkCount: number, finalTextBytes = FINAL_TEXT_
 		kind: "provider_draft",
 		admittedEntryIds: ["entry-performance"],
 		inputPayloadRefs: ["input-performance"],
-		journalPayloadRefs: [],
 	}
 	const draftRef = await payloads.put(encodeTaskPayload(draft))
 	payloads.resetWrites()

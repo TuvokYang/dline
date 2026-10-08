@@ -54,11 +54,6 @@ service AccountService {
   // Consumes one provider-owned reset credit through the shared usage capability.
   rpc consumeAccountUsageResetCredit(AccountUsageResetCreditRequest) returns (AccountUsageResetResult);
 
-  // Deprecated compatibility RPC. It no longer infers an active Profile.
-  rpc openAiCodexSignIn(EmptyRequest) returns (Empty) {
-    option deprecated = true;
-  }
-
   // Starts a browser OAuth flow for one OpenAI Codex Profile.
   rpc startOpenAiCodexSignIn(OpenAiCodexProfileRequest) returns (OpenAiCodexAuthFlow);
 
@@ -79,11 +74,6 @@ service AccountService {
 
   // Cancels an existing OAuth flow owned by one OpenAI Codex Profile.
   rpc cancelOpenAiCodexSignIn(OpenAiCodexAuthFlowRequest) returns (Empty);
-
-  // Deprecated compatibility RPC. It no longer infers an active Profile.
-  rpc openAiCodexSignOut(EmptyRequest) returns (Empty) {
-    option deprecated = true;
-  }
 
   // Signs out one OpenAI Codex Profile and clears only its credential.
   rpc signOutOpenAiCodexProfile(OpenAiCodexProfileRequest) returns (Empty);

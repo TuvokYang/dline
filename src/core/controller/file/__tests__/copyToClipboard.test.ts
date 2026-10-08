@@ -19,9 +19,9 @@ describe("copyToClipboard", () => {
 		writeTextToClipboard.mockRejectedValueOnce(failure)
 		vi.spyOn(Logger, "error").mockImplementation(() => undefined)
 
-		await expect(copyToClipboard({} as Controller, StringRequest.create({ value: "runtime-v2 error details" }))).rejects.toBe(
-			failure,
-		)
-		expect(writeTextToClipboard).toHaveBeenCalledWith("runtime-v2 error details")
+		await expect(
+			copyToClipboard({} as Controller, StringRequest.create({ value: "task runtime error details" })),
+		).rejects.toBe(failure)
+		expect(writeTextToClipboard).toHaveBeenCalledWith("task runtime error details")
 	})
 })

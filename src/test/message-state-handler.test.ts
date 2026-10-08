@@ -83,20 +83,18 @@ describe("MessageStateHandler Mutex Protection", () => {
 		}
 	}
 
-	it("should initialize with empty message arrays", () => {
+	it("should initialize with empty message arrays", async () => {
 		const handler = createTestHandler()
 		handler.clineMessages.length.should.equal(0)
-		handler.apiConversationHistory.length.should.equal(0)
+		;(await handler.readConversationHistory()).length.should.equal(0)
 	})
 
-	it("should set and get API conversation history", async () => {
+	it("should overwrite and read the API conversation history", async () => {
 		const handler = createTestHandler()
 		const testHistory = [{ role: "user" as const, content: "test message" }]
 
-		handler.apiConversationHistory = testHistory
-		// Setter is async (overwrite returns Promise) — await microtask to let it complete
-		await new Promise((r) => setTimeout(r, 0))
-		handler.apiConversationHistory.should.deepEqual(testHistory)
+		await handler.overwriteApiConversationHistory(testHistory)
+		;(await handler.readConversationHistory()).should.deepEqual(testHistory)
 	})
 
 	it("should set and get cline messages", async () => {
@@ -125,8 +123,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 			{ role: "assistant" as const, content: "response1" },
 			{ role: "user" as const, content: "msg2" },
 		]
-		handler.apiConversationHistory = initialHistory
-		await new Promise((r) => setTimeout(r, 0))
+		await handler.overwriteApiConversationHistory(initialHistory)
 
 		// Add initial message to establish baseline
 		const initialMsg = createTestMessage("initial")
@@ -144,12 +141,11 @@ describe("MessageStateHandler Mutex Protection", () => {
 		const msg3 = createTestMessage("concurrent3")
 
 		// Add more messages to API history to simulate ongoing conversation
-		handler.apiConversationHistory = [
+		await handler.overwriteApiConversationHistory([
 			...initialHistory,
 			{ role: "assistant" as const, content: "response2" },
 			{ role: "user" as const, content: "msg3" },
-		]
-		await new Promise((r) => setTimeout(r, 0))
+		])
 
 		// Execute concurrent operations
 		const results = await Promise.all([
@@ -269,7 +265,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 			handler.addToApiConversationHistory({ role: "user", content: "msg2", ts: Date.now() }),
 		])
 
-		const history = handler.apiConversationHistory
+		const history = await handler.readConversationHistory()
 		history.length.should.equal(3)
 		history[0].role.should.equal("user")
 		history[1].role.should.equal("assistant")
@@ -307,7 +303,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 		overwrite.mock.calls[0][0].should.deepEqual(newHistory)
 		clear.mock.calls.length.should.equal(0)
 		addMessage.mock.calls.length.should.equal(0)
-		handler.apiConversationHistory.should.deepEqual(newHistory)
+		;(await handler.readConversationHistory()).should.deepEqual(newHistory)
 	})
 
 	it("should truncate API conversation history by durable row count", async () => {
@@ -318,7 +314,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 
 		await handler.truncateApiConversationHistory(2)
 
-		handler.apiConversationHistory.map((message) => message.content).should.deepEqual(["first", "second"])
+		;(await handler.readConversationHistory()).map((message) => message.content).should.deepEqual(["first", "second"])
 	})
 
 	it("upsertClineMessageInMemory then finalizeClineMessage keeps a single message", async () => {

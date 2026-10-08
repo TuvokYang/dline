@@ -19,7 +19,7 @@ function normalized(filePath: string): string {
 	return filePath.replaceAll("\\", "/")
 }
 
-describe("TASK-103 module architecture", () => {
+describe("task kernel module architecture", () => {
 	it("keeps new production files below the absolute 1000-line limit", () => {
 		const oversized = production
 			.map((source) => ({

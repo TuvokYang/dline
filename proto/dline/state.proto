@@ -23,7 +23,6 @@ service StateService {
   rpc requestProfileSwitch(ProfileSwitchRequest) returns (ProfileSwitchResponse);
   rpc confirmProfileSwitch(ProfileSwitchOperationRequest) returns (ProfileSwitchResponse);
   rpc cancelProfileSwitch(ProfileSwitchOperationRequest) returns (ProfileSwitchResponse);
-  rpc restoreContextCompaction(ContextCompactionRestoreRequest) returns (ContextCompactionRestoreResponse);
   rpc updateAutoApprovalSettings(AutoApprovalSettingsRequest) returns (Empty);
   rpc updateSettings(UpdateSettingsRequest) returns (Empty);
   rpc updateTaskSettings(UpdateTaskSettingsRequest) returns (Empty);
@@ -373,36 +372,6 @@ message ProfileSwitchResponse {
 message ProfileSwitchOperationRequest {
   Metadata metadata = 1;
   string operation_id = 2;
-}
-
-enum ContextCompactionRestoreTarget {
-  CONTEXT_COMPACTION_RESTORE_TARGET_UNSPECIFIED = 0;
-  CONTEXT_COMPACTION_RESTORE_TARGET_PREVIOUS = 1;
-  CONTEXT_COMPACTION_RESTORE_TARGET_INITIAL = 2;
-}
-
-message ContextCompactionRestoreRequest {
-  Metadata metadata = 1;
-  string operation_id = 2;
-  ContextCompactionRestoreTarget target = 3;
-  string expected_head_checkpoint_id = 4;
-  int32 expected_chain_revision = 5;
-}
-
-enum ContextCompactionRestoreStatus {
-  CONTEXT_COMPACTION_RESTORE_STATUS_UNSPECIFIED = 0;
-  CONTEXT_COMPACTION_RESTORE_STATUS_RESTORED = 1;
-  CONTEXT_COMPACTION_RESTORE_STATUS_REJECTED = 2;
-}
-
-message ContextCompactionRestoreResponse {
-  ContextCompactionRestoreStatus status = 1;
-  optional string operation_id = 2;
-  optional string checkpoint_id = 3;
-  optional string head_checkpoint_id = 4;
-  optional int32 chain_revision = 5;
-  optional string branch_id = 6;
-  optional string error = 7;
 }
 
 enum PlanActMode {

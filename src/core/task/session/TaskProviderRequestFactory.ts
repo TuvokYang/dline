@@ -79,15 +79,9 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
 		}
 	}
 
-	/**
-	 * The conversation the draft was composed with.
-	 *
-	 * A draft written before drafts recorded a position names its payloads
-	 * instead; replaying it from those keeps a recovered request unchanged.
-	 */
+	/** The conversation the draft was composed with. */
 	private conversationOf(draft: ProviderDraftEnvelope) {
 		if (draft.journalThrough) return this.options.conversation.messages(draft.journalThrough)
-		if (draft.journalPayloadRefs) return this.options.conversation.messagesOf(draft.journalPayloadRefs)
 		return this.options.conversation.messages()
 	}
 

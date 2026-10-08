@@ -540,7 +540,7 @@ describe("HistoryDisplaySession", () => {
 				ts: anchorTs,
 				type: "ask",
 				ask: "tool",
-				text: JSON.stringify({ tool: "webSearch", path: "runtime-v2 approval" }),
+				text: JSON.stringify({ tool: "webSearch", path: "task runtime approval" }),
 				partial: false,
 				interactionId,
 			},

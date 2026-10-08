@@ -167,12 +167,6 @@ export class StateManager {
 	/** TaskHistory instance backed by the shared SQLite UnifyStore database. */
 	private _taskHistory: TaskHistory | null = null
 
-	/** @deprecated Use the Set-based callbacks below. Kept for external compatibility. */
-	onPersistenceError?: (event: PersistenceErrorEvent) => void
-
-	/** @deprecated Use the Set-based callbacks below. Kept for external compatibility. */
-	onSyncExternalChange?: (event: StateSyncEvent) => void | Promise<void>
-
 	private constructor(storage: StorageContext) {
 		this.storage = storage
 	}
@@ -431,7 +425,7 @@ export class StateManager {
 	 * the transaction commits.
 	 */
 	private async refreshTaskHistoryFromDisk(historyStore: TaskHistory, attempt = 0): Promise<void> {
-		if (this.onSyncExternalChangeCallbacks.size === 0 && !this.onSyncExternalChange) return
+		if (this.onSyncExternalChangeCallbacks.size === 0) return
 		let history: HistoryItem[]
 		try {
 			history = await historyStore.getDeduplicatedWithPendingWrites()
@@ -465,9 +459,6 @@ export class StateManager {
 	private async notifySyncExternalChange(event: StateSyncEvent): Promise<void> {
 		const startedAt = performance.now()
 		const callbacks = new Set(this.onSyncExternalChangeCallbacks)
-		if (this.onSyncExternalChange) {
-			callbacks.add(this.onSyncExternalChange)
-		}
 		let index = 0
 		for (const callback of callbacks) {
 			const callbackStartedAt = performance.now()
@@ -572,13 +563,9 @@ export class StateManager {
 
 		if (onPersistenceError) {
 			this.onPersistenceErrorCallbacks.add(onPersistenceError)
-			// Backward-compat: keep the single-slot reference for external consumers
-			this.onPersistenceError = onPersistenceError
 		}
 		if (onSyncExternalChange) {
 			this.onSyncExternalChangeCallbacks.add(onSyncExternalChange)
-			// Backward-compat
-			this.onSyncExternalChange = onSyncExternalChange
 		}
 
 		// Return a disposal function so the caller can unregister itself
@@ -1546,8 +1533,14 @@ export class StateManager {
 			} catch (error) {
 				Logger.error("[StateManager] Failed to persist pending changes:", error)
 
-				// Call persistence error callback for error recovery
-				this.onPersistenceError?.({ error: error })
+				// Every registered controller hears about the failure, not only the last one.
+				for (const callback of [...this.onPersistenceErrorCallbacks]) {
+					Promise.resolve()
+						.then(() => callback({ error }))
+						.catch((callbackError) =>
+							Logger.error("[StateManager] Persistence error callback failed:", callbackError),
+						)
+				}
 			}
 		}, this.PERSISTENCE_DELAY_MS)
 		this.persistenceTimeout = timeout

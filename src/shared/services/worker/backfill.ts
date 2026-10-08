@@ -6,8 +6,8 @@
  * configuration changes.
  */
 
-import * as fs from "fs/promises"
-import { GlobalFileNames, getTaskHistoryStateFilePath } from "@/core/storage/disk"
+import { GlobalFileNames } from "@/core/storage/disk"
+import { StateManager } from "@/core/storage/StateManager"
 import { readTaskConversation } from "@/core/task/conversation/TaskConversationReader"
 import { Logger } from "@/shared/services/Logger"
 import { syncWorker } from "./sync"
@@ -47,29 +47,19 @@ export interface BackfillOptions {
 }
 
 /**
- * List all task IDs in the tasks directory.
+ * List the IDs of tasks in the task history, exclusive of both bounds.
+ *
+ * Task IDs are creation timestamps, so the bounds compare as timestamps would.
  */
 async function listTaskIds(before?: string, after?: string): Promise<string[]> {
 	try {
-		const historyFile = await getTaskHistoryStateFilePath()
-		// Read the history file to get task json names
-		const data = await fs.readFile(historyFile, "utf-8")
-		const history = JSON.parse(data) as { id: string }[]
-		return (
-			history
-				?.map((item) => item.id)
-				?.filter((id) => typeof id === "string")
-				.filter((id) => {
-					if (before && id >= before) {
-						return false
-					}
-					if (after && id <= after) {
-						return false
-					}
-					return true
-				}) || []
-		)
-	} catch {
+		const history = await StateManager.get().taskHistory.getDeduplicated()
+		return history
+			.map((item) => item.id)
+			.filter((id) => typeof id === "string")
+			.filter((id) => (!before || id < before) && (!after || id > after))
+	} catch (error) {
+		Logger.error("[backfill] Failed to list task history:", error)
 		return []
 	}
 }

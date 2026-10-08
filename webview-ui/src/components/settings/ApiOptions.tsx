@@ -6,7 +6,6 @@ import Fuse from "fuse.js"
 import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useInterval } from "react-use"
 import styled from "styled-components"
-import { normalizeApiConfiguration } from "@/components/settings/utils/providerUtils"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PLATFORM_CONFIG, PlatformType } from "@/config/platform.config"
 import { useExtensionState } from "@/context/ExtensionStateContext"
@@ -87,8 +86,6 @@ const ApiOptions = ({ showModelOptions, apiErrorMessage, modelIdErrorMessage, is
 	const { apiConfiguration, remoteConfigSettings } = useExtensionState()
 	const { profiles, updateProfile, addProfile } = useApiProfiles()
 
-	const { selectedProvider } = normalizeApiConfiguration(apiConfiguration, currentMode)
-
 	// Find current profile for this mode
 	const currentProfile = useMemo<ApiProfile | undefined>(() => {
 		if (!apiConfiguration) return undefined
@@ -96,6 +93,8 @@ const ApiOptions = ({ showModelOptions, apiErrorMessage, modelIdErrorMessage, is
 		if (profileName) return profiles.find((p) => p.name === profileName)
 		return profiles.find((p) => p.usedFor.includes(currentMode) && p.enabled)
 	}, [profiles, apiConfiguration, currentMode])
+	// The profile owns the provider; there is no separate mode-level provider setting.
+	const selectedProvider = currentProfile?.provider ?? ""
 
 	const handleProfileUpdate = useCallback(
 		(updates: Partial<ApiProfile>) => {

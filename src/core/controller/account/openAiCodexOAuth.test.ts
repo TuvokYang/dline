@@ -15,8 +15,6 @@ import { consumeOpenAiCodexRateLimitResetCredit } from "./consumeOpenAiCodexRate
 import { getOpenAiCodexAuthStatus } from "./getOpenAiCodexAuthStatus"
 import { getOpenAiCodexUsage } from "./getOpenAiCodexUsage"
 import { importOpenAiCodexOAuthJson } from "./importOpenAiCodexOAuthJson"
-import { openAiCodexSignIn as deprecatedOpenAiCodexSignIn } from "./openAiCodexSignIn"
-import { openAiCodexSignOut as deprecatedOpenAiCodexSignOut } from "./openAiCodexSignOut"
 import { signOutOpenAiCodexProfile } from "./signOutOpenAiCodexProfile"
 import { startOpenAiCodexSignIn } from "./startOpenAiCodexSignIn"
 
@@ -135,13 +133,6 @@ describe("OpenAI Codex Profile OAuth handlers", () => {
 		await expect(startOpenAiCodexSignIn(controller, profileRequest(""))).rejects.toThrow("OpenAI Codex Profile")
 		await expect(startOpenAiCodexSignIn(controller, profileRequest("profile-b"))).rejects.toThrow("OpenAI Codex Profile")
 		expect(mocks.startAuthorizationFlow).not.toHaveBeenCalled()
-	})
-
-	it("keeps the deprecated Empty RPCs fail-closed without inferring an active Profile", async () => {
-		await expect(deprecatedOpenAiCodexSignIn(controller, {})).rejects.toThrow("Profile-targeted RPC")
-		await expect(deprecatedOpenAiCodexSignOut(controller, {})).rejects.toThrow("Profile-targeted RPC")
-		expect(mocks.startAuthorizationFlow).not.toHaveBeenCalled()
-		expect(mocks.clearCredentials).not.toHaveBeenCalled()
 	})
 
 	it("maps the Profile session status to a secret-free protobuf enum", async () => {

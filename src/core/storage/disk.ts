@@ -2,7 +2,6 @@ import { EnvironmentMetadataEntry, TaskMetadata } from "@core/context/context-tr
 import type { FrozenPromptBuilderInfo, TaskContextCache } from "@core/storage/task-context-types"
 import { UiMessage } from "@shared/ExtensionMessage"
 import { envFlagEnabled } from "@shared/env"
-import { HistoryItem } from "@shared/HistoryItem"
 import { requiresLegacyConversationMigration } from "@shared/messages/legacy-identity-migration"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
@@ -15,7 +14,6 @@ import os from "os"
 import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
-import { telemetryService } from "@/services/telemetry"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { McpMarketplaceCatalog } from "@/shared/mcp"
@@ -681,140 +679,6 @@ async function getDlineStorageDir(...subdirs: string[]): Promise<string> {
 	const p = path.resolve(d, ...subdirs)
 	await fs.mkdir(p, { recursive: true })
 	return p
-}
-
-// ─────────────────────────────────────────────────────────
-// LEGACY TASK HISTORY — JSON/JSONL compatibility and import helpers
-// ─────────────────────────────────────────────────────────
-
-const TASK_HISTORY_FILENAME = "taskHistory.jsonl"
-const LEGACY_TASK_HISTORY_FILENAME = "taskHistory.json"
-
-function _getTaskHistoryLockPath(): string {
-	return path.join(getDlineDocumentsPathSync(), "tasks", `${TASK_HISTORY_FILENAME}.lck`)
-}
-
-async function getTaskHistoryFilePath(): Promise<string> {
-	const d = await getDlineDocumentsPath()
-	return path.join(d, "tasks", TASK_HISTORY_FILENAME)
-}
-
-async function getLegacyTaskHistoryFilePath(): Promise<string> {
-	const d = await getDlineDocumentsPath()
-	return path.join(d, "tasks", LEGACY_TASK_HISTORY_FILENAME)
-}
-
-/**
- * Append a single HistoryItem as a JSONL line to taskHistory.jsonl.
- * @deprecated Use TaskHistory.upsert() instead.
- * Lines are appended in time order; later lines naturally have higher ts.
- */
-export async function appendTaskHistoryItem(item: HistoryItem): Promise<void> {
-	const fp = await getTaskHistoryFilePath()
-	await appendJsonl(fp, item)
-}
-
-/**
- * Read task history from JSONL file.
- * Because lines are appended in time order, later occurrences of the
- * same id naturally have a higher ts. We deduplicate by id, keeping
- * the last occurrence. Entries marked with _deleted are excluded.
- */
-/** @deprecated Use TaskHistory.getDeduplicated() instead. */
-export async function readTaskHistoryJsonl(): Promise<HistoryItem[]> {
-	const fp = await getTaskHistoryFilePath()
-	if (!(await fileExistsAtPath(fp))) {
-		return []
-	}
-	const rows = await readJsonl<HistoryItem & { _deleted?: boolean }>(fp)
-	// Deduplicate by id: later occurrence overwrites earlier (higher ts)
-	const byId = new Map<string, HistoryItem & { _deleted?: boolean }>()
-	for (const row of rows) {
-		byId.set(row.id, row)
-	}
-	// Exclude deleted entries, sort by ts descending
-	return [...byId.values()].filter((item) => !(item as any)._deleted).sort((a, b) => b.ts - a.ts)
-}
-
-/**
- * Full overwrite of task history JSONL. Used only for compact/reconstruct.
- */
-/** @deprecated Use TaskHistory.upsert() or clearAll() instead. */
-export async function writeTaskHistoryToState(items: HistoryItem[], targetPath?: string): Promise<void> {
-	const fp = targetPath ?? (await getTaskHistoryFilePath())
-	const dir = path.dirname(fp)
-	await fs.mkdir(dir, { recursive: true })
-	await writeJsonl(fp, items)
-	await removeStaleAtomicTempFiles(dir)
-}
-
-export async function getTaskHistoryStateFilePath(): Promise<string> {
-	return getTaskHistoryFilePath()
-}
-
-export async function taskHistoryStateFileExists(): Promise<boolean> {
-	return fileExistsAtPath(await getTaskHistoryFilePath())
-}
-
-export async function readTaskHistoryRecent(limit = 5): Promise<HistoryItem[]> {
-	try {
-		const items = await readTaskHistoryFromState()
-		return items
-			.filter((i) => i.ts)
-			.sort((a, b) => b.ts - a.ts)
-			.slice(0, limit)
-	} catch {
-		return []
-	}
-}
-
-/**
- * Read task history from persistent storage.
- *
- * Priority:
- *  1. taskHistory.jsonl exists → read JSONL, deduplicate
- *  2. taskHistory.json  exists → migrate to JSONL
- *  3. Neither exists         → return an empty history
- *
- * Reconstruction is an explicit user command and must never be triggered by a read.
- */
-/** @deprecated Use TaskHistory.getDeduplicated() instead. */
-export async function readTaskHistoryFromState(): Promise<HistoryItem[]> {
-	try {
-		const jsonlPath = await getTaskHistoryFilePath()
-
-		// Priority 1: JSONL exists
-		if (await fileExistsAtPath(jsonlPath)) {
-			return readTaskHistoryJsonl()
-		}
-
-		// Priority 2: Migrate legacy JSON
-		const legacyPath = await getLegacyTaskHistoryFilePath()
-		if (await fileExistsAtPath(legacyPath)) {
-			const raw = await fs.readFile(legacyPath, "utf8")
-			if (raw.trim()) {
-				try {
-					const items = JSON.parse(raw) as HistoryItem[]
-					if (Array.isArray(items) && items.length > 0) {
-						// Migrate: write to JSONL, keep old .json as .bak
-						await writeTaskHistoryToState(items)
-						const bakPath = `${legacyPath}.bak`
-						await fs.rename(legacyPath, bakPath).catch(() => {})
-						return items
-					}
-				} catch {
-					telemetryService.captureExtensionStorageError("Corrupted taskHistory.json", "parseError")
-					return []
-				}
-			}
-		}
-
-		// Priority 3: Missing history is a valid empty state.
-		return []
-	} catch (e) {
-		telemetryService.captureExtensionStorageError(e, "readTaskHistoryFromState")
-		throw e
-	}
 }
 
 /**

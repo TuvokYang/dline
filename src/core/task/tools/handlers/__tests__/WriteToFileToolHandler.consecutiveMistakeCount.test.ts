@@ -99,7 +99,7 @@ describe("WriteToFileToolHandler consecutiveMistakeCount", () => {
 
 	describe("counter increment on diff errors", () => {
 		/**
-		 * When constructNewFileContent throws (e.g., search string not found),
+		 * When the diff parser reports an error (e.g., search string not found),
 		 * the counter should be incremented so repeated failures accumulate.
 		 */
 		it("should increment on diff construction error", () => {

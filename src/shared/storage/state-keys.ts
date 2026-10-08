@@ -129,7 +129,7 @@ const API_HANDLER_SETTINGS_FIELDS = {
 } satisfies FieldDefinitions
 
 const USER_SETTINGS_FIELDS = {
-	// Settings that are NOT part of ApiHandlerOptions
+	// Settings that are not API handler options
 	autoApprovalSettings: {
 		default: DEFAULT_AUTO_APPROVAL_SETTINGS as AutoApprovalSettings,
 	},

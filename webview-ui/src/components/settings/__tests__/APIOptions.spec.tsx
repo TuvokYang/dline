@@ -49,10 +49,6 @@ vi.mock("./providers/useApiProfiles", () => ({
 	}),
 }))
 
-vi.mock("@/components/settings/utils/providerUtils", () => ({
-	normalizeApiConfiguration: () => ({ selectedProvider: "openai", selectedModelId: "" }),
-}))
-
 describe("ApiOptions Component", () => {
 	it("renders API Provider selector input", () => {
 		//@ts-expect-error - vscode mock

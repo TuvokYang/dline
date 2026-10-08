@@ -8,7 +8,7 @@ import type { ApiProviderStreamChunk } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { ApiUsageAccumulator } from "@core/api/transform/usage-accumulator"
 import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
-import { parseAssistantMessageV2, ToolUse } from "@core/assistant-message"
+import { parseAssistantMessage, ToolUse } from "@core/assistant-message"
 import { discoverAvailableSkills } from "@core/context/instructions/user-instructions/skills"
 import { createImageProfileResolverForProfile } from "@core/image-generation/runtime"
 import { formatResponse } from "@core/prompts/responses"
@@ -450,7 +450,7 @@ function parseNonNativeToolCalls(assistantText: string, identityFactory: Identit
 			return identity
 		},
 	}
-	const parsedBlocks = parseAssistantMessageV2(assistantText, registry)
+	const parsedBlocks = parseAssistantMessage(assistantText, registry)
 
 	return parsedBlocks
 		.filter((block): block is ToolUse => block.type === "tool_use")

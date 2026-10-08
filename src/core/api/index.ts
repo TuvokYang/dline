@@ -57,11 +57,6 @@ import { applyTaskRuntimeOverrides } from "./runtime-profile"
 import { withCrossModelHistory } from "./transform/cross-model-history-handler"
 import { ApiStream, ApiStreamUsageChunk } from "./transform/stream"
 
-/** @deprecated Use ApiHandlerContext instead */
-export type CommonApiHandlerOptions = {
-	onRetryAttempt?: ApiConfiguration["onRetryAttempt"]
-}
-
 /**
  * Context passed to every API handler. Contains the full ApiProfile
  * so handlers can read model capabilities from profile.modelInfo and

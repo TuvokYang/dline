@@ -50,7 +50,6 @@ export interface ParseTsRegistry {
 }
 
 /**
- * @description **Version 2**
  * Parses an assistant message string potentially containing mixed text and tool usage blocks
  * marked with XML-like tags into an array of structured content objects.
  *
@@ -63,7 +62,7 @@ export interface ParseTsRegistry {
  *   responsibility when needed (e.g. SubagentRunner creates its own counter).
  * @returns An array of `AssistantMessageContent` objects with ts assigned.
  */
-export function parseAssistantMessageV2(assistantMessage: string, registry: ParseTsRegistry): AssistantMessageContent[] {
+export function parseAssistantMessage(assistantMessage: string, registry: ParseTsRegistry): AssistantMessageContent[] {
 	const contentBlocks: AssistantMessageContent[] = []
 	let currentTextContentStart = 0
 	let currentTextContent: TextStreamContent | undefined

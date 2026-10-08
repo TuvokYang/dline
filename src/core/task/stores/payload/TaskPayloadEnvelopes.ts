@@ -88,8 +88,6 @@ export interface ProviderDraftEnvelope {
 	 * draft stays the same size however long the conversation grows.
 	 */
 	readonly journalThrough?: JournalWatermark
-	/** @deprecated Written by drafts before `journalThrough`; read only to replay them. */
-	readonly journalPayloadRefs?: readonly string[]
 	readonly turnId?: string
 	/** Present when the kernel opened this round instead of the user; see TurnContinuationEnvelope. */
 	readonly continuation?: TurnContinuationReason

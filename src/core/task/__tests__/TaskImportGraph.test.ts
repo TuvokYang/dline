@@ -68,7 +68,6 @@ describe("WS-051 shared-contract import graph", () => {
 				if (target.startsWith(`src/core/task/executors/${sourceDomain}/`)) return []
 				if (target.startsWith("src/core/task/executors/shared/")) return []
 				if (target === "src/core/task/executors/contracts.ts") return []
-				if (target.startsWith("src/core/task/executors/inbound/")) return [edgeKey(edge)]
 			}
 			if (target.startsWith("src/core/task/kernel/") && target !== KERNEL_PUBLIC) return [edgeKey(edge)]
 			if (

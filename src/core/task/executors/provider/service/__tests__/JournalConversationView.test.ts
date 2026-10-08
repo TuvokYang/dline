@@ -141,14 +141,6 @@ describe("JournalConversationView", () => {
 		expect(textsOf(await view.messages())).toEqual(["first"])
 	})
 
-	it("replays a draft that named its payloads before drafts recorded a position", async () => {
-		const { journal, payloads, view } = open()
-		const first = await write(journal, payloads, "intake:1", { kind: "user_input", text: "first" })
-		await write(journal, payloads, "intake:2", { kind: "user_input", text: "not in the draft" })
-
-		expect(textsOf(await view.messagesOf([first]))).toEqual(["first"])
-	})
-
 	it("carries a summary's unanswered reply with the entry that holds it", async () => {
 		const { journal, payloads, view } = open()
 		await write(journal, payloads, "intake:1", { kind: "user_input", text: "task" })

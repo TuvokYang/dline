@@ -257,7 +257,6 @@ describe("ProductionComposeAdapter draft", () => {
 		// Through the environment block, the last entry this round wrote.
 		expect(draft.journalThrough).toEqual(journal.watermark())
 		expect(journal.watermark()).toEqual({ seq: 22 })
-		expect(draft).not.toHaveProperty("journalPayloadRefs")
 		expect(draft.inputPayloadRefs).toEqual([entryRef])
 	})
 

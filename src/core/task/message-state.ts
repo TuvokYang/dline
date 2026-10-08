@@ -236,16 +236,6 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		return this.apiConversation ? (this.apiConversation.getAll() as unknown as ClineStorageMessage[]) : []
 	}
 
-	/** @deprecated The legacy file only; read the conversation through readConversationHistory. */
-	get apiConversationHistory(): ClineStorageMessage[] {
-		return this.apiConversation ? (this.apiConversation.getAll() as unknown as ClineStorageMessage[]) : []
-	}
-
-	set apiConversationHistory(msgs: ClineStorageMessage[]) {
-		if (!this.apiConversation) return
-		this.apiConversation.overwrite(msgs).catch((e) => Logger.error("set apiConversationHistory failed:", e))
-	}
-
 	// ── Event emission ──
 
 	/**

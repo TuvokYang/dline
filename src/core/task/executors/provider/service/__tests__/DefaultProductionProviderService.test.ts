@@ -721,7 +721,7 @@ describe("DefaultProductionProviderService request retry", () => {
 		expect(harness.api.createMessage).toHaveBeenCalledOnce()
 	})
 
-	// BUGFIX-092 in the v2 runtime: the frozen prompt and tools are one
+	// BUGFIX-092 in the task runtime: the frozen prompt and tools are one
 	// provider's projection, so a handler replaced by a Profile or Mode switch
 	// must not be sent the previous provider's request.
 	it("prepares the same turn again for a handler the task replaced during the retry wait", async () => {

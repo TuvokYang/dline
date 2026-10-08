@@ -295,15 +295,6 @@ export class AuthService {
 	}
 
 	/**
-	 * @deprecated Use handleDeauth() instead. Storage clearing is now handled consistently within the auth domain.
-	 * Clear the authentication token from the extension's storage.
-	 * This is typically called when the user logs out.
-	 */
-	async clearAuthToken(): Promise<void> {
-		this.destroyTokens()
-	}
-
-	/**
 	 * Restores the authentication data from the extension's storage.
 	 * This is typically called when the extension is activated.
 	 */

@@ -1,7 +1,7 @@
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiStreamChunk, ApiStreamServerToolChunk, ApiStreamToolCallsChunk } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
-import { parseAssistantMessageV2, type ToolUse } from "@core/assistant-message"
+import { parseAssistantMessage, type ToolUse } from "@core/assistant-message"
 import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
 import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
 import {
@@ -220,7 +220,7 @@ const PREVIEW_PARSE_REGISTRY = {
 	getOrCreateToolIdentityForBlock: () => ({ function_id: "", dline_tid: "" }),
 }
 
-function proseOf(blocks: ReturnType<typeof parseAssistantMessageV2>): string {
+function proseOf(blocks: ReturnType<typeof parseAssistantMessage>): string {
 	let prose = ""
 	let hasText = false
 	for (const block of blocks) {
@@ -240,7 +240,7 @@ function proseOf(blocks: ReturnType<typeof parseAssistantMessageV2>): string {
  * reach the chat as text while it streams any more than after it settles.
  */
 function visibleAssistantText(text: string): string {
-	return proseOf(parseAssistantMessageV2(text, PREVIEW_PARSE_REGISTRY))
+	return proseOf(parseAssistantMessage(text, PREVIEW_PARSE_REGISTRY))
 }
 
 /**
@@ -759,7 +759,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 	private materializeXmlTools(text: string): { text: string; tools: ToolUse[] } {
 		const timestamps = new Map<string, number>()
 		const identities = new Map<string, { function_id: string; dline_tid: string }>()
-		const blocks = parseAssistantMessageV2(text, {
+		const blocks = parseAssistantMessage(text, {
 			getOrCreateTsForBlock: (key) => {
 				const existing = timestamps.get(key)
 				if (existing !== undefined) return existing

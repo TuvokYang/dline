@@ -184,13 +184,6 @@ export interface ITerminal {
 }
 
 /**
- * Terminal process result interface.
- * @deprecated Use ITerminalProcess instead.
- * This is kept for backwards compatibility.
- */
-export type ITerminalProcessResult = ITerminalProcess
-
-/**
  * Promise-like interface for terminal process results.
  * Combines Promise<void> with ITerminalProcess for flexible usage.
  * This allows the process to be awaited while also providing access to events.
@@ -403,19 +396,6 @@ export interface ShellIntegrationWarningTracker {
 	timestamps: number[]
 	/** Timestamp when the suggestion was last shown */
 	lastSuggestionShown?: number
-}
-
-/**
- * Represents an active background command that can be cancelled
- * @deprecated Use BackgroundCommand instead
- */
-export interface ActiveBackgroundCommand {
-	process: {
-		terminate?: () => void
-		continue?: () => void
-	}
-	command: string
-	outputLines: string[]
 }
 
 /**
