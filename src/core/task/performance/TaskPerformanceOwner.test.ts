@@ -54,6 +54,7 @@ describe("TaskPerformanceOwner", () => {
 		vi.spyOn(TaskProviderRequestRoundOwner.prototype, "getOrdinary").mockReturnValue(admission)
 		const complete = vi.spyOn(TaskProviderRequestRoundOwner.prototype, "completeTurn").mockReturnValue(undefined)
 		const usage = vi.spyOn(TaskProviderRequestRoundOwner.prototype, "attachOrdinaryExactUsage").mockReturnValue(undefined)
+		const rateUsage = vi.spyOn(TaskApiRateMetricsService.prototype, "recordExactUsage").mockReturnValue(undefined)
 		const owner = await TaskPerformanceOwner.open({
 			taskId: "task-1",
 			readState: () => committedIn("idle"),
@@ -86,5 +87,7 @@ describe("TaskPerformanceOwner", () => {
 			0,
 			expect.objectContaining({ inputTokens: 10, outputTokens: 2, cacheUsageReported: false }),
 		)
+		// TPM is a generation rate: the prompt read before streaming must not count toward it.
+		expect(rateUsage.mock.calls).toEqual([[{ outputTokens: 2 }]])
 	})
 })

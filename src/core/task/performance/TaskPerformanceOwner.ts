@@ -165,13 +165,8 @@ export class TaskPerformanceOwner {
 				totalCost: Number.isFinite(usage.totalCost) ? usage.totalCost : undefined,
 			})
 		}
-		this.activeMetrics.recordExactUsage({
-			inputTokens: finiteUsage(usage.inputTokens),
-			outputTokens: finiteUsage(usage.outputTokens),
-			cacheWriteTokens: finiteUsage(usage.cacheWriteTokens),
-			cacheReadTokens: finiteUsage(usage.cacheReadTokens),
-			thoughtsTokens: finiteUsage(usage.thoughtsTokenCount),
-		})
+		// TPM is a generation rate, so only generated output feeds it.
+		this.activeMetrics.recordExactUsage({ outputTokens: finiteUsage(usage.outputTokens) })
 	}
 
 	/**

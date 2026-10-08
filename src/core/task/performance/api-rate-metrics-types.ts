@@ -129,12 +129,13 @@ export interface ApiRateMetricsQueryResult {
 	retentionStartMs?: number
 }
 
+/**
+ * Exact provider usage that feeds TPM. TPM is a generation rate over provider-active seconds, so only
+ * generated output counts; prompt and cache tokens are read before streaming starts and would inflate it.
+ */
 export interface ApiRateExactUsage {
-	inputTokens: number
+	/** Generated tokens reported by the provider, already including any reasoning share. */
 	outputTokens: number
-	cacheWriteTokens?: number
-	cacheReadTokens?: number
-	thoughtsTokens?: number
 }
 
 export interface ApiRateMetricsRangeQuery {
