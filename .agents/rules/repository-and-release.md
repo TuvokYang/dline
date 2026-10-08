@@ -190,11 +190,20 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 
 | HEAD | Extension name | Version | Channel | Marketplace track |
 | --- | --- | --- | --- | --- |
-| `main` + `vX.Y.Z` | `dline` | `X.Y.Z` from the tag | `production` | Release |
-| `dev` + `dev-vX.Y.Z` | `dline` | `X.Y.Z` from the tag | `pre-release` | Pre-release |
-| `dev` without a tag | `dline-insiders` | `major.minor.<unix-seconds>` | `insiders` | Release |
+| `main` + `vX.Y.Z` | `dline` | `X.Y.Z` from the tag; `Y` even | `production` | Release |
+| `dev` + `dev-vX.Y.Z` | `dline` | `X.Y.Z` from the tag; `Y` odd | `pre-release` | Pre-release |
+| `dev` without a tag | `dline-insiders` | `major.<pre-release minor>.<unix-seconds>` | `insiders` | Release |
 
-`tuvokyang.dline` carries both the release and the pre-release track; `dline-insiders` is a separate extension with its own version sequence. A pre-release keeps the production manifest identity and differs only by the VSIX pre-release marker (`Microsoft.VisualStudio.Code.PreRelease`, set by vsce `preRelease`) and by the GitHub asset name `dline-X.Y.Z-pre-release.vsix`. Registry gates reject a pre-release VSIX without the marker and a production VSIX that carries it. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published; the pre-release channel reuses the exact tag version, and the insiders channel replaces the patch with a timestamp.
+`tuvokyang.dline` carries both the release and the pre-release track; `dline-insiders` is a separate extension with its own version sequence. A pre-release keeps the production manifest identity and differs only by the VSIX pre-release marker (`Microsoft.VisualStudio.Code.PreRelease`, set by vsce `preRelease`) and by the GitHub asset name `dline-X.Y.Z-pre-release.vsix`. Registry gates reject a pre-release VSIX without the marker and a production VSIX that carries it. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published.
+
+Version bump rules:
+
+- A registry keys a version only by publisher, name, and number; the pre-release track is a flag on that number. Production and pre-release therefore split one version space by minor parity, as the VS Code publishing guide recommends.
+- Production releases use an even minor (`0.10.0`, `0.10.1`, `0.12.0`). Pre-releases use an odd minor (`0.11.0`, `0.11.1`, `0.13.0`). A pre-release never reuses a number a production release needs.
+- Insiders follows the pre-release line: its major and minor are the package version's when the minor is odd, and the next odd minor when the package minor is even, with the patch replaced by a timestamp. Every Insiders build therefore sorts above the production release it follows.
+- Preparing a production release bumps `package.json` on `dev` to the next even minor (or the next patch of the current even minor for a fix release). Starting a pre-release line bumps it to the next odd minor. The minor never decreases.
+- `scripts/release-version-policy.mjs` is the single source of these rules. `scripts/package-vsix.mjs` rejects a `vX.Y.Z` tag with an odd minor and a `dev-vX.Y.Z` tag with an even minor before packaging.
+- Versions released before this rule, up to `0.9.4`, keep their numbers; `0.10.0` is the first release under it.
 
 Packaging rules:
 
@@ -211,7 +220,7 @@ Packaging is not publishing. Producing a VSIX never implies authorization to pub
 
 Registry publication currently targets Open VSX only. `publish-vsix-registries.yml` skips the VS Code Marketplace job unless a caller passes `publish_marketplace: true`, and the registry gate records the Marketplace as disabled rather than failed.
 
-A registry keys a version only by publisher, name, and number; the pre-release track is a flag on that version. Because the pre-release channel reuses the tag version, publishing `dev-vX.Y.Z` to a registry occupies `X.Y.Z` there, and the production `vX.Y.Z` can no longer reach that registry. The Open VSX job checks the existing version's track and fails on a mismatch instead of reporting a skipped duplicate as published.
+The Open VSX job checks the track of an existing version before publishing and fails on a mismatch instead of reporting a skipped duplicate as published. Before the parity rule, `dev-v0.9.4` occupied `0.9.4` on Open VSX as a pre-release, so the production `v0.9.4` could not reach it.
 
 ## 11. Workflow and skill authoring rules
 

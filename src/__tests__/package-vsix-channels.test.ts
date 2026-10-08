@@ -70,10 +70,12 @@ describe("package-vsix release channels", () => {
 		expect(insidersReturn).toBeLessThan(insidersBranch.indexOf("getExactTag()"))
 	})
 
-	it("derives the insiders patch from a unix timestamp", async () => {
+	it("delegates channel version parity and the insiders version to the release version policy", async () => {
 		const source = await readPackageVsix()
 
-		expect(source).toMatch(/\$\{major\}\.\$\{minor\}\.\$\{Math\.floor\(Date\.now\(\) \/ 1000\)\}/)
+		expect(source).toContain('from "./release-version-policy.mjs"')
+		expect(source).toContain("assertChannelVersion(channel, tagVersion)")
+		expect(source).toContain("createPolicyInsidersVersion(packageVersion)")
 	})
 
 	it("gates tagged channels on version and changelog consistency", async () => {

@@ -53,6 +53,8 @@ Merge both the fix and version preparation into `dev`, then run the complete int
 
 Only after the `dev` gate passes, load `release` to squash `dev` into one `main` commit, back-merge it into `dev`, re-verify the final `main` commit, and create the production `vX.Y.Z` tag.
 
+A hotfix releases the next patch of the current even production minor (for example `0.10.0` to `0.10.1`), as the version bump rules in repository-and-release require; never ship a hotfix under an odd pre-release minor.
+
 The standard Release and Marketplace workflows must package and publish the tested artifact. Do not rebuild or manually replace the release VSIX.
 
 ## 5. When dev contains changes that cannot ship
