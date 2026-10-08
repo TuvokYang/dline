@@ -9,7 +9,8 @@ export async function cancelTaskActivities(
 ): Promise<CancelTaskActivitiesResponse> {
 	// Only the running session the request was opened against owns live activities.
 	const task = controller.task
-	if (!task || currentOpening(controller, request) !== task) {
+	// A window that does not own the task has no live activities to control.
+	if (!task || currentOpening(controller, request) !== task || !task.writable) {
 		return CancelTaskActivitiesResponse.create({ cancelledActivityIds: [] })
 	}
 	const cancelledActivityIds = await task.owners.activities.cancel(request.activityIds)

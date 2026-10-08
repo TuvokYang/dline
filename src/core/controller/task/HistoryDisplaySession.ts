@@ -24,6 +24,7 @@ import { type HistoryDisplayProjection, projectHistoryDisplayState } from "@/cor
 import { historyDisplayAnchorRow } from "@/core/task/view/historyDisplayAnchorRow"
 import { materializeCanonicalInputQueue } from "@/core/task/view/materializeCanonicalInputQueue"
 import { projectHistoryPreparingView } from "./history-task-readiness"
+import { readOnlyTaskView } from "./readOnlyTaskView"
 import { adaptCanonicalTaskView, anchoredInteractionId } from "./TaskViewMessageAdapter"
 
 /**
@@ -239,14 +240,7 @@ export class HistoryDisplaySession {
 	}
 
 	getViewState(): TaskViewState {
-		if (!this.locked) return this.viewState
-		return {
-			...this.viewState,
-			input: { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false },
-			footer: {
-				actions: this.viewState.footer.actions.map((action) => ({ ...action, enabled: false })),
-			},
-		}
+		return this.locked ? readOnlyTaskView(this.viewState) : this.viewState
 	}
 
 	markLocked(): void {

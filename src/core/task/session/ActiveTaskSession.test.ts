@@ -145,6 +145,35 @@ describe("ActiveTaskSession", () => {
 		expect(order).toHaveLength(4)
 	})
 
+	it("releases a session that never owned the task without writing to it", async () => {
+		const terminate = vi.fn()
+		const owners = createOwners()
+		const anchorStagedCompletion = vi.spyOn(owners.interactions, "anchorStagedCompletion")
+		const release = vi.fn(async () => undefined)
+		const payloads = { put: vi.fn(), read: vi.fn() } as unknown as TaskPayloadStore
+		const session = new ActiveTaskSession({
+			task: { taskId: "task-1", terminate } as unknown as Task,
+			checkpointRestore: {} as never,
+			readState: () => createInitialTaskState("task-1"),
+			isWritable: () => false,
+			assembly: {} as TaskExecutorAssembly,
+			payloads,
+			inputs: createInputs(payloads),
+			inputQueue: createInputQueue(),
+			owners,
+			approvalFeedback: new InMemoryToolApprovalFeedbackLedger(),
+			conversation: createConversation(),
+			releases: [{ release }],
+		})
+
+		expect(session.writable).toBe(false)
+		await session.dispose("halt-1")
+
+		expect(terminate).not.toHaveBeenCalled()
+		expect(anchorStagedCompletion).not.toHaveBeenCalled()
+		expect(release).toHaveBeenCalledOnce()
+	})
+
 	it("releases a checkpoint-fenced session without terminating over the restored vault", async () => {
 		const order: string[] = []
 		const state = createInitialTaskState("task-1")

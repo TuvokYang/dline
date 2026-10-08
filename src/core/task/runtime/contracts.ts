@@ -1,4 +1,4 @@
-import type { Command, TaskEvent, TaskState, TransitionResult } from "../kernel"
+import type { Command, Diagnostic, TaskEvent, TaskState, TransitionResult } from "../kernel"
 
 export interface CommitReceipt {
 	readonly revision: number
@@ -47,6 +47,19 @@ export interface CommandDispatch {
 	readonly completion: Promise<void>
 }
 
+/**
+ * A refusal decided by the runtime before the kernel sees the event.
+ *
+ * `read_only`: this window does not own the task, so committing the event would
+ * write the stores the owning window is writing.
+ */
+export interface RuntimeRejection {
+	readonly kind: "rejected"
+	readonly state: TaskState
+	readonly reason: "read_only"
+	readonly diagnostic: Diagnostic
+}
+
 export type EventSubmissionResult =
 	| {
 			readonly kind: "accepted"
@@ -55,6 +68,7 @@ export type EventSubmissionResult =
 			readonly receipt: CommitReceipt
 	  }
 	| Extract<TransitionResult, { kind: "rejected" }>
+	| RuntimeRejection
 
 export interface RuntimeFacade {
 	getState(): Readonly<TaskState>
@@ -63,6 +77,13 @@ export interface RuntimeFacade {
 	waitForDurable(revision: number): Promise<void>
 	waitForDomainCompletion(revision: number): Promise<void>
 	waitForQuiescence(): Promise<void>
-	/** Dispatch recovered commands held at construction; a no-op when nothing is held. */
+	/** Make this runtime the task's writer, so it admits events. Idempotent. */
+	grantWriteOwnership(): void
+	/** Whether events are admitted; false until a read-only runtime is granted ownership. */
+	isWritable(): boolean
+	/**
+	 * Dispatch recovered commands held at construction. A no-op when nothing is
+	 * held or the runtime is still read-only, since dispatching writes the task.
+	 */
 	releaseRestoredCommands(): void
 }

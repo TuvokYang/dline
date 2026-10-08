@@ -18,6 +18,7 @@ type DispatchInteractionResult =
 	| "duplicate_response"
 	| "missing_task"
 	| "invalid_runtime_event"
+	| "task_read_only"
 
 function response(accepted: boolean, result: DispatchInteractionResult): DispatchInteractionResponse {
 	return DispatchInteractionResponse.create({ accepted, result })
@@ -110,6 +111,7 @@ function normalizeResult(reason: string): DispatchInteractionResult {
 	if (reason === "identity_mismatch" || reason === "generation_mismatch" || reason === "stale_attempt")
 		return "stale_interaction"
 	if (reason === "duplicate") return "duplicate_response"
+	if (reason === "read_only") return "task_read_only"
 	return "invalid_runtime_event"
 }
 
@@ -130,6 +132,8 @@ export async function dispatchInteraction(
 		)
 		return response(false, "stale_interaction")
 	}
+	// Another window owns the task: its draft and selection must not be stored here.
+	if (!session.writable) return response(false, "task_read_only")
 	// An interrupted task parks its recovery dialog under `interrupted`, so Resume
 	// must be answerable there as well as on a live primary.
 	const owner = [state.dialog.primary, state.dialog.interrupted].find(

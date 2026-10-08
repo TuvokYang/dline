@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto"
 import { Empty } from "@shared/proto/dline/common"
 import { ResetStateRequest } from "@shared/proto/dline/state"
 import { resetGlobalState, resetWorkspaceState } from "@/core/storage/utils/state-helpers"
@@ -16,6 +15,10 @@ import { sendChatButtonClickedEvent } from "../ui/subscribeToChatButtonClicked"
  */
 export async function resetState(controller: Controller, request: ResetStateRequest): Promise<Empty> {
 	try {
+		// Closed through the controller's lifecycle lane, which also stops the lock
+		// heartbeat, releases the task lock and clears the task's settings; disposing
+		// the session directly left the lock held until this window closed.
+		await controller.clearTask({ suppressPostState: true })
 		if (request.global) {
 			HostProvider.window.showMessage({
 				type: ShowMessageType.INFORMATION,
@@ -28,11 +31,6 @@ export async function resetState(controller: Controller, request: ResetStateRequ
 				message: "Resetting workspace state...",
 			})
 			await resetWorkspaceState()
-		}
-
-		if (controller.task) {
-			await controller.task.dispose(randomUUID())
-			controller.task = undefined
 		}
 
 		HostProvider.window.showMessage({

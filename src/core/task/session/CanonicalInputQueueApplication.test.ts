@@ -88,6 +88,8 @@ function harness(deliveryResult: "accepted" | "stale" | "failed" | "uncertain" =
 		waitForDurable: vi.fn(),
 		waitForDomainCompletion: vi.fn(),
 		waitForQuiescence: vi.fn(),
+		grantWriteOwnership: vi.fn(),
+		isWritable: () => true,
 		releaseRestoredCommands: vi.fn(),
 	}
 	let entrySequence = 0

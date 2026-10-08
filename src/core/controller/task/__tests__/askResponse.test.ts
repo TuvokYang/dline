@@ -7,8 +7,9 @@ vi.mock("../dispatchInteraction", () => ({ dispatchInteraction: vi.fn(async () =
 const { dispatchInteraction } = await import("../dispatchInteraction")
 
 /** Build a controller whose session is awaiting the given primary interaction. */
-function controller(interaction?: { interactionId: string; turnId: string }) {
+function controller(interaction?: { interactionId: string; turnId: string }, writable = true) {
 	const session = createSessionFixture({
+		session: { writable },
 		patchState: (state) => ({
 			...state,
 			dialog: {
@@ -54,5 +55,17 @@ describe("askResponse legacy boundary", () => {
 
 		expect(session.inputs.materialize).toHaveBeenCalledWith({ text: "interrupt", images: [], files: [] })
 		expect(session.task.submitInput).toHaveBeenCalledTimes(1)
+	})
+
+	it("stores nothing for a window that does not own the task", async () => {
+		vi.mocked(dispatchInteraction).mockClear()
+		const awaiting = controller({ interactionId: "interaction-1", turnId: "turn-1" }, false)
+		await askResponse(awaiting.value as never, AskResponseRequest.create({ responseType: "yesButtonClicked" }))
+		expect(dispatchInteraction).not.toHaveBeenCalled()
+
+		const idle = controller(undefined, false)
+		await askResponse(idle.value as never, AskResponseRequest.create({ responseType: "messageResponse", text: "hi" }))
+		expect(idle.session.inputs.materialize).not.toHaveBeenCalled()
+		expect(idle.session.task.submitInput).not.toHaveBeenCalled()
 	})
 })

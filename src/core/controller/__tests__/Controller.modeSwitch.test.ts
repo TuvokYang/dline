@@ -7,7 +7,7 @@ describe("Controller mode switch integration", () => {
 	it("delegates requests to the coordinator", async () => {
 		const request = vi.fn(async () => ({ status: "confirmation_required", operationId: "operation-1" }))
 		const fakeController = {
-			task: { taskId: "task-1" },
+			task: { taskId: "task-1", writable: true },
 			modeSwitchCoordinator: { request },
 		}
 		const draft = { message: "draft", images: ["image"], files: ["file"] }
@@ -16,6 +16,17 @@ describe("Controller mode switch integration", () => {
 
 		expect(result).toEqual({ status: "confirmation_required", operationId: "operation-1" })
 		expect(request).toHaveBeenCalledWith({ taskId: "task-1", targetMode: "act", chatContent: draft })
+	})
+
+	/** A window that does not own the task must not start a transaction that writes it. */
+	it("rejects a switch while another window owns the task", async () => {
+		const request = vi.fn()
+		const fakeController = { task: { taskId: "task-1", writable: false }, modeSwitchCoordinator: { request } }
+
+		const result = await Controller.prototype.requestModeSwitch.call(fakeController, "act")
+
+		expect(result).toEqual({ status: "rejected", error: "Task is read-only in this window." })
+		expect(request).not.toHaveBeenCalled()
 	})
 
 	/** Preserve welcome-screen mode selection when no task-local transaction exists. */

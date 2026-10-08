@@ -17,7 +17,8 @@ export async function retryTaskActivities(
 		return RetryTaskActivitiesResponse.create({ retriedActivityIds: [] })
 	}
 	const task = controller.task
-	if (!task || task.taskId !== request.taskId) {
+	// A retry restarts work, which only the window owning the task may do.
+	if (!task || task.taskId !== request.taskId || !task.writable) {
 		return RetryTaskActivitiesResponse.create({ retriedActivityIds: [] })
 	}
 	for (const activityId of request.activityIds) {

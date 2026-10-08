@@ -39,6 +39,7 @@ export async function openActiveTaskSession(options: OpenActiveTaskSessionOption
 		task: composed.task,
 		checkpointRestore: composed.checkpointRestore,
 		readState: () => composed.runtime.getState(),
+		isWritable: () => composed.runtime.isWritable(),
 		assembly: composed.assembly,
 		payloads: composed.payloads,
 		inputs,

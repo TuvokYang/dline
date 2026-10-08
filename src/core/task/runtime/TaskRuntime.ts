@@ -2,7 +2,7 @@ import type { TaskEvent, TaskState } from "../kernel"
 import type { CommandPublicationStore, DurableTaskSnapshot, StateVault, TaskViewPort } from "../stores/contracts"
 import { CommandRouter } from "./CommandRouter"
 import { CommitPipeline } from "./CommitPipeline"
-import type { CommandExecutor, EventSubmissionResult, RuntimeDiagnosticSink, RuntimeFacade } from "./contracts"
+import type { CommandExecutor, EventSubmissionResult, RuntimeDiagnosticSink, RuntimeFacade, RuntimeRejection } from "./contracts"
 import { DurableCommandOutbox } from "./DurableCommandOutbox"
 import { EventLoop } from "./EventLoop"
 
@@ -15,9 +15,11 @@ export interface TaskRuntimeOptions {
 	readonly diagnostics?: RuntimeDiagnosticSink
 	readonly restoredOutbox?: DurableTaskSnapshot["outbox"]
 	/**
-	 * Hold restored commands until `releaseRestoredCommands()`. A window that opens a task
-	 * without owning its lock must not dispatch recovered work, because dispatch writes the
-	 * task databases that the lock owner is writing.
+	 * Open read-only until `grantWriteOwnership()`: hold restored commands and refuse every
+	 * event. A window that opens a task without owning its lock must neither dispatch
+	 * recovered work nor commit events, because both write the task databases the lock
+	 * owner is writing, and any entry it journals would also cancel the pending import of
+	 * the conversation an earlier version left behind.
 	 */
 	readonly deferRestoredCommands?: boolean
 }
@@ -34,6 +36,7 @@ export class TaskRuntime implements RuntimeFacade {
 	private readonly events: EventLoop
 	private readonly taskView: TaskViewPort
 	private held?: HeldRestoredCommands
+	private writable: boolean
 
 	constructor(options: TaskRuntimeOptions) {
 		this.taskView = options.taskView
@@ -41,17 +44,26 @@ export class TaskRuntime implements RuntimeFacade {
 		this.commits = new CommitPipeline(options.vault, options.taskView, options.diagnostics)
 		this.outbox = new DurableCommandOutbox(this.router, options.publications, options.diagnostics)
 		this.events = new EventLoop(options.initialState, this.commits, this.outbox)
+		this.writable = options.deferRestoredCommands !== true
 		if (options.restoredOutbox) {
 			this.held = { commands: options.restoredOutbox, generation: options.initialState.generation }
-			if (!options.deferRestoredCommands) this.releaseRestoredCommands()
+			this.releaseRestoredCommands()
 		}
+	}
+
+	grantWriteOwnership(): void {
+		this.writable = true
 	}
 
 	releaseRestoredCommands(): void {
 		const held = this.held
-		if (!held) return
+		if (!held || !this.writable) return
 		this.held = undefined
 		this.outbox.restore(held.commands, held.generation)
+	}
+
+	isWritable(): boolean {
+		return this.writable
 	}
 
 	getState(): Readonly<TaskState> {
@@ -59,6 +71,7 @@ export class TaskRuntime implements RuntimeFacade {
 	}
 
 	submit(event: TaskEvent): Promise<EventSubmissionResult> {
+		if (!this.writable) return Promise.resolve(readOnlyRejection(this.getState(), event))
 		return this.events.submit(event)
 	}
 
@@ -80,5 +93,17 @@ export class TaskRuntime implements RuntimeFacade {
 		await this.commits.flushAll()
 		await this.outbox.whenIdle()
 		await this.router.waitForQuiescence()
+	}
+}
+
+function readOnlyRejection(state: TaskState, event: TaskEvent): RuntimeRejection {
+	return {
+		kind: "rejected",
+		state,
+		reason: "read_only",
+		diagnostic: {
+			code: "task_read_only",
+			message: `Refused ${event.type}: another window owns task ${state.taskId}`,
+		},
 	}
 }

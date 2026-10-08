@@ -8,6 +8,7 @@ export async function compactTask(controller: Controller, request: CompactTaskRe
 	if (!session || session.taskId !== request.taskId) {
 		return CompactTaskResponse.create({ accepted: false, result: "missing_task" })
 	}
+	if (!session.writable) return CompactTaskResponse.create({ accepted: false, result: "task_read_only" })
 
 	// The header control is the user asking, so the summary is theirs to review.
 	const result = await requestTaskCompaction(session, {

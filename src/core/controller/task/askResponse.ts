@@ -38,6 +38,10 @@ export async function askResponse(controller: Controller, request: AskResponseRe
 			Logger.warn("askResponse: No active task to receive response")
 			return Empty.create()
 		}
+		if (!session.writable) {
+			Logger.warn(`askResponse: Task ${session.taskId} is owned by another window; response refused`)
+			return Empty.create()
+		}
 		// Retry during an automatic countdown sends the scheduled attempt now,
 		// spending the same retry the countdown would have spent.
 		if (request.responseType === "retry" && session.owners.providerRetry?.retryNow()) return Empty.create()

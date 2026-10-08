@@ -148,6 +148,7 @@ import { ControllerTaskSessionHostFactory } from "./task/host/ControllerTaskSess
 import { ControllerTaskSessionPorts } from "./task/host/ControllerTaskSessionPorts"
 import { ControllerTransitionCompactionPort } from "./task/host/ControllerTransitionCompactionPort"
 import { type TaskOpening } from "./task/opened-task"
+import { readOnlyTaskView } from "./task/readOnlyTaskView"
 import { replyWithTransitionDraft } from "./task/replyWithTransitionDraft"
 import { selectTaskRateMetricsQuery, type TaskRateMetricsQueryFn } from "./task/TaskRateMetricsSource"
 import { adaptCanonicalTaskView } from "./task/TaskViewMessageAdapter"
@@ -162,6 +163,9 @@ import { sendPartialMessageEvent } from "./ui/subscribeToPartialMessage"
  * of the build keeps the user-visible latency ceiling unchanged.
  */
 const STATE_POST_COALESCE_MS = 50
+
+/** Why a write is refused while another window owns the task this window shows. */
+const READ_ONLY_TASK_ERROR = "Task is read-only in this window."
 
 const ACCOUNT_USAGE_BINDING_SETTINGS = new Set([
 	"mode",
@@ -1165,6 +1169,9 @@ export class Controller {
 				this.startLockPoll(taskId)
 			}
 			logInitStage("task_lock", taskId, `acquired=${this.taskLockAcquired}`)
+			// A new task has no history to show read-only, and starting it without the
+			// lock would make this window a second writer of a task another one owns.
+			if (!this.taskLockAcquired && !historyItem) throw new Error(`Task ${taskId} is open in another window`)
 
 			await this.stateManager.loadTaskSettings(taskId)
 			logInitStage("task_settings", taskId)
@@ -2095,6 +2102,7 @@ export class Controller {
 			await this.postStateToWebview({ immediate: true })
 			return { status: "switched", operationId: crypto.randomUUID() }
 		}
+		if (!this.task.writable) return { status: "rejected", error: READ_ONLY_TASK_ERROR }
 		return this.modeSwitchCoordinator.request({ taskId: this.task.taskId, targetMode, chatContent })
 	}
 
@@ -2144,6 +2152,7 @@ export class Controller {
 			await this.postStateToWebview({ immediate: true })
 			return { status: "switched", operationId: randomUUID() }
 		}
+		if (!this.task.writable) return { status: "rejected", error: READ_ONLY_TASK_ERROR }
 
 		return this.profileSwitchCoordinator.request({
 			taskId: this.task.taskId,
@@ -2169,7 +2178,7 @@ export class Controller {
 		resolution: { readonly profileId: string; readonly profileName: string },
 		modes: readonly Mode[],
 	): Promise<ProfileSwitchRequestResult> {
-		if (display.isLocked()) return { status: "rejected", error: "Task is read-only in this window." }
+		if (display.isLocked()) return { status: "rejected", error: READ_ONLY_TASK_ERROR }
 		// The first frame no longer waits for the task's own Profile binding, so
 		// the switcher is usable while that binding is still being adopted. The
 		// user's choice is written after it lands; otherwise the late adoption
@@ -2750,7 +2759,9 @@ export class Controller {
 			session.owners.providerRetry?.active === true,
 			session.owners.compactionRecovery?.truncationOffered() === true,
 		)
-		return { ...view, taskInstanceId: session.taskInstanceId }
+		// Another window owns the task: show it, but offer nothing that would write.
+		const owned = session.writable ? view : readOnlyTaskView(view)
+		return { ...owned, taskInstanceId: session.taskInstanceId }
 	}
 
 	/** Build a monotonic extension state while preserving the public non-optional contract. */

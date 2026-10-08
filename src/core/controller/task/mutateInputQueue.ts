@@ -75,6 +75,7 @@ export async function mutateInputQueue(
 	if (!task || (request.taskId && task.taskId !== request.taskId)) {
 		return MutateInputQueueResponse.create({ accepted: false, result: "missing_task" })
 	}
+	if (!task.writable) return MutateInputQueueResponse.create({ accepted: false, result: "task_read_only" })
 	let mutation: CanonicalInputQueueMutation | undefined
 	try {
 		mutation = toMutation(request)

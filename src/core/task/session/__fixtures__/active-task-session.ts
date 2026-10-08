@@ -92,6 +92,8 @@ export function createSessionFixture(options: SessionFixtureOptions = {}) {
 	const session = {
 		taskId,
 		taskInstanceId: (owners.identity as { taskIncarnationId: string }).taskIncarnationId,
+		/** Owns the task; pass `session: { writable: false }` for a read-only window. */
+		writable: true,
 		task: {
 			start: vi.fn(async () => undefined),
 			submitInput: vi.fn(async () => undefined),

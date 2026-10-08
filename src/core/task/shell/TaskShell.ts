@@ -142,11 +142,16 @@ export class TaskShell {
 	}
 
 	/**
-	 * Take ownership of the task: dispatch recovered work that was held while the window did
-	 * not own the task lock, then submit `lifecycle.open`. Release happens first because an
-	 * interrupted task is paused and rejects `lifecycle.open`, yet its recovered work still runs.
+	 * Take ownership of the task. Only a window holding the task lock may call this.
+	 *
+	 * The runtime becomes writable first, because reconciling the retained queue
+	 * writes. Recovered work held while the window did not own the lock is then
+	 * dispatched, and only after that is `lifecycle.open` submitted: an
+	 * interrupted task is paused and rejects `lifecycle.open`, yet its recovered
+	 * work still runs.
 	 */
 	async open(): Promise<EventSubmissionResult> {
+		this.runtime.grantWriteOwnership()
 		await this.retainedQueueSettlement?.settle()
 		this.runtime.releaseRestoredCommands()
 		return this.runtime.submit({ type: "lifecycle.open", generation: this.runtime.getState().generation })

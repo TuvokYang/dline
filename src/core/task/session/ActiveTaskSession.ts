@@ -31,6 +31,8 @@ export interface ActiveTaskSessionOptions {
 	readonly task: Task
 	readonly checkpointRestore: TaskCheckpointRestoreSuspensionPort
 	readonly readState: () => Readonly<TaskState>
+	/** Whether this window owns the task; see {@link ActiveTaskSession.writable}. */
+	readonly isWritable?: () => boolean
 	readonly assembly: TaskExecutorAssembly
 	readonly payloads: TaskPayloadStore
 	readonly inputs: TaskInputMaterializer
@@ -98,6 +100,18 @@ export class ActiveTaskSession {
 	 */
 	get taskInstanceId(): string {
 		return this.owners.identity.taskIncarnationId
+	}
+
+	/**
+	 * Whether this window may write the task.
+	 *
+	 * False while another window owns the task lock, until this window takes the
+	 * task over and opens it. The runtime refuses every event meanwhile; callers
+	 * that write payloads or other stores before submitting check this first, so
+	 * a refused request leaves nothing behind.
+	 */
+	get writable(): boolean {
+		return this.options.isWritable?.() ?? true
 	}
 
 	state(): Readonly<TaskState> {
@@ -169,9 +183,13 @@ export class ActiveTaskSession {
 
 	private async disposeOwnedResources(haltId: string): Promise<void> {
 		this.beginClose()
-		await this.task.terminate(haltId)
-		// Written before the stores close, so the completion a terminate kept is answerable on reopen.
-		await this.owners.interactions.anchorStagedCompletion()
+		// A session that never owned the task has nothing of its own to stop or keep,
+		// and writing here would land in the stores the owning window is writing.
+		if (this.writable) {
+			await this.task.terminate(haltId)
+			// Written before the stores close, so the completion a terminate kept is answerable on reopen.
+			await this.owners.interactions.anchorStagedCompletion()
+		}
 		await releaseSessionResources(this.options.releases ?? [])
 	}
 }

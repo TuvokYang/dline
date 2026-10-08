@@ -9,7 +9,8 @@ export async function finishTaskActivities(
 ): Promise<FinishTaskActivitiesResponse> {
 	// Only the running session the request was opened against owns live activities.
 	const task = controller.task
-	if (!task || currentOpening(controller, request) !== task) {
+	// A window that does not own the task has no live activities to control.
+	if (!task || currentOpening(controller, request) !== task || !task.writable) {
 		return FinishTaskActivitiesResponse.create({ finishedActivityIds: [] })
 	}
 	const finishedActivityIds = await task.owners.activities.finish(request.activityIds)

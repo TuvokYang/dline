@@ -40,6 +40,8 @@ interface ControllerOptions {
 	readonly rowWriteFails?: boolean
 	/** Hold the chat row's durable write until the returned release is called. */
 	readonly holdRowWrite?: boolean
+	/** False for a window that shows the task while another window owns it. */
+	readonly writable?: boolean
 }
 
 function controller(taskState: TaskState = state(), options: ControllerOptions = {}) {
@@ -83,6 +85,7 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 			task: {
 				taskId: "task-1",
 				taskInstanceId: "open-1",
+				writable: options.writable ?? true,
 				state: () => taskState,
 				task: { respond },
 				payloads: { put },
@@ -169,6 +172,27 @@ function compactReply(text = "/compact keep the API notes") {
 }
 
 describe("dispatchInteraction", () => {
+	it("refuses a reply in a window that does not own the task before storing anything", async () => {
+		const host = controller(state(), { writable: false })
+		const result = await dispatchInteraction(
+			host.value as never,
+			DispatchInteractionRequest.create({
+				taskInstanceId: "open-1",
+				taskId: "task-1",
+				turnId: "turn-1",
+				interactionId: "interaction-1",
+				actionId: "reply",
+				stateRevision: 12,
+				draft: { text: "next turn", images: [], files: [] },
+				selection: { values: ["item-1"] },
+			}),
+		)
+
+		expect(result).toMatchObject({ accepted: false, result: "task_read_only" })
+		expect(host.put).not.toHaveBeenCalled()
+		expect(host.respond).not.toHaveBeenCalled()
+	})
+
 	it("materializes payloads and submits one canonical dialog response", async () => {
 		const host = controller()
 		const result = await dispatchInteraction(

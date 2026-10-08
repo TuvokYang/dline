@@ -43,6 +43,14 @@ class RecordingRuntime implements RuntimeFacade {
 		this.order.push("quiescent")
 		return Promise.resolve()
 	}
+	private writable = false
+	grantWriteOwnership(): void {
+		this.writable = true
+		this.order.push("grant-ownership")
+	}
+	isWritable(): boolean {
+		return this.writable
+	}
 	releaseRestoredCommands(): void {
 		this.released += 1
 		this.order.push("release-restored")
@@ -200,6 +208,6 @@ describe("TaskShell", () => {
 
 		expect(runtime.released).toBe(1)
 		expect(runtime.events.map((event) => event.type)).toEqual(["lifecycle.open"])
-		expect(runtime.order).toEqual(["settle-queue", "release-restored", "submit:lifecycle.open"])
+		expect(runtime.order).toEqual(["grant-ownership", "settle-queue", "release-restored", "submit:lifecycle.open"])
 	})
 })

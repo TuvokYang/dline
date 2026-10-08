@@ -2,7 +2,7 @@ import { Logger } from "@shared/services/Logger"
 import { renderRetainedInputs } from "../continuation/RetainedInputContent"
 import { retainedQueueDeliveryEntries } from "../kernel/machines/intake"
 import type { RejectReason } from "../kernel/types"
-import type { RuntimeFacade } from "../runtime"
+import type { RuntimeFacade, RuntimeRejection } from "../runtime"
 import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
@@ -24,7 +24,8 @@ import type { TaskInputMaterializer } from "./TaskInputMaterializer"
  * Only a new entry can be held back by the task's phase: a compaction in
  * progress keeps the send with the user until its summary has landed.
  */
-function refusalOf(mutation: CanonicalInputQueueMutation, reason: RejectReason): string {
+function refusalOf(mutation: CanonicalInputQueueMutation, reason: RejectReason | RuntimeRejection["reason"]): string {
+	if (reason === "read_only") return "task_read_only"
 	if (reason === "capacity_exceeded") return "queue_full"
 	if (mutation.kind === "enqueue" && reason === "phase_invalid") return "input_held"
 	return "missing_entry"

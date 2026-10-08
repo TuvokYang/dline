@@ -144,6 +144,7 @@ describe("Controller state publication coalescing", () => {
 		Object.assign(controller, {
 			task: {
 				taskId: "task-a",
+				writable: true,
 				projectView: () => view,
 				owners: {
 					messages: {

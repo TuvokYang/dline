@@ -221,6 +221,27 @@ describe("openTaskShell", () => {
 		expect(revealed).toHaveBeenCalledTimes(1)
 	})
 
+	it("commits nothing for a window without the task lock until it opens the task", async () => {
+		const opened = await openTaskShell({
+			taskId: "task-1",
+			openReason: "crash_recovery",
+			execution: execution(vi.fn()),
+			taskView: new InMemoryTaskViewPort(),
+			persistence: await preparedDialogTask(),
+			deferRestoredCommands: true,
+		})
+		const revision = opened.runtime.getState().revision
+
+		const refused = await opened.shell.submitInput({ entryId: "entry-1", payloadRef: "input:1" })
+		expect(refused).toMatchObject({ kind: "rejected", reason: "read_only", diagnostic: { code: "task_read_only" } })
+		expect(await opened.shell.cancel("halt-1")).toMatchObject({ kind: "rejected", reason: "read_only" })
+		expect(opened.runtime.getState().revision).toBe(revision)
+		expect(opened.runtime.isWritable()).toBe(false)
+
+		await opened.shell.open()
+		expect(opened.runtime.isWritable()).toBe(true)
+	})
+
 	it("rebuilds a task whose unfinished work lost its payload and drops the stored commands", async () => {
 		const missingRef = `sha256:${"a".repeat(64)}`
 		const interaction = {
