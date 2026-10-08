@@ -3,6 +3,7 @@ import { projectCanonicalTaskView } from "@core/task/view/canonical/projectCanon
 import type { TaskViewState } from "@shared/ExtensionMessage"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
+import { OpeningHandoff } from "../task/OpeningHandoff"
 
 vi.mock(import("../state/subscribeToState"), async (importOriginal) => ({
 	...(await importOriginal()),
@@ -42,6 +43,7 @@ function createController(taskId?: string): { controller: Controller; buildState
 		latestStateRevision: 0,
 		publicationSequence: 0,
 		pendingStatePostTimer: undefined,
+		openingHandoff: new OpeningHandoff(),
 		_accountUsage: undefined,
 		task: taskId ? { taskId } : undefined,
 		stateManager: { setActiveTaskId },

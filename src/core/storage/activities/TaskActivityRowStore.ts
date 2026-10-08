@@ -2,7 +2,7 @@ import { readFile, rename } from "node:fs/promises"
 import path from "node:path"
 import type { TaskActivityRecord } from "@shared/task-activity"
 import type { UnifyStore } from "../backend/api/UnifyStore"
-import { asc } from "../backend/api/UnifyStoreQuery"
+import { asc, desc } from "../backend/api/UnifyStoreQuery"
 import { ensureInstanceLayout, InstanceDatabase, openInstanceStorage } from "../instance"
 import { TaskActivityRow } from "./TaskActivityRow"
 
@@ -20,7 +20,8 @@ export interface LegacyActivityFile {
 	readonly text: string
 }
 
-const POSITION = TaskActivityRow.storage.fields.position
+const CREATED_AT = TaskActivityRow.storage.fields.createdAt
+const ACTIVITY_ID = TaskActivityRow.storage.fields.activityId
 
 function isMissingFile(error: unknown): boolean {
 	return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT"
@@ -29,7 +30,8 @@ function isMissingFile(error: unknown): boolean {
 /**
  * Activity rows of one task in `activities.db`, written only by the task's activity store.
  *
- * The whole list is replaced in one transaction, so a reader never sees half of a save.
+ * A save writes the activities that changed in one transaction, so a reader never
+ * sees half of a save and an unchanged activity is never rewritten.
  */
 export class TaskActivityRowStore {
 	private constructor(
@@ -51,15 +53,16 @@ export class TaskActivityRowStore {
 		}
 	}
 
-	/** Stored activities in list order. */
+	/** Stored activities, newest first like the activity list. */
 	async read(): Promise<TaskActivityRecord[]> {
-		const { records } = await this.rows.query({ orderBy: [asc(POSITION)] })
+		const { records } = await this.rows.query({ orderBy: [desc(CREATED_AT), asc(ACTIVITY_ID)] })
 		return records.map((row) => row.record)
 	}
 
-	/** Replaces the stored list with `activities`, keeping their order. */
-	replace(activities: readonly TaskActivityRecord[]): Promise<void> {
-		return this.rows.replaceAll(activities.map((record, position) => new TaskActivityRow(position, record)))
+	/** Inserts `activities` or overwrites the stored ones with the same id; others are left alone. */
+	upsert(activities: readonly TaskActivityRecord[]): Promise<void> {
+		if (activities.length === 0) return Promise.resolve()
+		return this.rows.upsert(activities.map((record) => new TaskActivityRow(record)))
 	}
 
 	/** The legacy file of this task, or undefined when there is none. */

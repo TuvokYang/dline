@@ -1,6 +1,7 @@
 import type { HistoryItem } from "@shared/HistoryItem"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
+import { OpeningHandoff } from "../task/OpeningHandoff"
 
 /** A promise the test settles by hand, standing in for slow durable work. */
 function deferred<T>() {
@@ -15,7 +16,7 @@ const display = vi.hoisted(() => {
 	class FakeHistoryDisplaySession {
 		readonly taskId: string
 		loadOptions: unknown
-		readonly startMaintenance = vi.fn()
+		readonly surfacePublished = vi.fn()
 		readonly markLocked = vi.fn()
 		readonly dispose = vi.fn(async () => undefined)
 		constructor(readonly historyItem: { id: string }) {
@@ -73,6 +74,7 @@ vi.mock("@/core/task/TaskStateManager", () => ({
 type PrivateController = {
 	initHistoryDisplaySession(historyItem: HistoryItem, options?: unknown): Promise<string>
 	promoteHistoryDisplay(session: unknown): Promise<void>
+	promoteHistoryDisplayForActivityControl(taskId: string): Promise<boolean>
 	commitHistoryDisplayProfile(
 		display: unknown,
 		resolution: { profileId: string; profileName: string },
@@ -89,6 +91,7 @@ function subject() {
 	const controller = {
 		historyDisplaySession: undefined as unknown,
 		historyDisplayProfileBindings: new WeakMap(),
+		openingHandoff: new OpeningHandoff(),
 		taskLockAcquired: true,
 		stateManager: {
 			loadTaskSettings: vi.fn(async () => undefined),
@@ -134,12 +137,11 @@ describe("opening a task from History", () => {
 		})
 
 		const [session] = display.instances
-		expect(session?.loadOptions).toMatchObject({ deferMaintenance: true })
 		// The frame went out while the Profile was still resolving.
 		expect(events).toEqual(["post:immediate", "ready"])
-		// Maintenance blocks the host while it hydrates, so it starts after the frame.
-		expect(session?.startMaintenance).toHaveBeenCalledTimes(1)
-		expect(session?.startMaintenance.mock.invocationCallOrder[0]).toBeGreaterThan(ready.mock.invocationCallOrder[0] ?? 0)
+		// Activity IO blocks the host, so the display learns the frame is out only after it was posted.
+		expect(session?.surfacePublished).toHaveBeenCalledTimes(1)
+		expect(session?.surfacePublished.mock.invocationCallOrder[0]).toBeGreaterThan(ready.mock.invocationCallOrder[0] ?? 0)
 
 		resolution.resolve()
 		await vi.waitFor(() => expect(events).toEqual(["post:immediate", "ready", "flush", "post"]))
@@ -199,5 +201,34 @@ describe("opening a task from History", () => {
 		await expect(switched).resolves.toMatchObject({ status: "switched" })
 		expect(profile.adopt).toHaveBeenCalledTimes(1)
 		expect(profile.adopt.mock.invocationCallOrder[0]).toBeLessThan(profile.bind.mock.invocationCallOrder[0] ?? 0)
+	})
+
+	// Retry on a retained subagent acts on the new opening at once; until the
+	// Webview learns that opening it ignores the activity stream keyed to it.
+	it("hands the promoted opening to the Webview before an activity control acts on it", async () => {
+		const patch = deferred<void>()
+		const controller = {
+			task: undefined as { taskId: string } | undefined,
+			historyDisplaySession: { taskId: "history-task", isLocked: () => false },
+			runTaskLifecycleOperation: <T>(operation: () => Promise<T>) => operation(),
+			canPromoteHistoryDisplay: controllerPrototype.canPromoteHistoryDisplay,
+			promoteHistoryDisplay: vi.fn(async () => {
+				controller.task = { taskId: "history-task" }
+			}),
+			postTaskViewPatchToWebview: vi.fn(() => patch.promise),
+		}
+		let settled = false
+
+		const promoted = controllerPrototype.promoteHistoryDisplayForActivityControl
+			.call(controller, "history-task")
+			.finally(() => {
+				settled = true
+			})
+		await vi.waitFor(() => expect(controller.postTaskViewPatchToWebview).toHaveBeenCalledTimes(1))
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(settled).toBe(false)
+
+		patch.resolve()
+		await expect(promoted).resolves.toBe(true)
 	})
 })

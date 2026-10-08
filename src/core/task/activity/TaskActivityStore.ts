@@ -94,7 +94,8 @@ type MoveActivity = () => Promise<BackgroundHandoffResult>
 
 export interface TaskActivityPersistencePort {
 	load(): Promise<TaskActivityRecord[]>
-	save(activities: TaskActivityRecord[]): Promise<void>
+	/** Writes the activities that changed; activities not passed keep their stored state. */
+	upsert(activities: readonly TaskActivityRecord[]): Promise<void>
 }
 
 export interface CreateTaskActivityInput {
@@ -642,7 +643,15 @@ export class TaskActivityStore {
 		this.backgroundMovers.clear()
 	}
 
+	/**
+	 * Drain pending writes. A write that failed re-marks its activities, and a
+	 * caller usually disposes the store next, so they get one more flush here
+	 * rather than waiting for a later change that will not come.
+	 */
 	async waitForPersistence(): Promise<void> {
+		this.flush()
+		await this.persistenceSequence
+		if (this.dirtyIds.size === 0) return
 		this.flush()
 		await this.persistenceSequence
 	}
@@ -665,7 +674,7 @@ export class TaskActivityStore {
 			.map((id) => this.get(id))
 			.filter((activity): activity is TaskActivityRecord => Boolean(activity))
 		this.dirtyIds.clear()
-		this.persist()
+		this.persist(activities)
 		if (this.listeners.size === 0) return
 		const update: TaskActivityUpdate = { sequence: ++this.sequence, snapshot: false, activities }
 		for (const listener of this.listeners.keys()) this.enqueue(listener, update)
@@ -735,14 +744,30 @@ export class TaskActivityStore {
 		return event
 	}
 
-	private persist(): void {
+	/**
+	 * Write the activities of one flush. Only they changed, so a flush costs what
+	 * changed rather than the whole history: the backing store writes synchronously
+	 * on the extension host thread.
+	 */
+	private persist(activities: readonly TaskActivityRecord[]): void {
 		const persistence = this.persistence
 		if (!persistence) return
 		this.persistenceSequence = this.persistenceSequence
 			.catch(() => undefined)
 			.then(() => this.hydrate())
-			.then(() => persistence.save(this.list()))
-			.catch((error) => Logger.warn("[TaskActivityStore] Failed to persist activity history", error))
+			.then(() => persistence.upsert(activities))
+			.catch((error) => {
+				Logger.warn("[TaskActivityStore] Failed to persist activity history", error)
+				this.retryPersistence(activities)
+			})
+	}
+
+	/** A failed write is not retried by the next flush, which carries only its own changes. */
+	private retryPersistence(activities: readonly TaskActivityRecord[]): void {
+		if (this.disposed) return
+		for (const activity of activities) {
+			if (this.activities.has(activity.activityId)) this.dirtyIds.add(activity.activityId)
+		}
 	}
 
 	private isTransient(status: TaskActivityStatus): boolean {

@@ -97,8 +97,9 @@ export class TaskActivityPersistence {
 		}
 	}
 
-	async save(activities: TaskActivityRecord[]): Promise<void> {
-		await (await this.store()).replace(activities)
+	/** Writes the activities that changed; activities not passed keep their stored rows. */
+	async upsert(activities: readonly TaskActivityRecord[]): Promise<void> {
+		await (await this.store()).upsert(activities)
 	}
 
 	/** Releases `activities.db`; the next load or save reopens it. */
@@ -128,7 +129,8 @@ export class TaskActivityPersistence {
 			Logger.warn(`[TaskActivityPersistence] Keeping unreadable ${legacy.file}`, error)
 			return []
 		}
-		await store.replace(activities)
+		// Only an empty database imports, so writing every legacy activity loses nothing.
+		await store.upsert(activities)
 		const stored = await store.read()
 		if (stored.length !== activities.length) {
 			Logger.error(

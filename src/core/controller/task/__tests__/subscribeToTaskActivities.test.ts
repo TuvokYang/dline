@@ -76,7 +76,7 @@ describe("subscribeToTaskActivities", () => {
 
 		expect(subscribe).not.toHaveBeenCalled()
 		expect(responseStream).toHaveBeenCalledWith(
-			expect.objectContaining({ sequence: 0, snapshot: true, activities: [] }),
+			expect.objectContaining({ sequence: 0, snapshot: true, activities: [], taskId: "task-1", taskInstanceId: "open-1" }),
 			true,
 		)
 	})
@@ -141,7 +141,11 @@ describe("subscribeToTaskActivities", () => {
 			activityStore.dispose()
 
 			await vi.waitFor(() => expect(responseStream).toHaveBeenCalledTimes(2))
-			expect(responseStream.mock.calls[1]).toEqual([expect.objectContaining({ snapshot: false, activities: [] }), true])
+			// The end is keyed to its opening, so the Webview clears what it showed.
+			expect(responseStream.mock.calls[1]).toEqual([
+				expect.objectContaining({ snapshot: true, activities: [], taskId: "task-1", taskInstanceId: "open-1" }),
+				true,
+			])
 			expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
 		} finally {
 			getRequestRegistry().cancelRequest(requestId)

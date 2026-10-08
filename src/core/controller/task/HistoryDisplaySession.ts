@@ -5,6 +5,7 @@ import type { HistoryItem } from "@shared/HistoryItem"
 import type { QueuedInputEntry } from "@shared/InputQueue"
 import type { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { Logger } from "@shared/services/Logger"
+import type { TaskActivityRecord } from "@shared/task-activity"
 import { InstanceDatabase, instanceDatabaseExists, openInstanceStorage, resolveInstanceLayout } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
@@ -23,6 +24,7 @@ import { projectCanonicalTaskView } from "@/core/task/view/canonical/projectCano
 import { type HistoryDisplayProjection, projectHistoryDisplayState } from "@/core/task/view/canonical/projectHistoryDisplayState"
 import { historyDisplayAnchorRow } from "@/core/task/view/historyDisplayAnchorRow"
 import { materializeCanonicalInputQueue } from "@/core/task/view/materializeCanonicalInputQueue"
+import { HistoryActivityGate } from "./HistoryActivityGate"
 import { projectHistoryPreparingView } from "./history-task-readiness"
 import { readOnlyTaskView } from "./readOnlyTaskView"
 import { adaptCanonicalTaskView, anchoredInteractionId } from "./TaskViewMessageAdapter"
@@ -53,14 +55,6 @@ export interface HistoryDisplayLoadOptions {
 	 * surface was already shown, so the chat can redraw them.
 	 */
 	readonly onMaintained?: (rows: readonly UiMessage[]) => Promise<void> | void
-	/**
-	 * Hold the maintenance back until `startMaintenance` is called.
-	 *
-	 * Hydrating activities reads the whole activity store synchronously and
-	 * blocks the extension host while it does; a caller that still has to post
-	 * the first frame defers it so that frame is not queued behind it.
-	 */
-	readonly deferMaintenance?: boolean
 }
 
 /** A command row still showing work whose activity was found interrupted. */
@@ -91,6 +85,8 @@ export class HistoryDisplaySession {
 	 * promoted into, and any other window opening the same task.
 	 */
 	private readonly activityPersistence: TaskActivityPersistence
+	/** Every activities.db read waits until the first message window is out. */
+	private readonly activityGate = new HistoryActivityGate()
 	private messageReader?: UIMessageWindowReader
 	/** The metrics a past run recorded, read so the header and chart show them before resume. */
 	private performance?: TaskPerformanceOwner
@@ -104,14 +100,17 @@ export class HistoryDisplaySession {
 	private locked = false
 	private loaded = false
 	private disposed = false
-	/** Activity hydration and orphan recovery, which run after the surface is shown. */
+	/** Activity hydration and orphan recovery, which run after the first message window is out. */
 	private maintenance: Promise<void> = Promise.resolve()
-	/** The options of a deferred load whose maintenance has not started yet. */
-	private deferredMaintenance?: HistoryDisplayLoadOptions
 
 	constructor(readonly historyItem: HistoryItem) {
 		this.activityPersistence = new TaskActivityPersistence(historyItem.id)
-		this.activityStore = new TaskActivityStore(historyItem.id, this.activityPersistence)
+		// The activity subscription hydrates the store as well as the
+		// maintenance, so the gate sits in front of the store's only read.
+		this.activityStore = new TaskActivityStore(historyItem.id, {
+			load: () => this.loadActivitiesOnceServed(),
+			upsert: (activities) => this.activityPersistence.upsert(activities),
+		})
 		this.viewState = projectHistoryPreparingView({ taskId: historyItem.id, phase: TaskPhase.IDLE, revision: 0 })
 		this.contextWindowIndicator = readHistoryContextWindowIndicator(historyItem.contextWindowIndicator, historyItem.id)
 	}
@@ -158,8 +157,7 @@ export class HistoryDisplaySession {
 			this.inputQueue = [...inputQueue]
 			this.viewState = projected.view
 			this.loaded = true
-			if (options?.deferMaintenance) this.deferredMaintenance = options
-			else this.maintenance = this.maintain(options)
+			this.maintenance = this.maintain(options)
 		} catch (error) {
 			if (this.messageReader === reader) this.messageReader = undefined
 			await reader.close().catch(() => undefined)
@@ -168,17 +166,19 @@ export class HistoryDisplaySession {
 		}
 	}
 
-	/** Start the maintenance a deferred `load` held back. Calling it again, or after dispose, does nothing. */
-	startMaintenance(): void {
-		const options = this.deferredMaintenance
-		this.deferredMaintenance = undefined
-		if (!options || this.disposed) return
-		this.maintenance = this.maintain(options)
+	/**
+	 * The surface reached the Webview. Activity IO starts once its first message
+	 * window was served, at once when there is no message to serve, and after a
+	 * bounded wait when the Webview never asks for one.
+	 */
+	surfacePublished(): void {
+		if (this.getMessageCount() === 0) this.activityGate.open()
+		else this.activityGate.armFallback()
 	}
 
 	/**
 	 * Resolves once the activity hydration and orphan recovery that follow `load`
-	 * finished; immediately while a deferred maintenance has not been started.
+	 * finished. They wait for the first message window, like every activity read.
 	 */
 	whenMaintained(): Promise<void> {
 		return this.maintenance
@@ -236,6 +236,7 @@ export class HistoryDisplaySession {
 		if (this.syntheticMessage && startIndex <= this.durableMessageCount && endIndex > this.durableMessageCount) {
 			messages.push(this.syntheticMessage)
 		}
+		this.activityGate.openAfterServing()
 		return { messages, totalCount, startIndex }
 	}
 
@@ -280,6 +281,9 @@ export class HistoryDisplaySession {
 
 	async dispose(): Promise<void> {
 		this.disposed = true
+		// A gated read resolves empty once disposed, so nothing waits on a
+		// window that will never be served.
+		this.activityGate.open()
 		// activities.db admits one writer; recovery hands it back before the
 		// store is torn down and the promoted Task opens it.
 		await this.maintenance
@@ -334,6 +338,12 @@ export class HistoryDisplaySession {
 		} finally {
 			await this.releaseActivities()
 		}
+	}
+
+	/** Read activities.db once the first message window is out, and never after dispose. */
+	private async loadActivitiesOnceServed(): Promise<TaskActivityRecord[]> {
+		await this.activityGate.whenOpen()
+		return this.disposed ? [] : await this.activityPersistence.load()
 	}
 
 	private async recoverOrphanedActivities(ownerless: Promise<boolean> | undefined): Promise<ReadonlySet<string>> {

@@ -1480,11 +1480,11 @@ describe("SubagentToolHandler", () => {
 
 	it("persists why a named subagent retry cannot be restored after Task reopen", async () => {
 		const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
-		const persisted: Array<ReturnType<TaskActivityStore["list"]>> = []
+		const persisted = new Map<string, ReturnType<TaskActivityStore["list"]>[number]>()
 		const activityStore = new TaskActivityStore("task-1", {
-			load: vi.fn(async () => persisted.at(-1) ?? []),
-			save: vi.fn(async (activities: ReturnType<TaskActivityStore["list"]>) => {
-				persisted.push(activities)
+			load: vi.fn(async () => [...persisted.values()]),
+			upsert: vi.fn(async (activities: ReturnType<TaskActivityStore["list"]>) => {
+				for (const activity of activities) persisted.set(activity.activityId, activity)
 			}),
 		})
 		activityStore.create({
@@ -1517,7 +1517,7 @@ describe("SubagentToolHandler", () => {
 				retryRecipe: vitestExpect.objectContaining({ retryable: false }),
 			}),
 		)
-		vitestExpect(persisted.at(-1)?.[0]).toEqual(
+		vitestExpect(persisted.get("subagent-unavailable")).toEqual(
 			vitestExpect.objectContaining({
 				retryUnavailableReason: "Retry unavailable: subagent 'retired-reviewer' is no longer enabled.",
 				retryRecipe: vitestExpect.objectContaining({ retryable: false }),

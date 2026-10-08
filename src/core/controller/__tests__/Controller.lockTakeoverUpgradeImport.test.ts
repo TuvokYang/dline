@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Controller } from "../index"
+import { OpeningHandoff } from "../task/OpeningHandoff"
 
 const host = vi.hoisted(() => ({ showMessage: vi.fn() }))
 
@@ -48,6 +49,7 @@ function subject(upgradeImportPending: boolean) {
 		lockService: { acquireTaskLock: vi.fn(async () => true) },
 		stopLockPoll: vi.fn(),
 		startLockHeartbeat: vi.fn(),
+		openingHandoff: new OpeningHandoff(),
 		postStateToWebview: vi.fn(async () => undefined),
 		getTaskWithId: vi.fn(async () => ({ historyItem: { id: "task-1" } })),
 		initTask: vi.fn(async () => undefined),

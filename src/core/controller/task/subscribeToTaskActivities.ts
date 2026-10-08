@@ -126,10 +126,21 @@ export async function subscribeToTaskActivities(
 	responseStream: StreamingResponseHandler<ProtoTaskActivityUpdate>,
 	requestId?: string,
 ): Promise<void> {
+	// A stream that ends carries the opening it ends for, as an empty snapshot:
+	// the Webview drops updates for another opening, so an unkeyed end left the
+	// last activities of a closed or promoted surface on screen.
+	const ended = () =>
+		ProtoTaskActivityUpdate.create({
+			sequence: 0,
+			snapshot: true,
+			activities: [],
+			taskId: request.taskId,
+			taskInstanceId: request.taskInstanceId,
+		})
 	const owner = currentOpening(controller, request)
 	const activityStore = owner ? controller.getCurrentTaskActivityStore(request.taskId) : undefined
 	if (!owner || !activityStore) {
-		await responseStream(ProtoTaskActivityUpdate.create({ sequence: 0, snapshot: true, activities: [] }), true)
+		await responseStream(ended(), true)
 		return
 	}
 
@@ -162,7 +173,7 @@ export async function subscribeToTaskActivities(
 			if (completed) return
 			completed = true
 			try {
-				await responseStream(ProtoTaskActivityUpdate.create({ sequence: 0, snapshot: false, activities: [] }), true)
+				await responseStream(ended(), true)
 			} finally {
 				if (requestId) requestRegistry.cancelRequest(requestId)
 			}

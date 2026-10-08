@@ -3,6 +3,7 @@ import { createInitialTaskState, type TaskState } from "@core/task/kernel"
 import { DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
 import Mutex from "p-mutex"
 import { describe, expect, it, vi } from "vitest"
+import { OpeningHandoff } from "../task/OpeningHandoff"
 
 const LIFECYCLE_WAIT_MS = 1_000
 
@@ -60,6 +61,7 @@ function createPromotingController(continuation: Promise<void>): Controller {
 			dispose: async () => undefined,
 		},
 		historyDisplayProfileBindings: new WeakMap(),
+		openingHandoff: new OpeningHandoff(),
 		stopLockPoll: () => undefined,
 	})
 	vi.spyOn(controller, "initTask").mockImplementation(async () => {

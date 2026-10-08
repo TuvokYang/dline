@@ -37,6 +37,12 @@ async function seedMessages(taskId: string, messages: readonly UiMessage[]): Pro
 	}
 }
 
+/** Publish the surface and serve its first message window, as the Controller and Webview do. */
+async function showSurface(session: HistoryDisplaySession): Promise<void> {
+	session.surfacePublished()
+	await session.fetchMessages(-1, 200)
+}
+
 async function persistSnapshot(taskId: string, state: TaskState): Promise<void> {
 	const layout = await ensureInstanceLayout({ taskId })
 	await new FileTaskStateVault(layout.stateFile).save({ state, outbox: [] })
@@ -347,6 +353,7 @@ describe("HistoryDisplaySession", () => {
 
 		try {
 			await session.load()
+			await showSurface(session)
 			await session.whenMaintained()
 			expect(session.activityStore.list()).toEqual([
 				expect.objectContaining({
@@ -407,6 +414,7 @@ describe("HistoryDisplaySession", () => {
 						redrawn.push(...rows.map((row) => row.commandStatus ?? ""))
 					},
 				})
+				await showSurface(session)
 				await session.whenMaintained()
 				expect(session.activityStore.get("orphan")?.status).toBe("interrupted")
 				// The settled row reaches the chat after the surface was shown.
@@ -427,6 +435,7 @@ describe("HistoryDisplaySession", () => {
 
 			try {
 				await session.load({ ownerless: Promise.resolve(false) })
+				await showSurface(session)
 				await session.whenMaintained()
 				expect(session.activityStore.get("orphan")?.status).toBe("running")
 				expect(session.getMessages().find((message) => message.activityId === "orphan")?.commandStatus).toBe("running")
@@ -436,10 +445,13 @@ describe("HistoryDisplaySession", () => {
 			expect(await readDurable(taskId)).toEqual({ activity: "running", row: "running" })
 		})
 
-		it("holds a deferred maintenance back until it is started, then settles the work once", async () => {
-			const taskId = "history-deferred-maintenance"
+		// activities.db is read synchronously on the extension host; reading it
+		// before the first window is out queued that window behind the read.
+		it("reads activities, for the maintenance and a subscription alike, only once the first window was served", async () => {
+			const taskId = "history-gated-activities"
 			await seedRunningCommand(taskId)
 			const session = new HistoryDisplaySession(createHistoryItem(taskId))
+			const snapshots: string[][] = []
 
 			try {
 				const redrawn: string[] = []
@@ -448,35 +460,38 @@ describe("HistoryDisplaySession", () => {
 					onMaintained: (rows) => {
 						redrawn.push(...rows.map((row) => row.commandStatus ?? ""))
 					},
-					deferMaintenance: true,
 				})
-				await session.whenMaintained()
-				// Nothing hydrated or settled yet: the caller still owes the first frame.
-				expect(session.activityStore.list()).toEqual([])
+				session.surfacePublished()
+				session.activityStore.subscribe((update) => {
+					snapshots.push(update.activities.map((activity) => activity.activityId))
+				})
+				await new Promise((resolve) => setTimeout(resolve, 50))
+				expect(snapshots).toEqual([])
 				expect(redrawn).toEqual([])
 				expect(await readDurable(taskId)).toEqual({ activity: "running", row: "running" })
 
-				session.startMaintenance()
-				session.startMaintenance()
+				await session.fetchMessages(-1, 200)
 				await session.whenMaintained()
 				expect(session.activityStore.get("orphan")?.status).toBe("interrupted")
 				expect(redrawn).toEqual(["interrupted"])
+				await vi.waitFor(() => expect(snapshots[0]).toEqual(["orphan"]))
 			} finally {
 				await session.dispose()
 			}
 			expect(await readDurable(taskId)).toEqual({ activity: "interrupted", row: "interrupted" })
 		})
 
-		it("never starts a deferred maintenance after the display was disposed", async () => {
-			const taskId = "history-deferred-disposed"
+		it("never reads activities after the display was disposed", async () => {
+			const taskId = "history-gated-disposed"
 			await seedRunningCommand(taskId)
 			const session = new HistoryDisplaySession(createHistoryItem(taskId))
 
-			await session.load({ ownerless: Promise.resolve(true), deferMaintenance: true })
+			await session.load({ ownerless: Promise.resolve(true) })
+			session.surfacePublished()
 			await session.dispose()
-			session.startMaintenance()
 			await session.whenMaintained()
 
+			expect(session.activityStore.list()).toEqual([])
 			expect(await readDurable(taskId)).toEqual({ activity: "running", row: "running" })
 		})
 	})

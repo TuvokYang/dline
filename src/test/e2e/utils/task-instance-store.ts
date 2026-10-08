@@ -4,7 +4,7 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import type { TaskActivityRecord } from "@shared/task-activity"
 import { TaskActivityRow } from "@/core/storage/activities/TaskActivityRow"
 import { LEGACY_ACTIVITY_FILE } from "@/core/storage/activities/TaskActivityRowStore"
-import { asc } from "@/core/storage/backend/api/UnifyStoreQuery"
+import { asc, desc } from "@/core/storage/backend/api/UnifyStoreQuery"
 import { InstanceDatabase, InstanceLayout, instanceDatabaseExists, openInstanceStorage } from "@/core/storage/instance"
 import { openUiMessageRows } from "@/core/storage/messages/openUiMessageRows"
 import { readUiMessages } from "@/core/storage/messages/readUiMessages"
@@ -488,7 +488,7 @@ export async function rewriteTaskActivities(
 	try {
 		const database = await storage.openDatabase(InstanceDatabase.Activities, E2E_FIXTURE_WRITER)
 		const rows = await database.openStore(TaskActivityRow)
-		await rows.replaceAll(next.map((record, position) => new TaskActivityRow(position, record)))
+		await rows.replaceAll(next.map((record) => new TaskActivityRow(record)))
 	} finally {
 		await storage.close()
 	}
@@ -506,7 +506,8 @@ export async function readTaskActivities(dlineDocsDir: string, taskId: string): 
 	try {
 		const database = await storage.openDatabase(InstanceDatabase.Activities, E2E_READER)
 		const rows = await database.openStore(TaskActivityRow)
-		const { records } = await rows.query({ orderBy: [asc(TaskActivityRow.storage.fields.position)] })
+		const { fields } = TaskActivityRow.storage
+		const { records } = await rows.query({ orderBy: [desc(fields.createdAt), asc(fields.activityId)] })
 		return records.length > 0 ? records.map((row) => row.record) : await readLegacyActivities(root)
 	} catch {
 		return await readLegacyActivities(root)

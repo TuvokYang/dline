@@ -144,7 +144,7 @@ describe("TaskActivityStore bounded payload", () => {
 		}
 		const store = new TaskActivityStore("task-bounded", {
 			load: async () => [persisted],
-			save: async () => {},
+			upsert: async () => {},
 		})
 
 		await store.hydrate()

@@ -147,6 +147,7 @@ import { prepareHistoryTaskForDisplay } from "./task/history-task-readiness"
 import { ControllerTaskSessionHostFactory } from "./task/host/ControllerTaskSessionHostFactory"
 import { ControllerTaskSessionPorts } from "./task/host/ControllerTaskSessionPorts"
 import { ControllerTransitionCompactionPort } from "./task/host/ControllerTransitionCompactionPort"
+import { OpeningHandoff } from "./task/OpeningHandoff"
 import { type TaskOpening } from "./task/opened-task"
 import { readOnlyTaskView } from "./task/readOnlyTaskView"
 import { replyWithTransitionDraft } from "./task/replyWithTransitionDraft"
@@ -235,6 +236,8 @@ export class Controller {
 
 	task?: ActiveTaskSession
 	private historyDisplaySession?: HistoryDisplaySession
+	/** Holds state publications while an opening of the task is replaced by another. */
+	private readonly openingHandoff = new OpeningHandoff()
 	/**
 	 * The Profile binding each history display started, settled true once it
 	 * rewrote the task's settings. The first frame does not wait for it, but a
@@ -903,7 +906,11 @@ export class Controller {
 				Logger.error(`[HistoryDisplay] Failed to promote task ${taskId} for an activity control:`, error)
 				return false
 			}
-			return this.task?.taskId === taskId
+			if (this.task?.taskId !== taskId) return false
+			// The control acts on the new opening at once; the Webview must re-key
+			// its activity stream to it first, not on a later coalesced state post.
+			await this.postTaskViewPatchToWebview()
+			return true
 		})
 	}
 
@@ -1478,16 +1485,19 @@ export class Controller {
 		const isCurrent = () => this.historyDisplaySession === session
 		const publishReadyHistory = async () => {
 			if (!isCurrent()) return
-			// The first frame that carries the task's messages; it must not wait for maintenance.
-			await measureHistoryReadinessStage(
-				"history_message_surface",
-				{ taskId: session.taskId, hasTaskLock: false, isCurrent },
-				() => this.postStateToWebview({ immediate: true }),
-			)
-			await options?.onHistoryTaskReadyToDisplay?.()
-			// Started only once the first frame is out: it blocks the host while
-			// it hydrates activities, and nothing that frame draws depends on it.
-			session.startMaintenance()
+			try {
+				// The first frame that carries the task's messages; it must not wait for maintenance.
+				await measureHistoryReadinessStage(
+					"history_message_surface",
+					{ taskId: session.taskId, hasTaskLock: false, isCurrent },
+					() => this.postStateToWebview({ immediate: true }),
+				)
+				await options?.onHistoryTaskReadyToDisplay?.()
+			} finally {
+				// Activity IO blocks the host, so it waits for the message window
+				// this frame makes the Webview request, bounded by a fallback.
+				session.surfacePublished()
+			}
 		}
 		const remainsCurrent = await prepareHistoryTaskForDisplay({
 			taskId: session.taskId,
@@ -1513,7 +1523,7 @@ export class Controller {
 					await Promise.all(rows.map((row) => sendPartialMessageEvent(this, convertClineMessageToProto(row), session)))
 					await this.postStateToWebview()
 				}
-				const [owned] = await Promise.all([ownerless, session.load({ ownerless, onMaintained, deferMaintenance: true })])
+				const [owned] = await Promise.all([ownerless, session.load({ ownerless, onMaintained })])
 				if (this.historyDisplaySession !== session || owned) return
 				session.markLocked()
 				// The surface no longer owns the lock a previous task held, so an
@@ -1623,16 +1633,23 @@ export class Controller {
 	 * display is still current.
 	 */
 	private async promoteHistoryDisplay(display: HistoryDisplaySession): Promise<void> {
-		this.historyDisplaySession = undefined
-		// A read-only display may own a lock poll. initTask acquires the lock
-		// itself, so leaving that round armed would let it take the same lock
-		// concurrently and then activate a surface this promotion replaced.
-		this.stopLockPoll()
-		await Promise.all([display.dispose(), this.historyDisplayProfileBindings.get(display)])
-		await this.initTask(undefined, undefined, undefined, display.historyItem, undefined, {
-			skipInitialClear: true,
-			activateHistory: true,
-		})
+		// No opening exists from the display's teardown until the runtime is
+		// installed; a state published in between would show the task closed.
+		await this.openingHandoff.run(
+			async () => {
+				this.historyDisplaySession = undefined
+				// A read-only display may own a lock poll. initTask acquires the lock
+				// itself, so leaving that round armed would let it take the same lock
+				// concurrently and then activate a surface this promotion replaced.
+				this.stopLockPoll()
+				await Promise.all([display.dispose(), this.historyDisplayProfileBindings.get(display)])
+				await this.initTask(undefined, undefined, undefined, display.historyItem, undefined, {
+					skipInitialClear: true,
+					activateHistory: true,
+				})
+			},
+			() => this.postStateToWebview({ immediate: true }),
+		)
 	}
 
 	/**
@@ -2671,8 +2688,12 @@ export class Controller {
 	 * revealed dialog would otherwise never reach the webview.
 	 */
 	private async publishState(options?: PostStateOptions): Promise<void> {
+		if (this.openingHandoff.holds(this.currentOpening() !== undefined)) return
 		const publication = ++this.publicationSequence
 		const state = await this.getStateToPostToWebview()
+		// The build follows the opening, so one that started before a handoff
+		// can finish inside it with no task.
+		if (this.openingHandoff.holds(this.currentOpening() !== undefined)) return
 		if (!this.isStateCurrent(state.stateRevision)) {
 			if (publication === this.publicationSequence) this.scheduleCoalescedStatePost()
 			return
@@ -3397,22 +3418,29 @@ export class Controller {
 	 *
 	 * A takeover runs from a timer with no caller to report to, so a failed
 	 * reopen is shown to the user rather than leaving an emptied chat behind.
+	 * The handoff publishes the resulting state once, whether the lookup or the
+	 * reopen failed.
 	 */
 	private async reopenForUpgradeImport(taskId: string, scope: TaskLifecycleScope): Promise<void> {
 		Logger.info(`[Lock] Reopening task ${taskId} to import data from an earlier version`)
 		try {
-			const history = await this.getTaskWithId(taskId)
-			await scope.clearTask({ suppressPostState: true })
-			await this.initTask(undefined, undefined, undefined, history.historyItem, undefined, {
-				activateHistory: true,
-				skipInitialClear: true,
-			})
+			// The same task stays on screen; the Webview must not see it close in between.
+			await this.openingHandoff.run(
+				async () => {
+					const history = await this.getTaskWithId(taskId)
+					await scope.clearTask({ suppressPostState: true })
+					await this.initTask(undefined, undefined, undefined, history.historyItem, undefined, {
+						activateHistory: true,
+						skipInitialClear: true,
+					})
+				},
+				() => this.postStateToWebview({ immediate: true }),
+			)
 		} catch (error) {
 			HostProvider.window.showMessage({
 				type: ShowMessageType.ERROR,
 				message: `Could not reopen the task to import its earlier conversation: ${error instanceof Error ? error.message : String(error)}`,
 			})
-			await this.postStateToWebview()
 			throw error
 		}
 	}

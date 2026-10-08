@@ -13,8 +13,9 @@ function isActivityRecord(value: unknown): value is TaskActivityRecord {
 /**
  * One activity of a task in `activities.db`.
  *
- * The record is stored whole because it is written and read as one snapshot;
- * `position` keeps the order the activity list is shown in.
+ * The record is stored whole and written per activity, so a save touches only
+ * the activities that changed. `createdAt` never changes, so the newest-first
+ * order the activity list is shown in survives writes of single rows.
  */
 export class TaskActivityRow {
 	static readonly storage = defineEntity<TaskActivityRow>()({
@@ -22,19 +23,18 @@ export class TaskActivityRow {
 		version: 1,
 		columns: {
 			activityId: column.text({ primary: true }),
-			position: column.integer({ indexed: true }),
+			createdAt: column.integer({ indexed: true }),
 			record: column.json({ validate: isActivityRecord }),
 		},
-		defaultOrder: [{ field: "position", direction: "asc" }],
-		hydrate: (values) => new TaskActivityRow(values.position, values.record),
+		defaultOrder: [{ field: "createdAt", direction: "desc" }],
+		hydrate: (values) => new TaskActivityRow(values.record),
 	})
 
 	readonly activityId: string
+	readonly createdAt: number
 
-	constructor(
-		readonly position: number,
-		readonly record: TaskActivityRecord,
-	) {
+	constructor(readonly record: TaskActivityRecord) {
 		this.activityId = record.activityId
+		this.createdAt = record.createdAt
 	}
 }

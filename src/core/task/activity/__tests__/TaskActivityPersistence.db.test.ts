@@ -53,17 +53,18 @@ describe("TaskActivityPersistence over activities.db", () => {
 		return directory
 	}
 
-	it("saves the whole list and loads it back in order after reopening", async () => {
+	it("writes only the activities passed and keeps the others after reopening", async () => {
 		const writer = new TaskActivityPersistence("task-save")
-		await writer.save([activity("task-save", "b", "second"), activity("task-save", "a", "first")])
-		await writer.save([activity("task-save", "b", "second v2"), activity("task-save", "a", "first")])
+		await writer.upsert([activity("task-save", "b", "second"), activity("task-save", "a", "first")])
+		await writer.upsert([activity("task-save", "b", "second v2")])
 		await writer.close()
 
 		const reader = new TaskActivityPersistence("task-save")
 		const loaded = await reader.load()
+		// Equal creation times fall back to the activity id, as the activity list does.
 		expect(loaded.map((record) => [record.activityId, record.title])).toEqual([
-			["b", "second v2"],
 			["a", "first"],
+			["b", "second v2"],
 		])
 		await reader.close()
 	})
@@ -115,11 +116,13 @@ describe("TaskActivityPersistence over activities.db", () => {
 
 	it("rejects a second writer while the task's activity store is open", async () => {
 		const owner = new TaskActivityPersistence("task-writer")
-		await owner.save([activity("task-writer", "a", "owned")])
+		await owner.upsert([activity("task-writer", "a", "owned")])
 
 		const intruder = await TaskActivityRowStore.open("task-writer")
 		expect(await intruder.read()).toHaveLength(1)
-		await expect(intruder.replace([])).rejects.toThrow(/InstanceDatabaseWriterConflict/)
+		await expect(intruder.upsert([activity("task-writer", "b", "intruder")])).rejects.toThrow(
+			/InstanceDatabaseWriterConflict/,
+		)
 		await intruder.close()
 		await owner.close()
 	})
