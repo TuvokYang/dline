@@ -73,6 +73,20 @@ function measureMedian(messages: ClineMessage[], samples: number): number {
 	return median(runs)
 }
 
+/**
+ * Fastest of several runs after a warm-up. Preemption and collector pauses only ever add time, so the
+ * minimum tracks the algorithmic cost that a doubling ratio compares; a median still absorbs a pause
+ * that lands in most samples of the larger input.
+ */
+function measureFastest(messages: ClineMessage[], samples: number): number {
+	combineApiRequests(messages)
+	let fastest = Number.POSITIVE_INFINITY
+	for (let i = 0; i < samples; i++) {
+		fastest = Math.min(fastest, measureOnce(messages))
+	}
+	return fastest
+}
+
 describe("combineApiRequests performance lock", () => {
 	it("keeps single-call duration below 500ms at 8000 API request pairs", () => {
 		const messages = buildPairedApiRequestMessages(8_000)
@@ -88,7 +102,7 @@ describe("combineApiRequests performance lock", () => {
 	it("scales sub-quadratically when the message count doubles (t(2N)/t(N) < 3.2)", () => {
 		const timings = new Map<number, number>()
 		for (const size of PAIR_SIZES) {
-			timings.set(size, measureMedian(buildPairedApiRequestMessages(size), 5))
+			timings.set(size, measureFastest(buildPairedApiRequestMessages(size), 5))
 		}
 
 		for (let i = 1; i < PAIR_SIZES.length; i++) {
