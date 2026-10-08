@@ -2,6 +2,20 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 # Changelog
 
+## [0.10.0]
+
+0.10.0 is the production version number for the 0.9.4 content: a pre-release with the same number already occupied 0.9.4 in the registry, so the production release moves to a new even minor. Everything listed under 0.9.4 below is included in this release.
+
+### Fixes
+- TPM counts only the output tokens returned by the API; prompt and cache tokens no longer inflate the rate
+- TODO lists are no longer reported as modified after format normalization
+- The composer scrollbar track and maximum height are corrected, so long input keeps a visible scrollbar without exceeding the available height
+
+### Release
+- Version rules: production releases use an even minor (such as 0.10.x), pre-releases use an odd minor (such as 0.11.x), and Insiders follows the pre-release major and minor; packaging rejects a release tag with the wrong parity
+- Registry publication currently targets Open VSX only and VS Code Marketplace publication is disabled; Open VSX fails when the same version is held by the other track instead of reporting a false success
+- The full functional E2E stage of the release gate runs per folder in parallel, so a failure reruns only the failed folders
+
 ## [0.9.4]
 
 ### Features

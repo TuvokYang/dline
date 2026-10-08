@@ -25,6 +25,7 @@ import {
 	hasUncheckedFocusChainItem,
 	hasValidTodoItem,
 	isAllItemsCompleted,
+	isEquivalentFocusChainList,
 	mergeCompletedItems,
 	mergeInProgressItem,
 } from "./file-utils"
@@ -161,8 +162,9 @@ export class FocusChainManager {
 				if (markdownTodoList) {
 					const previousList = this.taskState.currentFocusChainChecklist
 
-					// Only update if the content actually changed
-					if (previousList !== markdownTodoList) {
+					// The runtime's own writes echo through this watcher, and the file keeps only the
+					// persisted form. Compare that form so formatting never counts as a user edit.
+					if (previousList === null || !isEquivalentFocusChainList(previousList, markdownTodoList)) {
 						this.taskState.currentFocusChainChecklist = markdownTodoList
 						this.taskState.currentInProgressItemIndex =
 							getUncheckedFocusChainItemAtIndex(markdownTodoList, this.taskState.currentInProgressItemIndex) !==

@@ -2,6 +2,20 @@
 
 # Changelog
 
+## [0.10.0]
+
+0.10.0 是 0.9.4 内容的正式发布版本号：0.9.4 的同号 pre-release 已占用注册表中的 0.9.4，正式版因此改用新的偶数 minor 发布。下方 0.9.4 的全部内容均包含在本版本中。
+
+### Fixes
+- TPM 只统计 API 返回的输出 Token，不再把 Prompt 与缓存 Token 计入速率
+- TODO 列表在格式规范化后不再被误判为已修改
+- 输入框滚动条轨道与最大高度修正，长输入时滚动条可见且不超出可用高度
+
+### Release
+- 版本号规则：正式版使用偶数 minor（如 0.10.x），pre-release 使用奇数 minor（如 0.11.x），Insiders 跟随 pre-release 的 major 与 minor；打包时拒绝奇偶不符的发布标签
+- 注册表发布暂只面向 Open VSX，VS Code Marketplace 发布已停用；Open VSX 遇到被另一 track 占用的同号版本时直接失败，不再误报发布成功
+- 发布门禁中的完整 functional E2E 按目录并行执行，失败时只需重跑失败的目录
+
 ## [0.9.4]
 
 ### Features

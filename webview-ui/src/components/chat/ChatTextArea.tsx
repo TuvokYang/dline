@@ -61,14 +61,12 @@ import {
 	validateSlashCommand,
 } from "@/utils/slash-commands"
 import ClineRulesToggleModal from "../agent-capabilities/ClineRulesToggleModal"
+import { CHAT_INPUT_MIN_ROWS, CHAT_INPUT_PADDING_Y_PX, chatInputMaxRows } from "./chat-input-height"
 import { ChatInputRuntimeControls } from "./input/ChatInputRuntimeControls"
 import ServersToggleModal from "./ServersToggleModal"
 import { UsageBar } from "./UsageBar"
 
 const { MAX_IMAGES_AND_FILES_PER_MESSAGE } = CHAT_CONSTANTS
-
-/** Visible rows before the composer scrolls; a visible scrollbar takes over past this height. */
-const CHAT_INPUT_MAX_ROWS = 15
 
 /**
  * Above this length (~20K characters) the composer stops re-scanning the whole text for @mentions and
@@ -374,6 +372,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 
 		const [thumbnailsHeight, setThumbnailsHeight] = useState(0)
 		const [textAreaBaseHeight, setTextAreaBaseHeight] = useState<number | undefined>(undefined)
+		const [textAreaRowHeight, setTextAreaRowHeight] = useState<number | undefined>(undefined)
 		const [showContextMenu, setShowContextMenu] = useState(false)
 		const [cursorPosition, setCursorPosition] = useState(0)
 		const [searchQuery, setSearchQuery] = useState("")
@@ -1732,13 +1731,13 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							borderRight: isTextAreaFocused ? 0 : undefined,
 							borderTop: isTextAreaFocused ? 0 : undefined,
 							borderBottom: isTextAreaFocused ? 0 : undefined,
-							padding: `9px 28px ${9 + thumbnailsHeight}px 9px`,
+							padding: `${CHAT_INPUT_PADDING_Y_PX}px 28px ${CHAT_INPUT_PADDING_Y_PX + thumbnailsHeight}px 9px`,
 						}}
 					/>
 					<DynamicTextArea
 						data-testid="chat-input"
-						maxRows={CHAT_INPUT_MAX_ROWS}
-						minRows={3}
+						maxRows={chatInputMaxRows(textAreaRowHeight)}
+						minRows={CHAT_INPUT_MIN_ROWS}
 						onBlur={handleBlur}
 						onChange={(e) => {
 							handleInputChange(e)
@@ -1748,10 +1747,11 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							setIsTextAreaFocused(true)
 							onFocusChange?.(true) // Call prop on focus
 						}}
-						onHeightChange={(height) => {
+						onHeightChange={(height, { rowHeight }) => {
 							if (textAreaBaseHeight === undefined || height < textAreaBaseHeight) {
 								setTextAreaBaseHeight(height)
 							}
+							setTextAreaRowHeight(rowHeight)
 							onHeightChange?.(height)
 						}}
 						onKeyDown={handleKeyDown}
@@ -1785,7 +1785,10 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							// A visible scrollbar shows that long input continues beyond the visible rows.
 							scrollbarWidth: "thin",
 							scrollbarGutter: "stable",
-							// Since we have maxRows, when text is long enough it starts to overflow the bottom padding, appearing behind the thumbnails. To fix this, we use a transparent border to push the text up instead. (https://stackoverflow.com/questions/42631947/maintaining-a-padding-inside-of-text-area/52538410#52538410)
+							// The standard scrollbar properties bypass the webview's ::-webkit-scrollbar theme,
+							// so the colors must be set here or the track renders as an untinted system gutter.
+							scrollbarColor: "var(--vscode-scrollbarSlider-background) transparent",
+							// Since we have maxRows
 							// borderTop: "9px solid transparent",
 							borderLeft: 0,
 							borderRight: 0,
@@ -1796,7 +1799,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							// borderLeft: "9px solid transparent", // NOTE: react-textarea-autosize doesn't calculate correct height when using borderLeft/borderRight so we need to use horizontal padding instead
 							// Instead of using boxShadow, we use a div with a border to better replicate the behavior when the textarea is focused
 							// boxShadow: "0px 0px 0px 1px var(--vscode-input-border)",
-							padding: "9px 28px 9px 9px",
+							padding: `${CHAT_INPUT_PADDING_Y_PX}px 28px ${CHAT_INPUT_PADDING_Y_PX}px 9px`,
 							cursor: "text",
 							flex: 1,
 							zIndex: 1,

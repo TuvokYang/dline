@@ -7,16 +7,17 @@
  * CI can pass `--channel` explicitly so pull-request packages remain neutral
  * while dev, pre-release, and production runs receive their public identities:
  *
- * | Channel      | name             | version                    | Marketplace track |
- * | ------------ | ---------------- | -------------------------- | ----------------- |
- * | ci           | dline            | package.json version       | -                 |
- * | production   | dline            | X.Y.Z (from `vX.Y.Z`)      | release           |
- * | pre-release  | dline            | X.Y.Z (from `dev-vX.Y.Z`)  | pre-release       |
- * | insiders     | dline-insiders   | major.minor.<unix seconds> | release           |
+ * | Channel      | name             | version                                 | Marketplace track |
+ * | ------------ | ---------------- | --------------------------------------- | ----------------- |
+ * | ci           | dline            | package.json version                    | -                 |
+ * | production   | dline            | X.EVEN.Z (from `vX.Y.Z`)                | release           |
+ * | pre-release  | dline            | X.ODD.Z (from `dev-vX.Y.Z`)             | pre-release       |
+ * | insiders     | dline-insiders   | major.<pre-release minor>.<unix seconds> | release           |
  *
  * Pre-release and production share the `tuvokyang.dline` extension; only the
  * VSIX pre-release marker (vsce `preRelease`) puts a build on the pre-release
- * track.
+ * track. Registries key a version only by its number, so the two channels split
+ * the version space by minor parity (see release-version-policy.mjs).
  *
  * GitHub distribution follows the same channel contract:
  * - untagged main runs CI only and is rejected by automatic release packaging;
@@ -36,6 +37,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { withMarketplaceReadme } from "./marketplace-readme.mjs"
+import { assertChannelVersion, createInsidersVersion as createPolicyInsidersVersion } from "./release-version-policy.mjs"
 import { packageVsix } from "./vsix-packager.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -182,11 +184,17 @@ function changelogDocumentsVersion(changelogPath, version) {
 /**
  * Reject a tagged release whose version is not consistent everywhere.
  *
+ * @param {"production"|"pre-release"} channel Channel the tag selects.
  * @param {string} tag Tag pointing at HEAD.
  * @param {string} tagVersion Version parsed out of the tag.
  * @param {string} packageVersion Version currently in package.json.
  */
-function assertReleaseVersionConsistency(tag, tagVersion, packageVersion) {
+function assertReleaseVersionConsistency(channel, tag, tagVersion, packageVersion) {
+	try {
+		assertChannelVersion(channel, tagVersion)
+	} catch (error) {
+		fail(`Tag '${tag}': ${error.message}`)
+	}
 	if (tagVersion !== packageVersion) {
 		fail(`Tag '${tag}' declares version ${tagVersion} but package.json is ${packageVersion}. Bump the version first.`)
 	}
@@ -205,8 +213,11 @@ function assertReleaseVersionConsistency(tag, tagVersion, packageVersion) {
  * @returns {string}
  */
 function createInsidersVersion(packageVersion) {
-	const [major, minor] = packageVersion.split(".")
-	return `${major}.${minor}.${Math.floor(Date.now() / 1000)}`
+	try {
+		return createPolicyInsidersVersion(packageVersion)
+	} catch (error) {
+		fail(`Cannot derive the Insiders version: ${error.message}`)
+	}
 }
 
 /**
@@ -225,7 +236,7 @@ function resolveChannel(packageVersion) {
 		if (branch !== null && branch !== "main" && branch !== "master") {
 			fail(`Production tag '${tag}' is checked out on '${branch}'. A production tag must live on main.`)
 		}
-		assertReleaseVersionConsistency(tag, productionTag[1], packageVersion)
+		assertReleaseVersionConsistency("production", tag, productionTag[1], packageVersion)
 		return { channel: "production", version: productionTag[1], tag }
 	}
 
@@ -233,7 +244,7 @@ function resolveChannel(packageVersion) {
 		if (branch !== null && branch !== "dev") {
 			fail(`Development tag '${tag}' is checked out on '${branch}'. A dev release tag must live on dev.`)
 		}
-		assertReleaseVersionConsistency(tag, devTag[1], packageVersion)
+		assertReleaseVersionConsistency(PRE_RELEASE_CHANNEL, tag, devTag[1], packageVersion)
 		return { channel: PRE_RELEASE_CHANNEL, version: devTag[1], tag }
 	}
 
@@ -283,7 +294,7 @@ function resolveRequestedChannel(requestedChannel, packageVersion) {
 		const expected = requestedChannel === "production" ? "vX.Y.Z" : "dev-vX.Y.Z"
 		fail(`${requestedChannel} packaging requires an exact ${expected} tag at HEAD.`)
 	}
-	assertReleaseVersionConsistency(tag, match[1], packageVersion)
+	assertReleaseVersionConsistency(requestedChannel, tag, match[1], packageVersion)
 	return { channel: requestedChannel, version: match[1], tag }
 }
 
