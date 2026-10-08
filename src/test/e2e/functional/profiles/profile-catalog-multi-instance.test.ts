@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { MultiInstanceLauncher, type MultiInstanceSurface } from "@e2e/utils/multi-instance"
+import { focusInstanceWindow, MultiInstanceLauncher, type MultiInstanceSurface } from "@e2e/utils/multi-instance"
 import { expect } from "@playwright/test"
 
 interface StoredProfile {
@@ -71,6 +71,7 @@ async function expectResponsiveProfileLayout(surface: MultiInstanceSurface): Pro
 }
 
 async function selectColorTheme(surface: MultiInstanceSurface, themeName: string, themeKind: string): Promise<void> {
+	await focusInstanceWindow(surface)
 	await E2ETestHelper.runCommandPalette(surface.page, "Preferences: Color Theme")
 	const themeInput = surface.page.locator(".quick-input-widget input").last()
 	await expect(themeInput).toBeVisible()
