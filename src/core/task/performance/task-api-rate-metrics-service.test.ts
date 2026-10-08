@@ -252,7 +252,7 @@ describe("TaskApiRateMetricsService", () => {
 		service.recordEstimatedTokens(70)
 		await vi.advanceTimersByTimeAsync(1_001)
 		service.recordProviderRequestFinished()
-		service.recordExactUsage({ inputTokens: 0, outputTokens: 200 })
+		service.recordExactUsage({ outputTokens: 200 })
 		await vi.advanceTimersByTimeAsync(1_001)
 		await service.waitForPersistence()
 
@@ -279,6 +279,35 @@ describe("TaskApiRateMetricsService", () => {
 		})
 	})
 
+	it("counts only generated output tokens toward TPM when exact usage includes prompt and cache tokens", async () => {
+		vi.useFakeTimers()
+		vi.setSystemTime(new Date("2026-08-10T10:00:00.000Z"))
+		const repository = new MemoryRepository()
+		const service = new TaskApiRateMetricsService({ repository })
+		await service.initialize()
+		// Provider usage reaches the service as the full usage object; prompt and cache tokens are
+		// consumed before streaming starts, so they must not inflate the per-active-second rate.
+		const providerUsage = { inputTokens: 90_000, cacheWriteTokens: 5_000, cacheReadTokens: 80_000, outputTokens: 120 }
+
+		service.recordRequestStarted()
+		service.recordEstimatedTokens(40)
+		await vi.advanceTimersByTimeAsync(1_001)
+		service.recordEstimatedTokens(80)
+		service.recordProviderRequestFinished()
+		service.recordExactUsage(providerUsage)
+		await vi.advanceTimersByTimeAsync(1_001)
+		await service.waitForPersistence()
+
+		const canonical = foldApiRateSecondRevisions(secondRecords(repository))
+		expect(canonical.map(({ effectiveTokens }) => effectiveTokens)).toEqual([40, 80])
+		expect(canonical.at(-1)).toMatchObject({
+			runningProviderActiveSeconds: 2,
+			runningTokenCount: 120,
+			tokensPerMinute: 3_600,
+		})
+		expect(service.getSnapshot().tokensPerMinute).toBe(3_600)
+	})
+
 	it("checks retention after exact usage and after the final dispose flush", async () => {
 		vi.useFakeTimers()
 		vi.setSystemTime(new Date("2026-08-10T10:00:00.000Z"))
@@ -289,7 +318,7 @@ describe("TaskApiRateMetricsService", () => {
 		service.recordRequestStarted()
 		service.recordEstimatedTokens(50)
 		service.recordProviderRequestFinished()
-		service.recordExactUsage({ inputTokens: 50, outputTokens: 50 })
+		service.recordExactUsage({ outputTokens: 50 })
 		await service.waitForPersistence()
 		expect(repository.compactionRequests).toEqual([1_786_356_000])
 
