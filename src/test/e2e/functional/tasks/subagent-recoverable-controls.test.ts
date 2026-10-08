@@ -1004,6 +1004,10 @@ e2e(
 		await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
 		const activity = sidebar.getByTestId("activity-item").filter({ hasText: agentName })
 		await expect(activity).toHaveAttribute("data-activity-status", "running", { timeout: 60_000 })
+		// Cancel the held request, not the run's setup. A run cancelled before its
+		// first request never consumes the held response, and Retry would then
+		// receive the response scripted for the cancelled attempt.
+		await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 }).toBe(1)
 		await activity.getByRole("button", { name: "Cancel", exact: true }).click()
 		await expect(activity).toHaveAttribute("data-activity-status", "cancelled", { timeout: 60_000 })
 
@@ -1014,6 +1018,10 @@ e2e(
 
 		await activityRetry.click()
 		await expect(activity).toHaveAttribute("data-activity-status", "completed", { timeout: 120_000 })
+		const childConsumptions = server.getMockConsumptions("openai-compatible-responses")
+		expect(childConsumptions).toHaveLength(2)
+		expect(childConsumptions[0]).toMatchObject({ toolCallId: "call_cancel_retry_child_never_completes" })
+		expect(childConsumptions[1]).toMatchObject({ toolCallId: "call_cancel_retry_child_complete" })
 
 		await sidebar.getByRole("tab", { name: "Work", exact: true }).click()
 		const input = sidebar.getByTestId("chat-input")
