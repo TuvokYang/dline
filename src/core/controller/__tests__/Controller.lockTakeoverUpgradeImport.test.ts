@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Controller } from "../index"
 
@@ -16,7 +16,12 @@ type TakeOver = (owner: unknown, scope: unknown) => Promise<void>
 const prototype = Controller.prototype as unknown as {
 	takeOverTaskAfterUnlock: TakeOver
 	reopenForUpgradeImport: (taskId: string, scope: unknown) => Promise<void>
+	rollbackUnownedOpening: (taskId: string, closeHistory: () => void) => Promise<void>
 }
+
+beforeEach(() => {
+	vi.clearAllMocks()
+})
 
 /**
  * A window that opened the task without its lock, now taking it over.
@@ -95,6 +100,24 @@ describe("Controller lock takeover of a task with data from an earlier version",
 		expect(controller.postStateToWebview).toHaveBeenCalledOnce()
 	})
 
+	// A history lookup that fails before anything was cleared must still be
+	// reported, and must leave the session the user is looking at untouched.
+	it("reports a failed history lookup without clearing the session", async () => {
+		const { controller, clearTask, takeOver } = subject(true)
+		const failure = new Error("task history is unavailable")
+		controller.getTaskWithId.mockRejectedValue(failure)
+
+		await expect(takeOver()).rejects.toBe(failure)
+
+		expect(clearTask).not.toHaveBeenCalled()
+		expect(controller.initTask).not.toHaveBeenCalled()
+		expect(host.showMessage).toHaveBeenCalledExactlyOnceWith({
+			type: ShowMessageType.ERROR,
+			message: expect.stringContaining("task history is unavailable"),
+		})
+		expect(controller.postStateToWebview).toHaveBeenCalledOnce()
+	})
+
 	it("opens the session in place when nothing waits to be imported", async () => {
 		const { controller, clearTask, open, takeOver } = subject(false)
 
@@ -105,5 +128,56 @@ describe("Controller lock takeover of a task with data from an earlier version",
 		expect(open).toHaveBeenCalledOnce()
 		expect(clearTask).not.toHaveBeenCalled()
 		expect(controller.initTask).not.toHaveBeenCalled()
+	})
+})
+
+/** An opening that failed after taking the lock but before a session owned it. */
+function failedOpening(lockAcquired: boolean) {
+	const controller = {
+		taskLockAcquired: lockAcquired,
+		workspaceHistorySession: { taskId: "task-1" } as unknown,
+		stopLockPoll: vi.fn(),
+		stopLockHeartbeat: vi.fn(async () => undefined),
+		releaseOwnedTaskLock: vi.fn(async () => undefined),
+		stateManager: { clearTaskSettings: vi.fn(async () => undefined) },
+	}
+	const closeHistory = vi.fn()
+	const rollback = () => prototype.rollbackUnownedOpening.call(controller, "task-1", closeHistory)
+	return { controller, closeHistory, rollback }
+}
+
+describe("Controller rollback of an opening that never produced a session", () => {
+	// Close finds the lock through the session; without one the heartbeat would
+	// keep the lock fresh and no other window could open the task again.
+	it("stops the heartbeat and releases the lock the opening took", async () => {
+		const { controller, closeHistory, rollback } = failedOpening(true)
+
+		await rollback()
+
+		expect(controller.stopLockPoll).toHaveBeenCalledOnce()
+		expect(controller.stopLockHeartbeat).toHaveBeenCalledExactlyOnceWith("task-1")
+		expect(controller.releaseOwnedTaskLock).toHaveBeenCalledExactlyOnceWith("task-1")
+		expect(controller.taskLockAcquired).toBe(false)
+		expect(controller.stateManager.clearTaskSettings).toHaveBeenCalledExactlyOnceWith("task-1")
+		expect(closeHistory).toHaveBeenCalledOnce()
+		expect(controller.workspaceHistorySession).toBeUndefined()
+	})
+
+	it("leaves another window's lock alone when the opening was read-only", async () => {
+		const { controller, rollback } = failedOpening(false)
+
+		await rollback()
+
+		expect(controller.stopLockPoll).toHaveBeenCalledOnce()
+		expect(controller.releaseOwnedTaskLock).not.toHaveBeenCalled()
+	})
+
+	// The caller rethrows the opening's own error; a cleanup failure must not replace it.
+	it("does not throw when the cleanup itself fails", async () => {
+		const { controller, rollback } = failedOpening(true)
+		controller.releaseOwnedTaskLock.mockRejectedValue(new Error("lock file is busy"))
+
+		await expect(rollback()).resolves.toBeUndefined()
+		expect(controller.taskLockAcquired).toBe(false)
 	})
 })

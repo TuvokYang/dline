@@ -1145,138 +1145,146 @@ export class Controller {
 		const workspaceHistorySession = workspaceHistoryManager.beginTask(taskId)
 		this.workspaceHistorySession = workspaceHistorySession
 
-		// Acquire task lock via lock service
-		this.taskLockAcquired = await this.lockService.acquireTaskLock(taskId)
-		if (this.taskLockAcquired) {
-			Logger.debug(`[Task ${taskId}] Task lock acquired`)
-			this.startLockHeartbeat(taskId)
-			await this.pruneOwnedCommandLogs(taskId)
-			// Holding the lock means no other window writes here, so stale temp files are a crashed writer's.
-			void cleanupStaleTaskTempFiles(taskId).catch((error) =>
-				Logger.warn(`[Task ${taskId}] Stale temp file cleanup failed:`, error),
-			)
-		} else {
-			Logger.debug(`[Task ${taskId}] Task locked by another instance - read-only mode`)
-			// Start polling for lock release in the background
-			this.startLockPoll(taskId)
-		}
-		logInitStage("task_lock", taskId, `acquired=${this.taskLockAcquired}`)
+		// Until the session takes ownership, close cannot find what this opening
+		// holds, so a failure in between is undone here rather than leaving a
+		// heartbeating lock that keeps every other window out of the task.
+		try {
+			// Acquire task lock via lock service
+			this.taskLockAcquired = await this.lockService.acquireTaskLock(taskId)
+			if (this.taskLockAcquired) {
+				Logger.debug(`[Task ${taskId}] Task lock acquired`)
+				this.startLockHeartbeat(taskId)
+				await this.pruneOwnedCommandLogs(taskId)
+				// Holding the lock means no other window writes here, so stale temp files are a crashed writer's.
+				void cleanupStaleTaskTempFiles(taskId).catch((error) =>
+					Logger.warn(`[Task ${taskId}] Stale temp file cleanup failed:`, error),
+				)
+			} else {
+				Logger.debug(`[Task ${taskId}] Task locked by another instance - read-only mode`)
+				// Start polling for lock release in the background
+				this.startLockPoll(taskId)
+			}
+			logInitStage("task_lock", taskId, `acquired=${this.taskLockAcquired}`)
 
-		await this.stateManager.loadTaskSettings(taskId)
-		logInitStage("task_settings", taskId)
-		if (taskSettings) {
-			this.stateManager.setTaskSettingsBatch(taskId, taskSettings)
-		}
+			await this.stateManager.loadTaskSettings(taskId)
+			logInitStage("task_settings", taskId)
+			if (taskSettings) {
+				this.stateManager.setTaskSettingsBatch(taskId, taskSettings)
+			}
 
-		// Freeze resource enablement at task creation. Resumed tasks keep their
-		// persisted snapshot; only legacy tasks without one inherit current state.
-		const initialTaskCache = this.stateManager.getTaskCacheRef(taskId)
-		if (typeof initialTaskCache.taskCapabilityToggles !== "string") {
-			this.stateManager.setTaskSettings(
+			// Freeze resource enablement at task creation. Resumed tasks keep their
+			// persisted snapshot; only legacy tasks without one inherit current state.
+			const initialTaskCache = this.stateManager.getTaskCacheRef(taskId)
+			if (typeof initialTaskCache.taskCapabilityToggles !== "string") {
+				this.stateManager.setTaskSettings(
+					taskId,
+					"taskCapabilityToggles",
+					serializeTaskCapabilityToggles(this.getInheritedTaskCapabilityToggles()),
+				)
+			}
+
+			// New task: inherit mode from the welcome-screen global setting.
+			// Resumed tasks already have their mode persisted via loadTaskSettings.
+			const taskCache = this.stateManager.getTaskCacheRef(taskId)
+			if (!taskCache.mode) {
+				const globalMode = this.stateManager.getGlobalSettingsKey("mode")
+				this.stateManager.setTaskSettings(taskId, "mode", globalMode || "plan")
+				Logger.debug(`[Task ${taskId}] initialized task-level mode from global: ${globalMode || "plan"}`)
+			}
+			this.bindTaskProfileOnCreate(taskId)
+
+			// If restoring from history and HistoryItem has provider info, inject it
+			// as task-specific settings so the task resumes with the same provider.
+			// Mode is persisted separately via setTaskSettings in togglePlanActMode
+			// and restored by loadTaskSettings above �?do NOT override it from historyItem.
+			const uiMessage = await UIMessage.open(taskId)
+			// The chat store claims the task's messages.db writer on its first write;
+			// it must not outlive an open that never hands it to a session.
+			const apiConversation = await ApiConversation.open(taskId).catch(async (error: unknown) => {
+				await uiMessage.close().catch(() => undefined)
+				throw error
+			})
+			logInitStage("message_stores_open", taskId)
+
+			const terminalExecutionMode = vscodeTerminalExecutionMode ?? "vscodeTerminal"
+			const taskView = new KernelTaskViewPort({
+				publishCommitted: async () => this.postStateToWebview(),
+				publishTransient: () => void this.postStateToWebview(),
+			})
+			// This opening's identity. The session adopts it as its incarnation, so
+			// every row, page and activity the session publishes is attributed to it.
+			const opening: TaskOpening = { taskId, taskInstanceId: randomUUID() }
+			this.task = await new TaskSessionCompositionService().open({
 				taskId,
-				"taskCapabilityToggles",
-				serializeTaskCapabilityToggles(this.getInheritedTaskCapabilityToggles()),
-			)
-		}
-
-		// New task: inherit mode from the welcome-screen global setting.
-		// Resumed tasks already have their mode persisted via loadTaskSettings.
-		const taskCache = this.stateManager.getTaskCacheRef(taskId)
-		if (!taskCache.mode) {
-			const globalMode = this.stateManager.getGlobalSettingsKey("mode")
-			this.stateManager.setTaskSettings(taskId, "mode", globalMode || "plan")
-			Logger.debug(`[Task ${taskId}] initialized task-level mode from global: ${globalMode || "plan"}`)
-		}
-		this.bindTaskProfileOnCreate(taskId)
-
-		// If restoring from history and HistoryItem has provider info, inject it
-		// as task-specific settings so the task resumes with the same provider.
-		// Mode is persisted separately via setTaskSettings in togglePlanActMode
-		// and restored by loadTaskSettings above �?do NOT override it from historyItem.
-		const uiMessage = await UIMessage.open(taskId)
-		// The chat store claims the task's messages.db writer on its first write;
-		// it must not outlive an open that never hands it to a session.
-		const apiConversation = await ApiConversation.open(taskId).catch(async (error: unknown) => {
-			await uiMessage.close().catch(() => undefined)
-			throw error
-		})
-		logInitStage("message_stores_open", taskId)
-
-		const terminalExecutionMode = vscodeTerminalExecutionMode ?? "vscodeTerminal"
-		const taskView = new KernelTaskViewPort({
-			publishCommitted: async () => this.postStateToWebview(),
-			publishTransient: () => void this.postStateToWebview(),
-		})
-		// This opening's identity. The session adopts it as its incarnation, so
-		// every row, page and activity the session publishes is attributed to it.
-		const opening: TaskOpening = { taskId, taskInstanceId: randomUUID() }
-		this.task = await new TaskSessionCompositionService().open({
-			taskId,
-			taskIncarnationId: opening.taskInstanceId,
-			openReason: historyItem ? (options?.openReason ?? "resume") : "new",
-			collaboration: {
-				writable: this.taskLockAcquired,
-				summary: historyItem?.task ?? task ?? "",
-				kind: options?.taskKind ?? "main",
-				createdAt: new Date().toISOString(),
-			},
-			// Another window owns the task: recovered work waits for `task.open()`,
-			// which runs only once this window acquires the lock.
-			deferRestoredCommands: !this.taskLockAcquired,
-			cwd,
-			stateManager: this.stateManager,
-			taskView,
-			messages: {
-				uiMessage,
-				apiConversation,
-				taskIsFavorited: historyItem?.isFavorited,
-				updateTaskHistory: (item) => workspaceHistoryManager.publishMetadata(item, workspaceHistorySession),
-				publishTaskHistoryClose: () => workspaceHistoryManager.closeTask(workspaceHistorySession),
-				completion: {
-					initial:
-						historyItem?.isCompleted === undefined
-							? undefined
-							: { isCompleted: historyItem.isCompleted, revision: historyItem.completionStateRevision ?? -1 },
-					persist: (update) => this.persistTaskCompletionState(update.taskId, update.isCompleted, update.revision),
+				taskIncarnationId: opening.taskInstanceId,
+				openReason: historyItem ? (options?.openReason ?? "resume") : "new",
+				collaboration: {
+					writable: this.taskLockAcquired,
+					summary: historyItem?.task ?? task ?? "",
+					kind: options?.taskKind ?? "main",
+					createdAt: new Date().toISOString(),
 				},
-			},
-			prompt: {
-				ports: new ControllerTaskSessionPorts(this, opening),
-				ignoreController,
-				workspaceManager: this.workspaceManager,
-				terminalExecutionMode,
-				readCapabilityToggles: () =>
-					parseTaskCapabilityToggles(this.stateManager.getTaskCacheRef(taskId).taskCapabilityToggles) ??
-					this.getInheritedTaskCapabilityToggles(),
-				shouldUseNativeToolCalls: (providerInfo) =>
-					isNativeToolCallingConfig(
-						providerInfo,
-						this.stateManager.getGlobalStateKey("nativeToolCallEnabled") === true,
-					),
-				resolveParallelToolCallingEnabled: (providerInfo) =>
-					this.stateManager.getGlobalSettingsKey("enableParallelToolCalling") === true &&
-					isNativeToolCallingConfig(
-						providerInfo,
-						this.stateManager.getGlobalStateKey("nativeToolCallEnabled") === true,
-					),
-				getParentTaskId: async () => {
-					const { OrchestratorController } = await import("@/core/orchestrator/OrchestratorController")
-					return OrchestratorController.getInstance().getParentTaskId(taskId)
-				},
-			},
-			hostFactory: new ControllerTaskSessionHostFactory({
-				controller: this,
-				context: this.context,
+				// Another window owns the task: recovered work waits for `task.open()`,
+				// which runs only once this window acquires the lock.
+				deferRestoredCommands: !this.taskLockAcquired,
+				cwd,
 				stateManager: this.stateManager,
-				mcpHub: this.mcpHub,
-				ignoreController,
-				workspaceManager: this.workspaceManager,
-			}),
-			publishState: (publication) => this.postStateToWebview(publication),
-			restoredContextWindowIndicator: historyItem
-				? readHistoryContextWindowIndicator(historyItem.contextWindowIndicator, taskId)
-				: undefined,
-		})
+				taskView,
+				messages: {
+					uiMessage,
+					apiConversation,
+					taskIsFavorited: historyItem?.isFavorited,
+					updateTaskHistory: (item) => workspaceHistoryManager.publishMetadata(item, workspaceHistorySession),
+					publishTaskHistoryClose: () => workspaceHistoryManager.closeTask(workspaceHistorySession),
+					completion: {
+						initial:
+							historyItem?.isCompleted === undefined
+								? undefined
+								: { isCompleted: historyItem.isCompleted, revision: historyItem.completionStateRevision ?? -1 },
+						persist: (update) => this.persistTaskCompletionState(update.taskId, update.isCompleted, update.revision),
+					},
+				},
+				prompt: {
+					ports: new ControllerTaskSessionPorts(this, opening),
+					ignoreController,
+					workspaceManager: this.workspaceManager,
+					terminalExecutionMode,
+					readCapabilityToggles: () =>
+						parseTaskCapabilityToggles(this.stateManager.getTaskCacheRef(taskId).taskCapabilityToggles) ??
+						this.getInheritedTaskCapabilityToggles(),
+					shouldUseNativeToolCalls: (providerInfo) =>
+						isNativeToolCallingConfig(
+							providerInfo,
+							this.stateManager.getGlobalStateKey("nativeToolCallEnabled") === true,
+						),
+					resolveParallelToolCallingEnabled: (providerInfo) =>
+						this.stateManager.getGlobalSettingsKey("enableParallelToolCalling") === true &&
+						isNativeToolCallingConfig(
+							providerInfo,
+							this.stateManager.getGlobalStateKey("nativeToolCallEnabled") === true,
+						),
+					getParentTaskId: async () => {
+						const { OrchestratorController } = await import("@/core/orchestrator/OrchestratorController")
+						return OrchestratorController.getInstance().getParentTaskId(taskId)
+					},
+				},
+				hostFactory: new ControllerTaskSessionHostFactory({
+					controller: this,
+					context: this.context,
+					stateManager: this.stateManager,
+					mcpHub: this.mcpHub,
+					ignoreController,
+					workspaceManager: this.workspaceManager,
+				}),
+				publishState: (publication) => this.postStateToWebview(publication),
+				restoredContextWindowIndicator: historyItem
+					? readHistoryContextWindowIndicator(historyItem.contextWindowIndicator, taskId)
+					: undefined,
+			})
+		} catch (error) {
+			await this.rollbackUnownedOpening(taskId, () => workspaceHistoryManager.closeTask(workspaceHistorySession))
+			throw error
+		}
 		logInitStage("task_construct", taskId)
 		this.restartAccountUsagePolling()
 		const taskInstance = this.task
@@ -3381,9 +3389,9 @@ export class Controller {
 	 */
 	private async reopenForUpgradeImport(taskId: string, scope: TaskLifecycleScope): Promise<void> {
 		Logger.info(`[Lock] Reopening task ${taskId} to import data from an earlier version`)
-		const history = await this.getTaskWithId(taskId)
-		await scope.clearTask({ suppressPostState: true })
 		try {
+			const history = await this.getTaskWithId(taskId)
+			await scope.clearTask({ suppressPostState: true })
 			await this.initTask(undefined, undefined, undefined, history.historyItem, undefined, {
 				activateHistory: true,
 				skipInitialClear: true,
@@ -3395,6 +3403,28 @@ export class Controller {
 			})
 			await this.postStateToWebview()
 			throw error
+		}
+	}
+
+	/**
+	 * Release what an opening acquired before a session owned it: the poll, the
+	 * heartbeat and the lock, the task settings cache and the workspace history
+	 * slot. A cleanup failure is logged so the opening's own error still reaches
+	 * the caller.
+	 */
+	private async rollbackUnownedOpening(taskId: string, closeHistory: () => void): Promise<void> {
+		this.stopLockPoll()
+		this.workspaceHistorySession = undefined
+		try {
+			closeHistory()
+			await this.stopLockHeartbeat(taskId)
+			if (this.taskLockAcquired) {
+				this.taskLockAcquired = false
+				await this.releaseOwnedTaskLock(taskId)
+			}
+			await this.stateManager.clearTaskSettings(taskId)
+		} catch (cleanupError) {
+			Logger.error(`[Task ${taskId}] Failed to roll back an opening that did not complete`, cleanupError)
 		}
 	}
 
