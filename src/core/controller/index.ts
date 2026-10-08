@@ -3266,13 +3266,13 @@ export class Controller {
 		// between can never be taken over by a stale round.
 		const owner = this.currentOpening()
 		this.lockPollTimer = setInterval(() => {
-			void this.runTaskLifecycleOperation(async () => {
+			void this.runTaskLifecycleOperation(async (scope) => {
 				if (generation !== this.lockPollGeneration || this.currentOpening() !== owner || this.disposed) return
 				if (!owner || owner.taskId !== taskId || this.taskLockAcquired) return
 				// Only a released or stale lock is worth a takeover attempt.
 				const status = await this.lockService.checkTaskLock(taskId)
 				if (status.isLocked && !status.isStale) return
-				await this.takeOverTaskAfterUnlock(owner)
+				await this.takeOverTaskAfterUnlock(owner, scope)
 			}).catch((error) => Logger.warn(`[Lock] Poll error for task ${taskId}:`, error))
 		}, 30000)
 	}
@@ -3305,7 +3305,7 @@ export class Controller {
 		if (!owner || owner.taskId !== taskId) return
 		const timer = setTimeout(() => {
 			this.lockTakeoverTimers.delete(timer)
-			void this.runTaskLifecycleOperation(() => this.takeOverTaskAfterUnlock(owner)).catch((error) => {
+			void this.runTaskLifecycleOperation((scope) => this.takeOverTaskAfterUnlock(owner, scope)).catch((error) => {
 				Logger.error(`[Lock] Failed to take over task ${taskId} after unlock:`, error)
 			})
 		}, 0)
@@ -3317,9 +3317,13 @@ export class Controller {
 	 * another instance took it first. Called only inside the Task lifecycle
 	 * lane, so a close or reopen cannot interleave with the takeover.
 	 */
-	private async takeOverTaskAfterUnlock(owner: TaskOpening): Promise<void> {
+	private async takeOverTaskAfterUnlock(owner: TaskOpening, scope: TaskLifecycleScope): Promise<void> {
 		if (this.disposed || this.currentOpening() !== owner || this.taskLockAcquired) return
 		const taskId = owner.taskId
+		if (this.task?.taskId === taskId && this.task.upgradeImportPending) {
+			await this.reopenForUpgradeImport(taskId, scope)
+			return
+		}
 		const acquired = await this.lockService.acquireTaskLock(taskId)
 		if (!acquired) {
 			// Another instance won the released lock. Stay read-only and let the
@@ -3362,6 +3366,36 @@ export class Controller {
 		// Notify webview so the read-only banner is removed
 		await this.postStateToWebview()
 		Logger.debug(`[Lock] Task ${taskId} activated after force-unlock`)
+	}
+
+	/**
+	 * Reopen a session that hydrated without the history an earlier version left.
+	 *
+	 * Opening it in place would let its first write close the import off for
+	 * good. Reopening runs the import before the kernel reads the stores, and
+	 * reads every store fresh. initTask takes the lock itself; if another window
+	 * wins it, the task opens read-only again and the poll resumes.
+	 *
+	 * A takeover runs from a timer with no caller to report to, so a failed
+	 * reopen is shown to the user rather than leaving an emptied chat behind.
+	 */
+	private async reopenForUpgradeImport(taskId: string, scope: TaskLifecycleScope): Promise<void> {
+		Logger.info(`[Lock] Reopening task ${taskId} to import data from an earlier version`)
+		const history = await this.getTaskWithId(taskId)
+		await scope.clearTask({ suppressPostState: true })
+		try {
+			await this.initTask(undefined, undefined, undefined, history.historyItem, undefined, {
+				activateHistory: true,
+				skipInitialClear: true,
+			})
+		} catch (error) {
+			HostProvider.window.showMessage({
+				type: ShowMessageType.ERROR,
+				message: `Could not reopen the task to import its earlier conversation: ${error instanceof Error ? error.message : String(error)}`,
+			})
+			await this.postStateToWebview()
+			throw error
+		}
 	}
 
 	/**

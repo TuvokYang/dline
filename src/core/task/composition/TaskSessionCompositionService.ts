@@ -31,7 +31,6 @@ import { MessageStateCompactionCards } from "../compaction/MessageStateCompactio
 import { MessageStateCompactionFailure } from "../compaction/MessageStateCompactionFailure"
 import { MessageStateCompactionLanding } from "../compaction/MessageStateCompactionLanding"
 import { ProviderCompactionService } from "../compaction/ProviderCompactionService"
-import { importLegacyConversation } from "../conversation/LegacyConversationImport"
 import { DefaultProductionProviderService } from "../executors/provider/service/DefaultProductionProviderService"
 import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
@@ -44,11 +43,6 @@ import {
 	type TaskCompletionProjectionUpdate,
 	TaskCompletionProjector,
 } from "../history/TaskCompletionProjector"
-import {
-	LegacyInputQueueCleanupPendingError,
-	legacyInputQueueSource,
-	migrateLegacyInputQueue,
-} from "../input-queue/LegacyInputQueueMigration"
 import type { TaskState } from "../kernel"
 import { MessageStateHandler } from "../message-state"
 import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback, perRequestHistory } from "../new-task/new-task-feedback"
@@ -96,6 +90,7 @@ import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { ToolValidator } from "../tools/ToolValidator"
 import type { TaskSessionHostFactory } from "./TaskSessionHostFactory"
 import type { TaskSessionPorts } from "./TaskSessionPorts"
+import { importTaskUpgrade, taskUpgradeImportPending } from "./TaskUpgradeImport"
 
 /**
  * Message stores the caller opened for this incarnation.
@@ -190,12 +185,16 @@ export class TaskSessionCompositionService {
 		resources: SessionResourceScope,
 	): Promise<ActiveTaskSession> {
 		const taskIncarnationId = options.taskIncarnationId ?? randomUUID()
-		// Before the kernel reads either durable source, so a task from an older
-		// build hydrates with the conversation and retained input it already had.
-		if (!options.deferRestoredCommands) {
-			await this.importLegacyConversation(options, persistence)
-			await this.importLegacyInputQueue(options, persistence)
+		const upgrade = {
+			taskId: options.taskId,
+			persistence,
+			apiHistory: options.messages.apiConversation.getAll(),
 		}
+		// A window without the task lock must not write the stores; its session
+		// records the pending import so the window reopens it once it owns them.
+		let upgradeImportPending = false
+		if (options.deferRestoredCommands) upgradeImportPending = await taskUpgradeImportPending(upgrade)
+		else await importTaskUpgrade(upgrade)
 		const settings = new TaskStateManager(options.taskId, options.stateManager)
 		const toolState = new DefaultToolHandlerState()
 		// One view per task: requests, compaction and every conversation reader
@@ -618,6 +617,7 @@ export class TaskSessionCompositionService {
 			taskId: options.taskId,
 			openReason: options.openReason,
 			deferRestoredCommands: options.deferRestoredCommands,
+			upgradeImportPending,
 			readAnchorRows: () => messages.durableClineMessages,
 			persistence,
 			conversationView,
@@ -864,59 +864,6 @@ export class TaskSessionCompositionService {
 		if (options.collaboration.writable) collaboration.activate()
 		interactions.bind(session)
 		return session
-	}
-
-	/**
-	 * Carry a pre-journal conversation into the journal.
-	 *
-	 * Only the window owning the task lock writes `journal.db`, so a window
-	 * that opens the task read-only leaves it to the owner. A failed import is
-	 * logged and the task still opens: the import resumes on the next open, and
-	 * refusing the task would lose more than the missing context.
-	 */
-	private async importLegacyConversation(
-		options: OpenTaskSessionCompositionOptions,
-		persistence: TaskPersistenceAssembly,
-	): Promise<void> {
-		try {
-			const imported = await importLegacyConversation({
-				journal: persistence.ports.journal,
-				payloads: persistence.payloads,
-				legacy: options.messages.apiConversation.getAll(),
-			})
-			if (imported > 0) Logger.info(`[Task ${options.taskId}] Imported ${imported} legacy conversation messages`)
-		} catch (error) {
-			Logger.warn(`[Task ${options.taskId}] Legacy conversation import failed; it resumes on the next open`, error)
-		}
-	}
-
-	/** Move the retired snapshot queue into canonical intake before kernel hydrate. */
-	private async importLegacyInputQueue(
-		options: OpenTaskSessionCompositionOptions,
-		persistence: TaskPersistenceAssembly,
-	): Promise<void> {
-		try {
-			const result = await migrateLegacyInputQueue({
-				taskId: options.taskId,
-				source: await legacyInputQueueSource(options.taskId),
-				vault: persistence.ports.vault,
-				payloads: persistence.payloads,
-			})
-			if (result.kind === "imported") {
-				Logger.info(
-					`[Task ${options.taskId}] Imported ${result.importedEntries} legacy queued inputs; skipped ${result.skippedDeliveringEntries} possibly delivered and ${result.skippedInvalidEntries} invalid entries`,
-				)
-			}
-		} catch (error) {
-			if (error instanceof LegacyInputQueueCleanupPendingError) {
-				Logger.warn(
-					`[Task ${options.taskId}] Legacy input queue cleanup failed; canonical state is safe and cleanup resumes on the next open`,
-					error.cause,
-				)
-				return
-			}
-			throw error
-		}
 	}
 
 	/**

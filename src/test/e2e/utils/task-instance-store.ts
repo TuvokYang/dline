@@ -189,9 +189,9 @@ function journalSourceOf(message: ClineStorageMessage): JournalSource {
  * Replaces the provider conversation of a closed task with `transform(current)`.
  *
  * The journal stays append-only: the earlier entries are rewound and the new
- * conversation is appended as messages, the way the runtime imports a
- * pre-journal history. Operation ids never use the `legacy:` prefix, so a
- * leftover `api_conversation_history.jsonl` is not imported on top.
+ * conversation is appended as messages, the way the runtime imports
+ * `api_conversation_history.jsonl`. Operation ids never use the import's
+ * `api-history:` prefix, so a leftover file is not imported on top.
  */
 export async function rewriteTaskConversation(
 	dlineDocsDir: string,
@@ -205,7 +205,7 @@ export async function rewriteTaskConversation(
 		for (const [index, message] of next.entries()) {
 			await journal.append({
 				operationId: `${operation}:${index}`,
-				payloadRef: await payloads.put(encodeTaskPayload({ kind: "legacy_message", message })),
+				payloadRef: await payloads.put(encodeTaskPayload({ kind: "api_history_message", message })),
 				source: journalSourceOf(message),
 				watermark: journal.watermark(),
 			})

@@ -105,9 +105,14 @@ export async function resolveTaskDirectory(taskId: string): Promise<string> {
 	return path.join(await getDlineDocumentsPath(), "tasks", taskId)
 }
 
-/** Compatibility source written by task runtimes before canonical `state.json` ownership. */
-export async function getLegacyTaskSnapshotPath(taskId: string): Promise<string> {
-	return path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.taskSnapshot)
+/**
+ * `snapshot.json`, which earlier versions wrote; read only to import its input queue into `state.json`.
+ *
+ * Resolved without creating the task directory: a window that only checks for
+ * the file must not leave a directory behind.
+ */
+export async function getTaskSnapshotPath(taskId: string): Promise<string> {
+	return path.join(await resolveTaskDirectory(taskId), GlobalFileNames.taskSnapshot)
 }
 
 export async function ensureRulesDirectoryExists(): Promise<string> {

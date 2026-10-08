@@ -329,14 +329,14 @@ export interface EnvironmentDetailsEnvelope {
 }
 
 /**
- * A provider message written before the journal existed, carried in as stored.
+ * A message imported from `api_conversation_history.jsonl`, carried in as stored.
  *
- * Tasks from before the journal kept their conversation only in
- * `api_conversation_history.jsonl`. Each message is replayed verbatim, because
- * no runtime payload can reconstruct what an older build sent.
+ * Tasks from before the journal kept their conversation only in that file.
+ * Each message is replayed verbatim, because no runtime payload can
+ * reconstruct what an earlier version sent.
  */
-export interface LegacyMessageEnvelope {
-	readonly kind: "legacy_message"
+export interface ApiHistoryMessageEnvelope {
+	readonly kind: "api_history_message"
 	readonly message: ClineStorageMessage
 }
 

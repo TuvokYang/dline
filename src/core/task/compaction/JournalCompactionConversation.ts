@@ -83,15 +83,15 @@ type ToolNames = ReadonlyMap<string, string>
  * Environment snapshots, background results and turn continuations are
  * journaled as user-role text too, and their journal source is not reliable
  * for entries written before sources were recorded, so authorship is read
- * from the payload itself. A legacy user message that answers no call is the
- * task or feedback an older build recorded, so it counts as written too.
+ * from the payload itself. An imported user message that answers no call is
+ * the task or feedback an earlier version recorded, so it counts as written too.
  */
 const USER_AUTHORED_KINDS: ReadonlySet<string> = new Set([
 	"user_input",
 	"dialog_draft",
 	"dialog_selection",
 	"task_handoff",
-	"legacy_message",
+	"api_history_message",
 ])
 
 /**

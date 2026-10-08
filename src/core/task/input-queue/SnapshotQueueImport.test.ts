@@ -14,17 +14,19 @@ import {
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import {
-	FileLegacyInputQueueSource,
-	LegacyInputQueueCleanupPendingError,
-	LegacyInputQueueIntegrityError,
-	type LegacyInputQueueSource,
-	migrateLegacyInputQueue,
-} from "./LegacyInputQueueMigration"
+	importSnapshotQueue,
+	SnapshotQueueChangedError,
+	SnapshotQueueCleanupPendingError,
+	SnapshotQueueFile,
+	type SnapshotQueueSource,
+} from "./SnapshotQueueImport"
 
 const temporaryDirectories: string[] = []
 
+const EMPTY_JOURNAL = { seq: 0 }
+
 async function temporaryDirectory(): Promise<string> {
-	const directory = await mkdtemp(path.join(os.tmpdir(), "dline-legacy-input-queue-"))
+	const directory = await mkdtemp(path.join(os.tmpdir(), "dline-snapshot-queue-"))
 	temporaryDirectories.push(directory)
 	return directory
 }
@@ -51,7 +53,7 @@ async function payloadsOf(vault: InMemoryStateVault, payloads: InMemoryTaskPaylo
 	)
 }
 
-class ControlledSource implements LegacyInputQueueSource {
+class ControlledSource implements SnapshotQueueSource {
 	readonly removeInputQueue = vi.fn(async (_expectedFingerprint: string) => undefined)
 
 	constructor(public current: { readonly fingerprint: string; readonly entries: readonly unknown[] } | undefined) {}
@@ -71,7 +73,7 @@ class FailingVault implements StateVault {
 	}
 }
 
-describe("legacy input queue migration", () => {
+describe("snapshot queue import", () => {
 	afterEach(async () => {
 		vi.restoreAllMocks()
 		await Promise.all(
@@ -125,11 +127,12 @@ describe("legacy input queue migration", () => {
 		const payloads = new InMemoryTaskPayloadStore()
 
 		await expect(
-			migrateLegacyInputQueue({
+			importSnapshotQueue({
 				taskId: "task-1",
-				source: new FileLegacyInputQueueSource(snapshotPath),
+				source: new SnapshotQueueFile(snapshotPath),
 				vault,
 				payloads,
+				journalTail: EMPTY_JOURNAL,
 			}),
 		).resolves.toMatchObject({ kind: "imported", importedEntries: 2, skippedDeliveringEntries: 1 })
 
@@ -154,7 +157,7 @@ describe("legacy input queue migration", () => {
 				state: "accepted",
 			},
 		])
-		expect(stored?.state.legacyInputQueueV1).toMatchObject({ importedEntryCount: 2, skippedDeliveringCount: 1 })
+		expect(stored?.state.snapshotQueueImport).toMatchObject({ importedEntryCount: 2, skippedDeliveringCount: 1 })
 		expect(await payloadsOf(vault, payloads)).toEqual([
 			{
 				kind: "user_input",
@@ -191,7 +194,7 @@ describe("legacy input queue migration", () => {
 			],
 		})
 
-		await migrateLegacyInputQueue({ taskId: "task-1", source, vault, payloads })
+		await importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL })
 
 		const reloaded = await new FileTaskStateVault(path.join(directory, "state.json")).load("task-1")
 		if (!reloaded) throw new Error("expected reloaded canonical state")
@@ -201,7 +204,7 @@ describe("legacy input queue migration", () => {
 			journalTail: { seq: 0 },
 			openReason: "resume",
 		})
-		expect(restored.state.legacyInputQueueV1).toMatchObject({
+		expect(restored.state.snapshotQueueImport).toMatchObject({
 			sourceFingerprint: "sha256:reload-source",
 			importedEntryCount: 2,
 		})
@@ -211,10 +214,35 @@ describe("legacy input queue migration", () => {
 		])
 	})
 
+	it("positions a state it creates at the journal tail, so the imported conversation counts as read", async () => {
+		const vault = new InMemoryStateVault()
+		const source = new ControlledSource({
+			fingerprint: "sha256:source-tail",
+			entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
+		})
+
+		await importSnapshotQueue({
+			taskId: "task-1",
+			source,
+			vault,
+			payloads: new InMemoryTaskPayloadStore(),
+			journalTail: { seq: 4 },
+		})
+
+		const migrated = await vault.load("task-1")
+		if (!migrated) throw new Error("expected migrated canonical state")
+		expect(migrated.state.journalWatermark).toEqual({ seq: 4 })
+		const restored = hydrate({ taskId: "task-1", snapshot: migrated.state, journalTail: { seq: 4 }, openReason: "resume" })
+		expect(restored.form).toBe("interrupted")
+		expect(restored.state.journalWatermark).toEqual({ seq: 4 })
+		expect(restored.state.dialog.primary?.kind).toBe("resume")
+		expect(restored.state.intake.queued.map((entry) => [entry.entryId, entry.state])).toEqual([["queued-1", "accepted"]])
+	})
+
 	it("saves canonical state before cleanup and retries only cleanup after a failed source rewrite", async () => {
 		const source = new ControlledSource({
 			fingerprint: "sha256:source-a",
-			entries: [{ id: "legacy-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
+			entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
 		})
 		source.removeInputQueue.mockRejectedValueOnce(new Error("source rewrite failed"))
 		const vault = new InMemoryStateVault()
@@ -222,14 +250,16 @@ describe("legacy input queue migration", () => {
 		const payloads = new InMemoryTaskPayloadStore()
 		const put = vi.spyOn(payloads, "put")
 
-		await expect(migrateLegacyInputQueue({ taskId: "task-1", source, vault, payloads })).rejects.toBeInstanceOf(
-			LegacyInputQueueCleanupPendingError,
-		)
+		await expect(
+			importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
+		).rejects.toBeInstanceOf(SnapshotQueueCleanupPendingError)
 		expect((await vault.load("task-1"))?.state.intake.queued).toHaveLength(1)
 		expect(save).toHaveBeenCalledOnce()
 		expect(put).toHaveBeenCalledOnce()
 
-		await expect(migrateLegacyInputQueue({ taskId: "task-1", source, vault, payloads })).resolves.toMatchObject({
+		await expect(
+			importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
+		).resolves.toMatchObject({
 			kind: "cleaned",
 			importedEntries: 1,
 		})
@@ -238,43 +268,49 @@ describe("legacy input queue migration", () => {
 		expect(source.removeInputQueue).toHaveBeenCalledTimes(2)
 	})
 
-	it("fails closed when the retained legacy source changes after canonical state was saved", async () => {
+	it("fails closed when snapshot.json changes after state.json was saved", async () => {
 		const source = new ControlledSource({
 			fingerprint: "sha256:source-a",
-			entries: [{ id: "legacy-1", text: "A", images: [], files: [], mode: "queued", sequence: 0 }],
+			entries: [{ id: "queued-1", text: "A", images: [], files: [], mode: "queued", sequence: 0 }],
 		})
 		source.removeInputQueue.mockRejectedValueOnce(new Error("source rewrite failed"))
 		const vault = new InMemoryStateVault()
 		const payloads = new InMemoryTaskPayloadStore()
-		await expect(migrateLegacyInputQueue({ taskId: "task-1", source, vault, payloads })).rejects.toBeInstanceOf(
-			LegacyInputQueueCleanupPendingError,
-		)
+		await expect(
+			importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
+		).rejects.toBeInstanceOf(SnapshotQueueCleanupPendingError)
 
 		source.current = {
 			fingerprint: "sha256:source-b",
-			entries: [{ id: "legacy-1", text: "B", images: [], files: [], mode: "queued", sequence: 0 }],
+			entries: [{ id: "queued-1", text: "B", images: [], files: [], mode: "queued", sequence: 0 }],
 		}
-		await expect(migrateLegacyInputQueue({ taskId: "task-1", source, vault, payloads })).rejects.toBeInstanceOf(
-			LegacyInputQueueIntegrityError,
-		)
+		await expect(
+			importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
+		).rejects.toBeInstanceOf(SnapshotQueueChangedError)
 		expect((await payloadsOf(vault, payloads))[0]?.text).toBe("A")
 		expect(source.removeInputQueue).toHaveBeenCalledOnce()
 	})
 
-	it("does not clear the legacy source when the canonical snapshot cannot be saved", async () => {
+	it("does not clear snapshot.json when state.json cannot be saved", async () => {
 		const source = new ControlledSource({
 			fingerprint: "sha256:source-a",
-			entries: [{ id: "legacy-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
+			entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
 		})
 		const vault = new FailingVault()
 
 		await expect(
-			migrateLegacyInputQueue({ taskId: "task-1", source, vault, payloads: new InMemoryTaskPayloadStore() }),
+			importSnapshotQueue({
+				taskId: "task-1",
+				source,
+				vault,
+				payloads: new InMemoryTaskPayloadStore(),
+				journalTail: EMPTY_JOURNAL,
+			}),
 		).rejects.toThrow("state save failed")
 		expect(source.removeInputQueue).not.toHaveBeenCalled()
 	})
 
-	it("preserves an existing canonical snapshot and its outbox while appending the legacy retained queue", async () => {
+	it("preserves an existing state.json and its outbox while appending the imported queue", async () => {
 		const vault = new InMemoryStateVault()
 		const original = createInitialTaskState("task-1")
 		await vault.save({
@@ -283,14 +319,20 @@ describe("legacy input queue migration", () => {
 		})
 		const source = new ControlledSource({
 			fingerprint: "sha256:source-a",
-			entries: [{ id: "legacy-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
+			entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
 		})
 
-		await migrateLegacyInputQueue({ taskId: "task-1", source, vault, payloads: new InMemoryTaskPayloadStore() })
+		await importSnapshotQueue({
+			taskId: "task-1",
+			source,
+			vault,
+			payloads: new InMemoryTaskPayloadStore(),
+			journalTail: EMPTY_JOURNAL,
+		})
 
 		const migrated = await vault.load("task-1")
 		expect(migrated?.state.revision).toBe(7)
-		expect(migrated?.state.intake.queued.map((entry) => entry.entryId)).toEqual(["legacy-1"])
+		expect(migrated?.state.intake.queued.map((entry) => entry.entryId)).toEqual(["queued-1"])
 		expect(migrated?.outbox).toEqual([
 			{ type: "provider.start", commandId: "command-1", originRevision: 7, generation: 0, draftRef: "draft:1" },
 		])

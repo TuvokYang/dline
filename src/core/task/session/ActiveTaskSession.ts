@@ -43,6 +43,7 @@ export interface ActiveTaskSessionOptions {
 	/** Shrinks that conversation when the provider refuses a request as longer than its window. */
 	readonly contextTruncation?: ContextTruncationPort
 	readonly releases?: readonly ActiveTaskSessionReleasePort[]
+	readonly upgradeImportPending?: boolean
 }
 
 /** Owns one task incarnation without expanding the six-use-case Task facade. */
@@ -58,6 +59,15 @@ export class ActiveTaskSession {
 	readonly approvalFeedback: ToolApprovalFeedbackLedger
 	readonly conversation: CompactionConversationPort
 	readonly contextTruncation: ContextTruncationPort | undefined
+	/**
+	 * Opened without the task lock while data from an earlier version still
+	 * waited to be migrated.
+	 *
+	 * Such a session hydrated without that history and may not write it, so
+	 * opening it in place once the window owns the task would lose the history
+	 * for good. The owner reopens it instead, which runs the migration first.
+	 */
+	readonly upgradeImportPending: boolean
 	private disposePromise: Promise<void> | undefined
 	private disposeMode: "ordinary" | "checkpoint_restore" | undefined
 	private checkpointRestoreFencePromise: Promise<CheckpointRestoreFence> | undefined
@@ -77,6 +87,7 @@ export class ActiveTaskSession {
 		this.approvalFeedback = options.approvalFeedback
 		this.conversation = options.conversation
 		this.contextTruncation = options.contextTruncation
+		this.upgradeImportPending = options.upgradeImportPending === true
 	}
 
 	/**

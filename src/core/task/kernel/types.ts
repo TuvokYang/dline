@@ -284,8 +284,8 @@ export interface IntakeSlice {
 	readonly coTask: readonly IntakeEntry[]
 }
 
-/** Durable proof that the legacy `snapshot.json.inputQueue` authority was consumed. */
-export interface LegacyInputQueueMigrationV1 {
+/** Durable proof that the input queue an earlier version kept in `snapshot.json` was imported. */
+export interface SnapshotQueueImportMarker {
 	readonly sourceFingerprint: string
 	readonly importedEntryCount: number
 	readonly skippedDeliveringCount: number
@@ -314,7 +314,7 @@ export interface TaskState {
 	readonly turn: TurnSlice
 	readonly dialog: DialogSlice
 	readonly intake: IntakeSlice
-	readonly legacyInputQueueV1?: LegacyInputQueueMigrationV1
+	readonly snapshotQueueImport?: SnapshotQueueImportMarker
 	readonly halt: HaltSlice
 	readonly journalWatermark?: JournalWatermark
 }

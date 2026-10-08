@@ -5,6 +5,7 @@ import type { TaskPayloadStore } from "../../../stores"
 import { readAttachedDocuments } from "../../../stores/payload/AttachedDocuments"
 import { decodeTaskPayload } from "../../../stores/payload/TaskPayloadCodec"
 import type {
+	ApiHistoryMessageEnvelope,
 	BackgroundResultsEnvelope,
 	CompactionContinuation,
 	CompactionSummaryEnvelope,
@@ -12,7 +13,6 @@ import type {
 	DialogDraftEnvelope,
 	DialogSelectionEnvelope,
 	EnvironmentDetailsEnvelope,
-	LegacyMessageEnvelope,
 	ProviderFinalEnvelope,
 	ProviderInterruptedEnvelope,
 	TaskHandoffEnvelope,
@@ -42,7 +42,7 @@ type JournalPayload =
 	| ToolTerminalManifestEnvelope
 	| TaskHandoffEnvelope
 	| TurnContinuationEnvelope
-	| LegacyMessageEnvelope
+	| ApiHistoryMessageEnvelope
 	| { readonly kind: string; readonly [key: string]: unknown }
 
 /**
@@ -222,9 +222,9 @@ export class ProviderJournalMessageMaterializer {
 				// projection always has; an assistant-first request is invalid for
 				// providers that require the conversation to start with the user.
 				return textMessage((payload as CompactionSummaryEnvelope).text)
-			case "legacy_message":
-				// Written by an older build and replayed exactly as it was sent.
-				return (payload as LegacyMessageEnvelope).message
+			case "api_history_message":
+				// Written by an earlier version and replayed exactly as it was sent.
+				return (payload as ApiHistoryMessageEnvelope).message
 			case "provider_partial":
 				return undefined
 			default:

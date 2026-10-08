@@ -10,6 +10,7 @@ import {
 	type OpenTaskSessionCompositionOptions,
 	TaskSessionCompositionService,
 } from "./TaskSessionCompositionService"
+import { ApiHistoryImportError } from "./TaskUpgradeImport"
 
 const persistenceMock = vi.hoisted(() => ({ open: vi.fn() }))
 
@@ -67,6 +68,28 @@ describe("TaskSessionCompositionService", () => {
 		stores.uiMessage.close.mockRejectedValue(new Error("close failed"))
 
 		await expect(new TaskSessionCompositionService().open(openOptions(stores))).rejects.toBe(failure)
+
+		expect(persistence.close).toHaveBeenCalledOnce()
+		expect(stores.uiMessage.close).toHaveBeenCalledOnce()
+		expect(stores.apiConversation.close).toHaveBeenCalledOnce()
+	})
+
+	// A task opened after a failed import would lose its history with the first
+	// journal write; refusing the open keeps the import resumable.
+	it("fails the open and releases every store when the saved conversation cannot be imported", async () => {
+		const stores = messageStores()
+		stores.apiConversation.getAll = () =>
+			[{ role: "user", content: [{ type: "text", text: "<task>fix it</task>" }] }] as never
+		const journal = new InMemoryConversationJournal()
+		vi.spyOn(journal, "append").mockRejectedValue(new Error("journal.db is read-only"))
+		const persistence = {
+			close: vi.fn(async () => undefined),
+			ports: { journal },
+			payloads: { put: vi.fn(async () => "sha256:payload"), read: vi.fn() },
+		} as unknown as TaskPersistenceAssembly
+		persistenceMock.open.mockResolvedValue(persistence)
+
+		await expect(new TaskSessionCompositionService().open(openOptions(stores))).rejects.toBeInstanceOf(ApiHistoryImportError)
 
 		expect(persistence.close).toHaveBeenCalledOnce()
 		expect(stores.uiMessage.close).toHaveBeenCalledOnce()

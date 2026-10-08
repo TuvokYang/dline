@@ -14,6 +14,8 @@ export interface OpenActiveTaskSessionOptions extends TaskCompositionOptions {
 	readonly inputAdmission: TaskInputAdmissionPort
 	/** Carries out lifecycle commands such as `/compact`; absent means they stay prose. */
 	readonly lifecycleBarriers?: LifecycleBarrierPort
+	/** See {@link ActiveTaskSession.upgradeImportPending}. */
+	readonly upgradeImportPending?: boolean
 }
 
 function createInputIdentity(taskId: string): TaskInputIdentityPort {
@@ -46,5 +48,6 @@ export async function openActiveTaskSession(options: OpenActiveTaskSessionOption
 		conversation: composed.conversation,
 		contextTruncation: composed.contextTruncation,
 		releases: options.releases,
+		upgradeImportPending: options.upgradeImportPending,
 	})
 }
