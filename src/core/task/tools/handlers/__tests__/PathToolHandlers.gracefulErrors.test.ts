@@ -8,7 +8,7 @@ import { ClineDefaultTool } from "@shared/tools"
 import * as pathUtils from "@utils/path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 // sinon import removed: using vitest globals
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import { ToolValidator } from "../../ToolValidator"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { ListCodeDefinitionNamesToolHandler } from "../ListCodeDefinitionNamesToolHandler"
@@ -34,7 +34,7 @@ let tmpDir: string
 type SearchFilesHandlerTestAccess = { determineSearchPaths: () => never }
 
 function createConfig() {
-	const taskState = new TaskState()
+	const taskState = new DefaultToolHandlerState()
 
 	const callbacks = {
 		say: vi.fn().mockResolvedValue(undefined),

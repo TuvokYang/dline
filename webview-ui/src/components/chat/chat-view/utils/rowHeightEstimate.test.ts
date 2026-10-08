@@ -1,8 +1,8 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { estimateMessageHeight, estimateRowHeight } from "./rowHeightEstimate"
 
-const say = (text: string): ClineMessage => ({ ts: 1, type: "say", say: "text", text }) as ClineMessage
+const say = (text: string): UiMessage => ({ ts: 1, type: "say", say: "text", text }) as UiMessage
 
 const fenced = (lines: number) =>
 	["intro", "```ts", ...Array.from({ length: lines }, (_, line) => `  const value = ${line}`), "```"].join("\n")
@@ -31,7 +31,7 @@ describe("estimateMessageHeight", () => {
 	})
 
 	it("leaves a message with no text alone", () => {
-		expect(estimateMessageHeight({ ts: 1 } as ClineMessage)).toBeUndefined()
+		expect(estimateMessageHeight({ ts: 1 } as UiMessage)).toBeUndefined()
 		expect(estimateMessageHeight(say(""))).toBeUndefined()
 	})
 

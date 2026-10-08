@@ -6,7 +6,7 @@ import { ClineDefaultTool } from "@shared/tools"
 import * as pathUtils from "@utils/path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 // sinon import removed: using vitest globals
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import { ToolValidator } from "../../ToolValidator"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { ReadFileToolHandler } from "../ReadFileToolHandler"
@@ -27,7 +27,7 @@ import { ReadFileToolHandler } from "../ReadFileToolHandler"
 let tmpDir: string
 
 function createConfig() {
-	const taskState = new TaskState()
+	const taskState = new DefaultToolHandlerState()
 
 	const callbacks = {
 		say: vi.fn().mockResolvedValue(undefined),

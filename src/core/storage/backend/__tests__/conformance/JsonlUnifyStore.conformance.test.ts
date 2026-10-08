@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterAll, beforeAll, describe } from "vitest"
-import { JsonlUnifyStoreBackend } from "../../jsonl/JsonlUnifyStore"
+import { JsonlUnifyStoreBackend } from "../../jsonl/JsonlDatabase"
 import { runUnifyStoreConformance } from "./unify-store-conformance"
 
 describe("JsonlUnifyStore conformance", () => {

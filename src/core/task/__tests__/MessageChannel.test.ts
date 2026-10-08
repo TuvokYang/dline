@@ -1,26 +1,19 @@
 import { strict as assert } from "node:assert"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, it, vi } from "vitest"
-import { MessageChannel } from "../MessageChannel"
+import { MessageChannel, type MessageChannelState } from "../MessageChannel"
 import type { MessageStateHandler } from "../message-state"
-import type { TaskState } from "../TaskState"
+import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 
 function createMessageChannel(
 	options: {
-		pushMessage?: (message: ClineMessage) => void | Promise<void>
+		pushMessage?: (message: UiMessage) => void | Promise<void>
 		syncState?: () => Promise<void>
-		durableCommit?: (message: ClineMessage) => Promise<ClineMessage>
+		durableCommit?: (message: UiMessage) => Promise<UiMessage>
 	} = {},
 ) {
-	const clineMessages: ClineMessage[] = []
-	const taskState = {
-		abort: false,
-		askResponse: undefined,
-		askResponseText: undefined,
-		askResponseImages: undefined,
-		askResponseFiles: undefined,
-		lastMessageTs: undefined,
-	} as TaskState
+	const clineMessages: UiMessage[] = []
+	const taskState: DefaultToolHandlerState & MessageChannelState = new DefaultToolHandlerState()
 
 	let lastTs = 0
 	const flushUiMessages = vi.fn(async () => {})
@@ -32,15 +25,15 @@ function createMessageChannel(
 			get clineMessages() {
 				return clineMessages
 			},
-			addToClineMessages: async (message: ClineMessage) => {
+			addToClineMessages: async (message: UiMessage) => {
 				clineMessages.push(message)
 			},
-			updateClineMessage: async (index: number, updates: Partial<ClineMessage>) => {
+			updateClineMessage: async (index: number, updates: Partial<UiMessage>) => {
 				Object.assign(clineMessages[index], updates)
 			},
 			flushUiMessages,
 			flushMessageUpdate,
-			upsertClineMessageInMemory: async (message: ClineMessage) => {
+			upsertClineMessageInMemory: async (message: UiMessage) => {
 				const index = clineMessages.findIndex((candidate) => candidate.ts === message.ts)
 				if (index >= 0) {
 					clineMessages[index] = message
@@ -49,7 +42,7 @@ function createMessageChannel(
 				}
 				return message
 			},
-			finalizeClineMessage: async (message: ClineMessage) => {
+			finalizeClineMessage: async (message: UiMessage) => {
 				const index = clineMessages.findIndex((candidate) => candidate.ts === message.ts)
 				if (index >= 0) {
 					clineMessages[index] = message
@@ -58,7 +51,7 @@ function createMessageChannel(
 				}
 				return message
 			},
-			beginDurableClineMessage: (message: ClineMessage) => {
+			beginDurableClineMessage: (message: UiMessage) => {
 				const index = clineMessages.findIndex((candidate) => candidate.ts === message.ts)
 				if (index >= 0) clineMessages[index] = message
 				else clineMessages.push(message)
@@ -85,7 +78,7 @@ async function flushMicrotasks(iterations = 5) {
 describe("MessageChannel.say", () => {
 	it("allows lifecycle state snapshots while the task is aborted", async () => {
 		const { channel, clineMessages, taskState } = createMessageChannel()
-		taskState.abort = true
+		taskState.cancelOperations("test_task_aborted")
 
 		await channel.say("state_snapshot", JSON.stringify({ phase: "cancelling", apiIndex: 1, timestamp: Date.now() }))
 
@@ -95,7 +88,7 @@ describe("MessageChannel.say", () => {
 
 	it("rejects regular visible messages while the task is aborted", async () => {
 		const { channel, taskState } = createMessageChannel()
-		taskState.abort = true
+		taskState.cancelOperations("test_task_aborted")
 
 		await assert.rejects(channel.say("text", "should not continue after abort"), /Dline instance aborted/)
 	})
@@ -121,8 +114,8 @@ describe("MessageChannel.presentAsk", () => {
 	})
 
 	it("registers a synthesized history ask before a slow durable commit completes", async () => {
-		let releaseCommit!: (message: ClineMessage) => void
-		const commitGate = new Promise<ClineMessage>((resolve) => {
+		let releaseCommit!: (message: UiMessage) => void
+		const commitGate = new Promise<UiMessage>((resolve) => {
 			releaseCommit = resolve
 		})
 		const durableCommit = vi.fn(async () => await commitGate)
@@ -176,7 +169,7 @@ describe("MessageChannel.presentAsk", () => {
 			releaseCompletionSay = resolve
 		})
 		const delivered: string[] = []
-		const pushMessage = vi.fn(async (message: ClineMessage) => {
+		const pushMessage = vi.fn(async (message: UiMessage) => {
 			const identity = `${message.type}:${message.ask ?? message.say}`
 			if (message.type === "say" && message.say === "completion_result") {
 				await completionSayDelivery

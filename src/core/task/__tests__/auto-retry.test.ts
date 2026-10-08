@@ -1,13 +1,7 @@
 import { strict as assert } from "node:assert"
 import { describe, it } from "vitest"
-import {
-	AUTO_RETRY_DELAYS_MS,
-	getRetryDelay,
-	getStreamRetryDecision,
-	MAX_AUTO_RETRY_ATTEMPTS,
-	runDelayedStreamRetry,
-	waitRetryDelay,
-} from "../auto-retry"
+import { getStreamRetryDecision, runDelayedStreamRetry, waitRetryDelay } from "../auto-retry"
+import { AUTO_RETRY_DELAYS_MS, getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry-schedule"
 
 describe("auto retry recovery", () => {
 	it("stops the delayed retry when the task is aborted", async () => {

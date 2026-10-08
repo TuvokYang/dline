@@ -12,6 +12,7 @@ import { ModelRegistry } from "./core/model-registry/ModelRegistry"
 import { ensureSeedProviders } from "./core/model-registry/seed-initializer"
 import { getWorkspacePromptInputWatcherRegistry } from "./core/prompts/system-prompt-cache/WorkspacePromptInputWatcherRegistry"
 import { StateManager } from "./core/storage/StateManager"
+import type { FlowPhase } from "./core/task/kernel"
 import { AgentConfigLoader } from "./core/task/tools/subagent/AgentConfigLoader"
 import { ExtensionRegistryInfo } from "./registry"
 import { ErrorService } from "./services/error"
@@ -36,6 +37,9 @@ import { syncWorker } from "./shared/services/worker/sync"
 import { getBlobStoreSettingsFromEnv } from "./shared/services/worker/worker"
 import { getLatestAnnouncementId } from "./utils/announcements"
 import { arePathsEqual } from "./utils/path"
+
+/** Flow phases whose tasks no longer produce runtime work worth reporting as active. */
+const INACTIVE_TASK_PHASES = new Set<FlowPhase>(["completed", "error", "terminated", "paused"])
 
 /**
  * Performs intialization for Cline that is common to all platforms.
@@ -174,9 +178,7 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
 					.getActiveControllers()
 					.flatMap((controller) => {
 						const task = controller.task
-						return task && !["completed", "aborted", "paused"].includes(task.getActiveTaskPhase())
-							? [task.taskId]
-							: []
+						return task && !INACTIVE_TASK_PHASES.has(task.state().flow.phase) ? [task.taskId] : []
 					}),
 		})
 	} catch (error) {

@@ -4,12 +4,12 @@ import * as chokidar from "chokidar"
 import * as fs from "fs/promises"
 import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
-import { ClineSay } from "../../../shared/ExtensionMessage"
+import { UiSay } from "../../../shared/ExtensionMessage"
 import { Mode } from "../../../shared/storage/types"
 import { writeFile } from "../../../utils/fs"
 import { ensureTaskDirectoryExists } from "../../storage/disk"
 import { StateManager } from "../../storage/StateManager"
-import { TaskState } from "../TaskState"
+import type { ToolConversationState } from "../tools/state/ToolHandlerState"
 import {
 	appendToFocusChainHistory,
 	createFocusChainMarkdownContent,
@@ -39,24 +39,41 @@ export interface FocusChainProjectionOptions {
 	didSwitchFromPlan?: boolean
 }
 
+export interface FocusChainState
+	extends Pick<
+		ToolConversationState,
+		| "apiRequestCount"
+		| "apiRequestsSinceLastTodoUpdate"
+		| "currentFocusChainChecklist"
+		| "currentInProgressItemIndex"
+		| "todoListWasUpdatedByUser"
+		| "didRespondToPlanAskBySwitchingMode"
+		| "focusChainRejectionMessage"
+		| "focusChainHistory"
+		| "hasWarnedSkipOrder"
+		| "blockNextToolCalls"
+	> {
+	consecutiveMistakeCount: number
+}
+
 export interface FocusChainDependencies {
 	taskId: string
-	taskState: TaskState
+	taskState: FocusChainState
 	getMode: () => Mode
 	stateManager: StateManager
 	postStateToWebview: () => Promise<void>
-	say: (type: ClineSay, text?: string, images?: string[], files?: string[], partial?: boolean) => Promise<number | undefined>
+	say: (type: UiSay, text?: string, images?: string[], files?: string[], partial?: boolean) => Promise<number | undefined>
 	focusChainSettings: FocusChainSettings
 }
 
 export class FocusChainManager {
 	private taskId: string
-	private taskState: TaskState
+	private taskState: FocusChainState
 	private stateManager: StateManager
 	private getMode: () => Mode
 	private postStateToWebview: () => Promise<void>
 	private say: (
-		type: ClineSay,
+		type: UiSay,
 		text?: string,
 		images?: string[],
 		files?: string[],
@@ -101,14 +118,18 @@ export class FocusChainManager {
 			// remains null even if the file exists, causing "no task plan exists" errors
 			const existingChecklist = await this.readFocusChainFromDisk()
 			if (this.disposed) return
+			// A reopened task also shows the checklists that earlier plans replaced.
+			const existingHistory = await this.readFocusChainHistory()
+			if (this.disposed) return
+			if (existingHistory) this.taskState.focusChainHistory = existingHistory
 			if (existingChecklist) {
 				this.taskState.currentFocusChainChecklist = existingChecklist
 				this.taskState.currentInProgressItemIndex =
 					getUncheckedFocusChainItemAtIndex(existingChecklist, this.taskState.currentInProgressItemIndex) !== null
 						? this.taskState.currentInProgressItemIndex
 						: null
-				await this.postStateToWebview()
 			}
+			if (existingChecklist || existingHistory) await this.postStateToWebview()
 
 			if (this.disposed) return
 			// Initialize chokidar watcher

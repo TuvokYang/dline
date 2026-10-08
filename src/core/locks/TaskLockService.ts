@@ -9,6 +9,15 @@ import { Logger } from "@/shared/services/Logger"
 const LOCK_TTL_MS = 5 * 60 * 1000
 
 /**
+ * How long an unreadable lock file may be young before it counts as abandoned.
+ *
+ * The file is created exclusively and then written, so for a moment a live
+ * writer's lock is empty. Replacing it then would hand the task to two
+ * instances; a file still unreadable after this long has no writer left.
+ */
+const UNREADABLE_LOCK_GRACE_MS = 5_000
+
+/**
  * Structure stored in .lock JSON files.
  */
 interface LockData {
@@ -49,10 +58,18 @@ export class TaskLockService {
 		return path.join(this.tasksBasePath, taskId, ".lock")
 	}
 
+	/**
+	 * The lock the file records, or null when it records none.
+	 *
+	 * A lock that cannot be read or parsed, or that lacks its holder or time,
+	 * counts as no lock: treating it as held would lock the task forever,
+	 * because nothing would ever refresh or release a lock nobody can identify.
+	 */
 	private async readLockFile(taskId: string): Promise<LockData | null> {
 		try {
 			const raw = await fs.readFile(this.lockFilePath(taskId), "utf-8")
-			return JSON.parse(raw) as LockData
+			const parsed: unknown = JSON.parse(raw)
+			return isLockData(parsed) ? parsed : null
 		} catch {
 			return null
 		}
@@ -107,17 +124,35 @@ export class TaskLockService {
 			return true
 		}
 
-		const created = await this.writeLockFile(taskId)
+		let created = await this.writeLockFile(taskId)
+		const data = created ? undefined : await this.readLockFile(taskId)
+		if (data === null && (await this.isAbandoned(taskId))) {
+			// The file exists but records no lock: an unreadable leftover of a
+			// crashed or interrupted writer. It must not keep the task locked.
+			Logger.warn(`[Lock] Replacing unreadable lock file for task ${taskId}`)
+			await this.releaseTaskLock(taskId)
+			created = await this.writeLockFile(taskId)
+		}
 		if (created) {
 			Logger.debug(`[Lock] Acquired for task ${taskId}`)
 			return true
 		}
 
-		const data = await this.readLockFile(taskId)
-		if (data?.held_by === this.instanceAddress) return true
+		if ((data ?? (await this.readLockFile(taskId)))?.held_by === this.instanceAddress) return true
 
 		Logger.debug(`[Lock] Task ${taskId} locked by another instance`)
 		return false
+	}
+
+	/** Whether the lock file has been left alone longer than a live writer needs to fill it. */
+	private async isAbandoned(taskId: string): Promise<boolean> {
+		try {
+			const { mtimeMs } = await fs.stat(this.lockFilePath(taskId))
+			return Date.now() - mtimeMs > UNREADABLE_LOCK_GRACE_MS
+		} catch {
+			// Gone already: nothing holds the task.
+			return true
+		}
 	}
 
 	async releaseTaskLock(taskId: string): Promise<void> {
@@ -169,9 +204,11 @@ export class TaskLockService {
 				if (!entry.isDirectory()) continue
 				const lp = path.join(this.tasksBasePath, entry.name, ".lock")
 				try {
-					const raw = await fs.readFile(lp, "utf-8")
-					const data = JSON.parse(raw) as LockData
-					if (Date.now() - data.locked_at > LOCK_TTL_MS) {
+					const data = await this.readLockFile(entry.name)
+					// An unreadable lock holds nothing once no writer can still be filling it.
+					const orphaned =
+						data === null ? await this.isAbandoned(entry.name) : Date.now() - data.locked_at > LOCK_TTL_MS
+					if (orphaned) {
 						await fs.rm(lp, { force: true })
 						cleaned++
 					}
@@ -184,4 +221,15 @@ export class TaskLockService {
 			/* tasks dir may not exist */
 		}
 	}
+}
+
+function isLockData(value: unknown): value is LockData {
+	if (!value || typeof value !== "object") return false
+	const candidate = value as Partial<LockData>
+	return (
+		typeof candidate.held_by === "string" &&
+		candidate.held_by.length > 0 &&
+		typeof candidate.locked_at === "number" &&
+		Number.isFinite(candidate.locked_at)
+	)
 }

@@ -1,12 +1,17 @@
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { ClineDefaultTool } from "@shared/tools"
-import type { ToolResponse } from "../../index"
-import { statusFeedbackText } from "../../interaction/InteractionContinuation"
+import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { attachToolFeedbackFiles } from "../utils/UserFeedbackUtils"
+import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+
+/** The note typed with Acknowledge or Stop, framed for the tool result; empty when there is none. */
+function feedbackNote(text?: string): string {
+	const trimmed = text?.trim()
+	return trimmed ? `\n<feedback>\n${trimmed}\n</feedback>` : ""
+}
 
 export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = ClineDefaultTool.STATUS_UPDATE
@@ -21,7 +26,7 @@ export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
 		await uiHelpers.say("text", message, undefined, undefined, true, block.ts).catch(() => {})
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const response: string | undefined = (block.params as Record<string, string>).response
 		const requiresAck: boolean = (block.params as Record<string, string>).requires_acknowledgment === "true"
 
@@ -50,14 +55,29 @@ export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
 				presentation: response,
 				existingTs: block.ts,
 			})
-			// Attached images and files reach the model as their own blocks, never as data URLs in the text.
-			const feedback = statusFeedbackText(outcome.draft?.text)
-			const fileContent = await attachToolFeedbackFiles(config.taskState.userMessageContent, outcome.draft?.files)
+			// The note typed with Acknowledge or Stop is the user's own message, so it
+			// is shown in the chat just as a follow-up reply is.
+			if (outcome.draft?.text?.trim() || outcome.draft?.images.length || outcome.draft?.files.length) {
+				await sayFeedbackOnce(
+					config,
+					"messageResponse",
+					outcome.draft.text,
+					outcome.draft.images,
+					outcome.draft.files,
+					outcome,
+				)
+			}
+			// Images and files reach the model as content, never as their data URLs or paths in text.
+			const attachments = await attachToolFeedbackFiles(outcome.draft?.files)
+			const note = feedbackNote(outcome.draft?.text)
 			const message =
 				outcome.actionId === "stop"
-					? `[STATUS_UPDATE] User chose to stop.${feedback} Wait for further instructions.`
-					: `[STATUS_UPDATE] User acknowledged.${feedback} Continue with your next tool call.`
-			return formatResponse.toolResult(message, outcome.draft?.images, fileContent)
+					? `[STATUS_UPDATE] User chose to stop.${note} Wait for further instructions.`
+					: `[STATUS_UPDATE] User acknowledged.${note} Continue with your next tool call.`
+			return withToolDocuments(
+				formatResponse.toolResult(message, outcome.draft?.images, attachments.text),
+				attachments.documents,
+			)
 		}
 
 		const toolMsg = JSON.stringify({ tool: "statusUpdate", content: response })

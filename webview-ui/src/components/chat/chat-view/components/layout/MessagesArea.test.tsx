@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import React from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -14,12 +14,12 @@ interface VirtuosoTestProps {
 
 const mocks = vi.hoisted(() => ({
 	fetchMessage: vi.fn(),
-	initialMessages: [] as ClineMessage[],
+	initialMessages: [] as UiMessage[],
 	initialFirstItemIndex: 0,
 	totalMessageCount: 0,
-	currentMessages: [] as ClineMessage[],
+	currentMessages: [] as UiMessage[],
 	currentFirstItemIndex: 0,
-	setCurrentMessages: undefined as React.Dispatch<React.SetStateAction<ClineMessage[]>> | undefined,
+	setCurrentMessages: undefined as React.Dispatch<React.SetStateAction<UiMessage[]>> | undefined,
 	virtuosoProps: undefined as VirtuosoTestProps | undefined,
 	scrollToIndex: vi.fn(),
 	/** Row wrappers the mock list renders; zero keeps the scroller detached. */
@@ -59,7 +59,7 @@ vi.mock("@/services/grpc-client", () => ({
 }))
 
 vi.mock("@shared/proto-conversions/cline-message", () => ({
-	convertProtoToClineMessage: (message: ClineMessage) => message,
+	convertProtoToClineMessage: (message: UiMessage) => message,
 }))
 
 vi.mock("react-virtuoso", async () => {
@@ -105,7 +105,7 @@ vi.mock("../messages/MessageRenderer", () => ({
 	createMessageRenderer: () => () => null,
 }))
 
-function createMessages(startIndex: number, count: number): ClineMessage[] {
+function createMessages(startIndex: number, count: number): UiMessage[] {
 	return Array.from({ length: count }, (_, offset) => {
 		const absoluteIndex = startIndex + offset
 		return {
@@ -113,7 +113,7 @@ function createMessages(startIndex: number, count: number): ClineMessage[] {
 			type: "say",
 			say: "text",
 			text: `message-${absoluteIndex}`,
-		} as ClineMessage
+		} as UiMessage
 	})
 }
 
@@ -217,7 +217,7 @@ describe("MessagesArea sliding-window integration", () => {
 				say: "completion_result",
 				text: completionText,
 				partial: false,
-			} as ClineMessage,
+			} as UiMessage,
 		]
 		mocks.initialFirstItemIndex = 0
 		mocks.totalMessageCount = 2
@@ -297,6 +297,49 @@ describe("MessagesArea sliding-window integration", () => {
 		})
 		expect(mocks.fetchMessage.mock.calls[0][0]).toMatchObject({ referenceIndex: 100, count: 200 })
 		expect(mocks.fetchMessage.mock.calls[1][0]).toMatchObject({ referenceIndex: 50, count: 200 })
+	})
+
+	it("reaches a reply that arrived below the loaded window while following the bottom", async () => {
+		// The window stops one message short of the conversation, which is what a
+		// new reply looks like before it has been fetched.
+		mocks.initialMessages = createMessages(800, 200)
+		mocks.initialFirstItemIndex = 800
+		mocks.totalMessageCount = 1001
+		mocks.fetchMessage.mockResolvedValue({ messages: createMessages(1000, 1), startIndex: 1000 })
+		renderMessagesArea()
+
+		// Reported ranges are absolute row indexes and are clamped to the loaded
+		// rows, so this is "the viewport sits on the last loaded row".
+		act(() => {
+			mocks.virtuosoProps?.rangeChanged({ startIndex: Number.MAX_SAFE_INTEGER, endIndex: Number.MAX_SAFE_INTEGER })
+		})
+
+		// Withholding this fetch is self-defeating: an unloaded tail is exactly
+		// what suppresses the follow intent, so the reply would stay outside both
+		// the window and the view for the rest of the task.
+		await waitFor(() => {
+			expect(mocks.fetchMessage).toHaveBeenCalledTimes(1)
+		})
+		expect(mocks.fetchMessage.mock.calls[0][0]).toMatchObject({ referenceIndex: 1000, count: 1 })
+	})
+
+	it("still refuses to page history while following the bottom", async () => {
+		// Same viewport, but the leading side is the one short of the edge. Paging
+		// there on every layout event would eagerly pull in the whole transcript.
+		mocks.initialMessages = createMessages(800, 200)
+		mocks.initialFirstItemIndex = 800
+		mocks.totalMessageCount = 1000
+		mocks.fetchMessage.mockResolvedValue({ messages: [], startIndex: 600 })
+		renderMessagesArea()
+
+		act(() => {
+			mocks.virtuosoProps?.rangeChanged({ startIndex: 800, endIndex: 820 })
+		})
+
+		await act(async () => {
+			await Promise.resolve()
+		})
+		expect(mocks.fetchMessage).not.toHaveBeenCalled()
 	})
 
 	it("keeps the row the reader can see in place when older history merges in ahead of it", async () => {

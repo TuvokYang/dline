@@ -519,6 +519,25 @@ export async function* handleAnthropicMessagesApiStreamResponse(
 						// Ignore malformed partial input; the provider result still completes the lifecycle.
 					}
 				}
+				if (lastStartedToolCall.id && lastStartedToolCall.name) {
+					// The block stop is the only point where a Messages API tool call is
+					// known to be whole. Consumers that decide a turn has ended on a
+					// completed call, such as a turn-ending attempt_completion, never saw
+					// one without this boundary. The empty delta adds nothing to the
+					// arguments the earlier deltas already carried.
+					yield {
+						type: "tool_calls",
+						function_id: lastStartedToolCall.id,
+						phase: "completed",
+						argumentsMode: "delta",
+						tool_call: {
+							function: {
+								name: lastStartedToolCall.name,
+								arguments: "",
+							},
+						},
+					}
+				}
 				lastStartedToolCall.id = ""
 				lastStartedToolCall.name = ""
 				lastStartedToolCall.arguments = ""

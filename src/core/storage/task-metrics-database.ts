@@ -1,51 +1,84 @@
-import { access, mkdir, rename } from "node:fs/promises"
+import { access, rename } from "node:fs/promises"
 import path from "node:path"
 import { Logger } from "@shared/services/Logger"
 import { FileLock } from "./backend/jsonl/FileLock"
-import { getDlineDocumentsPath } from "./documents-path"
+import { GlobalFileNames } from "./disk"
+import { ensureInstanceLayout, InstanceDatabase, type InstanceLayout, resolveInstanceLayout } from "./instance"
 
-export const TASK_METRICS_DATABASE_NAME = "metrics.db"
+/** Files SQLite keeps beside a database; they belong to it and move with it. */
 const SQLITE_SIDE_FILES = ["-wal", "-shm"] as const
+
+/** One move per metrics database in this process, so concurrent openers share the locked attempt. */
 const pendingMoves = new Map<string, Promise<string>>()
 
-/** Resolve one metrics container; explicit locations are unchanged for existing storage consumers. */
+/**
+ * Location of the task's `metrics.db`, the one database every API metrics collection shares.
+ *
+ * A writer (the default) lays out the task directory and moves a pre-layout
+ * `<task-id>.db` into place, with its WAL and shared-memory files, under a
+ * cross-process lock. The move is all-or-nothing: a failure rolls the moved files
+ * back, so the database is never split between two names, and a move that cannot
+ * happen leaves the metrics readable where they are.
+ *
+ * A reader (`readOnly`) never creates or moves anything and rejects when the task
+ * recorded no metrics; {@link findExistingTaskMetricsDatabase} tests for that first.
+ *
+ * @param location an explicit database path, used as is (tests and tools).
+ */
 export async function resolveTaskMetricsDatabase(taskId: string, location?: string, readOnly = false): Promise<string> {
 	if (location) return location
-	if (!taskId || path.basename(taskId) !== taskId || taskId === "." || taskId === ".." || /[\\/]/.test(taskId)) {
-		throw new Error("Invalid Task metrics identity")
-	}
-	const directory = path.join(await getDlineDocumentsPath(), "tasks", taskId)
-	const target = path.join(directory, TASK_METRICS_DATABASE_NAME)
-	const key = process.platform === "win32" ? target.toLowerCase() : target
 	if (readOnly) {
-		await pendingMoves.get(key)
-		await FileLock.waitUntilUnlocked(target)
-		const legacy = path.join(directory, `${taskId}.db`)
-		if (!(await exists(target))) return legacy
-		if (!(await exists(legacy)) && (await hasLegacySideFiles(legacy))) {
-			throw new Error("Task metrics move is incomplete; writable recovery is required")
-		}
-		return target
+		const existing = await findExistingTaskMetricsDatabase(taskId)
+		if (!existing) throw new Error(`Task ${taskId} has no metrics database`)
+		return existing
 	}
+	const layout = await ensureInstanceLayout({ taskId })
+	const target = layout.database(InstanceDatabase.Metrics)
+	const key = moveKey(target)
 	let pending = pendingMoves.get(key)
 	if (!pending) {
-		pending = moveLegacyDatabase(directory, taskId, target)
+		pending = new FileLock().withLock(target, () => moveLegacyDatabase(layout, taskId, target))
 		pendingMoves.set(key, pending)
-		void pending.then(
-			() => pendingMoves.delete(key),
-			() => pendingMoves.delete(key),
-		)
+		// Every attempt re-checks under the lock, so another process's move is observed too.
+		const forget = () => pendingMoves.delete(key)
+		void pending.then(forget, forget)
 	}
 	return pending
 }
 
-async function moveLegacyDatabase(directory: string, taskId: string, target: string): Promise<string> {
-	await mkdir(directory, { recursive: true })
-	return new FileLock().withLock(target, () => moveDatabaseFiles(directory, taskId, target))
+/**
+ * The task's existing metrics database, without creating or moving anything.
+ *
+ * A history view reads what a past run recorded; it must not lay out a task
+ * directory or migrate files for a task nobody is running. A move in progress,
+ * in this process or another, is waited for, so a half-moved database is never
+ * read. A task that never recorded metrics has none, and the view shows none.
+ */
+export async function findExistingTaskMetricsDatabase(taskId: string): Promise<string | undefined> {
+	const layout = await resolveInstanceLayout({ taskId })
+	const target = layout.database(InstanceDatabase.Metrics)
+	await pendingMoves.get(moveKey(target))?.catch(() => undefined)
+	await FileLock.waitUntilUnlocked(target)
+	const legacy = legacyDatabase(layout, taskId)
+	if (await exists(target)) {
+		if (!(await exists(legacy)) && (await hasLegacySideFiles(legacy))) {
+			throw new Error(`Task ${taskId} metrics move is incomplete; the next run of the task recovers it`)
+		}
+		return target
+	}
+	return (await exists(legacy)) ? legacy : undefined
 }
 
-async function moveDatabaseFiles(directory: string, taskId: string, target: string): Promise<string> {
-	const legacy = path.join(directory, `${taskId}.db`)
+function legacyDatabase(layout: InstanceLayout, taskId: string): string {
+	return path.join(layout.root, GlobalFileNames.legacyTaskDatabase(taskId))
+}
+
+function moveKey(target: string): string {
+	return process.platform === "win32" ? target.toLowerCase() : target
+}
+
+async function moveLegacyDatabase(layout: InstanceLayout, taskId: string, target: string): Promise<string> {
+	const legacy = legacyDatabase(layout, taskId)
 	const legacyExists = await exists(legacy)
 	const targetExists = await exists(target)
 	const recovering = targetExists && !legacyExists && (await hasLegacySideFiles(legacy))

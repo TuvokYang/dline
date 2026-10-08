@@ -1,8 +1,27 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { TaskActivitySubscriptionRequest, TaskActivityUpdate } from "@shared/proto/dline/task"
 import { describe, expect, it, vi } from "vitest"
 import { TaskActivityStore } from "../../../task/activity/TaskActivityStore"
 import { getRequestRegistry } from "../../grpc-handler"
 import { subscribeToTaskActivities } from "../subscribeToTaskActivities"
+
+type Opening = { readonly taskId: string; readonly taskInstanceId: string }
+
+/** A Controller double whose current opening is its session, or else its history display. */
+function controllerWith(fields: {
+	task?: Opening
+	historyDisplay?: Opening
+	activityStore?: TaskActivityStore
+	canPromoteHistoryDisplay?: boolean
+}) {
+	const controller = {
+		task: fields.task,
+		currentOpening: (): Opening | undefined => controller.task ?? fields.historyDisplay,
+		getCurrentTaskActivityStore: () => fields.activityStore,
+		canPromoteHistoryDisplay: () => fields.canPromoteHistoryDisplay ?? false,
+	}
+	return controller
+}
 
 describe("subscribeToTaskActivities", () => {
 	it("ends the stream when the controller has no current task", async () => {
@@ -10,7 +29,7 @@ describe("subscribeToTaskActivities", () => {
 		const requestId = "activity-no-current-task"
 
 		await subscribeToTaskActivities(
-			{ task: undefined, getCurrentTaskActivityStore: () => undefined } as never,
+			controllerWith({}) as never,
 			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
 			responseStream,
 			requestId,
@@ -30,7 +49,7 @@ describe("subscribeToTaskActivities", () => {
 		const activityStore = new TaskActivityStore("task-2")
 
 		await subscribeToTaskActivities(
-			{ task: { taskId: "task-2", activityStore }, getCurrentTaskActivityStore: () => undefined } as never,
+			controllerWith({ task: { taskId: "task-2", taskInstanceId: "open-1" }, activityStore }) as never,
 			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
 			responseStream,
 			requestId,
@@ -44,7 +63,25 @@ describe("subscribeToTaskActivities", () => {
 		expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
 	})
 
-	it("streams the canonical non-working Task activity surface", async () => {
+	it("ends the stream for a request from a previous opening of the same task", async () => {
+		const responseStream = vi.fn(async () => undefined)
+		const activityStore = new TaskActivityStore("task-1")
+		const subscribe = vi.spyOn(activityStore, "subscribe")
+
+		await subscribeToTaskActivities(
+			controllerWith({ task: { taskId: "task-1", taskInstanceId: "open-2" }, activityStore }) as never,
+			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
+			responseStream,
+		)
+
+		expect(subscribe).not.toHaveBeenCalled()
+		expect(responseStream).toHaveBeenCalledWith(
+			expect.objectContaining({ sequence: 0, snapshot: true, activities: [], taskId: "task-1", taskInstanceId: "open-1" }),
+			true,
+		)
+	})
+
+	it("streams a history surface's activities attributed to its opening", async () => {
 		const activityStore = new TaskActivityStore("task-1")
 		activityStore.create({
 			activityId: "history-subagent",
@@ -56,9 +93,11 @@ describe("subscribeToTaskActivities", () => {
 		const responseStream = vi.fn(async () => undefined)
 
 		await subscribeToTaskActivities(
-			{
-				task: { taskId: "task-1", taskInstanceId: "open-1", isReadOnly: () => false, activityStore },
-			} as never,
+			controllerWith({
+				historyDisplay: { taskId: "task-1", taskInstanceId: "open-1" },
+				activityStore,
+				canPromoteHistoryDisplay: true,
+			}) as never,
 			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
 			responseStream,
 		)
@@ -66,11 +105,16 @@ describe("subscribeToTaskActivities", () => {
 
 		expect(responseStream).toHaveBeenCalledWith(
 			expect.objectContaining({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
 				snapshot: true,
 				activities: [
 					expect.objectContaining({
 						activityId: "history-subagent",
 						metrics: expect.objectContaining({ toolCalls: 4, inputTokens: 40, outputTokens: 8 }),
+						// No runtime backs a history surface, so nothing can be stopped from it.
+						cancellable: false,
+						finishable: false,
 					}),
 				],
 			}),
@@ -85,10 +129,7 @@ describe("subscribeToTaskActivities", () => {
 		const requestId = "activity-surface-disposed"
 
 		await subscribeToTaskActivities(
-			{
-				task: { taskId: "task-1", taskInstanceId: "open-1", isReadOnly: () => false, activityStore },
-				getCurrentTaskActivityStore: () => activityStore,
-			} as never,
+			controllerWith({ task: { taskId: "task-1", taskInstanceId: "open-1" }, activityStore }) as never,
 			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
 			responseStream,
 			requestId,
@@ -100,7 +141,11 @@ describe("subscribeToTaskActivities", () => {
 			activityStore.dispose()
 
 			await vi.waitFor(() => expect(responseStream).toHaveBeenCalledTimes(2))
-			expect(responseStream.mock.calls[1]).toEqual([expect.objectContaining({ snapshot: false, activities: [] }), true])
+			// The end is keyed to its opening, so the Webview clears what it showed.
+			expect(responseStream.mock.calls[1]).toEqual([
+				expect.objectContaining({ snapshot: true, activities: [], taskId: "task-1", taskInstanceId: "open-1" }),
+				true,
+			])
 			expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
 		} finally {
 			getRequestRegistry().cancelRequest(requestId)
@@ -147,11 +192,14 @@ describe("subscribeToTaskActivities", () => {
 			streamedUpdates.push(update)
 		})
 
+		const session = createSessionFixture({
+			taskId: "task-1",
+			taskInstanceId: "open-1",
+			owners: { activities: activityStore },
+		})
+
 		await subscribeToTaskActivities(
-			{
-				task: { taskId: "task-1", taskInstanceId: "open-1", isReadOnly: () => false, activityStore },
-				getCurrentTaskActivityStore: () => activityStore,
-			} as never,
+			controllerWith({ task: session, activityStore }) as never,
 			TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
 			responseStream,
 		)

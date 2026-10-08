@@ -1,10 +1,10 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { filterVisibleMessages, getToolsNotInCurrentActivities, groupLowStakesTools, groupMessages } from "./messageUtils"
 
 describe("filterVisibleMessages approval history", () => {
 	it("keeps a rejected tool ask visible after the active interaction is cleared", () => {
-		const rejectedTool: ClineMessage = {
+		const rejectedTool: UiMessage = {
 			ts: 100,
 			type: "ask",
 			ask: "tool",
@@ -15,13 +15,13 @@ describe("filterVisibleMessages approval history", () => {
 	})
 
 	it("keeps a rejected low-stakes tool in the grouped timeline after a completed API request", () => {
-		const completedApiRequest: ClineMessage = {
+		const completedApiRequest: UiMessage = {
 			ts: 100,
 			type: "say",
 			say: "api_req_started",
 			text: JSON.stringify({ cost: 0.01 }),
 		}
-		const rejectedTool: ClineMessage = {
+		const rejectedTool: UiMessage = {
 			ts: 101,
 			type: "ask",
 			ask: "tool",

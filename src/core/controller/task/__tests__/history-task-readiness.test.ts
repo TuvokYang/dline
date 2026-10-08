@@ -36,6 +36,16 @@ function setupTraceExporter(): {
 	return { exporter, provider, recordHistogram }
 }
 
+function recordedStages(recordHistogram: ReturnType<typeof vi.fn>): unknown[] {
+	return recordHistogram.mock.calls
+		.filter(([name]) => name === "dline.runtime.operation.duration")
+		.map(([, , attributes]) => attributes)
+}
+
+function stage(name: string, hasTaskLock: boolean, outcome = "success") {
+	return { operation: "task_init.stage", stage: name, kind: "history", hasTaskLock, outcome }
+}
+
 describe("history task readiness", () => {
 	it("projects a visible but non-dispatchable Resume action while preparing", () => {
 		const view = projectHistoryPreparingView({ taskId: "task-1", phase: "initializing", revision: 3 })
@@ -53,7 +63,7 @@ describe("history task readiness", () => {
 		await prepareHistoryTaskForDisplay({
 			taskId: "task-1",
 			displayHistory: async () => undefined,
-			prepareFromHistory: async (options) => options.onReadyToDisplay?.(),
+			prepareFromHistory: async () => undefined,
 			hasTaskLock: true,
 			isCurrent: () => true,
 			onReadyToDisplay: async () => undefined,
@@ -68,43 +78,41 @@ describe("history task readiness", () => {
 			"task.history_prepare.ready",
 			"task.history_prepare.prepared",
 		])
-		const stageAttributes = recordHistogram.mock.calls
-			.filter(([name]) => name === "dline.runtime.operation.duration")
-			.map(([, , attributes]) => attributes)
-		expect(stageAttributes).toEqual([
-			{
-				operation: "task_init.stage",
-				stage: "history_surface_preparing",
-				kind: "history",
-				hasTaskLock: true,
-				outcome: "success",
-			},
-			{
-				operation: "task_init.stage",
-				stage: "history_display",
-				kind: "history",
-				hasTaskLock: true,
-				outcome: "success",
-			},
-			{
-				operation: "task_init.stage",
-				stage: "history_surface_ready",
-				kind: "history",
-				hasTaskLock: true,
-				outcome: "success",
-			},
-			{
-				operation: "task_init.stage",
-				stage: "history_background_prepare",
-				kind: "history",
-				hasTaskLock: true,
-				outcome: "success",
-			},
+		expect(recordedStages(recordHistogram)).toEqual([
+			stage("history_surface_preparing", true),
+			stage("history_display", true),
+			stage("history_surface_ready", true),
+			stage("history_background_prepare", true),
 		])
-		for (const attributes of stageAttributes) {
+		// Metric dimensions stay low-cardinality: no task identity, no raw timing.
+		for (const attributes of recordedStages(recordHistogram)) {
 			expect(attributes).not.toHaveProperty("taskId")
 			expect(attributes).not.toHaveProperty("elapsedMs")
 		}
+	})
+
+	// The history-open liveness check reads these stages to tell the extension's
+	// share of opening a task from the view's transport and rendering.
+	it("times the visible surface of a display that owns no task runtime", async () => {
+		const { recordHistogram } = setupTraceExporter()
+		let current = true
+
+		await prepareHistoryTaskForDisplay({
+			taskId: "task-1",
+			displayHistory: async () => undefined,
+			prepareFromHistory: async () => undefined,
+			hasTaskLock: false,
+			isCurrent: () => current,
+			onReadyToDisplay: async () => {
+				current = false
+			},
+		})
+
+		expect(recordedStages(recordHistogram)).toEqual([
+			stage("history_surface_preparing", false),
+			stage("history_display", false),
+			stage("history_surface_ready", false, "superseded"),
+		])
 	})
 
 	it("publishes a preparing surface before full historical display is ready", async () => {

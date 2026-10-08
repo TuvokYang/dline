@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it } from "vitest"
 import { projectCompactionContext, readCompletedCompactionCards } from "../compaction-context-projection"
@@ -226,7 +226,7 @@ describe("projectCompactionContext", () => {
 
 describe("readCompletedCompactionCards", () => {
 	it("reads only new-format completed cards from the loaded UI cache", () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 10,
 				type: "say",

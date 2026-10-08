@@ -24,6 +24,11 @@ export interface DeferredHostedCall {
 	toolName: string
 	/** Index of the assistant message holding the call segment. */
 	messageIndex: number
+	/**
+	 * Indices of the consecutive user messages that follow the call's turn. The provider reads them as one user
+	 * turn, so a request that carries the call must send them as one message holding only tool results.
+	 */
+	followUpIndices: readonly number[]
 	state: DeferredHostedCallState
 }
 
@@ -37,8 +42,9 @@ export interface DeferredHostedCallOptions {
 /**
  * Decide, from stored history alone, which deferred hosted calls a request can still carry.
  *
- * A deferred call is honoured only in the shape the provider accepts: the user message right after its turn
- * answers that turn's client tools, and the next assistant turn, if any, opens with the call's result. Every
+ * A deferred call is honoured only in the shape the provider accepts: the user turn right after its turn - one
+ * or more consecutive user messages, which the provider reads as one turn - opens with the answers to that
+ * turn's client tools, and the next assistant turn, if any, opens with the call's result. Every
  * consumer derives its view from this one function, so the request projection and the task's hosted-call
  * rows always agree, and the same history always projects to the same request.
  */
@@ -54,28 +60,45 @@ export function resolveDeferredHostedCalls(
 			const callId = hostedSegmentCallId(block)
 			const toolName = hostedToolName(block)
 			if (callId === undefined || toolName === undefined) continue
+			const followUpIndices = followUpRun(messages, messageIndex)
 			calls.push({
 				callId,
 				toolName,
 				messageIndex,
-				state: deferredCallState(messages, messageIndex, block, callId, toolName, options),
+				followUpIndices,
+				state: deferredCallState(messages, followUpIndices, block, callId, toolName, options),
 			})
 		}
 	})
 	return calls
 }
 
+/**
+ * The user messages between an assistant turn and the next assistant turn.
+ *
+ * The task journal stores a round's tool results and its environment details as separate user messages; the
+ * provider merges adjacent user messages into one turn, so the deferral rules apply to the whole run.
+ */
+function followUpRun(messages: readonly ClineStorageMessage[], messageIndex: number): number[] {
+	const indices: number[] = []
+	for (let index = messageIndex + 1; index < messages.length && messages[index].role === "user"; index++) {
+		indices.push(index)
+	}
+	return indices
+}
+
 function deferredCallState(
 	messages: readonly ClineStorageMessage[],
-	messageIndex: number,
+	followUpIndices: readonly number[],
 	block: ClineAssistantHostedToolBlock,
 	callId: string,
 	toolName: string,
 	options: DeferredHostedCallOptions,
 ): DeferredHostedCallState {
 	if (block.protocol !== options.protocol || !options.replayHostedTools?.has(toolName)) return "dropped"
-	if (!answersClientTools(messages[messageIndex + 1])) return "dropped"
-	const next = messages[messageIndex + 2]
+	const firstFollowUp = followUpIndices[0]
+	if (firstFollowUp === undefined || !answersClientTools(messages[firstFollowUp])) return "dropped"
+	const next = messages[firstFollowUp + followUpIndices.length]
 	if (next === undefined) return "pending"
 	return opensWithResultFor(next, callId) ? "resumed" : "dropped"
 }

@@ -3,12 +3,12 @@ import { performance } from "node:perf_hooks"
 import { describe, it } from "vitest"
 import { combineApiRequests } from "../shared/combineApiRequests"
 import { combineCommandSequences } from "../shared/combineCommandSequences"
-import { ClineMessage } from "../shared/ExtensionMessage"
+import { UiMessage } from "../shared/ExtensionMessage"
 import { getApiMetrics, getLastApiReqTotalTokens, getLastTaskProgressText } from "../shared/getApiMetrics"
 
 /** Reference implementation of the ORIGINAL pairing algorithm (semantics lock). */
-function combineApiRequestsReference(messages: ClineMessage[]): ClineMessage[] {
-	const combinedApiRequests: ClineMessage[] = []
+function combineApiRequestsReference(messages: UiMessage[]): UiMessage[] {
+	const combinedApiRequests: UiMessage[] = []
 
 	for (let i = 0; i < messages.length; i++) {
 		if (messages[i].type === "say" && messages[i].say === "api_req_started") {
@@ -53,13 +53,13 @@ function combineApiRequestsReference(messages: ClineMessage[]): ClineMessage[] {
 // ui_messages.jsonl and measure each buildState pipeline step.
 const REAL_MESSAGES_PATH = process.env.DLINE_PERF_PROFILE_MESSAGES_PATH
 
-function loadRealMessages(): ClineMessage[] {
+function loadRealMessages(): UiMessage[] {
 	if (!REAL_MESSAGES_PATH) {
 		throw new Error("DLINE_PERF_PROFILE_MESSAGES_PATH is required to run the real-task profile")
 	}
 	const raw = readFileSync(REAL_MESSAGES_PATH, "utf8")
 	const lines = raw.split("\n").filter((line) => line.trim().length > 0)
-	return lines.map((line) => JSON.parse(line) as ClineMessage)
+	return lines.map((line) => JSON.parse(line) as UiMessage)
 }
 
 function measure<T>(label: string, fn: () => T): T {

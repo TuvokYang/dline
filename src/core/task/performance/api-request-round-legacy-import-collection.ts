@@ -9,7 +9,7 @@ export interface ApiRequestRoundLegacyImportCollectionOptions {
 	readonly readOnly?: boolean
 }
 
-/** Open the legacy import entity in the same Task-local SQLite database as exact rounds. */
+/** Open the legacy import entity in the task's `metrics.db`, beside the exact rounds. */
 export async function createApiRequestRoundLegacyImportCollection(
 	options: ApiRequestRoundLegacyImportCollectionOptions,
 ): Promise<UnifyStore<ApiRequestRoundLegacyImportEntity>> {

@@ -1,4 +1,4 @@
-import { ClineMessage } from "./ExtensionMessage"
+import { UiMessage } from "./ExtensionMessage"
 
 const recoveredStreamSayTypes = new Set([
 	"reasoning",
@@ -10,7 +10,7 @@ const recoveredStreamSayTypes = new Set([
 	"browser_action",
 ])
 
-function isTerminalRetryFailure(message: ClineMessage): boolean {
+function isTerminalRetryFailure(message: UiMessage): boolean {
 	try {
 		const retryInfo = JSON.parse(message.text || "{}") as { failed?: unknown }
 		return retryInfo.failed === true
@@ -19,7 +19,7 @@ function isTerminalRetryFailure(message: ClineMessage): boolean {
 	}
 }
 
-function isRecoveredStreamMessage(message: ClineMessage, conversationHistoryIndex: number): boolean {
+function isRecoveredStreamMessage(message: UiMessage, conversationHistoryIndex: number): boolean {
 	if ((message.conversationHistoryIndex ?? 0) !== conversationHistoryIndex) {
 		return false
 	}
@@ -43,7 +43,7 @@ function isRecoveredStreamMessage(message: ClineMessage, conversationHistoryInde
 	)
 }
 
-function projectCanonicalApiError(messages: ClineMessage[]): ClineMessage[] {
+function projectCanonicalApiError(messages: UiMessage[]): UiMessage[] {
 	const canonicalError = messages.at(-1)
 	if (canonicalError?.type !== "ask" || canonicalError.ask !== "api_req_failed" || !canonicalError.text) {
 		return messages
@@ -89,12 +89,12 @@ function projectCanonicalApiError(messages: ClineMessage[]): ClineMessage[] {
  *    proves that the retried request produced a model response
  * 3. Preserves the legacy api_req_started boundary for non-final retries
  *
- * @param messages - An array of ClineMessage objects to process.
- * @returns A new array of ClineMessage objects with error_retry sequences consolidated.
+ * @param messages - An array of UiMessage objects to process.
+ * @returns A new array of UiMessage objects with error_retry sequences consolidated.
  *
  * @example
  * // During retry sequence - shows only latest attempt:
- * const messages: ClineMessage[] = [
+ * const messages: UiMessage[] = [
  *   { type: 'say', say: 'error_retry', text: '{"attempt":1,"maxAttempts":3}', ts: 1000 },
  *   { type: 'say', say: 'api_req_retried', ts: 1001 },
  *   { type: 'say', say: 'error_retry', text: '{"attempt":2,"maxAttempts":3}', ts: 1002 },
@@ -106,7 +106,7 @@ function projectCanonicalApiError(messages: ClineMessage[]): ClineMessage[] {
  *
  * @example
  * // After successful retry - removes error_retry entirely:
- * const messages: ClineMessage[] = [
+ * const messages: UiMessage[] = [
  *   { type: 'say', say: 'error_retry', text: '{"attempt":1,"maxAttempts":3}', ts: 1000 },
  *   { type: 'say', say: 'api_req_retried', ts: 1001 },
  *   { type: 'say', say: 'api_req_started', text: '{}', ts: 1002 },
@@ -114,9 +114,9 @@ function projectCanonicalApiError(messages: ClineMessage[]): ClineMessage[] {
  * const result = combineErrorRetryMessages(messages);
  * // Result: [{ type: 'say', say: 'api_req_started', text: '{}', ts: 1002 }]
  */
-export function combineErrorRetryMessages(messages: ClineMessage[]): ClineMessage[] {
+export function combineErrorRetryMessages(messages: UiMessage[]): UiMessage[] {
 	const projectedMessages = projectCanonicalApiError(messages)
-	const result: ClineMessage[] = []
+	const result: UiMessage[] = []
 
 	for (let i = 0; i < projectedMessages.length; i++) {
 		const message = projectedMessages[i]
@@ -139,7 +139,11 @@ export function combineErrorRetryMessages(messages: ClineMessage[]): ClineMessag
 				}
 				if (laterMessage.type === "ask" && laterMessage.ask === "api_req_failed") {
 					hasCanonicalRecoveryAsk = true
-					break
+					// An exhausted card stays beside the canonical ask's actions, so
+					// the scan continues past it: a Retry answered there may already
+					// have recovered, and only a later response proves that.
+					if (!isTerminalFailure) break
+					continue
 				}
 				if (laterMessage.say === "api_req_retried") {
 					hasRetryStarted = true

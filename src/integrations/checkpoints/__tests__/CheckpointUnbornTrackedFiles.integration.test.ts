@@ -3,8 +3,8 @@ import * as os from "os"
 import * as path from "path"
 import simpleGit from "simple-git"
 import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "@/core/task/TaskState"
-import type { ClineMessage, ClineSay } from "@/shared/ExtensionMessage"
+import { DefaultToolHandlerState } from "@/core/task/tools/state/ToolHandlerState"
+import type { UiMessage, UiSay } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
 
@@ -64,13 +64,13 @@ function createManagerHarness(input: {
 	taskId: string
 	workspacePath: string
 	taskFileTracker: TaskFileTracker
-	messages: ClineMessage[]
+	messages: UiMessage[]
 }) {
 	const setCheckpointTracker = vi.fn()
 	const updateTaskHistory = vi.fn().mockResolvedValue(undefined)
 	let nextMessageTs = 200
-	const say = vi.fn(async (type: ClineSay) => {
-		const message: ClineMessage = {
+	const say = vi.fn(async (type: UiSay) => {
+		const message: UiMessage = {
 			ts: ++nextMessageTs,
 			type: "say",
 			say: type,
@@ -91,13 +91,13 @@ function createManagerHarness(input: {
 			messageStateHandler: {
 				clineMessages: input.messages,
 				setCheckpointTracker,
-				updateClineMessage: async (index: number, updates: Partial<ClineMessage>) => {
+				updateClineMessage: async (index: number, updates: Partial<UiMessage>) => {
 					Object.assign(input.messages[index], updates)
 				},
 				flushMessageUpdate: vi.fn().mockResolvedValue(undefined),
 				updateTaskHistory,
 			},
-			taskState: new TaskState(),
+			taskState: new DefaultToolHandlerState(),
 			taskFileTracker: input.taskFileTracker,
 			workspaceManager: {
 				getPrimaryRoot: () => ({ path: input.workspacePath }),
@@ -109,6 +109,7 @@ function createManagerHarness(input: {
 			restoreChatRuntime: vi.fn().mockResolvedValue(undefined),
 			say,
 			postStateToWebview: vi.fn().mockResolvedValue(undefined),
+			publishMessage: vi.fn().mockResolvedValue(undefined),
 		} as never,
 		{},
 	)
@@ -444,7 +445,7 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
 		const taskId = "task-command-scan-restore"
 		const commandOutput = path.join(sandbox.workspacePath, "command-output.txt")
 		const taskFiles = new TaskFileTracker(taskId)
-		const messages: ClineMessage[] = []
+		const messages: UiMessage[] = []
 		try {
 			const harness = createManagerHarness({
 				taskId,
@@ -520,7 +521,7 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
 			await expect(fs.stat(sandbox.staleFile)).rejects.toMatchObject({ code: "ENOENT" })
 			await expect(fs.stat(sandbox.missingFile)).rejects.toMatchObject({ code: "ENOENT" })
 
-			const messages: ClineMessage[] = []
+			const messages: UiMessage[] = []
 			const harness = createManagerHarness({
 				taskId,
 				workspacePath: sandbox.workspacePath,

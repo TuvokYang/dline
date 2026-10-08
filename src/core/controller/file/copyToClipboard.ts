@@ -16,6 +16,7 @@ export async function copyToClipboard(_controller: Controller, request: StringRe
 		}
 	} catch (error) {
 		Logger.error("Error copying to clipboard:", error)
+		throw error
 	}
 	return Empty.create()
 }

@@ -75,6 +75,19 @@ After you open a task from history:
 - an interrupted task shows **Resume** at the bottom; click it to continue. Resuming only loads the saved state; it does not resend requests or rerun tools automatically.
 - a completed task shows **Start New Task**; you can also keep sending messages in the input box.
 
+## Upgrading from an earlier version
+
+Tasks created by an earlier Dline build keep working after the upgrade:
+
+- The first time you continue such a task, its conversation is imported unchanged, so the next request carries the full history.
+- A task that was running, or had already completed, before the upgrade may reopen as interrupted. Click **Resume** or send a new message to continue it.
+- Reasoning effort saved by the removed per-mode settings no longer applies; a continued task uses the selected Profile's default.
+- Once this version has opened a task, an older build cannot continue it.
+
+## When a task is open in another window
+
+Only one window can work on a task at a time. If another window already has it open, this window shows the task read-only: the input and footer actions are disabled, and the lock banner offers a force unlock to take the task over.
+
 ## When the context grows
 
 Longer conversations use more context. You can:

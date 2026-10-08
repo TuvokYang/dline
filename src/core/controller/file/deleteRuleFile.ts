@@ -37,7 +37,7 @@ export async function deleteRuleFile(controller: Controller, request: RuleFileRe
 
 	// The delete implementation updates the canonical toggle store before returning.
 	if (controller.task) {
-		await controller.task.flushPromptFreshnessInvalidation("capability_mutation")
+		await controller.task.owners.prompt.flush("capability_mutation")
 	} else {
 		await controller.postStateToWebview()
 	}

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert"
 import { describe, it } from "vitest"
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import {
 	buildSubagentOutputBudgetPrompt,
@@ -31,7 +31,7 @@ function createConfig(contextWindow: number, contextTokens: number): Pick<TaskCo
 						]
 					: [],
 		} as TaskConfig["messageState"],
-		taskState: new TaskState(),
+		taskState: new DefaultToolHandlerState(),
 	}
 }
 

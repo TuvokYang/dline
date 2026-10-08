@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { formatTaskPanelTitle, normalizeTaskPanelTitle } from "../TaskPanelTitle"
+import { formatTaskPanelTitle, normalizeTaskPanelTitle, resolveTaskPanelTitle } from "../TaskPanelTitle"
 
 const checklist = (...items: Array<"completed" | "pending">): string =>
 	items.map((item, index) => `- [${item === "completed" ? "x" : " "}] Task ${index + 1}`).join("\n")
@@ -68,5 +68,25 @@ describe("formatTaskPanelTitle", () => {
 
 		expect(formatted).toBe("修一下api con (1/5)")
 		expect(normalizeTaskPanelTitle(formatted)).toBe(formatted)
+	})
+})
+
+describe("resolveTaskPanelTitle", () => {
+	// Regression: a background-started task synced its title before the task
+	// row existed and kept the "Dline" fallback tab title.
+	it("uses the initial task text before the task row exists", () => {
+		expect(resolveTaskPanelTitle({ taskRow: undefined, initialTask: "E2E_PANEL_ONE_GROUP task" })).toBe("E2E_PANEL_ONE_GR")
+	})
+
+	it("prefers the persisted task row over the initial and history text", () => {
+		expect(resolveTaskPanelTitle({ taskRow: "Row title", initialTask: "Initial", historyTask: "History" })).toBe("Row title")
+	})
+
+	it("skips blank sources and falls back to the history task text", () => {
+		expect(resolveTaskPanelTitle({ taskRow: "  ", initialTask: "", historyTask: "History title" })).toBe("History title")
+	})
+
+	it("appends checklist progress and keeps the fallback title without any text", () => {
+		expect(resolveTaskPanelTitle({ checklist: checklist("completed", "pending") })).toBe("Dline (1/2)")
 	})
 })

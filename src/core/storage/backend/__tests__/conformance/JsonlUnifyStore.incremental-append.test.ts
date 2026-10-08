@@ -139,4 +139,66 @@ describe("buffered JSONL incremental append", () => {
 			await fs.rm(root, { recursive: true, force: true })
 		}
 	})
+
+	it("commits a staged rewrite before the durable row that follows it", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-jsonl-durable-after-rewrite-"))
+		const filePath = path.join(root, "items.jsonl")
+		try {
+			await fs.writeFile(filePath, `${JSON.stringify({ ts: 1, value: "seed" })}\n`, "utf8")
+			const store = await openBufferedJsonlStore<Item>(filePath, {
+				schemaId: "durable-after-rewrite-test",
+				flushIntervalMs: 60_000,
+				acceptInitialItem: (item) => item.ts > 0,
+			})
+			try {
+				await store.stagePatchAt(0, { value: "patched" })
+				await expect(store.commitPendingAndAppendDurable({ ts: 2, value: "final" })).resolves.toEqual({
+					ts: 2,
+					value: "final",
+				})
+				expect(await fs.readFile(filePath, "utf8")).toBe(
+					`${JSON.stringify({ ts: 1, value: "patched" })}\n${JSON.stringify({ ts: 2, value: "final" })}\n`,
+				)
+				expect(store.getAll()).toEqual([
+					{ ts: 1, value: "patched" },
+					{ ts: 2, value: "final" },
+				])
+			} finally {
+				await store.close()
+			}
+		} finally {
+			await fs.rm(root, { recursive: true, force: true })
+		}
+	})
+
+	it("keeps the append-only commit when only appends are staged before the durable row", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-jsonl-durable-after-tail-"))
+		const filePath = path.join(root, "items.jsonl")
+		try {
+			await fs.writeFile(filePath, `${JSON.stringify({ ts: 1, value: "seed" })}\n`, "utf8")
+			const store = await openBufferedJsonlStore<Item>(filePath, {
+				schemaId: "durable-after-tail-test",
+				flushIntervalMs: 60_000,
+				acceptInitialItem: (item) => item.ts > 0,
+			})
+			const readSpy = vi.spyOn(fs, "readFile")
+			const writeSpy = vi.spyOn(fs, "writeFile")
+			try {
+				await store.append({ ts: 2, value: "dirty-tail" })
+				await store.commitPendingAndAppendDurable({ ts: 3, value: "final" })
+				const dataReads = readSpy.mock.calls.filter(([target]) => path.resolve(String(target)) === path.resolve(filePath))
+				expect(dataReads).toHaveLength(0)
+				expect(writeSpy).not.toHaveBeenCalled()
+			} finally {
+				readSpy.mockRestore()
+				writeSpy.mockRestore()
+				await store.close()
+			}
+			expect(await fs.readFile(filePath, "utf8")).toBe(
+				`${JSON.stringify({ ts: 1, value: "seed" })}\n${JSON.stringify({ ts: 2, value: "dirty-tail" })}\n${JSON.stringify({ ts: 3, value: "final" })}\n`,
+			)
+		} finally {
+			await fs.rm(root, { recursive: true, force: true })
+		}
+	})
 })

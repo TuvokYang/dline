@@ -1,7 +1,9 @@
 import type { ToolUse } from "@core/assistant-message"
 import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "../../../TaskState"
+import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../../../new-task/new-task-continuation"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
+import { sayFeedbackOnce } from "../../utils/UserFeedbackUtils"
 import { NewTaskHandler } from "../NewTaskHandler"
 
 vi.mock("@core/prompts/i18n", () => ({
@@ -44,7 +46,7 @@ function createConfig(result: InteractionResult): TaskConfig {
 		ulid: "ulid-new",
 		cwd: "/workspace",
 		mode: "act",
-		taskState: new TaskState(),
+		taskState: new DefaultToolHandlerState(),
 		autoApprovalSettings: { enableNotifications: false },
 		interactions: {
 			open: vi.fn(async () => ({
@@ -76,29 +78,14 @@ function createBlock(context?: string): ToolUse {
 }
 
 describe("NewTaskHandler", () => {
-	it("streams the partial context into the new_task ask instead of a tool row", async () => {
-		const ask = vi.fn(async () => ({ response: "messageResponse" }))
-		const say = vi.fn(async () => undefined)
-		const block = { ...createBlock("Partial successor"), partial: true } as ToolUse
-
-		await new NewTaskHandler().handlePartialBlock(block, {
-			ask,
-			say,
-			removeClosingTag: (_block: ToolUse, _tag: string, text?: string) => text ?? "",
-		} as never)
-
-		expect(ask).toHaveBeenCalledWith("new_task", "Partial successor", true, { existingTs: 100 })
-		expect(say).not.toHaveBeenCalled()
-	})
-
 	it("returns a successor directive for approve even when a draft is present", async () => {
 		const config = createConfig({ actionId: "approve", text: "This draft must not change the action" })
 
 		const result = await new NewTaskHandler().execute(config, createBlock("Successor task context"))
 
 		expect(config.interactions.open).toHaveBeenCalledWith({
-			turnId: expect.any(String),
-			interactionId: expect.any(String),
+			turnId: "turn:tid-new-task",
+			interactionId: "tid-new-task",
 			kind: "new_task",
 			presentation: "Successor task context",
 			existingTs: 100,
@@ -114,28 +101,26 @@ describe("NewTaskHandler", () => {
 		})
 	})
 
-	it("returns feedback continuation for reject with text and attachments", async () => {
-		const config = createConfig({
-			actionId: "reject",
-			text: "Keep the migration constraints",
-			images: ["image-1"],
-			files: ["file-1"],
-		})
+	it("returns Regenerate Context feedback to the model as a marked result instead of handing off", async () => {
+		const config = createConfig({ actionId: "reject", text: "Narrow the scope", files: ["/workspace/a.md"] })
 
-		const result = await new NewTaskHandler().execute(config, createBlock("Initial context"))
+		const result = await new NewTaskHandler().execute(config, createBlock("Successor task context"))
 
 		expect(result).not.toHaveProperty("postCommit")
-		expect(JSON.stringify(result)).toContain("The user provided feedback instead of creating a new task")
-		expect(JSON.stringify(result)).toContain("Keep the migration constraints")
-	})
-
-	it("treats an empty reject as feedback instead of confirming task creation", async () => {
-		const config = createConfig({ actionId: "reject" })
-
-		const result = await new NewTaskHandler().execute(config, createBlock("Initial context"))
-
-		expect(result).not.toHaveProperty("postCommit")
-		expect(JSON.stringify(result)).toContain("The user provided feedback instead of creating a new task")
+		expect(result).toEqual([
+			{
+				type: "text",
+				text: `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\nNarrow the scope\n</feedback>`,
+			},
+		])
+		expect(sayFeedbackOnce).toHaveBeenCalledWith(
+			config,
+			"noButtonClicked",
+			"Narrow the scope",
+			[],
+			["/workspace/a.md"],
+			expect.objectContaining({ actionId: "reject" }),
+		)
 	})
 
 	it("keeps the existing missing-context error path", async () => {

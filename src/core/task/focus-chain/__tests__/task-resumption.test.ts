@@ -3,8 +3,8 @@ import os from "os"
 import path from "path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ensureTaskDirectoryExists } from "../../../storage/disk"
-import { TaskState } from "../../TaskState"
-import { createFocusChainMarkdownContent, getFocusChainFilePath } from "../file-utils"
+import { DefaultToolHandlerState } from "../../tools/state/ToolHandlerState"
+import { createFocusChainMarkdownContent, getFocusChainFilePath, getFocusChainHistoryFilePath } from "../file-utils"
 import { FocusChainManager } from "../index"
 
 describe("FocusChainManager - Task Resumption", () => {
@@ -43,7 +43,7 @@ describe("FocusChainManager - Task Resumption", () => {
 		await fs.writeFile(focusChainFilePath, fileContent, "utf8")
 
 		// Create TaskState and FocusChainManager
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const postStateToWebview = vi.fn().mockResolvedValue(undefined)
 		expect(taskState.currentFocusChainChecklist).toBeNull() // Initially null
 
@@ -75,7 +75,7 @@ describe("FocusChainManager - Task Resumption", () => {
 		const fileContent = createFocusChainMarkdownContent(taskId, existingContent)
 		await fs.writeFile(focusChainFilePath, fileContent, "utf8")
 
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		taskState.currentInProgressItemIndex = 0
 		manager = new FocusChainManager({
 			taskId,
@@ -92,6 +92,27 @@ describe("FocusChainManager - Task Resumption", () => {
 		expect(taskState.currentInProgressItemIndex).toBeNull()
 	})
 
+	it("restores the archived checklist history of a reopened task", async () => {
+		const history = "# Earlier Plan\n- [x] Replaced item"
+		await fs.writeFile(getFocusChainHistoryFilePath(taskDir, taskId), history, "utf8")
+		const taskState = new DefaultToolHandlerState()
+		const postStateToWebview = vi.fn().mockResolvedValue(undefined)
+		manager = new FocusChainManager({
+			taskId,
+			taskState,
+			getMode: () => "act",
+			stateManager: {} as any,
+			postStateToWebview,
+			say: vi.fn(),
+			focusChainSettings: { enabled: true, remindClineInterval: 10 },
+		})
+
+		await manager.setupFocusChainFileWatcher()
+
+		expect(taskState.focusChainHistory).toBe(history)
+		expect(postStateToWebview).toHaveBeenCalledOnce()
+	})
+
 	it("should create focus chain file for new tasks", async () => {
 		// Arrange: Ensure file does NOT exist
 		try {
@@ -100,7 +121,7 @@ describe("FocusChainManager - Task Resumption", () => {
 			// File already doesn't exist
 		}
 
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		manager = new FocusChainManager({
 			taskId,
 			taskState,
@@ -131,7 +152,7 @@ describe("FocusChainManager - Task Resumption", () => {
 		const fileContent = createFocusChainMarkdownContent(taskId, existingContent)
 		await fs.writeFile(focusChainFilePath, fileContent, "utf8")
 
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const mockSay = vi.fn()
 		manager = new FocusChainManager({
 			taskId,
@@ -150,7 +171,7 @@ describe("FocusChainManager - Task Resumption", () => {
 	})
 
 	it("rejects a complete checklist that has a Section but no required Title", async () => {
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const mockSay = vi.fn()
 		manager = new FocusChainManager({
 			taskId,
@@ -172,7 +193,7 @@ describe("FocusChainManager - Task Resumption", () => {
 	})
 
 	it("rejects a new complete checklist that has no unchecked work", async () => {
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const mockSay = vi.fn()
 		manager = new FocusChainManager({
 			taskId,
@@ -197,7 +218,7 @@ describe("FocusChainManager - Task Resumption", () => {
 	})
 
 	it("ignores non-empty task_progress content without a valid TODO item", async () => {
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const mockSay = vi.fn()
 		manager = new FocusChainManager({
 			taskId,
@@ -222,7 +243,7 @@ describe("FocusChainManager - Task Resumption", () => {
 		const fileContent = createFocusChainMarkdownContent(taskId, existingContent)
 		await fs.writeFile(focusChainFilePath, fileContent, "utf8")
 
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const mockSay = vi.fn()
 		manager = new FocusChainManager({
 			taskId,
@@ -241,7 +262,7 @@ describe("FocusChainManager - Task Resumption", () => {
 	})
 
 	it("clears current and skip-order state when a user-approved plan replaces the checklist", async () => {
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		taskState.currentFocusChainChecklist = "# Old Plan\n- [ ] Old item"
 		taskState.currentInProgressItemIndex = 0
 		taskState.hasWarnedSkipOrder = true
@@ -271,7 +292,7 @@ describe("FocusChainManager - Task Resumption", () => {
 		const fileContent = createFocusChainMarkdownContent(taskId, existingContent)
 		await fs.writeFile(focusChainFilePath, fileContent, "utf8")
 
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const mockSay = vi.fn()
 		manager = new FocusChainManager({
 			taskId,

@@ -1,16 +1,12 @@
 import type { TaskViewState } from "@shared/ExtensionMessage"
-import {
-	type HistoryReadinessOutcome,
-	type HistoryReadinessStage,
-	startHistoryReadinessStage,
-} from "@/core/task/history-readiness-telemetry"
 import { runWithSignalSpan, startSignalSpan } from "@/services/telemetry/service/pipeline-port"
+import { type HistoryReadinessStage, measureHistoryReadinessStage } from "./history-readiness-telemetry"
 
 export interface HistoryTaskReadinessOptions {
 	taskId: string
 	displayHistory: () => Promise<void>
 	onPreparingToDisplay?: () => Promise<void>
-	prepareFromHistory: (options: { onReadyToDisplay?: () => Promise<void>; isCurrent?: () => boolean }) => Promise<void>
+	prepareFromHistory: (options: { isCurrent?: () => boolean }) => Promise<void>
 	hasTaskLock: boolean
 	isCurrent: () => boolean
 	onReadyToDisplay?: () => Promise<void>
@@ -63,15 +59,13 @@ export async function prepareHistoryTaskForDisplay(options: HistoryTaskReadiness
 			span.addEvent?.("task.history_prepare.displayed")
 			if (!options.isCurrent()) return finish(false)
 
+			// The displayed surface is published before any background preparation,
+			// so opening a task never waits for work its first frame does not need.
 			await runStage("history_surface_ready", async () => options.onReadyToDisplay?.())
 			span.addEvent?.("task.history_prepare.ready")
 			if (!options.isCurrent() || !options.hasTaskLock) return finish(options.isCurrent())
 
-			await runStage("history_background_prepare", () =>
-				options.prepareFromHistory({
-					isCurrent: options.isCurrent,
-				}),
-			)
+			await runStage("history_background_prepare", () => options.prepareFromHistory({ isCurrent: options.isCurrent }))
 			span.addEvent?.("task.history_prepare.prepared")
 			return finish(options.isCurrent())
 		} catch (error) {
@@ -83,17 +77,8 @@ export async function prepareHistoryTaskForDisplay(options: HistoryTaskReadiness
 		}
 	})
 
-	async function runStage<T>(stage: HistoryReadinessStage, operation: () => Promise<T> | T): Promise<T> {
-		const measurement = startHistoryReadinessStage(options.taskId, stage, options.hasTaskLock)
-		try {
-			const result = await operation()
-			const outcome: HistoryReadinessOutcome = options.isCurrent() ? "success" : "superseded"
-			measurement.stop({ outcome })
-			return result
-		} catch (error) {
-			measurement.stop({ outcome: options.isCurrent() ? "failure" : "superseded" })
-			throw error
-		}
+	function runStage<T>(stage: HistoryReadinessStage, operation: () => Promise<T> | T): Promise<T> {
+		return measureHistoryReadinessStage(stage, options, operation)
 	}
 
 	function finish(current: boolean): boolean {

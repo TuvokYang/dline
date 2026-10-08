@@ -1,9 +1,9 @@
-import { BrowserAction, BrowserActionResult, browserActions, ClineSayBrowserAction } from "@shared/ExtensionMessage"
+import { BrowserAction, BrowserActionResult, browserActions, UiSayBrowserAction } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@/shared/tools"
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
-import { ToolResponse } from "../.."
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
@@ -42,7 +42,7 @@ export class BrowserToolHandler implements IFullyManagedTool {
 					action: action as BrowserAction,
 					coordinate: uiHelpers.removeClosingTag(block, "coordinate", coordinate),
 					text: uiHelpers.removeClosingTag(block, "text", text),
-				} satisfies ClineSayBrowserAction),
+				} satisfies UiSayBrowserAction),
 				undefined,
 				undefined,
 				true,
@@ -143,7 +143,7 @@ export class BrowserToolHandler implements IFullyManagedTool {
 						action: action as BrowserAction,
 						coordinate,
 						text,
-					} satisfies ClineSayBrowserAction),
+					} satisfies UiSayBrowserAction),
 					undefined,
 					undefined,
 					false,

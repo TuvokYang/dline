@@ -82,7 +82,7 @@ export async function getAvailableSlashCommands(controller: Controller, _request
 	}
 
 	// Get workflow toggles from state
-	const taskToggles = parseTaskCapabilityToggles(controller.task?.taskSm.taskCapabilityToggles)
+	const taskToggles = parseTaskCapabilityToggles(controller.task?.owners.settings.taskCapabilityToggles)
 	const localWorkflowToggles = taskToggles?.localWorkflowToggles ?? localCapabilityToggles(controller, "workflows")
 	const globalWorkflowToggles =
 		taskToggles?.globalWorkflowToggles ?? controller.stateManager.getGlobalSettingsKey("globalWorkflowToggles") ?? {}

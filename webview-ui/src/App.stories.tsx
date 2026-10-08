@@ -1,7 +1,7 @@
 import { HeroUIProvider } from "@heroui/react"
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { type ApiConfiguration, bedrockModels } from "@shared/api"
-import type { ClineAsk, ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiAsk, UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { Decorator, Meta, StoryObj } from "@storybook/react-vite"
 import { useEffect, useMemo, useState } from "react"
@@ -133,11 +133,11 @@ const mockTaskHistory: HistoryItem[] = [
 
 const createMessage = (
 	minutesAgo: number,
-	type: ClineMessage["type"],
-	say: ClineMessage["say"],
+	type: UiMessage["type"],
+	say: UiMessage["say"],
 	text: string,
-	overrides: Partial<ClineMessage> = {},
-): ClineMessage => ({
+	overrides: Partial<UiMessage> = {},
+): UiMessage => ({
 	ts: Date.now() - minutesAgo * 60000,
 	type,
 	say,
@@ -145,11 +145,7 @@ const createMessage = (
 	...overrides,
 })
 
-const createSayToolMessage = (
-	minutesAgo: number,
-	sayTool: ClineSayTool,
-	overrides: Partial<ClineMessage> = {},
-): ClineMessage => ({
+const createSayToolMessage = (minutesAgo: number, sayTool: UiSayTool, overrides: Partial<UiMessage> = {}): UiMessage => ({
 	ts: Date.now() - minutesAgo * 60000,
 	type: "say",
 	say: "tool",
@@ -187,7 +183,7 @@ const createApiReqMessage = (minutesAgo: number, request: string, metrics: ApiRe
 		}),
 	)
 
-const mockActiveMessages: ClineMessage[] = [
+const mockActiveMessages: UiMessage[] = [
 	createMessage(5, "say", "task", "Help me create a responsive navigation component for a React application"),
 	createApiReqMessage(4.9, "Initial analysis request"),
 	createMessage(
@@ -223,7 +219,7 @@ const mockActiveMessages: ClineMessage[] = [
 	),
 ]
 
-const mockStreamingMessages: ClineMessage[] = [
+const mockStreamingMessages: UiMessage[] = [
 	...mockActiveMessages,
 	createMessage(
 		0.17,
@@ -426,7 +422,7 @@ export const StreamingResponse: Story = {
 	},
 }
 
-const createLongMessages = (): ClineMessage[] => [
+const createLongMessages = (): UiMessage[] => [
 	createMessage(30, "say", "task", "Help me build a complete e-commerce application with React, Node.js, and MongoDB"),
 	createMessage(
 		29.7,
@@ -518,7 +514,7 @@ const createErrorMessages = () => [
 	),
 ]
 
-const createAskMessage = (type: ClineAsk, text: string): ClineMessage => ({
+const createAskMessage = (type: UiAsk, text: string): UiMessage => ({
 	ts: Date.now() - 60000,
 	type: "ask",
 	ask: type,
@@ -661,7 +657,7 @@ export const ToolSave: Story = {
 }
 
 // Quick story generators for common patterns
-const quickStory = (name: string, askType: ClineAsk, text: string, description: string): Story => ({
+const quickStory = (name: string, askType: UiAsk, text: string, description: string): Story => ({
 	decorators: [
 		createStoryDecorator({
 			clineMessages: [
@@ -1108,7 +1104,7 @@ export const DiffEditNewFormatStreaming: Story = {
 	decorators: [
 		(Story) => {
 			const baseState = useExtensionState()
-			const [messages, setMessages] = useState<ClineMessage[]>([
+			const [messages, setMessages] = useState<UiMessage[]>([
 				createMessage(5, "say", "task", "Add TypeScript types to the user module"),
 				createMessage(4.7, "say", "text", "I'll add TypeScript types to improve type safety."),
 			])
@@ -1142,7 +1138,7 @@ export const DiffEditNewFormatStreaming: Story = {
 
 				// Add initial partial message
 				const timer1 = setTimeout(() => {
-					setMessages((prev: ClineMessage[]) => [
+					setMessages((prev: UiMessage[]) => [
 						...prev,
 						createSayToolMessage(
 							4.3,
@@ -1158,7 +1154,7 @@ export const DiffEditNewFormatStreaming: Story = {
 
 				// Add more content
 				const timer2 = setTimeout(() => {
-					setMessages((prev: ClineMessage[]) => {
+					setMessages((prev: UiMessage[]) => {
 						const updated = [...prev]
 						updated[updated.length - 1] = createSayToolMessage(
 							4.3,
@@ -1175,7 +1171,7 @@ export const DiffEditNewFormatStreaming: Story = {
 
 				// Complete the patch
 				const timer3 = setTimeout(() => {
-					setMessages((prev: ClineMessage[]) => {
+					setMessages((prev: UiMessage[]) => {
 						const updated = [...prev]
 						updated[updated.length - 1] = createSayToolMessage(
 							4.3,
@@ -1248,7 +1244,7 @@ export const DiffEditReplaceDiffFormatStreaming: Story = {
 	decorators: [
 		(Story) => {
 			const baseState = useExtensionState()
-			const [messages, setMessages] = useState<ClineMessage[]>([
+			const [messages, setMessages] = useState<UiMessage[]>([
 				createMessage(5, "say", "task", "Update error handling"),
 				createMessage(4.7, "say", "text", "I'll improve the error handling in the API client."),
 			])
@@ -1287,7 +1283,7 @@ try {
 						return
 					}
 
-					setMessages((prev: ClineMessage[]) => {
+					setMessages((prev: UiMessage[]) => {
 						const updated = [...prev]
 						updated[updated.length - 1] = createSayToolMessage(
 							4.3,

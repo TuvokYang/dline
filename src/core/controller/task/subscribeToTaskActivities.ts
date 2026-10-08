@@ -9,7 +9,7 @@ import {
 import type { TaskActivityRecord, TaskActivityUpdate } from "@shared/task-activity"
 import type { Controller } from ".."
 import { getRequestRegistry, type StreamingResponseHandler } from "../grpc-handler"
-import { getOpenedTask } from "./opened-task"
+import { currentOpening } from "./opened-task"
 
 function toProtoMetrics(metrics: TaskActivityRecord["metrics"]): ProtoTaskActivityMetrics | undefined {
 	return metrics
@@ -126,25 +126,41 @@ export async function subscribeToTaskActivities(
 	responseStream: StreamingResponseHandler<ProtoTaskActivityUpdate>,
 	requestId?: string,
 ): Promise<void> {
-	const owner = getOpenedTask(controller, request)
-	const activityStore = owner?.activityStore
+	// A stream that ends carries the opening it ends for, as an empty snapshot:
+	// the Webview drops updates for another opening, so an unkeyed end left the
+	// last activities of a closed or promoted surface on screen.
+	const ended = () =>
+		ProtoTaskActivityUpdate.create({
+			sequence: 0,
+			snapshot: true,
+			activities: [],
+			taskId: request.taskId,
+			taskInstanceId: request.taskInstanceId,
+		})
+	const owner = currentOpening(controller, request)
+	const activityStore = owner ? controller.getCurrentTaskActivityStore(request.taskId) : undefined
 	if (!owner || !activityStore) {
-		await responseStream(ProtoTaskActivityUpdate.create({ sequence: 0, snapshot: true, activities: [] }), true)
+		await responseStream(ended(), true)
 		return
 	}
 
-	const interactive = () => controller.task === owner && !owner.isReadOnly()
+	// A history surface owns no runtime, so it can cancel or finish nothing. Retry
+	// promotes the display into the task's runtime first, so it stays offered
+	// while that promotion is possible. Both are read per update because the
+	// surface can change under a live subscription.
+	const interactive = () => controller.task?.taskId === request.taskId
+	const canRetry = () => interactive() || controller.canPromoteHistoryDisplay(request.taskId)
 	const requestRegistry = getRequestRegistry()
 	let completed = false
 	const unsubscribe = activityStore.subscribe(
 		async (update) => {
-			if (controller.task !== owner || completed) return
+			if (controller.currentOpening() !== owner || completed) return
 			await responseStream(
 				{
 					...toProtoUpdate(update, (activityId) => ({
 						cancellable: interactive() && activityStore.isCancellable(activityId),
 						finishable: interactive() && activityStore.isFinishable(activityId),
-						retryable: interactive() && activityStore.isRetryable(activityId),
+						retryable: canRetry() && activityStore.isRetryable(activityId),
 					})),
 					taskId: owner.taskId,
 					taskInstanceId: owner.taskInstanceId,
@@ -157,7 +173,7 @@ export async function subscribeToTaskActivities(
 			if (completed) return
 			completed = true
 			try {
-				await responseStream(ProtoTaskActivityUpdate.create({ sequence: 0, snapshot: false, activities: [] }), true)
+				await responseStream(ended(), true)
 			} finally {
 				if (requestId) requestRegistry.cancelRequest(requestId)
 			}

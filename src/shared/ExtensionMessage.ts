@@ -83,9 +83,11 @@ export interface ExtensionState {
 	mode: Mode
 	checkpointManagerErrorMessage?: string
 	/** Task description displayed in fixed header; sent once, never repeated */
-	taskTitleMessage?: ClineMessage
+	taskTitleMessage?: UiMessage
 	/** Total count of body messages (excluding task) for virtuoso totalCount */
 	totalMessageCount?: number
+	/** Destructive sequence revision used to refetch same-count message replacements. */
+	messageWindowRevision?: number
 	/** Index of the first item in the current window within the full message list */
 	firstItemIndex?: number
 	currentTaskItem?: HistoryItem
@@ -282,11 +284,11 @@ export interface CompactionConversationRange {
 	preCompactionApiEndIndex: number
 }
 
-export interface ClineMessage {
+export interface UiMessage {
 	ts: number
 	type: "ask" | "say"
-	ask?: ClineAsk
-	say?: ClineSay
+	ask?: UiAsk
+	say?: UiSay
 	text?: string
 	reasoning?: string
 	images?: string[]
@@ -324,6 +326,14 @@ export interface ClineMessage {
 	completionHasChanges?: boolean
 	isOperationOutsideWorkspace?: boolean
 	conversationHistoryIndex?: number
+	/**
+	 * Journal position the conversation stood at when the row was written.
+	 *
+	 * A restore returns the journal to exactly this point. The row's
+	 * `conversationHistoryIndex` alone cannot: a compacted conversation passes
+	 * through the same length more than once. Backend-only; never sent to the Webview.
+	 */
+	conversationJournalSeq?: number
 	conversationHistoryDeletedRange?: [number, number] // for when conversation history is truncated for API requests
 	/** Canonical pre-compaction range stored only on a durable completed compaction card. */
 	compactionConversationRange?: CompactionConversationRange
@@ -333,7 +343,7 @@ export interface ClineMessage {
 
 export type CommandExecutionMode = "foreground" | "background"
 
-export type ClineAsk =
+export type UiAsk =
 	| "followup"
 	| "make_plan"
 	| "act_mode_respond"
@@ -358,7 +368,7 @@ export type ClineAsk =
 	| "status_acknowledgment"
 	| "generate_report"
 
-export type ClineSay =
+export type UiSay =
 	| "task"
 	| "error"
 	| "error_retry"
@@ -444,7 +454,7 @@ export interface TaskUiState {
 	cancelEnabled: boolean
 	showFooter: boolean
 	actions: TaskUiAction[]
-	activeAsk?: ClineAsk
+	activeAsk?: UiAsk
 	activeFunctionId?: string
 	message?: string
 	reason: string
@@ -512,7 +522,7 @@ export interface ActiveInteractionView {
 	kind: string
 	status: "opening" | "awaiting" | "resolving"
 	stateRevision: number
-	taskAsk: ClineAsk
+	taskAsk: UiAsk
 	presentationKind: string
 	askMessageTs: number
 	/** Backend registered the exact ask anchor in durable write order even if the Webview window has not loaded it yet. */
@@ -545,7 +555,7 @@ export interface TaskViewState {
 	footer: TaskFooterViewState
 }
 
-export interface ClineSayTool {
+export interface UiSayTool {
 	tool:
 		| "editedExistingFile"
 		| "newFileCreated"
@@ -582,6 +592,14 @@ export interface ClineSayTool {
 	compactionUnitIndex?: number
 	/** True only after this execution-unit card has been committed to durable message history. */
 	compactionDurable?: boolean
+	/**
+	 * Last conversation-journal entry the summary replaced.
+	 *
+	 * Written by the Task runtime, whose provider conversation lives in the
+	 * journal rather than in API history rows, so this watermark (not an API
+	 * row index) is what a Restore from the card rewinds to.
+	 */
+	compactionJournalBoundary?: { readonly seq: number }
 	/** Actionable compaction failure detail. */
 	error?: string
 	/** Content-free classification of the latest failed compaction attempt on this card. */
@@ -655,7 +673,7 @@ export interface ClineSayTool {
 	loadCapability?: LoadCapabilityPayload
 }
 
-export interface ClineSayHook {
+export interface UiSayHook {
 	hookName: string // Name of the hook (e.g., "PreToolUse", "PostToolUse")
 	toolName?: string // Tool name if applicable (for PreToolUse/PostToolUse)
 	status: "running" | "completed" | "failed" | "cancelled" // Execution status
@@ -694,13 +712,13 @@ export type HookOutputStreamMeta = {
 export const browserActions = ["launch", "click", "type", "scroll_down", "scroll_up", "close"] as const
 export type BrowserAction = (typeof browserActions)[number]
 
-export interface ClineSayBrowserAction {
+export interface UiSayBrowserAction {
 	action: BrowserAction
 	coordinate?: string
 	text?: string
 }
 
-export interface ClineSayGenerateExplanation {
+export interface UiSayGenerateExplanation {
 	title: string
 	fromRef: string
 	toRef: string
@@ -749,7 +767,7 @@ export interface SubagentStatusItem {
 	error?: string
 }
 
-export interface ClineSaySubagentStatus {
+export interface UiSaySubagentStatus {
 	kind?: "single" | "batch"
 	status: SubagentExecutionStatus
 	total: number
@@ -777,7 +795,7 @@ export type BrowserActionResult = {
 	currentMousePosition?: string
 }
 
-export interface ClineAskUseMcpServer {
+export interface UiAskUseMcpServer {
 	serverName: string
 	type: "use_mcp_tool" | "access_mcp_resource"
 	toolName?: string
@@ -785,7 +803,7 @@ export interface ClineAskUseMcpServer {
 	uri?: string
 }
 
-export interface ClineAskUseSubagents {
+export interface UiAskUseSubagents {
 	prompts: string[]
 	/**
 	 * Per-item approval detail for a batch.
@@ -844,31 +862,31 @@ export interface ClineAskUseSubagents {
 	jobId?: string
 }
 
-export interface ClineMakePlanResponse {
+export interface UiMakePlanResponse {
 	response: string
 }
 
-export interface ClineQnaResponse {
+export interface UiQnaResponse {
 	response: string
 }
 
-export interface ClineAskQuestion {
+export interface UiAskQuestion {
 	question: string
 	options?: string[]
 	selected?: string
 }
 
-export interface ClineAskNewTask {
+export interface UiAskNewTask {
 	context: string
 }
 
-export interface ClineAskSpawnTask {
+export interface UiAskSpawnTask {
 	task: string
 	mode: Mode
 	context: string
 }
 
-export interface ClineApiReqInfo {
+export interface UiApiReqInfo {
 	request?: string
 	/** Canonical context occupancy after provider usage normalization. */
 	contextTokens?: number
@@ -885,7 +903,7 @@ export interface ClineApiReqInfo {
 	currency?: string // Billing currency code
 	inputPrice?: number // Price per 1M input tokens
 	outputPrice?: number // Price per 1M output tokens
-	cancelReason?: ClineApiReqCancelReason
+	cancelReason?: UiApiReqCancelReason
 	streamingFailedMessage?: string
 	retryStatus?: {
 		attempt: number
@@ -895,7 +913,7 @@ export interface ClineApiReqInfo {
 	}
 }
 
-export interface ClineSubagentUsageInfo {
+export interface UiSubagentUsageInfo {
 	source: "subagents"
 	tokensIn: number
 	tokensOut: number
@@ -904,6 +922,6 @@ export interface ClineSubagentUsageInfo {
 	cost: number
 }
 
-export type ClineApiReqCancelReason = "streaming_failed" | "user_cancelled" | "retries_exhausted"
+export type UiApiReqCancelReason = "streaming_failed" | "user_cancelled" | "retries_exhausted"
 
 export const COMPLETION_RESULT_CHANGES_FLAG = "HAS_CHANGES"

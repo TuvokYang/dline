@@ -1,4 +1,9 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
+
+/** A position in the task's conversation journal. */
+export interface ConversationJournalPosition {
+	readonly seq: number
+}
 
 export interface ChatRestoreBoundary {
 	readonly apiKeepCount: number
@@ -6,11 +11,18 @@ export interface ChatRestoreBoundary {
 	readonly contextAnchorTs: number
 	readonly runtimeApiIndex: number
 	readonly conversationHistoryDeletedRange?: [number, number]
+	/**
+	 * Journal position the provider conversation returns to.
+	 *
+	 * Present only for a card written by the Task runtime, whose conversation
+	 * lives in the journal; the legacy API rows are then left untouched.
+	 */
+	readonly journalTarget?: ConversationJournalPosition
 }
 
 /** Resolve and validate every chat rewind boundary before any store is mutated. */
 export function resolveChatRestoreBoundary(input: {
-	readonly messages: readonly ClineMessage[]
+	readonly messages: readonly UiMessage[]
 	readonly messageIndex: number
 	readonly apiCount: number
 	readonly uiCount: number
@@ -23,6 +35,22 @@ export function resolveChatRestoreBoundary(input: {
 	}
 
 	const compactionRange = message.compactionConversationRange
+	const journalTarget = compactionRange ? undefined : readCompactionJournalBoundary(message)
+	if (journalTarget) {
+		// The summary card itself is the first row the rewind removes, so the
+		// row before it anchors the context history exactly as a range card does.
+		if (messageIndex <= 0) throw new Error("Compaction Restore boundary is inconsistent with the current conversation")
+		// API rows are not this conversation's record, so they are kept as they
+		// are and the deleted range, an API-row fact, is carried through unchecked.
+		return {
+			apiKeepCount: apiCount,
+			uiKeepCount: messageIndex,
+			contextAnchorTs: messages[messageIndex - 1].ts,
+			runtimeApiIndex: apiCount - 1,
+			conversationHistoryDeletedRange: cloneDeletedRange(message.conversationHistoryDeletedRange),
+			journalTarget,
+		}
+	}
 	if (compactionRange) {
 		const [turnStart, turnEnd] = compactionRange.logicalTurnRange
 		const [apiStart, apiEnd] = compactionRange.apiConversationRange
@@ -68,6 +96,32 @@ export function resolveChatRestoreBoundary(input: {
 		runtimeApiIndex: apiKeepCount - 1,
 		conversationHistoryDeletedRange: cloneDeletedRange(message.conversationHistoryDeletedRange),
 	}
+}
+
+/**
+ * The journal position a completed Task-runtime summary card restores to.
+ *
+ * Read from the tool payload because that is the part of the row that reaches
+ * the Webview unchanged, so the card that offers Restore and the boundary that
+ * performs it read the same fact. A malformed position is treated as absent
+ * rather than guessed, which leaves the card on the ordinary restore path.
+ */
+function readCompactionJournalBoundary(message: UiMessage): ConversationJournalPosition | undefined {
+	if (message.say !== "tool" || message.partial === true || !message.text) return undefined
+	let payload: UiSayTool
+	try {
+		payload = JSON.parse(message.text) as UiSayTool
+	} catch {
+		return undefined
+	}
+	if (payload.tool !== "summarizeTask" || payload.compactionStatus !== "completed") return undefined
+	const boundary = payload.compactionJournalBoundary
+	if (!boundary) return undefined
+	const { seq } = boundary
+	if (!Number.isInteger(seq) || seq < 1) {
+		throw new Error("Compaction Restore boundary is inconsistent with the current conversation")
+	}
+	return { seq }
 }
 
 function validateDeletedRange(range: [number, number] | undefined, apiKeepCount: number): void {

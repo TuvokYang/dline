@@ -1,10 +1,11 @@
 import { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { ToolResponse } from "@core/task"
 import { MAX_TOOL_RESULT_TEXT_BYTES, truncateContent } from "@shared/content-limits"
 import type { ClineContent, ClineUserToolResultContentBlock } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
+import { toolApprovalFeedbackText } from "../../utils/buildUserFeedbackContent"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 
 /**
  * Sentinel tool response meaning "the tool turn must not emit a tool_result".
@@ -88,6 +89,31 @@ export class ToolResultUtils {
 		}
 		const baseContent = Array.isArray(content) ? content : ([{ type: "text", text: String(content) }] as const)
 		return [...baseContent, ...ToolResultUtils.flattenFeedback(feedbackContent)]
+	}
+
+	/**
+	 * Bound the text one canonical tool result contributes to the conversation.
+	 *
+	 * Every executed result, whichever path produced it, is held to the same
+	 * ceiling: a result that escapes it reaches every later request verbatim and
+	 * can by itself push the conversation past the window it was sized for.
+	 * Non-text blocks are kept as they are.
+	 */
+	/**
+	 * The text a tool's string result is sent as: the call, then what it returned.
+	 *
+	 * The description names what the call acted on - the file read, the command
+	 * run - so two calls that returned the same text stay distinguishable to the
+	 * model, and a provider prefix built from them does not collapse.
+	 */
+	static describeTextResult(description: string, text: string): string {
+		return `${description} Result:\n${text || "(tool did not return anything)"}`
+	}
+
+	static boundContent(content: ToolResponse): ToolResponse {
+		return typeof content === "string"
+			? truncateContent(content, MAX_TOOL_RESULT_TEXT_BYTES)
+			: ToolResultUtils.boundStructuredResult(content)
 	}
 
 	/** Bound one tool result's generated text while preserving non-text blocks and user feedback. */
@@ -191,8 +217,6 @@ export class ToolResultUtils {
 		}
 
 		if (typeof content === "string") {
-			const resultText = content || "(tool did not return anything)"
-
 			// Try to get description from coordinator first, otherwise use the provided function
 			const description = coordinator
 				? (() => {
@@ -207,7 +231,10 @@ export class ToolResultUtils {
 			// replaces the older one (e.g. "SEARCH block not found"). The final
 			// result is what the AI sees, and ensureToolResultsFollowToolUse
 			// deduplicates by function_id before sending to the API.
-			const boundedResult = truncateContent(`${description} Result:\n${resultText}`, MAX_TOOL_RESULT_TEXT_BYTES)
+			const boundedResult = truncateContent(
+				ToolResultUtils.describeTextResult(description, content),
+				MAX_TOOL_RESULT_TEXT_BYTES,
+			)
 			const mergedContent = ToolResultUtils.mergeTextResult(boundedResult, pendingFeedback)
 			return storeResult(ToolResultUtils.createResult(mergedContent, block, isError))
 		}
@@ -237,12 +264,11 @@ export class ToolResultUtils {
 			return
 		}
 
-		// Build the feedback text only if we have meaningful feedback
-		const feedbackText = hasMeaningfulFeedback
-			? `The user provided the following feedback:\n<feedback>\n${feedback}\n</feedback>`
-			: "The user provided additional content:"
-
-		const content = formatResponse.toolResult(feedbackText, images, hasMeaningfulFileContent ? fileContentString : undefined)
+		const content = formatResponse.toolResult(
+			toolApprovalFeedbackText(hasMeaningfulFeedback ? feedback : undefined),
+			images,
+			hasMeaningfulFileContent ? fileContentString : undefined,
+		)
 		userMessageContent.push({
 			type: "tool_feedback",
 			content,

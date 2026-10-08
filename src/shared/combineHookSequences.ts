@@ -1,8 +1,8 @@
-import { ClineMessage } from "./ExtensionMessage"
+import { UiMessage } from "./ExtensionMessage"
 
 /**
  * Hook metadata extracted from hook message text.
- * Mirrors the ClineSayHook interface but represents parsed data.
+ * Mirrors the UiSayHook interface but represents parsed data.
  */
 interface HookMetadata {
 	hookName: string
@@ -15,7 +15,7 @@ interface HookMetadata {
 type HookStatusSay = "hook" | "hook_status"
 type HookOutputStreamSay = "hook_output" | "hook_output_stream"
 
-function getSay(msg: ClineMessage): string | undefined {
+function getSay(msg: UiMessage): string | undefined {
 	// Back-compat: older recordings may be deserialized without strict typing.
 	return msg.say as string | undefined
 }
@@ -35,7 +35,7 @@ function isHookOutputStreamSay(say: string | undefined): say is HookOutputStream
 /**
  * Type guard to check if a message is a tool or command.
  */
-function isToolOrCommandMessage(msg: ClineMessage): boolean {
+function isToolOrCommandMessage(msg: UiMessage): boolean {
 	return msg.ask === "tool" || msg.say === "tool" || msg.ask === "command" || msg.say === "command"
 }
 
@@ -43,7 +43,7 @@ function isToolOrCommandMessage(msg: ClineMessage): boolean {
  * Safely parses hook metadata from a hook message.
  * Returns null if parsing fails or message is not a hook.
  */
-function parseHookMetadata(hookMessage: ClineMessage): HookMetadata | null {
+function parseHookMetadata(hookMessage: UiMessage): HookMetadata | null {
 	if (!isHookStatusSay(getSay(hookMessage)) || !hookMessage.text) {
 		return null
 	}
@@ -69,7 +69,7 @@ function parseHookMetadata(hookMessage: ClineMessage): HookMetadata | null {
  * This preserves streaming partial tool rows in the UI while still preventing
  * duplicate tool/command entries when both partial and final variants exist.
  */
-function dedupeToolOrCommandMessagesByTimestamp(messages: ClineMessage[]): ClineMessage[] {
+function dedupeToolOrCommandMessagesByTimestamp(messages: UiMessage[]): UiMessage[] {
 	const lastToolOrCommandIndexByTs = new Map<number, number>()
 
 	for (let i = 0; i < messages.length; i++) {
@@ -95,10 +95,10 @@ function dedupeToolOrCommandMessagesByTimestamp(messages: ClineMessage[]): Cline
  * @returns Object containing the combined message and the next index to process
  */
 function combineHookWithOutputs(
-	hookMessage: ClineMessage,
+	hookMessage: UiMessage,
 	startIndex: number,
-	messages: ClineMessage[],
-): { combined: ClineMessage; nextIndex: number } {
+	messages: UiMessage[],
+): { combined: UiMessage; nextIndex: number } {
 	let combinedText = hookMessage.text || ""
 	let hasOutput = false
 	let i = startIndex + 1
@@ -135,9 +135,9 @@ function combineHookWithOutputs(
  * 1. Scan through and combine each hook with its outputs
  * 2. Build final array without hook_output messages, using combined hooks
  */
-function combineAllHooks(messages: ClineMessage[]): ClineMessage[] {
+function combineAllHooks(messages: UiMessage[]): UiMessage[] {
 	// Pass 1: Build map of combined hooks by timestamp
-	const combinedHooksByTs = new Map<number, ClineMessage>()
+	const combinedHooksByTs = new Map<number, UiMessage>()
 
 	for (let i = 0; i < messages.length; i++) {
 		if (isHookStatusSay(getSay(messages[i]))) {
@@ -148,7 +148,7 @@ function combineAllHooks(messages: ClineMessage[]): ClineMessage[] {
 	}
 
 	// Pass 2: Build result array
-	const result: ClineMessage[] = []
+	const result: UiMessage[] = []
 
 	for (const msg of messages) {
 		const say = getSay(msg)
@@ -180,7 +180,7 @@ function combineAllHooks(messages: ClineMessage[]): ClineMessage[] {
  * @param messages The original messages array (may include partial tools)
  * @returns The timestamp of the immediate next tool, or null if none found
  */
-function findImmediateNextToolTimestamp(hookIndex: number, messages: ClineMessage[]): number | null {
+function findImmediateNextToolTimestamp(hookIndex: number, messages: UiMessage[]): number | null {
 	for (let i = hookIndex + 1; i < messages.length; i++) {
 		const msg = messages[i]
 
@@ -216,8 +216,8 @@ function findImmediateNextToolTimestamp(hookIndex: number, messages: ClineMessag
  * @param originalMessages Original messages array (used to find tools)
  * @returns Map of tool timestamp -> array of PreToolUse hooks for that tool
  */
-function buildPreToolUseMap(processedMessages: ClineMessage[], originalMessages: ClineMessage[]): Map<number, ClineMessage[]> {
-	const map = new Map<number, ClineMessage[]>()
+function buildPreToolUseMap(processedMessages: UiMessage[], originalMessages: UiMessage[]): Map<number, UiMessage[]> {
+	const map = new Map<number, UiMessage[]>()
 
 	// Build timestamp-to-index map once to avoid O(n) findIndex calls
 	const timestampToIndex = new Map<number, number>()
@@ -277,8 +277,8 @@ function buildPreToolUseMap(processedMessages: ClineMessage[], originalMessages:
  * @param preToolUseMap Map of tool timestamp -> PreToolUse hooks
  * @returns Reordered messages array
  */
-function reorderWithPreToolUseHooks(messages: ClineMessage[], preToolUseMap: Map<number, ClineMessage[]>): ClineMessage[] {
-	const result: ClineMessage[] = []
+function reorderWithPreToolUseHooks(messages: UiMessage[], preToolUseMap: Map<number, UiMessage[]>): UiMessage[] {
+	const result: UiMessage[] = []
 	const addedHooks = new Set<number>()
 	const addedTools = new Set<number>()
 
@@ -352,10 +352,10 @@ function reorderWithPreToolUseHooks(messages: ClineMessage[], preToolUseMap: Map
  * 3. Build mapping of tools to their PreToolUse hooks
  * 4. Reorder so PreToolUse hooks appear before their tools
  *
- * @param messages Array of ClineMessage objects to process
+ * @param messages Array of UiMessage objects to process
  * @returns New array with hooks combined and PreToolUse hooks reordered
  */
-export function combineHookSequences(messages: ClineMessage[]): ClineMessage[] {
+export function combineHookSequences(messages: UiMessage[]): UiMessage[] {
 	// Phase 1: Deduplicate tool/command messages while preserving streaming partials
 	const filtered = dedupeToolOrCommandMessagesByTimestamp(messages)
 

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest"
+import { createRunningTaskState } from "@/core/task/kernel/__fixtures__/task-state"
 import { TaskTurnTelemetry } from "@/core/task/observability/task-turn-telemetry"
-import { createTaskRuntimeState } from "@/core/task/runtime/TaskRuntimeState"
-import { TaskPhase } from "@/core/task/TaskPhase"
 import { adaptLegacyTelemetryProvider } from "@/services/telemetry/providers/LegacyTelemetryProviderAdapter"
 import { OpenTelemetryClientProvider } from "@/services/telemetry/providers/opentelemetry/OpenTelemetryClientProvider"
 import { OpenTelemetryTelemetryProvider } from "@/services/telemetry/providers/opentelemetry/OpenTelemetryTelemetryProvider"
@@ -76,20 +75,7 @@ describe("API error live OpenTelemetry export", () => {
 			)
 
 			const taskId = `live-${canaryId}`
-			const state = {
-				...createTaskRuntimeState({
-					taskId,
-					phase: TaskPhase.STREAMING,
-					revision: 7,
-					anchor: { apiIndex: 2, turnId: "synthetic-turn" },
-				}),
-				turn: {
-					turnId: "synthetic-turn",
-					assistantApiIndex: 2,
-					mode: "serial" as const,
-					blocks: [],
-				},
-			}
+			const state = createRunningTaskState({ taskId, turnId: "synthetic-turn", revision: 7 })
 			const timeline = new TaskTurnTelemetry(
 				taskId,
 				() => state,
@@ -106,13 +92,7 @@ describe("API error live OpenTelemetry export", () => {
 			)
 			cleanup.push(() => timeline.dispose())
 			timeline.committed("TURN_CREATED", state)
-			timeline.snapshot("persisted", {
-				taskId,
-				phase: TaskPhase.STREAMING,
-				apiIndex: 2,
-				revision: 6,
-				timestamp: Date.now(),
-			})
+			timeline.snapshot("persisted", { state, outbox: [] })
 			const failedTaskSegment = timeline.currentSpan()!
 			const error = Object.assign(new Error("ws070-private-error-message"), {
 				code: "upstream_unavailable",

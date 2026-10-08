@@ -178,4 +178,59 @@ describe("TaskLockService", () => {
 		const status = await lockService.checkTaskLock(taskId)
 		expect(status.isLocked).to.be.true
 	})
+
+	// ──────────────────────────────────────────────
+	// unreadable lock files count as no lock
+	// ──────────────────────────────────────────────
+
+	/** Write `content` as the task's lock file, last modified `ageMs` ago. */
+	async function writeRawLock(content: string, ageMs: number): Promise<string> {
+		const lockPath = path.join(testDir, taskId, ".lock")
+		await fs.mkdir(path.dirname(lockPath), { recursive: true })
+		await fs.writeFile(lockPath, content)
+		const at = new Date(Date.now() - ageMs)
+		await fs.utimes(lockPath, at, at)
+		return lockPath
+	}
+
+	for (const [label, content] of [
+		["corrupt JSON", "{not json"],
+		["an empty file", ""],
+		["a record without its holder", JSON.stringify({ locked_at: Date.now(), pid: 1 })],
+	] as const) {
+		it(`checkTaskLock treats ${label} as unlocked`, async () => {
+			await writeRawLock(content, 60_000)
+
+			const status = await lockService.checkTaskLock(taskId)
+
+			expect(status.isLocked).to.be.false
+		})
+
+		it(`acquireTaskLock replaces an abandoned lock holding ${label}`, async () => {
+			const lockPath = await writeRawLock(content, 60_000)
+
+			expect(await lockService.acquireTaskLock(taskId)).to.be.true
+			expect(JSON.parse(await fs.readFile(lockPath, "utf-8")).held_by).to.equal(instanceA)
+		})
+	}
+
+	it("acquireTaskLock leaves a lock another writer is still filling", async () => {
+		// Created exclusively a moment ago but not yet written: a live acquirer.
+		const lockPath = await writeRawLock("", 0)
+
+		expect(await lockService.acquireTaskLock(taskId)).to.be.false
+		expect(await fs.readFile(lockPath, "utf-8")).to.equal("")
+	})
+
+	it("cleanupOrphaned removes an abandoned unreadable lock", async () => {
+		const lockPath = await writeRawLock("{not json", 60_000)
+
+		await lockService.cleanupOrphaned()
+
+		const remaining = await fs.access(lockPath).then(
+			() => true,
+			() => false,
+		)
+		expect(remaining).to.be.false
+	})
 })

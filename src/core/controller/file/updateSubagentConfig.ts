@@ -98,7 +98,7 @@ export async function updateSubagentConfig(controller: Controller, request: Upda
 	}
 
 	if (controller.task) {
-		await controller.task.flushPromptFreshnessInvalidation("capability_mutation")
+		await controller.task.owners.prompt.flush("capability_mutation")
 	} else {
 		await controller.postStateToWebview()
 	}

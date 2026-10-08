@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { act, renderHook } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -18,7 +18,7 @@ import { useScrollBehavior } from "./useScrollBehavior"
  * stranded after switching away and back.
  */
 
-const MESSAGES: ClineMessage[] = [
+const MESSAGES: UiMessage[] = [
 	{ ts: 1, type: "say", say: "task", text: "task" },
 	{ ts: 2, type: "say", say: "text", text: "reply" },
 ]

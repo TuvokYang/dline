@@ -1,10 +1,47 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import * as should from "should"
 // sinon import removed
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
+import * as should from "should"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createClineAPI } from "@/exports"
 import { Logger } from "@/shared/services/Logger"
 import type { ClineAPI } from "../exports/cline"
 import { setVscodeHostProviderMock } from "./host-provider-test-utils"
+
+vi.mock("@core/controller/task/dispatchInteraction", () => ({
+	dispatchInteraction: vi.fn(async () => undefined),
+}))
+const { dispatchInteraction } = await import("@core/controller/task/dispatchInteraction")
+
+/**
+ * Build an active session. With an approval awaiting, a legacy button press is
+ * routed into that interaction; otherwise message text becomes task input.
+ */
+function activeSession(options: { awaitingApproval?: boolean } = {}) {
+	return createSessionFixture({
+		taskId: "task-1",
+		patchState: (state) => ({
+			...state,
+			dialog: {
+				...state.dialog,
+				primary: options.awaitingApproval
+					? {
+							interactionId: "interaction-1",
+							turnId: "turn-1",
+							status: "awaiting" as const,
+							kind: "approval" as const,
+							receiverGeneration: 0,
+							createdRevision: 0,
+							presentationRef: "presentation:approval",
+							actionRules: [
+								{ actionId: "approve", payloadPolicy: "none" as const },
+								{ actionId: "reject", payloadPolicy: "draft" as const },
+							],
+						}
+					: undefined,
+			},
+		}),
+	})
+}
 
 describe("ClineAPI Core Functionality", () => {
 	let api: ClineAPI
@@ -83,14 +120,17 @@ describe("ClineAPI Core Functionality", () => {
 
 	describe("sendMessage", () => {
 		it("should send message to active task", async () => {
-			const mockTask = {
-				handleWebviewAskResponse: vi.fn().mockResolvedValue(undefined),
-			}
-			mockController.task = mockTask
+			const session = activeSession()
+			mockController.task = session
 
 			await api.sendMessage("Test message", ["image.png"])
 
-			expect(mockTask.handleWebviewAskResponse).toHaveBeenCalledWith("messageResponse", "Test message", ["image.png"])
+			expect(session.inputs.materialize).toHaveBeenCalledWith({
+				text: "Test message",
+				images: ["image.png"],
+				files: [],
+			})
+			expect(session.task.submitInput).toHaveBeenCalledTimes(1)
 		})
 
 		it("should handle no active task gracefully", async () => {
@@ -100,39 +140,36 @@ describe("ClineAPI Core Functionality", () => {
 		})
 
 		it("should handle empty message", async () => {
-			const mockTask = {
-				handleWebviewAskResponse: vi.fn().mockResolvedValue(undefined),
-			}
-			mockController.task = mockTask
+			const session = activeSession()
+			mockController.task = session
 
 			await api.sendMessage("", [])
 
-			expect(mockTask.handleWebviewAskResponse).toHaveBeenCalledWith("messageResponse", "", [])
+			// An empty payload carries no user intent, so no turn input is submitted.
+			expect(session.task.submitInput).not.toHaveBeenCalled()
 		})
 
 		it("should handle undefined message", async () => {
-			const mockTask = {
-				handleWebviewAskResponse: vi.fn().mockResolvedValue(undefined),
-			}
-			mockController.task = mockTask
+			const session = activeSession()
+			mockController.task = session
 
 			await api.sendMessage(undefined, [])
 
-			expect(mockTask.handleWebviewAskResponse).toHaveBeenCalledWith("messageResponse", "", [])
+			expect(session.task.submitInput).not.toHaveBeenCalled()
 		})
 	})
 
 	describe("Button Press Methods", () => {
 		describe("pressPrimaryButton", () => {
 			it("should handle primary button press with active task", async () => {
-				const mockTask = {
-					handleWebviewAskResponse: vi.fn().mockResolvedValue(undefined),
-				}
-				mockController.task = mockTask
+				mockController.task = activeSession({ awaitingApproval: true })
 
 				await api.pressPrimaryButton()
 
-				expect(mockTask.handleWebviewAskResponse).toHaveBeenCalledWith("yesButtonClicked", "", [])
+				expect(dispatchInteraction).toHaveBeenCalledWith(
+					mockController,
+					expect.objectContaining({ interactionId: "interaction-1", actionId: "approve" }),
+				)
 			})
 
 			it("should handle primary button press with no active task", async () => {
@@ -146,14 +183,14 @@ describe("ClineAPI Core Functionality", () => {
 
 		describe("pressSecondaryButton", () => {
 			it("should handle secondary button press with active task", async () => {
-				const mockTask = {
-					handleWebviewAskResponse: vi.fn().mockResolvedValue(undefined),
-				}
-				mockController.task = mockTask
+				mockController.task = activeSession({ awaitingApproval: true })
 
 				await api.pressSecondaryButton()
 
-				expect(mockTask.handleWebviewAskResponse).toHaveBeenCalledWith("noButtonClicked", "", [])
+				expect(dispatchInteraction).toHaveBeenCalledWith(
+					mockController,
+					expect.objectContaining({ interactionId: "interaction-1", actionId: "reject" }),
+				)
 			})
 
 			it("should handle secondary button press with no active task", async () => {

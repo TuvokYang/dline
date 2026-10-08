@@ -19,7 +19,7 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
 	}
 
 	/**
-	 * Stream the proposed context into the same new_task ask that execute() later opens.
+	 * Handle partial block streaming for new_task
 	 */
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		const context = uiHelpers.removeClosingTag(block, "context", block.params.context)
@@ -44,7 +44,8 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
 			})
 		}
 
-		// The user decides between starting the successor task and sending feedback instead.
+		// Handing the conversation to a successor is the user's call even when
+		// tools are auto-approved, so the choice is this tool's own interaction.
 		const outcome = await config.interactions.open({
 			turnId: interactionTurnId(block),
 			interactionId: interactionId(block),
@@ -70,13 +71,15 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
 		const text = outcome.draft?.text ?? ""
 		const images = outcome.draft?.images
 		const files = outcome.draft?.files
-		const fileContent = files && files.length > 0 ? await processFilesIntoText(files) : ""
+		const fileContentString = files && files.length > 0 ? await processFilesIntoText(files) : ""
 
-		await sayFeedbackOnce(config, "noButtonClicked", text, images, files)
+		await sayFeedbackOnce(config, "noButtonClicked", text, images, files, outcome)
+		// The marker is what lets the next round call new_task again without the
+		// user repeating /newtask; see deriveNewTaskFeedbackContinuation.
 		return formatResponse.toolResult(
 			`${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\n${text}\n</feedback>`,
 			images,
-			fileContent,
+			fileContentString,
 		)
 	}
 }

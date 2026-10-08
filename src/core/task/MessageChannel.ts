@@ -1,11 +1,11 @@
-import { type ClineAsk, type ClineMessage, type ClineSay } from "@shared/ExtensionMessage"
+import { type UiAsk, type UiMessage, type UiSay } from "@shared/ExtensionMessage"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
 import pWaitFor from "p-wait-for"
 import type { ClineMessageModelInfo } from "@/shared/messages"
+import { createCanonicalAskRow } from "./ask-row"
 import type { MessageStateHandler } from "./message-state"
-import type { TaskState } from "./TaskState"
 
-const ABORT_ALLOWED_SAY_TYPES = new Set<ClineSay>(["hook_status", "hook_output_stream", "deleted_api_reqs", "state_snapshot"])
+const ABORT_ALLOWED_SAY_TYPES = new Set<UiSay>(["hook_status", "hook_output_stream", "deleted_api_reqs", "state_snapshot"])
 
 /**
  * Check whether a say message is required for abort-time lifecycle cleanup.
@@ -13,7 +13,7 @@ const ABORT_ALLOWED_SAY_TYPES = new Set<ClineSay>(["hook_status", "hook_output_s
  * @param type Say message type being emitted.
  * @returns True when the message may be persisted after task abort.
  */
-export function isAbortAllowedSay(type: ClineSay): boolean {
+export function isAbortAllowedSay(type: UiSay): boolean {
 	return ABORT_ALLOWED_SAY_TYPES.has(type)
 }
 
@@ -40,6 +40,16 @@ export interface RegisteredAskPresentation {
 	readonly persistence: Promise<void>
 }
 
+/** Mutable response state and cancellation scope owned by the message boundary. */
+export interface MessageChannelState {
+	readonly operationSignal: AbortSignal
+	lastMessageTs?: number
+	askResponse?: ClineAskResponse
+	askResponseText?: string
+	askResponseImages?: string[]
+	askResponseFiles?: string[]
+}
+
 /**
  * A point in an ask's life that has to be recoverable from a log.
  *
@@ -56,7 +66,7 @@ export type AskLifecycleEvent = "window_open" | "ui_presented" | "response_recei
 
 export interface AskLifecycleRecord {
 	event: AskLifecycleEvent
-	ask: ClineAsk
+	ask: UiAsk
 	askTs: number
 	/** Milliseconds since the receive window opened; absent before it opens. */
 	elapsedMs?: number
@@ -65,10 +75,10 @@ export interface AskLifecycleRecord {
 }
 
 export interface MessageChannelConfig {
-	pushMessage: (msg: ClineMessage) => void | Promise<void>
+	pushMessage: (msg: UiMessage) => void | Promise<void>
 	syncState: () => Promise<void>
 	messageStateHandler: MessageStateHandler
-	taskState: TaskState
+	taskState: MessageChannelState
 	getProviderInfo: () => ClineMessageModelInfo
 	genTs: () => number
 	/**
@@ -89,10 +99,10 @@ export interface MessageChannelConfig {
  * Does NOT depend on Task or Controller — only on injected config.
  */
 export class MessageChannel {
-	private pushMessage: (msg: ClineMessage) => void | Promise<void>
+	private pushMessage: (msg: UiMessage) => void | Promise<void>
 	private syncState: () => Promise<void>
 	private messageStateHandler: MessageStateHandler
-	private taskState: TaskState
+	private taskState: MessageChannelState
 	private getProviderInfo: () => ClineMessageModelInfo
 	private genTs: () => number
 	private recordAskLifecycle?: (record: AskLifecycleRecord) => void
@@ -124,22 +134,11 @@ export class MessageChannel {
 	}
 
 	/** Build the canonical complete ask row shared by ordinary and recovered presentation paths. */
-	private createAskMessage(type: ClineAsk, text: string | undefined, askTs: number, interactionId?: string): ClineMessage {
-		const commandPresentation = type === "command" ? { commandStatus: "pending" as const, exitCode: undefined } : {}
-		const interactionIdentity = interactionId ? { interactionId } : {}
-		return {
-			ts: askTs,
-			type: "ask",
-			say: undefined,
-			ask: type,
-			text,
-			partial: false,
-			...interactionIdentity,
-			...commandPresentation,
-		}
+	private createAskMessage(type: UiAsk, text: string | undefined, askTs: number, interactionId?: string): UiMessage {
+		return createCanonicalAskRow(type, text, askTs, interactionId)
 	}
 
-	private shouldMessageInvalidateAsk(message: ClineMessage): boolean {
+	private shouldMessageInvalidateAsk(message: UiMessage): boolean {
 		if (message.type === "say" && message.say === "state_snapshot") {
 			return false
 		}
@@ -168,7 +167,7 @@ export class MessageChannel {
 	 * Signature matches Task.say exactly.
 	 */
 	async say(
-		type: ClineSay,
+		type: UiSay,
 		text?: string,
 		images?: string[],
 		files?: string[],
@@ -177,7 +176,7 @@ export class MessageChannel {
 		commandTs?: number,
 	): Promise<number | undefined> {
 		// Allow lifecycle messages during abort so cancel/resume state can be persisted.
-		if (this.taskState.abort && !isAbortAllowedSay(type)) {
+		if (this.taskState.operationSignal.aborted && !isAbortAllowedSay(type)) {
 			throw new Error("Dline instance aborted")
 		}
 
@@ -203,7 +202,7 @@ export class MessageChannel {
 			if (type === "command") {
 				const existing = existingTs ? this.messageStateHandler.clineMessages.find((m) => m.ts === existingTs) : undefined
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				const existingStatus = (existing as ClineMessage)?.commandStatus
+				const existingStatus = (existing as UiMessage)?.commandStatus
 				msg.commandStatus = existingStatus || "pending"
 			}
 			const finalized = await this.messageStateHandler.finalizeClineMessage(msg)
@@ -232,13 +231,13 @@ export class MessageChannel {
 	/** Persist one ask presentation without creating a legacy response waiter. */
 	/** Persist one causally identified say row exactly once. */
 	async presentSay(
-		type: ClineSay,
+		type: UiSay,
 		text: string | undefined,
 		images: string[] | undefined,
 		files: string[] | undefined,
 		interactionId: string,
-		userInputKind?: ClineMessage["userInputKind"],
-		queuedInputMode?: ClineMessage["queuedInputMode"],
+		userInputKind?: UiMessage["userInputKind"],
+		queuedInputMode?: UiMessage["queuedInputMode"],
 	): Promise<number> {
 		const messages = this.messageStateHandler.clineMessages
 		const matches = messages
@@ -291,7 +290,7 @@ export class MessageChannel {
 	 * interaction immediately while every later UI-message write remains ordered after it.
 	 */
 	beginSynthesizedHistoryAsk(
-		type: ClineAsk,
+		type: UiAsk,
 		text?: string,
 		existingTs?: number,
 		interactionId?: string,
@@ -311,7 +310,7 @@ export class MessageChannel {
 		}
 	}
 
-	async presentAsk(type: ClineAsk, text?: string, existingTs?: number, interactionId?: string): Promise<number> {
+	async presentAsk(type: UiAsk, text?: string, existingTs?: number, interactionId?: string): Promise<number> {
 		const askTs = existingTs ?? this.genTs()
 		this.taskState.lastMessageTs = askTs
 		const messages = this.messageStateHandler.clineMessages
@@ -339,9 +338,9 @@ export class MessageChannel {
 	 * Send an "ask" message and wait for user response.
 	 * Signature matches Task.ask exactly.
 	 */
-	async ask(type: ClineAsk, text?: string, partial?: boolean, options?: AskOptions): Promise<AskResult> {
+	async ask(type: UiAsk, text?: string, partial?: boolean, options?: AskOptions): Promise<AskResult> {
 		// Allow resume asks even when aborted
-		if (this.taskState.abort && type !== "resume_task" && type !== "resume_completed_task") {
+		if (this.taskState.operationSignal.aborted && type !== "resume_task" && type !== "resume_completed_task") {
 			throw new Error("Dline instance aborted")
 		}
 
@@ -379,7 +378,7 @@ export class MessageChannel {
 					partial: true,
 					commandTs: options?.commandTs,
 					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				} as Partial<ClineMessage>)
+				} as Partial<UiMessage>)
 				this.pushMessage(upserted)
 				this.taskState.lastMessageTs = askTs
 				options?.onTsCreated?.(askTs)
@@ -400,7 +399,7 @@ export class MessageChannel {
 				commandTs: options?.commandTs,
 				commandStatus: type === "command" ? "pending" : undefined,
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			} as Partial<ClineMessage>)
+			} as Partial<UiMessage>)
 			this.pushMessage(finalized)
 			await this.postStateToWebview()
 			options?.onTsCreated?.(askTs)
@@ -418,7 +417,7 @@ export class MessageChannel {
 				const idx = msgs.findIndex((m) => m.ts === options?.existingTs)
 				if (idx !== -1) {
 					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					const updates: Partial<ClineMessage> = { partial: false }
+					const updates: Partial<UiMessage> = { partial: false }
 					if (type === "command") {
 						updates.commandStatus = "pending"
 						updates.exitCode = undefined
@@ -437,7 +436,7 @@ export class MessageChannel {
 						commandTs: options?.commandTs,
 						commandStatus: type === "command" ? "pending" : undefined,
 						// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					} as Partial<ClineMessage>)
+					} as Partial<UiMessage>)
 				}
 			} else {
 				await this.messageStateHandler.addToClineMessages({
@@ -471,7 +470,7 @@ export class MessageChannel {
 				() =>
 					this.taskState.askResponse !== undefined ||
 					this.isAskPromiseSuperseded(invalidationStartIndex) ||
-					(shouldWakeOnAbort && this.taskState.abort),
+					(shouldWakeOnAbort && this.taskState.operationSignal.aborted),
 				{ interval: 100 },
 			)
 		} finally {
@@ -480,7 +479,7 @@ export class MessageChannel {
 			// that is no longer being asked.
 			this.isAwaitingAskResponse = false
 		}
-		if (shouldWakeOnAbort && this.taskState.abort && this.taskState.askResponse === undefined) {
+		if (shouldWakeOnAbort && this.taskState.operationSignal.aborted && this.taskState.askResponse === undefined) {
 			reportLifecycle("abandoned", askTs, "aborted")
 			throw new Error("Dline instance aborted")
 		}

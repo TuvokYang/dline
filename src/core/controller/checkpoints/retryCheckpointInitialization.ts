@@ -2,7 +2,7 @@ import { Boolean, EmptyRequest } from "@shared/proto/dline/common"
 import type { Controller } from "../index"
 
 export async function retryCheckpointInitialization(controller: Controller, _request: EmptyRequest): Promise<Boolean> {
-	const checkpointManager = controller.task?.checkpointManager
+	const checkpointManager = controller.task?.owners.checkpoints
 	if (!checkpointManager || !("retryCheckpointInitialization" in checkpointManager)) {
 		return Boolean.create({ value: false })
 	}

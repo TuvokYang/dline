@@ -1,23 +1,17 @@
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { getApiMetrics } from "@shared/getApiMetrics"
 import { describe, expect, it, vi } from "vitest"
 import { MessageUsageProjection } from "../MessageUsageProjection"
 
-function usage(
-	say: NonNullable<ClineMessage["say"]>,
-	ts: number,
-	payload: unknown,
-	extra: Partial<ClineMessage> = {},
-): ClineMessage {
+function usage(say: NonNullable<UiMessage["say"]>, ts: number, payload: unknown, extra: Partial<UiMessage> = {}): UiMessage {
 	return { ts, type: "say", say, text: JSON.stringify(payload), ...extra }
 }
 
-const started = (ts: number, payload: unknown, extra: Partial<ClineMessage> = {}) => usage("api_req_started", ts, payload, extra)
-const finished = (ts: number, payload: unknown, extra: Partial<ClineMessage> = {}) =>
-	usage("api_req_finished", ts, payload, extra)
-const legacy = (messages: ClineMessage[]) => getApiMetrics(combineApiRequests(combineCommandSequences(messages)))
+const started = (ts: number, payload: unknown, extra: Partial<UiMessage> = {}) => usage("api_req_started", ts, payload, extra)
+const finished = (ts: number, payload: unknown, extra: Partial<UiMessage> = {}) => usage("api_req_finished", ts, payload, extra)
+const legacy = (messages: UiMessage[]) => getApiMetrics(combineApiRequests(combineCommandSequences(messages)))
 
 function outcome(read: () => ReturnType<typeof getApiMetrics>) {
 	try {
@@ -28,7 +22,7 @@ function outcome(read: () => ReturnType<typeof getApiMetrics>) {
 	}
 }
 
-const cases: { name: string; messages: ClineMessage[] }[] = [
+const cases: { name: string; messages: UiMessage[] }[] = [
 	{
 		name: "normal pair and unfinished request",
 		messages: [started(1, { request: "body", tokensIn: 10 }), finished(2, { tokensOut: 20 }), started(3, { tokensIn: 5 })],
@@ -177,11 +171,7 @@ describe("MessageUsageProjection", () => {
 	it("reuses scalar projections across state and history reads and refreshes changed rows", () => {
 		const text = JSON.stringify({ request: "synthetic request ".repeat(8_000), tokensIn: 10 })
 		const message = started(2, {}, { text })
-		const messages: ClineMessage[] = [
-			{ ts: 1, type: "say", say: "task", text: "Task" },
-			message,
-			finished(3, { tokensOut: 20 }),
-		]
+		const messages: UiMessage[] = [{ ts: 1, type: "say", say: "task", text: "Task" }, message, finished(3, { tokensOut: 20 })]
 		const projection = new MessageUsageProjection()
 		const parse = vi.spyOn(JSON, "parse")
 		try {

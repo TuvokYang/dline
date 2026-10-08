@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 
 import { canAppendRealtimeMessage, isMessageWindowOverfull, reconcileMessageWindow } from "./messageWindowSync"
@@ -10,8 +10,8 @@ import { canAppendRealtimeMessage, isMessageWindowOverfull, reconcileMessageWind
  * @param partial Whether the message is a streaming frame.
  * @returns Message usable by the reconciliation contract.
  */
-function message(ts: number, partial?: boolean): ClineMessage {
-	return { ts, type: "say", say: "text", text: `m${ts}`, partial } as ClineMessage
+function message(ts: number, partial?: boolean): UiMessage {
+	return { ts, type: "say", say: "text", text: `m${ts}`, partial } as UiMessage
 }
 
 describe("reconcileMessageWindow", () => {
@@ -36,6 +36,48 @@ describe("reconcileMessageWindow", () => {
 
 		expect(result.messages.map((entry) => entry.ts)).toEqual([1, 3])
 		expect(result.removed).toBe(true)
+	})
+
+	it("drops deleted local tail rows when the fetched window reaches the backend tail", () => {
+		const result = reconcileMessageWindow(
+			{ messages: [message(1), message(2), message(3), message(4)], startIndex: 0 },
+			{ messages: [message(1), message(2)], startIndex: 0, total: 2 },
+		)
+
+		expect(result.messages.map((entry) => entry.ts)).toEqual([1, 2])
+		expect(result.removed).toBe(true)
+	})
+
+	it("preserves a durable row that arrived after the fetched snapshot started", () => {
+		const result = reconcileMessageWindow(
+			{ messages: [message(1), message(2), message(3)], startIndex: 0 },
+			{ messages: [message(1), message(2)], startIndex: 0, total: 2 },
+			{ localTimestampsAtFetchStart: new Set([1, 2]) },
+		)
+
+		expect(result.messages.map((entry) => entry.ts)).toEqual([1, 2, 3])
+		expect(result.removed).toBe(false)
+	})
+
+	it("preserves a partial that arrived after the fetched snapshot started", () => {
+		const result = reconcileMessageWindow(
+			{ messages: [message(1), message(2), message(3, true)], startIndex: 0 },
+			{ messages: [message(1), message(4)], startIndex: 0, total: 2 },
+			{ localTimestampsAtFetchStart: new Set([1, 2]) },
+		)
+
+		expect(result.messages.map((entry) => entry.ts)).toEqual([1, 3, 4])
+		expect(result.removed).toBe(true)
+	})
+
+	it("preserves an already visible partial while the task is still streaming", () => {
+		const result = reconcileMessageWindow(
+			{ messages: [message(1), message(2), message(3, true)], startIndex: 0 },
+			{ messages: [message(1), message(4)], startIndex: 0, total: 2 },
+			{ localTimestampsAtFetchStart: new Set([1, 2, 3]), preserveOmittedPartials: true },
+		)
+
+		expect(result.messages.map((entry) => entry.ts)).toEqual([1, 3, 4])
 	})
 
 	it("keeps a restore that truncated the tail and appended a new message", () => {
@@ -95,8 +137,8 @@ describe("reconcileMessageWindow", () => {
 	it("does not let a slow response overwrite a newer durable local message", () => {
 		// The realtime stream already upgraded ts=2 to an ask; a fetch that was
 		// in flight before that must not push the older say back on screen.
-		const durableAsk = { ts: 2, type: "ask", ask: "completion_result", text: "Completed" } as ClineMessage
-		const staleSay = { ts: 2, type: "say", say: "completion_result", text: "Completed" } as ClineMessage
+		const durableAsk = { ts: 2, type: "ask", ask: "completion_result", text: "Completed" } as UiMessage
+		const staleSay = { ts: 2, type: "say", say: "completion_result", text: "Completed" } as UiMessage
 
 		const result = reconcileMessageWindow(
 			{ messages: [message(1), durableAsk], startIndex: 0 },

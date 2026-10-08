@@ -4,14 +4,23 @@ import path from "node:path"
 import type CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
 import { ensureCheckpointInitialized } from "@integrations/checkpoints/initializer"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import { MessageStateHandler } from "@/core/task/message-state"
-import { TaskState } from "@/core/task/TaskState"
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import { DefaultToolHandlerState } from "@/core/task/tools/state/ToolHandlerState"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
 
+import { createCheckpointReferenceSet } from "@shared/checkpoints"
+import { encodeCheckpointWorkspaceRef } from "../checkpoint-references"
 import { createTaskCheckpointManager } from "../index"
+import type { CanonicalCheckpointPort } from "../types"
+
+/** The canonical reference a single-root workspace binds to its shadow commit. */
+function singleRootWorkspaceRef(hash: string): string {
+	return encodeCheckpointWorkspaceRef(createCheckpointReferenceSet([hash], ["C:/workspace"]))
+}
 
 type CreateCheckpointTracker = (
 	taskId: string,
@@ -22,7 +31,7 @@ type CreateCheckpointTracker = (
 function createManager(
 	createCheckpointTracker: CreateCheckpointTracker,
 	initialError?: string,
-	options?: { messages?: ClineMessage[]; tracker?: CheckpointTracker },
+	options?: { messages?: UiMessage[]; tracker?: CheckpointTracker; canonicalCheckpoint?: CanonicalCheckpointPort },
 ) {
 	const messages = options?.messages ?? []
 	const taskState: { taskId: string; checkpointManagerErrorMessage?: string } = {
@@ -32,14 +41,15 @@ function createManager(
 	const setCheckpointTracker = vi.fn()
 	const postStateToWebview = vi.fn().mockResolvedValue(undefined)
 	const say = vi.fn(async () => {
-		const message: ClineMessage = { ts: 42, type: "say", say: "checkpoint_created" }
+		const message: UiMessage = { ts: 42, type: "say", say: "checkpoint_created" }
 		messages.push(message)
 		return message.ts
 	})
-	const updateClineMessage = vi.fn(async (index: number, updates: Partial<ClineMessage>) => {
+	const updateClineMessage = vi.fn(async (index: number, updates: Partial<UiMessage>) => {
 		Object.assign(messages[index], updates)
 	})
 	const flushMessageUpdate = vi.fn().mockResolvedValue(undefined)
+	const publishMessage = vi.fn(async (_message: UiMessage) => undefined)
 	const manager = createTaskCheckpointManager(
 		{ taskId: "task-1", controller: {} } as never,
 		{ enableCheckpoints: true, createCheckpointTracker },
@@ -55,6 +65,7 @@ function createManager(
 			},
 			taskState,
 			workspaceManager: { getPrimaryRoot: () => ({ path: "C:/workspace" }) },
+			...(options?.canonicalCheckpoint ? { canonicalCheckpoint: options.canonicalCheckpoint } : {}),
 		} as never,
 		{
 			updateTaskHistory: vi.fn(),
@@ -62,13 +73,22 @@ function createManager(
 			restoreChatRuntime: vi.fn(),
 			say,
 			postStateToWebview,
+			publishMessage,
 		} as never,
 		{
 			checkpointManagerErrorMessage: initialError,
 			...(options?.tracker ? { checkpointTracker: options.tracker } : {}),
 		},
 	)
-	return { manager, taskState, setCheckpointTracker, postStateToWebview, updateClineMessage, flushMessageUpdate }
+	return {
+		manager,
+		taskState,
+		setCheckpointTracker,
+		postStateToWebview,
+		publishMessage,
+		updateClineMessage,
+		flushMessageUpdate,
+	}
 }
 
 describe("TaskCheckpointManager checkpoint initialization", () => {
@@ -156,7 +176,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 	})
 
 	it("creates a chat-only checkpoint when Git initialization is unavailable", async () => {
-		const messages: ClineMessage[] = []
+		const messages: UiMessage[] = []
 		const create = vi.fn<CreateCheckpointTracker>().mockRejectedValue(new Error("Git must be installed to use checkpoints."))
 		const harness = createManager(create, undefined, { messages })
 
@@ -168,15 +188,34 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		expect(harness.taskState.checkpointManagerErrorMessage).toContain("Git must be installed")
 	})
 
+	it("captures a chat-only canonical bundle when file checkpoints are unavailable", async () => {
+		const messages: UiMessage[] = []
+		const capture = vi.fn(async () => undefined)
+		const create = vi.fn<CreateCheckpointTracker>().mockRejectedValue(new Error("Git unavailable"))
+		const harness = createManager(create, undefined, {
+			messages,
+			canonicalCheckpoint: { capture, restore: vi.fn() },
+		})
+
+		await harness.manager.saveCheckpoint()
+
+		expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42 })
+	})
+
 	it("binds the first chat checkpoint to the initialized shadow baseline when no files were tracked", async () => {
-		const messages: ClineMessage[] = []
+		const messages: UiMessage[] = []
 		const baselineHash = "shadow-baseline-hash"
 		const tracker = {
 			setTaskFileTracker: vi.fn(),
 			commit: vi.fn().mockResolvedValue(baselineHash),
 		} as unknown as CheckpointTracker
 		const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
-		const harness = createManager(create, undefined, { messages, tracker })
+		const capture = vi.fn(async () => undefined)
+		const harness = createManager(create, undefined, {
+			messages,
+			tracker,
+			canonicalCheckpoint: { capture, restore: vi.fn() },
+		})
 
 		await harness.manager.saveCheckpoint()
 
@@ -199,10 +238,44 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		expect(harness.flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(
 			harness.postStateToWebview.mock.invocationCallOrder[0],
 		)
+		// The row is already on screen without a hash; only republishing it
+		// lets the view offer the file restore for this checkpoint.
+		expect(harness.publishMessage).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({ ts: 42, say: "checkpoint_created", lastCheckpointHash: [baselineHash] }),
+		)
+		expect(harness.flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+			harness.publishMessage.mock.invocationCallOrder[0],
+		)
+		expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42, workspaceRef: singleRootWorkspaceRef(baselineHash) })
+	})
+
+	it("keeps a durable checkpoint hash when republishing its row fails", async () => {
+		const messages: UiMessage[] = []
+		const tracker = {
+			setTaskFileTracker: vi.fn(),
+			commit: vi.fn().mockResolvedValue("baseline-hash"),
+			getConsecutiveStagingFailures: vi.fn().mockReturnValue(0),
+		} as unknown as CheckpointTracker
+		const capture = vi.fn(async () => undefined)
+		const harness = createManager(vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker), undefined, {
+			messages,
+			tracker,
+			canonicalCheckpoint: { capture, restore: vi.fn() },
+		})
+		harness.publishMessage.mockRejectedValueOnce(new Error("webview closed"))
+
+		await harness.manager.saveCheckpoint()
+
+		expect(messages[0]).toMatchObject({ lastCheckpointHash: ["baseline-hash"] })
+		expect(harness.postStateToWebview).toHaveBeenCalled()
+		expect(capture).toHaveBeenCalledExactlyOnceWith({
+			messageTs: 42,
+			workspaceRef: singleRootWorkspaceRef("baseline-hash"),
+		})
 	})
 
 	it("durably binds a completion checkpoint before posting its updated UI state", async () => {
-		const completionMessage: ClineMessage = { ts: 84, type: "say", say: "completion_result" }
+		const completionMessage: UiMessage = { ts: 84, type: "say", say: "completion_result" }
 		const messages = [completionMessage]
 		const completionHash = "completion-checkpoint-hash"
 		const tracker = {
@@ -241,7 +314,6 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 			const messageStateHandler = new MessageStateHandler({
 				taskId,
 				ulid: "ulid-durable-checkpoint-message",
-				taskState: new TaskState(),
 				uiMessage,
 				updateTaskHistory: async () => [],
 			})
@@ -262,7 +334,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 					fileContextTracker: {},
 					diffViewProvider: {},
 					messageStateHandler,
-					taskState: new TaskState(),
+					taskState: new DefaultToolHandlerState(),
 					workspaceManager: { getPrimaryRoot: () => ({ path: "C:/workspace" }) },
 				} as never,
 				{
@@ -276,6 +348,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 						return ts
 					},
 					postStateToWebview,
+					publishMessage: vi.fn().mockResolvedValue(undefined),
 				} as never,
 				{ checkpointTracker: tracker },
 			)
@@ -288,8 +361,96 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 		} finally {
 			if (previousDocsDir === undefined) delete process.env.DLINE_DOCS_DIR
 			else process.env.DLINE_DOCS_DIR = previousDocsDir
+			await closeInstanceStoragesUnder(docsDir)
 			await rm(docsDir, { force: true, recursive: true })
 		}
+	})
+
+	it("shows the baseline row before the shadow commit finishes and lets a writer wait for it", async () => {
+		const messages: UiMessage[] = []
+		let releaseCommit: (hash: string) => void = () => undefined
+		const tracker = {
+			setTaskFileTracker: vi.fn(),
+			commit: vi.fn(() => new Promise<string>((resolve) => (releaseCommit = resolve))),
+		} as unknown as CheckpointTracker
+		const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
+		const harness = createManager(create, undefined, { messages, tracker })
+
+		await harness.manager.beginInitialCheckpoint()
+
+		expect(messages).toEqual([expect.objectContaining({ say: "checkpoint_created" })])
+		let settled = false
+		const waiting = harness.manager.awaitInitialCheckpoint().then(() => {
+			settled = true
+		})
+		await vi.waitFor(() => expect(tracker.commit).toHaveBeenCalledOnce())
+		expect(settled).toBe(false)
+
+		releaseCommit("baseline-hash")
+		await waiting
+		expect(messages[0]).toMatchObject({ lastCheckpointHash: ["baseline-hash"] })
+	})
+
+	it("starts only one baseline and never rejects a waiter when the commit fails", async () => {
+		const messages: UiMessage[] = []
+		const tracker = {
+			setTaskFileTracker: vi.fn(),
+			commit: vi.fn().mockRejectedValue(new Error("shadow index is locked")),
+		} as unknown as CheckpointTracker
+		const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
+		const harness = createManager(create, undefined, { messages, tracker })
+
+		await harness.manager.beginInitialCheckpoint()
+		await harness.manager.beginInitialCheckpoint()
+
+		await expect(harness.manager.awaitInitialCheckpoint()).resolves.toBeUndefined()
+		expect(messages.filter((message) => message.say === "checkpoint_created")).toHaveLength(1)
+		expect(tracker.commit).toHaveBeenCalledOnce()
+		expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
+	})
+
+	it("stops persisting a baseline that finishes after the task released its stores", async () => {
+		const messages: UiMessage[] = []
+		let releaseCommit: (hash: string) => void = () => undefined
+		const tracker = {
+			setTaskFileTracker: vi.fn(),
+			commit: vi.fn(() => new Promise<string>((resolve) => (releaseCommit = resolve))),
+		} as unknown as CheckpointTracker
+		const capture = vi.fn(async () => undefined)
+		const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
+		const harness = createManager(create, undefined, {
+			messages,
+			tracker,
+			canonicalCheckpoint: { capture, restore: vi.fn() },
+		})
+
+		await harness.manager.beginInitialCheckpoint()
+		await vi.waitFor(() => expect(tracker.commit).toHaveBeenCalledOnce())
+		harness.manager.dispose()
+		releaseCommit("late-baseline-hash")
+		await harness.manager.awaitInitialCheckpoint()
+
+		expect(harness.updateClineMessage).not.toHaveBeenCalled()
+		expect(capture).not.toHaveBeenCalled()
+		expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
+	})
+
+	it("does not open a baseline when checkpoints are disabled", async () => {
+		const messages: UiMessage[] = []
+		const create = vi.fn<CreateCheckpointTracker>()
+		const disabled = createTaskCheckpointManager(
+			{ taskId: "task-1", controller: {} } as never,
+			{ enableCheckpoints: false, createCheckpointTracker: create },
+			{ messageStateHandler: { clineMessages: messages } } as never,
+			{ say: vi.fn() } as never,
+			{},
+		)
+
+		await disabled.beginInitialCheckpoint()
+
+		await expect(disabled.awaitInitialCheckpoint()).resolves.toBeUndefined()
+		expect(messages).toEqual([])
+		expect(create).not.toHaveBeenCalled()
 	})
 
 	it("does not retry a permanent missing Git capability error", async () => {

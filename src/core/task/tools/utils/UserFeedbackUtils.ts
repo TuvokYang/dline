@@ -1,23 +1,22 @@
-import type { ClineContent } from "@shared/messages/content"
+import type { ToolResultAttachments } from "@integrations/misc/extract-text"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
+import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import type { TaskConfig } from "../types/TaskConfig"
 
 /**
- * Load files the user attached while answering a tool and return the text for its tool result.
+ * Load files the user attached while answering a tool.
  *
- * PDFs are queued in the pending user message instead, where they follow the tool results and reach the
- * model as native documents within the request's document budget.
- * @param userMessageContent Pending next-user-message content of the task.
+ * The handler returns the documents with its result (see `withToolDocuments`), so the
+ * journal records them beside the result and the provider request places them after it
+ * as native documents within the request's document budget.
  * @param files Attached file paths, if any.
- * @returns `<file_content>` text for the tool result; empty when nothing was attached.
+ * @returns `<file_content>` text for the tool result and the PDFs that follow it; both empty when nothing was attached.
  */
-export async function attachToolFeedbackFiles(userMessageContent: ClineContent[], files: string[] | undefined): Promise<string> {
-	if (!files?.length) return ""
+export async function attachToolFeedbackFiles(files: string[] | undefined): Promise<ToolResultAttachments> {
+	if (!files?.length) return { text: "", documents: [] }
 	// Loaded on demand: the extractor pulls in the PDF and spreadsheet parsers.
 	const { processFilesForToolResult } = await import("@integrations/misc/extract-text")
-	const { text, documents } = await processFilesForToolResult(files)
-	userMessageContent.push(...documents)
-	return text
+	return processFilesForToolResult(files)
 }
 
 /**
@@ -60,7 +59,9 @@ export async function sayFeedbackOnce(
 	text?: string,
 	images?: string[],
 	files?: string[],
+	presentation?: Pick<InteractionOutcome, "feedbackPresented">,
 ): Promise<void> {
+	if (presentation?.feedbackPresented) return
 	if (!isAckedFeedback(config, response, text, images, files)) {
 		await config.callbacks.say("user_feedback", text ?? "", images, files)
 	}

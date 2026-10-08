@@ -1,10 +1,10 @@
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import React, { memo, useCallback } from "react"
 import { cn } from "@/lib/utils"
-import { highlightText } from "./Highlights"
+import { useHighlightedText } from "./Highlights"
 
 interface StickyUserMessageProps {
-	readonly lastUserMessage: ClineMessage | null
+	readonly lastUserMessage: UiMessage | null
 	readonly onScrollToMessage?: () => void
 	readonly isVisible: boolean
 }
@@ -33,30 +33,32 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
 			[onScrollToMessage],
 		)
 
+		const messageText = lastUserMessage?.text?.trim()
+		// Highlighted before the visibility check: reading the semantic catalog is
+		// a hook, so it cannot sit behind a conditional return.
+		const highlightedText = useHighlightedText(messageText, false)
+
 		// Don't render if no user message or not visible
-		if (!lastUserMessage?.text || !isVisible) {
+		if (!messageText || !isVisible) {
 			return null
 		}
 
-		const messageText = lastUserMessage.text.trim()
-
 		return (
-			<div
+			<button
 				aria-label={`Scroll to your message: ${messageText}`}
 				className={cn(
-					"pointer-events-auto relative flex items-center px-2.5 pt-2 pb-2 cursor-pointer select-none",
-					"backdrop-blur-sm",
+					"pointer-events-auto relative flex w-full items-center px-2.5 pt-2 pb-2 cursor-pointer select-none",
+					"backdrop-blur-sm border-0 text-left",
 					"hover:brightness-110",
 				)}
 				onClick={handleClick}
 				onKeyDown={handleKeyDown}
-				role="button"
 				style={{
 					backgroundColor: "var(--vscode-badge-background)",
 					borderRadius: "3px",
 				}}
-				tabIndex={0}
-				title="Click to scroll to your message">
+				title="Click to scroll to your message"
+				type="button">
 				{/* Message text (truncated via CSS text-ellipsis) */}
 				<div
 					className={cn(
@@ -64,9 +66,9 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
 						"overflow-hidden text-ellipsis whitespace-nowrap",
 						"ph-no-capture",
 					)}>
-					{highlightText(messageText, false)}
+					{highlightedText}
 				</div>
-			</div>
+			</button>
 		)
 	},
 	(prevProps, nextProps) => {

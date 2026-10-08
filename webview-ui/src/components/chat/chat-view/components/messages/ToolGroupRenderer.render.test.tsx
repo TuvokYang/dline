@@ -1,4 +1,4 @@
-import type { ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { FileServiceClient } from "@/services/grpc-client"
@@ -49,12 +49,12 @@ vi.mock("@/services/grpc-client", () => ({
 }))
 
 /** A completed tool message carrying the given say payload. */
-function toolMessage(ts: number, payload: ClineSayTool): ClineMessage {
+function toolMessage(ts: number, payload: UiSayTool): UiMessage {
 	return { ts, type: "say", say: "tool", text: JSON.stringify(payload) }
 }
 
 /** Render one completed tool entry outside any active request. */
-function renderTool(payload: ClineSayTool) {
+function renderTool(payload: UiSayTool) {
 	const message = toolMessage(1, payload)
 	return render(<ToolGroupRenderer allMessages={[message]} isLastGroup={false} messages={[message]} />)
 }
@@ -121,8 +121,8 @@ describe("ToolGroupRenderer rows", () => {
 
 	it("keeps active metadata visible immediately and does not activate the running tool", async () => {
 		rowWidth = 100
-		const request: ClineMessage = { ts: 1, type: "say", say: "api_req_started", text: "{}" }
-		const tool: ClineMessage = {
+		const request: UiMessage = { ts: 1, type: "say", say: "api_req_started", text: "{}" }
+		const tool: UiMessage = {
 			ts: 2,
 			type: "ask",
 			ask: "tool",

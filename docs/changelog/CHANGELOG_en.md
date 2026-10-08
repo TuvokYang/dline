@@ -2,6 +2,15 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- The task runtime now stores conversations in a journal; the first time an existing task is continued after upgrading, its conversation is imported unchanged and later requests carry the full history; per-task `state.json` replaces `snapshot.json`, and the migration imports only the queued inputs, not the earlier completion state
+- Tasks from before the upgrade may reopen as interrupted, including tasks that were running or already completed, and continue through Resume or a new message; a task opened after upgrading cannot be continued by downgrading to an older Dline build
+- Per-task storage moves to `messages.db`, `activities.db`, and `metrics.db`: an existing `ui_messages.jsonl` or `activities.json` is imported on first open and renamed to `*.migrated`, an existing `<task-id>.db` becomes `metrics.db`, and `api_conversation_history.jsonl` is left unchanged
+- A task already open in another window is read-only in this window: input and footer actions are disabled, and replies, queue changes, compaction, activity controls, mode and Profile switches, and checkpoint restore are refused until you take the task over with force unlock in the lock banner
+- Removed the deprecated per-mode OCA/OpenRouter model ID, model info and reasoning effort settings (cleaned once at startup), so continued tasks use the selected Profile's default reasoning effort; also removed the legacy `updateApiConfigurationProto` RPC and unused Groq/Hugging Face/Baseten model list state in the Webview
+
 ## [0.10.0]
 
 0.10.0 is the production version number for the 0.9.4 content: a pre-release with the same number already occupied 0.9.4 in the registry, so the production release moves to a new even minor. Everything listed under 0.9.4 below is included in this release.

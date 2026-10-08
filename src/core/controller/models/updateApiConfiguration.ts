@@ -1,10 +1,9 @@
 import { findEnabledProfiles, PROVIDER_API_KEY_MAP } from "@core/controller/file/getApiProfiles"
 import * as SecretsManager from "@core/storage/secrets"
 import { Empty } from "@shared/proto/dline/common"
-import { ApiHandlerOptions } from "@/shared/api"
 import { UpdateApiConfigurationRequestNew } from "@/shared/proto/dline"
 import { Logger } from "@/shared/services/Logger"
-import { Secrets } from "@/shared/storage/state-keys"
+import { GlobalStateAndSettings, Secrets } from "@/shared/storage/state-keys"
 import type { Controller } from "../index"
 
 /**
@@ -90,7 +89,11 @@ export async function updateApiConfiguration(controller: Controller, request: Up
 		}
 
 		// Process options based on field mask
-		const options: Partial<ApiHandlerOptions> = {}
+		const options: Partial<GlobalStateAndSettings> = {}
+		// Masked option names are validated against the request above, not against the settings type.
+		const assignOption = (key: string, value: unknown) => {
+			;(options as Record<string, unknown>)[key] = value
+		}
 		if (protoOptions && maskOptionsFields.size > 0) {
 			// Validate all masked fields exist
 			for (const fieldName of maskOptionsFields) {
@@ -111,7 +114,7 @@ export async function updateApiConfiguration(controller: Controller, request: Up
 					} else if (key === "actModeProfile") {
 						if (typeof value === "string") options.actModeProfile = value
 					} else {
-						options[key as keyof ApiHandlerOptions] = value
+						assignOption(key, value)
 					}
 
 					// If mode configs should be synced, also update the alternate mode field
@@ -123,7 +126,7 @@ export async function updateApiConfiguration(controller: Controller, request: Up
 							} else if (alternateField === "actModeProfile") {
 								if (typeof value === "string") options.actModeProfile = value
 							} else {
-								options[alternateField as keyof ApiHandlerOptions] = value
+								assignOption(alternateField, value)
 							}
 						}
 					}
@@ -160,7 +163,7 @@ export async function updateApiConfiguration(controller: Controller, request: Up
 		// Update the task's API handler if there's an active task
 		if (controller.task) {
 			// Refresh the active handler and canonical Profile validity after explicit configuration updates.
-			await controller.task.rebuildApiHandler()
+			await controller.task.owners.api.rebuild({ abortPrevious: true })
 		}
 		controller.restartAccountUsagePolling()
 

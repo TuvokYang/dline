@@ -11,10 +11,12 @@ import { findLastIndex } from "@shared/array"
 import { Logger } from "@shared/services/Logger"
 import { ClineDefaultTool } from "@shared/tools"
 import { commitCompletion } from "../../completion/CompletionCommit"
-import type { ToolResponse } from "../../index"
-import type { InteractionOutcome } from "../../interaction/InteractionCoordinator"
+import { isAllItemsCompleted } from "../../focus-chain/file-utils"
+import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import { buildUserFeedbackContent } from "../../utils/buildUserFeedbackContent"
+import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { getTaskCompletionTelemetry } from "../utils"
@@ -33,6 +35,20 @@ function getInitialTaskPreview(config: TaskConfig): string | undefined {
 	return `${firstTaskMessage.slice(0, TASK_PREVIEW_MAX_CHARS)}\n...[truncated]`
 }
 
+/**
+ * Return the stored checklist when it still blocks completion.
+ *
+ * Completion is refused while the task's own TODO list has unchecked items, so a
+ * model cannot declare victory over a plan it has not finished. A subagent runs
+ * without the parent's checklist, and a disabled Focus Chain has no plan to hold.
+ */
+function readUnfinishedFocusChecklist(config: TaskConfig): string | undefined {
+	if (config.isSubagentExecution || config.focusChainSettings?.enabled !== true) return undefined
+	const checklist = config.taskState.currentFocusChainChecklist
+	if (!checklist || isAllItemsCompleted(checklist)) return undefined
+	return checklist
+}
+
 export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHandler {
 	readonly name = ClineDefaultTool.ATTEMPT
 
@@ -47,13 +63,21 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		// Completion remains provisional until all commit prerequisites succeed.
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const result: string | undefined = block.params.result
 
 		// Validate required parameters
 		if (!result) {
 			config.taskState.consecutiveMistakeCount++
 			return await config.callbacks.sayAndCreateMissingParamError(this.name, "result", undefined, block.ts)
+		}
+
+		const unfinishedChecklist = readUnfinishedFocusChecklist(config)
+		if (unfinishedChecklist) {
+			config.taskState.consecutiveMistakeCount++
+			return formatResponse.toolError(
+				`${getPrompt("focusChain", "attemptCompletionBlocked")}\n\nCurrent checklist:\n${unfinishedChecklist}`,
+			)
 		}
 
 		config.taskState.consecutiveMistakeCount = 0
@@ -99,13 +123,26 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		return this.commitAndPresentCompletion(config, block)
 	}
 
-	private async commitAndPresentCompletion(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	private async commitAndPresentCompletion(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const result = block.params.result
 		if (!result) throw new Error("Invalid attempt_completion continuation result")
+		const completion = {
+			turnId: interactionTurnId(block),
+			interactionId: interactionId(block),
+			completionId: interactionId(block),
+			presentation: result,
+			existingTs: block.ts,
+		}
 
+		// Staged before the result is shown: a close from here on keeps the task finished.
+		await config.interactions.stageCompletion?.(completion)
 		await commitCompletion({
 			publishResult: () => config.callbacks.say("completion_result", result, undefined, undefined, false, block.ts),
-			saveCheckpoint: (completionMessageTs) => config.callbacks.saveCheckpoint(true, completionMessageTs),
+			// A task surface without workspace history has nothing to commit, so
+			// completion stays available to one that only produces an answer.
+			saveCheckpoint: async (completionMessageTs) => {
+				await config.callbacks.saveCheckpoint?.(true, completionMessageTs)
+			},
 			markWorkspaceChanges: (completionMessageTs) => this.markCompletionWorkspaceChanges(config, completionMessageTs),
 			captureTelemetry: () => telemetryService.captureTaskCompleted(config.ulid ?? "", getTaskCompletionTelemetry(config)),
 		})
@@ -123,13 +160,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			{ message: result },
 		)
 
-		const outcome = await config.interactions.complete({
-			turnId: interactionTurnId(block),
-			interactionId: interactionId(block),
-			completionId: interactionId(block),
-			presentation: result,
-			existingTs: block.ts,
-		})
+		const outcome = await config.interactions.complete(completion)
 		return this.continueInteraction(config, block, outcome)
 	}
 
@@ -159,7 +190,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 	}
 
 	/** Consume completion feedback without replaying the completion commit. */
-	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolResponse> {
+	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
 		const text = outcome.draft?.text
 		const images = outcome.draft?.images
 		const completionFiles = outcome.draft?.files
@@ -167,7 +198,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		if (outcome.actionId === "start_new_task") {
 			return prefix
 		}
-		await sayFeedbackOnce(config, "messageResponse", text, images, completionFiles)
+		await sayFeedbackOnce(config, "messageResponse", text, images, completionFiles, outcome)
 
 		// Run UserPromptSubmit hook when user provides post-completion feedback
 		let hookContextModification: string | undefined
@@ -207,11 +238,11 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 			})
 		}
 
-		const fileContentString = await attachToolFeedbackFiles(config.taskState.userMessageContent, completionFiles)
-		if (fileContentString) {
+		const attachments = await attachToolFeedbackFiles(completionFiles)
+		if (attachments.text) {
 			toolResults.push({
 				type: "text" as const,
-				text: fileContentString,
+				text: attachments.text,
 			})
 		}
 
@@ -220,13 +251,14 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 		}
 
 		// Return the tool results as a complex response
-		return [
+		const response: ToolResponse = [
 			{
 				type: "text" as const,
 				text: prefix,
 			},
 			...toolResults,
 		]
+		return withToolDocuments(response, attachments.documents)
 	}
 
 	/**

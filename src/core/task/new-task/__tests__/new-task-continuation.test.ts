@@ -1,10 +1,14 @@
 import type { ToolUse } from "@core/assistant-message"
 import { ExplicitInstructionRegistry } from "@core/task/explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
-import type { ClineContent, ClineUserToolResultContentBlock } from "@shared/messages/content"
+import type { ClineContent, ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages/content"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
-import { deriveNewTaskFeedbackContinuation, NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../new-task-continuation"
+import {
+	deriveNewTaskFeedbackContinuation,
+	deriveNewTaskFeedbackContinuationFromConversation,
+	NEW_TASK_FEEDBACK_CONTINUATION_MARKER,
+} from "../new-task-continuation"
 
 /** Create one complete assistant tool block with canonical identities. */
 function newTaskTool(overrides: Partial<ToolUse> = {}): ToolUse {
@@ -38,6 +42,54 @@ function feedbackResult(overrides: Partial<ClineUserToolResultContentBlock> = {}
 function derive(userContent: readonly ClineContent[], assistantContent: readonly ToolUse[] = [newTaskTool()]) {
 	return deriveNewTaskFeedbackContinuation({ userContent, assistantContent, persistedRequest: false })
 }
+
+/** One assistant turn that declared the given tools. */
+function assistantTurn(...tools: ToolUse[]): ClineStorageMessage {
+	return {
+		role: "assistant",
+		content: tools.map((tool) => ({
+			type: "tool_use" as const,
+			id: tool.function_id ?? "",
+			name: tool.name,
+			input: tool.params,
+			function_id: tool.function_id ?? "",
+			dline_tid: tool.dline_tid ?? "",
+		})),
+	} as ClineStorageMessage
+}
+
+/** One user message carrying the given content. */
+function userTurn(...content: ClineContent[]): ClineStorageMessage {
+	return { role: "user", content } as ClineStorageMessage
+}
+
+describe("New Task feedback continuation from the request conversation", () => {
+	it("grants the round that answers a feedback result", () => {
+		const declaration = deriveNewTaskFeedbackContinuationFromConversation([
+			userTurn({ type: "text", text: "/newtask" }),
+			assistantTurn(newTaskTool()),
+			userTurn(feedbackResult()),
+			userTurn({ type: "text", text: "<environment_details/>" }),
+		])
+
+		expect(declaration).toMatchObject({ type: "new_task", source: "internal_continuation", targetTool: "new_task" })
+	})
+
+	it("grants nothing once a later assistant turn answered the feedback", () => {
+		expect(
+			deriveNewTaskFeedbackContinuationFromConversation([
+				assistantTurn(newTaskTool()),
+				userTurn(feedbackResult()),
+				assistantTurn(newTaskTool({ function_id: "function-later", dline_tid: "tid-later" })),
+				userTurn({ type: "text", text: "ordinary reply" }),
+			]),
+		).toBeUndefined()
+	})
+
+	it("grants nothing to a conversation without an assistant turn", () => {
+		expect(deriveNewTaskFeedbackContinuationFromConversation([userTurn(feedbackResult())])).toBeUndefined()
+	})
+})
 
 describe("New Task feedback continuation", () => {
 	it("derives a fresh internal one-shot declaration from a canonical feedback pair", () => {

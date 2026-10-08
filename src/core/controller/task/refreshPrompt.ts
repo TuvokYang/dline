@@ -15,7 +15,7 @@ export async function refreshPrompt(controller: Controller, request: RefreshProm
 		Logger.debug(`[RefreshPrompt] rejected taskId=${request.taskId} activeTaskId=${task?.taskId ?? "none"}`)
 		return { success: false }
 	}
-	await task.refreshPromptCache()
+	await task.owners.prompt.refreshManual()
 	Logger.debug(`[RefreshPrompt] refreshed taskId=${request.taskId}`)
 	return { success: true }
 }

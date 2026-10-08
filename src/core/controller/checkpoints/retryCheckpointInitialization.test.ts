@@ -1,3 +1,4 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { describe, expect, it, vi } from "vitest"
 import { retryCheckpointInitialization } from "./retryCheckpointInitialization"
@@ -12,7 +13,7 @@ describe("retryCheckpointInitialization controller", () => {
 	it("forwards the retry to the active checkpoint manager", async () => {
 		const retry = vi.fn().mockResolvedValue(true)
 		const checkpointManager = { retryCheckpointInitialization: retry }
-		const controller = { task: { checkpointManager } }
+		const controller = { task: createSessionFixture({ owners: { checkpoints: checkpointManager } }) }
 
 		const result = await retryCheckpointInitialization(controller as never, EmptyRequest.create({}))
 
@@ -23,7 +24,9 @@ describe("retryCheckpointInitialization controller", () => {
 
 	it("preserves a failed retry result", async () => {
 		const retry = vi.fn().mockResolvedValue(false)
-		const controller = { task: { checkpointManager: { retryCheckpointInitialization: retry } } }
+		const controller = {
+			task: createSessionFixture({ owners: { checkpoints: { retryCheckpointInitialization: retry } } }),
+		}
 
 		const result = await retryCheckpointInitialization(controller as never, EmptyRequest.create({}))
 

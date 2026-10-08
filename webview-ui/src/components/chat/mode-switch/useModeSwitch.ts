@@ -1,4 +1,5 @@
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ModeSwitchSnapshot } from "@shared/mode-switch"
 import { ModeSwitchOperationRequest, ModeSwitchStatus, PlanActMode, TogglePlanActModeRequest } from "@shared/proto/dline/state"
 import type { Mode } from "@shared/storage/types"
@@ -10,6 +11,14 @@ export interface ModeSwitchDraft {
 	text: string
 	images: string[]
 	files: string[]
+	/**
+	 * The structure the composer held when the switch started.
+	 *
+	 * Captured with the text so confirming the switch submits the same input the
+	 * user composed, including node order and any lifecycle barrier, instead of
+	 * a re-parse of the captured string.
+	 */
+	semanticInput?: SemanticInputDocument
 }
 
 interface PendingSwitch {
@@ -43,7 +52,7 @@ interface UseModeSwitchResult {
 }
 
 const ACTIVE_PHASES = new Set<ModeSwitchSnapshot["phase"]>(["awaiting_confirmation", "compacting", "committing"])
-const MODE_SWITCH_OWNED_ASKS = new Set<ClineAsk>([
+const MODE_SWITCH_OWNED_ASKS = new Set<UiAsk>([
 	"followup",
 	"make_plan",
 	"qna_respond",
@@ -58,7 +67,7 @@ function hasDraft(draft: ModeSwitchDraft): boolean {
 }
 
 /** Return whether the active interaction owns the draft submitted with a mode switch. */
-export function shouldAttachModeSwitchDraft(clineAsk: ClineAsk | undefined): boolean {
+export function shouldAttachModeSwitchDraft(clineAsk: UiAsk | undefined): boolean {
 	return clineAsk !== undefined && MODE_SWITCH_OWNED_ASKS.has(clineAsk)
 }
 
@@ -73,6 +82,9 @@ function cloneDraft(draft: ModeSwitchDraft): ModeSwitchDraft {
 		text: draft.text,
 		images: [...draft.images],
 		files: [...draft.files],
+		// The document is immutable once composed, so the captured reference is
+		// already a stable snapshot of the structure.
+		...(draft.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
 	}
 }
 

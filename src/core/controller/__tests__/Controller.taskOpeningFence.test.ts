@@ -3,15 +3,14 @@ import Mutex from "p-mutex"
 import { describe, expect, it, vi } from "vitest"
 
 /** Exercise the real close and lifecycle lane, isolating only transition/store ports. */
-function closingController(terminate: () => Promise<void>) {
+function closingController(dispose: () => Promise<void>) {
 	const controller = Object.create(Controller.prototype) as Controller
 	const task = {
 		taskId: "task-1",
 		taskInstanceId: "open-1",
-		taskSm: { mode: "act" },
-		fenceControllerDetachment: vi.fn(),
-		terminate: vi.fn(terminate),
-		isReadOnly: () => false,
+		owners: { settings: { mode: "act" }, prompt: { beginDispose: vi.fn() } },
+		beginClose: vi.fn(),
+		dispose: vi.fn(dispose),
 	}
 	const releaseTaskLock = vi.fn(async () => undefined)
 	Object.assign(controller, {
@@ -38,7 +37,7 @@ describe("Controller Task opening fence", () => {
 		})
 		await expect(controller.clearTask()).rejects.toBe(failure)
 		expect(controller.task).toBeUndefined()
-		expect(task.fenceControllerDetachment).toHaveBeenCalledOnce()
+		expect(task.beginClose).toHaveBeenCalledOnce()
 		expect(releaseTaskLock).not.toHaveBeenCalled()
 		const replacement = vi.fn(async () => "opened")
 		await expect(controller.runTaskLifecycleOperation(replacement)).rejects.toBe(failure)

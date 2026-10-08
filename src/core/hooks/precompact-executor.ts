@@ -1,5 +1,5 @@
 import { findLastIndex } from "@shared/array"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import type { ContextManager } from "../context/context-management/ContextManager"
@@ -46,7 +46,7 @@ export interface TokenUsage {
  * @param message The API request message to parse
  * @returns Token usage information, or zeros if parsing fails
  */
-export function extractTokenUsageFromMessage(message: ClineMessage | undefined): TokenUsage {
+export function extractTokenUsageFromMessage(message: UiMessage | undefined): TokenUsage {
 	const defaultUsage: TokenUsage = {
 		tokensIn: 0,
 		tokensOut: 0,
@@ -129,7 +129,7 @@ export interface PreCompactHookParams {
 	/** Current deleted range (if any) */
 	conversationHistoryDeletedRange?: [number, number]
 	/** Cline messages for extracting token usage */
-	clineMessages: ClineMessage[]
+	clineMessages: UiMessage[]
 
 	// Services
 	/** Context manager for getting truncated messages */

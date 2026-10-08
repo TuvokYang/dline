@@ -10,6 +10,7 @@ import type {
 	ClineUserToolResultContentBlock,
 } from "@shared/messages/content"
 import { ClineDefaultTool } from "@shared/tools"
+import { ToolResultUtils } from "../tools/utils/ToolResultUtils"
 import type { InteractionKind } from "./Interaction"
 
 export interface InteractionContinuationInput {
@@ -18,6 +19,8 @@ export interface InteractionContinuationInput {
 	dlineTid: string
 	chatContent?: ChatContent
 	switchesPlanToAct?: boolean
+	/** The action the user answered with; a status acknowledgment reads Stop differently. */
+	actionId?: string
 }
 
 /** Map a conversational tool name to the interaction contract that formats its continuation. */
@@ -55,7 +58,7 @@ export async function projectInteractionContinuation(input: InteractionContinuat
 			type: "tool_result",
 			function_id: input.functionId,
 			dline_tid: input.dlineTid,
-			content: projectResponseContent(input, attachments.text),
+			content: ToolResultUtils.boundContent(projectResponseContent(input, attachments.text)),
 		},
 		documents: attachments.documents,
 	}
@@ -84,12 +87,16 @@ function projectResponseContent(input: InteractionContinuationInput, fileContent
 					: "User continued the conversation."
 			return formatResponse.toolResult(message, images, fileContent)
 		}
-		case "status_acknowledgment":
-			return formatResponse.toolResult(
-				`[STATUS_UPDATE] User acknowledged.${statusFeedbackText(text)} Continue with your next tool call.`,
-				images,
-				fileContent,
-			)
+		case "status_acknowledgment": {
+			const feedback = statusFeedbackText(text)
+			// Worded exactly as StatusUpdateHandler answers a live dialog, so a
+			// restored answer reads the same to the model.
+			const message =
+				input.actionId === "stop"
+					? `[STATUS_UPDATE] User chose to stop.${feedback} Wait for further instructions.`
+					: `[STATUS_UPDATE] User acknowledged.${feedback} Continue with your next tool call.`
+			return formatResponse.toolResult(message, images, fileContent)
+		}
 		case "completion": {
 			const content: Array<ClineTextContentBlock | ImageBlockParam> = [
 				{ type: "text", text: "[attempt_completion] Result: Done" },

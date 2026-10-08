@@ -43,7 +43,6 @@ function createTaskConfig(
 						actModeApiModelId: "act-default",
 						planModeApiModelId: "plan-default",
 						actModeOpenAiModelId: "openai-act-default",
-						planModeOpenRouterModelId: "openrouter-plan-default",
 					} as any
 				},
 			},

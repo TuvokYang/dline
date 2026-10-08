@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import ErrorRow from "./ErrorRow"
@@ -32,7 +32,7 @@ vi.mock("../../../../src/services/error/ClineError", () => ({
 }))
 
 describe("ErrorRow", () => {
-	const mockMessage: ClineMessage = {
+	const mockMessage: UiMessage = {
 		ts: 123456789,
 		type: "say",
 		say: "error",

@@ -61,18 +61,21 @@ All of these are under `<documents-root>/tasks/<task-id>/`:
 
 | File | Owner |
 |---|---|
-| `ui_messages.jsonl` | `UIMessage`, buffered UI messages |
-| `api_conversation_history.jsonl` | `ApiConversation`, the conversation sent to the model |
-| `snapshot.json` | `TaskSnapshotPersistence`, snapshots used for crash recovery |
+| `journal.db` | Task runtime commits: journal entries, command publications, and payloads; the conversation sent to the model is rebuilt from it |
+| `state.json`, `state.json.bak` | The durable kernel snapshot used to reopen and recover the task; the previous version is kept as `.bak` |
+| `messages.db` | `UIMessage`, the chat projection shown in the Webview |
+| `activities.db` | `TaskActivityPersistence`, task activity events |
+| `metrics.db` | API rate metrics and request/response execution data |
 | `context.json`, `context_history.jsonl` | Task context and context-management records |
 | `settings.json` | Task-level setting overrides |
 | `task_metadata.json` | Task metadata |
-| `activities.json` | `TaskActivityPersistence`, schema-versioned task activities |
-| `<task-id>.db` | Per-task SQLite container for API rate metrics and request/response execution data |
+| `subagents/<subagent-id>/` | One directory per subagent with the same layout, including subagents spawned by other subagents |
 | `artifacts/` | Task artifacts (such as generated images); only task-relative paths are allowed |
 | `tmp/` | `command-logs/`, `shell-diagnostics/`, `image-previews/`, `image-viewer/` |
 
-`tmp/command-logs/` survives across sessions because chat rows and the Activities view link to those logs. It is bounded by a per-task total size budget (200 MiB by default) that drops the oldest logs first; age alone never deletes a log. `api_rate_metrics.jsonl` is a legacy format that is imported into the per-task database with fingerprint checks.
+`src/core/storage/instance/InstanceLayout.ts` is the single source of these paths, and each database has exactly one writing module.
+
+`tmp/command-logs/` survives across sessions because chat rows and the Activities view link to those logs. It is bounded by a per-task total size budget (200 MiB by default) that drops the oldest logs first; age alone never deletes a log. `api_rate_metrics.jsonl` is a legacy format that is imported into `metrics.db` with fingerprint checks.
 
 Deleting a task must go through the task deletion coordinator, which handles locks, active Controllers, panels, `TaskHistory`, database files, and checkpoints. When you add a task-owned file, decide who is responsible for it during deletion and recovery.
 
@@ -116,7 +119,9 @@ Capability toggles (rules, workflows, skills, and so on) use three sparse scopes
 - **Exporting VS Code storage**: `exportVSCodeStorageToSharedFiles()` (in `src/hosts/vscode/vscode-to-file-migration.ts`) reads legacy `ExtensionContext` global state, workspace state, and secrets and writes them to file storage. Global state and each workspace record their version separately in `__vscodeMigrationVersion`; values already in files take precedence.
 - **Settings migration**: `StateManager` uses `__settingsMigrationVersion` to move supported legacy global-state settings into the settings file, and removes the legacy copies only after the settings file owns them.
 - **Task history**: the legacy `taskHistory.jsonl` is imported only when `taskHistory.db` does not exist. Once the database has been created, later launches do not attempt the import again.
-- **Message files**: legacy JSON message files are imported only when the current JSONL file does not exist.
+- **Message and activity files**: a legacy `ui_messages.jsonl` (or an older `ui_messages.json`/`claude_messages.json`) is imported into `messages.db` on first open, and `activities.json` into `activities.db`. Each file is renamed to `<name>.migrated` only after its rows are committed and read back, so an interrupted import is retried on the next open.
+- **Metrics database**: a legacy `<task-id>.db` and its WAL are moved to `metrics.db` once; an existing `metrics.db` is never overwritten.
+- **Task runtime upgrade**: `snapshot.json` from earlier versions is read only to import its input queue into `state.json`, once; the earlier completion state is not imported, so such a task may reopen as interrupted. The first time a task from an earlier version is continued, its `api_conversation_history.jsonl` is imported into `journal.db` while the journal holds nothing but that import; the file itself is left unchanged. A task opened by this version cannot be continued by an older one.
 
 ## Adding persistent state
 

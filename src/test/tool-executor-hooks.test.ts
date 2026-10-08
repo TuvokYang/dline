@@ -4,7 +4,6 @@ import "should"
 import { executeHook } from "../core/hooks/hook-executor"
 import { StateManager } from "../core/storage/StateManager"
 import { MessageStateHandler } from "../core/task/message-state"
-import { TaskState } from "../core/task/TaskState"
 
 /**
  * Unit tests for tool hook execution (PreToolUse and PostToolUse)
@@ -34,11 +33,9 @@ describe("Tool Executor Hooks", () => {
 	 * Helper to create a minimal MessageStateHandler for testing
 	 */
 	function createTestHandler(): MessageStateHandler {
-		const taskState = new TaskState()
 		return new MessageStateHandler({
 			taskId: "test-task-id",
 			ulid: "test-ulid",
-			taskState,
 			updateTaskHistory: async () => [],
 		})
 	}

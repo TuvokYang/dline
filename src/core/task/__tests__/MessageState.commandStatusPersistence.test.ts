@@ -1,11 +1,11 @@
 import { UIMessage } from "@core/storage/UIMessage"
 import { MessageStateHandler } from "@core/task/message-state"
-import { TaskState } from "@core/task/TaskState"
-import type { ClineMessage, CommandStatus } from "@shared/ExtensionMessage"
+import type { CommandStatus, UiMessage } from "@shared/ExtensionMessage"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 
 describe("command status persistence", () => {
 	let dlineDocsDir: string
@@ -17,6 +17,7 @@ describe("command status persistence", () => {
 
 	afterEach(async () => {
 		vi.unstubAllEnvs()
+		await closeInstanceStoragesUnder(dlineDocsDir)
 		await fs.rm(dlineDocsDir, { recursive: true, force: true })
 	})
 
@@ -34,13 +35,12 @@ describe("command status persistence", () => {
 			ask: "command",
 			text: "echo test",
 			commandStatus: "pending",
-		} satisfies ClineMessage)
+		} satisfies UiMessage)
 		await writer.flush()
 
 		const messageState = new MessageStateHandler({
 			taskId,
 			ulid: "test-ulid",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			uiMessage: writer,
 		})

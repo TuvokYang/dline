@@ -1,8 +1,40 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { TaskActivityStore } from "./TaskActivityStore"
 
+type Activity = ReturnType<TaskActivityStore["list"]>[number]
+
+/** A stand-in for `activities.db`: writes merge by activity id, so a reopen sees every activity ever written. */
+function rowPersistence() {
+	const rows = new Map<string, Activity>()
+	return {
+		rows,
+		load: vi.fn(async () => [...rows.values()]),
+		upsert: vi.fn(async (activities: readonly Activity[]) => {
+			for (const activity of activities) rows.set(activity.activityId, activity)
+		}),
+	}
+}
+
 describe("TaskActivityStore", () => {
 	afterEach(() => vi.useRealTimers())
+
+	// A drain is usually followed by dispose, so a failed write must not wait
+	// for a later change to be retried.
+	it("retries a failed write once while draining, so disposing next keeps the latest record", async () => {
+		const persistence = rowPersistence()
+		const store = new TaskActivityStore("task-retry", persistence)
+		store.create({ activityId: "command-1", kind: "command", executionMode: "background", title: "npm test" })
+		await store.waitForPersistence()
+		expect(persistence.rows.get("command-1")?.status).not.toBe("completed")
+
+		// The write carrying the terminal status is the last one before the drain.
+		persistence.upsert.mockRejectedValueOnce(new Error("database is locked"))
+		store.update("command-1", { status: "completed" })
+		await store.waitForPersistence()
+		store.dispose()
+
+		expect(persistence.rows.get("command-1")?.status).toBe("completed")
+	})
 
 	it("sends one initial snapshot and batches output updates", async () => {
 		vi.useFakeTimers()
@@ -258,13 +290,7 @@ describe("TaskActivityStore", () => {
 	})
 
 	it("persists retry recipes without treating them as live retry controls after reopen", async () => {
-		const persisted: Array<ReturnType<TaskActivityStore["list"]>> = []
-		const persistence = {
-			load: vi.fn(async () => persisted.at(-1) ?? []),
-			save: vi.fn(async (activities: ReturnType<TaskActivityStore["list"]>) => {
-				persisted.push(activities)
-			}),
-		}
+		const persistence = rowPersistence()
 		const store = new TaskActivityStore("task-1", persistence)
 		store.create({
 			activityId: "subagent-recipe",
@@ -404,13 +430,7 @@ describe("TaskActivityStore", () => {
 	})
 
 	it("keeps ordered typed events and persists history for reopen", async () => {
-		const persisted: Array<ReturnType<TaskActivityStore["list"]>> = []
-		const persistence = {
-			load: vi.fn(async () => persisted.at(-1) ?? []),
-			save: vi.fn(async (activities: ReturnType<TaskActivityStore["list"]>) => {
-				persisted.push(activities)
-			}),
-		}
+		const persistence = rowPersistence()
 		const store = new TaskActivityStore("task-1", persistence)
 		store.create({
 			activityId: "subagent-1",
@@ -461,13 +481,7 @@ describe("TaskActivityStore", () => {
 	})
 
 	it("preserves complete tool history when verbose streaming exceeds the activity event cap", async () => {
-		const persisted: Array<ReturnType<TaskActivityStore["list"]>> = []
-		const persistence = {
-			load: vi.fn(async () => persisted.at(-1) ?? []),
-			save: vi.fn(async (activities: ReturnType<TaskActivityStore["list"]>) => {
-				persisted.push(activities)
-			}),
-		}
+		const persistence = rowPersistence()
 		const store = new TaskActivityStore("task-1", persistence)
 		store.create({
 			activityId: "subagent-verbose",
@@ -581,7 +595,7 @@ describe("TaskActivityStore", () => {
 					resolveLoad = resolve
 				}),
 		)
-		const save = vi.fn(async (_activities: ReturnType<TaskActivityStore["list"]>) => undefined)
+		const upsert = vi.fn(async (_activities: readonly Activity[]) => undefined)
 		const historicalStore = new TaskActivityStore("task-1")
 		historicalStore.create({
 			activityId: "historical-command",
@@ -589,7 +603,7 @@ describe("TaskActivityStore", () => {
 			executionMode: "background",
 			title: "historical",
 		})
-		const store = new TaskActivityStore("task-1", { load, save })
+		const store = new TaskActivityStore("task-1", { load, upsert })
 		const unsubscribe = store.subscribe(vi.fn())
 		store.create({
 			activityId: "live-command",
@@ -601,12 +615,13 @@ describe("TaskActivityStore", () => {
 		await store.waitForPersistence()
 		unsubscribe()
 
-		expect(
-			save.mock.calls
-				.at(-1)?.[0]
-				.map((activity) => activity.activityId)
-				.sort(),
-		).toEqual(["historical-command", "live-command"])
+		expect(store.list().map((activity) => activity.activityId)).toEqual(
+			expect.arrayContaining(["historical-command", "live-command"]),
+		)
+		// History merged on load stays stored as it was; only the activity that changed is written.
+		expect(upsert.mock.calls.flatMap(([activities]) => activities.map((activity) => activity.activityId))).toEqual([
+			"live-command",
+		])
 	})
 
 	it("does not interrupt live activities created after persisted history hydration", async () => {
@@ -619,7 +634,7 @@ describe("TaskActivityStore", () => {
 		})
 		const reopened = new TaskActivityStore("task-1", {
 			load: vi.fn(async () => historicalStore.list()),
-			save: vi.fn(async () => undefined),
+			upsert: vi.fn(async () => undefined),
 		})
 
 		await reopened.hydrate()
@@ -670,15 +685,15 @@ describe("TaskActivityStore", () => {
 		})
 		historicalStore.update("completed-command", { status: "completed", latestEvent: "Command completed" })
 
-		const save = vi.fn(async (_activities: ReturnType<TaskActivityStore["list"]>) => undefined)
+		const upsert = vi.fn(async (_activities: readonly Activity[]) => undefined)
 		const reopened = new TaskActivityStore("task-1", {
 			load: vi.fn(async () => historicalStore.list()),
-			save,
+			upsert,
 		})
 
 		await reopened.hydrate()
 		expect(reopened.get("running-zero-timeout")?.status).toBe("running")
-		expect(save).not.toHaveBeenCalled()
+		expect(upsert).not.toHaveBeenCalled()
 
 		expect((await reopened.recoverInterruptedActivities()).sort()).toEqual([
 			"awaiting-agent",
@@ -704,22 +719,23 @@ describe("TaskActivityStore", () => {
 		}
 		expect(reopened.get("completed-command")?.status).toBe("completed")
 		expect(reopened.listRunning()).toEqual([])
-		expect(save).toHaveBeenCalledTimes(1)
-		expect(save.mock.calls.at(-1)?.[0].map((activity) => activity.status)).toContain("interrupted")
+		expect(upsert).toHaveBeenCalledTimes(1)
+		// Recovery writes the recovered activities only, never the untouched history.
+		expect(upsert.mock.calls.at(-1)?.[0].every((activity) => activity.status === "interrupted")).toBe(true)
 
-		const saveCount = save.mock.calls.length
+		const upsertCount = upsert.mock.calls.length
 		expect(await reopened.recoverInterruptedActivities()).toEqual([])
-		expect(save).toHaveBeenCalledTimes(saveCount)
+		expect(upsert).toHaveBeenCalledTimes(upsertCount)
 		reopened.update("running-zero-timeout", { status: "completed", result: "late result" })
 		expect(reopened.get("running-zero-timeout")?.status).toBe("interrupted")
 		expect(reopened.get("running-zero-timeout")?.result).toBeUndefined()
 	})
 
 	it("redacts obvious secrets from every persisted activity text field", async () => {
-		const save = vi.fn(async (_activities: ReturnType<TaskActivityStore["list"]>) => undefined)
+		const upsert = vi.fn(async (_activities: readonly Activity[]) => undefined)
 		const store = new TaskActivityStore("task-1", {
 			load: vi.fn(async () => []),
-			save,
+			upsert,
 		})
 		store.create({
 			activityId: "command-1",
@@ -737,7 +753,7 @@ describe("TaskActivityStore", () => {
 		})
 		await store.waitForPersistence()
 
-		const serialized = JSON.stringify(save.mock.calls.at(-1)?.[0])
+		const serialized = JSON.stringify(upsert.mock.calls.at(-1)?.[0])
 		expect(serialized).toContain("[REDACTED]")
 		for (const secret of [
 			"title-secret",

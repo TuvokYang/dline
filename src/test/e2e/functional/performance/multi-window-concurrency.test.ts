@@ -10,6 +10,7 @@ import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { openTab } from "@e2e/utils/common"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskConversationText, readTaskInteractionView } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 
 const DLINE_RELOAD_NOTIFICATION =
@@ -98,13 +99,7 @@ async function findTaskIdByHistoryMarker(dlineDocsDir: string, marker: string): 
 		})
 		for (const entry of entries) {
 			if (!entry.isDirectory()) continue
-			const history = await readFile(
-				path.join(dlineDocsDir, "tasks", entry.name, "api_conversation_history.jsonl"),
-				"utf8",
-			).catch((error: unknown) => {
-				if ((error as NodeJS.ErrnoException).code === "ENOENT") return ""
-				throw error
-			})
+			const history = await readTaskConversationText(dlineDocsDir, entry.name)
 			if (history.includes(marker)) return entry.name
 		}
 		return undefined
@@ -112,23 +107,8 @@ async function findTaskIdByHistoryMarker(dlineDocsDir: string, marker: string): 
 }
 
 async function waitForQnaInteraction(dlineDocsDir: string, taskId: string): Promise<void> {
-	const readState = async () => {
-		const snapshotText = await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8")
-		const snapshot = JSON.parse(snapshotText) as {
-			phase?: string
-			interaction?: { interactionId?: string; kind?: string; status?: string }
-			turn?: { blocks?: Array<{ dlineTid?: string; phase?: string; toolName?: string }> }
-		}
-		const block = snapshot.turn?.blocks?.find((candidate) => candidate.toolName === "qna_respond")
-		return {
-			phase: snapshot.phase,
-			interactionId: snapshot.interaction?.interactionId,
-			interactionKind: snapshot.interaction?.kind,
-			interactionStatus: snapshot.interaction?.status,
-			blockId: block?.dlineTid,
-			blockPhase: block?.phase,
-		}
-	}
+	// The turn-ending block is the qna_respond call that opened the dialog.
+	const readState = () => readTaskInteractionView(dlineDocsDir, taskId)
 	await expect.poll(readState, { timeout: 30_000 }).toMatchObject({
 		phase: "executing",
 		interactionKind: "qna_response",
@@ -400,6 +380,37 @@ async function activateDlinePanel(tab: Locator, frame: Frame): Promise<void> {
 	const frameElement = await frame.frameElement()
 	await frameElement.waitForElementState("visible")
 	await expect(frame.locator("#root")).toBeVisible()
+	await waitForWebviewFocusHandoff(frame)
+}
+
+/**
+ * Wait until VS Code has handed keyboard focus to an activated webview.
+ *
+ * Activating an editor tab focuses its webview asynchronously: the workbench
+ * first focuses the webview's host iframe and only then restores focus inside
+ * the content frame. Text typed into the content frame before that handoff
+ * lands is dropped while the host iframe takes focus away, so the panel is
+ * ready for input only once every frame from the workbench down to the Dline
+ * content frame is the active element of the document that contains it.
+ */
+async function waitForWebviewFocusHandoff(frame: Frame): Promise<void> {
+	await expect
+		.poll(async () => {
+			for (let child = frame, parent = frame.parentFrame(); parent; child = parent, parent = parent.parentFrame()) {
+				if (!(await isActiveElementOfParent(child))) return false
+			}
+			return true
+		})
+		.toBe(true)
+}
+
+async function isActiveElementOfParent(frame: Frame): Promise<boolean> {
+	const element = await frame.frameElement()
+	try {
+		return await element.evaluate((node) => node.ownerDocument.activeElement === node)
+	} finally {
+		await element.dispose()
+	}
 }
 
 async function activateDlinePanelByFrame(group: Locator, frame: Frame): Promise<void> {
@@ -602,6 +613,9 @@ e2e("Dline task panels preserve independent editor groups across window reload",
 	await expect.poll(() => secondPanel.evaluate(() => document.hasFocus()), { timeout: 60_000 }).toBe(true)
 	await E2ETestHelper.runCommandPalette(page, "View: Move Editor into Next Group")
 	await expect(dlineEditorGroups(page, reloadTaskMarkers)).toHaveCount(2)
+	// The moved editor takes focus asynchronously again; a palette opened before that
+	// handoff lands loses its keystrokes and closes when the webview takes focus.
+	await waitForWebviewFocusHandoff(secondPanel)
 
 	await E2ETestHelper.runCommandPalette(page, "Developer: Reload Window")
 	await expect(dlineEditorGroups(page, reloadTaskMarkers)).toHaveCount(2, { timeout: 60_000 })
@@ -1423,12 +1437,13 @@ e2e(
 		await E2ETestHelper.dismissWhatsNewModal(panel)
 		await expect(panel.getByText(panelTask, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
 		await expect(panel.getByTestId("chat-input")).toBeEnabled()
-		const restoredSnapshotText = await readFile(path.join(dlineDocsDir, "tasks", panelTaskId, "snapshot.json"), "utf8")
-		const restoredSnapshot = JSON.parse(restoredSnapshotText) as {
-			interaction?: { interactionId?: string; kind?: string }
-			turn?: { blocks?: Array<{ dlineTid?: string; toolName?: string }> }
+		const restoredView = await readTaskInteractionView(dlineDocsDir, panelTaskId)
+		const restoredSnapshotText = JSON.stringify(restoredView)
+		const restoredSnapshot = {
+			interaction: { interactionId: restoredView.interactionId, kind: restoredView.interactionKind },
 		}
-		const completionBlock = restoredSnapshot.turn?.blocks?.find((block) => block.toolName === "attempt_completion")
+		// The turn-ending block is the attempt_completion call.
+		const completionBlock = restoredView.blockId === undefined ? undefined : { dlineTid: restoredView.blockId }
 		expect(restoredSnapshot.interaction?.kind, restoredSnapshotText).toBe("completion")
 		expect(restoredSnapshot.interaction?.interactionId, restoredSnapshotText).toBe(completionBlock?.dlineTid)
 		await selectProfile(panel, E2E_PROFILE_NAMES.mockOpenAiResponses)

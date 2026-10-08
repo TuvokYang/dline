@@ -58,7 +58,7 @@ export async function deleteSkillFile(controller: Controller, request: DeleteSki
 	const localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "skills"))
 
 	if (controller.task) {
-		await controller.task.flushPromptFreshnessInvalidation("capability_mutation")
+		await controller.task.owners.prompt.flush("capability_mutation")
 	} else {
 		await controller.postStateToWebview()
 	}

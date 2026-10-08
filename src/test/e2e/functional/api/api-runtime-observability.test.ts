@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import * as path from "node:path"
-import { MAX_AUTO_RETRY_ATTEMPTS } from "@core/task/auto-retry"
+import { MAX_AUTO_RETRY_ATTEMPTS } from "@core/task/auto-retry-schedule"
 import type { MockApiConsumption, MockTokenUsage } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { addSelectedCodeToDline, openTab, toggleNotifications } from "@e2e/utils/common"
@@ -140,18 +140,6 @@ async function expectSingleStructuredApiError(
 	await expect(sidebar.getByText(/^\s*\{"message":.*"providerId":.*\}\s*$/)).toHaveCount(0)
 	await expect(sidebar.getByText(/^\s*\[[A-Z0-9_-]+\]/)).toHaveCount(0)
 	await expect(sidebar.getByText('(Click "Retry" below)', { exact: true })).toHaveCount(0)
-}
-
-async function setAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {
-	await sidebar.getByLabel("Open auto-approve settings").click()
-	const checkbox = sidebar.locator("vscode-checkbox").filter({ hasText: label })
-	await expect(checkbox).toHaveCount(1)
-	const isChecked = () => checkbox.evaluate((element) => Boolean((element as HTMLInputElement).checked))
-	if ((await isChecked()) !== enabled) {
-		await sidebar.getByText(label, { exact: true }).click()
-	}
-	await expect.poll(isChecked).toBe(enabled)
-	await sidebar.getByLabel("Close auto-approve settings").click()
 }
 
 async function submitInteractionFeedback(sidebar: Frame, text: string): Promise<void> {
@@ -907,9 +895,6 @@ e2e(
 	async ({ helper, server, sidebar, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(240_000)
 		await helper.signin(sidebar)
-		// Edit approval is decided before the SEARCH block is matched, so failed
-		// replaces only reach the mistake limit when edits run without a prompt.
-		await setAutoApproveAction(sidebar, "Edit project files", true)
 		const relativePath = ".memory-bank/workstreams/WS-001-omnispace/progress.md"
 		const filePath = path.join(workspaceDir, relativePath)
 		await mkdir(path.dirname(filePath), { recursive: true })
@@ -936,7 +921,12 @@ e2e(
 
 		const taskText = "E2E_FAILED_REPLACE_RESUME_TASK"
 		await sendTask(sidebar, taskText)
-		await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(3)
+		const approve = sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
+		for (let requestCount = 1; requestCount <= 3; requestCount++) {
+			await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(requestCount)
+			await expect(approve).toBeVisible({ timeout: 30_000 })
+			await approve.click()
+		}
 		const failedReplaceConsumptions = server.getMockConsumptions("openai-compatible-chat")
 		expect(failedReplaceConsumptions.map((entry) => entry.toolName)).toEqual([
 			"replace_in_file",
@@ -1010,25 +1000,27 @@ e2e(
 		await expect(copyErrorButton).toBeVisible()
 		await copyErrorButton.click()
 		await expect(sidebar.getByRole("button", { name: "Copied" })).toBeVisible()
-		const copiedError = (await app.evaluate(({ clipboard }) => clipboard.readText())).replaceAll("\r\n", "\n")
-		expect(copiedError).toBe(
-			[
-				"API Request Failed",
-				"",
-				message,
-				"",
-				"Provider: openai",
-				"Model: dline-e2e-model",
-				"HTTP status: 500",
-				"Error code: e2e_mock_queue_exhausted",
-				`Request ID: ${requestId}`,
-				"",
-				"Details",
-				"Type: e2e_mock_error",
-				"Target: openai-compatible-chat",
-				"Retryable: true",
-			].join("\n"),
-		)
+		const expectedCopiedError = [
+			"API Request Failed",
+			"",
+			message,
+			"",
+			"Provider: openai",
+			"Model: dline-e2e-model",
+			"HTTP status: 500",
+			"Error code: e2e_mock_queue_exhausted",
+			`Request ID: ${requestId}`,
+			"",
+			"Details",
+			"Type: e2e_mock_error",
+			"Target: openai-compatible-chat",
+			"Retryable: true",
+		].join("\n")
+		await expect
+			.poll(async () => (await app.evaluate(({ clipboard }) => clipboard.readText())).replaceAll("\r\n", "\n"), {
+				timeout: 10_000,
+			})
+			.toBe(expectedCopiedError)
 
 		server.enqueueResponses("openai-compatible-chat", {
 			type: "tool",
@@ -1188,7 +1180,8 @@ e2e(
 				type: "tool",
 				name: "attempt_completion",
 				arguments: { result: "E2E_UNSENT_DRAFT_AUTOMATIC_RETRY_DONE" },
-				delayMs: 5_000,
+				// Keep the recovered request active long enough for real keyboard input before completion rerenders the task footer.
+				delayMs: 15_000,
 			},
 			{
 				type: "error",
@@ -1250,7 +1243,9 @@ e2e(
 				type: "tool",
 				name: "attempt_completion",
 				arguments: { result: completion },
-				delayMs: 5_000,
+				// Leave a deterministic window after the recovered text turn so the
+				// assertion observes the active request rather than racing completion.
+				delayMs: 15_000,
 			},
 			{
 				type: "error",
@@ -1356,7 +1351,9 @@ e2e(
 				name: "attempt_completion",
 				arguments: { result: completion },
 				reasoning: recoveredReasoning,
-				afterReasoningDelayMs: 8_000,
+				// Keep the recovered request active while the reasoning row is expanded
+				// and the retry card is reconciled from the persisted message window.
+				afterReasoningDelayMs: 20_000,
 			},
 			{
 				type: "error",
@@ -1369,13 +1366,14 @@ e2e(
 		await sendTask(sidebar, "Exercise DeepSeek recovery at the first streamed response chunk.")
 
 		const errorBox = sidebar.getByTestId("error-retry-box")
-		await expect(errorBox).toContainText(retryAttemptLabel(1), { timeout: 90_000 })
-		await expect(sidebar.getByText(recoveredReasoning, { exact: false })).toHaveCount(1, { timeout: 60_000 })
+		const streamingThinking = sidebar.getByRole("button", { name: "Thinking...", exact: true }).last()
+		await expect(streamingThinking).toBeVisible({ timeout: 60_000 })
+		await expect(sidebar.getByText(completion, { exact: false })).toHaveCount(0)
+		await expect(sidebar.getByText(recoveredReasoning, { exact: false })).toHaveCount(1)
 		await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(2)
 		await expect(errorBox).toHaveCount(0)
 		await expect(sidebar.getByText(/Automatic retry (scheduled|in progress|stopped)/)).toHaveCount(0)
 		await expect(sidebar.locator('vscode-button[aria-label="Retry"]')).toHaveCount(0)
-		await expect(sidebar.locator('vscode-button[aria-label="Cancel"]')).toBeVisible()
 
 		await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 		await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)

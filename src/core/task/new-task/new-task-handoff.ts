@@ -1,4 +1,4 @@
-import type { ClineUserContent } from "@shared/messages/content"
+import { type ClineUserContent, imageSourceToUrl } from "@shared/messages/content"
 import type { Mode } from "@shared/storage/types"
 import type { StartSuccessorTaskPostCommitDirective } from "../tools/ToolExecutionResult"
 
@@ -39,6 +39,31 @@ export interface NewTaskSettingsSource {
 	readonly planModeProfile?: string
 	readonly actModeProfileId?: string
 	readonly actModeProfile?: string
+}
+
+/** A handoff's initial content in the shape a task submission carries it. */
+export interface SuccessorSubmission {
+	/** Text that follows the task in the first request, as submission context. */
+	readonly context: readonly string[]
+	/** Images as data URLs, submitted with the task. */
+	readonly images: readonly string[]
+}
+
+/**
+ * Split a handoff's initial content into submission context and images.
+ *
+ * The successor's first input is an ordinary submission whose text is the
+ * handed-over context, so the feedback the user gave has to travel beside it
+ * rather than replace it.
+ */
+export function successorSubmission(initialUserContent: readonly ClineUserContent[]): SuccessorSubmission {
+	const context: string[] = []
+	const images: string[] = []
+	for (const block of initialUserContent) {
+		if (block.type === "text") context.push(block.text)
+		else if (block.type === "image") images.push(imageSourceToUrl(block.source))
+	}
+	return { context, images }
 }
 
 /** Snapshot a successor directive, prepared feedback content, and current Task-local settings. */

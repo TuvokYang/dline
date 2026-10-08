@@ -1,3 +1,4 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { UpdateTaskSettingsRequest } from "@shared/proto/dline/state"
 import { createTaskCapabilityToggles, serializeTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -71,7 +72,13 @@ function createController() {
 				return undefined
 			}),
 		},
-		task: { taskId: "task-1", rebuildApiHandler, flushPromptFreshnessInvalidation },
+		task: createSessionFixture({
+			taskId: "task-1",
+			owners: {
+				api: { rebuild: rebuildApiHandler },
+				prompt: { flush: flushPromptFreshnessInvalidation },
+			},
+		}),
 		restartAccountUsagePolling: vi.fn(),
 		postStateToWebview,
 	} as unknown as Controller
@@ -131,7 +138,17 @@ describe("updateTaskSettings Task runtime overrides", () => {
 		expect(fixture.setTaskSettings).toHaveBeenCalledWith("task-1", "actModeServiceTierOverrideTier", "priority")
 		expect(fixture.flushPendingState).toHaveBeenCalledOnce()
 		expect(fixture.rebuildApiHandler).toHaveBeenCalledOnce()
+		expect(fixture.rebuildApiHandler).toHaveBeenCalledWith({ abortPrevious: false })
 		expect(fixture.order).toEqual(["flush", "rebuild", "post"])
+	})
+
+	it("aborts the in-flight request only when the Profile or mode changes", async () => {
+		const profileFixture = createController()
+		await updateTaskSettings(
+			profileFixture.controller,
+			UpdateTaskSettingsRequest.create({ taskId: "task-1", settings: { actModeProfile: "Other profile" } }),
+		)
+		expect(profileFixture.rebuildApiHandler).toHaveBeenCalledWith({ abortPrevious: true })
 	})
 
 	it("rejects a positive budget below the effective minimum before any durable mutation", async () => {
@@ -221,7 +238,6 @@ describe("updateTaskSettings Task runtime overrides", () => {
 			"planModeReasoningOverrideKind",
 			"planModeReasoningOverrideEffort",
 			"planModeThinkingBudgetTokens",
-			"planModeReasoningEffort",
 			"planModeServiceTierOverrideKind",
 			"planModeServiceTierOverrideTier",
 		]) {
@@ -270,6 +286,7 @@ describe("updateTaskSettings Task runtime overrides", () => {
 		expect(fixture.setTaskSettings).toHaveBeenCalledWith("task-1", "actModeServiceTierOverrideTier", "flex")
 		expect(fixture.flushPendingState).toHaveBeenCalledOnce()
 		expect(fixture.rebuildApiHandler).toHaveBeenCalledOnce()
+		expect(fixture.rebuildApiHandler).toHaveBeenCalledWith({ abortPrevious: false })
 		expect(fixture.postStateToWebview).toHaveBeenCalledOnce()
 	})
 

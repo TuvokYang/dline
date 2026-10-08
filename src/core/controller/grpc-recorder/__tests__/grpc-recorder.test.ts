@@ -194,7 +194,6 @@ describe("grpc-recorder", () => {
 		it("never records OAuth requests or responses that carry transient secrets", () => {
 			const secureRecorder = GrpcRecorder.builder().enableIf(true).build()
 			const methods = [
-				["cline.AccountService", "openAiCodexSignIn"],
 				["cline.AccountService", "startOpenAiCodexSignIn"],
 				["cline.AccountService", "getOpenAiCodexAuthStatus"],
 				["cline.AccountService", "completeOpenAiCodexCallbackUri"],

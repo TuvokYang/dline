@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package dline;
+
+option go_package = "github.com/dline/grpc-go/dline";
+option java_multiple_files = true;
+option java_package = "bot.dline.proto";
+
+// The semantic input document: the single truth for one chat submission.
+//
+// Ordered nodes are the authority for send order. raw_text exists for
+// accessibility, history display and legacy mirroring, and is never re-parsed
+// to discover additional commands or mentions.
+message SemanticInputDocument {
+  int32 schema_version = 1;
+  string parser_version = 2;
+  string catalog_revision = 3;
+  string document_id = 4;
+  string raw_text = 5;
+  repeated SemanticInputNode nodes = 6;
+  repeated SemanticResourceBinding resources = 7;
+}
+
+// One ordered node. Exactly one payload is set.
+message SemanticInputNode {
+  oneof node {
+    TextInputNode text = 1;
+    SlashCommandInputNode slash_command = 2;
+    MentionInputNode mention = 3;
+    ImageInputNode image = 4;
+    FileInputNode file = 5;
+  }
+}
+
+message TextInputNode {
+  string text = 1;
+}
+
+// How a semantic entity stands at submission time.
+enum SemanticEntityState {
+  SEMANTIC_ENTITY_STATE_RECOGNIZED = 0;
+  SEMANTIC_ENTITY_STATE_PARTIAL = 1;
+  SEMANTIC_ENTITY_STATE_UNRESOLVED = 2;
+  SEMANTIC_ENTITY_STATE_INVALID = 3;
+  SEMANTIC_ENTITY_STATE_DISABLED = 4;
+  SEMANTIC_ENTITY_STATE_STALE = 5;
+  SEMANTIC_ENTITY_STATE_LITERAL = 6;
+}
+
+// Where a slash command comes from.
+enum SlashCommandNamespace {
+  SLASH_COMMAND_NAMESPACE_CMD = 0;
+  SLASH_COMMAND_NAMESPACE_WORKFLOW = 1;
+  SLASH_COMMAND_NAMESPACE_SKILL = 2;
+  SLASH_COMMAND_NAMESPACE_MCP = 3;
+}
+
+// Whether the command composes with later commands or closes the sequence.
+enum SlashCommandComposition {
+  SLASH_COMMAND_COMPOSITION_COMPOSABLE = 0;
+  SLASH_COMMAND_COMPOSITION_LIFECYCLE_BARRIER = 1;
+}
+
+enum MentionKind {
+  MENTION_KIND_FILE = 0;
+  MENTION_KIND_FOLDER = 1;
+  MENTION_KIND_URL = 2;
+  MENTION_KIND_PROBLEMS = 3;
+  MENTION_KIND_TERMINAL = 4;
+  MENTION_KIND_GIT_CHANGES = 5;
+  MENTION_KIND_GIT_COMMIT = 6;
+}
+
+// When a mention's content is captured.
+enum MentionCapturePolicy {
+  MENTION_CAPTURE_POLICY_SNAPSHOT_AT_SUBMIT = 0;
+  MENTION_CAPTURE_POLICY_RESOLVE_AT_EXECUTE = 1;
+}
+
+// How a file node entered the document.
+enum FileNodeOrigin {
+  FILE_NODE_ORIGIN_PASTED_TEXT = 0;
+  FILE_NODE_ORIGIN_PASTED_FILE = 1;
+  FILE_NODE_ORIGIN_UPLOADED_FILE = 2;
+}
+
+message SlashCommandInputNode {
+  string entity_id = 1;
+  string command_id = 2; // Catalog descriptor identity, e.g. "command.compact"
+  string source_text = 3;
+  string canonical_name = 4;
+  SlashCommandNamespace namespace = 5;
+  SlashCommandComposition composition_mode = 6;
+  SemanticEntityState state = 7;
+}
+
+message MentionInputNode {
+  string entity_id = 1;
+  MentionKind mention_kind = 2;
+  string source_text = 3;
+  string canonical_ref = 4;
+  optional string workspace_hint = 5;
+  optional MentionCapturePolicy capture_policy = 6;
+  SemanticEntityState state = 7;
+}
+
+message ImageInputNode {
+  string entity_id = 1;
+  string resource_id = 2;
+  string display_name = 3;
+  optional string alt_text = 4;
+}
+
+message FileInputNode {
+  string entity_id = 1;
+  string resource_id = 2;
+  FileNodeOrigin file_origin = 3;
+  string display_name = 4;
+  optional int32 line_count = 5;
+}
+
+// A binding to a task-owned resource. The hash freezes which content this
+// submission agreed to; the document never carries a path or payload.
+message SemanticResourceBinding {
+  string resource_id = 1;
+  string expected_content_hash = 2;
+}

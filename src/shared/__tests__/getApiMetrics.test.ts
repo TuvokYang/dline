@@ -1,11 +1,11 @@
 import { strict as assert } from "node:assert"
 import { describe, it } from "vitest"
-import type { ClineMessage } from "../ExtensionMessage"
+import type { UiMessage } from "../ExtensionMessage"
 import { getApiMetrics, getLastApiReqTotalTokens } from "../getApiMetrics"
 
 describe("getApiMetrics", () => {
 	it("includes subagent_usage in aggregate totals", () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 1,
 				type: "say",
@@ -68,7 +68,7 @@ describe("getApiMetrics", () => {
 	})
 
 	it("ignores malformed usage payloads", () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 1,
 				type: "say",
@@ -86,7 +86,7 @@ describe("getApiMetrics", () => {
 
 describe("getLastApiReqTotalTokens", () => {
 	it("uses only the latest api_req_started payload", () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 1,
 				type: "say",

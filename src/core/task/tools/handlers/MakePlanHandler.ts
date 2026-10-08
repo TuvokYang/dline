@@ -3,11 +3,11 @@ import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import { findLast } from "@shared/array"
 import { telemetryService } from "@/services/telemetry"
-import type { ClineMakePlanResponse } from "@/shared/ExtensionMessage"
+import type { UiMakePlanResponse } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
-import type { ToolResponse } from "../../index"
-import type { InteractionOutcome } from "../../interaction/InteractionCoordinator"
+import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
+import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
@@ -31,12 +31,12 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 
 		const sharedMessage = {
 			response: uiHelpers.removeClosingTag(block, "response", response),
-		} satisfies ClineMakePlanResponse
+		} satisfies UiMakePlanResponse
 
 		await uiHelpers.ask(MAKE_PLAN_ASK, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const response: string | undefined = block.params.response
 		const needsMoreExploration: boolean = block.params.needs_more_exploration === "true"
 
@@ -53,7 +53,7 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 			return formatResponse.toolResult(getPrompt("toolHandlers", "planNeedsMoreExploration"))
 		}
 
-		const sharedMessage = { response } satisfies ClineMakePlanResponse
+		const sharedMessage = { response } satisfies UiMakePlanResponse
 
 		// Auto-switch to Act mode while in yolo mode
 		if (config.mode === "plan" && config.yoloModeToggled) {
@@ -89,7 +89,7 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 	}
 
 	/** Consume a make_plan response without replaying presentation or mode-switch setup. */
-	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolResponse> {
+	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
 		const text = outcome.draft?.text
 		const images = outcome.draft?.images
 		const responseFiles = outcome.draft?.files
@@ -97,10 +97,11 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 		config.taskState.isAwaitingPlanResponse = false
 
 		if (text || (images && images.length > 0) || (responseFiles && responseFiles.length > 0)) {
-			await sayFeedbackOnce(config, "messageResponse", text, images, responseFiles)
+			await sayFeedbackOnce(config, "messageResponse", text, images, responseFiles, outcome)
 		}
 
-		const fileContentString = await attachToolFeedbackFiles(config.taskState.userMessageContent, responseFiles)
+		const attachments = await attachToolFeedbackFiles(responseFiles)
+		const fileContentString = attachments.text
 
 		telemetryService.captureTaskCompleted(config.ulid ?? "", getTaskCompletionTelemetry(config))
 
@@ -112,9 +113,12 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
 			const result = formatResponse.toolResult(switchMsg, images, fileContentString)
 			// Reset the flag after using it to prevent it from persisting
 			config.taskState.didRespondToPlanAskBySwitchingMode = false
-			return result
+			return withToolDocuments(result, attachments.documents)
 		}
 		// if we didn't switch to ACT MODE, then we can just send the user_feedback message
-		return formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString)
+		return withToolDocuments(
+			formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString),
+			attachments.documents,
+		)
 	}
 }

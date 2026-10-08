@@ -1,4 +1,4 @@
-import type { ClineMessage, TaskViewAction, TaskViewState } from "@shared/ExtensionMessage"
+import type { TaskViewAction, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { AskResponseRequest, MoveCommandToBackgroundRequest } from "@shared/proto/dline/task"
 import { useState } from "react"
@@ -15,7 +15,7 @@ import {
 
 /** Presentation-only props for a say timeline row. */
 export interface SayViewProps {
-	message: ClineMessage
+	message: UiMessage
 }
 
 /** Presentation-only say row with no action or dispatch capability. */
@@ -25,7 +25,7 @@ export function SayView({ message }: SayViewProps) {
 
 /** Presentation-only props for an ask timeline row. */
 export interface AskViewProps {
-	message: ClineMessage
+	message: UiMessage
 }
 
 /** Read-only ask presentation; actions are rendered only by the host footer. */
@@ -35,7 +35,7 @@ export function AskView({ message }: AskViewProps) {
 
 /** Props for the task interaction synchronization boundary. */
 export interface InteractionHostProps {
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	view: TaskViewState
 	dispatch: DispatchInteraction
 	draft?: InteractionDraft
@@ -124,6 +124,8 @@ export function InteractionHost({
 					)
 				})}
 			{interaction && (!anchor || !supported) && !canRenderVerifiedFooter ? (
+				// An unmatched anchor is a transient window gap: the backend re-reveals a
+				// dialog whose row was lost, so only task-level actions stay meanwhile.
 				<FooterActions
 					dispatch={dispatch}
 					dispatchTaskAction={taskActionDispatcher}

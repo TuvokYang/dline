@@ -1,55 +1,36 @@
 import type { ContextManager } from "@core/context/context-management/ContextManager"
 import type { FileContextTracker } from "@core/context/context-tracking/FileContextTracker"
 import type { MessageStateHandler } from "@core/task/message-state"
-import type { TaskState } from "@core/task/TaskState"
-import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
-import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import { createTaskCheckpointManager } from "@integrations/checkpoints"
+import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
+import { type CheckpointRuntimeState, createTaskCheckpointManager } from "@integrations/checkpoints"
 import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
-import type { ICheckpointManager } from "@integrations/checkpoints/types"
+import type { CanonicalCheckpointPort, ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
-import { StateManager } from "@/core/storage/StateManager"
-
-/**
- * Simple predicate abstracting our multi-root decision.
- */
-export function shouldUseMultiRoot({
-	workspaceManager,
-	enableCheckpoints,
-	stateManager,
-	multiRootEnabledOverride,
-}: {
-	workspaceManager?: WorkspaceRootManager
-	enableCheckpoints: boolean
-	stateManager: StateManager
-	multiRootEnabledOverride?: boolean
-}): boolean {
-	const multiRootEnabled = multiRootEnabledOverride ?? isMultiRootEnabled(stateManager)
-	return Boolean(multiRootEnabled && enableCheckpoints && workspaceManager && workspaceManager.getRoots().length > 1)
-}
+import type { UiMessage } from "@shared/ExtensionMessage"
+import type { StateManager } from "@/core/storage/StateManager"
 
 type BuildArgs = {
-	// common
 	taskId: string
 	controller: any // Controller reference for event routing
 	messageStateHandler: MessageStateHandler
-	// single-root deps
 	fileContextTracker: FileContextTracker
 	contextManager: ContextManager
 	diffViewProvider: DiffViewProvider
-	taskState: TaskState
+	taskState: CheckpointRuntimeState
 	taskFileTracker: TaskFileTracker
-	// multi-root deps
+	/** Present when the workspace has more than one root; drives the root coordinator. */
 	workspaceManager?: WorkspaceRootManager
+	/** Rewinds the task's journal conversation when a journal-bounded card is restored. */
+	conversationRewind?: ConversationRewindPort
+	canonicalCheckpoint?: CanonicalCheckpointPort
 
-	// callbacks for single-root TaskCheckpointManager
 	updateTaskHistory: (historyItem: any) => Promise<any[]>
 	say: (...args: any[]) => Promise<number | undefined>
 	cancelTask: () => Promise<void>
 	restoreChatRuntime: (input: { apiIndex: number; editedText?: string }) => Promise<void>
 	postStateToWebview: () => Promise<void>
+	publishMessage: (message: UiMessage) => Promise<void>
 
-	// initial state for single-root
 	initialConversationHistoryDeletedRange?: [number, number]
 	initialCheckpointManagerErrorMessage?: string
 
@@ -71,11 +52,14 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 		taskState,
 		taskFileTracker,
 		workspaceManager,
+		conversationRewind,
+		canonicalCheckpoint,
 		updateTaskHistory,
 		say,
 		cancelTask,
 		restoreChatRuntime,
 		postStateToWebview,
+		publishMessage,
 		initialConversationHistoryDeletedRange,
 		initialCheckpointManagerErrorMessage,
 		stateManager,
@@ -94,6 +78,8 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 			taskFileTracker,
 			taskState,
 			workspaceManager,
+			conversationRewind,
+			canonicalCheckpoint,
 		},
 		{
 			updateTaskHistory,
@@ -101,6 +87,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
 			cancelTask,
 			restoreChatRuntime,
 			postStateToWebview,
+			publishMessage,
 		},
 		{
 			conversationHistoryDeletedRange: initialConversationHistoryDeletedRange,

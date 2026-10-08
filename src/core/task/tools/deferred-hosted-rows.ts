@@ -1,4 +1,4 @@
-import type { ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage, HostedToolReplayProtocol } from "@shared/messages/content"
 import { type DeferredHostedCallState, resolveDeferredHostedCalls } from "@shared/messages/hosted-tool-deferral"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
@@ -35,7 +35,7 @@ const UNKNOWN_OPERATION: HostedWebSearchOperation = { type: "unknown" }
  * Rows are the durable record of a deferral: they survive restarts with the conversation, so the request
  * that resumes a call reads them instead of trusting in-memory state.
  */
-export function readDeferredHostedRow(message: ClineMessage): DeferredHostedRow | undefined {
+export function readDeferredHostedRow(message: UiMessage): DeferredHostedRow | undefined {
 	if (message.type !== "say" || message.say !== "tool" || !message.text?.includes('"deferred"')) return undefined
 	const tool = parseSayTool(message.text)
 	const search = tool?.tool === "webSearch" ? tool.webSearch : undefined
@@ -64,7 +64,7 @@ export function readDeferredHostedRow(message: ClineMessage): DeferredHostedRow 
  * request keeps its call, and abandoned exactly when the request drops it.
  */
 export function planDeferredHostedRows(
-	messages: readonly ClineMessage[],
+	messages: readonly UiMessage[],
 	history: readonly ClineStorageMessage[],
 	request: DeferredHostedRequest,
 ): DeferredHostedRowPlan {
@@ -106,10 +106,10 @@ function callStates(
 	return new Map(calls.map((call) => [call.callId, call.state]))
 }
 
-function parseSayTool(text: string): ClineSayTool | undefined {
+function parseSayTool(text: string): UiSayTool | undefined {
 	try {
 		const parsed: unknown = JSON.parse(text)
-		return parsed && typeof parsed === "object" ? (parsed as ClineSayTool) : undefined
+		return parsed && typeof parsed === "object" ? (parsed as UiSayTool) : undefined
 	} catch {
 		return undefined
 	}

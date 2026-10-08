@@ -1,11 +1,5 @@
-import { LiteLLMModelInfo, ModelInfo, OcaModelInfo } from "@shared/api"
-import {
-	OpenRouterModelInfo,
-	LiteLLMModelInfo as ProtoLiteLLMModelInfo,
-	ModelInfo as ProtoModelInfo,
-	OcaModelInfo as ProtoOcaModelInfo,
-	OpenAiCompatibleModelInfo as ProtoOpenAiCompatibleModelInfo,
-} from "@shared/proto/dline/models"
+import { ModelInfo } from "@shared/api"
+import { OpenRouterModelInfo, ModelInfo as ProtoModelInfo } from "@shared/proto/dline/models"
 import { ThinkingConfig } from "@shared/proto/dline/models/metadata"
 
 /** Preserve declarations without deriving support or mode from a budget value. */
@@ -71,86 +65,6 @@ export function toProtobufModelInfo(modelInfo: ModelInfo): OpenRouterModelInfo {
 		supportsGlobalEndpoint: modelInfo.capabilities?.supportsGlobalEndpoint,
 		tiers: modelInfo.pricing?.tiers || [],
 	})
-}
-
-/**
- * Convert protobuf OpenAiCompatibleModelInfo to application OpenAiCompatibleModelInfo
- */
-export function fromProtobufOpenAiCompatibleModelInfo(protoInfo: ProtoOpenAiCompatibleModelInfo): ModelInfo {
-	return {
-		id: "",
-		capabilities: {
-			supportsImages: protoInfo.supportsImages ?? false,
-			supportsPromptCache: protoInfo.supportsPromptCache ?? false,
-			maxTokens: protoInfo.maxTokens ?? undefined,
-			contextWindow: protoInfo.contextWindow ?? undefined,
-			thinking: convertThinkingConfig(protoInfo.thinkingConfig),
-		},
-		pricing: {
-			inputPrice: protoInfo.inputPrice,
-			outputPrice: protoInfo.outputPrice,
-			cacheWritesPrice: protoInfo.cacheWritesPrice,
-			cacheReadsPrice: protoInfo.cacheReadsPrice,
-			tiers: protoInfo.tiers.length > 0 ? protoInfo.tiers : undefined,
-		},
-		description: protoInfo.description,
-		temperature: protoInfo.temperature,
-	}
-}
-
-export function fromProtobufLiteLLMModelInfo(protoInfo: ProtoLiteLLMModelInfo): LiteLLMModelInfo {
-	return {
-		id: "",
-		capabilities: {
-			supportsImages: protoInfo.supportsImages ?? false,
-			supportsPromptCache: protoInfo.supportsPromptCache ?? false,
-			supportsReasoning: protoInfo.supportsReasoning ?? undefined,
-			supportsGlobalEndpoint: protoInfo.supportsGlobalEndpoint ?? undefined,
-			maxTokens: protoInfo.maxTokens ?? undefined,
-			contextWindow: protoInfo.contextWindow ?? undefined,
-			thinking: convertThinkingConfig(protoInfo.thinkingConfig),
-		},
-		pricing: {
-			inputPrice: protoInfo.inputPrice,
-			outputPrice: protoInfo.outputPrice,
-			cacheWritesPrice: protoInfo.cacheWritesPrice,
-			cacheReadsPrice: protoInfo.cacheReadsPrice,
-			tiers: protoInfo.tiers.length > 0 ? protoInfo.tiers : undefined,
-		},
-		description: protoInfo.description,
-		temperature: protoInfo.temperature,
-	}
-}
-
-/**
- * Convert protobuf OcaModelInfo to application OcaModelInfo
- */
-export function fromProtobufOcaModelInfo(protoInfo: ProtoOcaModelInfo): OcaModelInfo {
-	return {
-		id: "",
-		capabilities: {
-			supportsImages: protoInfo.supportsImages ?? false,
-			supportsPromptCache: protoInfo.supportsPromptCache ?? false,
-			supportsReasoning: protoInfo.supportsReasoning ?? undefined,
-			maxTokens: protoInfo.maxTokens ?? undefined,
-			contextWindow: protoInfo.contextWindow ?? undefined,
-			thinking: convertThinkingConfig(protoInfo.thinkingConfig),
-		},
-		pricing: {
-			inputPrice: protoInfo.inputPrice,
-			outputPrice: protoInfo.outputPrice,
-			cacheWritesPrice: protoInfo.cacheWritesPrice,
-			cacheReadsPrice: protoInfo.cacheReadsPrice,
-		},
-		description: protoInfo.description,
-		temperature: protoInfo.temperature,
-		apiFormats: protoInfo.apiFormat !== undefined ? [protoInfo.apiFormat] : undefined,
-		modelName: protoInfo.modelName,
-		surveyId: protoInfo.surveyId,
-		banner: protoInfo.banner,
-		surveyContent: protoInfo.surveyContent,
-		reasoningEffortOptions: protoInfo.reasoningEffortOptions,
-	}
 }
 
 /**

@@ -9,8 +9,9 @@ import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS, MIN_TERMINAL_COMMAND_TIMEOUT_
 import { arePathsEqual } from "@utils/path"
 import { telemetryService } from "@/services/telemetry"
 import { ClineDefaultTool } from "@/shared/tools"
-import type { ToolResponse } from "../../index"
+import { isApprovalRowOf } from "../approval-interaction"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { applyModelContentFixes } from "../utils/ModelContentProcessor"
@@ -51,19 +52,19 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
 	 * so a refused command would otherwise stay pending forever and keep
 	 * offering a Cancel button for work that will never start.
 	 *
-	 * The row is matched by the block's canonical interaction id rather than by
-	 * position: a turn may carry several command rows, and the most recent one
-	 * can belong to a sibling that is still running.
+	 * The row is the call's approval row, matched by its approval interaction id
+	 * rather than by position: a turn may carry several command rows, and the
+	 * most recent one can belong to a sibling that is still running.
 	 */
 	async presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {
 		if (block.name === ClineDefaultTool.KILL_COMMAND) return
-		const interactionId = block.dline_tid
-		if (!interactionId) return
+		const dlineTid = block.dline_tid
+		if (!dlineTid) return
 		const messages = config.messageState.clineMessages
 		const index = messages.findIndex(
 			(message) =>
 				(message.ask === "command" || message.say === "command") &&
-				message.interactionId === interactionId &&
+				isApprovalRowOf(message.interactionId, dlineTid) &&
 				message.commandStatus === "pending",
 		)
 		if (index === -1) return

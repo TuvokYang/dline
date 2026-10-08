@@ -1,4 +1,4 @@
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { type ComponentProps, forwardRef, type ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -12,7 +12,7 @@ vi.mock("@/components/chat/ChatTextArea", () => ({
 			onSend: (draft: { text: string; images: string[]; files: string[] }) => void
 			onSendBlocked?: (draft: { text: string; images: string[]; files: string[] }) => void
 			sendingDisabled: boolean
-			clineAsk?: ClineAsk
+			clineAsk?: UiAsk
 		}
 	>((props, _ref) => (
 		<>
@@ -55,6 +55,8 @@ async function settleEffects(): Promise<void> {
 
 function props(currentDraft: InteractionDraft): ComponentProps<typeof InputSection> {
 	return {
+		// InputSection now receives the catalog it composes and recalls drafts against.
+		semanticCatalog: { revision: 1, descriptors: [] },
 		chatState: {
 			activeQuote: null,
 			setActiveQuote: vi.fn(),
@@ -68,6 +70,10 @@ function props(currentDraft: InteractionDraft): ComponentProps<typeof InputSecti
 			setSelectedFiles: vi.fn(),
 			textAreaRef: { current: null },
 			handleFocusChange: vi.fn(),
+			// Paste provenance is part of the chat state contract since WS-041 AC-09.
+			pasteProvenance: { text: currentDraft.text, spans: [] },
+			commitPasteProvenance: vi.fn(),
+			restoreDraft: vi.fn(),
 		},
 		messageHandlers: { handleSendMessage: vi.fn() },
 		scrollBehavior: { isAtBottom: true, scrollToBottomAuto: vi.fn() },

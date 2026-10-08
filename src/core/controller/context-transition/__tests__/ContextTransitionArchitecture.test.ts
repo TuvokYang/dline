@@ -25,15 +25,19 @@ describe("ContextTransition architecture", () => {
 	})
 
 	it("keeps a Profile switch free of target projection and compaction", async () => {
-		const [task, policy] = await Promise.all([
-			read("task/index.ts"),
+		const [controller, coordinator, policy] = await Promise.all([
+			read("controller/index.ts"),
+			read("controller/profile-switch/ProfileSwitchCoordinator.ts"),
 			read("controller/context-transition/policies/ProfileTransitionPolicy.ts"),
 		])
 
 		// Selecting a Profile only rebinds handlers, so no Profile path may rebuild a
 		// target request or schedule compaction: both once blocked the switch outright.
-		expect(task).not.toContain("projectProfileSwitchTargetUsage")
-		expect(task).toContain("getOccupiedContextTokens()")
+		// Occupancy is read from the live indicator by the Controller, which owns the
+		// transition; the Task side no longer projects a target usage request.
+		expect(controller).toContain("getOccupiedContextTokens()")
+		expect(controller).not.toContain("projectProfileSwitchTargetUsage")
+		expect(coordinator).not.toContain("projectProfileSwitchTargetUsage")
 		expect(policy).not.toContain("createCompactionRequest")
 		expect(policy).not.toContain("compactionError")
 	})
@@ -59,9 +63,12 @@ describe("ContextTransition architecture", () => {
 		expect(progress).not.toContain('"restore"')
 	})
 
-	it("keeps conversational handlers and InteractionCoordinator unaware of compaction control signals", async () => {
+	it("keeps conversational handlers and interaction ownership unaware of compaction control signals", async () => {
 		const paths = [
-			"task/interaction/InteractionCoordinator.ts",
+			// Canonical interaction ownership after the runtime convergence.
+			"task/interaction/InteractionRegistry.ts",
+			"task/interaction/InteractionContinuation.ts",
+			"task/session/TaskInteractionOwner.ts",
 			"task/tools/handlers/AskFollowupQuestionToolHandler.ts",
 			"task/tools/handlers/AttemptCompletionHandler.ts",
 			"task/tools/handlers/GenerateReportHandler.ts",

@@ -1,4 +1,4 @@
-import { ApiConfiguration, ModelInfo } from "@shared/api"
+import { ApiConfiguration } from "@shared/api"
 import { Mode } from "@shared/storage/types"
 import type { ApiProfile } from "@/components/settings/providers/ProviderProfile"
 
@@ -24,17 +24,5 @@ export function validateApiConfiguration(
 		return "You must provide a valid API key or choose a different provider."
 	}
 
-	return undefined
-}
-
-/**
- * @deprecated Profile-driven: model validation now done via ModelRegistry in core.
- */
-export function validateModelId(
-	_currentMode: Mode,
-	_apiConfiguration?: ApiConfiguration,
-	_openRouterModels?: Record<string, ModelInfo>,
-	_clineModels?: Record<string, ModelInfo>,
-): string | undefined {
 	return undefined
 }

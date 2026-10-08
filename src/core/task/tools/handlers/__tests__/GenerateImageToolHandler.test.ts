@@ -200,6 +200,22 @@ describe("GenerateImageToolHandler", () => {
 		])
 		expect(JSON.stringify(previewMessage)).not.toContain("base64")
 		expect(JSON.stringify(previewMessage)).not.toContain("data:")
+
+		// Queued, started, and preview updates remain transient; only the terminal state finalizes the row.
+		const transientCalls = say.mock.calls.filter((call) => {
+			const status = JSON.parse(call[1] as string).imageGeneration?.status
+			return status === "queued" || status === "started" || status === "preview"
+		})
+		expect(transientCalls.map((call) => JSON.parse(call[1] as string).imageGeneration.status)).toEqual([
+			"queued",
+			"started",
+			"preview",
+			"preview",
+			"preview",
+		])
+		expect(transientCalls.every((call) => call[4] === true && call[5] === block.ts)).toBe(true)
+		expect(say.mock.calls.at(-1)?.[4]).toBe(false)
+		expect(say.mock.calls.at(-1)?.[5]).toBe(block.ts)
 	})
 
 	it("aborts an in-flight provider request when the task operation is cancelled", async () => {

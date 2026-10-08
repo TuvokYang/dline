@@ -16,7 +16,7 @@ function runDiffParser(diff: string, originalContent: string, isPartial = false)
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import { resolveWorkspacePath } from "@core/workspace"
-import { ClineSayTool } from "@shared/ExtensionMessage"
+import { UiSayTool } from "@shared/ExtensionMessage"
 import { getLastApiReqTotalTokens } from "@shared/getApiMetrics"
 import { fileExistsAtPath } from "@utils/fs"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
@@ -24,8 +24,8 @@ import { applyPatch } from "diff"
 import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
-import type { ToolResponse } from "../../index"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
@@ -119,7 +119,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 					]
 				: []
 
-		const message: ClineSayTool = {
+		const message: UiSayTool = {
 			tool: block.name === "replace_in_file" ? "editedExistingFile" : "newFileCreated",
 			path: getReadablePath(config.cwd, relPath),
 			content: contentArr,
@@ -237,7 +237,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 				]
 				webviewStartLines = [1]
 			}
-			const sharedMessageProps: ClineSayTool = {
+			const sharedMessageProps: UiSayTool = {
 				tool: block.name === "replace_in_file" ? "editedExistingFile" : "newFileCreated",
 				path: getReadablePath(config.cwd, relPath),
 				content: contentArr,
@@ -262,7 +262,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			const completeMessage = JSON.stringify({
 				...sharedMessageProps,
 				operationIsLocatedInWorkspace: await isLocatedInWorkspace(relPath),
-			} satisfies ClineSayTool)
+			} satisfies UiSayTool)
 
 			await config.callbacks.say("tool", completeMessage, undefined, undefined, false, block.ts)
 			const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
@@ -491,7 +491,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 							startLineNumbers,
 							blockErrors,
 							operationIsLocatedInWorkspace: await isLocatedInWorkspace(resolvedPath),
-						} satisfies ClineSayTool)
+						} satisfies UiSayTool)
 						await config.callbacks.say("tool", updatedToolJson, undefined, undefined, false, existingTs)
 						await config.services.diffViewProvider.open(absolutePath, { displayPath: resolvedPath })
 						await config.services.diffViewProvider.update(newContent, true)
@@ -508,7 +508,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 						startLineNumbers,
 						blockErrors,
 						operationIsLocatedInWorkspace: await isLocatedInWorkspace(resolvedPath),
-					} satisfies ClineSayTool)
+					} satisfies UiSayTool)
 					await config.callbacks.say("tool", noPartialJson, undefined, undefined, false, block.ts)
 					this._lastDiffError = `${blockResults}${describeFailureReminder(result.blocks)}`
 					return
@@ -531,7 +531,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 					startLineNumbers: card.startLineNumbers,
 					blockErrors: card.blockErrors,
 					operationIsLocatedInWorkspace: await isLocatedInWorkspace(relPath),
-				} satisfies ClineSayTool)
+				} satisfies UiSayTool)
 				await config.callbacks.say("tool", updatedToolJson, undefined, undefined, false, existingTs)
 
 				// Extract provider information for telemetry
@@ -630,7 +630,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 			startLineNumbers: card.startLineNumbers,
 			blockErrors: card.blockErrors,
 			operationIsLocatedInWorkspace: await isLocatedInWorkspace(resolvedPath),
-		} satisfies ClineSayTool)
+		} satisfies UiSayTool)
 		await config.callbacks.say("tool", refusedJson, undefined, undefined, false, block.ts)
 		this._lastDiffError = formatResponse.toolError(
 			formatResponse.replaceInFileFileNotFound(getReadablePath(config.cwd, resolvedPath)),

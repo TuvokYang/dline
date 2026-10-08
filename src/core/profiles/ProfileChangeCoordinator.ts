@@ -8,6 +8,21 @@ interface ProfileChange {
 	nextProfile?: ApiProfile
 }
 
+/**
+ * Whether a Profile change alters what a handler built from it would send.
+ *
+ * A rename only moves the display name the binding is shown under, so it keeps
+ * the handler. A deleted or disabled Profile keeps the running handler too: the
+ * task stays on what it has until the user picks a replacement.
+ */
+function changesHandlerConfiguration(change: ProfileChange | undefined): boolean {
+	const next = change?.nextProfile
+	if (!next || next.enabled === false || !change.oldProfile) return false
+	const { name: _previousName, ...previous } = change.oldProfile
+	const { name: _nextName, ...current } = next
+	return JSON.stringify(previous) !== JSON.stringify(current)
+}
+
 /** Coordinate process-wide profile update notifications across active controllers. */
 export class ProfileChangeCoordinator {
 	#revision = 0
@@ -39,9 +54,23 @@ export class ProfileChangeCoordinator {
 	private async publishToController(controller: Controller, changes: Map<string, ProfileChange>): Promise<void> {
 		const task = controller.task
 		try {
+			// Resolve before rename adoption: a name-only binding is found by its old name.
+			const activeChange = task ? this.findActiveBindingChange(task.owners.settings, changes) : undefined
 			if (task) {
-				this.adoptTaskBinding(task.taskSm.planModeProfileId, task.taskSm.planModeProfile, "plan", changes, task.taskSm)
-				this.adoptTaskBinding(task.taskSm.actModeProfileId, task.taskSm.actModeProfile, "act", changes, task.taskSm)
+				this.adoptTaskBinding(
+					task.owners.settings.planModeProfileId,
+					task.owners.settings.planModeProfile,
+					"plan",
+					changes,
+					task.owners.settings,
+				)
+				this.adoptTaskBinding(
+					task.owners.settings.actModeProfileId,
+					task.owners.settings.actModeProfile,
+					"act",
+					changes,
+					task.owners.settings,
+				)
 			}
 
 			this.adoptGlobalBinding(
@@ -63,15 +92,45 @@ export class ProfileChangeCoordinator {
 			// bindings before publishing the committed Catalog revision.
 			await controller.stateManager.flushPendingState()
 
-			// Catalog edits must not replace a running handler. They can still
-			// change prompt-visible image tool availability for the bound Profile.
 			if (task) {
-				await task.flushPromptFreshnessInvalidation("profile_catalog")
+				// A handler captures its Profile when it is built, so an edit to the
+				// Profile the task runs under (credentials, headers, identity toggles)
+				// only reaches the next request through a fresh handler. The request in
+				// flight keeps the handler it started with; nothing is aborted.
+				if (changesHandlerConfiguration(activeChange)) {
+					await this.rebuildActiveHandler(task)
+				}
+				// Prompt freshness reads the current handler, so it follows the rebuild.
+				await task.owners.prompt.flush("profile_catalog")
 			} else {
 				await controller.postStateToWebview()
 			}
 		} catch (error) {
 			Logger.warn(`[ProfileChangeCoordinator] Post-commit notification failed for task ${task?.taskId ?? "none"}`, error)
+		}
+	}
+
+	private findActiveBindingChange(
+		settings: {
+			readonly mode: string
+			readonly planModeProfileId?: string
+			readonly planModeProfile?: string
+			readonly actModeProfileId?: string
+			readonly actModeProfile?: string
+		},
+		changes: Map<string, ProfileChange>,
+	): ProfileChange | undefined {
+		return settings.mode === "plan"
+			? this.findBindingChange(settings.planModeProfileId, settings.planModeProfile, changes)
+			: this.findBindingChange(settings.actModeProfileId, settings.actModeProfile, changes)
+	}
+
+	/** A failed rebuild keeps the previous handler; the Catalog commit itself already succeeded. */
+	private async rebuildActiveHandler(task: NonNullable<Controller["task"]>): Promise<void> {
+		try {
+			await task.owners.api.rebuild()
+		} catch (error) {
+			Logger.warn(`[ProfileChangeCoordinator] Active handler rebuild failed for task ${task.taskId}`, error)
 		}
 	}
 

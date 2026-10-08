@@ -3,8 +3,10 @@ import { HostProvider } from "@/hosts/host-provider"
 import { telemetryService } from "@/services/telemetry"
 import { CommandContext, Empty } from "@/shared/proto/dline"
 import { ShowMessageType } from "@/shared/proto/dline/host"
+import { AskResponseRequest } from "@/shared/proto/dline/task"
 import { Logger } from "@/shared/services/Logger"
 import { Controller } from "../index"
+import { askResponse } from "../task/askResponse"
 
 export async function improveWithCline(
 	controller: Controller,
@@ -35,12 +37,12 @@ export async function improveWithCline(
 
 	// Send: notebooks go to existing task if available, non-notebooks always create new task
 	if (notebookContext && controller.task) {
-		await controller.task.handleWebviewAskResponse("messageResponse", prompt)
+		await askResponse(controller, AskResponseRequest.create({ responseType: "messageResponse", text: prompt }))
 	} else {
 		await controller.initTask(prompt)
 	}
 
-	telemetryService.captureButtonClick("codeAction_improveCode", controller.task?.ulid)
+	telemetryService.captureButtonClick("codeAction_improveCode", controller.task?.owners.identity.taskIncarnationId)
 
 	return {}
 }

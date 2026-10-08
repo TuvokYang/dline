@@ -1,4 +1,4 @@
-import type { ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import {
 	buildToolsWithReasoning,
@@ -9,12 +9,7 @@ import {
 	getToolGroupSummaryFromParsedTools,
 } from "./ToolGroupRenderer"
 
-const readToolMessage = (
-	ts: number,
-	type: "ask" | "say",
-	path: string,
-	range?: { start: number; end: number },
-): ClineMessage => ({
+const readToolMessage = (ts: number, type: "ask" | "say", path: string, range?: { start: number; end: number }): UiMessage => ({
 	ts,
 	type,
 	...(type === "ask" ? { ask: "tool" as const } : { say: "tool" as const }),
@@ -38,12 +33,55 @@ describe("buildToolsWithReasoning", () => {
 		expect(tools[0].parsedTool.readLineEnd).toBe(20)
 	})
 
+	// An approval row is written when the dialog is revealed, which is not
+	// necessarily next to the result row it belongs to. Matching by path keeps
+	// the pair collapsed instead of reporting one read as two files.
+	it("collapses an approval and its result even when another row sits between them", () => {
+		const tools = buildToolsWithReasoning([
+			readToolMessage(1, "ask", "src/a.ts"),
+			{ ts: 2, type: "say", say: "tool", text: JSON.stringify({ tool: "readFile", path: "src/b.ts" }) },
+			readToolMessage(3, "say", "src/a.ts", { start: 1, end: 20 }),
+		])
+
+		expect(tools).toHaveLength(2)
+		expect(tools.map((tool) => tool.parsedTool.path)).toEqual(["src/a.ts", "src/b.ts"])
+		expect(tools[0].tool.say).toBe("tool")
+	})
+
+	// The result row carries the timestamp of the tool block while the approval
+	// row is anchored when the dialog is revealed, so the result can sort first.
+	it("collapses the pair when the result row precedes its approval row", () => {
+		const tools = buildToolsWithReasoning([
+			readToolMessage(1, "say", "src/a.ts", { start: 1, end: 3 }),
+			readToolMessage(2, "ask", "src/a.ts"),
+		])
+
+		expect(tools).toHaveLength(1)
+		expect(tools[0].tool.say).toBe("tool")
+		expect(tools[0].parsedTool.readLineEnd).toBe(3)
+	})
+
 	it("keeps separate reads of the same file when they are distinct operations", () => {
 		const tools = buildToolsWithReasoning([
 			readToolMessage(1, "ask", "src/a.ts"),
 			readToolMessage(2, "say", "src/a.ts", { start: 1, end: 20 }),
 			readToolMessage(3, "ask", "src/a.ts"),
 			readToolMessage(4, "say", "src/a.ts", { start: 40, end: 60 }),
+		])
+
+		expect(tools).toHaveLength(2)
+		expect(tools.map((tool) => [tool.parsedTool.readLineStart, tool.parsedTool.readLineEnd])).toEqual([
+			[1, 20],
+			[40, 60],
+		])
+	})
+
+	it("keeps result-first pairs separate for repeated reads of the same file", () => {
+		const tools = buildToolsWithReasoning([
+			readToolMessage(1, "say", "src/a.ts", { start: 1, end: 20 }),
+			readToolMessage(2, "ask", "src/a.ts"),
+			readToolMessage(3, "say", "src/a.ts", { start: 40, end: 60 }),
+			readToolMessage(4, "ask", "src/a.ts"),
 		])
 
 		expect(tools).toHaveLength(2)
@@ -131,7 +169,7 @@ describe("getToolDisplayInfo", () => {
 			symbolName: "ToolExecutor",
 			count: 12,
 			files: 3,
-		} as ClineSayTool
+		} as UiSayTool
 
 		expect(getToolDisplayInfo(tool)).toMatchObject({
 			displayText: '"ToolExecutor" in src/core/task/ToolExecutor.ts (12 refs · 3 files)',
@@ -140,7 +178,7 @@ describe("getToolDisplayInfo", () => {
 	})
 
 	it("falls back to a generic reference target when the symbol is unknown", () => {
-		const tool = { tool: "findReferences", path: "src/a.ts" } as ClineSayTool
+		const tool = { tool: "findReferences", path: "src/a.ts" } as UiSayTool
 
 		expect(getToolDisplayInfo(tool)).toMatchObject({
 			displayText: "references in src/a.ts",
@@ -157,7 +195,7 @@ describe("getToolDisplayInfo", () => {
 			count: 300,
 			files: 42,
 			truncated: true,
-		} as ClineSayTool
+		} as UiSayTool
 
 		expect(getToolDisplayInfo(tool)).toMatchObject({
 			displayText: '"describe | it | expect +2" in src/core/prompts/ (*.test.ts) (300+ matches · 42 files)',
@@ -166,7 +204,7 @@ describe("getToolDisplayInfo", () => {
 	})
 
 	it("omits the file pattern when it matches everything", () => {
-		const tool = { tool: "searchFiles", path: "src", regex: "toolResult", filePattern: "*" } as ClineSayTool
+		const tool = { tool: "searchFiles", path: "src", regex: "toolResult", filePattern: "*" } as UiSayTool
 
 		expect(getToolDisplayInfo(tool)?.displayText).toBe('"toolResult" in src/')
 	})
@@ -177,7 +215,7 @@ describe("getToolDisplayInfo", () => {
 			path: "src/core/task/tools/handlers/ReadFileToolHandler.ts",
 			readLineStart: 125,
 			readLineEnd: 416,
-		} as ClineSayTool
+		} as UiSayTool
 
 		expect(getToolDisplayInfo(tool)).toMatchObject({
 			displayText: "src/core/task/tools/handlers/ReadFileToolHandler.ts · lines 125-416",
@@ -191,7 +229,7 @@ describe("getToolDisplayInfo", () => {
 	})
 
 	it("renders a directory listing with its trailing slash", () => {
-		const tool = { tool: "listFilesRecursive", path: "src/core/task/tools" } as ClineSayTool
+		const tool = { tool: "listFilesRecursive", path: "src/core/task/tools" } as UiSayTool
 
 		expect(getToolDisplayInfo(tool)).toMatchObject({
 			displayText: "src/core/task/tools/",
@@ -200,13 +238,13 @@ describe("getToolDisplayInfo", () => {
 	})
 
 	it("returns null for tools that have no row representation", () => {
-		expect(getToolDisplayInfo({ tool: "webFetch" } as ClineSayTool)).toBeNull()
+		expect(getToolDisplayInfo({ tool: "webFetch" } as UiSayTool)).toBeNull()
 	})
 })
 
 describe("getActivityText", () => {
 	it("describes an in-flight reference lookup instead of rendering nothing", () => {
-		const tool = { tool: "findReferences", path: "src/core/task/ToolExecutor.ts" } as ClineSayTool
+		const tool = { tool: "findReferences", path: "src/core/task/ToolExecutor.ts" } as UiSayTool
 
 		expect(getActivityText(tool)).toMatchObject({
 			displayText: "Finding references in src/core/task/ToolExecutor.ts...",
@@ -221,7 +259,7 @@ describe("getActivityText", () => {
 			path: "src/core/prompts",
 			regex: "describe|it|expect|vi|beforeEach",
 			filePattern: "*.test.ts",
-		} as ClineSayTool
+		} as UiSayTool
 
 		const active = getActivityText(tool)
 		const completed = getToolDisplayInfo(tool)
@@ -234,13 +272,13 @@ describe("getActivityText", () => {
 		for (const tool of [
 			{ tool: "searchFiles", path: "src", regex: "needle", count: 4, files: 2 },
 			{ tool: "findReferences", path: "src/a.ts", symbolName: "MySymbol", count: 4, files: 2 },
-		] satisfies ClineSayTool[]) {
+		] satisfies UiSayTool[]) {
 			expect(getActivityText(tool)?.row?.suffix).toBe(getToolDisplayInfo(tool)?.row?.suffix)
 			expect(getActivityText(tool)?.tooltipText).toContain("4 ")
 		}
 	})
 
 	it("has no text for a tool without a path", () => {
-		expect(getActivityText({ tool: "readFile" } as ClineSayTool)).toBeNull()
+		expect(getActivityText({ tool: "readFile" } as UiSayTool)).toBeNull()
 	})
 })

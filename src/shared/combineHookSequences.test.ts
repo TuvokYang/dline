@@ -1,11 +1,11 @@
 import should from "should"
 import { describe, it } from "vitest"
 import { combineHookSequences } from "./combineHookSequences"
-import type { ClineMessage } from "./ExtensionMessage"
+import type { UiMessage } from "./ExtensionMessage"
 
 describe("combineHookSequences", () => {
 	it("keeps partial tool messages when no newer tool message with same timestamp exists", () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 1,
 				type: "say",
@@ -34,7 +34,7 @@ describe("combineHookSequences", () => {
 	})
 
 	it("keeps only the newest tool message variant for a shared timestamp", () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 10,
 				type: "ask",

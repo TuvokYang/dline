@@ -1,6 +1,9 @@
+import { createInitialTaskState } from "@core/task/kernel"
+import { projectCanonicalTaskView } from "@core/task/view/canonical/projectCanonicalTaskView"
 import type { TaskViewState } from "@shared/ExtensionMessage"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
+import { OpeningHandoff } from "../task/OpeningHandoff"
 
 vi.mock(import("../state/subscribeToState"), async (importOriginal) => ({
 	...(await importOriginal()),
@@ -38,7 +41,9 @@ function createController(taskId?: string): { controller: Controller; buildState
 		stateBuildsAfterDetach: 0,
 		nextStateRevision: 0,
 		latestStateRevision: 0,
+		publicationSequence: 0,
 		pendingStatePostTimer: undefined,
+		openingHandoff: new OpeningHandoff(),
 		_accountUsage: undefined,
 		task: taskId ? { taskId } : undefined,
 		stateManager: { setActiveTaskId },
@@ -112,35 +117,67 @@ describe("Controller state publication coalescing", () => {
 		expect(sendStatePatch).toHaveBeenCalledWith(controller, { stateRevision: 1, taskViewState }, undefined)
 	})
 
-	it("publishes the canonical history count and title without a full state build", async () => {
-		const { controller, buildState, setActiveTaskId } = createController("task-a")
-		const taskViewState = {
-			taskId: "task-a",
-			taskInstanceId: "opening-a",
-			stateRevision: 7,
-			input: { enabled: false },
-		} as TaskViewState
-		const taskTitleMessage = { ts: 1, type: "say", say: "task", text: "Saved task" }
-		Object.assign(controller.task!, {
-			getDisplayMessageCount: () => 512,
-			getDisplayMessages: () => Array(200),
-			getTaskTitleMessage: () => taskTitleMessage,
+	// A reopened task publishes its restored dialog through the interaction
+	// patch rather than a full state build. Projecting that patch without the
+	// task's rows left the anchor unresolved, so the composer stayed disabled
+	// and the interaction was never offered: the task looked permanently stuck
+	// even though its dialog was awaiting an answer.
+	it("projects the interaction patch against the task's own messages", async () => {
+		const { controller } = createController("task-a")
+		const initial = createInitialTaskState("task-a")
+		const view = projectCanonicalTaskView({
+			...initial,
+			revision: 7,
+			flow: { phase: "paused" },
+			dialog: {
+				approvalsByBlock: {},
+				primary: {
+					interactionId: "interaction-1",
+					turnId: "turn-1",
+					kind: "completion",
+					status: "awaiting",
+					createdRevision: 6,
+					presentationRef: "completion:turn-1",
+					receiverGeneration: 0,
+					actionRules: [{ actionId: "reply", payloadPolicy: "draft" }],
+				},
+			},
 		})
-		vi.spyOn(
-			controller as unknown as { projectCurrentTaskViewState(): TaskViewState },
-			"projectCurrentTaskViewState",
-		).mockReturnValue(taskViewState)
-		await controller.postHistorySurfaceToWebview()
-		expect(setActiveTaskId).toHaveBeenCalledWith("task-a")
-		expect(buildState).not.toHaveBeenCalled()
-		expect(sendStatePatch).toHaveBeenCalledWith(
-			controller,
-			{ stateRevision: 1, taskViewState, taskTitleMessage, totalMessageCount: 512, firstItemIndex: 312 },
-			undefined,
-		)
-		controller.detachUi()
-		await controller.postHistorySurfaceToWebview()
-		expect(sendStatePatch).toHaveBeenCalledOnce()
+		Object.assign(controller, {
+			task: {
+				taskId: "task-a",
+				writable: true,
+				projectView: () => view,
+				owners: {
+					messages: {
+						clineMessages: [
+							{
+								type: "ask",
+								ask: "completion_result",
+								ts: 20,
+								text: "done",
+								interactionId: "interaction-1",
+								partial: false,
+							},
+						],
+					},
+					commands: {
+						getReadyBackgroundHandoffActivityId: () => undefined,
+						isBackgroundHandoffRequested: () => false,
+					},
+				},
+			},
+		})
+
+		await controller.postTaskViewPatchToWebview()
+
+		const patched = vi.mocked(sendStatePatch).mock.calls[0]?.[1] as { taskViewState?: TaskViewState }
+		expect(patched.taskViewState?.activeInteraction).toMatchObject({
+			interactionId: "interaction-1",
+			status: "awaiting",
+			askMessageTs: 20,
+		})
+		expect(patched.taskViewState?.input).toMatchObject({ enabled: true, enterAction: "reply" })
 	})
 
 	it("lets an immediate publication supersede a pending merge window", async () => {
@@ -201,5 +238,76 @@ describe("Controller state publication coalescing", () => {
 
 		expect(buildState).not.toHaveBeenCalled()
 		expect(sendStateUpdate).not.toHaveBeenCalled()
+	})
+
+	/** Let a released build's promise chain run to its end. */
+	async function settle(): Promise<void> {
+		for (let turn = 0; turn < 20; turn++) await Promise.resolve()
+	}
+
+	/** Hold the first state build open until released; later builds finish at once. */
+	function holdFirstBuild(controller: Controller): { release(): void; builds(): number } {
+		let release!: () => void
+		const firstBuild = new Promise<void>((resolve) => {
+			release = resolve
+		})
+		let builds = 0
+		vi.spyOn(controller as Controller & { buildState(r: number): Promise<never> }, "buildState").mockImplementation(
+			async (revision: number) => {
+				builds++
+				if (builds === 1) await firstBuild
+				return { stateRevision: revision } as never
+			},
+		)
+		return { release, builds: () => builds }
+	}
+
+	it("publishes again when a state read that never delivers overtakes a publication", async () => {
+		vi.useFakeTimers()
+		try {
+			const { controller } = createController()
+			const build = holdFirstBuild(controller)
+
+			await controller.postStateToWebview()
+			await vi.advanceTimersByTimeAsync(50)
+			// A unary read (getLatestState, getProcessInfo) finishes while the
+			// publication is still building, which makes that build stale.
+			await controller.getStateToPostToWebview()
+			build.release()
+			await settle()
+			expect(sendStateUpdate).not.toHaveBeenCalled()
+
+			// Nothing else will publish once a dialog is revealed, so the dropped
+			// build must be replaced by one that reaches the webview.
+			await vi.advanceTimersByTimeAsync(50)
+			await settle()
+			expect(sendStateUpdate).toHaveBeenCalledTimes(1)
+			expect(build.builds()).toBe(3)
+			expect(vi.mocked(sendStateUpdate).mock.calls[0]?.[1]).toMatchObject({ stateRevision: 3 })
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it("does not publish again when a newer publication overtook the dropped build", async () => {
+		vi.useFakeTimers()
+		try {
+			const { controller } = createController()
+			const build = holdFirstBuild(controller)
+
+			await controller.postStateToWebview()
+			await vi.advanceTimersByTimeAsync(50)
+			await controller.postStateToWebview({ immediate: true })
+			build.release()
+			await settle()
+			await vi.advanceTimersByTimeAsync(100)
+			await settle()
+
+			expect(build.builds()).toBe(2)
+			expect(sendStateUpdate).toHaveBeenCalledTimes(1)
+			expect(vi.mocked(sendStateUpdate).mock.calls[0]?.[1]).toMatchObject({ stateRevision: 2 })
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 })

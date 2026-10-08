@@ -10,12 +10,12 @@ import type {
 import { ImageGenerationError } from "@core/image-generation/contracts"
 import { DEFAULT_IMAGE_GENERATION_SIZE } from "@core/image-generation/ImageGenerationSizes"
 import { formatResponse } from "@core/prompts/responses"
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import { IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION, type ImageGenerationPresentationV1 } from "@shared/image-generation"
 import { ClineDefaultTool } from "@shared/tools"
 import type { ToolApprovalPresentation } from "../../executors/tool/ToolPreflight"
-import type { ToolResponse } from "../../index"
 import type { IApprovalPresentingToolHandler, IDenialPresentingToolHandler, IFullyManagedTool } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
@@ -84,7 +84,7 @@ function parseEnum<T extends string>(value: string | undefined, allowed: Readonl
 	return value as T
 }
 
-function createToolPresentation(imageGeneration: ImageGenerationPresentationV1): ClineSayTool {
+function createToolPresentation(imageGeneration: ImageGenerationPresentationV1): UiSayTool {
 	return {
 		tool: "generateImage",
 		content: imageGeneration.prompt,
@@ -98,7 +98,7 @@ function presentationCount(value: string | undefined): number {
 	return Number.isSafeInteger(count) && count > 0 ? count : 1
 }
 
-function createAdmissionPresentation(block: ToolUse, status: "awaiting_approval" | "rejected"): ClineSayTool {
+function createAdmissionPresentation(block: ToolUse, status: "awaiting_approval" | "rejected"): UiSayTool {
 	return createToolPresentation({
 		schemaVersion: IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION,
 		status,
@@ -215,7 +215,7 @@ export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPre
 			}
 			const presentation = createToolPresentation(activePresentation)
 			const message = JSON.stringify(presentation)
-			await config.callbacks.say("tool", message, undefined, undefined, false, block.ts)
+			await config.callbacks.say("tool", message, undefined, undefined, true, block.ts)
 
 			config.taskState.consecutiveMistakeCount = 0
 			activePresentation = { ...activePresentation, status: "started" }
@@ -224,7 +224,7 @@ export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPre
 				JSON.stringify(createToolPresentation(activePresentation)),
 				undefined,
 				undefined,
-				false,
+				true,
 				block.ts,
 			)
 			const result = await config.services.imageGenerationService.generate(request, {
@@ -237,12 +237,15 @@ export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPre
 						status: "preview",
 						previews: [...previewsBySequence.values()].sort((left, right) => left.sequence - right.sequence),
 					}
+					// A preview is transient: it updates the same row in place and the
+					// terminal state below is what finalizes it. Finalizing every preview
+					// made each one a durable replacement the surface never re-rendered.
 					await config.callbacks.say(
 						"tool",
 						JSON.stringify(createToolPresentation(activePresentation)),
 						undefined,
 						undefined,
-						false,
+						true,
 						block.ts,
 					)
 				},

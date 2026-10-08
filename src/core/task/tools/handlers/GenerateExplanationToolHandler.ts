@@ -13,25 +13,25 @@ import { formatResponse } from "@core/prompts/responses"
 import fs from "fs/promises"
 import path from "path"
 import simpleGit from "simple-git"
-import type { ClineSayGenerateExplanation } from "@/shared/ExtensionMessage"
+import type { UiSayGenerateExplanation } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
-import type { ToolResponse } from "../../index"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
 /**
- * Helper to create a stringified ClineSayGenerateExplanation message
+ * Helper to create a stringified UiSayGenerateExplanation message
  */
 function createExplanationMessage(
 	title: string,
 	fromRef: string,
 	toRef: string,
-	status: ClineSayGenerateExplanation["status"],
+	status: UiSayGenerateExplanation["status"],
 	error?: string,
 ): string {
-	const message: ClineSayGenerateExplanation = { title, fromRef, toRef, status }
+	const message: UiSayGenerateExplanation = { title, fromRef, toRef, status }
 	if (error) {
 		message.error = error
 	}
@@ -231,9 +231,8 @@ export class GenerateExplanationToolHandler implements IToolHandler, IPartialBlo
 				)
 			}
 
-			// Get conversation context from the task's API conversation history
-			const apiConversationHistory = config.messageState.apiConversationHistory
-			const conversationContext = stringifyConversationHistory(apiConversationHistory)
+			// The conversation the model was actually sent, so the explanation shares its context.
+			const conversationContext = stringifyConversationHistory(await config.messageState.readConversationHistory())
 
 			// Set up the comment controller with reply handler
 			const commentController = await setupCommentController(apiConfiguration, changedFiles, conversationContext)
@@ -278,11 +277,11 @@ export class GenerateExplanationToolHandler implements IToolHandler, IPartialBlo
 					commentController.endStreamingComment()
 				},
 				// shouldAbort: Check if task was cancelled
-				() => config.taskState.abort === true,
+				() => config.taskState.operationSignal.aborted,
 			)
 
 			// Check if we were aborted during streaming
-			if (config.taskState.abort) {
+			if (config.taskState.operationSignal.aborted) {
 				// Finalize the loading partial before returning
 				await config.callbacks.say(
 					"generate_explanation",

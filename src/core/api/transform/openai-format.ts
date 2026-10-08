@@ -115,7 +115,7 @@ export function convertToOpenAiMessages(
 				// "Messages following `tool_use` blocks must begin with a matching number of `tool_result` blocks."
 				// Therefore we need to send these images after the tool result messages
 				// NOTE: it's actually okay to have multiple user messages in a row, the model will treat them as a continuation of the same input (this way works better than combining them into one message, since the tool result specifically mentions (see following user message for image)
-				// UPDATE v2.0: we don't use tools anymore, but if we did it's important to note that the openrouter prompt caching mechanism requires one user message at a time, so we would need to add these images to the user content array instead.
+				// If tool results are ever sent as tool messages, note that OpenRouter prompt caching requires one user message at a time, so these images would have to move into the user content array instead.
 				if (toolResultImages.length > 0) {
 					openAiMessages.push({
 						role: "user",

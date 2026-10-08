@@ -1,13 +1,15 @@
-import { appendFile, readdir, readFile } from "node:fs/promises"
+import { readdir } from "node:fs/promises"
 import * as path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 const TASK_TEXT = "E2E_STATE_BUILD_PERF_TASK"
 const TURN_1_DONE = "E2E_STATE_BUILD_PERF_TURN_1_DONE"
 
-// Conversation-intensity tiers: cumulative API request pairs appended to
-// ui_messages.jsonl. Doubling message volume must not push state building
+// Conversation-intensity tiers: cumulative API request pairs appended to the
+// stored chat history. Doubling message volume must not push state building
 // into quadratic territory (the log shows 900-2500ms per push at scale).
 // The tiers go beyond the vitest 8K baseline because the full buildState path
 // (combineCommandSequences + combineApiRequests + api metrics + serialization)
@@ -40,24 +42,17 @@ function parseStateBuildDurations(output: string, taskId: string, sinceMs: numbe
 	return durations
 }
 
-/** Append N api_req_started/api_req_finished pairs with unique timestamps. */
+/** Append N api_req_started/api_req_finished pairs with unique timestamps to a closed task. */
 async function appendApiRequestPairs(dlineDocsDir: string, taskId: string, pairCount: number): Promise<void> {
-	const messagesPath = path.join(dlineDocsDir, "tasks", taskId, "ui_messages.jsonl")
-	const persisted = await readFile(messagesPath, "utf8")
-	let maxTs = 0
-	for (const line of persisted.split(/\r?\n/)) {
-		if (!line.trim()) continue
-		const message = JSON.parse(line) as { ts?: unknown }
-		if (typeof message.ts === "number") maxTs = Math.max(maxTs, message.ts)
-	}
-	const lines: string[] = []
-	for (let i = 0; i < pairCount; i++) {
-		const ts = maxTs + i * 2 + 1
-		// Realistic message payloads: the field logs show ~226KB per 1000 messages,
-		// i.e. each api_req_started/finished pair carries tokens, cost, model and
-		// request metadata comparable to the persisted production shape.
-		lines.push(
-			JSON.stringify({
+	await rewriteTaskUiMessages(dlineDocsDir, taskId, (messages) => {
+		const maxTs = messages.reduce((max, message) => Math.max(max, message.ts), 0)
+		const pairs: UiMessage[] = []
+		for (let i = 0; i < pairCount; i++) {
+			const ts = maxTs + i * 2 + 1
+			// Realistic message payloads: the field logs show ~226KB per 1000 messages,
+			// i.e. each api_req_started/finished pair carries tokens, cost, model and
+			// request metadata comparable to the persisted production shape.
+			pairs.push({
 				ts,
 				type: "say",
 				say: "api_req_started",
@@ -71,10 +66,8 @@ async function appendApiRequestPairs(dlineDocsDir: string, taskId: string, pairC
 					cost: 0.018179,
 					mode: "act",
 				}),
-			}),
-		)
-		lines.push(
-			JSON.stringify({
+			})
+			pairs.push({
 				ts: ts + 1,
 				type: "say",
 				say: "api_req_finished",
@@ -84,11 +77,10 @@ async function appendApiRequestPairs(dlineDocsDir: string, taskId: string, pairC
 					totalTokensIn: 3312,
 					totalTokensOut: 217,
 				}),
-			}),
-		)
-	}
-	const separator = persisted.length > 0 && !persisted.endsWith("\n") ? "\n" : ""
-	await appendFile(messagesPath, `${separator}${lines.join("\n")}\n`, "utf8")
+			})
+		}
+		return [...messages, ...pairs]
+	})
 }
 
 async function closeCurrentTask(sidebar: Frame): Promise<void> {
@@ -139,7 +131,7 @@ e2e(
 		if (!taskId) throw new Error("E2E state-build task directory was not created")
 
 		// Grow the conversation in tiers: close, append API request pairs, reopen.
-		// Each reopen reloads ui_messages.jsonl from disk and rebuilds extension state,
+		// Each reopen reloads the stored chat history and rebuilds extension state,
 		// which is where the per-message cost shows up in the Dline Output log.
 		const samples: TierSample[] = []
 		let appendedPairs = 0

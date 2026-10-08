@@ -4,14 +4,19 @@ import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
 import { getTaskTempDirectory } from "@core/storage/task-temp"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
-import { type BrowserAction, browserActions, type ClineAsk, type ClineSayTool } from "@shared/ExtensionMessage"
+import { type BrowserAction, browserActions, type UiAsk, type UiSayTool } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { normalizeWorkspaceRelativeInputPath } from "@/core/workspace/utils/normalizeWorkspaceRelativeInputPath"
 import { parseWorkspaceInlinePath } from "@/core/workspace/utils/parseWorkspaceInlinePath"
 import { DlineRuntimeFileManager } from "@/services/runtime-files/DlineRuntimeFileManager"
 import { PATCH_MARKERS } from "@/shared/Patch"
-import type { ConfigurableCeilings, PermissionScopeContext } from "../../kernel/turn/approval-kind"
-import { PATH_SCOPED_TOOLS, resolveLaneContext, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
+import {
+	type ConfigurableCeilings,
+	PATH_SCOPED_TOOLS,
+	type PermissionScopeContext,
+	resolveLaneContext,
+	type ToolLaneContext,
+} from "../../kernel"
 import { findReplaceTextFiles } from "../../tools/utils/replace-text-files"
 import { declaresWritePath, resolveToolPathParam } from "../../tools/utils/tool-path-params"
 import {
@@ -94,7 +99,7 @@ const REQUIRED_PARAMETERS: Partial<Record<ClineDefaultTool, readonly RequiredPar
 }
 
 /** Presentation tool names accepted by the existing generic tool renderer. */
-const PRESENTATION_TOOLS: Partial<Record<ClineDefaultTool, ClineSayTool["tool"]>> = {
+const PRESENTATION_TOOLS: Partial<Record<ClineDefaultTool, UiSayTool["tool"]>> = {
 	[ClineDefaultTool.FILE_EDIT]: "editedExistingFile",
 	[ClineDefaultTool.FILE_READ]: "readFile",
 	[ClineDefaultTool.FILE_NEW]: "newFileCreated",
@@ -378,7 +383,7 @@ async function confirmScopeContext(
 	}
 }
 
-function approvalAsk(toolName: ClineDefaultTool, block: ToolUse): ClineAsk {
+function approvalAsk(toolName: ClineDefaultTool, block: ToolUse): UiAsk {
 	if (toolName === ClineDefaultTool.BASH || toolName === ClineDefaultTool.KILL_COMMAND) return "command"
 	if (
 		toolName === ClineDefaultTool.MCP_USE ||
@@ -421,7 +426,7 @@ function buildPresentation(
 	if (ask !== "tool") {
 		return { ask, body: JSON.stringify(block.params ?? {}), notify }
 	}
-	const body: ClineSayTool = {
+	const body: UiSayTool = {
 		tool: PRESENTATION_TOOLS[toolName] ?? "statusUpdate",
 		path: declaredPath(block, toolName) ?? description,
 		content: description,

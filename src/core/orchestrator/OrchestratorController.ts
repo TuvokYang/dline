@@ -1,6 +1,7 @@
 import { Logger } from "@/shared/services/Logger"
 import { Controller } from "../controller/index"
 import { ProfileChangeCoordinator } from "../profiles/ProfileChangeCoordinator"
+import { TaskCollaborationRuntime } from "../task/collaboration/TaskCollaborationRuntime"
 
 /**
  * OrchestratorController — maintains a registry of all active Controllers
@@ -18,9 +19,11 @@ export class OrchestratorController {
 	/** Parent → child task relationship tracker. */
 	private spawnRelations = new Map<string, string[]>()
 	readonly profileChanges: ProfileChangeCoordinator
+	readonly collaboration: TaskCollaborationRuntime
 
 	private constructor() {
 		this.profileChanges = new ProfileChangeCoordinator(() => this.getActiveControllers())
+		this.collaboration = new TaskCollaborationRuntime()
 	}
 
 	static initialize(): OrchestratorController {

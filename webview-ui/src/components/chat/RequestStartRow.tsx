@@ -1,4 +1,4 @@
-import type { ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import type { Mode } from "@shared/storage/types"
 import type React from "react"
 import { useMemo } from "react"
@@ -21,13 +21,13 @@ interface UsageInfo {
 }
 
 interface RequestStartRowProps {
-	message: ClineMessage
+	message: UiMessage
 	apiRequestFailedMessage?: string
 	apiReqStreamingFailedMessage?: string
 	cost?: number
 	reasoningContent?: string
 	responseStarted?: boolean
-	clineMessages: ClineMessage[]
+	clineMessages: UiMessage[]
 	mode?: Mode
 	classNames?: string
 	isExpanded: boolean
@@ -49,7 +49,7 @@ const formatSearchRegex = (regex: string, path: string, filePattern?: string): s
 	return filePattern && filePattern !== "*" ? `"${terms}" in ${cleanedPath}/ (${filePattern})` : `"${terms}" in ${cleanedPath}/`
 }
 // Format activity text based on tool type
-const getActivityText = (tool: ClineSayTool): string | null => {
+const getActivityText = (tool: UiSayTool): string | null => {
 	const cleanedPath = cleanPathPrefix(tool.path || "")
 	switch (tool.tool) {
 		case "readFile":
@@ -68,10 +68,10 @@ const getActivityText = (tool: ClineSayTool): string | null => {
 
 // Collect tools in a given range, with optional stop condition
 const collectToolsInRange = (
-	messages: ClineMessage[],
+	messages: UiMessage[],
 	startIdx: number,
 	endIdx: number,
-	stopCondition?: (msg: ClineMessage) => boolean,
+	stopCondition?: (msg: UiMessage) => boolean,
 ): { icon: React.ElementType; text: string }[] => {
 	const activities: { icon: React.ElementType; text: string }[] = []
 
@@ -89,7 +89,7 @@ const collectToolsInRange = (
 		}
 
 		try {
-			const tool = JSON.parse(msg.text || "{}") as ClineSayTool
+			const tool = JSON.parse(msg.text || "{}") as UiSayTool
 			const activityText = getActivityText(tool)
 			if (activityText) {
 				const toolIcon = getIconByToolName(tool.tool)
@@ -103,7 +103,7 @@ const collectToolsInRange = (
 }
 
 // Find current api_req and determine if it has cost
-const findCurrentApiReq = (messages: ClineMessage[]): { index: number; hasCost: boolean } | null => {
+const findCurrentApiReq = (messages: UiMessage[]): { index: number; hasCost: boolean } | null => {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i]
 		if (msg.say === "api_req_started" && msg.text) {
@@ -119,7 +119,7 @@ const findCurrentApiReq = (messages: ClineMessage[]): { index: number; hasCost: 
 }
 
 // Find the most recent completed api_req before the given index
-const _findPrevCompletedApiReq = (messages: ClineMessage[], beforeIdx: number): number => {
+const _findPrevCompletedApiReq = (messages: UiMessage[], beforeIdx: number): number => {
 	for (let i = beforeIdx - 1; i >= 0; i--) {
 		const msg = messages[i]
 		if (msg.say === "api_req_started" && msg.text) {

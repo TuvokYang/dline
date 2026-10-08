@@ -2,11 +2,10 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { readCompletedCompactionCards } from "@core/context/context-management/compaction-context-projection"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { afterEach, describe, expect, it } from "vitest"
 import { UIMessage } from "../../storage/UIMessage"
 import { MessageStateHandler } from "../message-state"
-import { TaskState } from "../TaskState"
 
 const originalDocumentsDirectory = process.env.DLINE_DOCUMENTS_DIRECTORY
 
@@ -24,11 +23,10 @@ describe("MessageState compaction transient overlay", () => {
 		const state = new MessageStateHandler({
 			taskId,
 			ulid: "ulid-transient-compaction",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			uiMessage,
 		})
-		const partial: ClineMessage = {
+		const partial: UiMessage = {
 			ts: 100,
 			type: "say",
 			say: "tool",
@@ -48,7 +46,6 @@ describe("MessageState compaction transient overlay", () => {
 		const finalState = new MessageStateHandler({
 			taskId,
 			ulid: "ulid-transient-compaction",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			uiMessage: reopened,
 		})
@@ -90,11 +87,10 @@ describe("MessageState compaction transient overlay", () => {
 		const state = new MessageStateHandler({
 			taskId,
 			ulid: "ulid-durable-compaction-cards",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			uiMessage,
 		})
-		const cards: ClineMessage[] = [
+		const cards: UiMessage[] = [
 			compactionCard(101, "pass", 0, "completed", "first accepted summary"),
 			compactionCard(102, "summary_refit", 0, "completed", "smaller cumulative summary"),
 			{
@@ -146,7 +142,7 @@ function compactionCard(
 	status: "completed" | "failed",
 	content: string,
 	error?: string,
-): ClineMessage {
+): UiMessage {
 	return {
 		ts,
 		type: "say",

@@ -1,11 +1,11 @@
-import type { ClineApiReqInfo, ClineMessage } from "@shared/ExtensionMessage"
+import type { UiApiReqInfo, UiMessage } from "@shared/ExtensionMessage"
 
 /**
  * Check if an API request is still active (streaming or executing tools).
  * Returns true when the api_req_started message has no cost, cancelReason,
  * or streamingFailedMessage — indicating the request hasn't completed yet.
  */
-export function isApiReqActive(message: ClineMessage | undefined): boolean {
+export function isApiReqActive(message: UiMessage | undefined): boolean {
 	if (message?.type !== "say" || message.say !== "api_req_started") {
 		return false
 	}
@@ -19,7 +19,7 @@ export function isApiReqActive(message: ClineMessage | undefined): boolean {
 	}
 
 	try {
-		const info = JSON.parse(message.text) as ClineApiReqInfo
+		const info = JSON.parse(message.text) as UiApiReqInfo
 		return info.cost == null && info.cancelReason == null && info.streamingFailedMessage == null
 	} catch {
 		return true

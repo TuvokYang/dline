@@ -1,7 +1,7 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { beforeEach, describe, expect, it } from "vitest"
 import { type AskLifecycleRecord, MessageChannel } from "../MessageChannel"
-import { TaskState } from "../TaskState"
+import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 
 /**
  * A stranded ask leaves no trace of its own: the wait is silent, and the log
@@ -15,28 +15,28 @@ import { TaskState } from "../TaskState"
 
 interface Harness {
 	channel: MessageChannel
-	taskState: TaskState
-	messages: ClineMessage[]
+	taskState: DefaultToolHandlerState
+	messages: UiMessage[]
 	records: AskLifecycleRecord[]
 	events: () => string[]
 }
 
 function createHarness(): Harness {
-	const taskState = new TaskState()
-	const messages: ClineMessage[] = []
+	const taskState = new DefaultToolHandlerState()
+	const messages: UiMessage[] = []
 	const records: AskLifecycleRecord[] = []
 	let nextTs = 1000
 
 	const messageStateHandler = {
 		clineMessages: messages,
-		addToClineMessages: async (message: ClineMessage) => {
+		addToClineMessages: async (message: UiMessage) => {
 			messages.push(message)
 		},
-		upsertClineMessageInMemory: async (message: ClineMessage) => {
+		upsertClineMessageInMemory: async (message: UiMessage) => {
 			messages.push(message)
 			return message
 		},
-		finalizeClineMessage: async (message: ClineMessage) => {
+		finalizeClineMessage: async (message: UiMessage) => {
 			messages.push(message)
 			return message
 		},
@@ -143,7 +143,7 @@ describe("MessageChannel ask lifecycle reporting", () => {
 		await new Promise((resolve) => setTimeout(resolve, 0))
 
 		// A later message supersedes the pending question.
-		harness.messages.push({ ts: 2000, type: "say", say: "text", text: "moved on" } as ClineMessage)
+		harness.messages.push({ ts: 2000, type: "say", say: "text", text: "moved on" } as UiMessage)
 
 		await expect(pending).rejects.toThrow("Current ask promise was ignored")
 
@@ -156,7 +156,7 @@ describe("MessageChannel ask lifecycle reporting", () => {
 		const pending = harness.channel.ask("followup", "question")
 		await new Promise((resolve) => setTimeout(resolve, 0))
 
-		harness.taskState.abort = true
+		harness.taskState.cancelOperations("test_task_aborted")
 
 		await expect(pending).rejects.toThrow("Dline instance aborted")
 
@@ -170,19 +170,19 @@ describe("MessageChannel ask lifecycle reporting", () => {
 	 * A channel that only functioned when observed would be a liability.
 	 */
 	it("works without a lifecycle sink", async () => {
-		const taskState = new TaskState()
-		const messages: ClineMessage[] = []
+		const taskState = new DefaultToolHandlerState()
+		const messages: UiMessage[] = []
 		let nextTs = 1000
 		const channel = new MessageChannel({
 			pushMessage: () => undefined,
 			syncState: async () => undefined,
 			messageStateHandler: {
 				clineMessages: messages,
-				addToClineMessages: async (message: ClineMessage) => {
+				addToClineMessages: async (message: UiMessage) => {
 					messages.push(message)
 				},
-				upsertClineMessageInMemory: async (message: ClineMessage) => message,
-				finalizeClineMessage: async (message: ClineMessage) => message,
+				upsertClineMessageInMemory: async (message: UiMessage) => message,
+				finalizeClineMessage: async (message: UiMessage) => message,
 				updateClineMessage: async () => undefined,
 				flushUiMessages: async () => undefined,
 			} as never,

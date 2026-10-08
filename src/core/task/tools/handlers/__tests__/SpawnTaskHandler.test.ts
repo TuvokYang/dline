@@ -5,40 +5,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import "should"
 import type { ToolUse } from "@core/assistant-message"
 import { ClineDefaultTool } from "@/shared/tools"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { SpawnTaskHandler } from "../SpawnTaskHandler"
 
-const spawnMocks = vi.hoisted(() => ({
-	createPanel: vi.fn(async () => undefined),
-	disposePanel: vi.fn(async () => undefined),
-	initTask: vi.fn(),
-	clearTask: vi.fn(async () => undefined),
-	disposeController: vi.fn(async () => undefined),
-	recordSpawn: vi.fn(),
-	spawnTask: vi.fn(),
-}))
-
-vi.mock("@/hosts/vscode/VscodeWebviewPanelProvider", () => ({
-	VscodeWebviewPanelProvider: class {
-		readonly controller = {
-			initTask: spawnMocks.initTask,
-			clearTask: spawnMocks.clearTask,
-			dispose: spawnMocks.disposeController,
-		}
-
-		createPanel = spawnMocks.createPanel
-		dispose = spawnMocks.disposePanel
-	},
-}))
-
-vi.mock("@/core/orchestrator/OrchestratorController", () => ({
-	OrchestratorController: {
-		getInstance: () => ({
-			recordSpawn: spawnMocks.recordSpawn,
-			spawnTask: spawnMocks.spawnTask,
-		}),
-	},
-}))
+function createTaskState(consecutiveMistakeCount = 0): DefaultToolHandlerState {
+	const state = new DefaultToolHandlerState()
+	state.consecutiveMistakeCount = consecutiveMistakeCount
+	return state
+}
 
 describe("SpawnTaskHandler", () => {
 	const handler = new SpawnTaskHandler()
@@ -63,7 +38,7 @@ describe("SpawnTaskHandler", () => {
 			let called = false
 			const config = {
 				taskId: "parent-1",
-				taskState: { consecutiveMistakeCount: 0 },
+				taskState: createTaskState(),
 				callbacks: {
 					sayAndCreateMissingParamError: async (_toolName: string, _param: string) => {
 						called = true
@@ -85,7 +60,7 @@ describe("SpawnTaskHandler", () => {
 		it("should reset mistake count when task is provided", async () => {
 			const config = {
 				taskId: "parent-1",
-				taskState: { consecutiveMistakeCount: 5 },
+				taskState: createTaskState(5),
 				taskController: { rejectActiveBlock: () => {} },
 				interactions: {
 					open: async () => ({ actionId: "reject" }),
@@ -108,7 +83,7 @@ describe("SpawnTaskHandler", () => {
 		it("should report a missing mode when task is provided without one", async () => {
 			const sayAndCreateMissingParamError = vi.fn(async () => "Missing mode error")
 			const config = {
-				taskState: { consecutiveMistakeCount: 0 },
+				taskState: createTaskState(),
 				callbacks: { sayAndCreateMissingParamError },
 			} as unknown as TaskConfig
 
@@ -126,7 +101,7 @@ describe("SpawnTaskHandler", () => {
 		it("should reject an unsupported mode before opening approval", async () => {
 			const open = vi.fn()
 			const config = {
-				taskState: { consecutiveMistakeCount: 0 },
+				taskState: createTaskState(),
 				interactions: { open },
 			} as unknown as TaskConfig
 
@@ -147,24 +122,11 @@ describe("SpawnTaskHandler", () => {
 			["plan", "parent-plan-profile"],
 			["act", "parent-act-profile"],
 		] as const)("starts the child in %s mode without waiting for its task loop", async (requestedMode, expectedProfile) => {
-			const neverCompletes = new Promise<void>(() => undefined)
-			spawnMocks.initTask.mockImplementation(async (...args: unknown[]) => {
-				const options = args[5] as
-					| {
-							startInBackground?: boolean
-							beforeStart?: (taskId: string) => Promise<void> | void
-					  }
-					| undefined
-				if (options?.startInBackground !== true) {
-					await neverCompletes
-				}
-				await options?.beforeStart?.("child-1")
-				return "child-1"
-			})
+			const spawn = vi.fn(async () => ({ childTaskId: "child-1" }))
 			const config = {
 				taskId: "parent-1",
 				mode: "plan",
-				taskState: { consecutiveMistakeCount: 0, abort: false },
+				taskState: createTaskState(),
 				callbacks: { say: async () => {} },
 				services: {
 					stateManager: {
@@ -174,7 +136,7 @@ describe("SpawnTaskHandler", () => {
 						}),
 					},
 				},
-				controllerContext: {},
+				peerTaskSpawner: { spawn },
 			} as unknown as TaskConfig
 
 			const execution = handler.execute(config, {
@@ -190,23 +152,23 @@ describe("SpawnTaskHandler", () => {
 			expect(result).not.toBe("SPAWN_BLOCKED")
 			expect(result).toContain(`${requestedMode.toUpperCase()} task`)
 			expect(result).toContain("child-1")
-			expect(spawnMocks.initTask).toHaveBeenCalledWith(
-				"Background child",
-				undefined,
-				undefined,
-				undefined,
-				{ planModeProfile: expectedProfile, actModeProfile: expectedProfile, mode: requestedMode },
-				expect.objectContaining({ startInBackground: true }),
-			)
-			expect(spawnMocks.recordSpawn).toHaveBeenCalledWith("parent-1", "child-1")
+			expect(spawn).toHaveBeenCalledWith({
+				task: "Background child",
+				mode: requestedMode,
+				profile: expectedProfile,
+				context: "Context",
+				signal: config.taskState.operationSignal,
+			})
 		})
 
-		it("disposes the new panel when child initialization fails", async () => {
-			spawnMocks.initTask.mockRejectedValueOnce(new Error("init failed"))
+		it("reports an error when the host-owned peer spawner fails", async () => {
+			const spawn = vi.fn(async () => {
+				throw new Error("init failed")
+			})
 			const config = {
 				taskId: "parent-1",
 				mode: "plan",
-				taskState: { consecutiveMistakeCount: 0, abort: false },
+				taskState: createTaskState(),
 				interactions: { open: async () => ({ actionId: "approve" }) },
 				callbacks: { say: async () => {} },
 				services: {
@@ -216,7 +178,7 @@ describe("SpawnTaskHandler", () => {
 						getGlobalSettingsKey: () => "plan",
 					},
 				},
-				controllerContext: {},
+				peerTaskSpawner: { spawn },
 			} as unknown as TaskConfig
 
 			const result = await handler.execute(config, {
@@ -226,7 +188,7 @@ describe("SpawnTaskHandler", () => {
 			} as unknown as ToolUse)
 
 			expect(result).toMatch(/init failed/i)
-			expect(spawnMocks.disposePanel).toHaveBeenCalledOnce()
+			expect(spawn).toHaveBeenCalledOnce()
 		})
 	})
 
@@ -234,7 +196,7 @@ describe("SpawnTaskHandler", () => {
 		it("should return toolError when an exception occurs", async () => {
 			const config = {
 				taskId: "parent-1",
-				taskState: { consecutiveMistakeCount: 0 },
+				taskState: createTaskState(),
 				interactions: {
 					open: async () => ({ actionId: "approve" }),
 				},
@@ -243,7 +205,7 @@ describe("SpawnTaskHandler", () => {
 					say: async () => {},
 				},
 				services: { stateManager: {} },
-				controllerContext: undefined,
+				peerTaskSpawner: undefined,
 			} as unknown as TaskConfig
 
 			const result = await handler.execute(config, {

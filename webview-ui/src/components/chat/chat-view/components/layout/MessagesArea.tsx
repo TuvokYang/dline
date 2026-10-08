@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import type React from "react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
@@ -40,21 +40,21 @@ const ROW_LOAD_THRESHOLD = 8
 const USER_SCROLL_INTENT_TTL_MS = 750
 
 /** Sentinel value to prevent Virtuoso zero-sized-element warnings when data is empty */
-// @ts-expect-error — Virtuoso sentinel; only ts/type needed, full ClineMessage shape not required
-const EMPTY_PLACEHOLDER_MSG: ClineMessage = { ts: -1, type: "__empty_placeholder__" } as ClineMessage
+// @ts-expect-error — Virtuoso sentinel; only ts/type needed, full UiMessage shape not required
+const EMPTY_PLACEHOLDER_MSG: UiMessage = { ts: -1, type: "__empty_placeholder__" } as UiMessage
 
 interface MessagesAreaProps {
-	task: ClineMessage
-	groupedMessages: (ClineMessage | ClineMessage[])[]
-	modifiedMessages: ClineMessage[]
+	task: UiMessage
+	groupedMessages: (UiMessage | UiMessage[])[]
+	modifiedMessages: UiMessage[]
 	scrollBehavior: ScrollBehavior
 	chatState: ChatState
 	messageHandlers: MessageHandlers
-	onFollowupOptionSelect: (message: ClineMessage, option: string) => Promise<void>
+	onFollowupOptionSelect: (message: UiMessage, option: string) => Promise<void>
 }
 
 type RenderRow = {
-	row: ClineMessage | ClineMessage[]
+	row: UiMessage | UiMessage[]
 	startMessageIndex: number
 	endMessageIndex: number
 	startMessageTs?: number
@@ -81,7 +81,7 @@ type MergeAnchor = {
 	windowStart: number
 }
 
-function createTailMessageSnapshot(message: ClineMessage | undefined): TailMessageSnapshot | null {
+function createTailMessageSnapshot(message: UiMessage | undefined): TailMessageSnapshot | null {
 	if (!message) return null
 	const contentSignature = JSON.stringify([message.partial === true, message.text ?? ""])
 	return {
@@ -154,7 +154,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	isWebviewHiddenRef.current = isWebviewHidden
 	const tailMessageSnapshotRef = useRef<TailMessageSnapshot | null>(null)
 	// A hidden snapshot belongs to exactly one Task and is invalidated on visibility restoration.
-	const cachedVisibleMessagesRef = useRef<{ taskKey: string | undefined; rows: (ClineMessage | ClineMessage[])[] } | null>(null)
+	const cachedVisibleMessagesRef = useRef<{ taskKey: string | undefined; rows: (UiMessage | UiMessage[])[] } | null>(null)
 
 	// Layout effects run before passive effects. Keep these mirrors current during
 	// render so initial async hydration can calculate the real loaded bottom.
@@ -291,7 +291,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		rowCoordinateRef.current = rowCoordinate
 	}, [rowCoordinate])
 
-	const visibleGroupedMessages = useMemo<(ClineMessage | ClineMessage[])[]>(() => {
+	const visibleGroupedMessages = useMemo<(UiMessage | UiMessage[])[]>(() => {
 		// When the webview is hidden (user switched to another tab), return the
 		// cached snapshot so Virtuoso stays idle instead of re-laying-out invisibly.
 		if (isWebviewHidden) {
@@ -304,7 +304,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		const rows = renderRows.map((renderRow) => renderRow.row)
 		// Prevent Virtuoso zero-sized-element warning when data is empty.
 		// A single invisible placeholder row keeps Virtuoso's measurement happy.
-		let result: (ClineMessage | ClineMessage[])[]
+		let result: (UiMessage | UiMessage[])[]
 		if (rows.length === 0) {
 			result = [EMPTY_PLACEHOLDER_MSG]
 		} else {
@@ -591,7 +591,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
 		// Wrap to handle the empty placeholder row — returns a 1px invisible
 		// spacer so Virtuoso never encounters a zero-sized element.
-		return (index: number, item: ClineMessage | ClineMessage[]) => {
+		return (index: number, item: UiMessage | UiMessage[]) => {
 			if (item === EMPTY_PLACEHOLDER_MSG) {
 				return <div style={{ height: 1 }} />
 			}
@@ -628,7 +628,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 		[showThinkingLoaderRow],
 	)
 
-	const computeItemKey = useCallback((index: number, item: ClineMessage | ClineMessage[]) => {
+	const computeItemKey = useCallback((index: number, item: UiMessage | UiMessage[]) => {
 		return buildMessageRowKey(item, index)
 	}, [])
 
@@ -707,13 +707,15 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 	)
 
 	const requestWindowExtensions = useCallback(
-		(visible: VisibleMessageRange) => {
+		(visible: VisibleMessageRange, restrictTo?: WindowSide) => {
 			if (isWebviewHiddenRef.current) return
 
 			const window = currentMessageWindow()
 			if (isWholeConversationLoaded(window)) return
 
-			const planned = planWindowExtensions(window, visible)
+			const planned = planWindowExtensions(window, visible).filter(
+				(extension) => restrictTo === undefined || extension.side === restrictTo,
+			)
 			if (planned.length === 0) return
 
 			// Growing the window at the leading edge inserts rows above the
@@ -880,6 +882,12 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 			// otherwise those layout events eagerly fetch every leading page.
 			if (!disableAutoScrollRef.current) {
 				latestExtensionRangeRef.current = null
+				// The trailing side is exempt, because it is how a newly arrived
+				// reply enters the loaded window at all. Withholding it here was
+				// self-defeating: the window stayed short of the conversation end,
+				// which is exactly the condition that suppresses the follow intent,
+				// so every later message stayed outside both the window and the view.
+				if (!absoluteBottomLoaded) requestWindowExtensions(visible, "trailing")
 				return
 			}
 
@@ -1062,12 +1070,20 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 					totalListHeightChanged={handleMeasuredLayoutChange}
 				/>
 
-				{/* Floating scroll direction button — appears on scroll, auto-hides after 5s idle */}
+				{/* Floating scroll direction button — dims after 5s idle, stays armed */}
 				{showScrollToBottom && (
 					<div
 						className={cn(
-							"absolute bottom-4 right-4 z-20 transition-all duration-300 ease-out",
-							floatingBtnVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none",
+							"absolute bottom-4 right-4 z-20 pointer-events-auto transition-opacity duration-300 ease-out",
+							// The wrapper exists only while the reader is away from the
+							// live bottom, so the affordance is warranted for as long as
+							// it is rendered and must remain clickable. The idle timer is
+							// presentation only: it may lower prominence, never remove
+							// interactivity. Tying pointer events to it produced a
+							// control that hit-testing and assistive technology both
+							// still reported as a button while the row underneath
+							// silently swallowed every click.
+							floatingBtnVisible ? "opacity-100" : "opacity-40 hover:opacity-100",
 						)}>
 						<button
 							aria-label={floatingBtnDir === "bottom" ? "Scroll to bottom" : "Scroll to top"}

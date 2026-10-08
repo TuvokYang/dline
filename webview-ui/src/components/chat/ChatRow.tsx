@@ -1,14 +1,14 @@
 import { COMMAND_OUTPUT_STRING } from "@shared/combineCommandSequences"
 import {
-	ClineApiReqInfo,
-	ClineAskQuestion,
-	ClineAskSpawnTask,
-	ClineAskUseMcpServer,
-	ClineMakePlanResponse,
-	ClineMessage,
-	ClineSayGenerateExplanation,
-	ClineSayTool,
 	COMPLETION_RESULT_CHANGES_FLAG,
+	UiApiReqInfo,
+	UiAskQuestion,
+	UiAskSpawnTask,
+	UiAskUseMcpServer,
+	UiMakePlanResponse,
+	UiMessage,
+	UiSayGenerateExplanation,
+	UiSayTool,
 } from "@shared/ExtensionMessage"
 import { parseImageGenerationPresentation } from "@shared/image-generation"
 import type { LoadCapabilityPayload } from "@shared/load-capabilities"
@@ -92,7 +92,7 @@ const HEADER_CLASSNAMES = "flex items-center gap-2.5 mb-3"
  * marker is still accepted and stripped to keep old histories rendering their
  * change actions with the same text.
  */
-function readCompletionChanges(message: ClineMessage): { hasChanges: boolean; text: string } {
+function readCompletionChanges(message: UiMessage): { hasChanges: boolean; text: string } {
 	const rawText = message.text ?? ""
 	const hasLegacyFlag = rawText.endsWith(COMPLETION_RESULT_CHANGES_FLAG)
 	return {
@@ -107,13 +107,13 @@ const commandCollapsedCache = new Map<number, boolean>()
 const autoCollapsedCommands = new Set<number>()
 
 interface ChatRowProps {
-	message: ClineMessage
+	message: UiMessage
 	isExpanded: boolean
 	onToggleExpand: (ts: number) => void
-	lastModifiedMessage?: ClineMessage
+	lastModifiedMessage?: UiMessage
 	isLast: boolean
 	onHeightChange: (isTaller: boolean) => void
-	onFollowupOptionSelect?: (message: ClineMessage, option: string) => Promise<void>
+	onFollowupOptionSelect?: (message: UiMessage, option: string) => Promise<void>
 	sendMessageFromChatRow?: (text: string, images: string[], files: string[]) => void
 	onAddToInput?: (text: string) => void
 	onSetQuote: (text: string) => void
@@ -260,7 +260,6 @@ export const ChatRowContent = memo(
 			checkpointManagerErrorMessage,
 			showFeatureTips,
 			taskViewState,
-			currentTaskItem,
 		} = useExtensionState()
 		const [seeNewChangesDisabled, setSeeNewChangesDisabled] = useState(false)
 		const [explainChangesDisabled, setExplainChangesDisabled] = useState(false)
@@ -291,7 +290,7 @@ export const ChatRowContent = memo(
 
 		const [cost, _apiReqCancelReason, apiReqStreamingFailedMessage, , usageInfo] = useMemo(() => {
 			if (message.text != null && message.say === "api_req_started") {
-				const info: ClineApiReqInfo = JSON.parse(message.text)
+				const info: UiApiReqInfo = JSON.parse(message.text)
 				return [
 					info.cost,
 					info.cancelReason,
@@ -336,15 +335,14 @@ export const ChatRowContent = memo(
 			(message.commandStatus === "completed" || message.commandStatus === undefined) &&
 			!isCommandSkipped
 
+		// The canonical task view names the running task; the history item can be
+		// absent while a task runs, which used to hide the row's Cancel.
+		const runningTaskId = taskViewState?.taskId
+		const runningTaskInstanceId = taskViewState?.taskInstanceId
 		const cancelCommand =
 			onCancelCommand ??
-			(message.activityId && taskViewState?.taskId && taskViewState.taskInstanceId
-				? () =>
-						void cancelTaskActivities(
-							taskViewState.taskId,
-							[message.activityId as string],
-							taskViewState.taskInstanceId!,
-						)
+			(message.activityId && runningTaskId && runningTaskInstanceId
+				? () => void cancelTaskActivities(runningTaskId, [message.activityId as string], runningTaskInstanceId)
 				: undefined)
 
 		const isMcpServerResponding = isLast && lastModifiedMessage?.say === "mcp_server_request_started"
@@ -447,7 +445,7 @@ export const ChatRowContent = memo(
 				case "command":
 					return [null, null]
 				case "use_mcp_server":
-					const mcpServerUse = JSON.parse(message.text || "{}") as ClineAskUseMcpServer
+					const mcpServerUse = JSON.parse(message.text || "{}") as UiAskUseMcpServer
 					return [
 						isMcpServerResponding ? (
 							<ProgressIndicator />
@@ -485,7 +483,7 @@ export const ChatRowContent = memo(
 			if (message.ask === "tool" || message.say === "tool") {
 				// A malformed or plain-text tool payload must not take down the whole chat list.
 				try {
-					return JSON.parse(message.text || "{}") as ClineSayTool
+					return JSON.parse(message.text || "{}") as UiSayTool
 				} catch {
 					return null
 				}
@@ -928,9 +926,11 @@ export const ChatRowContent = memo(
 							</div>
 							{/* The checkpoint control renders its menu outside the card, so it must not
 							    sit inside the card's clipping box or the control gets occluded. */}
-							{status === "completed" && message.partial !== true && message.compactionConversationRange && (
-								<CheckmarkControl hasWorkspaceCheckpoint={false} messageTs={message.ts} />
-							)}
+							{status === "completed" &&
+								message.partial !== true &&
+								(message.compactionConversationRange || tool.compactionJournalBoundary) && (
+									<CheckmarkControl hasWorkspaceCheckpoint={false} messageTs={message.ts} />
+								)}
 						</div>
 					)
 				}
@@ -1065,7 +1065,7 @@ export const ChatRowContent = memo(
 		}
 
 		if (message.ask === "use_mcp_server" || message.say === "use_mcp_server") {
-			const useMcpServer = JSON.parse(message.text || "{}") as ClineAskUseMcpServer
+			const useMcpServer = JSON.parse(message.text || "{}") as UiAskUseMcpServer
 			const server = mcpServers.find((server) => server.name === useMcpServer.serverName)
 			return (
 				<div>
@@ -1238,7 +1238,7 @@ export const ChatRowContent = memo(
 							/>
 						)
 					case "user_feedback_diff":
-						const tool = JSON.parse(message.text || "{}") as ClineSayTool
+						const tool = JSON.parse(message.text || "{}") as UiSayTool
 						return (
 							<div className="w-full -mt-2.5">
 								<CodeAccordian
@@ -1275,7 +1275,7 @@ export const ChatRowContent = memo(
 							</div>
 						)
 					case "generate_explanation": {
-						let explanationInfo: ClineSayGenerateExplanation = {
+						let explanationInfo: UiSayGenerateExplanation = {
 							title: "code changes",
 							fromRef: "",
 							toRef: "",
@@ -1499,7 +1499,7 @@ export const ChatRowContent = memo(
 						let options: string[] | undefined
 						let selected: string | undefined
 						try {
-							const parsedMessage = JSON.parse(message.text || "{}") as ClineAskQuestion
+							const parsedMessage = JSON.parse(message.text || "{}") as UiAskQuestion
 							question = parsedMessage.question
 							options = parsedMessage.options
 							selected = parsedMessage.selected
@@ -1564,10 +1564,10 @@ export const ChatRowContent = memo(
 						)
 					case "spawn_task": {
 						let spawnTask: string | undefined
-						let spawnMode: ClineAskSpawnTask["mode"] | undefined
+						let spawnMode: UiAskSpawnTask["mode"] | undefined
 						let spawnContext: string | undefined
 						try {
-							const parsed = JSON.parse(message.text || "{}") as ClineAskSpawnTask
+							const parsed = JSON.parse(message.text || "{}") as UiAskSpawnTask
 							spawnTask = parsed.task
 							spawnMode = parsed.mode === "plan" || parsed.mode === "act" ? parsed.mode : undefined
 							spawnContext = parsed.context
@@ -1613,7 +1613,7 @@ export const ChatRowContent = memo(
 					case "make_plan": {
 						let response = message.text || ""
 						try {
-							const parsedMessage = JSON.parse(message.text || "{}") as ClineMakePlanResponse
+							const parsedMessage = JSON.parse(message.text || "{}") as UiMakePlanResponse
 							response = parsedMessage.response || response
 						} catch (_e) {
 							// Keep malformed current records readable instead of failing the row.

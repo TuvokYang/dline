@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
 import {
 	createMissingToolResultMessage,
-	createResumeContinuationText,
 	createResumeInteractionPresentation,
+	createResumeSubmissionContext,
 } from "../ResumeProvenance"
 
 describe("ResumeProvenance", () => {
@@ -28,12 +28,21 @@ describe("ResumeProvenance", () => {
 		expect(message).not.toContain("may have been abnormal")
 	})
 
-	it("includes the same restoration provenance in model continuation without losing user draft text", () => {
-		const continuation = createResumeContinuationText("Continue with the focused test.")
+	// Replaces the former `createResumeContinuationText` case. That helper merged
+	// provenance into the user's text, but it had no production caller, so no
+	// request ever carried the restoration fact. Provenance is now submission
+	// context the materializer appends, which keeps the chat row the user's own
+	// words, so the contract under test is which dialog kinds have provenance.
+	it("states restoration only for a resumed session", () => {
+		const resumed = createResumeSubmissionContext("resume")
 
-		expect(continuation).toContain("session was closed")
-		expect(continuation).not.toContain("tool call result is missing")
-		expect(continuation).not.toContain("outcome is unknown")
-		expect(continuation).toContain("Continue with the focused test.")
+		expect(resumed).toContain("session was closed")
+		expect(resumed).not.toContain("tool call result is missing")
+		expect(resumed).not.toContain("outcome is unknown")
+	})
+
+	it("claims nothing when a retry happens inside the live session", () => {
+		expect(createResumeSubmissionContext("error_retry")).toBeUndefined()
+		expect(createResumeSubmissionContext("background_wakeup")).toBeUndefined()
 	})
 })

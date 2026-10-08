@@ -14,8 +14,7 @@ import type { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import type { McpHub } from "@services/mcp/McpHub"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import type { BrowserSettings } from "@shared/BrowserSettings"
-import type { ClineExtensionContext } from "@shared/cline/context"
-import type { ClineAsk, ClineSay, CommandStatus } from "@shared/ExtensionMessage"
+import type { CommandStatus, UiAsk, UiSay } from "@shared/ExtensionMessage"
 import type { FocusChainSettings } from "@shared/FocusChainSettings"
 import type { ClineContent, ClineToolResponseContent } from "@shared/messages/content"
 import type { Mode } from "@shared/storage/types"
@@ -26,16 +25,18 @@ import { WorkspaceRootManager } from "@/core/workspace"
 import type { ContextManager } from "../../../context/context-management/ContextManager"
 import type { StateManager } from "../../../storage/StateManager"
 import type { TaskActivityStore } from "../../activity/TaskActivityStore"
+import type { BackgroundResultDeliveryPort } from "../../background/BackgroundResultDeliveryPort"
+import type { PeerTaskSpawnPort } from "../../executors/spawn/PeerTaskSpawnPort"
+import type { ToolBlockStatePort } from "../../executors/tool/ToolBlockStatePort"
 import type {
 	CompleteInteractionRequest,
 	InteractionOutcome,
 	OpenInteractionRequest,
-} from "../../interaction/InteractionCoordinator"
+} from "../../interaction/InteractionProtocol"
 import type { MessageStateHandler } from "../../message-state"
 import type { ProviderRequestRoundPort } from "../../performance/provider-request-round-port"
-import type { TaskController } from "../../TaskController"
-import type { TaskState } from "../../TaskState"
 import type { HookExecution } from "../../types/HookExecution"
+import type { ToolHandlerState } from "../state/ToolHandlerState"
 import type { SubagentFanoutBudget } from "../subagent/SubagentFanoutBudget"
 import type { SubagentJobManager } from "../subagent/SubagentJobManager"
 import type { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
@@ -46,7 +47,7 @@ import { TASK_CALLBACKS_KEYS, TASK_CONFIG_KEYS, TASK_SERVICES_KEYS } from "../ut
  */
 /** Presentation-only request issued by one handler. */
 export interface SayPresentationRequest {
-	taskSay: ClineSay
+	taskSay: UiSay
 	presentation?: string
 	images?: string[]
 	files?: string[]
@@ -57,6 +58,14 @@ export interface SayPresentationRequest {
 export interface TaskInteractionPorts {
 	open(request: OpenInteractionRequest): Promise<InteractionOutcome>
 	complete(request: CompleteInteractionRequest): Promise<InteractionOutcome>
+	/**
+	 * Record that this completion's result is about to be shown, before it is.
+	 *
+	 * A terminate that lands while the completion is still committing then
+	 * leaves the task finished with this completion as its dialog. Never fails
+	 * the caller: without it a close in that window only loses the completion.
+	 */
+	stageCompletion?(request: CompleteInteractionRequest): Promise<void>
 	say(request: SayPresentationRequest): Promise<void>
 }
 
@@ -87,8 +96,8 @@ export interface TaskConfig {
 	isMultiRootEnabled?: boolean
 
 	// State management
-	taskState: TaskState
-	taskController: TaskController
+	taskState: ToolHandlerState
+	blockState: ToolBlockStatePort
 	messageState: MessageStateHandler
 
 	// API and services
@@ -118,9 +127,11 @@ export interface TaskConfig {
 	/** Task-owned Provider round admission for nested compaction and subagent requests. */
 	providerRequestRounds?: ProviderRequestRoundPort
 
-	/** VSCode extension context, required by spawn_task to create new webview panels. */
-	controllerContext?: ClineExtensionContext
+	/** Host-owned peer-task launcher; absent on headless runtimes. */
+	peerTaskSpawner?: PeerTaskSpawnPort
 
+	/** Producer-owned durable ingress for background command and subagent results. */
+	backgroundResults?: BackgroundResultDeliveryPort
 	/** Task-local background subagent job manager. */
 	subagentJobManager?: SubagentJobManager
 
@@ -155,18 +166,25 @@ export interface TaskServices {
  */
 export interface TaskCallbacks {
 	say: (
-		type: ClineSay,
+		type: UiSay,
 		text?: string,
 		images?: string[],
 		files?: string[],
 		partial?: boolean,
 		existingTs?: number,
+		/**
+		 * `ts` of the command row this message belongs to.
+		 *
+		 * A `command_output` row is only merged into its command by this key, so a
+		 * host that drops it leaves the output orphaned and never rendered.
+		 */
+		commandTs?: number,
 	) => Promise<number | undefined>
 
 	focusChainForceUpdate: (newPlan: string) => Promise<void>
 
 	ask: (
-		type: ClineAsk,
+		type: UiAsk,
 		text?: string,
 		partial?: boolean,
 		options?: {
@@ -180,7 +198,21 @@ export interface TaskCallbacks {
 		files?: string[]
 	}>
 
-	saveCheckpoint: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
+	/**
+	 * Commit a workspace restore point.
+	 *
+	 * Optional for the same reason as the checklist: a task that only produces
+	 * an answer has no workspace history to step back through.
+	 */
+	saveCheckpoint?: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
+
+	/**
+	 * Wait until the task's baseline restore point exists.
+	 *
+	 * Optional like `saveCheckpoint`: only a surface with workspace history
+	 * builds a baseline while the first request is in flight.
+	 */
+	awaitInitialCheckpoint?: () => Promise<void>
 
 	sayAndCreateMissingParamError: (
 		toolName: ClineDefaultTool,
@@ -199,7 +231,14 @@ export interface TaskCallbacks {
 
 	doesLatestTaskCompletionHaveNewChanges: () => Promise<boolean>
 
-	updateFCListFromToolResponse: (taskProgress: string | undefined) => Promise<void>
+	/**
+	 * Publish the checklist a tool call carried.
+	 *
+	 * Optional because a checklist belongs to the surface, not to tool
+	 * execution: a task instantiated to generate a title, review a change, or
+	 * decide an approval presents none, and must not have to supply a stub.
+	 */
+	updateFCListFromToolResponse?: (taskProgress: string | undefined) => Promise<void>
 
 	// Additional callbacks for task management
 	postStateToWebview: () => Promise<void>

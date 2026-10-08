@@ -1,11 +1,13 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
+import { openUiMessageRows, UI_MESSAGE_READER } from "@/core/storage/messages/openUiMessageRows"
 import { UIMessage } from "../../storage/UIMessage"
 import { MessageChannel } from "../MessageChannel"
 import { MessageStateHandler } from "../message-state"
-import { TaskState } from "../TaskState"
+import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 
 describe("MessageChannel completion ask persistence", () => {
 	let docsDir: string
@@ -23,12 +25,13 @@ describe("MessageChannel completion ask persistence", () => {
 		} else {
 			process.env.DLINE_DOCS_DIR = previousDocsDir
 		}
+		await closeInstanceStoragesUnder(docsDir)
 		await rm(docsDir, { force: true, recursive: true })
 	})
 
 	it("persists the latest reasoning delta when the task store closes mid-stream", async () => {
 		const taskId = "task-partial-reasoning-close"
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const uiMessage = await UIMessage.open(taskId)
 		const messageStateHandler = new MessageStateHandler({
 			taskId,
@@ -65,7 +68,7 @@ describe("MessageChannel completion ask persistence", () => {
 
 	it("keeps the upgraded completion ask anchor after reopening ui_messages.jsonl", async () => {
 		const taskId = "task-completion-ask"
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const uiMessage = await UIMessage.open(taskId)
 		const messageStateHandler = new MessageStateHandler({
 			taskId,
@@ -86,12 +89,14 @@ describe("MessageChannel completion ask persistence", () => {
 		await channel.say("completion_result", "done", undefined, undefined, false, 100)
 		await channel.presentAsk("completion_result", "done", 100, "completion-1")
 
+		// Count stored rows before reopening: opening the writer would fold a duplicate away.
+		const rows = await openUiMessageRows(path.join(docsDir, "tasks", taskId), UI_MESSAGE_READER)
+		const storedRows = await rows.count()
+		await rows.close()
 		const reopened = await UIMessage.open(taskId)
 		const persisted = reopened.getAll()
-		const raw = await readFile(path.join(docsDir, "tasks", taskId, "ui_messages.jsonl"), "utf8")
-		const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0)
 
-		expect(lines).toHaveLength(1)
+		expect(storedRows).toBe(1)
 		expect(persisted).toHaveLength(1)
 		expect(persisted[0]).toMatchObject({
 			ts: 100,

@@ -26,16 +26,15 @@ describe("getHookModelContext", () => {
 		})
 	})
 
-	it("should return concrete provider and model slug for plan mode", () => {
+	it("should return the plan profile's provider and the active handler's model for plan mode", () => {
 		const api = {
-			getModel: () => ({ id: "handler-model-id" }),
+			getModel: () => ({ id: "anthropic/claude-sonnet-4.5" }),
 		} as any
 
 		const stateManager = {
 			getGlobalSettingsKey: (key: string) => (key === "mode" ? "plan" : undefined),
 			getApiConfiguration: () => ({
 				planModeProfile: "Plan Profile",
-				planModeOpenRouterModelId: "anthropic/claude-sonnet-4.5",
 				actModeProfile: "Act Profile",
 			}),
 		} as any
@@ -45,9 +44,9 @@ describe("getHookModelContext", () => {
 		context.slug?.should.equal("anthropic/claude-sonnet-4.5")
 	})
 
-	it("should return concrete provider and model slug for act mode", () => {
+	it("should return the act profile's provider and the active handler's model for act mode", () => {
 		const api = {
-			getModel: () => ({ id: "handler-act-model" }),
+			getModel: () => ({ id: "gpt-5" }),
 		} as any
 
 		const stateManager = {
@@ -55,7 +54,6 @@ describe("getHookModelContext", () => {
 			getApiConfiguration: () => ({
 				planModeProfile: "Plan Profile",
 				actModeProfile: "Act Profile",
-				actModeOpenAiModelId: "gpt-5",
 			}),
 		} as any
 

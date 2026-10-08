@@ -1,6 +1,6 @@
 import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoContent } from "@integrations/misc/extract-text"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import {
 	type ClineContent,
 	type ClineStorageMessage,
@@ -15,8 +15,36 @@ import type { NewTaskConsumedState, NewTaskFeedback } from "./new-task-handoff"
 /** Persisted histories used to recover the latest causally submitted New Task feedback. */
 export interface NewTaskFeedbackHistory {
 	readonly apiHistory: readonly ClineStorageMessage[]
-	readonly uiHistory: readonly ClineMessage[]
+	readonly uiHistory: readonly UiMessage[]
 	readonly approvedSource: NewTaskConsumedState
+}
+
+/**
+ * The conversation as one user message per provider request, the shape the
+ * legacy history stored and `findLatestNewTaskFeedback` reads.
+ *
+ * The journal renders each payload of a request on its own, so the tool
+ * results and environment details of one round arrive as consecutive user
+ * messages; read separately, the feedback would not precede the approval.
+ */
+export function perRequestHistory(messages: readonly ClineStorageMessage[]): ClineStorageMessage[] {
+	const merged: ClineStorageMessage[] = []
+	for (const message of messages) {
+		const previous = merged[merged.length - 1]
+		if (message.role !== "user" || previous?.role !== "user") {
+			merged.push(message)
+			continue
+		}
+		merged[merged.length - 1] = {
+			...previous,
+			content: [...contentBlocks(previous.content), ...contentBlocks(message.content)],
+		} as ClineStorageMessage
+	}
+	return merged
+}
+
+function contentBlocks(content: ClineStorageMessage["content"]): ClineContent[] {
+	return typeof content === "string" ? [{ type: "text", text: content }] : [...content]
 }
 
 /** Create an owned empty feedback value for a successor handoff. */

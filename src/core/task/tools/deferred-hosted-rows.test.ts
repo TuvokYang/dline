@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineAssistantHostedToolBlock, ClineStorageMessage } from "@shared/messages/content"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { describe, expect, it } from "vitest"
@@ -32,7 +32,7 @@ const deferredTurn: ClineStorageMessage[] = [
 ]
 const anthropicRequest = { protocol: "anthropic_messages" as const, replayHostedTools: new Set(["web_search"]) }
 
-function searchRow(ts: number, status: string, hostedCall?: { functionId: string; traceId: string }): ClineMessage {
+function searchRow(ts: number, status: string, hostedCall?: { functionId: string; traceId: string }): UiMessage {
 	return {
 		ts,
 		type: "say",
@@ -54,7 +54,7 @@ function searchRow(ts: number, status: string, hostedCall?: { functionId: string
 	}
 }
 
-function fetchRow(ts: number): ClineMessage {
+function fetchRow(ts: number): UiMessage {
 	return {
 		ts,
 		type: "say",

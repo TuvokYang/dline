@@ -1,6 +1,6 @@
 import path from "node:path"
 import type { ChokidarOptions, FSWatcher } from "chokidar"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { PromptInputFileWatcher } from "./PromptInputFileWatcher"
 
 class FakeWatcher {
@@ -54,11 +54,6 @@ function createFixture(overrides: { shouldIgnoreDirectory?: (absolutePath: strin
 }
 
 describe("PromptInputFileWatcher", () => {
-	afterEach(() => {
-		vi.useRealTimers()
-		vi.unstubAllEnvs()
-	})
-
 	it("waits for the first ready event and ignores duplicate ready events", async () => {
 		const fixture = createFixture({ autoReady: false })
 		let settled = false
@@ -75,32 +70,10 @@ describe("PromptInputFileWatcher", () => {
 		expect(fixture.watch).toHaveBeenCalledOnce()
 	})
 
-	it("delays successful readiness only when the E2E gate is configured", async () => {
-		vi.useFakeTimers()
-		vi.stubEnv("E2E_TEST", "true")
-		vi.stubEnv("DLINE_E2E_PROMPT_WATCHER_READY_DELAY_MS", "2500")
-		const fixture = createFixture({ autoReady: false })
-		let settled = false
-		const starting = fixture.inputWatcher.start().then(() => {
-			settled = true
-		})
-
-		fixture.watcher.emit("ready", undefined)
-		await vi.advanceTimersByTimeAsync(2_499)
-		expect(settled).toBe(false)
-		await vi.advanceTimersByTimeAsync(1)
-		await starting
-		expect(settled).toBe(true)
-	})
-
-	it("lets disposal supersede a configured E2E readiness delay", async () => {
-		vi.useFakeTimers()
-		vi.stubEnv("E2E_TEST", "true")
-		vi.stubEnv("DLINE_E2E_PROMPT_WATCHER_READY_DELAY_MS", "2500")
+	it("lets disposal supersede readiness that has not arrived", async () => {
 		const fixture = createFixture({ autoReady: false })
 		const starting = fixture.inputWatcher.start()
 
-		fixture.watcher.emit("ready", undefined)
 		await fixture.inputWatcher.dispose()
 
 		await expect(starting).resolves.toBeUndefined()

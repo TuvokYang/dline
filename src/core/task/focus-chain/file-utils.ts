@@ -1,7 +1,7 @@
 import { isCompletedFocusChainItem, isFocusChainItem, parseFocusChainItem } from "@shared/focus-chain-utils"
 import * as fs from "fs/promises"
 import * as path from "path"
-import { ensureTaskDirectoryExists } from "../../storage/disk"
+import { ensureTaskDirectoryExists, resolveTaskDirectory } from "../../storage/disk"
 
 /**
  * Generate the standard file path for a task's focusChain markdown file
@@ -15,6 +15,20 @@ export function getFocusChainFilePath(taskDir: string, taskId: string): string {
  */
 export function getFocusChainHistoryFilePath(taskDir: string, taskId: string): string {
 	return path.join(taskDir, `focus_chain_taskid_${taskId}_history.md`)
+}
+
+/**
+ * Read a task's focusChain history without creating anything.
+ *
+ * @returns The history text, or null when the task never recorded one.
+ */
+export async function readFocusChainHistoryFile(taskId: string): Promise<string | null> {
+	try {
+		return await fs.readFile(getFocusChainHistoryFilePath(await resolveTaskDirectory(taskId), taskId), "utf8")
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+		throw error
+	}
 }
 
 /**

@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { SqliteUnifyStoreBackend } from "../../../core/storage/backend/sqlite/SqliteUnifyStore"
 import { ApiRateMetricsEntity, toApiRateMetricsEntity } from "../../../core/task/performance/api-rate-metrics-record-codec"
@@ -14,8 +15,6 @@ import {
 	toApiResponseExecutionEntity,
 } from "../../../core/task/performance/api-response-execution-entity"
 import type { ApiResponseExecutionRecord } from "../../../core/task/performance/api-response-execution-types"
-import { TaskUsageSummaryRepository } from "../../../core/task/performance/task-usage-summary-repository"
-import { getApiMetrics } from "../../../shared/getApiMetrics"
 
 const MINUTE_MS = 60_000
 const HOUR_MS = 60 * MINUTE_MS
@@ -71,6 +70,7 @@ export async function seedTaskStatistics(
 	nowMs = Date.now(),
 ): Promise<SeedTaskStatisticsResult> {
 	const databasePath = path.join(dlineDocsDir, "tasks", taskId, "metrics.db")
+	await mkdir(path.dirname(databasePath), { recursive: true })
 	const database = await new SqliteUnifyStoreBackend().open(databasePath)
 	const roundStore = await database.openStore(ApiRequestRoundEntity)
 	const executionStore = await database.openStore(ApiResponseExecutionEntity)
@@ -97,7 +97,6 @@ export async function seedTaskStatistics(
 		await executionStore.replaceAll(executions.map(toApiResponseExecutionEntity))
 		await activeStore.replaceAll(activeRecords.map(toApiRateMetricsEntity))
 		await legacyStore.replaceAll([createLegacyMarker(taskId, nowMs)])
-		await seedUsageSummary(dlineDocsDir, taskId, rounds)
 
 		const durationMs = SEEDED_ROUNDS.reduce((total, round) => total + round.executionDurationMs, 0)
 		const cacheReadTokens = SEEDED_ROUNDS.reduce((total, round) => total + round.cacheReadTokens, 0)
@@ -117,39 +116,6 @@ export async function seedTaskStatistics(
 		await activeStore.close()
 		await legacyStore.close()
 		await database.close()
-	}
-}
-
-/** Use the domain writer so the fixture does not duplicate its private persistence schema. */
-async function seedUsageSummary(dlineDocsDir: string, taskId: string, rounds: readonly ApiRequestRoundRecord[]): Promise<void> {
-	const usage = getApiMetrics(
-		rounds.map((round) => ({
-			ts: round.completedAtMs,
-			type: "say" as const,
-			say: "api_req_started" as const,
-			text: JSON.stringify({
-				tokensIn: round.inputTokens,
-				tokensOut: round.outputTokens,
-				cacheWrites: round.cacheWriteTokens,
-				cacheReads: round.cacheReadTokens,
-				cost: round.totalCost,
-				currency: round.currency,
-			}),
-		})),
-	)
-	// Playwright owns one fixture per worker process; never resolve the developer's document root.
-	const previousDocumentsRoot = process.env.DLINE_DOCS_DIR
-	process.env.DLINE_DOCS_DIR = dlineDocsDir
-	const repository = new TaskUsageSummaryRepository(taskId)
-	try {
-		await repository.write(usage)
-	} finally {
-		try {
-			await repository.close()
-		} finally {
-			if (previousDocumentsRoot === undefined) delete process.env.DLINE_DOCS_DIR
-			else process.env.DLINE_DOCS_DIR = previousDocumentsRoot
-		}
 	}
 }
 

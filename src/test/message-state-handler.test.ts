@@ -2,8 +2,7 @@ import { describe, it, vi } from "vitest"
 import "should"
 import should from "should"
 import { MessageStateHandler } from "../core/task/message-state"
-import { TaskState } from "../core/task/TaskState"
-import { ClineMessage } from "../shared/ExtensionMessage"
+import { UiMessage } from "../shared/ExtensionMessage"
 
 /**
  * Unit tests for MessageStateHandler's mutex protection (RC-4)
@@ -15,7 +14,6 @@ describe("MessageStateHandler Mutex Protection", () => {
 	 * Helper to create a minimal MessageStateHandler for testing
 	 */
 	function createTestHandler(): MessageStateHandler {
-		const taskState = new TaskState()
 		const mockStore = (initial: any[] = []) => {
 			let data = [...initial]
 			return {
@@ -67,7 +65,6 @@ describe("MessageStateHandler Mutex Protection", () => {
 		return new MessageStateHandler({
 			taskId: "test-task-id",
 			ulid: "test-ulid",
-			taskState,
 			updateTaskHistory: async () => [],
 			apiConversation: mockStore() as any,
 			uiMessage: mockStore() as any,
@@ -75,9 +72,9 @@ describe("MessageStateHandler Mutex Protection", () => {
 	}
 
 	/**
-	 * Helper to create a test ClineMessage
+	 * Helper to create a test UiMessage
 	 */
-	function createTestMessage(text: string): ClineMessage {
+	function createTestMessage(text: string): UiMessage {
 		return {
 			ts: Date.now(),
 			type: "say",
@@ -86,20 +83,18 @@ describe("MessageStateHandler Mutex Protection", () => {
 		}
 	}
 
-	it("should initialize with empty message arrays", () => {
+	it("should initialize with empty message arrays", async () => {
 		const handler = createTestHandler()
 		handler.clineMessages.length.should.equal(0)
-		handler.apiConversationHistory.length.should.equal(0)
+		;(await handler.readConversationHistory()).length.should.equal(0)
 	})
 
-	it("should set and get API conversation history", async () => {
+	it("should overwrite and read the API conversation history", async () => {
 		const handler = createTestHandler()
 		const testHistory = [{ role: "user" as const, content: "test message" }]
 
-		handler.apiConversationHistory = testHistory
-		// Setter is async (overwrite returns Promise) — await microtask to let it complete
-		await new Promise((r) => setTimeout(r, 0))
-		handler.apiConversationHistory.should.deepEqual(testHistory)
+		await handler.overwriteApiConversationHistory(testHistory)
+		;(await handler.readConversationHistory()).should.deepEqual(testHistory)
 	})
 
 	it("should set and get cline messages", async () => {
@@ -128,8 +123,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 			{ role: "assistant" as const, content: "response1" },
 			{ role: "user" as const, content: "msg2" },
 		]
-		handler.apiConversationHistory = initialHistory
-		await new Promise((r) => setTimeout(r, 0))
+		await handler.overwriteApiConversationHistory(initialHistory)
 
 		// Add initial message to establish baseline
 		const initialMsg = createTestMessage("initial")
@@ -147,12 +141,11 @@ describe("MessageStateHandler Mutex Protection", () => {
 		const msg3 = createTestMessage("concurrent3")
 
 		// Add more messages to API history to simulate ongoing conversation
-		handler.apiConversationHistory = [
+		await handler.overwriteApiConversationHistory([
 			...initialHistory,
 			{ role: "assistant" as const, content: "response2" },
 			{ role: "user" as const, content: "msg3" },
-		]
-		await new Promise((r) => setTimeout(r, 0))
+		])
 
 		// Execute concurrent operations
 		const results = await Promise.all([
@@ -272,7 +265,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 			handler.addToApiConversationHistory({ role: "user", content: "msg2", ts: Date.now() }),
 		])
 
-		const history = handler.apiConversationHistory
+		const history = await handler.readConversationHistory()
 		history.length.should.equal(3)
 		history[0].role.should.equal("user")
 		history[1].role.should.equal("assistant")
@@ -296,7 +289,6 @@ describe("MessageStateHandler Mutex Protection", () => {
 		const handler = new MessageStateHandler({
 			taskId: "test-task-id",
 			ulid: "test-ulid",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			apiConversation: { getAll: () => data, overwrite, clear, addMessage } as any,
 		})
@@ -311,7 +303,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 		overwrite.mock.calls[0][0].should.deepEqual(newHistory)
 		clear.mock.calls.length.should.equal(0)
 		addMessage.mock.calls.length.should.equal(0)
-		handler.apiConversationHistory.should.deepEqual(newHistory)
+		;(await handler.readConversationHistory()).should.deepEqual(newHistory)
 	})
 
 	it("should truncate API conversation history by durable row count", async () => {
@@ -322,7 +314,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 
 		await handler.truncateApiConversationHistory(2)
 
-		handler.apiConversationHistory.map((message) => message.content).should.deepEqual(["first", "second"])
+		;(await handler.readConversationHistory()).map((message) => message.content).should.deepEqual(["first", "second"])
 	})
 
 	it("upsertClineMessageInMemory then finalizeClineMessage keeps a single message", async () => {
@@ -336,7 +328,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 			say: "text",
 			text: "partial",
 			partial: true,
-		} as ClineMessage)
+		} as UiMessage)
 		should.equal(partial.partial, true)
 
 		// MessageChannel.pushMessage stores the returned partial in the runtime message collection.
@@ -351,7 +343,7 @@ describe("MessageStateHandler Mutex Protection", () => {
 			type: "say",
 			say: "text",
 			text: "final",
-		} as ClineMessage)
+		} as UiMessage)
 		should.equal(finalized.partial, false)
 
 		// Still exactly one message — upsert + finalize = same ts single entry

@@ -41,8 +41,6 @@ service ModelsService {
   rpc subscribeToOpenRouterModels(EmptyRequest) returns (stream OpenRouterCompatibleModelInfo);
   // Subscribe to LiteLLM models updates
   rpc subscribeToLiteLlmModels(EmptyRequest) returns (stream OpenRouterCompatibleModelInfo);
-  // Updates API configuration (legacy - uses combined configuration)
-  rpc updateApiConfigurationProto(UpdateApiConfigurationRequest) returns (Empty);
   // Updates API configuration (new - uses separate options and secrets)
   rpc updateApiConfiguration(UpdateApiConfigurationRequestNew) returns (Empty);
   // Updates API configuration with partial values (only updates fields that are explicitly set)
@@ -392,12 +390,6 @@ message ModelsApiOptions {
   optional OpenAiCompatibleModelInfo act_mode_aihubmix_model_info = 234;
   optional string act_mode_cline_model_id = 235;
   optional OpenRouterModelInfo act_mode_cline_model_info = 236;
-}
-
-// Request for updating API configuration (legacy - uses combined configuration)
-message UpdateApiConfigurationRequest {
-  Metadata metadata = 1;
-  ModelsApiConfiguration api_configuration = 2;
 }
 
 // Combined API configuration containing both options and secrets

@@ -9,6 +9,12 @@ import {
 	type ToolPreflightResult,
 	type ToolSideEffect,
 } from "../executors/tool/ToolPreflight"
+import {
+	authorizeExplicitToolExecution,
+	explicitToolRefusalMessage,
+	findHandlerlessExplicitRefusal,
+} from "../explicit-instructions/explicit-tool-gate"
+import type { ExplicitInstructionFailureCode } from "../explicit-instructions/types"
 import { AccessMcpResourceHandler } from "./handlers/AccessMcpResourceHandler"
 import { ActModeRespondHandler } from "./handlers/ActModeRespondHandler"
 import { ApplyPatchHandler } from "./handlers/ApplyPatchHandler"
@@ -40,6 +46,7 @@ import { UseMcpToolHandler } from "./handlers/UseMcpToolHandler"
 import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
+import { applyToolCallSideEffects, awaitToolCallPreconditions, resolveToolCallSideEffects } from "./ToolCallSideEffects"
 import type { ToolHandlerResult } from "./ToolExecutionResult"
 import { ToolValidator } from "./ToolValidator"
 import type { TaskConfig } from "./types/TaskConfig"
@@ -307,9 +314,44 @@ export class ToolExecutorCoordinator {
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const handler = this.getHandler(block.name)
 		if (!handler) {
+			const refusal = findHandlerlessExplicitRefusal(block.name, config.explicitInstructions)
+			if (refusal) return formatResponse.toolError(explicitToolRefusalMessage(block.name, refusal))
 			throw new Error(`No handler registered for tool: ${block.name}`)
 		}
 		if (block.dline_tid) this.preparedHandlers.delete(block.dline_tid)
-		return handler.execute(config, block)
+		const authorized = this.authorize(config, handler.name)
+		if (!authorized.ok) {
+			// The code is what the model reads back, so it can tell a missing grant
+			// from a spent one instead of retrying a call that can never run.
+			return formatResponse.toolError(explicitToolRefusalMessage(block.name, authorized.code))
+		}
+		// Effects that ride on a call without belonging to any tool. The surface
+		// decides which of them it has, so a task with no checklist and no
+		// workspace history runs the same tools without supplying either.
+		const effects = resolveToolCallSideEffects(config)
+		await awaitToolCallPreconditions(effects, handler.name)
+		const result = await handler.execute(authorized.config, block)
+		await applyToolCallSideEffects(effects, block, handler.name)
+		return result
+	}
+
+	/**
+	 * Consume the turn's one-shot authority for an explicit-only tool.
+	 *
+	 * The gate runs once per invocation so a handler that requires explicit
+	 * authorization sees exactly one consumed authorization. A refusal stops the
+	 * call here, before the handler or any of its effects: an explicit-only tool
+	 * the user never asked for must not run on the strength of the model alone.
+	 */
+	private authorize(
+		config: TaskConfig,
+		tool: ClineDefaultTool,
+	):
+		| { readonly ok: true; readonly config: TaskConfig }
+		| { readonly ok: false; readonly code: ExplicitInstructionFailureCode } {
+		const gated = authorizeExplicitToolExecution(tool, config.explicitInstructions)
+		if (!gated.ok) return { ok: false, code: gated.code }
+		if (!gated.authorization) return { ok: true, config }
+		return { ok: true, config: { ...config, explicitInstructionAuthorization: gated.authorization } }
 	}
 }

@@ -10,7 +10,7 @@ import { Controller } from ".."
 export async function checkpointRestore(controller: Controller, request: CheckpointRestoreRequest): Promise<Empty> {
 	if (request.number) {
 		// wait for messages to be loaded
-		await pWaitFor(() => controller.task?.taskState.isInitialized === true, {
+		await pWaitFor(() => controller.task !== undefined, {
 			timeout: 3_000,
 		}).catch((error) => {
 			Logger.log("Failed to init new Dline instance to restore checkpoint", error)
@@ -21,17 +21,19 @@ export async function checkpointRestore(controller: Controller, request: Checkpo
 			throw error
 		})
 
-		// File-only restore must not alter the active conversation runtime.
-		// Chat restore owns stream termination because it rewinds persisted conversation state.
-		if (request.restoreType !== "workspace") {
-			try {
-				await controller.task?.interrupt()
-			} catch (error) {
-				Logger.error("[checkpointRestore] interrupt failed (non-fatal):", error)
-			}
+		// Restoring rewrites the workspace and the conversation, which only the
+		// window owning the task may do.
+		if (controller.task && !controller.task.writable) {
+			HostProvider.window.showMessage({
+				type: ShowMessageType.WARNING,
+				message: "This task is open in another window. Take it over before restoring a checkpoint.",
+			})
+			return Empty.create({})
 		}
-
-		await controller.task?.checkpointManager?.restoreCheckpoint(
+		// The checkpoint owner owns validation, stop/fence and reopen as one transaction.
+		// Pre-cancelling here used the ordinary cancel path, which rearmed executors and
+		// offered a cancelled-resume dialog before the restore had even been validated.
+		await controller.task?.owners.checkpoints?.restoreCheckpoint(
 			request.number,
 			request.restoreType as ClineCheckpointRestore,
 			request.offset,

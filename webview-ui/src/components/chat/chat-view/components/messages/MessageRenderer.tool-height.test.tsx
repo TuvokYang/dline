@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { render, screen } from "@testing-library/react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -22,7 +22,7 @@ vi.mock("@/components/chat/ChatRow", () => ({
 vi.mock("../../utils/messageUtils", () => ({
 	findReasoningForApiReq: () => ({ reasoning: undefined, responseStarted: false }),
 	isTextMessagePendingToolCall: () => false,
-	isToolGroup: (value: ClineMessage | ClineMessage[]) => Array.isArray(value),
+	isToolGroup: (value: UiMessage | UiMessage[]) => Array.isArray(value),
 	resolveMessageRowExpanded: () => false,
 }))
 
@@ -38,7 +38,7 @@ const messageHandlers: MessageHandlers = {
 
 describe("MessageRenderer tool-group height boundary", () => {
 	it("caps grouped tool rows at 60vh without modifying ToolGroupRenderer", () => {
-		const group: ClineMessage[] = [
+		const group: UiMessage[] = [
 			{ ts: 1, type: "say", say: "tool", text: JSON.stringify({ tool: "readFile", path: "src/example.ts" }) },
 		]
 

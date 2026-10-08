@@ -22,7 +22,12 @@ import { Logger } from "@/shared/services/Logger"
 import { isCommandCompletionSuccessful } from "./command-completion"
 import { resolveCommandLogPath } from "./command-log-path"
 import { appendCommandLogPath } from "./command-result"
-import { COMPLETION_TIMEOUT_MS, DEFAULT_TERMINAL_OUTPUT_LINE_LIMIT, MAX_BYTES_BEFORE_FILE } from "./constants"
+import {
+	COMPLETION_TIMEOUT_MS,
+	DEFAULT_TERMINAL_OUTPUT_LINE_LIMIT,
+	EXPLICIT_BACKGROUND_START_WINDOW_MS,
+	MAX_BYTES_BEFORE_FILE,
+} from "./constants"
 import { formatTerminalOutput, splitTerminalOutput, writeTerminalOutputFrame } from "./output-stream"
 import { TerminalOutputFrameScheduler } from "./TerminalOutputFrameScheduler"
 import type {
@@ -375,7 +380,9 @@ export async function orchestrateCommandExecution(
 		onHighWater: () => process.pauseOutput?.(),
 		onLowWater: () => process.resumeOutput?.(),
 	})
+	let producedOutput = false
 	process.on("line", (line: string, stream: TerminalOutputStream = "combined") => {
+		producedOutput = true
 		outputScheduler.enqueue({ line, stream })
 	})
 
@@ -438,6 +445,11 @@ export async function orchestrateCommandExecution(
 	commandTiming = { startedAt, deadlineAt }
 
 	if (startInBackground && onProceedWhileRunning && !didCancelViaUi) {
+		// The handoff reports the command as running. Reporting it the instant
+		// the process spawned told the model so before the command had printed
+		// anything, losing an immediate startup failure from the result and
+		// letting a cancel land before the command did any work at all.
+		if (!completed && !producedOutput) await firstOutputOrExit(process, EXPLICIT_BACKGROUND_START_WINDOW_MS)
 		const result = await transitionToBackground("explicit", true)
 		if (result) {
 			return result
@@ -643,4 +655,21 @@ export async function orchestrateCommandExecution(
 		exitCode: completionDetails?.exitCode,
 		signal: completionDetails?.signal,
 	}
+}
+
+/** Resolves on the command's first output line or its exit, or once `windowMs` passes. */
+function firstOutputOrExit(process: TerminalProcessResultPromise, windowMs: number): Promise<void> {
+	return new Promise((resolve) => {
+		const settle = () => {
+			clearTimeout(timer)
+			process.off("line", settle)
+			process.off("completed", settle)
+			process.off("error", settle)
+			resolve()
+		}
+		const timer = setTimeout(settle, windowMs)
+		process.once("line", settle)
+		process.once("completed", settle)
+		process.once("error", settle)
+	})
 }

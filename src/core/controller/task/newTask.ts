@@ -1,10 +1,12 @@
+import { validateSemanticInputDocument } from "@shared/input-semantics/validation"
 import { String } from "@shared/proto/dline/common"
 import { PlanActMode } from "@shared/proto/dline/state"
 import { NewTaskRequest } from "@shared/proto/dline/task"
+import { fromProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Settings } from "@shared/storage/state-keys"
 import { DEFAULT_BROWSER_SETTINGS } from "../../../shared/BrowserSettings"
 import { Controller } from ".."
-import { normalizeOpenaiReasoningEffort } from "../state/reasoningEffort"
+import { inputSemanticCatalogService } from "../slash/input-semantic-catalog"
 
 /**
  * Creates a new task with the given text and optional images
@@ -52,12 +54,6 @@ export async function newTask(controller: Controller, request: NewTaskRequest): 
 					customArgs: request.taskSettings.browserSettings.customArgs,
 				},
 			}),
-			...(request.taskSettings?.planModeReasoningEffort !== undefined && {
-				planModeReasoningEffort: normalizeOpenaiReasoningEffort(request.taskSettings.planModeReasoningEffort),
-			}),
-			...(request.taskSettings?.actModeReasoningEffort !== undefined && {
-				actModeReasoningEffort: normalizeOpenaiReasoningEffort(request.taskSettings.actModeReasoningEffort),
-			}),
 			...(request.taskSettings?.mode !== undefined && {
 				mode: convertPlanActMode(request.taskSettings.mode),
 			}),
@@ -73,8 +69,28 @@ export async function newTask(controller: Controller, request: NewTaskRequest): 
 		}).filter(([_, value]) => value !== undefined),
 	)
 
+	// A structured submission is authoritative (WS-041 spec, structured submission
+	// protocol §2). An undecodable one is refused rather than read as legacy text,
+	// because the legacy reading is exactly what the document was sent to prevent.
+	let semanticInput: import("@shared/input-semantics/document").SemanticInputDocument | undefined
+	if (request.semanticInput) {
+		const decoded = fromProtoSemanticInputDocument(request.semanticInput)
+		if (!decoded.ok) throw new Error(`New task input was rejected: ${decoded.diagnostic.code}`)
+		// Admission itself runs in the background task, where a refusal could no
+		// longer hand the draft back. Refuse here what it would certainly refuse,
+		// so the caller still owns the draft and can restore it.
+		const structural = validateSemanticInputDocument(decoded.document)
+		if (structural.length > 0) throw new Error(`New task input was rejected: ${structural[0].code}`)
+		// `String` here is the proto message type, so the revision is formatted directly.
+		const currentRevision = `${inputSemanticCatalogService(controller).current().revision}`
+		if (decoded.document.catalogRevision !== currentRevision) {
+			throw new Error("New task input was rejected: semantic_input_catalog_stale")
+		}
+		semanticInput = decoded.document
+	}
 	const taskId = await controller.initTask(request.text, request.images, request.files, undefined, filteredTaskSettings, {
 		startInBackground: true,
+		...(semanticInput === undefined ? {} : { semanticInput }),
 	})
 	return String.create({ value: taskId || "" })
 }

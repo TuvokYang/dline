@@ -1,9 +1,8 @@
-import { TaskPhase } from "@core/task/TaskPhase"
-import { normalizeLegacyTaskSnapshot } from "@core/task/TaskSnapshot"
 import fs from "fs/promises"
 import path from "path"
 import type { HistoryItem } from "@/shared/HistoryItem"
 import { ensureTaskDirectoryExists, GlobalFileNames } from "./disk"
+import { decodeLegacyTaskCompletionSnapshot } from "./legacy/LegacyTaskCompletionSnapshot"
 
 /** Completion verdict recovered from one Task's canonical snapshot. */
 export interface RecoveredCompletion {
@@ -30,8 +29,7 @@ export async function readPersistedTaskCompletion(taskId: string): Promise<Recov
 	}
 
 	try {
-		const snapshot = normalizeLegacyTaskSnapshot(JSON.parse(raw))
-		return { isCompleted: snapshot.phase === TaskPhase.COMPLETED && snapshot.completion !== undefined }
+		return decodeLegacyTaskCompletionSnapshot(JSON.parse(raw))
 	} catch {
 		return undefined
 	}

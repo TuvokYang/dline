@@ -48,7 +48,6 @@ vi.mock("../services/grpc-client", () => {
 			refreshOpenRouterModelsRpc: vi.fn(async () => ({ models: {} })),
 			refreshHicapModels: vi.fn(async () => ({ models: {} })),
 			refreshLiteLlmModelsRpc: vi.fn(async () => ({ models: {} })),
-			refreshBasetenModelsRpc: vi.fn(async () => ({ models: {} })),
 			refreshVercelAiGatewayModelsRpc: vi.fn(async () => ({ models: {} })),
 			refreshClineModelsRpc: vi.fn(async () => ({ models: {} })),
 		},
@@ -176,13 +175,14 @@ function pinnedAnchorState(stateRevision: number, total = 1): ExtensionState {
 	} as ExtensionState
 }
 
-function stateSnapshot(input: { revision: number; total: number }): ExtensionState {
+function stateSnapshot(input: { revision: number; total: number; messageWindowRevision?: number }): ExtensionState {
 	return {
 		stateRevision: input.revision,
 		version: "test",
 		currentTaskItem: { id: "task-1", task: "Task", ts: 1 },
 		taskTitleMessage: { ts: 1, type: "say", say: "task", text: "Task" },
 		totalMessageCount: input.total,
+		messageWindowRevision: input.messageWindowRevision,
 		taskViewState: {
 			taskId: "task-1",
 			taskInstanceId: "open-1",
@@ -550,6 +550,49 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		})
 	})
 
+	it("still recovers a missing anchor row the backend has already verified", async () => {
+		// `anchorVerified` means the backend holds the row, so the footer may
+		// dispatch; it does not mean this window loaded it. Treating it as loaded
+		// skipped recovery and left an answered question off screen.
+		const earlier = convertClineMessageToProto({ ts: 50, type: "say", say: "text", text: "earlier row" })
+		const ask = convertClineMessageToProto({
+			ts: 100,
+			type: "ask",
+			ask: "qna_respond",
+			text: "Question",
+			interactionId: "interaction-1",
+		})
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce({ taskId: "task-1", taskInstanceId: "open-1", messages: [earlier], startIndex: 0 })
+			.mockResolvedValue({ taskId: "task-1", taskInstanceId: "open-1", messages: [earlier, ask], startIndex: 0 })
+		render(
+			<ExtensionStateContextProvider>
+				<InteractionProbe observedTaskIds={[]} />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+
+		// The window is already loaded when the verified interaction arrives,
+		// so only the anchor recovery can bring its row in.
+		const loaded = outOfSyncInteractionState(1)
+		if (!loaded.taskViewState) throw new Error("Expected a task view")
+		loaded.taskViewState.activeInteraction = undefined
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(loaded) })
+		})
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledOnce())
+		await waitFor(() => expect(screen.getByText("earlier row")).toBeInTheDocument())
+
+		const verified = outOfSyncInteractionState(2)
+		if (!verified.taskViewState?.activeInteraction) throw new Error("Expected an active interaction")
+		verified.taskViewState.activeInteraction.anchorVerified = true
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(verified) })
+		})
+
+		await waitFor(() => expect(screen.getByText("Question")).toBeVisible())
+	})
+
 	it("walks backward through persisted windows until it finds an older interaction anchor", async () => {
 		const tail = Array.from({ length: 200 }, (_, index) =>
 			convertClineMessageToProto({
@@ -836,8 +879,8 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		})
 		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2))
 
-		// More messages land before that catch-up answers. The window was still
-		// following the tail, so it has to keep going once the first page lands.
+		// More messages land before that catch-up answers, and then the task
+		// waits for the user, so no later state change asks for them again.
 		act(() => {
 			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 3, total: 3 })) })
 		})
@@ -892,8 +935,8 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(screen.getByText("also condensed")).toBeVisible())
 		const callsBeforeCompaction = vi.mocked(TaskServiceClient.fetchMessage).mock.calls.length
 
-		// Compaction shrinks the conversation, so the window is replaced from the
-		// latest page. That replacement is still in flight when the turn goes on.
+		// Compaction shrinks the conversation, so the window is refetched from the
+		// latest page. That fetch is still in flight when the turn goes on.
 		backend = [message(10, "first"), message(40, "summary")]
 		holdNextFetch = true
 		act(() => {
@@ -961,6 +1004,89 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2))
 		await waitFor(() => expect(screen.getByText("durable replacement")).toBeVisible())
 		expect(screen.queryByText("stale partial")).toBeNull()
+	})
+
+	it("reconciles a destructive same-count replacement while a durable-tail fetch is still running", async () => {
+		const initial = convertClineMessageToProto({ ts: 10, type: "say", say: "text", text: "assistant" })
+		const obsolete = convertClineMessageToProto({ ts: 20, type: "say", say: "text", text: "obsolete retry" })
+		const recovered = convertClineMessageToProto({
+			ts: 30,
+			type: "say",
+			say: "text",
+			text: "recovered response",
+			partial: true,
+		})
+		const activeRequest = convertClineMessageToProto({
+			ts: 40,
+			type: "say",
+			say: "text",
+			text: "active request",
+		})
+		type TailPage = {
+			taskId: string
+			taskInstanceId: string
+			messages: [typeof initial, typeof obsolete, typeof recovered]
+			startIndex: number
+			totalCount: number
+		}
+		let resolveTailFetch: ((value: TailPage) => void) | undefined
+		const tailFetch = new Promise<TailPage>((resolve) => {
+			resolveTailFetch = resolve
+		})
+		vi.mocked(TaskServiceClient.fetchMessage)
+			.mockResolvedValueOnce({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: [initial, obsolete],
+				startIndex: 0,
+				totalCount: 2,
+			})
+			.mockReturnValueOnce(tailFetch as never)
+			.mockResolvedValueOnce({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: [initial, { ...recovered, partial: false }, activeRequest],
+				startIndex: 0,
+				totalCount: 3,
+			})
+
+		render(
+			<ExtensionStateContextProvider>
+				<MessageProbe />
+			</ExtensionStateContextProvider>,
+		)
+		await waitFor(() => expect(subscriptions.state).toBeDefined())
+		act(() => {
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 1, total: 2 })) })
+		})
+		await waitFor(() => expect(screen.getByText("obsolete retry")).toBeVisible())
+
+		act(() => {
+			subscriptions.partial?.onResponse({ ...recovered, taskId: "task-1", taskInstanceId: "open-1" })
+			subscriptions.state?.onResponse({ stateJson: JSON.stringify(stateSnapshot({ revision: 2, total: 3 })) })
+		})
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(2))
+
+		act(() => {
+			subscriptions.state?.onResponse({
+				stateJson: JSON.stringify(stateSnapshot({ revision: 3, total: 3, messageWindowRevision: 1 })),
+			})
+		})
+		await act(async () => {
+			resolveTailFetch?.({
+				taskId: "task-1",
+				taskInstanceId: "open-1",
+				messages: [initial, obsolete, recovered],
+				startIndex: 0,
+				totalCount: 3,
+			})
+			await tailFetch
+		})
+
+		await waitFor(() => expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(3))
+		await waitFor(() => expect(screen.queryByText("obsolete retry")).toBeNull())
+		expect(screen.getByText("recovered response")).toBeVisible()
+		expect(screen.getByText("active request")).toBeVisible()
 	})
 
 	it("deduplicates a delayed partial event after the persisted tail has already been recovered", async () => {
@@ -1053,6 +1179,60 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
 		await waitFor(() => expect(TaskServiceClient.fetchMessage.mock.calls.length).toBeGreaterThan(2))
 		expect(screen.queryByText("Question")).toBeNull()
 		expect(screen.queryByRole("alert")).toBeNull()
+	})
+
+	it("bounds disconnected anchor retries and recovers after a later state publication", async () => {
+		vi.useFakeTimers()
+		try {
+			const tail = convertClineMessageToProto({ ts: 900, type: "say", say: "text", text: "tail message" })
+			const ask = convertClineMessageToProto({
+				ts: 100,
+				type: "ask",
+				ask: "qna_respond",
+				text: "Question",
+				interactionId: "interaction-1",
+			})
+			const page = { taskId: "task-1", taskInstanceId: "open-1" }
+			vi.mocked(TaskServiceClient.fetchMessage)
+				.mockResolvedValueOnce({ ...page, messages: [tail], startIndex: 400, totalCount: 401 })
+				.mockResolvedValue({ ...page, messages: [ask], startIndex: 0, totalCount: 401 })
+
+			render(
+				<ExtensionStateContextProvider>
+					<InteractionProbe observedTaskIds={[]} />
+				</ExtensionStateContextProvider>,
+			)
+			await act(async () => {
+				subscriptions.state?.onResponse({ stateJson: JSON.stringify(pinnedAnchorState(1, 401)) })
+			})
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1_200)
+			})
+
+			expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(5)
+			expect(screen.queryByText("Question")).toBeNull()
+			// A missing anchor is a window gap, not a fault the user must read about.
+			expect(screen.queryByRole("alert")).toBeNull()
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(10_000)
+			})
+			expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(5)
+
+			vi.mocked(TaskServiceClient.fetchMessage).mockResolvedValue({
+				...page,
+				messages: [ask, tail],
+				startIndex: 399,
+				totalCount: 401,
+			})
+			await act(async () => {
+				subscriptions.state?.onResponse({ stateJson: JSON.stringify(pinnedAnchorState(2, 401)) })
+			})
+			expect(TaskServiceClient.fetchMessage).toHaveBeenCalledTimes(6)
+			expect(screen.getByText("Question")).toBeVisible()
+			expect(screen.queryByRole("alert")).toBeNull()
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 
 	it("retries a failed anchor recovery instead of suppressing it permanently", async () => {

@@ -1,8 +1,9 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readdir, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskActivities } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page, type TestInfo } from "@playwright/test"
 
 /** Mirrors SubagentRunner.MAX_INITIAL_STREAM_ATTEMPTS (one initial try plus five backoff retries). */
@@ -69,10 +70,8 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 
 async function readSubagentActivity(dlineDocsDir: string, taskId: string): Promise<Record<string, unknown>> {
 	return E2ETestHelper.waitForValue(async () => {
-		const persisted = JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "activities.json"), "utf8")) as {
-			activities?: Array<Record<string, unknown>>
-		}
-		return persisted.activities?.find((activity) => activity.kind === "subagent")
+		const activity = (await readTaskActivities(dlineDocsDir, taskId)).find((candidate) => candidate.kind === "subagent")
+		return activity as unknown as Record<string, unknown> | undefined
 	})
 }
 
@@ -1005,6 +1004,10 @@ e2e(
 		await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
 		const activity = sidebar.getByTestId("activity-item").filter({ hasText: agentName })
 		await expect(activity).toHaveAttribute("data-activity-status", "running", { timeout: 60_000 })
+		// Cancel the held request, not the run's setup. A run cancelled before its
+		// first request never consumes the held response, and Retry would then
+		// receive the response scripted for the cancelled attempt.
+		await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 }).toBe(1)
 		await activity.getByRole("button", { name: "Cancel", exact: true }).click()
 		await expect(activity).toHaveAttribute("data-activity-status", "cancelled", { timeout: 60_000 })
 
@@ -1015,6 +1018,10 @@ e2e(
 
 		await activityRetry.click()
 		await expect(activity).toHaveAttribute("data-activity-status", "completed", { timeout: 120_000 })
+		const childConsumptions = server.getMockConsumptions("openai-compatible-responses")
+		expect(childConsumptions).toHaveLength(2)
+		expect(childConsumptions[0]).toMatchObject({ toolCallId: "call_cancel_retry_child_never_completes" })
+		expect(childConsumptions[1]).toMatchObject({ toolCallId: "call_cancel_retry_child_complete" })
 
 		await sidebar.getByRole("tab", { name: "Work", exact: true }).click()
 		const input = sidebar.getByTestId("chat-input")

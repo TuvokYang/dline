@@ -40,7 +40,6 @@ interface StoredTaskSettings {
 	planModeReasoningOverrideKind?: string
 	planModeReasoningOverrideEffort?: string
 	planModeThinkingBudgetTokens?: number
-	planModeReasoningEffort?: string
 	planModeServiceTierOverrideKind?: string
 	planModeServiceTierOverrideTier?: string
 	actModeProfileId?: string
@@ -48,7 +47,6 @@ interface StoredTaskSettings {
 	actModeReasoningOverrideKind?: string
 	actModeReasoningOverrideEffort?: string
 	actModeThinkingBudgetTokens?: number
-	actModeReasoningEffort?: string
 	actModeServiceTierOverrideKind?: string
 	actModeServiceTierOverrideTier?: string
 }
@@ -191,7 +189,6 @@ function activeRuntimeOverrideState(settings: StoredTaskSettings) {
 		reasoningKind: settings.actModeReasoningOverrideKind,
 		reasoningEffort: settings.actModeReasoningOverrideEffort,
 		thinkingBudget: settings.actModeThinkingBudgetTokens,
-		legacyReasoningEffort: settings.actModeReasoningEffort,
 		serviceTierKind: settings.actModeServiceTierOverrideKind,
 		serviceTier: settings.actModeServiceTierOverrideTier,
 	}
@@ -238,7 +235,6 @@ e2e(
 					reasoningKind: "effort",
 					reasoningEffort: "low",
 					thinkingBudget: undefined,
-					legacyReasoningEffort: undefined,
 					serviceTierKind: "tier",
 					serviceTier: "priority",
 				})
@@ -267,7 +263,6 @@ e2e(
 					reasoningKind: undefined,
 					reasoningEffort: undefined,
 					thinkingBudget: undefined,
-					legacyReasoningEffort: undefined,
 					serviceTierKind: undefined,
 					serviceTier: undefined,
 				})

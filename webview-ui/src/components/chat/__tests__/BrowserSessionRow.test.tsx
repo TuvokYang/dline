@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen } from "@testing-library/react"
 import React, { type ReactElement } from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -28,7 +28,7 @@ vi.mock("@components/browser/BrowserSettingsMenu", () => ({
 }))
 
 vi.mock("@components/chat/ChatRow", () => ({
-	ChatRowContent: ({ message }: { message: ClineMessage }) => (
+	ChatRowContent: ({ message }: { message: UiMessage }) => (
 		<div data-testid={`conversation-message-${message.ts}`}>{message.text}</div>
 	),
 	ProgressIndicator: () => <div>Browsing</div>,
@@ -49,11 +49,11 @@ vi.mock("../../../services/grpc-client", () => ({
 	FileServiceClient: { openImage: vi.fn(async () => undefined) },
 }))
 
-function launch(ts: number): ClineMessage {
+function launch(ts: number): UiMessage {
 	return { ts, type: "say", say: "browser_action_launch", text: "https://start.example" }
 }
 
-function result(ts: number, currentUrl: string): ClineMessage {
+function result(ts: number, currentUrl: string): UiMessage {
 	return {
 		ts,
 		type: "say",
@@ -67,7 +67,7 @@ function result(ts: number, currentUrl: string): ClineMessage {
 	}
 }
 
-function action(ts: number, coordinate: string): ClineMessage {
+function action(ts: number, coordinate: string): UiMessage {
 	return {
 		ts,
 		type: "say",
@@ -86,7 +86,7 @@ const baseProps = {
 
 describe("BrowserSessionRow", () => {
 	it("renders navigation and browser actions before ordinary conversation messages", () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			launch(1),
 			result(2, "https://one.example"),
 			{ ts: 3, type: "say", say: "reasoning", text: "THINKING_OUTSIDE_BROWSER" },
@@ -115,7 +115,7 @@ describe("BrowserSessionRow", () => {
 	})
 
 	it("reconstructs the latest persisted page after the row is remounted", () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			launch(20),
 			result(21, "https://one.example"),
 			action(22, "40,40"),
@@ -133,7 +133,7 @@ describe("BrowserSessionRow", () => {
 	})
 
 	it("keeps the selected historical page when a newer browser result arrives", () => {
-		const initialMessages: ClineMessage[] = [
+		const initialMessages: UiMessage[] = [
 			launch(10),
 			result(11, "https://one.example"),
 			action(12, "10,10"),

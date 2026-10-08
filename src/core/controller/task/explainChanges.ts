@@ -38,7 +38,7 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		const checkpointManager = controller.task.checkpointManager
+		const checkpointManager = controller.task.owners.checkpoints
 		if (!checkpointManager) {
 			HostProvider.window.showMessage({
 				type: ShowMessageType.ERROR,
@@ -48,7 +48,8 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		const messageStateHandler = controller.task.messageStateHandler
+		const messageStateHandler = controller.task.owners.messages
+		// The manager resolves the comparison base and every workspace root, as Compare does.
 		let changedFiles
 		try {
 			changedFiles = await checkpointManager.getTaskChangesForCheckpoint(request.messageTs)
@@ -79,9 +80,8 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			return Empty.create({})
 		}
 
-		// Get conversation summary for context
-		const apiConversationHistory = messageStateHandler.apiConversationHistory
-		const conversationSummary = stringifyConversationHistory(apiConversationHistory)
+		// The conversation the model was actually sent, so the explanation shares its context.
+		const conversationSummary = stringifyConversationHistory(await messageStateHandler.readConversationHistory())
 
 		// Set up the comment controller with reply handler
 		const commentController = await setupCommentController(apiConfiguration, changedFiles, conversationSummary)
@@ -98,8 +98,12 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 			await openDiffView("Explain Changes", changedFiles)
 		}
 
-		// Capture reference to the task for abort checking
-		const task = controller.task
+		// Capture the session so streaming stops when this task incarnation halts.
+		const session = controller.task
+		const isHalted = () => {
+			const phase = session.state().flow.phase
+			return phase === "terminated" || phase === "error" || phase === "completed" || phase === "paused"
+		}
 
 		// Stream AI explanation comments and add them as they arrive
 		// Each comment will open its virtual doc and scroll to show the comment (if 3+ files)
@@ -129,11 +133,11 @@ export async function explainChanges(controller: Controller, request: ExplainCha
 				commentController.endStreamingComment()
 			},
 			// shouldAbort: Check if task was cancelled
-			() => task?.taskState?.abort === true,
+			isHalted,
 		)
 
 		// Check if we were aborted during streaming
-		if (task?.taskState?.abort) {
+		if (isHalted()) {
 			// Close diff views and clear comments when cancelled
 			commentController.clearAllComments()
 			await commentController.closeDiffViews()

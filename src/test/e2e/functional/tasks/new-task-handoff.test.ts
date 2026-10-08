@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskConversationText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -11,11 +12,16 @@ interface StoredTaskSettings {
 	actModeProfile?: string
 }
 
-interface StoredTaskSnapshot {
-	phase?: string
-	newTaskConsumed?: {
-		functionId?: string
-		dlineTid?: string
+/** The kernel snapshot the runtime persists as `state.json`. */
+interface StoredTaskState {
+	snapshot?: {
+		state?: {
+			flow?: {
+				phase?: string
+				terminalReason?: string
+				consumedRef?: string
+			}
+		}
 	}
 }
 
@@ -73,8 +79,8 @@ async function readTaskSettings(dlineDocsDir: string, taskId: string): Promise<S
 	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "settings.json"), "utf8"))
 }
 
-async function readTaskSnapshot(dlineDocsDir: string, taskId: string): Promise<StoredTaskSnapshot> {
-	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8"))
+async function readTaskState(dlineDocsDir: string, taskId: string): Promise<StoredTaskState> {
+	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "state.json"), "utf8"))
 }
 
 async function expectInheritedTaskSettings(dlineDocsDir: string, taskId: string): Promise<void> {
@@ -106,11 +112,15 @@ async function expectConsumedTaskSnapshot(dlineDocsDir: string, taskId: string, 
 		.poll(
 			async () => {
 				try {
-					const snapshot = await readTaskSnapshot(dlineDocsDir, taskId)
+					const flow = (await readTaskState(dlineDocsDir, taskId)).snapshot?.state?.flow
+					// `new_task:<functionId>:<dlineTid>` names the declaration that consumed the task.
+					const [kind, consumedFunctionId, dlineTid] = flow?.consumedRef?.split(":") ?? []
 					return {
-						phase: snapshot.phase,
-						functionId: snapshot.newTaskConsumed?.functionId,
-						hasDlineTid: Boolean(snapshot.newTaskConsumed?.dlineTid),
+						phase: flow?.phase,
+						terminalReason: flow?.terminalReason,
+						kind,
+						functionId: consumedFunctionId,
+						hasDlineTid: Boolean(dlineTid),
 					}
 				} catch {
 					return undefined
@@ -118,7 +128,7 @@ async function expectConsumedTaskSnapshot(dlineDocsDir: string, taskId: string, 
 			},
 			{ timeout: 30_000 },
 		)
-		.toEqual({ phase: "aborted", functionId, hasDlineTid: true })
+		.toEqual({ phase: "terminated", terminalReason: "consumed", kind: "new_task", functionId, hasDlineTid: true })
 }
 
 async function sendTask(frame: Frame, text: string): Promise<void> {
@@ -274,14 +284,8 @@ e2e(
 			await expectInheritedTaskSettings(dlineDocsDir, successorTaskId)
 			await expectConsumedTaskSnapshot(dlineDocsDir, oldTaskId, approvedToolId)
 
-			const oldApiHistory = await readFile(
-				path.join(dlineDocsDir, "tasks", oldTaskId, "api_conversation_history.jsonl"),
-				"utf8",
-			)
-			const successorApiHistory = await readFile(
-				path.join(dlineDocsDir, "tasks", successorTaskId, "api_conversation_history.jsonl"),
-				"utf8",
-			)
+			const oldApiHistory = await readTaskConversationText(dlineDocsDir, oldTaskId)
+			const successorApiHistory = await readTaskConversationText(dlineDocsDir, successorTaskId)
 			expect(oldApiHistory).toContain(approvedToolId)
 			expect(oldApiHistory).toContain(feedback)
 			expect(successorApiHistory).toContain(successorContext)
@@ -403,14 +407,8 @@ e2e(
 			await expectInheritedTaskSettings(dlineDocsDir, successorTaskId)
 			await expectConsumedTaskSnapshot(dlineDocsDir, oldPanelTaskId, approvedToolId)
 
-			const oldPanelApiHistory = await readFile(
-				path.join(dlineDocsDir, "tasks", oldPanelTaskId, "api_conversation_history.jsonl"),
-				"utf8",
-			)
-			const successorApiHistory = await readFile(
-				path.join(dlineDocsDir, "tasks", successorTaskId, "api_conversation_history.jsonl"),
-				"utf8",
-			)
+			const oldPanelApiHistory = await readTaskConversationText(dlineDocsDir, oldPanelTaskId)
+			const successorApiHistory = await readTaskConversationText(dlineDocsDir, successorTaskId)
 			expect(oldPanelApiHistory).toContain(approvedToolId)
 			expect(oldPanelApiHistory).toContain(feedback)
 			expect(successorApiHistory).toContain(successorContext)

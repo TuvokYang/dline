@@ -1,8 +1,7 @@
 import { resolveChatRestoreBoundary } from "@integrations/checkpoints/chat-restore-boundary"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { MessageStateHandler } from "../message-state"
-import { TaskState } from "../TaskState"
 
 /**
  * P0 regression guard for a Restore rejected by an in-flight compaction card.
@@ -23,20 +22,20 @@ interface DurableRow {
 function createUiMessageStub(rows: DurableRow[]) {
 	const durable = [...rows]
 	return {
-		getAll: () => durable as unknown as ClineMessage[],
+		getAll: () => durable as unknown as UiMessage[],
 		get count() {
 			return durable.length
 		},
 		getByTs: (ts: number) => durable.find((row) => row.ts === ts),
 		findIndexByTs: (ts: number) => durable.findIndex((row) => row.ts === ts),
-		appendDurable: async (message: ClineMessage) => {
+		commitPendingAndAppendDurable: async (message: UiMessage) => {
 			durable.push(message as unknown as DurableRow)
 			return message
 		},
-		updateMessage: async (index: number, updates: Partial<ClineMessage>) => {
+		updateMessage: async (index: number, updates: Partial<UiMessage>) => {
 			const updated = { ...durable[index], ...updates } as unknown as DurableRow
 			durable[index] = updated
-			return updated as unknown as ClineMessage
+			return updated as unknown as UiMessage
 		},
 		flush: async () => {},
 		truncateByLineNum: async (count: number) => {
@@ -51,13 +50,12 @@ function createHandler(rows: DurableRow[]) {
 		taskId: "task-restore-transient",
 		ulid: "ulid-restore-transient",
 		updateTaskHistory: async () => [],
-		taskState: new TaskState(),
 		uiMessage: uiMessage as never,
 	})
 	return { handler, uiMessage }
 }
 
-function compactionCard(ts: number, partial: boolean): ClineMessage {
+function compactionCard(ts: number, partial: boolean): UiMessage {
 	return {
 		ts,
 		type: "say",
@@ -72,7 +70,7 @@ function compactionCard(ts: number, partial: boolean): ClineMessage {
 			compactionUnitIndex: 0,
 		}),
 		conversationHistoryIndex: 1,
-	} as ClineMessage
+	} as UiMessage
 }
 
 describe("chat restore boundary with an in-flight compaction card", () => {

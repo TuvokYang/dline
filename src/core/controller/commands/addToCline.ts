@@ -2,8 +2,10 @@ import { getFileMentionFromPath } from "@/core/mentions"
 import { singleFileDiagnosticsToProblemsString } from "@/integrations/diagnostics"
 import { telemetryService } from "@/services/telemetry"
 import { CommandContext, Empty } from "@/shared/proto/dline"
+import { AskResponseRequest } from "@/shared/proto/dline/task"
 import { Logger } from "@/shared/services/Logger"
 import { Controller } from "../index"
+import { askResponse } from "../task/askResponse"
 import { sendAddToInputEvent } from "../ui/subscribeToAddToInput"
 
 interface AddToClineOptions {
@@ -42,7 +44,7 @@ export async function addToCline(
 	// Notebooks send immediately. Busy-sidebar editor commands start a task
 	// on their isolated panel Controller; idle-sidebar adds keep the draft workflow.
 	if (notebookContext && controller.task) {
-		await controller.task.handleWebviewAskResponse("messageResponse", input)
+		await askResponse(controller, AskResponseRequest.create({ responseType: "messageResponse", text: input }))
 	} else if (notebookContext || options.startTask) {
 		await controller.initTask(input)
 	} else {
@@ -50,7 +52,7 @@ export async function addToCline(
 	}
 
 	Logger.log("addToCline", request.selectedText, filePath, request.language)
-	telemetryService.captureButtonClick("codeAction_addToChat", controller.task?.ulid)
+	telemetryService.captureButtonClick("codeAction_addToChat", controller.task?.owners.identity.taskIncarnationId)
 
 	return {}
 }

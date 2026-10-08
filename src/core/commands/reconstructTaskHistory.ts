@@ -1,8 +1,8 @@
 import { getDlineDocumentsPath, getSavedClineMessages, getTaskMetadata } from "@core/storage/disk"
 import { StateManager } from "@core/storage/StateManager"
-import { TaskMetricsOwner } from "@core/task/performance/TaskMetricsOwner"
+import { MessageUsageProjection } from "@core/task/performance/MessageUsageProjection"
 import { HostProvider } from "@hosts/host-provider"
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import type { ApiMetrics } from "@shared/getApiMetrics"
 import { HistoryItem } from "@shared/HistoryItem"
 import { ShowMessageType } from "@shared/proto/dline/host/window"
@@ -151,7 +151,8 @@ async function reconstructTaskHistoryItem(taskId: string): Promise<HistoryItem |
 		const metadata = await getTaskMetadata(taskId)
 
 		// Extract task information
-		const usage = await TaskMetricsOwner.readUsage(taskId, clineMessages)
+		// The same projection the task's history row aggregates: every message after the task text.
+		const usage = clineMessages.some(carriesUsage) ? new MessageUsageProjection().read(clineMessages.slice(1)) : undefined
 		const taskInfo = extractTaskInformation(clineMessages, metadata, usage)
 
 		// Create HistoryItem
@@ -176,6 +177,17 @@ async function reconstructTaskHistoryItem(taskId: string): Promise<HistoryItem |
 	}
 }
 
+/** Rows whose text the usage projection reads; without any, only legacy metadata knows the usage. */
+function carriesUsage(message: UiMessage): boolean {
+	return (
+		message.type === "say" &&
+		(message.say === "api_req_started" ||
+			message.say === "api_req_finished" ||
+			message.say === "deleted_api_reqs" ||
+			message.say === "subagent_usage")
+	)
+}
+
 interface TaskInfo {
 	ulid?: string
 	timestamp: number
@@ -190,7 +202,7 @@ interface TaskInfo {
 	conversationHistoryDeletedRange?: [number, number]
 }
 
-function extractTaskInformation(clineMessages: ClineMessage[], metadata: any, usage: Readonly<ApiMetrics> | undefined): TaskInfo {
+function extractTaskInformation(clineMessages: UiMessage[], metadata: any, usage: Readonly<ApiMetrics> | undefined): TaskInfo {
 	// Find the first user message (task description)
 	const firstUserMessage = clineMessages.find((msg) => msg.type === "say" && msg.say === "text" && msg.text)
 
@@ -219,8 +231,9 @@ function extractTaskInformation(clineMessages: ClineMessage[], metadata: any, us
 	let cacheReads = usage?.totalCacheReads ?? 0
 	let totalCost = usage?.totalCost ?? 0
 
-	// Preserve metadata-only compatibility when the metrics owner has no usage source.
-	if (!usage && metadata.model_usage) {
+	// Legacy tasks may carry usage only in metadata: their rows predate per-message
+	// token counts, so the message projection is either absent or sums to zero.
+	if (tokensIn === 0 && tokensOut === 0 && metadata.model_usage) {
 		for (const usage of metadata.model_usage) {
 			tokensIn += usage.tokensIn || 0
 			tokensOut += usage.tokensOut || 0

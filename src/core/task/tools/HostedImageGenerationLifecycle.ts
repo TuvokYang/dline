@@ -4,7 +4,7 @@ import { createTaskArtifactResolver, createTaskImagePreviewStore } from "@core/a
 import type { ImageArtifact } from "@core/artifacts/TaskArtifactStore"
 import type { TaskImagePreviewStore } from "@core/artifacts/TaskImagePreviewStore"
 import type { ImageProviderOutput } from "@core/image-generation/contracts"
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import {
 	IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION,
 	type ImageGenerationArtifactPresentationV1,
@@ -23,7 +23,7 @@ export interface HostedImageGenerationContext {
 export interface HostedImageGenerationUpdate {
 	readonly dlineTid: string
 	readonly partial: boolean
-	readonly message: ClineSayTool
+	readonly message: UiSayTool
 }
 
 interface HostedImageGenerationState {
@@ -88,7 +88,7 @@ function artifactPresentation(artifact: ImageArtifact): ImageGenerationArtifactP
 	}
 }
 
-function createMessage(presentation: ImageGenerationPresentationV1): ClineSayTool {
+function createMessage(presentation: ImageGenerationPresentationV1): UiSayTool {
 	return {
 		tool: "generateImage",
 		content: presentation.prompt,

@@ -2,8 +2,20 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskActivities, readTaskConversationText } from "@e2e/utils/task-instance-store"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Page } from "@playwright/test"
+
+/**
+ * How long an approved file edit may take to reach the disk.
+ *
+ * The write cannot land sooner than about four seconds after Approve:
+ * WriteToFileToolHandler waits 300 ms for the diff view and 3.5 s for
+ * diagnostics before saving, and a task's first edit also waits for the
+ * checkpoint baseline, which is often still initializing when Approve is
+ * clicked. The default 5 s poll left well under a second for all of that.
+ */
+const APPROVED_WRITE_TIMEOUT_MS = 15_000
 
 async function setAutoApproveAction(sidebar: Frame, label: string, enabled: boolean): Promise<void> {
 	await sidebar.getByLabel("Open auto-approve settings").click()
@@ -724,12 +736,11 @@ e2e(
 			return ids.length === 1 ? ids[0] : undefined
 		}, 30_000)
 		if (!taskId) throw new Error("E2E task directory was not created")
-		const durableHistoryPath = path.join(dlineDocsDir, "tasks", taskId, "api_conversation_history.jsonl")
 
 		await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
 		await expect(sidebar.getByTestId("chat-input")).toBeVisible()
 		const durableHistory = await E2ETestHelper.waitForValue(async () => {
-			const content = await readFile(durableHistoryPath, "utf8").catch(() => "")
+			const content = await readTaskConversationText(dlineDocsDir, taskId)
 			return content.includes('"function_id":"call_batch_search_after"') ? content : undefined
 		}, 30_000)
 		if (!durableHistory) throw new Error("Skipped tool results were not flushed to durable history")
@@ -893,10 +904,12 @@ e2e(
 
 		const filePath = path.join(workspaceDir, "e2e-tool-file.txt")
 		await expect
-			.poll(async () =>
-				readFile(filePath, "utf8")
-					.then((text) => text.replaceAll("\r\n", "\n"))
-					.catch(() => ""),
+			.poll(
+				async () =>
+					readFile(filePath, "utf8")
+						.then((text) => text.replaceAll("\r\n", "\n"))
+						.catch(() => ""),
+				{ timeout: APPROVED_WRITE_TIMEOUT_MS },
 			)
 			.toBe("alpha\n")
 		const rejectButton = sidebar.getByText("Reject", { exact: true })
@@ -907,7 +920,9 @@ e2e(
 		await expect.poll(async () => (await readFile(filePath, "utf8")).replaceAll("\r\n", "\n")).toBe("alpha\n")
 		await expect(approveButton).toBeVisible({ timeout: 60_000 })
 		await approveButton.click()
-		await expect.poll(async () => (await readFile(filePath, "utf8")).replaceAll("\r\n", "\n")).toBe("beta\n")
+		await expect
+			.poll(async () => (await readFile(filePath, "utf8")).replaceAll("\r\n", "\n"), { timeout: APPROVED_WRITE_TIMEOUT_MS })
+			.toBe("beta\n")
 		await expect(sidebar.getByText("E2E_WRITE_REPLACE_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
 		await expect.poll(() => server.openAiRequestCount).toBe(4)
@@ -1028,10 +1043,12 @@ e2e(
 		await expect(approveButton).toBeVisible({ timeout: 60_000 })
 		await approveButton.click()
 		await expect
-			.poll(async () =>
-				readFile(filePath, "utf8")
-					.then((text) => text.replaceAll("\r\n", "\n"))
-					.catch(() => ""),
+			.poll(
+				async () =>
+					readFile(filePath, "utf8")
+						.then((text) => text.replaceAll("\r\n", "\n"))
+						.catch(() => ""),
+				{ timeout: APPROVED_WRITE_TIMEOUT_MS },
 			)
 			.toBe("write survives cancellation\n")
 		await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
@@ -1211,15 +1228,19 @@ e2e(
 
 		const emittedPath = path.join(workspaceDir, "e2e-terminal-tail.emitted")
 		const parentScriptPath = path.join(workspaceDir, "e2e-terminal-tail-parent.cjs")
-		// The marker is replaced by rename: a kill between the truncate and the write of a plain
-		// writeFileSync would otherwise leave it permanently empty instead of holding the last sequence.
-		// A failed rename (for example a scanner holding the file on Windows) only leaves an older
-		// sequence behind, which keeps the captured-output lower bound below valid.
+		// Each emitted line is confirmed by appending its sequence. Windows cancels the
+		// command with a force kill, so a truncating rewrite could leave the marker empty
+		// even though every earlier line was emitted and drained.
 		await writeFile(
 			parentScriptPath,
-			`const fs = require("node:fs")\nconst emitted = ${JSON.stringify(emittedPath)}\nconst staged = emitted + ".staged"\nlet sequence = 0\nconsole.log("E2E_TERMINAL_CANCEL_DRAIN_STARTED")\nsetInterval(() => {\n  sequence += 1\n  fs.writeSync(1, \`E2E_TERMINAL_CANCEL_TAIL_\${sequence}\\n\`)\n  fs.writeFileSync(staged, String(sequence))\n  try { fs.renameSync(staged, emitted) } catch {}\n}, 1)\n`,
+			`const fs = require("node:fs")\nconst emitted = ${JSON.stringify(emittedPath)}\nlet sequence = 0\nconsole.log("E2E_TERMINAL_CANCEL_DRAIN_STARTED")\nsetInterval(() => {\n  sequence += 1\n  fs.writeSync(1, \`E2E_TERMINAL_CANCEL_TAIL_\${sequence}\\n\`)\n  fs.appendFileSync(emitted, \`\${sequence}\\n\`)\n}, 1)\n`,
 			"utf8",
 		)
+		/** The greatest sequence whose confirmation line was written completely. */
+		const readConfirmedSequence = async (): Promise<number> => {
+			const confirmations = (await readFile(emittedPath, "utf8").catch(() => "")).split("\n").slice(0, -1)
+			return confirmations.reduce((latest, line) => Math.max(latest, Number(line) || 0), 0)
+		}
 
 		server.resetOpenAiMock()
 		server.enqueueOpenAiResponses(
@@ -1264,9 +1285,9 @@ e2e(
 		await expect(commandCancelButton).toBeVisible({ timeout: 30_000 })
 		await commandCancelButton.click()
 		await expect(commandCancelButton).toHaveCount(0, { timeout: 30_000 })
-		await expect.poll(async () => Number(await readFile(emittedPath, "utf8")), { timeout: 10_000 }).toBeGreaterThan(0)
+		await expect.poll(readConfirmedSequence, { timeout: 10_000 }).toBeGreaterThan(0)
 		await page.waitForTimeout(500)
-		const emittedSequence = Number(await readFile(emittedPath, "utf8"))
+		const emittedSequence = await readConfirmedSequence()
 
 		const input = sidebar.getByTestId("chat-input")
 		await input.fill("E2E_TERMINAL_CANCEL_DRAIN_FEEDBACK")
@@ -1281,16 +1302,15 @@ e2e(
 			return ids.length === 1 ? ids[0] : undefined
 		}, 30_000)
 		if (!taskId) throw new Error("Terminal drain E2E task directory was not created")
-		const persistedActivity = await E2ETestHelper.waitForValue(async () => {
-			const persisted = JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "activities.json"), "utf8")) as {
-				activities?: Array<{ detail?: string; output?: string; status?: string }>
-			}
-			const activity = persisted.activities?.find((candidate) => candidate.detail === "node e2e-terminal-tail-parent.cjs")
-			return activity?.status === "cancelled" && activity.output ? activity : undefined
+		const persistedOutput = await E2ETestHelper.waitForValue(async () => {
+			const activity = (await readTaskActivities(dlineDocsDir, taskId)).find(
+				(candidate) => candidate.detail === "node e2e-terminal-tail-parent.cjs",
+			)
+			return activity?.status === "cancelled" && activity.output ? activity.output : undefined
 		}, 30_000)
-		if (!persistedActivity) throw new Error("Cancelled terminal activity was not persisted")
-		expect(persistedActivity.output).toContain("E2E_TERMINAL_CANCEL_DRAIN_STARTED")
-		const capturedSequences = [...persistedActivity.output.matchAll(/E2E_TERMINAL_CANCEL_TAIL_(\d+)/g)].map((match) =>
+		if (!persistedOutput) throw new Error("Cancelled terminal activity was not persisted")
+		expect(persistedOutput).toContain("E2E_TERMINAL_CANCEL_DRAIN_STARTED")
+		const capturedSequences = [...persistedOutput.matchAll(/E2E_TERMINAL_CANCEL_TAIL_(\d+)/g)].map((match) =>
 			Number(match[1]),
 		)
 		expect(capturedSequences.length).toBeGreaterThan(0)

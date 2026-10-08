@@ -1,11 +1,11 @@
 import type { ModelPricing } from "@shared/api"
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import React from "react"
 import TaskHeader from "@/components/chat/task-header/TaskHeader"
 import { MessageHandlers } from "../../types/chatTypes"
 
 interface TaskSectionProps {
-	task: ClineMessage
+	task: UiMessage
 	apiMetrics: {
 		totalTokensIn: number
 		totalTokensOut: number

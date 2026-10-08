@@ -24,14 +24,15 @@ export function createMissingToolResultMessage(toolName: string): string {
 	return renderPrompt("resumeProvenance", "missingToolResult", { TOOL_NAME: toolName })
 }
 
-/** Project restored-session provenance into the next model continuation. */
-export function createResumeContinuationText(userText?: string): string {
-	const provenance = createResumeInteractionPresentation()
-	const draft = userText?.trim()
-	return draft
-		? renderPrompt("resumeProvenance", "continuationWithUserText", {
-				PROVENANCE: provenance,
-				USER_TEXT: draft,
-			})
-		: provenance
+/**
+ * The submission context a resumed round carries, or nothing when it is not a resume.
+ *
+ * Only a restored session has provenance to state. A retry after a failed round
+ * happens inside the same live session, so claiming it was restored would be a
+ * fabricated fact. The returned text is submission context rather than user
+ * text: the materializer appends it to what the user typed, so the row the chat
+ * shows stays exactly the user's own words.
+ */
+export function createResumeSubmissionContext(dialogKind: string): string | undefined {
+	return dialogKind === "resume" ? createResumeInteractionPresentation() : undefined
 }

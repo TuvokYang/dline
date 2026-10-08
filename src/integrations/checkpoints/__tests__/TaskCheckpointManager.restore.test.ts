@@ -1,19 +1,16 @@
 import * as path from "path"
 import { describe, expect, it, vi } from "vitest"
-import type { ClineMessage } from "@/shared/ExtensionMessage"
+import type { UiMessage } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
 
-import { TaskRuntime } from "@/core/task/runtime/TaskRuntime"
-import { createTaskRuntimeState } from "@/core/task/runtime/TaskRuntimeState"
-import { TaskPhase } from "@/core/task/TaskPhase"
-import { TaskState } from "@/core/task/TaskState"
-import { projectTaskView } from "@/core/task/view/TaskViewProjector"
+import { DefaultToolHandlerState } from "@/core/task/tools/state/ToolHandlerState"
 import { createTaskCheckpointManager } from "../index"
+import type { CanonicalCheckpointPort } from "../types"
 
 interface RestoreHarness {
 	manager: ReturnType<typeof createTaskCheckpointManager>
-	taskState: TaskState & { taskId: string; askId: string }
+	taskState: DefaultToolHandlerState
 	resetHead: ReturnType<typeof vi.fn>
 	restoreFiles: ReturnType<typeof vi.fn>
 	restoreChatRuntime: ReturnType<typeof vi.fn>
@@ -27,20 +24,19 @@ interface RestoreHarness {
 }
 
 function createHarness(
-	messages: ClineMessage[],
+	messages: UiMessage[],
 	trackedFiles?: string[],
 	apiHistoryLength = 2,
+	conversationRewind?: { rewindTo: ReturnType<typeof vi.fn> },
+	canonicalCheckpoint?: CanonicalCheckpointPort,
 	workspacePath?: string,
 ): RestoreHarness {
-	const taskState = Object.assign(new TaskState(), {
-		taskId: "task-1",
+	const taskState = Object.assign(new DefaultToolHandlerState(), {
 		userMessageContent: [{ type: "text", text: "active user content" }],
 		assistantMessageContent: [{ type: "text", text: "active assistant content" }],
 		userMessageContentReady: true,
 		lastMessageTs: 99,
-		askId: "task-1",
 		consecutiveMistakeCount: 3,
-		autoRetryAttempts: 2,
 		consecutiveIdenticalToolCount: 4,
 		lastToolName: "replace_in_file",
 		lastToolParams: "stale-params",
@@ -88,6 +84,8 @@ function createHarness(
 			diffViewProvider: {},
 			messageStateHandler,
 			taskState,
+			...(conversationRewind === undefined ? {} : { conversationRewind }),
+			...(canonicalCheckpoint === undefined ? {} : { canonicalCheckpoint }),
 			...(trackedFiles === undefined
 				? {}
 				: { taskFileTracker: { getAllModifiedFiles: vi.fn().mockReturnValue(trackedFiles) } }),
@@ -106,6 +104,7 @@ function createHarness(
 			restoreChatRuntime,
 			say: vi.fn().mockResolvedValue(100),
 			postStateToWebview,
+			publishMessage: vi.fn().mockResolvedValue(undefined),
 		} as never,
 		{
 			checkpointTracker: { resetHead, restoreFiles } as never,
@@ -140,7 +139,6 @@ describe("TaskCheckpointManager restore isolation", () => {
 			userMessageContentReady: true,
 			lastMessageTs: 99,
 			consecutiveMistakeCount: 3,
-			autoRetryAttempts: 2,
 			consecutiveIdenticalToolCount: 4,
 			lastToolName: "replace_in_file",
 			lastToolParams: "stale-params",
@@ -166,6 +164,8 @@ describe("TaskCheckpointManager restore isolation", () => {
 			],
 			undefined,
 			2,
+			undefined,
+			undefined,
 			rootB,
 		)
 
@@ -177,7 +177,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 	it("truncates a durable compaction failure card that follows the restore point", async () => {
 		// A failed compaction carries no compactionConversationRange, so it is an ordinary
 		// durable row. Restoring an earlier point must rewind past it and remove it.
-		const failureCard: ClineMessage = {
+		const failureCard: UiMessage = {
 			ts: 43,
 			type: "say",
 			say: "tool",
@@ -190,7 +190,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 				compactionUnitKind: "failure",
 				error: "Internal compaction Pass did not return a valid summarize_task context",
 			}),
-		} as ClineMessage
+		} as UiMessage
 		const harness = createHarness([
 			{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: ["hash-1"] },
 			failureCard,
@@ -229,34 +229,6 @@ describe("TaskCheckpointManager restore isolation", () => {
 		expect(harness.resetHead).not.toHaveBeenCalled()
 	})
 
-	it("projects the restored chat Resume as an interaction continuation instead of a task reload", async () => {
-		const harness = createHarness([
-			{ ts: 42, type: "say", say: "text", conversationHistoryIndex: 0 },
-			{ ts: 43, type: "say", say: "text" },
-		])
-		const runtime = new TaskRuntime(createTaskRuntimeState({ taskId: "task-1", phase: TaskPhase.STREAMING, revision: 3 }), {
-			postView: async () => {},
-			persistSnapshot: async () => {},
-			cancelRuntime: async () => {},
-			prepareResume: async () => {},
-			startApi: async () => {},
-			executeTool: async () => {},
-			appendSay: async () => {},
-			appendAsk: async () => ({ uiMessageTs: 100 }),
-			startNewTask: async () => {},
-		})
-		harness.restoreChatRuntime.mockImplementationOnce(async ({ apiIndex }: { apiIndex: number }) => {
-			await runtime.dispatch({ type: "CHECKPOINT_CHAT_RESTORED", apiIndex })
-		})
-
-		await harness.manager.restoreCheckpoint(42, "task")
-
-		const view = projectTaskView(runtime.getState())
-		expect(view.activeInteraction).toMatchObject({ kind: "resume", status: "awaiting" })
-		expect(view.footer.actions).toEqual([expect.objectContaining({ type: "resume" })])
-		expect(view.footer.actions[0]?.dispatchTarget).not.toBe("task")
-	})
-
 	it("restores chat into a canonical paused runtime without auto-resuming", async () => {
 		const harness = createHarness([
 			{ ts: 42, type: "say", say: "text", conversationHistoryIndex: 0 },
@@ -280,7 +252,6 @@ describe("TaskCheckpointManager restore isolation", () => {
 
 		expect(harness.taskState).toMatchObject({
 			consecutiveMistakeCount: 0,
-			autoRetryAttempts: 0,
 			consecutiveIdenticalToolCount: 0,
 			lastToolName: "",
 			lastToolParams: "",
@@ -288,7 +259,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 	})
 
 	it("restores chat and workspace through one combined success projection", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 42,
 				type: "say",
@@ -377,7 +348,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 	})
 
 	it("restores a completed compaction card to its pre-compaction boundary through the ordinary transaction", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{ ts: 10, type: "say", say: "task", conversationHistoryIndex: 0 },
 			{ ts: 20, type: "say", say: "text", conversationHistoryIndex: 1 },
 			{
@@ -411,7 +382,7 @@ describe("TaskCheckpointManager restore isolation", () => {
 	})
 
 	it("rejects an invalid compaction boundary before mutating API, UI, context, or runtime", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{ ts: 10, type: "say", say: "task", conversationHistoryIndex: 0 },
 			{
 				ts: 30,
@@ -436,6 +407,191 @@ describe("TaskCheckpointManager restore isolation", () => {
 		expect(harness.truncateContextHistory).not.toHaveBeenCalled()
 		expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
 		expect(harness.persistTaskHistory).not.toHaveBeenCalled()
+	})
+
+	describe("journal-bounded compaction card", () => {
+		const journalMessages = (): UiMessage[] => [
+			{ ts: 10, type: "say", say: "task" },
+			{ ts: 20, type: "say", say: "text" },
+			{
+				ts: 30,
+				type: "say",
+				say: "tool",
+				partial: false,
+				text: JSON.stringify({
+					tool: "summarizeTask",
+					content: "summary",
+					compactionStatus: "completed",
+					compactionJournalBoundary: { seq: 6 },
+				}),
+			},
+			{ ts: 40, type: "say", say: "text" },
+		]
+
+		it("rewinds the journal before any chat or context file is truncated", async () => {
+			const order: string[] = []
+			const rewindTo = vi.fn(async () => {
+				order.push("rewind")
+			})
+			const harness = createHarness(journalMessages(), undefined, 2, { rewindTo })
+			harness.truncateUiHistory.mockImplementation(async () => {
+				order.push("ui")
+			})
+
+			await harness.manager.restoreCheckpoint(30, "task")
+
+			expect(rewindTo).toHaveBeenCalledWith({ operationId: "checkpoint.restore:30", target: { seq: 6 } })
+			expect(order).toEqual(["rewind", "ui"])
+			expect(harness.truncateUiHistory).toHaveBeenCalledWith(2)
+			expect(harness.truncateContextHistory).toHaveBeenCalledWith(20, expect.any(String))
+			expect(harness.restoreChatRuntime).toHaveBeenCalledOnce()
+		})
+
+		it("leaves every store untouched when the journal refuses the rewind", async () => {
+			const rewindTo = vi.fn().mockRejectedValue(new Error("ConversationRewindTargetMissing"))
+			const harness = createHarness(journalMessages(), undefined, 2, { rewindTo })
+
+			const result = await harness.manager.restoreCheckpoint(30, "task")
+
+			expect(result.checkpointManagerErrorMessage).toBe("ConversationRewindTargetMissing")
+			expect(harness.truncateApiHistory).not.toHaveBeenCalled()
+			expect(harness.truncateUiHistory).not.toHaveBeenCalled()
+			expect(harness.truncateContextHistory).not.toHaveBeenCalled()
+			expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
+		})
+
+		it("refuses the restore when no journal is available to rewind", async () => {
+			const harness = createHarness(journalMessages(), undefined, 2)
+
+			const result = await harness.manager.restoreCheckpoint(30, "task")
+
+			expect(result.checkpointManagerErrorMessage).toMatch(/requires the task conversation journal/)
+			expect(harness.truncateUiHistory).not.toHaveBeenCalled()
+			expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
+		})
+
+		it("refuses a task-and-workspace restore before rewinding files when no journal is available", async () => {
+			const messages = journalMessages()
+			messages[2] = { ...messages[2], lastCheckpointHash: ["hash-card"] }
+			const harness = createHarness(messages, undefined, 2)
+
+			const result = await harness.manager.restoreCheckpoint(30, "taskAndWorkspace")
+
+			expect(result.checkpointManagerErrorMessage).toMatch(/requires the task conversation journal/)
+			expect(harness.resetHead).not.toHaveBeenCalled()
+			expect(harness.restoreFiles).not.toHaveBeenCalled()
+			expect(harness.truncateUiHistory).not.toHaveBeenCalled()
+			expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
+		})
+
+		it("refuses to edit a journal-bounded card before rewinding files", async () => {
+			const rewindTo = vi.fn().mockResolvedValue(undefined)
+			const messages = journalMessages()
+			messages[2] = { ...messages[2], lastCheckpointHash: ["hash-card"] }
+			const harness = createHarness(messages, undefined, 2, { rewindTo })
+
+			const result = await harness.manager.restoreCheckpoint(30, "taskAndWorkspace", undefined, "edited")
+
+			expect(result.checkpointManagerErrorMessage).toMatch(/Editing input is unavailable/)
+			expect(harness.resetHead).not.toHaveBeenCalled()
+			expect(rewindTo).not.toHaveBeenCalled()
+		})
+
+		it("restores the card through the canonical transaction at the position before the compaction", async () => {
+			const rewindTo = vi.fn()
+			const canonicalRestore = vi.fn(async () => ({ kind: "restored" as const, diagnostics: [] }))
+			const harness = createHarness(
+				journalMessages(),
+				undefined,
+				2,
+				{ rewindTo },
+				{ capture: vi.fn(), restore: canonicalRestore },
+			)
+
+			const result = await harness.manager.restoreCheckpoint(30, "task")
+
+			expect(result.checkpointManagerErrorMessage).toBeUndefined()
+			expect(canonicalRestore).toHaveBeenCalledWith(
+				expect.objectContaining({ messageTs: 30, mode: "chat_only", journalTarget: { seq: 6 } }),
+			)
+			// The transaction rewinds the journal itself; the manager only drops the card and what follows.
+			expect(rewindTo).not.toHaveBeenCalled()
+			expect(harness.truncateUiHistory).toHaveBeenCalledWith(2)
+			expect(harness.restoreChatRuntime).toHaveBeenCalledOnce()
+		})
+
+		it("reports a failed canonical restore instead of throwing, with nothing truncated", async () => {
+			const canonicalRestore = vi.fn().mockRejectedValue(new Error("CanonicalCheckpointBoundaryAhead"))
+			const harness = createHarness(
+				journalMessages(),
+				undefined,
+				2,
+				{ rewindTo: vi.fn() },
+				{ capture: vi.fn(), restore: canonicalRestore },
+			)
+
+			const result = await harness.manager.restoreCheckpoint(30, "task")
+
+			expect(result.checkpointManagerErrorMessage).toBe("CanonicalCheckpointBoundaryAhead")
+			expect(harness.truncateUiHistory).not.toHaveBeenCalled()
+			expect(harness.truncateContextHistory).not.toHaveBeenCalled()
+			expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
+		})
+	})
+
+	it("uses the canonical transaction before clearing legacy presentation state", async () => {
+		const order: string[] = []
+		const canonicalRestore = vi.fn(async () => {
+			order.push("canonical")
+			return { kind: "restored" as const, diagnostics: [] }
+		})
+		const harness = createHarness(
+			[
+				{ ts: 42, type: "say", say: "checkpoint_created", conversationHistoryIndex: 0 },
+				{ ts: 43, type: "say", say: "text" },
+			],
+			undefined,
+			2,
+			{ rewindTo: vi.fn() },
+			{ capture: vi.fn(), restore: canonicalRestore },
+		)
+		harness.clearTransientClineMessages.mockImplementation(() => {
+			order.push("clear-transient")
+			return []
+		})
+
+		await harness.manager.restoreCheckpoint(42, "task")
+
+		expect(canonicalRestore).toHaveBeenCalledWith(
+			expect.objectContaining({ messageTs: 42, mode: "chat_only", restoreWorkspace: expect.any(Function) }),
+		)
+		expect(order).toEqual(["canonical", "clear-transient"])
+		expect(harness.restoreChatRuntime).toHaveBeenCalledWith({ apiIndex: 1 })
+	})
+
+	it("leaves legacy stores untouched when canonical validation rejects the restore", async () => {
+		const canonicalRestore = vi.fn(async () => ({
+			kind: "rejected" as const,
+			diagnostics: [{ code: "canonical_missing", message: "checkpoint bundle missing" }],
+		}))
+		const harness = createHarness(
+			[
+				{ ts: 42, type: "say", say: "checkpoint_created", conversationHistoryIndex: 0 },
+				{ ts: 43, type: "say", say: "text" },
+			],
+			undefined,
+			2,
+			{ rewindTo: vi.fn() },
+			{ capture: vi.fn(), restore: canonicalRestore },
+		)
+
+		const result = await harness.manager.restoreCheckpoint(42, "task")
+
+		expect(result.checkpointManagerErrorMessage).toBe("checkpoint bundle missing")
+		expect(harness.clearTransientClineMessages).not.toHaveBeenCalled()
+		expect(harness.truncateUiHistory).not.toHaveBeenCalled()
+		expect(harness.truncateContextHistory).not.toHaveBeenCalled()
+		expect(harness.restoreChatRuntime).not.toHaveBeenCalled()
 	})
 
 	it("continues an edited chat restore exactly once through the typed runtime", async () => {

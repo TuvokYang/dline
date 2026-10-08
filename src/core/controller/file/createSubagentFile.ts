@@ -90,7 +90,7 @@ export async function createSubagentFile(controller: Controller, request: Create
 	const content = SUBAGENT_TEMPLATE.replace(/\{\{SUBAGENT_NAME\}\}/g, sanitizedName)
 	await fs.writeFile(filePath, content, "utf-8")
 	if (controller.task) {
-		await controller.task.flushPromptFreshnessInvalidation("capability_mutation")
+		await controller.task.owners.prompt.flush("capability_mutation")
 	} else {
 		await controller.postStateToWebview()
 	}

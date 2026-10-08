@@ -1,8 +1,8 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it, vi } from "vitest"
 import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../new-task-continuation"
-import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback } from "../new-task-feedback"
+import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback, perRequestHistory } from "../new-task-feedback"
 
 vi.mock("@integrations/misc/extract-text", () => ({
 	processFilesIntoContent: vi.fn(async (files: string[]) => [{ type: "text", text: `files:${files.join(",")}` }]),
@@ -36,7 +36,7 @@ describe("New Task successor feedback", () => {
 			feedbackResult("function-feedback", "tid-feedback", "Use the narrower migration boundary"),
 			assistantNewTask("function-approved", "tid-approved"),
 		]
-		const uiHistory: ClineMessage[] = [
+		const uiHistory: UiMessage[] = [
 			{
 				ts: 100,
 				type: "say",
@@ -76,6 +76,23 @@ describe("New Task successor feedback", () => {
 				approvedSource: { functionId: "function-approved", dlineTid: "tid-approved" },
 			}),
 		).toEqual({ text: "", images: [], files: [] })
+	})
+
+	it("finds feedback in a journal history that renders one round's payloads as separate user messages", () => {
+		const apiHistory = perRequestHistory([
+			assistantNewTask("function-feedback", "tid-feedback"),
+			feedbackResult("function-feedback", "tid-feedback", "Keep the scope narrow"),
+			{ role: "user", content: [{ type: "text", text: "<environment_details/>" }] },
+			assistantNewTask("function-approved", "tid-approved"),
+		])
+
+		expect(
+			findLatestNewTaskFeedback({
+				apiHistory,
+				uiHistory: [],
+				approvedSource: { functionId: "function-approved", dlineTid: "tid-approved" },
+			}).text,
+		).toBe("Keep the scope narrow")
 	})
 
 	it("fails closed when the approved declaration identity is absent", () => {

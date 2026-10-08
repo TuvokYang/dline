@@ -1,7 +1,8 @@
 import { readJsonl } from "@core/storage/backend/jsonl/jsonl-utils"
 import { getTaskHeaderText } from "@core/storage/disk"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
-import type { ClineMessage, ExtensionState } from "@shared/ExtensionMessage"
+import type { ExtensionState, UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { Controller } from "../index"
 
@@ -25,12 +26,6 @@ vi.mock("@/integrations/openai-codex/oauth", () => ({
 	openAiCodexOAuthManager: { isAuthenticated: oauthMocks.isAuthenticated },
 }))
 
-// The full task-view projection needs a complete runtime state; header sourcing
-// under test does not depend on it, so stub the projector output.
-vi.mock("@/core/task/view/TaskViewProjector", () => ({
-	projectTaskView: vi.fn(() => undefined),
-}))
-
 // Environment singletons that are not part of the header-sourcing behavior.
 vi.mock("@/services/logging/distinctId", () => ({
 	getDistinctId: () => "test-distinct-id",
@@ -43,8 +38,8 @@ vi.mock("@/utils/announcements", () => ({
 const HEADER_TEXT = "test task header"
 
 /** Build a realistic long-conversation message list with a leading task header. */
-function buildMessages(count: number): ClineMessage[] {
-	const messages: ClineMessage[] = [{ ts: 1, type: "say", say: "task", text: HEADER_TEXT }]
+function buildMessages(count: number): UiMessage[] {
+	const messages: UiMessage[] = [{ ts: 1, type: "say", say: "task", text: HEADER_TEXT }]
 	for (let i = 2; i <= count; i++) {
 		messages.push({ ts: i, type: "say", say: "text", text: `message ${i}` })
 	}
@@ -57,44 +52,31 @@ function buildMessages(count: number): ClineMessage[] {
  * The double is a plain object, so the method has to be taken from the
  * prototype for `buildState.call` to resolve it.
  */
-function controllerAccessor(name: "getCurrentTaskId" | "getCurrentTaskMessages" | "getCurrentTaskMessageCount"): unknown {
+function controllerAccessor(
+	name: "currentOpening" | "getCurrentTaskId" | "getCurrentTaskMessages" | "getCurrentTaskMessageCount",
+): unknown {
 	return (Controller.prototype as unknown as Record<string, unknown>)[name]
 }
 
 /** Minimal Controller-shaped object exposing every field buildState touches. */
-function createFakeController(messages: ClineMessage[]): Record<string, unknown> {
+function createFakeController(messages: UiMessage[]): Record<string, unknown> {
 	return {
-		task: {
+		task: createSessionFixture({
 			taskId: "test-task-1",
-			taskInstanceId: "open-test-1",
-			isReadOnly: () => false,
-			getDisplayMessages: () => messages,
-			getDisplayMessageCount: () => messages.length,
-			getTaskTitleMessage: () => messages[0],
-			taskSm: {
-				planModeProfile: undefined,
-				actModeProfile: undefined,
-				mode: "act",
-				taskCapabilityToggles: undefined,
+			owners: {
+				settings: {
+					planModeProfile: undefined,
+					actModeProfile: undefined,
+					mode: "act",
+					taskCapabilityToggles: undefined,
+				},
+				messages: {
+					clineMessages: messages,
+					readStateMetrics: () => undefined,
+				},
+				apiRateSnapshot: () => ({}),
 			},
-			messageStateHandler: { clineMessages: messages },
-			taskState: {
-				checkpointManagerErrorMessage: undefined,
-				currentFocusChainChecklist: null,
-				focusChainHistory: null,
-			},
-			getRuntimeState: () => ({}),
-			getApiRateSnapshot: () => ({}),
-			getContextWindowIndicator: () => undefined,
-			getPromptCacheHealth: () => undefined,
-			getPromptFreshness: () => undefined,
-			getReadyBackgroundHandoffActivityId: () => undefined,
-			getContextCompactionOperationId: () => undefined,
-			isBackgroundHandoffRequested: () => false,
-			isForceTruncateAvailable: () => false,
-			hasAutoRetrySequence: () => false,
-			hasPendingAutoRetry: () => false,
-		},
+		}),
 		stateManager: {
 			setActiveTaskId: vi.fn(),
 			getApiConfiguration: () => ({}),
@@ -108,7 +90,7 @@ function createFakeController(messages: ClineMessage[]): Record<string, unknown>
 		// header assertions below do not depend on discovery, so an empty result
 		// keeps the double focused on message sourcing.
 		readLocalCapabilityToggles: () => ({}),
-		// The task-view projection is unrelated to header sourcing and requires
+		// The task-view projection
 		// canonical runtime state that this focused double intentionally omits.
 		projectCurrentTaskViewState: () => undefined,
 		// The history projection is memoized per history array by its owner.
@@ -123,6 +105,7 @@ function createFakeController(messages: ClineMessage[]): Record<string, unknown>
 		// reaching into `task` directly. Borrowing the real implementations keeps
 		// the double honest about where the identity and messages come from, and
 		// keeps it valid when the Controller changes how it resolves them.
+		currentOpening: controllerAccessor("currentOpening"),
 		getCurrentTaskId: controllerAccessor("getCurrentTaskId"),
 		getCurrentTaskMessages: controllerAccessor("getCurrentTaskMessages"),
 		getCurrentTaskMessageCount: controllerAccessor("getCurrentTaskMessageCount"),
@@ -160,7 +143,7 @@ describe("buildState header sourcing", () => {
 		expect(oauthMocks.isAuthenticated).not.toHaveBeenCalled()
 	})
 
-	it("projects saved history segments and their total without an executing Task", async () => {
+	it("projects the session's context window indicator and its total", async () => {
 		const indicator: ContextWindowIndicatorSnapshot = {
 			taskId: "history-task",
 			revision: 7,
@@ -177,9 +160,8 @@ describe("buildState header sourcing", () => {
 			lineage: { kind: "baseline" },
 		}
 		const fakeController = createFakeController([])
-		const task = fakeController.task as Record<string, unknown>
-		task.taskId = indicator.taskId
-		task.getContextWindowIndicator = () => indicator
+		const owners = (fakeController.task as { owners: Record<string, Record<string, unknown>> }).owners
+		owners.toolState = { ...owners.toolState, contextWindowIndicator: indicator }
 		const state = await buildState.call(fakeController, 1)
 		expect(state.contextWindowIndicator).toEqual(indicator)
 		expect(state.lastApiReqTotalTokens).toBe(43_000)

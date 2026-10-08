@@ -19,7 +19,15 @@ const STATE_KEYS_PATH = "src/shared/storage/state-keys.ts"
 const STATE_PROTO_PATH = "proto/dline/state.proto"
 const RESERVED_PROTO_LINES = {
 	Secrets: ["reserved 48;", 'reserved "openai_codex_oauth_credentials";'],
-	Settings: [],
+	// Removed per-mode model selection and legacy reasoning-effort keys; their
+	// numbers and names stay reserved so old payloads cannot be misread.
+	Settings: [
+		"reserved 47, 52, 53, 74, 75, 76, 87, 92, 93, 114, 115, 116;",
+		'reserved "plan_mode_reasoning_effort", "plan_mode_open_router_model_id", "plan_mode_open_router_model_info";',
+		'reserved "plan_mode_oca_model_id", "plan_mode_oca_model_info", "plan_mode_oca_reasoning_effort";',
+		'reserved "act_mode_reasoning_effort", "act_mode_open_router_model_id", "act_mode_open_router_model_info";',
+		'reserved "act_mode_oca_model_id", "act_mode_oca_model_info", "act_mode_oca_reasoning_effort";',
+	],
 }
 
 /**

@@ -6,12 +6,14 @@ import { type NormalizedUnifyStoreQuery, normalizeUnifyStoreQuery } from "./Unif
 export interface UnifyStoreDriverTransaction<TEntity extends object> {
 	query(query: NormalizedUnifyStoreQuery<TEntity>): Promise<TEntity[]>
 	insert(records: readonly TEntity[]): Promise<void>
+	upsert(records: readonly TEntity[]): Promise<void>
 	replaceAll(records: readonly TEntity[]): Promise<void>
 }
 
 export interface UnifyStoreDriver<TEntity extends object> {
 	query(query: NormalizedUnifyStoreQuery<TEntity>): Promise<UnifyStoreResult<TEntity>>
 	insert(records: readonly TEntity[]): Promise<void>
+	upsert(records: readonly TEntity[]): Promise<void>
 	replaceAll(records: readonly TEntity[]): Promise<void>
 	transaction<TResult>(
 		operation: (transaction: UnifyStoreDriverTransaction<TEntity>) => TResult | Promise<TResult>,
@@ -44,6 +46,14 @@ export class UnifyStoreCore<TEntity extends object> implements UnifyStore<TEntit
 		})
 	}
 
+	upsert(records: readonly TEntity[]): Promise<void> {
+		return this.enqueue(async () => {
+			if (records.length === 0) return
+			validateRecords(this.schema, records)
+			await this.driver.upsert(records)
+		})
+	}
+
 	replaceAll(records: readonly TEntity[]): Promise<void> {
 		return this.enqueue(async () => {
 			validateRecords(this.schema, records)
@@ -56,18 +66,7 @@ export class UnifyStoreCore<TEntity extends object> implements UnifyStore<TEntit
 	): Promise<TResult> {
 		return this.enqueue(() =>
 			this.driver.transaction(async (driverTransaction) => {
-				const transaction: UnifyStoreTransaction<TEntity> = {
-					query: (query) => driverTransaction.query(normalizeUnifyStoreQuery(this.schema, query)),
-					insert: async (records) => {
-						validateRecords(this.schema, records)
-						await driverTransaction.insert(records)
-					},
-					replaceAll: async (records) => {
-						validateRecords(this.schema, records)
-						await driverTransaction.replaceAll(records)
-					},
-				}
-				return await operation(transaction)
+				return await operation(createValidatedTransaction(this.schema, driverTransaction))
 			}),
 		)
 	}
@@ -95,6 +94,29 @@ export class UnifyStoreCore<TEntity extends object> implements UnifyStore<TEntit
 			() => undefined,
 		)
 		return result
+	}
+}
+
+/** Wraps a backend transaction so every write is schema-validated before it reaches the backend. */
+export function createValidatedTransaction<TEntity extends object>(
+	schema: EntitySchema<TEntity>,
+	driverTransaction: UnifyStoreDriverTransaction<TEntity>,
+): UnifyStoreTransaction<TEntity> {
+	return {
+		query: (query) => driverTransaction.query(normalizeUnifyStoreQuery(schema, query)),
+		insert: async (records) => {
+			validateRecords(schema, records)
+			await driverTransaction.insert(records)
+		},
+		upsert: async (records) => {
+			if (records.length === 0) return
+			validateRecords(schema, records)
+			await driverTransaction.upsert(records)
+		},
+		replaceAll: async (records) => {
+			validateRecords(schema, records)
+			await driverTransaction.replaceAll(records)
+		},
 	}
 }
 

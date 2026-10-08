@@ -2,6 +2,7 @@ import { DeleteAllTaskHistoryCount } from "@shared/proto/dline/task"
 import fs from "fs/promises"
 import path from "path"
 import { getDlineCheckpointsDir, getDlineDocumentsPath } from "@/core/storage/disk"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 import { HostProvider } from "@/hosts/host-provider"
 import { ShowMessageRequest, ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
@@ -149,7 +150,9 @@ async function cleanupTaskFiles(preserveTaskIds: string[]) {
 			for (const dir of taskDirs) {
 				if (!preserveTaskIds.includes(dir)) {
 					// Task dir path is not workspace specific
-					await fs.rm(path.join(taskDirPath, dir), {
+					const taskRoot = path.join(taskDirPath, dir)
+					await closeInstanceStoragesUnder(taskRoot)
+					await fs.rm(taskRoot, {
 						recursive: true,
 						force: true,
 					})

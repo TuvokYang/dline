@@ -1,30 +1,30 @@
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { type ApiMetrics, getApiMetrics } from "@shared/getApiMetrics"
 
 const USAGE_FIELDS = ["tokensIn", "tokensOut", "cacheWrites", "cacheReads", "cost", "currency"] as const
 
 interface CachedProjection {
-	text: ClineMessage["text"]
-	type: ClineMessage["type"]
-	say: ClineMessage["say"]
-	ask: ClineMessage["ask"]
+	text: UiMessage["text"]
+	type: UiMessage["type"]
+	say: UiMessage["say"]
+	ask: UiMessage["ask"]
 	ts: number
-	commandTs: ClineMessage["commandTs"]
-	message: ClineMessage
+	commandTs: UiMessage["commandTs"]
+	message: UiMessage
 }
 
 /** Legacy compatibility inside the metrics owner; never retains a parsed request body. */
 export class MessageUsageProjection {
-	private readonly cache = new WeakMap<ClineMessage, CachedProjection>()
+	private readonly cache = new WeakMap<UiMessage, CachedProjection>()
 
-	read(messages: ClineMessage[]): ApiMetrics {
+	read(messages: UiMessage[]): ApiMetrics {
 		const projected = messages.map((message) => this.project(message))
 		return getApiMetrics(combineApiRequests(combineCommandSequences(projected)))
 	}
 
-	private project(message: ClineMessage): ClineMessage {
+	private project(message: UiMessage): UiMessage {
 		if (
 			message.type !== "say" ||
 			!message.text ||
@@ -61,7 +61,7 @@ export class MessageUsageProjection {
 	}
 }
 
-function projectUsage(message: ClineMessage): ClineMessage {
+function projectUsage(message: UiMessage): UiMessage {
 	// Mixed command/usage rows retain text until the canonical command transform.
 	if (message.ask === "command" || message.ask === "command_output") return message
 	try {

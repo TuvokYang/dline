@@ -1,5 +1,5 @@
-import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { AcceptedInteractionSettlement, InteractionDraft } from "@/task-interaction/types"
@@ -31,6 +31,9 @@ const mocks = vi.hoisted(() => {
 		clearExpandedRows: vi.fn(),
 		resetState: vi.fn(),
 		restoreDraft: vi.fn(),
+		// ChatState owns paste provenance; an empty record keeps typed drafts on the legacy path.
+		pasteProvenance: { text: "", spans: [] as { start: number; end: number }[] },
+		commitPasteProvenance: vi.fn(),
 	}
 	return {
 		chatState,
@@ -59,6 +62,10 @@ vi.mock("@/services/grpc-client", () => ({
 	FileServiceClient: {
 		copyToClipboard: vi.fn(async () => undefined),
 		selectFiles: vi.fn(async () => ({ values1: [], values2: [] })),
+	},
+	// ChatView owns the input semantic catalog subscription shared by every composer surface.
+	SlashServiceClient: {
+		subscribeToInputSemanticCatalog: vi.fn(() => () => undefined),
 	},
 	TaskServiceClient: {
 		askResponse: mocks.askResponse,
@@ -93,12 +100,14 @@ vi.mock("../chat-view", () => {
 		CHAT_CONSTANTS: { MAX_IMAGES_AND_FILES_PER_MESSAGE: 20 },
 		ChatLayout: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 		InputSection: ({
+			canQueueInput,
 			chatState,
 			draft,
 			enabled,
 			onDraftAccepted,
 			onSubmit,
 		}: {
+			canQueueInput?: boolean
 			chatState: { inputValue: string }
 			draft: InteractionDraft
 			enabled?: boolean
@@ -106,7 +115,13 @@ vi.mock("../chat-view", () => {
 			onSubmit?: (draft: InteractionDraft) => Promise<AcceptedInteractionSettlement | undefined>
 		}) => (
 			<div>
-				<textarea aria-label="Task input" disabled={!enabled} readOnly value={chatState.inputValue} />
+				<textarea
+					aria-label="Task input"
+					data-can-queue={String(canQueueInput)}
+					disabled={!enabled}
+					readOnly
+					value={chatState.inputValue}
+				/>
 				<button
 					aria-label="Invoke Enter"
 					onClick={() => {
@@ -154,15 +169,16 @@ vi.mock("../chat-view", () => {
 		TaskActivityTabs: () => null,
 		WelcomeSection: () => <div>Welcome</div>,
 		convertHtmlToMarkdown: async (value: string) => value,
-		filterVisibleMessages: (messages: ClineMessage[]) => messages,
-		groupLowStakesTools: (messages: ClineMessage[]) => messages,
-		groupMessages: (messages: ClineMessage[]) => messages,
+		filterVisibleMessages: (messages: UiMessage[]) => messages,
+		groupLowStakesTools: (messages: UiMessage[]) => messages,
+		groupMessages: (messages: UiMessage[]) => messages,
 		useChatState: mocks.useChatState,
 		useMessageHandlers: () => ({
 			handleSendMessage: vi.fn(async () => undefined),
 			handleTaskCloseButtonClick: mocks.closeTask,
 			startNewTask: vi.fn(async () => undefined),
 		}),
+		useStoppedReasoningExpansion: () => undefined,
 		useScrollBehavior: () => ({
 			disableAutoScrollRef: { current: false },
 			isAtBottom: true,
@@ -173,7 +189,7 @@ vi.mock("../chat-view", () => {
 
 import ChatView from "../ChatView"
 
-const ASK: ClineMessage = {
+const ASK: UiMessage = {
 	ts: 100,
 	type: "ask",
 	ask: "qna_respond",
@@ -214,7 +230,7 @@ function chatView() {
 }
 
 function renderChat(
-	messages: ClineMessage[],
+	messages: UiMessage[],
 	view: TaskViewState = taskView(),
 	includeHistoryItem = true,
 ): ReturnType<typeof render> {
@@ -447,6 +463,20 @@ describe("ChatView interaction anchor synchronization", () => {
 		expect(mocks.compactTask).not.toHaveBeenCalled()
 	})
 
+	// The queue would deliver into the round the compaction holds, so a send
+	// while it runs stays in the composer instead of being handed over.
+	it("keeps a blocked send in the composer while backend compaction is active", () => {
+		const view = taskView()
+		view.phase = "streaming"
+		renderChat([ASK], view)
+		expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "true")
+		cleanup()
+
+		view.contextCompaction = { active: true, operationId: "manual-compaction:task-1:8" }
+		renderChat([ASK], view)
+		expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "false")
+	})
+
 	it("disables Compact immediately while the command dispatch is pending and rejects a duplicate dispatch", async () => {
 		let resolveDispatch!: (value: { accepted: boolean; result: string }) => void
 		mocks.dispatchInteraction.mockImplementationOnce(
@@ -567,7 +597,7 @@ describe("ChatView interaction anchor synchronization", () => {
 				dispatchTarget: "interaction",
 			},
 		]
-		const condenseAsk: ClineMessage = { ...ASK, ask: "condense", text: "Summary preview" }
+		const condenseAsk: UiMessage = { ...ASK, ask: "condense", text: "Summary preview" }
 		mocks.chatState.inputValue = "Keep the deployment details"
 
 		renderChat([condenseAsk], view)

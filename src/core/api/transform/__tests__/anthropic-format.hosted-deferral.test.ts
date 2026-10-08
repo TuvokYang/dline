@@ -69,6 +69,27 @@ describe("sanitizeAnthropicMessages deferred hosted calls", () => {
 		])
 	})
 
+	// The task journal stores the round's tool results and environment details as two user messages.
+	it("merges a follow-up split across consecutive user messages into one tool-result-only message", () => {
+		const splitHistory: ClineStorageMessage[] = [
+			deferredHistory[0],
+			deferredHistory[1],
+			{ role: "user", content: [toolResult] },
+			{ role: "user", content: [environment] },
+		]
+
+		const projected = sanitizeAnthropicMessages(splitHistory, false, replayWebSearch)
+
+		expect(projected).toHaveLength(3)
+		expect(projected[1].content).toEqual(expect.arrayContaining([call]))
+		expect(projected[2]).toEqual({
+			role: "user",
+			content: [
+				{ type: "tool_result", tool_use_id: "toolu_read", content: [{ type: "text", text: "file body" }, environment] },
+			],
+		})
+	})
+
 	it("places the prompt-cache breakpoint on the folded tool result", () => {
 		const projected = sanitizeAnthropicMessages(deferredHistory, true, replayWebSearch)
 		const followUp = projected[2].content as unknown as Array<Record<string, unknown>>

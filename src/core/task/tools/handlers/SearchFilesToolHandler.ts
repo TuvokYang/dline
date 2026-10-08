@@ -10,11 +10,11 @@ import { parseWorkspaceInlinePath } from "@/core/workspace/utils/parseWorkspaceI
 import { WorkspacePathAdapter } from "@/core/workspace/WorkspacePathAdapter"
 import { resolveWorkspacePath } from "@/core/workspace/WorkspaceResolver"
 import { telemetryService } from "@/services/telemetry"
-import { ClineSayTool } from "@/shared/ExtensionMessage"
+import { UiSayTool } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
-import type { ToolResponse } from "../../index"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
@@ -313,7 +313,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 			regex: uiHelpers.removeClosingTag(block, "regex", regex),
 			filePattern: uiHelpers.removeClosingTag(block, "file_pattern", filePattern),
 			operationIsLocatedInWorkspace: await isLocatedInWorkspace(relPath),
-		} satisfies ClineSayTool
+		} satisfies UiSayTool
 
 		const partialMessage = JSON.stringify(sharedMessageProps)
 
@@ -456,7 +456,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
 			files: stats.files,
 			truncated: stats.truncated,
 			operationIsLocatedInWorkspace: await isLocatedInWorkspace(parsedPath),
-		} satisfies ClineSayTool
+		} satisfies UiSayTool
 
 		const completeMessage = JSON.stringify(sharedMessageProps)
 

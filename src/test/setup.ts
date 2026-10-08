@@ -127,9 +127,6 @@ vi.mock("@/registry", () => ({
 
 // Mock checkpoint integration — avoids pulling in VSCode-specific code
 vi.mock("@integrations/checkpoints", () => ({}))
-vi.mock("@integrations/checkpoints/MultiRootCheckpointManager", () => ({
-	MultiRootCheckpointManager: class {},
-}))
 
 // Mock telemetryService — avoid importing the real module which triggers config loading
 vi.mock("@services/telemetry", () => {

@@ -58,7 +58,7 @@ describe("resolveDeferredHostedCalls", () => {
 		const messages = deferredTurn([toolResult, { type: "text", text: "<environment_details>x</environment_details>" }])
 
 		expect(resolveDeferredHostedCalls(messages, declared)).toEqual([
-			{ callId: "srvtoolu_deferred", toolName: "web_search", messageIndex: 1, state: "pending" },
+			{ callId: "srvtoolu_deferred", toolName: "web_search", messageIndex: 1, followUpIndices: [2], state: "pending" },
 		])
 	})
 
@@ -69,8 +69,35 @@ describe("resolveDeferredHostedCalls", () => {
 		]
 
 		expect(resolveDeferredHostedCalls(messages, declared)).toEqual([
-			{ callId: "srvtoolu_deferred", toolName: "web_search", messageIndex: 1, state: "resumed" },
+			{ callId: "srvtoolu_deferred", toolName: "web_search", messageIndex: 1, followUpIndices: [2], state: "resumed" },
 		])
+	})
+
+	// The task journal stores a round's tool results and its environment details as separate user messages.
+	it("reads consecutive user messages after the deferred turn as one follow-up turn", () => {
+		const environment: ClineStorageMessage = {
+			role: "user",
+			content: [{ type: "text", text: "<environment_details>x</environment_details>" }],
+		}
+		const pending = [...deferredTurn([toolResult]), environment]
+		const resumed: ClineStorageMessage[] = [
+			...pending,
+			{ role: "assistant", content: [resultSegment, { type: "text", text: "Found it." }] },
+		]
+
+		expect(resolveDeferredHostedCalls(pending, declared)).toEqual([
+			{ callId: "srvtoolu_deferred", toolName: "web_search", messageIndex: 1, followUpIndices: [2, 3], state: "pending" },
+		])
+		expect(resolveDeferredHostedCalls(resumed, declared)[0]?.state).toBe("resumed")
+	})
+
+	it("drops a deferred call whose follow-up run does not open with its tool results", () => {
+		const messages: ClineStorageMessage[] = [
+			...deferredTurn([{ type: "text", text: "Never mind" }]),
+			{ role: "user", content: [toolResult] },
+		]
+
+		expect(resolveDeferredHostedCalls(messages, declared)[0]?.state).toBe("dropped")
 	})
 
 	it("drops a deferred call whose follow-up user message carries no tool result", () => {

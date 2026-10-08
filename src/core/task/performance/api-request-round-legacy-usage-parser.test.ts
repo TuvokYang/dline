@@ -1,8 +1,8 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { parseLegacyUsageMessages } from "./api-request-round-legacy-usage-parser"
 
-function message(ts: number, say: ClineMessage["say"], info: object, overrides: Partial<ClineMessage> = {}): ClineMessage {
+function message(ts: number, say: UiMessage["say"], info: object, overrides: Partial<UiMessage> = {}): UiMessage {
 	return { ts, type: "say", say, text: JSON.stringify(info), ...overrides }
 }
 

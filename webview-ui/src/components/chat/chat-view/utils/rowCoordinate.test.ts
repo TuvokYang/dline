@@ -1,8 +1,8 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { advanceRowCoordinate, leadingRowShift, ROW_INDEX_BASE, rowIdentity } from "./rowCoordinate"
 
-const message = (ts: number): ClineMessage => ({ ts }) as ClineMessage
+const message = (ts: number): UiMessage => ({ ts }) as UiMessage
 
 const startingAt = (firstItemIndex: number, identities: string[]) => ({ firstItemIndex, identities })
 

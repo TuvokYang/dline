@@ -1,4 +1,4 @@
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { ToolValidator } from "../../ToolValidator"
@@ -90,9 +90,9 @@ function createHelpers(config: TaskConfig): StronglyTypedUIHelpers {
  *
  * @param diff Raw diff parameter as streamed so far.
  * @param originalContent File content the parser matches against.
- * @returns Parsed ClineSayTool payload handed to the webview.
+ * @returns Parsed UiSayTool payload handed to the webview.
  */
-async function streamPartialEdit(diff: string, originalContent = ORIGINAL_CONTENT): Promise<ClineSayTool> {
+async function streamPartialEdit(diff: string, originalContent = ORIGINAL_CONTENT): Promise<UiSayTool> {
 	const { config, say } = createConfig(originalContent)
 	const handler = new WriteToFileToolHandler(new ToolValidator({ validateAccess: vi.fn().mockReturnValue(true) } as never))
 
@@ -109,7 +109,7 @@ async function streamPartialEdit(diff: string, originalContent = ORIGINAL_CONTEN
 
 	expect(say).toHaveBeenCalled()
 	const [, payload] = say.mock.calls.at(-1) as [string, string]
-	return JSON.parse(payload) as ClineSayTool
+	return JSON.parse(payload) as UiSayTool
 }
 
 describe("WriteToFileToolHandler streaming payload", () => {

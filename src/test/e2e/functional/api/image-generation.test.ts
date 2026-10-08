@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto"
+import type { Dirent } from "node:fs"
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
 import { ImageGenerationSource } from "@shared/proto/dline/profile"
 
@@ -105,7 +107,7 @@ function getFrozenToolName(tool: unknown): string | undefined {
 }
 
 async function listFilesRecursively(root: string): Promise<string[]> {
-	let entries
+	let entries: Dirent[]
 	try {
 		entries = await readdir(root, { withFileTypes: true })
 	} catch (error) {
@@ -123,7 +125,7 @@ async function listFilesRecursively(root: string): Promise<string[]> {
 
 e2e(
 	"Image generation - Feature off keeps generate_image out of the provider tool schema",
-	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+	async ({ helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(120_000)
 		server.resetOpenAiMock()
 		server.enqueueOpenAiResponses({
@@ -208,12 +210,6 @@ e2e(
 		server.enqueueResponses(
 			"openai-compatible-responses",
 			{ type: "tool", id: "call_image_rejected", name: "generate_image", arguments: { prompt: rejectedPrompt, count: 1 } },
-			{
-				type: "tool",
-				id: "call_image_rejection_done",
-				name: "attempt_completion",
-				arguments: { result: "E2E_IMAGE_REJECTED_OK" },
-			},
 			{ type: "tool", id: "call_image_approved", name: "generate_image", arguments: { prompt: approvedPrompt, count: 1 } },
 			{
 				type: "hosted-image-generation",
@@ -253,20 +249,29 @@ e2e(
 			await page.getByRole("button", { name: "History", exact: true }).click()
 			await E2ETestHelper.dismissWhatsNewModal(sidebar)
 			await sidebar.locator(".history-item").filter({ hasText: rejectedTask }).click()
-			await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible()
+			const reopenedToggle = sidebar.getByRole("button", { name: "Collapse image generation", exact: true })
+			await expect(reopenedToggle).toBeVisible()
 			await expect(sidebar.getByText("Dline wants to generate an image", { exact: true })).toHaveCount(1)
-			await expect(pendingCard.getByText(rejectedPrompt, { exact: true })).toBeVisible()
+			await expect(reopenedToggle.locator("xpath=../..").getByText(rejectedPrompt, { exact: true })).toBeVisible()
 			expect(hostedImageConsumptions()).toHaveLength(0)
-			await sidebar.getByRole("contentinfo").getByText("Reject", { exact: true }).click()
-			await expect(sidebar.getByText("Image generation rejected", { exact: true }).last()).toBeVisible()
+			const reopenedFooter = sidebar.getByRole("contentinfo")
+			const approveButton = reopenedFooter.getByRole("button", { name: "Approve", exact: true }).first()
+			const rejectButton = reopenedFooter.getByRole("button", { name: "Reject", exact: true }).first()
+			await expect(approveButton).toBeVisible({ timeout: 30_000 })
+			await expect(rejectButton).toBeVisible()
+			await expect(reopenedFooter.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0)
+			await page.waitForTimeout(750)
+			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
+			await rejectButton.click()
+			await expect(sidebar.getByText("Image generation rejected", { exact: true }).last()).toBeVisible({ timeout: 30_000 })
 			await expect(sidebar.getByText(rejectedPrompt, { exact: true }).last()).toBeVisible()
 			expect(hostedImageConsumptions()).toHaveLength(0)
-			await expect(sidebar.getByText("E2E_IMAGE_REJECTED_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
 			const closeTask = sidebar.getByRole("button", { name: "Close Task", exact: true })
 			await closeTask.click()
 			// The chat input exists on both views; a send before the home view renders targets the closing task.
 			await expect(closeTask).toHaveCount(0)
+			await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
 			await sendTask(sidebar, approvedTask)
 			await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible({
 				timeout: 60_000,
@@ -278,14 +283,8 @@ e2e(
 			await expect(sidebar.getByText("E2E_IMAGE_APPROVED_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect(sidebar.getByText("Image generation completed", { exact: true }).last()).toBeVisible()
 			const consumptions = server.getMockConsumptions("openai-compatible-responses")
-			expect(consumptions).toHaveLength(5)
-			expect(consumptions.map((entry) => entry.responseType)).toEqual([
-				"tool",
-				"tool",
-				"tool",
-				"hosted-image-generation",
-				"tool",
-			])
+			expect(consumptions).toHaveLength(4)
+			expect(consumptions.map((entry) => entry.responseType)).toEqual(["tool", "tool", "hosted-image-generation", "tool"])
 			expect(consumptions.every((entry) => entry.contractError === undefined)).toBe(true)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 		} finally {
@@ -477,6 +476,17 @@ e2e(
 				sidebar,
 				"Generate one image with the GPT Subscription OpenAI Responses Profile, edit it using the returned ref, inspect the image from its returned path, and complete.",
 			)
+			await expect(sidebar.getByText("A hosted deterministic blue owl", { exact: true }).last()).toBeVisible({
+				timeout: 60_000,
+			})
+			// Start observing before filesystem proof collection: each provider preview
+			// is intentionally short-lived and is replaced by the final artifact card.
+			const partialPreview = sidebar.getByTestId("image-generation-partial-preview").last()
+			await expect(partialPreview).toBeVisible({ timeout: 60_000 })
+			const partialScreenshotPath = path.join(proofDir, "current-image-partial-preview.png")
+			await partialPreview.screenshot({ path: partialScreenshotPath })
+			await testInfo.attach("current-image-partial-preview.png", { path: partialScreenshotPath, contentType: "image/png" })
+
 			const contextPath = await E2ETestHelper.waitForValue(async () => {
 				const contextFiles = await findFiles(path.join(dlineDocsDir, "tasks"), "context.json")
 				return contextFiles[0]
@@ -502,15 +512,6 @@ e2e(
 			const initialFrozenTools = initialTaskContext.systemPrompt?.frozen?.tools ?? []
 			expect(initialFrozenTools.map(getFrozenToolName)).toContain("generate_image")
 			expect(initialTaskContext.systemPrompt?.frozen?.freshnessBaseline?.imageGenerationAvailable).toBe(true)
-			await expect(sidebar.getByText("A hosted deterministic blue owl", { exact: true }).last()).toBeVisible({
-				timeout: 60_000,
-			})
-
-			const partialPreview = sidebar.getByTestId("image-generation-partial-preview").last()
-			await expect(partialPreview).toBeVisible({ timeout: 60_000 })
-			const partialScreenshotPath = path.join(proofDir, "current-image-partial-preview.png")
-			await partialPreview.screenshot({ path: partialScreenshotPath })
-			await testInfo.attach("current-image-partial-preview.png", { path: partialScreenshotPath, contentType: "image/png" })
 
 			await E2ETestHelper.waitUntil(
 				async () => server.getMockConsumptions("openai-compatible-responses").length === 4,
@@ -637,21 +638,33 @@ e2e(
 			expect(manifest).toContain("image:sha256:")
 			expect(manifest).not.toContain(PNG_1X1_BASE64)
 			expect(path.resolve(path.dirname(manifests[0]), "..")).toBe(taskDirectory)
-			const requiredConversationArtifactNames = [
-				"context.json",
-				"api_conversation_history.jsonl",
-				"ui_messages.jsonl",
-			] as const
+			// The provider conversation lives in journal.db and the chat in messages.db.
+			const requiredConversationArtifactNames = ["context.json", "journal.db", "messages.db"] as const
 			const conversationArtifactNames = new Set([
 				...requiredConversationArtifactNames,
 				"context_history.jsonl",
+				"api_conversation_history.jsonl",
 				"api_conversation_all.jsonl",
 			])
 			const taskFiles = await listFilesRecursively(taskDirectory)
 			for (const requiredName of requiredConversationArtifactNames) {
 				expect(taskFiles.some((filePath) => path.basename(filePath) === requiredName)).toBe(true)
 			}
-			for (const artifactPath of taskFiles.filter((filePath) => conversationArtifactNames.has(path.basename(filePath)))) {
+			// Chat history lives in messages.db; check its decoded rows rather than the SQLite pages.
+			const chatHistory = await readTaskUiMessagesText(dlineDocsDir, path.basename(taskDirectory))
+			expect(chatHistory).not.toBe("")
+			expect(chatHistory).not.toContain("dline-e2e-api-key")
+			expect(chatHistory).not.toContain("data:image/")
+			expect(chatHistory).not.toContain("partial_image_b64")
+			const chatHistoryProofPath = path.join(proofDir, "current-image-ui-messages.jsonl")
+			await writeFile(chatHistoryProofPath, chatHistory)
+			await testInfo.attach("current-image-ui-messages.jsonl", {
+				path: chatHistoryProofPath,
+				contentType: "application/x-ndjson",
+			})
+			for (const artifactPath of taskFiles.filter(
+				(filePath) => conversationArtifactNames.has(path.basename(filePath)) && !filePath.endsWith(".db"),
+			)) {
 				const artifactName = path.basename(artifactPath)
 				const artifactContent = await readFile(artifactPath)
 				expect(artifactContent.toString("utf8")).not.toContain("dline-e2e-api-key")

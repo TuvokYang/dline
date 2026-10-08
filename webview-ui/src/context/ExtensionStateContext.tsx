@@ -8,7 +8,7 @@ import {
 import { DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
 import { DEFAULT_MAX_PARALLEL_SUBAGENTS, DEFAULT_MAX_PARALLEL_TOOL_CALLS } from "@shared/concurrency-limits"
-import { type ActiveInteractionView, type ClineMessage, DEFAULT_PLATFORM, type ExtensionState } from "@shared/ExtensionMessage"
+import { type ActiveInteractionView, DEFAULT_PLATFORM, type ExtensionState, type UiMessage } from "@shared/ExtensionMessage"
 import { DEFAULT_FOCUS_CHAIN_SETTINGS } from "@shared/FocusChainSettings"
 import { DEFAULT_MCP_DISPLAY_MODE } from "@shared/McpDisplayMode"
 import type { UserInfo } from "@shared/proto/dline/account"
@@ -22,10 +22,6 @@ import { fromProtobufModels } from "@shared/proto-conversions/models/typeConvers
 import type React from "react"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import {
-	basetenDefaultModelId,
-	basetenModels,
-	groqDefaultModelId,
-	groqModels,
 	type ModelInfo,
 	openRouterDefaultModelId,
 	openRouterDefaultModelInfo,
@@ -63,10 +59,10 @@ export function shouldAcceptState(currentRevision: number, incomingRevision?: nu
 	return incomingRevision > currentRevision
 }
 
-const mergeClineMessagesByTs = (existing: ClineMessage[], incoming: ClineMessage[]): ClineMessage[] => {
-	const merged: ClineMessage[] = []
+const mergeClineMessagesByTs = (existing: UiMessage[], incoming: UiMessage[]): UiMessage[] => {
+	const merged: UiMessage[] = []
 	const indexByTs = new Map<number, number>()
-	const appendOrReplace = (message: ClineMessage) => {
+	const appendOrReplace = (message: UiMessage) => {
 		const existingIndex = indexByTs.get(message.ts)
 		if (existingIndex === undefined) {
 			indexByTs.set(message.ts, merged.length)
@@ -104,30 +100,28 @@ const mergeClineMessagesByTs = (existing: ClineMessage[], incoming: ClineMessage
  * @returns Reconciled window and its absolute start index.
  */
 const applyFetchedMessageWindow = (
-	existing: ClineMessage[],
+	existing: UiMessage[],
 	existingStartIndex: number,
-	fetched: ClineMessage[],
+	fetched: UiMessage[],
 	fetchedStartIndex: number,
 	total?: number,
-): { messages: ClineMessage[]; startIndex: number } => {
+	localTimestampsAtFetchStart?: ReadonlySet<number>,
+	preserveOmittedPartials?: boolean,
+): { messages: UiMessage[]; startIndex: number } => {
 	const reconciled = reconcileMessageWindow(
 		{ messages: existing, startIndex: existingStartIndex },
 		{ messages: fetched, startIndex: fetchedStartIndex, total },
+		{ localTimestampsAtFetchStart, preserveOmittedPartials },
 	)
 	return { messages: reconciled.messages, startIndex: reconciled.startIndex }
 }
 
-/**
- * First step of a tail sync: `replace` swaps in the latest page because the
- * window contradicts the total, `reconcile` merges the latest page because a
- * durable message may have replaced the partial tail, and `follow` only pages
- * forward from the window end.
- */
-type TailSyncMode = "replace" | "reconcile" | "follow"
+/** First step of a tail sync: merge the latest page, or only page forward from the window end. */
+type TailSyncFirstStep = "latest" | "follow"
 const TAIL_PAGE_SIZE = 200
 const TAIL_SYNC_RETRY_DELAYS_MS = [100, 300, 750] as const
 
-const hasExactInteractionAnchor = (messages: readonly ClineMessage[], interaction: ActiveInteractionView): boolean =>
+const hasExactInteractionAnchor = (messages: readonly UiMessage[], interaction: ActiveInteractionView): boolean =>
 	messages.some(
 		(message) =>
 			message.type === "ask" &&
@@ -171,8 +165,8 @@ export interface ExtensionStateContextType extends ExtensionState {
 	historyTaskOpening?: HistoryTaskOpening
 	openHistoryTask: (target: HistoryTaskTarget) => void
 	dismissHistoryTaskOpening: () => void
-	clineMessages: ClineMessage[]
-	setClineMessages: React.Dispatch<React.SetStateAction<ClineMessage[]>>
+	clineMessages: UiMessage[]
+	setClineMessages: React.Dispatch<React.SetStateAction<UiMessage[]>>
 	didHydrateState: boolean
 	/** Hydration progress, including why it failed when it did. */
 	hydration: HydrationStatus
@@ -187,9 +181,6 @@ export interface ExtensionStateContextType extends ExtensionState {
 	liteLlmModels: Record<string, ModelInfo>
 	openAiModels: string[]
 	requestyModels: Record<string, ModelInfo>
-	groqModels: Record<string, ModelInfo>
-	basetenModels: Record<string, ModelInfo>
-	huggingFaceModels: Record<string, ModelInfo>
 	mcpServers: McpServer[]
 	mcpMarketplaceCatalog: McpMarketplaceCatalog
 	totalTasksSize: number | null
@@ -212,9 +203,6 @@ export interface ExtensionStateContextType extends ExtensionState {
 	setShouldShowAnnouncement: (value: boolean) => void
 	setMcpServers: (value: McpServer[]) => void
 	setRequestyModels: (value: Record<string, ModelInfo>) => void
-	setGroqModels: (value: Record<string, ModelInfo>) => void
-	setBasetenModels: (value: Record<string, ModelInfo>) => void
-	setHuggingFaceModels: (value: Record<string, ModelInfo>) => void
 	setGlobalClineRulesToggles: (toggles: Record<string, boolean>) => void
 	setLocalClineRulesToggles: (toggles: Record<string, boolean>) => void
 	setLocalCursorRulesToggles: (toggles: Record<string, boolean>) => void
@@ -450,7 +438,7 @@ export const ExtensionStateContextProvider: React.FC<{
 	}, [])
 
 	// Atomic sliding window state via React 18 auto-batching
-	const [clineMessages, setClineMessages] = useState<ClineMessage[]>([])
+	const [clineMessages, setClineMessages] = useState<UiMessage[]>([])
 	const [firstItemIndex, setFirstItemIndex] = useState(0)
 	const { historyTaskOpening, openHistoryTask, dismissHistoryTaskOpening } = useHistoryTaskOpening({
 		taskViewState: state.taskViewState,
@@ -459,28 +447,38 @@ export const ExtensionStateContextProvider: React.FC<{
 		requestOpen: requestHistoryTaskOpen,
 		navigateToChat,
 	})
-	const clineMessagesRef = useRef<ClineMessage[]>([])
+	const clineMessagesRef = useRef<UiMessage[]>([])
 	// Fetch callbacks resolve after their scheduling render, so reconciliation
 	// has to read the window start from a ref rather than the captured value.
 	const firstItemIndexRef = useRef(0)
 	const totalMessageCountRef = useRef(0)
+	// A state update can announce several durable rows before their window fetch
+	// lands. Remember that the current slice covered the previous tail so a
+	// realtime partial arriving in that gap is staged instead of discarded.
+	const windowWasAtTailRef = useRef(false)
 	const bootstrapResolvedRef = useRef(false)
 	clineMessagesRef.current = clineMessages
 	firstItemIndexRef.current = firstItemIndex
 	totalMessageCountRef.current = state.totalMessageCount ?? 0
 	if (clineMessages.length > 0) bootstrapResolvedRef.current = true
 
-	const commitMessageWindow = useCallback((messages: ClineMessage[], startIndex: number) => {
+	const commitMessageWindow = useCallback((messages: UiMessage[], startIndex: number) => {
 		clineMessagesRef.current = messages
 		firstItemIndexRef.current = startIndex
+		windowWasAtTailRef.current = canAppendRealtimeMessage(messages.length, startIndex, totalMessageCountRef.current)
 		setClineMessages(messages)
 		setFirstItemIndex(startIndex)
 	}, [])
 
 	const prevTotalRef = useRef(0)
-	// Owner token of the running tail sync. A fresh token per sync lets a newer
-	// sync take over, and keeps a superseded one from releasing its successor.
+	const prevMessageWindowRevisionRef = useRef(0)
+	// Owner token of the running window fetch. A fresh token per fetch lets a
+	// newer tail sync take over, and keeps a superseded one from releasing it.
 	const refetchLockRef = useRef<symbol | null>(null)
+	// A total shrink can arrive while a durable-tail fetch owns the single
+	// reconciliation slot. Remember it so releasing that slot cannot consume the
+	// lower total without removing the row that disappeared.
+	const refetchAfterUnlockRef = useRef(false)
 	// Stabilize window after cancel: delay refetch by 200ms so rapid state
 	// changes (remove partials, postState, total update) settle before
 	// triggering a Virtuoso data swap that causes layout jitter.
@@ -498,8 +496,12 @@ export const ExtensionStateContextProvider: React.FC<{
 	const lastInteractionFetchKeyRef = useRef<string | undefined>(undefined)
 	const inFlightInteractionFetchRef = useRef<string | undefined>(undefined)
 	const projectedInteraction = state.taskViewState?.activeInteraction
-	const projectedInteractionAnchorPresent = projectedInteraction
-		? projectedInteraction.anchorVerified === true || hasExactInteractionAnchor(clineMessages, projectedInteraction)
+	// Whether this window has loaded the chat row the interaction anchors to.
+	// `anchorVerified` only says the backend holds that row, which is enough for
+	// the footer to dispatch but not for the chat to show it; treating it as
+	// loaded skipped the recovery fetch and left an answered row off screen.
+	const projectedInteractionAnchorLoaded = projectedInteraction
+		? hasExactInteractionAnchor(clineMessages, projectedInteraction)
 		: true
 	const localTailMessage = clineMessages.at(-1)
 
@@ -508,6 +510,11 @@ export const ExtensionStateContextProvider: React.FC<{
 	useEffect(() => {
 		const currentTaskViewKey = getTaskViewKey(state.taskViewState)
 		const total = state.totalMessageCount ?? 0
+		const messageWindowRevision = state.messageWindowRevision ?? 0
+		const preserveOmittedPartials =
+			state.taskViewState?.footer.actions.some((action) => action.type === "cancel" && action.enabled) === true
+		// Pages are fenced to the task opening the view shows, so a late page of a
+		// previous opening can never merge into this one.
 		const fetchCurrentMessages = (referenceIndex: number, count: number) =>
 			fetchTaskMessages(state.taskViewState, referenceIndex, count)
 
@@ -542,6 +549,7 @@ export const ExtensionStateContextProvider: React.FC<{
 				retryLatestAtStart: boolean,
 				bootstrapRetryAttempt = 0,
 			): Promise<void> => {
+				const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
 				try {
 					const resp = await fetchCurrentMessages(referenceIndex, 200)
 					if (
@@ -571,6 +579,8 @@ export const ExtensionStateContextProvider: React.FC<{
 						converted,
 						startIndex,
 						responseTotal,
+						localTimestampsAtFetchStart,
+						preserveOmittedPartials,
 					)
 					commitMessageWindow(reconciled.messages, reconciled.startIndex)
 					if (expectedInteraction) {
@@ -585,9 +595,13 @@ export const ExtensionStateContextProvider: React.FC<{
 								inFlightInteractionFetchRef.current = undefined
 							}
 						} else if (startIndex > 0) {
-							await fetchAttempt(Math.max(0, startIndex - 200), false)
+							await fetchAttempt(Math.max(0, startIndex - 200), false, bootstrapRetryAttempt)
 						} else if (retryLatestAtStart) {
-							await fetchAttempt(-1, false)
+							await fetchAttempt(-1, false, bootstrapRetryAttempt)
+						} else if (bootstrapRetryAttempt < retryDelaysMs.length) {
+							// A disconnected page commits no window change, so recovery cannot
+							// depend on another render. Keep one fenced, bounded fetch chain.
+							await retryLatest(bootstrapRetryAttempt, false)
 						} else if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
 							// Every page was walked without recovering the anchor.
 							// Releasing the in-flight marker lets a later viewport
@@ -619,7 +633,20 @@ export const ExtensionStateContextProvider: React.FC<{
 					}
 				}
 			}
-			void fetchAttempt(-1, Boolean(expectedInteraction))
+			return fetchAttempt(-1, Boolean(expectedInteraction))
+		}
+
+		const runDeferredWindowReconciliation = () => {
+			if (!refetchAfterUnlockRef.current || refetchLockRef.current) return
+			const scheduledTaskViewKey = currentTaskViewKeyRef.current
+			const owner = Symbol("deferred-reconciliation")
+			refetchAfterUnlockRef.current = false
+			refetchLockRef.current = owner
+			void fetchLatestWindow(scheduledTaskViewKey).finally(() => {
+				if (refetchLockRef.current !== owner) return
+				refetchLockRef.current = null
+				runDeferredWindowReconciliation()
+			})
 		}
 
 		/**
@@ -628,16 +655,16 @@ export const ExtensionStateContextProvider: React.FC<{
 		 * Every effect run advances `prevTotalRef` to the newest total, and the
 		 * window counts as following the tail only while it still reaches that
 		 * mark. A page that was in flight while the total grew therefore lands
-		 * below it, and the window would be read as a browsing slice for good.
-		 * A sync keeps the chase until the window reaches the latest total,
-		 * whichever request started it, so no landing page strands the window.
+		 * below it, and once the task waits for the user no further state change
+		 * arrives to fetch the rows it missed. A sync keeps the chase until the
+		 * window reaches the latest total, whichever request started it.
 		 *
 		 * A sync that gives up short of the tail lowers the mark to the window
 		 * end, so the next state change resumes the chase instead of abandoning
-		 * it. A reader that trimmed or replaced the window ends the chase and
-		 * keeps the browsing classification.
+		 * it. A reader that trimmed the window ends the chase and keeps the
+		 * browsing classification.
 		 */
-		const syncTailWindow = async (scheduledTaskViewKey: string | undefined, mode: TailSyncMode) => {
+		const syncTailWindow = async (scheduledTaskViewKey: string | undefined, firstStep: TailSyncFirstStep) => {
 			const owner = Symbol("tail-sync")
 			const scheduledGeneration = messageFetchGenerationRef.current
 			refetchLockRef.current = owner
@@ -646,7 +673,7 @@ export const ExtensionStateContextProvider: React.FC<{
 				messageFetchGenerationRef.current === scheduledGeneration
 			const ownsSync = () => refetchLockRef.current === owner && isCurrentView()
 			const windowEnd = () => firstItemIndexRef.current + clineMessagesRef.current.length
-			let firstStepPending = mode !== "follow"
+			let firstStepPending = firstStep === "latest"
 			let followedEnd = windowEnd()
 			let readerMovedAway = false
 			let retries = 0
@@ -662,24 +689,22 @@ export const ExtensionStateContextProvider: React.FC<{
 					// The latest page overlaps the window, so it also repairs a missed
 					// or stale message near the tail. Only an older gap pages forward.
 					const fetchLatest = firstStepPending || latestTotal - knownEnd <= TAIL_PAGE_SIZE
+					const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
 					let progressed = false
 					try {
 						const resp = await fetchCurrentMessages(fetchLatest ? -1 : knownEnd, TAIL_PAGE_SIZE)
 						if (!ownsSync()) return
 						const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
-						const startIndex = Math.max(0, resp.startIndex)
-						if (firstStepPending && mode === "replace") {
-							commitMessageWindow(converted, startIndex)
-						} else {
-							const reconciled = applyFetchedMessageWindow(
-								clineMessagesRef.current,
-								firstItemIndexRef.current,
-								converted,
-								startIndex,
-								Number(resp.totalCount ?? 0),
-							)
-							commitMessageWindow(reconciled.messages, reconciled.startIndex)
-						}
+						const reconciled = applyFetchedMessageWindow(
+							clineMessagesRef.current,
+							firstItemIndexRef.current,
+							converted,
+							Math.max(0, resp.startIndex),
+							Number(resp.totalCount ?? 0),
+							localTimestampsAtFetchStart,
+							preserveOmittedPartials,
+						)
+						commitMessageWindow(reconciled.messages, reconciled.startIndex)
 						progressed = firstStepPending || windowEnd() > knownEnd
 						firstStepPending = false
 					} catch {
@@ -699,6 +724,7 @@ export const ExtensionStateContextProvider: React.FC<{
 					if (isCurrentView() && !readerMovedAway && windowEnd() < totalMessageCountRef.current) {
 						prevTotalRef.current = Math.min(prevTotalRef.current, windowEnd())
 					}
+					runDeferredWindowReconciliation()
 				}
 			}
 		}
@@ -712,19 +738,28 @@ export const ExtensionStateContextProvider: React.FC<{
 				cancelStabilizeTimerRef.current = null
 			}
 			refetchLockRef.current = null
+			refetchAfterUnlockRef.current = false
 			lastInteractionFetchKeyRef.current = undefined
 			inFlightInteractionFetchRef.current = undefined
 			bootstrapResolvedRef.current = false
 			firstItemIndexRef.current = 0
+			windowWasAtTailRef.current = false
 			setClineMessages([])
 			setFirstItemIndex(0)
 			prevTotalRef.current = total
+			prevMessageWindowRevisionRef.current = messageWindowRevision
 			if (total > 0) {
 				fetchLatestWindow(currentTaskViewKey, projectedInteraction)
 			}
 			return
 		}
 		currentTaskViewKeyRef.current = currentTaskViewKey
+		const messageWindowInvalidated = messageWindowRevision !== prevMessageWindowRevisionRef.current
+		prevMessageWindowRevisionRef.current = messageWindowRevision
+		if (messageWindowInvalidated && clineMessages.length > 0) {
+			refetchAfterUnlockRef.current = true
+			runDeferredWindowReconciliation()
+		}
 
 		if (total === 0) {
 			if (cancelStabilizeTimerRef.current) {
@@ -732,9 +767,12 @@ export const ExtensionStateContextProvider: React.FC<{
 				cancelStabilizeTimerRef.current = null
 			}
 			firstItemIndexRef.current = 0
+			windowWasAtTailRef.current = false
 			setClineMessages([])
 			setFirstItemIndex(0)
 			prevTotalRef.current = 0
+			prevMessageWindowRevisionRef.current = messageWindowRevision
+			refetchAfterUnlockRef.current = false
 			lastInteractionFetchKeyRef.current = undefined
 			inFlightInteractionFetchRef.current = undefined
 			bootstrapResolvedRef.current = false
@@ -747,10 +785,16 @@ export const ExtensionStateContextProvider: React.FC<{
 		}
 		const knownEndIndex = firstItemIndex + clineMessages.length
 		const windowCoveredPreviousTail = knownEndIndex >= prevTotalRef.current
+		// A tail fetch still running cannot be extended, so the rows it did not
+		// ask for must be requested once it lands. Holding the previous total
+		// keeps the window counted as the live tail until then; advancing it
+		// here made the next pass believe the window had fallen behind on
+		// purpose and never fetched the newest row.
+		const tailCatchUpDeferred = knownEndIndex < total && windowCoveredPreviousTail && refetchLockRef.current
 		const durableTailMayHaveReplacedPartial =
 			total > prevTotalRef.current && knownEndIndex === total && localTailMessage?.partial === true
 		if (durableTailMayHaveReplacedPartial && !refetchLockRef.current) {
-			void syncTailWindow(currentTaskViewKeyRef.current, "reconcile")
+			void syncTailWindow(currentTaskViewKeyRef.current, "latest")
 		} else if (knownEndIndex < total && windowCoveredPreviousTail && !refetchLockRef.current) {
 			void syncTailWindow(currentTaskViewKeyRef.current, "follow")
 		}
@@ -762,24 +806,33 @@ export const ExtensionStateContextProvider: React.FC<{
 		// a Virtuoso data swap that causes layout jitter.
 		const windowContradictsTotal =
 			total < prevTotalRef.current || isMessageWindowOverfull(clineMessages.length, firstItemIndex, total)
-		if (prevTotalRef.current !== 0 && windowContradictsTotal && clineMessages.length > 0 && !refetchLockRef.current) {
-			if (cancelStabilizeTimerRef.current) {
-				clearTimeout(cancelStabilizeTimerRef.current)
-			}
-			const scheduledTaskViewKey = currentTaskViewKeyRef.current
-			cancelStabilizeTimerRef.current = setTimeout(() => {
-				cancelStabilizeTimerRef.current = null
-				if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
-					return
+		if (prevTotalRef.current !== 0 && windowContradictsTotal && clineMessages.length > 0) {
+			if (refetchLockRef.current) {
+				refetchAfterUnlockRef.current = true
+			} else {
+				if (cancelStabilizeTimerRef.current) {
+					clearTimeout(cancelStabilizeTimerRef.current)
 				}
-				// The latest page is authoritative here and takes over any sync in
-				// flight, which would otherwise merge rows the backend removed.
-				void syncTailWindow(scheduledTaskViewKey, "replace")
-			}, 200)
+				const scheduledTaskViewKey = currentTaskViewKeyRef.current
+				cancelStabilizeTimerRef.current = setTimeout(() => {
+					cancelStabilizeTimerRef.current = null
+					if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
+						return
+					}
+					// The latest page takes over any sync in flight, which would
+					// otherwise keep merging against a window the total contradicts.
+					void syncTailWindow(scheduledTaskViewKey, "latest")
+				}, 200)
+			}
 		}
 
 		const activeInteraction = projectedInteraction
-		if (activeInteraction && !projectedInteractionAnchorPresent && !refetchLockRef.current) {
+		// A verified anchor keeps the footer usable meanwhile, so its row is
+		// recovered once the first window has landed instead of racing it. The
+		// in-flight key below already prevents duplicate recoveries, so an
+		// unrelated tail fetch must not suppress this one.
+		const anchorRecoveryReady = activeInteraction?.anchorVerified !== true || bootstrapResolvedRef.current
+		if (activeInteraction && !projectedInteractionAnchorLoaded && anchorRecoveryReady) {
 			const expectedFetchKey = interactionFetchKey(currentTaskViewKeyRef.current, activeInteraction)
 			// Recovery is skipped only when this anchor was already hydrated or a
 			// recovery for it is still running. A previously failed attempt no
@@ -792,12 +845,14 @@ export const ExtensionStateContextProvider: React.FC<{
 			}
 		}
 
-		prevTotalRef.current = total
+		if (!tailCatchUpDeferred) prevTotalRef.current = total
 	}, [
 		state.taskViewState,
 		state.totalMessageCount,
+		state.messageWindowRevision,
+		state.taskViewState?.footer.actions,
 		projectedInteraction,
-		projectedInteractionAnchorPresent,
+		projectedInteractionAnchorLoaded,
 		clineMessages.length,
 		localTailMessage,
 		firstItemIndex,
@@ -831,14 +886,6 @@ export const ExtensionStateContextProvider: React.FC<{
 	const [requestyModels, setRequestyModels] = useState<Record<string, ModelInfo>>({
 		[requestyDefaultModelId]: requestyDefaultModelInfo,
 	})
-	const [groqModelsState, setGroqModels] = useState<Record<string, ModelInfo>>({
-		[groqDefaultModelId]: groqModels[groqDefaultModelId],
-	})
-	const [basetenModelsState, setBasetenModels] = useState<Record<string, ModelInfo>>({
-		...basetenModels,
-		[basetenDefaultModelId]: basetenModels[basetenDefaultModelId],
-	})
-	const [huggingFaceModels, setHuggingFaceModels] = useState<Record<string, ModelInfo>>({})
 	const [mcpServers, setMcpServers] = useState<McpServer[]>([])
 	const [mcpMarketplaceCatalog, setMcpMarketplaceCatalog] = useState<McpMarketplaceCatalog>({ items: [] })
 
@@ -1085,10 +1132,13 @@ export const ExtensionStateContextProvider: React.FC<{
 						}
 						if (
 							existingIndex < 0 &&
+							partialMessage.partial !== true &&
+							!windowWasAtTailRef.current &&
 							!canAppendRealtimeMessage(prev.length, firstItemIndexRef.current, totalMessageCountRef.current)
 						) {
 							return prev
 						}
+						windowWasAtTailRef.current = true
 						return mergeClineMessagesByTs(prev, [partialMessage])
 					})
 				} catch (error) {
@@ -1315,17 +1365,6 @@ export const ExtensionStateContextProvider: React.FC<{
 			.catch((error: Error) => console.error("Failed to refresh LiteLLM models:", error))
 	}, [])
 
-	const refreshBasetenModels = useCallback(() => {
-		ModelsServiceClient.refreshBasetenModelsRpc(EmptyRequest.create({}))
-			.then((response) => {
-				setBasetenModels({
-					[basetenDefaultModelId]: basetenModels[basetenDefaultModelId],
-					...fromProtobufModels(response.models),
-				})
-			})
-			.catch((err) => console.error("Failed to refresh Baseten models:", err))
-	}, [])
-
 	const refreshVercelAiGatewayModels = useCallback(() => {
 		ModelsServiceClient.refreshVercelAiGatewayModelsRpc(EmptyRequest.create({}))
 			.then((response: OpenRouterCompatibleModelInfo) => {
@@ -1352,16 +1391,12 @@ export const ExtensionStateContextProvider: React.FC<{
 			refreshVercelAiGatewayModels()
 		}
 		if (state.apiConfiguration?.planModeProfile) {
-			refreshBasetenModels()
-		}
-		if (state.apiConfiguration?.planModeProfile) {
 			refreshLiteLlmModels()
 		}
 	}, [
 		refreshOpenRouterModels,
 		refreshVercelAiGatewayModels,
 		state?.apiConfiguration?.planModeProfile,
-		refreshBasetenModels,
 		refreshLiteLlmModels,
 		openRouterModels,
 		vercelAiGatewayModels,
@@ -1440,9 +1475,6 @@ export const ExtensionStateContextProvider: React.FC<{
 			liteLlmModels,
 			openAiModels,
 			requestyModels,
-			groqModels: groqModelsState,
-			basetenModels: basetenModelsState,
-			huggingFaceModels,
 			mcpServers,
 			mcpMarketplaceCatalog,
 			totalTasksSize,
@@ -1490,9 +1522,6 @@ export const ExtensionStateContextProvider: React.FC<{
 			setShouldShowAnnouncement,
 			setMcpServers,
 			setRequestyModels,
-			setGroqModels,
-			setBasetenModels,
-			setHuggingFaceModels,
 			setMcpMarketplaceCatalog,
 			setShowMcp,
 			closeMcpView,
@@ -1528,9 +1557,6 @@ export const ExtensionStateContextProvider: React.FC<{
 			liteLlmModels,
 			openAiModels,
 			requestyModels,
-			groqModelsState,
-			basetenModelsState,
-			huggingFaceModels,
 			mcpServers,
 			mcpMarketplaceCatalog,
 			totalTasksSize,

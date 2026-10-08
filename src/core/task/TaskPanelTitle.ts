@@ -37,6 +37,28 @@ export function formatTaskPanelTitle({ taskTitle, checklist }: TaskPanelTitleOpt
 	return `${baseTitle}${checklist ? formatProgress(checklist) : ""}`
 }
 
+export interface TaskPanelTitleSources {
+	/** Text of the persisted `task` row, which exists only once the start input was admitted. */
+	taskRow?: string | null
+	/** Text the task was created with; known synchronously, before the `task` row exists. */
+	initialTask?: string | null
+	/** Task text of a read-only history display session. */
+	historyTask?: string | null
+	checklist?: string | null
+}
+
+/**
+ * Resolve the editor-panel title from every source a task can have.
+ *
+ * A new task starts in the background, so the first title sync runs before the
+ * `task` row is written; without the initial text the tab keeps the fallback
+ * title for the whole task.
+ */
+export function resolveTaskPanelTitle({ taskRow, initialTask, historyTask, checklist }: TaskPanelTitleSources): string {
+	const taskTitle = [taskRow, initialTask, historyTask].find((text) => text?.trim())
+	return formatTaskPanelTitle({ taskTitle, checklist })
+}
+
 /** Normalize a title supplied by any panel entry point while preserving a progress suffix. */
 export function normalizeTaskPanelTitle(title: string): string {
 	const normalizedTitle = title.trim() || PANEL_TITLE_FALLBACK

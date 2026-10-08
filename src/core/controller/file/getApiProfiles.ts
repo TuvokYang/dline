@@ -41,6 +41,7 @@ import {
 import { PROFILE_PROVIDER_KEYS } from "@shared/providers/profile-model-info"
 import { declaredServerTools } from "@shared/providers/server-tool-switches"
 import { Logger } from "@shared/services/Logger"
+import { writeFileAtomic } from "@shared/storage/atomic-file"
 import { ProviderToApiKeyMap } from "@shared/storage/provider-keys"
 import fsSync from "fs"
 import fs from "fs/promises"
@@ -121,43 +122,16 @@ export function invalidateApiProfilesReadCache(filePath?: string): void {
 	apiProfilesReadCache = undefined
 }
 
-const ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS = [20, 50, 100, 200, 500]
-
-function isRetryableRenameError(error: unknown): boolean {
-	const code = (error as NodeJS.ErrnoException)?.code
-	return code === "EPERM" || code === "EBUSY" || code === "EACCES"
-}
-
-async function renameWithRetry(tmpPath: string, filePath: string): Promise<void> {
-	for (let attempt = 0; ; attempt++) {
-		try {
-			await fs.rename(tmpPath, filePath)
-			return
-		} catch (error) {
-			if (!isRetryableRenameError(error) || attempt >= ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS.length) {
-				throw error
-			}
-			await new Promise((resolve) => setTimeout(resolve, ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS[attempt]))
-		}
-	}
-}
-
-async function atomicWriteApiProfilesFile(filePath: string, data: string): Promise<void> {
-	const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.json`
-	try {
-		await fs.writeFile(tmpPath, data, "utf8")
-		await renameWithRetry(tmpPath, filePath)
-	} catch (error) {
-		fs.unlink(tmpPath).catch(() => {})
-		throw error
-	}
-}
+/**
+ * Every open window watches and re-reads the catalog, so a reader can hold the file longer than
+ * the default rename budget allows.
+ */
+const API_PROFILES_RENAME_RETRY_DELAYS_MS = [20, 50, 100, 200, 500] as const
 
 async function persistApiProfilesFile(filePath: string, profiles: ApiProfile[]): Promise<void> {
 	await persistProviderSecrets(profiles)
-	const data = JSON.stringify(serializeApiProfilesForStorage(profiles), null, "\t")
-	await fs.mkdir(path.dirname(filePath), { recursive: true })
-	await atomicWriteApiProfilesFile(filePath, data)
+	const data = `${JSON.stringify(serializeApiProfilesForStorage(profiles), null, "\t")}\n`
+	await writeFileAtomic(filePath, data, { renameRetryDelaysMs: API_PROFILES_RENAME_RETRY_DELAYS_MS })
 	invalidateApiProfilesReadCache(filePath)
 }
 
@@ -757,13 +731,9 @@ export async function getApiProfiles(controller: Controller, _request: EmptyRequ
 	} catch (err: any) {
 		if (err.code === "ENOENT") {
 			const initializeStartedAt = performance.now()
-			// Try migration from providers first, then fall back to legacy config
-			let profiles = await migrateFromProviders(controller)
+			// Profiles are created from the providers configured before profiles existed.
+			const profiles = await migrateFromProviders(controller)
 			Logger.log(`[getApiProfiles] migrateFromProviders returned ${profiles.length} profiles`)
-			if (profiles.length === 0) {
-				profiles = initializeFromApiConfig(controller)
-				Logger.log(`[getApiProfiles] initializeFromApiConfig returned ${profiles.length} profiles`)
-			}
 			await hydrateModelInfoFromRegistry(profiles)
 			await saveProfilesToFile(filePath, profiles)
 			// Flush any pending globalState writes before ensureProfileDefaults
@@ -935,38 +905,6 @@ async function migrateFromProviders(controller: Controller): Promise<ApiProfile[
 		Logger.log(`[migrateFromProviders] Migrated API key for ${providerName}`)
 	}
 
-	return profiles
-}
-
-/**
- * @deprecated Use ensureProfileDefaults and profile-driven model selection instead.
- * Reads legacy apiConfiguration via StateManager to create initial ApiProfiles.
- */
-function initializeFromApiConfig(controller: Controller): ApiProfile[] {
-	const config = controller.stateManager.getApiConfiguration() as Record<string, unknown> | undefined
-	if (!config) return []
-	const profiles: ApiProfile[] = []
-	const modes = [
-		{ mode: "plan", prefix: "planMode" },
-		{ mode: "act", prefix: "actMode" },
-	]
-	for (const { mode, prefix } of modes) {
-		const provider = config[`${prefix}ApiProvider`]
-		const modelId = config[`${prefix}ApiModelId`]
-		if (provider && modelId) {
-			profiles.push(
-				ApiProfile.create({
-					id: crypto.randomUUID(),
-					name: `${provider}:${modelId}`,
-					provider: String(provider),
-					apiKey: "",
-					modelId: String(modelId),
-					usedFor: [mode],
-					enabled: true,
-				}),
-			)
-		}
-	}
 	return profiles
 }
 

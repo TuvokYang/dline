@@ -46,7 +46,7 @@ export async function deleteSubagentFile(controller: Controller, request: Delete
 		localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "subagents"))
 	}
 	if (controller.task) {
-		await controller.task.flushPromptFreshnessInvalidation("capability_mutation")
+		await controller.task.owners.prompt.flush("capability_mutation")
 	} else {
 		await controller.postStateToWebview()
 	}

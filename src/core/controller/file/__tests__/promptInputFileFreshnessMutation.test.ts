@@ -1,3 +1,4 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { CreateSkillRequest, DeleteSkillRequest, RuleFileRequest } from "@shared/proto/dline/file"
 import fs from "fs/promises"
 import os from "os"
@@ -84,7 +85,7 @@ describe("Prompt input file freshness mutations", () => {
 					mutateScopedCapabilityToggles: vi.fn().mockResolvedValue(localSkillsToggles),
 					setWorkspaceState: vi.fn(),
 				},
-				task: { flushPromptFreshnessInvalidation },
+				task: createSessionFixture({ owners: { prompt: { flush: flushPromptFreshnessInvalidation } } }),
 				postStateToWebview,
 			} as never,
 			flushPromptFreshnessInvalidation,

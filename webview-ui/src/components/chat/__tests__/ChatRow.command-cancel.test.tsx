@@ -16,11 +16,12 @@ vi.mock("@/context/ExtensionStateContext", () => ({
 		vscodeTerminalExecutionMode: "backgroundExec",
 		clineMessages: [],
 		showFeatureTips: false,
+		// A running task has a canonical view but may not have a history item yet.
 		taskViewState: {
 			taskId: "task-1",
 			taskInstanceId: "task-instance-1",
 		},
-		currentTaskItem: { id: "task-1" },
+		currentTaskItem: undefined,
 	}),
 }))
 

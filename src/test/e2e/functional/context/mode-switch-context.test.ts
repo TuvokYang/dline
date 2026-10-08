@@ -3,6 +3,12 @@ import * as path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import {
+	readTaskConversationText,
+	readTaskInteractionView,
+	readTaskUiMessagesText,
+	type TaskInteractionView,
+} from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type TestInfo } from "@playwright/test"
 import { MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
 import type { ElectronApplication } from "playwright"
@@ -17,18 +23,6 @@ interface StoredProfile {
 			contextWindow?: number
 		}
 	}
-}
-
-interface StoredCompletionSnapshot {
-	phase?: string
-	completion?: { completionId?: string }
-	interaction?: {
-		interactionId?: string
-		kind?: string
-		status?: string
-	}
-	anchor?: { interactionId?: string }
-	turn?: { blocks?: Array<{ dlineTid?: string; phase?: string; toolName?: string }> }
 }
 
 const COMPACT_SIGNAL = "__dline_mode_switch_compact__"
@@ -374,6 +368,18 @@ async function captureContextWindowEvidence(sidebar: Frame, testInfo: TestInfo, 
 	await captureLocatorEvidence(sidebar.getByTestId("context-window-indicator"), testInfo, name)
 }
 
+/**
+ * Wait until the completion dialog is open and can take a reply.
+ *
+ * `attempt_completion` publishes its text before its checkpoint and hooks
+ * settle, and only the opened dialog can take a transition draft as its reply.
+ * A switch made in between leaves the draft in the composer for the user to
+ * send, which is what these tests are not about.
+ */
+async function waitForCompletionDialog(sidebar: Frame): Promise<void> {
+	await expect(sidebar.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible({ timeout: 60_000 })
+}
+
 async function confirmManualCompaction(sidebar: Frame, summary: string): Promise<void> {
 	await expect(sidebar.getByText(summary, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 	const confirmButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
@@ -393,20 +399,20 @@ async function taskDirectoryIds(dlineDocsDir: string): Promise<string[]> {
 	}
 }
 
-async function readCompletionSnapshot(dlineDocsDir: string, taskId: string): Promise<StoredCompletionSnapshot> {
-	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8"))
+async function readCompletionSnapshot(dlineDocsDir: string, taskId: string): Promise<TaskInteractionView> {
+	return readTaskInteractionView(dlineDocsDir, taskId)
 }
 
-function completionSnapshotState(snapshot: StoredCompletionSnapshot) {
-	const completionBlock = snapshot.turn?.blocks?.find((block) => block.toolName === "attempt_completion")
+// The completion turns here call only `attempt_completion`, so it is the turn-ending block.
+function completionSnapshotState(snapshot: TaskInteractionView) {
 	return {
 		phase: snapshot.phase,
-		completionId: snapshot.completion?.completionId,
-		interactionId: snapshot.interaction?.interactionId,
-		interactionKind: snapshot.interaction?.kind,
-		interactionStatus: snapshot.interaction?.status,
-		anchorInteractionId: snapshot.anchor?.interactionId,
-		completionBlockId: completionBlock?.dlineTid,
+		completionId: snapshot.completionId,
+		interactionId: snapshot.interactionId,
+		interactionKind: snapshot.interactionKind,
+		interactionStatus: snapshot.interactionStatus,
+		anchorInteractionId: snapshot.anchorInteractionId,
+		completionBlockId: snapshot.blockId,
 	}
 }
 
@@ -535,8 +541,7 @@ e2e(
 
 			const [taskId] = await taskDirectoryIds(dlineDocsDir)
 			if (!taskId) throw new Error("Profile switch E2E task directory was not created")
-			const apiHistoryPath = path.join(dlineDocsDir, "tasks", taskId, "api_conversation_history.jsonl")
-			const committedApiHistory = await readFile(apiHistoryPath, "utf8")
+			const committedApiHistory = await readTaskConversationText(dlineDocsDir, taskId)
 			expect(committedApiHistory).toContain("E2E_PROFILE_COMPACTION_TASK")
 			expect(committedApiHistory).toContain("E2E_PROFILE_COMPACTION_HISTORY_READY")
 			expect(committedApiHistory).toContain("E2E_PROFILE_COMPACTION_LATEST")
@@ -682,6 +687,7 @@ e2e(
 			await expect(sidebar.getByText("E2E_SAME_PROFILE_READY", { exact: false }).last()).toBeVisible({
 				timeout: 60_000,
 			})
+			await waitForCompletionDialog(sidebar)
 
 			const input = sidebar.getByTestId("chat-input")
 			await input.fill("E2E_SAME_PROFILE_PLAN_DRAFT")
@@ -893,6 +899,7 @@ e2e(
 			const { sidebar } = await openSidebar(app, helper)
 			await sendTask(sidebar, "E2E_SMALLER_FITS_TASK")
 			await expect(sidebar.getByText("E2E_SMALLER_FITS_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await waitForCompletionDialog(sidebar)
 
 			await sidebar.getByTestId("chat-input").fill("E2E_SMALLER_FITS_PLAN_DRAFT")
 			await sidebar.getByTestId("mode-switch").evaluate((element) => element.click())
@@ -2092,9 +2099,8 @@ e2e(
 
 			const [taskId] = await taskDirectoryIds(dlineDocsDir)
 			if (!taskId) throw new Error("DeepSeek pressure E2E task directory was not created")
-			const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
-			const apiHistory = await readFile(path.join(taskDirectory, "api_conversation_history.jsonl"), "utf8")
-			const uiMessages = await readFile(path.join(taskDirectory, "ui_messages.jsonl"), "utf8")
+			const apiHistory = await readTaskConversationText(dlineDocsDir, taskId)
+			const uiMessages = await readTaskUiMessagesText(dlineDocsDir, taskId)
 			expect(apiHistory).not.toContain(summary)
 			for (const file of [...seedFiles, ...protectedFiles]) expect(apiHistory).toContain(file.marker)
 			expect(uiMessages).toContain(summary)
@@ -2187,9 +2193,16 @@ e2e(
 			await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(3)
 			const finalRequest = server.getMockConsumptions("deepseek-chat")[2]
 			expect(finalRequest.contractError).toBeUndefined()
-			expect(finalRequest.requestToolResults).not.toContainEqual(
-				expect.objectContaining({ callId: "call_deepseek_near_limit_ready" }),
-			)
+			// The reply reached the conversation after the model last spoke, so it
+			// is protected continuation (WS-010 §2): never summarized unseen, and
+			// carried verbatim, once, as the result of the call it answers.
+			const reply = "E2E_DEEPSEEK_NEAR_LIMIT_CONTINUE"
+			expect(JSON.stringify(summaryRequest.requestBody)).not.toContain(reply)
+			expect(
+				finalRequest.requestToolResults.filter((result) => result.callId === "call_deepseek_near_limit_ready"),
+			).toEqual([expect.objectContaining({ content: expect.stringContaining(reply) })])
+			expect(finalRequest.requestToolPairing.complete).toBe(true)
+			expect(JSON.stringify(finalRequest.requestBody).split(reply)).toHaveLength(2)
 			await expectCompactionSummary(sidebar, "E2E_DEEPSEEK_NEAR_LIMIT_SUMMARY preserves the task and latest request.")
 			await expect
 				.poll(async () =>

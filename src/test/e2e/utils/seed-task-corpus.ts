@@ -1,6 +1,6 @@
 import { mkdir, open, stat } from "node:fs/promises"
 import * as path from "node:path"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { seedLegacyTaskHistory } from "./task-history-store"
@@ -82,8 +82,8 @@ export async function seedTaskCorpus(dlineDocsDir: string, options: SeedTaskCorp
 	}
 }
 
-function createUiMessages(title: string, baseTimestamp: number, count: number, payloadBytes: number): ClineMessage[] {
-	const messages: ClineMessage[] = [{ ts: baseTimestamp, type: "say", say: "task", text: title }]
+function createUiMessages(title: string, baseTimestamp: number, count: number, payloadBytes: number): UiMessage[] {
+	const messages: UiMessage[] = [{ ts: baseTimestamp, type: "say", say: "task", text: title }]
 	for (let index = 1; index < count; index++) {
 		messages.push({
 			ts: baseTimestamp + index,

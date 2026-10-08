@@ -1,6 +1,7 @@
 import * as diskStorage from "@core/storage/disk"
 import * as remoteConfigFetch from "@core/storage/remote-config/fetch"
 import * as remoteConfigUtils from "@core/storage/remote-config/utils"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import * as assert from "assert"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 // sinon import removed: using vitest globals
@@ -322,7 +323,7 @@ describe("fetchRemoteConfig", () => {
 				getGlobalStateKey: (key: string) => globalState.get(key),
 			},
 			mcpHub: {},
-			task: { flushPromptFreshnessInvalidation },
+			task: createSessionFixture({ owners: { prompt: { flush: flushPromptFreshnessInvalidation } } }),
 			postStateToWebview: vi.fn(),
 		}
 
@@ -364,7 +365,7 @@ describe("fetchRemoteConfig", () => {
 				getGlobalStateKey: (key: string) => globalState.get(key),
 			},
 			mcpHub: {},
-			task: { flushPromptFreshnessInvalidation },
+			task: createSessionFixture({ owners: { prompt: { flush: flushPromptFreshnessInvalidation } } }),
 			postStateToWebview: vi.fn(),
 		}
 

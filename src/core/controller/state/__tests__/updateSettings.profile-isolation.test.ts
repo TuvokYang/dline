@@ -1,3 +1,4 @@
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { PlanActMode, UpdateSettingsRequest, UpdateTaskSettingsRequest } from "@shared/proto/dline/state"
 import { expect } from "chai"
 import { describe, it, vi } from "vitest"
@@ -23,11 +24,10 @@ function createController(): {
 			getGlobalSettingsKey: vi.fn((key: string) => (key === "planActSeparateModelsSetting" ? true : undefined)),
 			clearTaskSetting,
 		},
-		task: {
+		task: createSessionFixture({
 			taskId: "history-task",
-			rebuildApiHandler,
-			flushPromptFreshnessInvalidation: vi.fn().mockResolvedValue(undefined),
-		},
+			owners: { api: { rebuild: rebuildApiHandler } },
+		}),
 		restartAccountUsagePolling: vi.fn(),
 		postStateToWebview: vi.fn().mockResolvedValue(undefined),
 	} as unknown as Controller
@@ -47,7 +47,7 @@ describe("updateSettings profile isolation", () => {
 	})
 
 	it("collapses active task bindings when Profile split is disabled", async () => {
-		const commitProfileBindings = vi.fn().mockResolvedValue(undefined)
+		const setProfileIdentityBindings = vi.fn()
 		const controller = {
 			configureGlobalComponents: vi.fn().mockResolvedValue({ components: [], durationMs: 0 }),
 			stateManager: {
@@ -57,23 +57,23 @@ describe("updateSettings profile isolation", () => {
 				getCanonicalSettingsKey: vi.fn((key: string) => (key === "planActSeparateModelsSetting" ? true : undefined)),
 				getGlobalSettingsKey: vi.fn((key: string) => (key === "planActSeparateModelsSetting" ? true : undefined)),
 			},
-			task: {
-				commitProfileBindings,
-				flushPromptFreshnessInvalidation: vi.fn().mockResolvedValue(undefined),
-				taskSm: {
-					mode: "act",
-					actModeProfileId: "act-profile-id",
-					actModeProfile: "act-profile",
+			task: createSessionFixture({
+				owners: {
+					settings: {
+						mode: "act",
+						actModeProfileId: "act-profile-id",
+						actModeProfile: "act-profile",
+						setProfileIdentityBindings,
+					},
 				},
-			},
+			}),
 			postStateToWebview: vi.fn().mockResolvedValue(undefined),
 		} as unknown as Controller
 
 		await updateSettings(controller, UpdateSettingsRequest.create({ planActSeparateModelsSetting: false }))
 
-		expect(commitProfileBindings.mock.calls).to.deep.equal([
-			[{ profileId: "act-profile-id", profileName: "act-profile" }, ["plan", "act"]],
-		])
+		const binding = { profileId: "act-profile-id", profileName: "act-profile" }
+		expect(setProfileIdentityBindings.mock.calls).to.deep.equal([[{ plan: binding, act: binding }]])
 	})
 
 	it("stores the image profile without synchronizing plan or act profiles", async () => {
@@ -119,11 +119,10 @@ describe("updateTaskSettings account usage", () => {
 				setTaskSettingsBatch: vi.fn(),
 				setTaskSettings: vi.fn(),
 			},
-			task: {
+			task: createSessionFixture({
 				taskId: "task-1",
-				rebuildApiHandler,
-				flushPromptFreshnessInvalidation: vi.fn().mockResolvedValue(undefined),
-			},
+				owners: { api: { rebuild: rebuildApiHandler } },
+			}),
 			restartAccountUsagePolling,
 			postStateToWebview: vi.fn().mockResolvedValue(undefined),
 		} as unknown as Controller

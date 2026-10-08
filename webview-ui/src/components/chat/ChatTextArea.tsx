@@ -1,6 +1,7 @@
 import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT, getChatInputSendShortcutLabel } from "@shared/ChatInputSendShortcut"
-import { mentionRegex, mentionRegexGlobal } from "@shared/context-mentions"
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import { mentionRegex } from "@shared/context-mentions"
+import type { UiAsk } from "@shared/ExtensionMessage"
+import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { EmptyRequest, StringRequest } from "@shared/proto/dline/common"
 import {
 	FileSearchRequest,
@@ -24,14 +25,27 @@ import { type ModeSwitchDraft, shouldAttachModeSwitchDraft, useModeSwitch } from
 import SlashCommandMenu from "@/components/chat/SlashCommandMenu"
 import ModelSwitcher from "@/components/chat/task-header/ModelSwitcher"
 import Thumbnails from "@/components/common/Thumbnails"
-import { getModeSpecificFields, normalizeApiConfiguration } from "@/components/settings/utils/providerUtils"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { usePlatform } from "@/context/PlatformContext"
 import { useTaskCapabilityToggles } from "@/hooks/useTaskCapabilityToggles"
 import { cn } from "@/lib/utils"
 import { FileServiceClient, SlashServiceClient } from "@/services/grpc-client"
-import { shouldSendChatInput } from "@/utils/chat-input-shortcut"
+import { renderSemanticHighlightHtml } from "@/services/input-semantics/highlight"
+import { classifyPaste } from "@/services/input-semantics/paste-intent"
+import {
+	composeSubmission,
+	confirmRange,
+	followNativePaste,
+	heldPastedCandidates,
+	newComposerDocumentId,
+	type PasteProvenance,
+	pasteAwareActivation,
+	rebaseProvenance,
+	recordPaste,
+} from "@/services/input-semantics/paste-provenance"
+import { storeOversizedPaste } from "@/services/input-semantics/paste-resource"
+import { shouldCompleteMenuSelection, shouldSendChatInput } from "@/utils/chat-input-shortcut"
 import {
 	classifyTransferFiles,
 	isDocumentAttachmentUri,
@@ -57,8 +71,6 @@ import {
 	sectionToPrefix,
 	shouldShowSlashCommandsMenu,
 	slashCommandDeleteRegex,
-	slashCommandRegexGlobal,
-	validateSlashCommand,
 } from "@/utils/slash-commands"
 import ClineRulesToggleModal from "../agent-capabilities/ClineRulesToggleModal"
 import { CHAT_INPUT_MIN_ROWS, CHAT_INPUT_PADDING_Y_PX, chatInputMaxRows } from "./chat-input-height"
@@ -111,9 +123,15 @@ interface ChatTextAreaProps {
 	onSendBlocked?: (draft: ModeSwitchDraft) => void
 	onSelectFilesAndImages: () => void
 	shouldDisableFilesAndImages: boolean
-	clineAsk?: ClineAsk
+	clineAsk?: UiAsk
 	onHeightChange?: (height: number) => void
 	onFocusChange?: (isFocused: boolean) => void
+	/** Pasted spans of `inputValue`, owned by the draft state (WS-041 AC-09). */
+	pasteProvenance: PasteProvenance
+	/** Record the provenance of an edit this composer observed. */
+	commitPasteProvenance: (provenance: PasteProvenance) => void
+	/** The catalog every submission of this view is composed against. */
+	semanticCatalog: InputSemanticCatalog
 }
 
 interface GitCommit {
@@ -248,6 +266,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			clineAsk,
 			onHeightChange,
 			onFocusChange,
+			pasteProvenance,
+			commitPasteProvenance,
+			semanticCatalog,
 		},
 		ref,
 	) => {
@@ -255,8 +276,6 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			mode,
 			modeSwitch,
 			stateRevision,
-			apiConfiguration,
-			openRouterModels,
 			platform,
 			chatInputSendShortcut,
 			localWorkflowToggles,
@@ -379,6 +398,36 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		const textAreaRef = useRef<HTMLTextAreaElement | null>(null)
 		const [isMouseDownOnMenu, setIsMouseDownOnMenu] = useState(false)
 		const highlightLayerRef = useRef<HTMLDivElement>(null)
+		// A text paste the browser inserts natively, applied by the change it causes.
+		const pendingNativePasteRef = useRef<{ start: number; end: number; text: string } | undefined>(undefined)
+		// The draft's provenance as of the last render. Change handlers are
+		// memoized, so they read it here rather than from a stale closure.
+		const provenanceRef = useRef(pasteProvenance)
+		provenanceRef.current = pasteProvenance
+		/** Provenance of `text`, carried forward from the draft's current state. */
+		const provenanceOf = useCallback((text: string) => rebaseProvenance(provenanceRef.current, text), [])
+		const heldCandidates = useMemo(
+			() => heldPastedCandidates(pasteProvenance.text, semanticCatalog, pasteProvenance.spans),
+			[pasteProvenance, semanticCatalog],
+		)
+		/** The draft one send carries; a held pasted candidate travels as a structured document. */
+		const captureSendDraft = useCallback(
+			(text: string) => {
+				const { semanticInput } = composeSubmission({
+					text,
+					spans: rebaseProvenance(pasteProvenance, text).spans,
+					catalog: semanticCatalog,
+					documentId: newComposerDocumentId(),
+				})
+				return {
+					text,
+					images: [...selectedImages],
+					files: [...selectedFiles],
+					...(semanticInput ? { semanticInput } : {}),
+				}
+			},
+			[pasteProvenance, semanticCatalog, selectedImages, selectedFiles],
+		)
 		const [selectedMenuIndex, setSelectedMenuIndex] = useState(-1)
 		const [selectedType, setSelectedType] = useState<ContextMenuOptionType | null>(null)
 		const [justDeletedSpaceAfterMention, setJustDeletedSpaceAfterMention] = useState(false)
@@ -547,6 +596,14 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						queryLength,
 					)
 
+					// Picking from the menu is the user's confirmation (WS-041 AC-09).
+					const confirmedFrom = textAreaRef.current.value
+					commitPasteProvenance(
+						confirmRange(rebaseProvenance(provenanceOf(confirmedFrom), newValue), {
+							start: mentionIndex,
+							end: mentionIndex + 1 + insertValue.length,
+						}),
+					)
 					setInputValue(newValue)
 					const newCursorPosition = newValue.indexOf(" ", mentionIndex + insertValue.length) + 1
 					setCursorPosition(newCursorPosition)
@@ -574,6 +631,14 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						cursorPosition,
 					)
 					const newCursorPosition = newValue.indexOf(" ", commandIndex + 1 + fullName.length) + 1
+					// Picking from the menu is the user's confirmation (WS-041 AC-09).
+					const confirmedFrom = textAreaRef.current.value
+					commitPasteProvenance(
+						confirmRange(rebaseProvenance(provenanceOf(confirmedFrom), newValue), {
+							start: commandIndex,
+							end: commandIndex + 1 + fullName.length,
+						}),
+					)
 
 					setInputValue(newValue)
 					setCursorPosition(newCursorPosition)
@@ -664,7 +729,14 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						return
 					}
 
-					if ((event.key === "Enter" || event.key === "Tab") && selectedSlashCommandsIndex !== -1) {
+					if (
+						shouldCompleteMenuSelection(
+							event,
+							chatInputSendShortcut ?? DEFAULT_CHAT_INPUT_SEND_SHORTCUT,
+							isComposing,
+						) &&
+						selectedSlashCommandsIndex !== -1
+					) {
 						event.preventDefault()
 						const commands = getMatchingSlashCommands(
 							slashCommandsQuery,
@@ -727,7 +799,14 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 						})
 						return
 					}
-					if ((event.key === "Enter" || event.key === "Tab") && selectedMenuIndex !== -1) {
+					if (
+						shouldCompleteMenuSelection(
+							event,
+							chatInputSendShortcut ?? DEFAULT_CHAT_INPUT_SEND_SHORTCUT,
+							isComposing,
+						) &&
+						selectedMenuIndex !== -1
+					) {
 						event.preventDefault()
 						const selectedOption = getContextMenuOptions(searchQuery, selectedType, queryItems, fileSearchResults)[
 							selectedMenuIndex
@@ -748,11 +827,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				if (shouldSendChatInput(event, chatInputSendShortcut ?? DEFAULT_CHAT_INPUT_SEND_SHORTCUT, isComposing)) {
 					event.preventDefault()
 
-					const capturedDraft = {
-						text: event.currentTarget.value,
-						images: [...selectedImages],
-						files: [...selectedFiles],
-					}
+					const capturedDraft = captureSendDraft(event.currentTarget.value)
 					if (!sendingDisabled) {
 						setIsTextAreaFocused(false)
 						onSend(capturedDraft)
@@ -906,12 +981,19 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			(e: React.ChangeEvent<HTMLTextAreaElement>) => {
 				const newValue = e.target.value
 				const newCursorPosition = e.target.selectionStart
+				const nativePaste = pendingNativePasteRef.current
+				pendingNativePasteRef.current = undefined
+				const base = provenanceRef.current
+				const nextProvenance = nativePaste
+					? followNativePaste(base, nativePaste, newValue)
+					: rebaseProvenance(base, newValue)
 				// A backend turn-end render can arrive in the same frame as a DOM input
 				// event. Commit the controlled value before that external render can
 				// reconcile the textarea from the preceding character and drop the key.
 				flushSync(() => {
 					setInputValue(newValue)
 					setCursorPosition(newCursorPosition)
+					commitPasteProvenance(nextProvenance)
 				})
 				let showMenu = shouldShowContextMenu(newValue, newCursorPosition)
 				const showSlashCommandsMenu = shouldShowSlashCommandsMenu(newValue, newCursorPosition)
@@ -1085,124 +1167,147 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 			[appendAttachmentPaths],
 		)
 
-		const handlePaste = useCallback(
-			async (e: React.ClipboardEvent) => {
-				const items = e.clipboardData.items
-
-				// Files copied in a file manager arrive as clipboard files (images keep the image path below).
-				const pastedFiles = classifyTransferFiles(Array.from(e.clipboardData.files ?? []))
-				if (pastedFiles.attachments.length > 0 || (pastedFiles.rejected.length > 0 && pastedFiles.images.length === 0)) {
-					if (pastedFiles.rejected.length > 0) {
-						showUnsupportedFileErrorMessage()
+		// A paste the composer took over still lands where the browser would have
+		// put it. The textarea is read at insertion time rather than from the
+		// render closure, because an oversized paste falls back only after the
+		// host answers and the user may have typed in the meantime.
+		const insertAtCursor = useCallback(
+			(text: string, origin: "paste" | "typed" = "typed") => {
+				const element = textAreaRef.current
+				const value = element?.value ?? inputValue
+				const start = element?.selectionStart ?? cursorPosition
+				const end = element?.selectionEnd ?? start
+				const nextValue = value.slice(0, start) + text + value.slice(end)
+				// Text the clipboard supplied stays held even when the composer, not
+				// the browser, inserts it (WS-041 AC-09).
+				const base = provenanceOf(value)
+				commitPasteProvenance(
+					origin === "paste" ? recordPaste(base, start, end, text) : rebaseProvenance(base, nextValue),
+				)
+				setInputValue(nextValue)
+				const newCursorPosition = start + text.length
+				setCursorPosition(newCursorPosition)
+				setIntendedCursorPosition(newCursorPosition)
+				setShowContextMenu(false)
+				// Scroll to the new caret without losing focus.
+				setTimeout(() => {
+					if (textAreaRef.current) {
+						textAreaRef.current.setSelectionRange(newCursorPosition, newCursorPosition)
+						textAreaRef.current.scrollTop = textAreaRef.current.scrollHeight
 					}
-					if (pastedFiles.attachments.length > 0) {
-						e.preventDefault()
-						if (!shouldDisableFilesAndImages) {
-							await stageAttachmentFiles(pastedFiles.attachments)
-						}
-						if (pastedFiles.images.length === 0) {
-							return
-						}
-					}
-				}
+				}, 0)
+			},
+			[commitPasteProvenance, cursorPosition, inputValue, provenanceOf, setInputValue],
+		)
 
-				const pastedText = e.clipboardData.getData("text")
-				// Linux file managers copy files as file:// URIs in the text payload.
-				const pastedFileUris = parseAttachableFileUris(pastedText)
-				if (pastedFileUris.length > 0) {
-					e.preventDefault()
-					if (!shouldDisableFilesAndImages) {
-						await attachFileUris(pastedFileUris)
-					}
-					return
-				}
-				// Check if the pasted content is a URL, add space after so user can easily delete if they don't want it
-				const urlRegex = /^\S+:\/\/\S+$/
-				if (urlRegex.test(pastedText.trim())) {
-					e.preventDefault()
-					const trimmedUrl = pastedText.trim()
-					const newValue = `${inputValue.slice(0, cursorPosition) + trimmedUrl} ${inputValue.slice(cursorPosition)}`
-					setInputValue(newValue)
-					const newCursorPosition = cursorPosition + trimmedUrl.length + 1
-					setCursorPosition(newCursorPosition)
-					setIntendedCursorPosition(newCursorPosition)
-					setShowContextMenu(false)
-
-					// Scroll to new cursor position without losing focus
-					setTimeout(() => {
-						if (textAreaRef.current) {
-							textAreaRef.current.setSelectionRange(newCursorPosition, newCursorPosition)
-							textAreaRef.current.scrollTop = textAreaRef.current.scrollHeight
-						}
-					}, 0)
-					// NOTE: callbacks dont utilize return function to cleanup, but it's fine since this timeout immediately executes and will be cleaned up by the browser (no chance component unmounts before it executes)
-
-					return
-				}
-
-				const acceptedTypes = ["png", "jpeg", "webp"] // supported by anthropic and openrouter (jpg is just a file extension but the image will be recognized as jpeg)
-				const imageItems = Array.from(items).filter((item) => {
-					const [type, subtype] = item.type.split("/")
-					return type === "image" && acceptedTypes.includes(subtype)
-				})
-				if (!shouldDisableFilesAndImages && imageItems.length > 0) {
-					e.preventDefault()
-					const imagePromises = imageItems.map((item) => {
-						return new Promise<string | null>((resolve) => {
-							const blob = item.getAsFile()
-							if (!blob) {
+		const attachPastedImages = useCallback(
+			async (files: readonly File[]) => {
+				const readImage = (file: File) =>
+					new Promise<string | null>((resolve) => {
+						const reader = new FileReader()
+						reader.onloadend = async () => {
+							const result = reader.result
+							if (reader.error || typeof result !== "string") {
+								if (reader.error) console.error("Error reading file:", reader.error)
 								resolve(null)
 								return
 							}
-							const reader = new FileReader()
-							reader.onloadend = async () => {
-								if (reader.error) {
-									console.error("Error reading file:", reader.error)
-									resolve(null)
-								} else {
-									const result = reader.result
-									if (typeof result === "string") {
-										try {
-											await getImageDimensions(result)
-											resolve(result)
-										} catch (error) {
-											console.warn((error as Error).message)
-											showDimensionErrorMessage()
-											resolve(null)
-										}
-									} else {
-										resolve(null)
-									}
-								}
+							try {
+								await getImageDimensions(result)
+								resolve(result)
+							} catch (error) {
+								console.warn((error as Error).message)
+								showDimensionErrorMessage()
+								resolve(null)
 							}
-							reader.readAsDataURL(blob)
-						})
-					})
-					const imageDataArray = await Promise.all(imagePromises)
-					const dataUrls = imageDataArray.filter((dataUrl): dataUrl is string => dataUrl !== null)
-					//.map((dataUrl) => dataUrl.split(",")[1]) // strip the mime type prefix, sharp doesn't need it
-					if (dataUrls.length > 0) {
-						const filesAndImagesLength = selectedImages.length + selectedFiles.length
-						const availableSlots = MAX_IMAGES_AND_FILES_PER_MESSAGE - filesAndImagesLength
-
-						if (availableSlots > 0) {
-							const imagesToAdd = Math.min(dataUrls.length, availableSlots)
-							setSelectedImages((prevImages) => [...prevImages, ...dataUrls.slice(0, imagesToAdd)])
 						}
-					} else {
-						console.warn("No valid images were processed")
+						reader.readAsDataURL(file)
+					})
+				const dataUrls = (await Promise.all(files.map(readImage))).filter(
+					(dataUrl): dataUrl is string => dataUrl !== null,
+				)
+				if (dataUrls.length === 0) {
+					console.warn("No valid images were processed")
+					return
+				}
+				const availableSlots = MAX_IMAGES_AND_FILES_PER_MESSAGE - (selectedImages.length + selectedFiles.length)
+				if (availableSlots > 0) setSelectedImages((prevImages) => [...prevImages, ...dataUrls.slice(0, availableSlots)])
+			},
+			[selectedImages.length, selectedFiles.length, setSelectedImages, showDimensionErrorMessage],
+		)
+
+		const handlePaste = useCallback(
+			async (e: React.ClipboardEvent) => {
+				const pastedText = e.clipboardData.getData("text")
+				// Files copied in a file manager arrive as clipboard files, or on Linux as
+				// file:// URIs in the text payload; images keep the image intent below.
+				const pastedFiles = classifyTransferFiles(Array.from(e.clipboardData.files ?? []))
+				const pastedFileUris = parseAttachableFileUris(pastedText)
+				const reportsRejected =
+					pastedFiles.rejected.length > 0 && (pastedFiles.attachments.length > 0 || pastedFiles.images.length === 0)
+				if (reportsRejected) showUnsupportedFileErrorMessage()
+				if (pastedFiles.attachments.length > 0 || pastedFileUris.length > 0) {
+					// Claimed before the first await: the browser pastes as soon as this handler yields.
+					e.preventDefault()
+					if (!shouldDisableFilesAndImages) {
+						if (pastedFiles.attachments.length > 0) await stageAttachmentFiles(pastedFiles.attachments)
+						else await attachFileUris(pastedFileUris)
 					}
+					if (pastedFiles.images.length > 0 && !shouldDisableFilesAndImages)
+						await attachPastedImages(pastedFiles.images)
+					return
+				}
+				const intent = classifyPaste(pastedText, Array.from(e.clipboardData.items), {
+					attachmentsEnabled: !shouldDisableFilesAndImages,
+					hasFreeSlot: selectedImages.length + selectedFiles.length < MAX_IMAGES_AND_FILES_PER_MESSAGE,
+				})
+				if (intent.kind === "native") {
+					// The browser inserts the text; the change it causes records where.
+					const element = textAreaRef.current
+					if (element && pastedText) {
+						const { selectionStart: start, selectionEnd: end, value } = element
+						// Pasting exactly the selected text changes nothing, so no change
+						// event follows; the pasted origin must be recorded right here.
+						if (value.slice(start, end) === pastedText) {
+							pendingNativePasteRef.current = undefined
+							commitPasteProvenance(recordPaste(provenanceOf(value), start, end, pastedText))
+							return
+						}
+						pendingNativePasteRef.current = { start, end, text: pastedText }
+					}
+					return
+				}
+				// The browser applies its default paste as soon as this handler
+				// yields, so a takeover must be claimed before the first await.
+				e.preventDefault()
+				switch (intent.kind) {
+					case "url":
+						// A trailing space lets the user delete the link as one unit.
+						insertAtCursor(`${intent.url} `, "paste")
+						return
+					case "oversized_text": {
+						// An oversized paste becomes a task-owned file so it stays readable
+						// and is not repeated in every later provider request.
+						const stored = await storeOversizedPaste(intent.text)
+						// A declined store keeps what the user pasted instead of dropping it.
+						if (stored) setSelectedFiles((previousFiles) => [...previousFiles, stored.absolutePath])
+						else insertAtCursor(intent.text, "paste")
+						return
+					}
+					case "images":
+						await attachPastedImages(intent.files)
+						return
 				}
 			},
 			[
+				attachPastedImages,
+				commitPasteProvenance,
+				insertAtCursor,
+				provenanceOf,
+				selectedFiles.length,
+				selectedImages.length,
+				setSelectedFiles,
 				shouldDisableFilesAndImages,
-				setSelectedImages,
-				selectedImages,
-				selectedFiles,
-				cursorPosition,
-				setInputValue,
-				inputValue,
-				showDimensionErrorMessage,
 				stageAttachmentFiles,
 				attachFileUris,
 			],
@@ -1236,73 +1341,24 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				return
 			}
 
-			let processedText = textAreaRef.current.value
-				.replace(/\n$/, "\n\n")
-				.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] || c)
-
-			// Very large pastes skip the per-keystroke mention and command scans so typing stays responsive;
+			const value = textAreaRef.current.value
+			// Very large pastes skip the per-keystroke semantic scan so typing stays responsive;
 			// the overlay still mirrors the text so layout and scrolling stay aligned.
-			if (processedText.length > MAX_HIGHLIGHTED_INPUT_LENGTH) {
-				highlightLayerRef.current.innerHTML = processedText
+			if (value.length > MAX_HIGHLIGHTED_INPUT_LENGTH) {
+				highlightLayerRef.current.innerHTML = value
+					.replace(/\n$/, "\n\n")
+					.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] || c)
 				syncHighlightScroll()
 				return
 			}
-
-			// highlight @mentions
-			processedText = processedText.replace(
-				mentionRegexGlobal,
-				'<mark class="mention-context-textarea-highlight">$&</mark>',
-			)
-
-			// Highlight only the FIRST valid /slash-command in the text
-			// Only one slash command is processed per message, so we only highlight the first one
-			slashCommandRegexGlobal.lastIndex = 0
-			let hasHighlightedSlashCommand = false
-			processedText = processedText.replace(slashCommandRegexGlobal, (match, prefix, command) => {
-				// Only highlight the first valid slash command
-				if (hasHighlightedSlashCommand) {
-					return match
-				}
-
-				// Extract just the command name (without the slash)
-				const commandName = command.substring(1)
-				const isValidCommand = validateSlashCommand(
-					commandName,
-					effectiveLocalWorkflowToggles,
-					effectiveGlobalWorkflowToggles,
-					effectiveRemoteWorkflowToggles,
-					remoteConfigSettings?.remoteGlobalWorkflows,
-					effectiveMcpServers,
-					effectiveLocalSkillsToggles,
-					effectiveGlobalSkillsToggles,
-					remoteConfigSettings?.remoteGlobalSkills,
-					effectiveRemoteSkillsToggles,
-					undefined,
-					availableSkillCommands,
-				)
-
-				if (isValidCommand) {
-					hasHighlightedSlashCommand = true
-					// Keep the prefix (whitespace or empty) and wrap the command in highlight
-					return `${prefix}<mark class="mention-context-textarea-highlight">${command}</mark>`
-				}
-				return match
-			})
-
-			highlightLayerRef.current.innerHTML = processedText
+			// The highlight comes from the same catalog and lexer the task admits
+			// with, so an entity stops looking active exactly when it stops acting
+			// as one: an unknown mention, or anything a lifecycle barrier moved
+			// into the pre-message.
+			const spans = provenanceOf(value).spans
+			highlightLayerRef.current.innerHTML = renderSemanticHighlightHtml(value, semanticCatalog, pasteAwareActivation(spans))
 			syncHighlightScroll()
-		}, [
-			syncHighlightScroll,
-			effectiveLocalWorkflowToggles,
-			effectiveGlobalWorkflowToggles,
-			effectiveRemoteWorkflowToggles,
-			effectiveMcpServers,
-			effectiveLocalSkillsToggles,
-			effectiveGlobalSkillsToggles,
-			effectiveRemoteSkillsToggles,
-			remoteConfigSettings,
-			availableSkillCommands,
-		])
+		}, [semanticCatalog, pasteProvenance, provenanceOf, syncHighlightScroll])
 
 		useLayoutEffect(() => {
 			updateHighlights()
@@ -1324,11 +1380,14 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		)
 
 		const attachDraft = shouldAttachModeSwitchDraft(clineAsk)
+		// Composed once per draft content, so an unrelated render neither re-lexes
+		// the text nor hands the switch a new document identity.
+		const modeSwitchDraft = useMemo(() => captureSendDraft(inputValue), [captureSendDraft, inputValue])
 		const modeSwitchFlow = useModeSwitch({
 			mode,
 			stateRevision,
 			modeSwitch,
-			draft: { text: inputValue, images: selectedImages, files: selectedFiles },
+			draft: modeSwitchDraft,
 			attachDraft,
 			submitDraftAfterSwitch: currentTaskItem !== undefined,
 			onSend: (capturedDraft) => onSend(capturedDraft),
@@ -1391,47 +1450,6 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		const handleModelButtonClick = () => {
 			navigateToSettings("api-config")
 		}
-
-		// Get model display name
-		const _modelDisplayName = useMemo(() => {
-			const { selectedProvider, selectedModelId } = normalizeApiConfiguration(apiConfiguration, mode)
-			const {
-				vsCodeLmModelSelector,
-				togetherModelId,
-				lmStudioModelId,
-				ollamaModelId,
-				liteLlmModelId,
-				requestyModelId,
-				vercelAiGatewayModelId,
-			} = getModeSpecificFields(apiConfiguration, mode)
-			const unknownModel = "unknown"
-
-			if (!apiConfiguration) {
-				return unknownModel
-			}
-			switch (selectedProvider) {
-				case "cline":
-					return `${selectedProvider}:${selectedModelId}`
-				case "openai":
-					return `openai-compat:${selectedModelId}`
-				case "vscode-lm":
-					return `vscode-lm:${vsCodeLmModelSelector ? `${vsCodeLmModelSelector.vendor ?? ""}/${vsCodeLmModelSelector.family ?? ""}` : unknownModel}`
-				case "together":
-					return `${selectedProvider}:${togetherModelId}`
-				case "lmstudio":
-					return `${selectedProvider}:${lmStudioModelId}`
-				case "ollama":
-					return `${selectedProvider}:${ollamaModelId}`
-				case "litellm":
-					return `${selectedProvider}:${liteLlmModelId}`
-				case "requesty":
-					return `${selectedProvider}:${requestyModelId}`
-				case "vercel-ai-gateway":
-					return `${selectedProvider}:${vercelAiGatewayModelId || selectedModelId}`
-				default:
-					return `${selectedProvider}:${selectedModelId}`
-			}
-		}, [apiConfiguration, mode])
 
 		// Function to show error message for unsupported files for drag and drop
 		const showUnsupportedFileErrorMessage = () => {
@@ -1598,9 +1616,14 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 		 * @param {string} text - The dropped text.
 		 */
 		const handleTextDrop = (text: string) => {
-			const newValue = inputValue.slice(0, cursorPosition) + text + inputValue.slice(cursorPosition)
+			// The cursor may still point past a draft that was just cleared; insertion
+			// and provenance must use the same, clamped offset.
+			const at = Math.min(Math.max(cursorPosition, 0), inputValue.length)
+			const newValue = inputValue.slice(0, at) + text + inputValue.slice(at)
+			// Dropped text is foreign text, held exactly like a paste (WS-041 AC-09).
+			commitPasteProvenance(recordPaste(provenanceOf(inputValue), at, at, text))
 			setInputValue(newValue)
-			const newCursorPosition = cursorPosition + text.length
+			const newCursorPosition = at + text.length
 			setCursorPosition(newCursorPosition)
 			setIntendedCursorPosition(newCursorPosition)
 		}
@@ -1818,6 +1841,15 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 							Type @ for context, / for slash commands & workflows, hold shift to drag in files/images
 						</div>
 					)}
+					{heldCandidates.length > 0 && (
+						<div
+							aria-live="polite"
+							className="text-xs absolute -top-5 left-4 right-4 truncate text-(--vscode-editorWarning-foreground) z-1"
+							data-testid="pasted-candidate-notice"
+							role="status">
+							{`Pasted ${heldCandidates.join(", ")} will be sent as plain text. Pick it from the menu to run it.`}
+						</div>
+					)}
 					{(selectedImages.length > 0 || selectedFiles.length > 0) && (
 						<Thumbnails
 							files={selectedFiles}
@@ -1848,11 +1880,7 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 								)}
 								data-testid="send-button"
 								onClick={() => {
-									const capturedDraft = {
-										text: textAreaRef.current?.value ?? inputValue,
-										images: [...selectedImages],
-										files: [...selectedFiles],
-									}
+									const capturedDraft = captureSendDraft(textAreaRef.current?.value ?? inputValue)
 									if (!sendingDisabled) {
 										setIsTextAreaFocused(false)
 										onSend(capturedDraft)

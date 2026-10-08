@@ -1,12 +1,12 @@
 import type { CodeExecutionPresentationV1, HostedCodeExecutionOperation } from "@shared/code-execution-tools"
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import { ChevronDownIcon, ChevronRightIcon, TerminalIcon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
 import ToolCardHeader from "./ToolCardHeader"
 
 interface CodeExecutionRowProps {
 	messageType: "ask" | "say"
-	codeExecution?: ClineSayTool["codeExecution"]
+	codeExecution?: UiSayTool["codeExecution"]
 	/** Message-level fallback used when the provider never described the call. */
 	description?: string
 }

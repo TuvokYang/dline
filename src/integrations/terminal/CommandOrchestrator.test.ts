@@ -5,6 +5,7 @@ import { EventEmitter } from "events"
 import { afterEach, describe, it, vi } from "vitest"
 import { Logger } from "@/shared/services/Logger"
 import { orchestrateCommandExecution } from "./CommandOrchestrator"
+import { EXPLICIT_BACKGROUND_START_WINDOW_MS } from "./constants"
 import type {
 	CommandExecutorCallbacks,
 	ITerminalManager,
@@ -121,12 +122,15 @@ describe("CommandOrchestrator background transitions", () => {
 			logFilePath: "C:\\Temp\\background-1.log",
 		}))
 
-		const result = await orchestrateCommandExecution(process.asResultPromise(), createTerminalManager(), createCallbacks(), {
+		const execution = orchestrateCommandExecution(process.asResultPromise(), createTerminalManager(), createCallbacks(), {
 			command: "long-running-command",
 			onOutputLine,
 			onProceedWhileRunning,
 			startInBackground: true,
 		})
+		// A command that starts silently is handed off once the start window passes.
+		await vi.advanceTimersByTimeAsync(EXPLICIT_BACKGROUND_START_WINDOW_MS)
+		const result = await execution
 
 		assert.equal(result.completed, false)
 		assert.equal(result.backgroundCommandId, "background-1")
@@ -138,6 +142,31 @@ describe("CommandOrchestrator background transitions", () => {
 		await Promise.resolve()
 		await Promise.resolve()
 		assert.equal(onOutputLine.mock.calls.length, 0)
+	})
+
+	it("hands an explicit background command off at its first output, carrying that output", async () => {
+		vi.useFakeTimers()
+		const process = new FakeTerminalProcess()
+		const onProceedWhileRunning = vi.fn((_existingOutput: TerminalOutputLine[]) => ({
+			backgroundCommandId: "background-first-output",
+			logFilePath: "C:\\Temp\\background-first-output.log",
+		}))
+		const execution = orchestrateCommandExecution(process.asResultPromise(), createTerminalManager(), createCallbacks(), {
+			command: "server --watch",
+			onProceedWhileRunning,
+			startInBackground: true,
+		})
+
+		await vi.advanceTimersByTimeAsync(EXPLICIT_BACKGROUND_START_WINDOW_MS / 2)
+		// Spawning alone does not report the command as running.
+		assert.equal(onProceedWhileRunning.mock.calls.length, 0)
+		process.emit("line", "listening on 5173", "combined")
+		await vi.advanceTimersByTimeAsync(0)
+		const result = await execution
+
+		assert.equal(result.backgroundCommandId, "background-first-output")
+		const handedOff = onProceedWhileRunning.mock.calls[0]?.[0] ?? []
+		assert.ok(handedOff.some((entry) => entry.line === "listening on 5173"))
 	})
 
 	it("includes output emitted immediately before the automatic handoff", async () => {

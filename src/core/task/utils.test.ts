@@ -1,16 +1,16 @@
 import type { ApiHandler } from "@core/api"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import type { MessageStateHandler } from "./message-state"
 import { updateApiReqMsg } from "./utils"
 
 describe("updateApiReqMsg", () => {
 	it("keeps a valid requested API message index when a later request exists", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{ ts: 1, type: "say", say: "api_req_started", text: JSON.stringify({ request: "current request" }) },
 			{ ts: 2, type: "say", say: "api_req_started", text: JSON.stringify({ request: "later request" }) },
 		]
-		const updateClineMessage = vi.fn(async (index: number, updates: Partial<ClineMessage>) => {
+		const updateClineMessage = vi.fn(async (index: number, updates: Partial<UiMessage>) => {
 			messages[index] = { ...messages[index], ...updates }
 		})
 		const messageStateHandler = {
@@ -41,7 +41,7 @@ describe("updateApiReqMsg", () => {
 	})
 
 	it("replaces estimate provenance with reliable provider usage while preserving the sent estimate", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 1,
 				type: "say",
@@ -53,7 +53,7 @@ describe("updateApiReqMsg", () => {
 				}),
 			},
 		]
-		const updateClineMessage = vi.fn(async (index: number, updates: Partial<ClineMessage>) => {
+		const updateClineMessage = vi.fn(async (index: number, updates: Partial<UiMessage>) => {
 			messages[index] = { ...messages[index], ...updates }
 		})
 		const messageStateHandler = {
@@ -87,7 +87,7 @@ describe("updateApiReqMsg", () => {
 	})
 
 	it("updates the current API request after earlier retry messages are removed", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{ ts: 1, type: "say", say: "task", text: "Task" },
 			{
 				ts: 5,
@@ -96,7 +96,7 @@ describe("updateApiReqMsg", () => {
 				text: JSON.stringify({ request: "retry feedback" }),
 			},
 		]
-		const updateClineMessage = vi.fn(async (index: number, updates: Partial<ClineMessage>) => {
+		const updateClineMessage = vi.fn(async (index: number, updates: Partial<UiMessage>) => {
 			messages[index] = { ...messages[index], ...updates }
 		})
 		const messageStateHandler = {

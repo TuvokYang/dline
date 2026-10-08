@@ -1,33 +1,10 @@
-import { readdir, readFile } from "node:fs/promises"
+import { readdir } from "node:fs/promises"
 import * as path from "node:path"
 import type { ClineApiServerMock } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskInteractionView, type TaskInteractionView } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
-
-interface StoredTurnEndingSnapshot {
-	phase?: string
-	completion?: { completionId?: string }
-	interaction?: {
-		taskId?: string
-		turnId?: string
-		interactionId?: string
-		kind?: string
-		status?: string
-	}
-	anchor?: {
-		turnId?: string
-		interactionId?: string
-	}
-	turn?: {
-		turnId?: string
-		blocks?: Array<{
-			dlineTid?: string
-			phase?: string
-			toolName?: string
-		}>
-	}
-}
 
 interface TurnEndingSnapshotState {
 	phase?: string
@@ -94,25 +71,13 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 	}, 30_000)
 }
 
-async function readSnapshot(dlineDocsDir: string, taskId: string): Promise<StoredTurnEndingSnapshot> {
-	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8"))
+async function readSnapshot(dlineDocsDir: string, taskId: string): Promise<TaskInteractionView> {
+	return readTaskInteractionView(dlineDocsDir, taskId)
 }
 
-function snapshotState(snapshot: StoredTurnEndingSnapshot, toolName: string): TurnEndingSnapshotState {
-	const block = snapshot.turn?.blocks?.find((candidate) => candidate.toolName === toolName)
-	return {
-		phase: snapshot.phase,
-		completionId: snapshot.completion?.completionId,
-		interactionId: snapshot.interaction?.interactionId,
-		interactionKind: snapshot.interaction?.kind,
-		interactionStatus: snapshot.interaction?.status,
-		interactionTurnId: snapshot.interaction?.turnId,
-		anchorInteractionId: snapshot.anchor?.interactionId,
-		anchorTurnId: snapshot.anchor?.turnId,
-		turnId: snapshot.turn?.turnId,
-		blockId: block?.dlineTid,
-		blockPhase: block?.phase,
-	}
+// Each turn here calls exactly one tool, so the turn-ending block is that tool's block.
+function snapshotState(snapshot: TaskInteractionView, _toolName: string): TurnEndingSnapshotState {
+	return snapshot
 }
 
 async function readContextWindowVisual(sidebar: Frame): Promise<ContextWindowVisualState> {

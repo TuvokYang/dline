@@ -1,13 +1,12 @@
 import { EnvironmentMetadataEntry, TaskMetadata } from "@core/context/context-tracking/ContextTrackerTypes"
 import type { FrozenPromptBuilderInfo, TaskContextCache } from "@core/storage/task-context-types"
-import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import { envFlagEnabled } from "@shared/env"
-import { HistoryItem } from "@shared/HistoryItem"
 import { requiresLegacyConversationMigration } from "@shared/messages/legacy-identity-migration"
 import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { RemoteConfig } from "@shared/remote-config/schema"
+import { removeStaleAtomicTempFiles, writeFileAtomic, writeJsonAtomic } from "@shared/storage/atomic-file"
 import { GlobalState, Settings } from "@shared/storage/state-keys"
 import { fileExistsAtPath, isDirectory } from "@utils/fs"
 import fs from "fs/promises"
@@ -15,7 +14,6 @@ import os from "os"
 import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
-import { telemetryService } from "@/services/telemetry"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { McpMarketplaceCatalog } from "@/shared/mcp"
@@ -31,7 +29,7 @@ import {
 	getDocumentsPath,
 	warmupDocumentsPathCache,
 } from "./documents-path"
-import { TASK_METRICS_DATABASE_NAME } from "./task-metrics-database"
+import { readUiMessages } from "./messages/readUiMessages"
 
 // Storage roots live in a leaf module so low-level owners can resolve them
 // without importing this module's host and Webview dependencies.
@@ -44,86 +42,15 @@ export {
 	warmupDocumentsPathCache,
 }
 
-const ATOMIC_WRITE_RENAME_MAX_ATTEMPTS = 5
-const ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100]
-const RETRYABLE_RENAME_ERROR_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
-
 /** Maximum age for task history lock file before it's considered stale (10 seconds). */
 const _TASK_HISTORY_LOCK_TIMEOUT_MS = 10_000
-
-function isRetryableRenameError(error: unknown): boolean {
-	const code = (error as NodeJS.ErrnoException | undefined)?.code
-	return typeof code === "string" && RETRYABLE_RENAME_ERROR_CODES.has(code)
-}
-async function renameWithRetry(tmpPath: string, filePath: string): Promise<void> {
-	for (let attempt = 1; attempt <= ATOMIC_WRITE_RENAME_MAX_ATTEMPTS; attempt++) {
-		try {
-			await fs.rename(tmpPath, filePath)
-			return
-		} catch (error) {
-			if (!isRetryableRenameError(error) || attempt === ATOMIC_WRITE_RENAME_MAX_ATTEMPTS) throw error
-			const delayMs = ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS[attempt - 1] ?? ATOMIC_WRITE_RENAME_RETRY_DELAYS_MS.at(-1) ?? 0
-			await new Promise((r) => setTimeout(r, delayMs))
-		}
-	}
-}
-/**
- * Atomically write data to a file using a temp file + rename.
- * On failure, cleans up the temp file.
- */
-async function atomicWriteFile(filePath: string, data: string): Promise<void> {
-	const tmpPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).substring(7)}.json`
-	try {
-		await fs.writeFile(tmpPath, data, "utf8")
-		await renameWithRetry(tmpPath, filePath)
-	} catch (e) {
-		// Clean up the temp file on any failure
-		fs.unlink(tmpPath).catch(() => {})
-		throw e
-	}
-}
-
-/**
- * Clean up stale temp files left behind by the atomic writers.
- * These can accumulate if the process crashes between writeFile and rename.
- * Only cleans files older than STALE_TMP_FILE_AGE_MS to avoid racing with active writes.
- */
-const STALE_TMP_FILE_AGE_MS = 60_000
-/**
- * Temp names of the writers that stage files next to their target:
- * atomicWriteFile (`<file>.tmp.<ms>.<rand>.json`), writeJsonl (`<file>.tmp.<uuid>`),
- * and the snapshot and activity writers (`<file>.tmp.<ms>`).
- */
-const ATOMIC_WRITE_TEMP_NAME_PATTERNS = [
-	/^.+\.tmp\.\d{13}\.[a-z0-9]+\.json$/,
-	/^.+\.tmp\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-	/^.+\.tmp\.\d{13}$/,
-]
-
-async function cleanupStaleTmpFiles(dir: string): Promise<void> {
-	try {
-		const entries = await fs.readdir(dir, { withFileTypes: true })
-		const now = Date.now()
-		for (const entry of entries) {
-			if (!entry.isFile() || !ATOMIC_WRITE_TEMP_NAME_PATTERNS.some((pattern) => pattern.test(entry.name))) continue
-			const fp = path.join(dir, entry.name)
-			try {
-				if (now - (await fs.stat(fp)).mtimeMs > STALE_TMP_FILE_AGE_MS) await fs.unlink(fp)
-			} catch {
-				// Its writer already published or removed it.
-			}
-		}
-	} catch {
-		// Directory may not exist yet — ignore
-	}
-}
 
 /**
  * Remove temp files a crashed writer left in a task directory.
  * Call only while holding the task lock, so no other process is writing there.
  */
 export async function cleanupStaleTaskTempFiles(taskId: string): Promise<void> {
-	await cleanupStaleTmpFiles(await ensureTaskDirectoryExists(taskId))
+	await removeStaleAtomicTempFiles(await ensureTaskDirectoryExists(taskId))
 }
 
 export const GlobalFileNames = {
@@ -131,11 +58,12 @@ export const GlobalFileNames = {
 	taskSnapshot: "snapshot.json",
 	taskActivities: "activities.json",
 	taskApiRateMetrics: "api_rate_metrics.jsonl",
-	taskDatabase: (_taskId: string) => TASK_METRICS_DATABASE_NAME,
+	/** Where builds before `metrics.db` kept a task's API metrics; moved on first open. */
 	legacyTaskDatabase: (taskId: string) => `${taskId}.db`,
 	taskContext: "context.json",
 	apiConversationHistory: "api_conversation_history.jsonl",
 	contextHistory: "context_history.jsonl",
+	/** Legacy chat history file; the owning task imports it into `messages.db` on first open. */
 	uiMessages: "ui_messages.jsonl",
 	clineModels: "cline_models.json",
 	groqModels: "groq_models.json",
@@ -167,11 +95,26 @@ export const GlobalFileNames = {
 }
 
 export async function ensureTaskDirectoryExists(taskId: string): Promise<string> {
-	const d = await getDlineDocumentsPath()
-	const dir = path.join(d, "tasks", taskId)
+	const dir = await resolveTaskDirectory(taskId)
 	await fs.mkdir(dir, { recursive: true })
 	return dir
 }
+
+/** Where a task's directory lives, without creating it; a task that is only viewed must not gain one. */
+export async function resolveTaskDirectory(taskId: string): Promise<string> {
+	return path.join(await getDlineDocumentsPath(), "tasks", taskId)
+}
+
+/**
+ * `snapshot.json`, which earlier versions wrote; read only to import its input queue into `state.json`.
+ *
+ * Resolved without creating the task directory: a window that only checks for
+ * the file must not leave a directory behind.
+ */
+export async function getTaskSnapshotPath(taskId: string): Promise<string> {
+	return path.join(await resolveTaskDirectory(taskId), GlobalFileNames.taskSnapshot)
+}
+
 export async function ensureRulesDirectoryExists(): Promise<string> {
 	const d = await getDlineDocumentsPath()
 	const dir = path.join(d, "rules")
@@ -368,21 +311,21 @@ export async function saveApiConversationHistory(taskId: string, h: ClineStorage
 	await writeJsonl(p, h)
 }
 /**
- * Deduplicate ClineMessage array by timestamp (ts), keeping the last
+ * Deduplicate UiMessage array by timestamp (ts), keeping the last
  * occurrence for each ts. Used because incremental appends (addToClineMessages
  * + flushMessageUpdate) may produce duplicate rows for the same message
  * (initial partial write + final complete write).
  */
-export function dedupeClineMessagesByTs(messages: ClineMessage[]): ClineMessage[] {
+export function dedupeClineMessagesByTs(messages: UiMessage[]): UiMessage[] {
 	if (messages.length <= 1) return messages
-	const seen = new Map<number, ClineMessage>()
+	const seen = new Map<number, UiMessage>()
 	// Walk in order; later entries overwrite earlier ones for the same ts
 	for (const msg of messages) {
 		seen.set(msg.ts, msg)
 	}
 	// Preserve insertion order by collecting in original order,
 	// but only keeping the last occurrence for each ts
-	const deduped: ClineMessage[] = []
+	const deduped: UiMessage[] = []
 	const included = new Set<number>()
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i]
@@ -394,51 +337,15 @@ export function dedupeClineMessagesByTs(messages: ClineMessage[]): ClineMessage[
 	return deduped
 }
 
-export async function getSavedClineMessages(taskId: string): Promise<ClineMessage[]> {
-	const dir = await ensureTaskDirectoryExists(taskId)
-	const p = path.join(dir, GlobalFileNames.uiMessages)
-
-	// If .jsonl exists, use it exclusively — never fall back to legacy .json
-	if (await fileExistsAtPath(p)) {
-		const raw = await readJsonl<ClineMessage>(p)
-		return dedupeClineMessagesByTs(raw).map(normalizeStoredCheckpointMessage)
-	}
-
-	// Migrate: read legacy .json, write to .jsonl, preserve old file as backup
-	const legacyP = path.join(dir, "ui_messages.json")
-	if (await fileExistsAtPath(legacyP)) {
-		const legacyMsgs = await readJsonl<ClineMessage>(legacyP)
-		if (legacyMsgs.length > 0) {
-			await writeJsonl(p, legacyMsgs)
-		}
-		return dedupeClineMessagesByTs(legacyMsgs).map(normalizeStoredCheckpointMessage)
-	}
-	// Legacy: claude_messages.json migration (no .jsonl exists yet)
-	const old = path.join(dir, "claude_messages.json")
-	if (await fileExistsAtPath(old)) {
-		const d = await readJsonl<ClineMessage>(old)
-		if (d.length > 0) {
-			await writeJsonl(p, d)
-		}
-		return dedupeClineMessagesByTs(d).map(normalizeStoredCheckpointMessage)
-	}
-	return []
-}
-export async function saveClineMessages(taskId: string, m: ClineMessage[]) {
-	const p = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.uiMessages)
-	await writeJsonl(p, m)
-}
-
 /**
- * Atomically append a single ClineMessage to the JSONL file.
- * Uses fs.appendFile which guarantees atomicity for single-line writes.
+ * Reads a task's chat history without writing it.
  *
- * @param taskId Task identifier
- * @param message Single message to append
+ * Only the task's own `UIMessage` store writes `messages.db`; this read never
+ * claims that writer and never migrates a legacy file, so it is safe while the
+ * task is open in any window.
  */
-export async function appendClineMessage(taskId: string, message: ClineMessage): Promise<void> {
-	const p = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.uiMessages)
-	await appendJsonl(p, message)
+export async function getSavedClineMessages(taskId: string): Promise<UiMessage[]> {
+	return dedupeClineMessagesByTs(await readUiMessages(await ensureTaskDirectoryExists(taskId)))
 }
 
 /**
@@ -508,7 +415,7 @@ export async function getTaskMetadata(taskId: string): Promise<TaskMetadata> {
 }
 export async function saveTaskMetadata(taskId: string, m: TaskMetadata) {
 	const p = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.taskMetadata)
-	await fs.writeFile(p, JSON.stringify(m, null, 2), "utf8")
+	await writeJsonAtomic(p, m)
 }
 
 /**
@@ -749,7 +656,7 @@ export async function getTaskContext(taskId: string): Promise<TaskContextCache> 
  */
 export async function saveTaskContext(taskId: string, context: TaskContextCache): Promise<void> {
 	const p = path.join(await ensureTaskDirectoryExists(taskId), GlobalFileNames.taskContext)
-	await atomicWriteFile(p, JSON.stringify(context, null, 2))
+	await writeJsonAtomic(p, context)
 }
 
 export async function ensureStateDirectoryExists(): Promise<string> {
@@ -779,144 +686,9 @@ async function getDlineStorageDir(...subdirs: string[]): Promise<string> {
 	return p
 }
 
-// ─────────────────────────────────────────────────────────
-// LEGACY TASK HISTORY — JSON/JSONL compatibility and import helpers
-// ─────────────────────────────────────────────────────────
-
-const TASK_HISTORY_FILENAME = "taskHistory.jsonl"
-const LEGACY_TASK_HISTORY_FILENAME = "taskHistory.json"
-
-function _getTaskHistoryLockPath(): string {
-	return path.join(getDlineDocumentsPathSync(), "tasks", `${TASK_HISTORY_FILENAME}.lck`)
-}
-
-async function getTaskHistoryFilePath(): Promise<string> {
-	const d = await getDlineDocumentsPath()
-	return path.join(d, "tasks", TASK_HISTORY_FILENAME)
-}
-
-async function getLegacyTaskHistoryFilePath(): Promise<string> {
-	const d = await getDlineDocumentsPath()
-	return path.join(d, "tasks", LEGACY_TASK_HISTORY_FILENAME)
-}
-
-/**
- * Append a single HistoryItem as a JSONL line to taskHistory.jsonl.
- * @deprecated Use TaskHistory.upsert() instead.
- * Lines are appended in time order; later lines naturally have higher ts.
- */
-export async function appendTaskHistoryItem(item: HistoryItem): Promise<void> {
-	const fp = await getTaskHistoryFilePath()
-	await appendJsonl(fp, item)
-}
-
-/**
- * Read task history from JSONL file.
- * Because lines are appended in time order, later occurrences of the
- * same id naturally have a higher ts. We deduplicate by id, keeping
- * the last occurrence. Entries marked with _deleted are excluded.
- */
-/** @deprecated Use TaskHistory.getDeduplicated() instead. */
-export async function readTaskHistoryJsonl(): Promise<HistoryItem[]> {
-	const fp = await getTaskHistoryFilePath()
-	if (!(await fileExistsAtPath(fp))) {
-		return []
-	}
-	const rows = await readJsonl<HistoryItem & { _deleted?: boolean }>(fp)
-	// Deduplicate by id: later occurrence overwrites earlier (higher ts)
-	const byId = new Map<string, HistoryItem & { _deleted?: boolean }>()
-	for (const row of rows) {
-		byId.set(row.id, row)
-	}
-	// Exclude deleted entries, sort by ts descending
-	return [...byId.values()].filter((item) => !(item as any)._deleted).sort((a, b) => b.ts - a.ts)
-}
-
-/**
- * Full overwrite of task history JSONL. Used only for compact/reconstruct.
- */
-/** @deprecated Use TaskHistory.upsert() or clearAll() instead. */
-export async function writeTaskHistoryToState(items: HistoryItem[], targetPath?: string): Promise<void> {
-	const fp = targetPath ?? (await getTaskHistoryFilePath())
-	const dir = path.dirname(fp)
-	await fs.mkdir(dir, { recursive: true })
-	await writeJsonl(fp, items)
-	// Clean up stale tmp files that may have accumulated from atomic writes
-	await cleanupStaleTmpFiles(dir)
-}
-
-export async function getTaskHistoryStateFilePath(): Promise<string> {
-	return getTaskHistoryFilePath()
-}
-
-export async function taskHistoryStateFileExists(): Promise<boolean> {
-	return fileExistsAtPath(await getTaskHistoryFilePath())
-}
-
-export async function readTaskHistoryRecent(limit = 5): Promise<HistoryItem[]> {
-	try {
-		const items = await readTaskHistoryFromState()
-		return items
-			.filter((i) => i.ts)
-			.sort((a, b) => b.ts - a.ts)
-			.slice(0, limit)
-	} catch {
-		return []
-	}
-}
-
-/**
- * Read task history from persistent storage.
- *
- * Priority:
- *  1. taskHistory.jsonl exists → read JSONL, deduplicate
- *  2. taskHistory.json  exists → migrate to JSONL
- *  3. Neither exists         → return an empty history
- *
- * Reconstruction is an explicit user command and must never be triggered by a read.
- */
-/** @deprecated Use TaskHistory.getDeduplicated() instead. */
-export async function readTaskHistoryFromState(): Promise<HistoryItem[]> {
-	try {
-		const jsonlPath = await getTaskHistoryFilePath()
-
-		// Priority 1: JSONL exists
-		if (await fileExistsAtPath(jsonlPath)) {
-			return readTaskHistoryJsonl()
-		}
-
-		// Priority 2: Migrate legacy JSON
-		const legacyPath = await getLegacyTaskHistoryFilePath()
-		if (await fileExistsAtPath(legacyPath)) {
-			const raw = await fs.readFile(legacyPath, "utf8")
-			if (raw.trim()) {
-				try {
-					const items = JSON.parse(raw) as HistoryItem[]
-					if (Array.isArray(items) && items.length > 0) {
-						// Migrate: write to JSONL, keep old .json as .bak
-						await writeTaskHistoryToState(items)
-						const bakPath = `${legacyPath}.bak`
-						await fs.rename(legacyPath, bakPath).catch(() => {})
-						return items
-					}
-				} catch {
-					telemetryService.captureExtensionStorageError("Corrupted taskHistory.json", "parseError")
-					return []
-				}
-			}
-		}
-
-		// Priority 3: Missing history is a valid empty state.
-		return []
-	} catch (e) {
-		telemetryService.captureExtensionStorageError(e, "readTaskHistoryFromState")
-		throw e
-	}
-}
-
 /**
  * Get the task header/description text for a given task.
- * Currently reads the first "say === task" message from ui_messages.jsonl.
+ * Currently reads the first "say === task" message from the task's chat history.
  *
  * TODO: Future enhancement — replace with AI-generated summary stored
  * in a dedicated storage entry (e.g., task_summary.jsonl per task),
@@ -948,7 +720,7 @@ export async function writeTaskSettingsToStorage(taskId: string, s: Partial<Sett
 			next[key] = value
 		}
 	}
-	await atomicWriteFile(p, JSON.stringify(next, null, 2))
+	await writeJsonAtomic(p, next)
 }
 
 export async function readRemoteConfigFromCache(orgId: string): Promise<RemoteConfig | undefined> {
@@ -1087,6 +859,6 @@ export async function writeConversationHistoryText(taskId: string, h: ClineStora
 		c += "\n"
 	}
 	c += "=== END OF CONTEXT ===\n"
-	await atomicWriteFile(p, c)
+	await writeFileAtomic(p, c)
 	return p
 }

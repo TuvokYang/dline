@@ -1,15 +1,9 @@
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
-
-/**
- * Backoff schedule for one automatic retry sequence, indexed by attempt.
- *
- * The schedule is explicit rather than exponential so every attempt keeps a
- * countdown long enough to read, and so the total wait before manual recovery
- * stays bounded at one minute.
- */
-export const AUTO_RETRY_DELAYS_MS: readonly number[] = [3_000, 5_000, 7_000, 15_000, 30_000]
-
-export const MAX_AUTO_RETRY_ATTEMPTS = AUTO_RETRY_DELAYS_MS.length
+import { isOutputLimitExceededError } from "@core/api/stream/OutputLimitExceededError"
+import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
+import { ClineError, ClineErrorType } from "@/services/error"
+import { MAX_AUTO_RETRY_ATTEMPTS } from "./auto-retry-schedule"
+import { ProfileNotValidError } from "./profile-admission"
 
 export interface StreamRetryInput {
 	isSpendLimitError: boolean
@@ -29,21 +23,6 @@ export interface DelayedStreamRetryInput {
 }
 
 /**
- * Read the auto-retry backoff for one attempt.
- *
- * Attempts outside the schedule clamp to its first or last entry so a caller
- * with a different attempt budget, such as context compaction, still receives a
- * defined delay.
- *
- * @param attempt One-based retry attempt count.
- * @returns Delay duration in milliseconds.
- */
-export function getRetryDelay(attempt: number): number {
-	const scheduleIndex = Math.min(Math.max(Math.trunc(attempt), 1), AUTO_RETRY_DELAYS_MS.length) - 1
-	return AUTO_RETRY_DELAYS_MS[scheduleIndex]
-}
-
-/**
  * Wait for the auto-retry backoff and report whether retry may continue.
  * @param delay Delay duration in milliseconds.
  * @param isAborted Callback that reports whether the task was aborted.
@@ -52,6 +31,100 @@ export function getRetryDelay(attempt: number): number {
 export async function waitRetryDelay(delay: number, isAborted: () => boolean): Promise<boolean> {
 	await setTimeoutPromise(delay)
 	return !isAborted()
+}
+
+/**
+ * Wait out one retry delay, giving up the moment the signal aborts.
+ *
+ * A cancelled task must not sit in a countdown it will never use, so the wait
+ * settles on abort instead of after the full delay.
+ *
+ * @returns True when the delay elapsed, false when cancellation won.
+ */
+export function waitRetryDelayUnlessAborted(delay: number, signal: AbortSignal): Promise<boolean> {
+	if (signal.aborted) return Promise.resolve(false)
+	return new Promise((resolve) => {
+		const onAbort = () => {
+			clearTimeout(timer)
+			resolve(false)
+		}
+		const timer = setTimeout(() => {
+			signal.removeEventListener("abort", onAbort)
+			resolve(true)
+		}, delay)
+		signal.addEventListener("abort", onAbort, { once: true })
+	})
+}
+
+/** The provider and model a failed request was sent to, for error classification. */
+export interface ProviderIdentity {
+	readonly providerId?: string
+	readonly modelId?: string
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+	return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : undefined
+}
+
+function parseMessageRecord(error: unknown): Record<string, unknown> | undefined {
+	if (!(error instanceof Error)) return undefined
+	try {
+		return asRecord(JSON.parse(error.message))
+	} catch {
+		return undefined
+	}
+}
+
+/** The HTTP status a provider error carries, wherever the provider nested it. */
+function nestedStatusOf(error: unknown, parsed: ClineError): number {
+	const raw = asRecord(error)
+	const messageRecord = parseMessageRecord(error)
+	const rawError = asRecord(raw?.error)
+	const messageError = asRecord(messageRecord?.error)
+	const status =
+		raw?.status ??
+		raw?.statusCode ??
+		asRecord(raw?.response)?.status ??
+		rawError?.status ??
+		asRecord(rawError?.error)?.status ??
+		messageRecord?.status ??
+		messageRecord?.statusCode ??
+		asRecord(messageRecord?.response)?.status ??
+		messageError?.status ??
+		asRecord(messageError?.error)?.status ??
+		parsed._error.status
+	return typeof status === "number" ? status : Number(status)
+}
+
+/**
+ * Decide whether sending the same request again can succeed.
+ *
+ * Failures are retryable by default and only errors that a replay would repeat
+ * are excluded: account limits that waiting cannot lift, rejected credentials,
+ * a context the model cannot hold, and an output limit the provider enforced.
+ * An allow-list instead silently skipped the whole backoff for any upstream
+ * code outside it, such as `stream_read_error`.
+ */
+export function isRetryableProviderError(error: unknown, provider: ProviderIdentity = {}): boolean {
+	// A cancelled run is not a provider failure and must not be replayed.
+	if (error instanceof Error && error.name === "AbortError") return false
+	// Only fixing or switching the Profile can admit this request.
+	if (error instanceof ProfileNotValidError) return false
+	if (isOutputLimitExceededError(error)) return false
+	// The same frozen request cannot fit on a second attempt either.
+	if (checkContextWindowExceededError(error)) return false
+
+	const parsed = ClineError.transform(error, provider.modelId, provider.providerId)
+	const status = nestedStatusOf(error, parsed)
+	// 408/409/425 are transport-level request states that can accompany an auth
+	// classification without meaning the credentials themselves are rejected.
+	const isRetryableRequestStatus = status === 408 || status === 409 || status === 425
+	return !(
+		parsed.isErrorType(ClineErrorType.Balance) ||
+		parsed.isErrorType(ClineErrorType.SpendLimit) ||
+		parsed.isErrorType(ClineErrorType.QuotaExceeded) ||
+		(parsed.isErrorType(ClineErrorType.Auth) && !isRetryableRequestStatus)
+	)
 }
 
 /**

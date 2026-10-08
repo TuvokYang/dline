@@ -33,6 +33,7 @@ import { readTaskSettingsFromStorage, writeTaskSettingsToStorage } from "./disk"
 import { STATE_MANAGER_NOT_INITIALIZED } from "./error-messages"
 import { cleanupLegacyGlobalState } from "./globalstatecleanup"
 import { filterAllowedRemoteConfigFields } from "./remote-config/utils"
+import { cleanupRemovedSettings, findRemovedSettingsKeys } from "./removed-settings-keys"
 import {
 	getAccountApiKey,
 	getAccountId,
@@ -167,12 +168,6 @@ export class StateManager {
 	/** TaskHistory instance backed by the shared SQLite UnifyStore database. */
 	private _taskHistory: TaskHistory | null = null
 
-	/** @deprecated Use the Set-based callbacks below. Kept for external compatibility. */
-	onPersistenceError?: (event: PersistenceErrorEvent) => void
-
-	/** @deprecated Use the Set-based callbacks below. Kept for external compatibility. */
-	onSyncExternalChange?: (event: StateSyncEvent) => void | Promise<void>
-
 	private constructor(storage: StorageContext) {
 		this.storage = storage
 	}
@@ -226,6 +221,7 @@ export class StateManager {
 			} catch (error) {
 				Logger.warn("[StateManager] Legacy global state cleanup deferred:", error)
 			}
+			await StateManager.cleanupRemovedSettingsKeys(candidate)
 
 			// Create TaskHistory inside the injected storage boundary.
 			const databasePath = storage.taskHistoryDatabasePath
@@ -256,6 +252,21 @@ export class StateManager {
 			await Promise.all([candidate.dispose(), taskHistory?.dispose()])
 			if (StateManager.instance === candidate) StateManager.instance = null
 			throw error
+		}
+	}
+
+	/**
+	 * Drop keys that the Settings schema no longer declares. A failure is not
+	 * fatal: the values stay unreadable and the next launch retries.
+	 */
+	private static async cleanupRemovedSettingsKeys(instance: StateManager): Promise<void> {
+		const repository = instance.settingsRepository
+		if (!repository) return
+		try {
+			const removed = await cleanupRemovedSettings(repository)
+			if (removed.length > 0) instance.applySettingsSnapshot(repository.readSnapshot())
+		} catch (error) {
+			Logger.warn("[StateManager] Removed settings cleanup deferred:", error)
 		}
 	}
 
@@ -299,23 +310,7 @@ export class StateManager {
 
 		// Deprecated Settings remain in legacy global state and are not copied into
 		// the canonical Settings document during the one-time migration.
-		const deprecatedSettings = new Set([
-			"planModeOcaModelId",
-			"planModeOcaModelInfo",
-			"planModeOcaReasoningEffort",
-			"actModeOcaModelId",
-			"actModeOcaModelInfo",
-			"actModeOcaReasoningEffort",
-			"planModeOpenRouterModelId",
-			"planModeOpenRouterModelInfo",
-			"actModeOpenRouterModelId",
-			"actModeOpenRouterModelInfo",
-			"liteLlmBaseUrl",
-			"requestyBaseUrl",
-			"ocaMode",
-			"planModeReasoningEffort",
-			"actModeReasoningEffort",
-		])
+		const deprecatedSettings = new Set(["liteLlmBaseUrl", "requestyBaseUrl", "ocaMode"])
 		const settingsEntries: Record<string, unknown> = {}
 		for (const key of SettingsKeys) {
 			const keyName = key as string
@@ -431,7 +426,7 @@ export class StateManager {
 	 * the transaction commits.
 	 */
 	private async refreshTaskHistoryFromDisk(historyStore: TaskHistory, attempt = 0): Promise<void> {
-		if (this.onSyncExternalChangeCallbacks.size === 0 && !this.onSyncExternalChange) return
+		if (this.onSyncExternalChangeCallbacks.size === 0) return
 		let history: HistoryItem[]
 		try {
 			history = await historyStore.getDeduplicatedWithPendingWrites()
@@ -465,9 +460,6 @@ export class StateManager {
 	private async notifySyncExternalChange(event: StateSyncEvent): Promise<void> {
 		const startedAt = performance.now()
 		const callbacks = new Set(this.onSyncExternalChangeCallbacks)
-		if (this.onSyncExternalChange) {
-			callbacks.add(this.onSyncExternalChange)
-		}
 		let index = 0
 		for (const callback of callbacks) {
 			const callbackStartedAt = performance.now()
@@ -572,13 +564,9 @@ export class StateManager {
 
 		if (onPersistenceError) {
 			this.onPersistenceErrorCallbacks.add(onPersistenceError)
-			// Backward-compat: keep the single-slot reference for external consumers
-			this.onPersistenceError = onPersistenceError
 		}
 		if (onSyncExternalChange) {
 			this.onSyncExternalChangeCallbacks.add(onSyncExternalChange)
-			// Backward-compat
-			this.onSyncExternalChange = onSyncExternalChange
 		}
 
 		// Return a disposal function so the caller can unregister itself
@@ -801,14 +789,34 @@ export class StateManager {
 		this.activeTaskId = taskId
 
 		try {
-			const taskSettings = await readTaskSettingsFromStorage(taskId)
+			const taskSettings = (await readTaskSettingsFromStorage(taskId)) as Record<string, unknown>
+			const removedKeys = findRemovedSettingsKeys(taskSettings)
+			for (const key of removedKeys) delete taskSettings[key]
 			// Populate per-task cache with loaded settings
 			const cache = this.getOrCreateTaskCache(taskId)
 			Object.assign(cache, taskSettings)
+			if (removedKeys.length > 0) this.scheduleRemovedTaskSettingsCleanup(taskId, removedKeys)
 		} catch (error) {
 			// If reading fails, just use empty cache for this task
 			Logger.error("[StateManager] Failed to load task settings, defaulting to globally selected settings.", error)
 		}
+	}
+
+	/**
+	 * Delete removed keys from a task settings document through the same
+	 * debounced writer as every other task setting, so the cleanup never races
+	 * a concurrent task-settings write. The cache never holds these keys, so the
+	 * writer persists them as deletions.
+	 */
+	private scheduleRemovedTaskSettingsCleanup(taskId: string, keys: readonly string[]): void {
+		if (this.shuttingDown) return
+		let pending = this.pendingTaskState.get(taskId)
+		if (!pending) {
+			pending = new Set()
+			this.pendingTaskState.set(taskId, pending)
+		}
+		for (const key of keys) pending.add(key as SettingsKey)
+		this.scheduleDebouncedPersistence()
 	}
 
 	/**
@@ -1546,8 +1554,14 @@ export class StateManager {
 			} catch (error) {
 				Logger.error("[StateManager] Failed to persist pending changes:", error)
 
-				// Call persistence error callback for error recovery
-				this.onPersistenceError?.({ error: error })
+				// Every registered controller hears about the failure, not only the last one.
+				for (const callback of [...this.onPersistenceErrorCallbacks]) {
+					Promise.resolve()
+						.then(() => callback({ error }))
+						.catch((callbackError) =>
+							Logger.error("[StateManager] Persistence error callback failed:", callbackError),
+						)
+				}
 			}
 		}, this.PERSISTENCE_DELAY_MS)
 		this.persistenceTimeout = timeout
@@ -1770,22 +1784,16 @@ export class StateManager {
 
 		const taskCache = taskId ? this.taskStateCache.get(taskId) : undefined
 		const profileBindings = this.resolveProfileBindings(taskId)
-		const planModeReasoningOverride = taskReasoningOverrideFromFields(
-			{
-				kind: taskCache?.planModeReasoningOverrideKind,
-				effort: taskCache?.planModeReasoningOverrideEffort,
-				budgetTokens: taskCache?.planModeThinkingBudgetTokens,
-			},
-			taskCache?.planModeReasoningEffort,
-		)
-		const actModeReasoningOverride = taskReasoningOverrideFromFields(
-			{
-				kind: taskCache?.actModeReasoningOverrideKind,
-				effort: taskCache?.actModeReasoningOverrideEffort,
-				budgetTokens: taskCache?.actModeThinkingBudgetTokens,
-			},
-			taskCache?.actModeReasoningEffort,
-		)
+		const planModeReasoningOverride = taskReasoningOverrideFromFields({
+			kind: taskCache?.planModeReasoningOverrideKind,
+			effort: taskCache?.planModeReasoningOverrideEffort,
+			budgetTokens: taskCache?.planModeThinkingBudgetTokens,
+		})
+		const actModeReasoningOverride = taskReasoningOverrideFromFields({
+			kind: taskCache?.actModeReasoningOverrideKind,
+			effort: taskCache?.actModeReasoningOverrideEffort,
+			budgetTokens: taskCache?.actModeThinkingBudgetTokens,
+		})
 		const planModeServiceTierOverride = taskServiceTierOverrideFromFields({
 			kind: taskCache?.planModeServiceTierOverrideKind,
 			tier: taskCache?.planModeServiceTierOverrideTier,

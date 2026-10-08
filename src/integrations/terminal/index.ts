@@ -34,7 +34,6 @@ export { StandaloneTerminalRegistry } from "./standalone/StandaloneTerminalRegis
 // Export all types from types.ts
 export type {
 	// Command Executor types
-	ActiveBackgroundCommand,
 	AskResponse,
 	BackgroundCommand,
 	CommandCancellationResult,
@@ -47,7 +46,6 @@ export type {
 	ITerminal,
 	ITerminalManager,
 	ITerminalProcess,
-	ITerminalProcessResult,
 	// Command Orchestrator types
 	OrchestrationOptions,
 	OrchestrationResult,

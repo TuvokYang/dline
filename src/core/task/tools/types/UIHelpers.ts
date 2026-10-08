@@ -1,4 +1,4 @@
-import type { ClineAsk, ClineSay } from "@shared/ExtensionMessage"
+import type { UiAsk, UiSay } from "@shared/ExtensionMessage"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
 import type { ToolParamName, ToolUse } from "../../../assistant-message"
 import { removeClosingTag } from "../utils/ToolConstants"
@@ -10,7 +10,7 @@ import type { TaskConfig } from "./TaskConfig"
 export interface StronglyTypedUIHelpers {
 	// Core UI methods
 	say: (
-		type: ClineSay,
+		type: UiSay,
 		text?: string,
 		images?: string[],
 		files?: string[],
@@ -19,7 +19,7 @@ export interface StronglyTypedUIHelpers {
 	) => Promise<number | undefined>
 
 	ask: (
-		type: ClineAsk,
+		type: UiAsk,
 		text?: string,
 		partial?: boolean,
 		options?: {

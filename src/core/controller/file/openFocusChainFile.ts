@@ -21,7 +21,7 @@ export async function openFocusChainFile(controller: Controller, request: String
 	if (currentTask) {
 		// Get the task's message history and find the most recent task_progress message
 		// TODO - can we decouple this from ClineMessages?
-		const clineMessages = currentTask.messageStateHandler.clineMessages
+		const clineMessages = currentTask.owners.messages.clineMessages
 		const lastProgressMessage = clineMessages
 			.slice()
 			.reverse()

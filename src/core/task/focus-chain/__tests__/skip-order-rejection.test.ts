@@ -7,8 +7,8 @@
 
 import { FocusChainSettings } from "@shared/FocusChainSettings"
 import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "../../TaskState"
-import { type FocusChainDependencies, FocusChainManager } from "../index"
+import { DefaultToolHandlerState } from "../../tools/state/ToolHandlerState"
+import { type FocusChainDependencies, FocusChainManager, type FocusChainState } from "../index"
 import { FocusChainPrompts } from "../prompts"
 
 /** Build a simple task_progress report string as AI would send. */
@@ -39,7 +39,7 @@ function mockSay() {
 }
 
 /** Create FocusChainManager with mocked dependencies. */
-function createManager(taskState: TaskState, sayFn: FocusChainDependencies["say"]) {
+function createManager(taskState: FocusChainState, sayFn: FocusChainDependencies["say"]) {
 	const deps = {
 		taskId: "test-task-id",
 		taskState,
@@ -62,7 +62,7 @@ function createManager(taskState: TaskState, sayFn: FocusChainDependencies["say"
 
 describe("skip-order detection via updateFCListFromToolResponse", () => {
 	it("first skip-order violation: accepts with warning, preserves rejection for next prompt", async () => {
-		const ts = new TaskState()
+		const ts = new DefaultToolHandlerState()
 		// Set up initial checklist with 3 unchecked items
 		ts.currentFocusChainChecklist = checklist([{ text: "Task A" }, { text: "Task B" }, { text: "Task C" }])
 		const { fn: say, calls } = mockSay()
@@ -98,7 +98,7 @@ describe("skip-order detection via updateFCListFromToolResponse", () => {
 	})
 
 	it("second skip-order violation: rejects update", async () => {
-		const ts = new TaskState()
+		const ts = new DefaultToolHandlerState()
 		ts.currentFocusChainChecklist = checklist([{ text: "Task A" }, { text: "Task B" }, { text: "Task C" }])
 		ts.hasWarnedSkipOrder = true // simulate first offense already happened
 		const { fn: say, calls } = mockSay()
@@ -128,7 +128,7 @@ describe("skip-order detection via updateFCListFromToolResponse", () => {
 	})
 
 	it("does not commit a replacement current item when a skip-order update is rejected", async () => {
-		const ts = new TaskState()
+		const ts = new DefaultToolHandlerState()
 		ts.currentFocusChainChecklist = checklist([{ text: "Task A" }, { text: "Task B" }, { text: "Task C" }])
 		ts.currentInProgressItemIndex = 0
 		ts.hasWarnedSkipOrder = true
@@ -150,7 +150,7 @@ describe("skip-order detection via updateFCListFromToolResponse", () => {
 	})
 
 	it("cross-section skip-order: global counter applies", async () => {
-		const ts = new TaskState()
+		const ts = new DefaultToolHandlerState()
 		ts.currentFocusChainChecklist = checklist(
 			[{ text: "S1-Task A" }, { text: "S1-Task B" }, { text: "S2-Task C" }],
 			["Section 1", "Section 2"],
@@ -175,7 +175,7 @@ describe("skip-order detection via updateFCListFromToolResponse", () => {
 	})
 
 	it("third skip-order violation: rejected with consecutiveMistakeCount accumulated", async () => {
-		const ts = new TaskState()
+		const ts = new DefaultToolHandlerState()
 		ts.currentFocusChainChecklist = checklist([{ text: "Task 1" }, { text: "Task 2" }, { text: "Task 3" }])
 		ts.hasWarnedSkipOrder = true // first warning already happened
 		// Simulate one previous rejection
@@ -198,7 +198,7 @@ describe("skip-order detection via updateFCListFromToolResponse", () => {
 	})
 
 	it("warning rejection is injected into AI prompt via generateFocusChainInstructions", async () => {
-		const ts = new TaskState()
+		const ts = new DefaultToolHandlerState()
 		ts.currentFocusChainChecklist = checklist([{ text: "Task X" }, { text: "Task Y" }, { text: "Task Z" }])
 		const { fn: say } = mockSay()
 		const mgr = createManager(ts, say)
@@ -224,7 +224,7 @@ describe("skip-order detection via updateFCListFromToolResponse", () => {
 	})
 
 	it("clears the current item when that item is completed without a replacement", async () => {
-		const ts = new TaskState()
+		const ts = new DefaultToolHandlerState()
 		ts.currentFocusChainChecklist = checklist([{ text: "Task A" }, { text: "Task B" }])
 		ts.currentInProgressItemIndex = 0
 		const { fn: say } = mockSay()
@@ -237,7 +237,7 @@ describe("skip-order detection via updateFCListFromToolResponse", () => {
 	})
 
 	it("switches current work when a completed update includes a new unchecked item", async () => {
-		const ts = new TaskState()
+		const ts = new DefaultToolHandlerState()
 		ts.currentFocusChainChecklist = checklist([{ text: "Task A" }, { text: "Task B" }, { text: "Task C" }])
 		ts.currentInProgressItemIndex = 0
 		const { fn: say } = mockSay()
@@ -258,7 +258,7 @@ describe("skip-order detection via updateFCListFromToolResponse", () => {
 		// Scenario: AI skipped B by completing A+D, got a warning.
 		// Now AI tries to backfill B — the list is already A[x] B[ ] C[ ] D[x] E[ ].
 		// The historical D[x] should NOT cause skipDetected because D was already [x] before.
-		const ts = new TaskState()
+		const ts = new DefaultToolHandlerState()
 		ts.currentFocusChainChecklist = checklist([
 			{ text: "Task A" },
 			{ text: "Task B" },
@@ -303,7 +303,7 @@ describe("skip-order detection via updateFCListFromToolResponse", () => {
 	it("backfill of historically skipped items does NOT reset skip warning for new skips", async () => {
 		// After backfilling B (accepted), if AI tries to skip again (mark E while C is still [ ]),
 		// it should still be rejected because hasWarnedSkipOrder is true.
-		const ts = new TaskState()
+		const ts = new DefaultToolHandlerState()
 		ts.currentFocusChainChecklist = checklist([
 			{ text: "Task A" },
 			{ text: "Task B" },

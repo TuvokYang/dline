@@ -1,4 +1,4 @@
-import type { ClineMessage, ClineSayTool, CompactionConversationRange } from "@shared/ExtensionMessage"
+import type { CompactionConversationRange, UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages/content"
 import { compactionSummaryMessage } from "./compaction-summary-message"
 import { hasTaggedUserFeedback } from "./logical-turns"
@@ -24,11 +24,11 @@ export interface CompactionContextProjection {
 }
 
 /** Read new-format durable compaction cards from the already-loaded UI message cache. */
-export function readCompletedCompactionCards(messages: readonly ClineMessage[]): CompletedCompactionCardProjection[] {
+export function readCompletedCompactionCards(messages: readonly UiMessage[]): CompletedCompactionCardProjection[] {
 	return messages.flatMap((message) => {
 		if (message.partial || message.say !== "tool" || !message.compactionConversationRange || !message.text) return []
 		try {
-			const payload = JSON.parse(message.text) as ClineSayTool
+			const payload = JSON.parse(message.text) as UiSayTool
 			if (
 				payload.tool !== "summarizeTask" ||
 				payload.compactionStatus !== "completed" ||

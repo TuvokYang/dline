@@ -4,6 +4,7 @@ import { ContextTransitionEngine } from "@core/controller/context-transition/Con
 import { ContextTransitionLease } from "@core/controller/context-transition/ContextTransitionLease"
 import * as profileCatalog from "@core/controller/file/getApiProfiles"
 import type { ProfileSwitchCoordinator } from "@core/controller/profile-switch/ProfileSwitchCoordinator"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 /** Verify the production Profile transition factory preserves the pending draft across preflight and compaction. */
@@ -52,15 +53,25 @@ describe("Controller Profile switch integration", () => {
 		const getOccupiedContextTokens = vi.fn(() => 128_001)
 		const compact = vi.fn(async () => "completed" as const)
 		const release = vi.fn()
-		const commitProfileBindings = vi.fn(async () => undefined)
+		const setProfileIdentityBindings = vi.fn()
+		const rebuild = vi.fn(async () => undefined)
+		const dismissProviderFailure = vi.fn(async () => undefined)
+		const handBack = vi.fn(() => true)
+		const flushPendingState = vi.fn(async () => undefined)
 		const restartAccountUsagePolling = vi.fn()
 		const fakeController = {
-			task: {
+			stateManager: { flushPendingState },
+			task: createSessionFixture({
 				taskId: "task-1",
-				getMode: () => "act" as const,
-				getOccupiedContextTokens,
-				commitProfileBindings,
-			},
+				owners: {
+					settings: { mode: "act" as const, setProfileIdentityBindings },
+					api: { rebuild },
+					interactions: { dismissProviderFailure },
+					providerRetry: { handBack },
+				},
+			}),
+			// Occupancy is read by the Controller from the live indicator.
+			getOccupiedContextTokens,
 			profileTransitionEngine: new ContextTransitionEngine({
 				lease: new ContextTransitionLease(),
 				compaction: {
@@ -107,23 +118,36 @@ describe("Controller Profile switch integration", () => {
 		})
 		expect(compact).not.toHaveBeenCalled()
 		expect(release).not.toHaveBeenCalled()
-		expect(commitProfileBindings).toHaveBeenCalledWith({ profileId: "target-id", profileName: "target-profile" }, ["act"])
+		// Adopting a Profile also drops the previous Profile's runtime overrides.
+		expect(setProfileIdentityBindings).toHaveBeenCalledWith(
+			{ act: { profileId: "target-id", profileName: "target-profile" } },
+			{ clearRuntimeOverrides: true },
+		)
+		expect(rebuild).toHaveBeenCalledWith({ abortPrevious: true })
+		// The switch is reported only once the binding is on disk.
+		expect(flushPendingState).toHaveBeenCalledOnce()
+		// The source Profile's retry countdown is handed back once the target is bound.
+		expect(handBack).toHaveBeenCalledOnce()
+		expect(rebuild.mock.invocationCallOrder[0]).toBeLessThan(handBack.mock.invocationCallOrder[0])
+		expect(dismissProviderFailure).toHaveBeenCalledOnce()
 		expect(restartAccountUsagePolling).toHaveBeenCalledOnce()
 	})
 
 	it("switches Profiles while a Mode transition still owns its own transaction", async () => {
-		const commitProfileBindings = vi.fn(async () => undefined)
+		const setProfileIdentityBindings = vi.fn()
+		const rebuild = vi.fn(async () => undefined)
+		const flushPendingState = vi.fn(async () => undefined)
 		const restartAccountUsagePolling = vi.fn()
 		const fakeController = {
-			task: {
+			stateManager: { flushPendingState },
+			task: createSessionFixture({
 				taskId: "task-1",
-				getMode: () => "act" as const,
-				getOccupiedContextTokens: () => 0,
-				commitProfileBindings,
-				compactForTransition: vi.fn(async () => "completed" as const),
-				completeContextCompaction: vi.fn(async () => undefined),
-				abortContextCompaction: vi.fn(async () => undefined),
-			},
+				owners: {
+					settings: { mode: "act" as const, setProfileIdentityBindings },
+					api: { rebuild },
+				},
+			}),
+			getOccupiedContextTokens: () => 0,
 			resolveTaskProfileName: vi.fn(() => "source-profile"),
 			// An unresolved target degrades to a direct switch, which is exactly the
 			// path that must stay reachable while another transition is in flight.
@@ -162,7 +186,61 @@ describe("Controller Profile switch integration", () => {
 		})
 
 		expect(result.status).toBe("switched")
-		expect(commitProfileBindings).toHaveBeenCalledWith({ profileId: "target-id", profileName: "target-profile" }, ["act"])
+		expect(setProfileIdentityBindings).toHaveBeenCalledWith(
+			{ act: { profileId: "target-id", profileName: "target-profile" } },
+			{ clearRuntimeOverrides: true },
+		)
+		expect(flushPendingState).toHaveBeenCalledOnce()
 		expect(restartAccountUsagePolling).toHaveBeenCalledOnce()
+	})
+
+	it("restores the previous bindings and handler when the switch cannot be persisted", async () => {
+		const previous = { plan: { profileId: "source-id", profileName: "source-profile" } }
+		const setProfileIdentityBindings = vi.fn(() => previous)
+		const restoreProfileState = vi.fn()
+		const rebuild = vi.fn(async () => undefined)
+		const handBack = vi.fn(() => true)
+		const flushPendingState = vi.fn(async () => {
+			throw new Error("disk full")
+		})
+		const fakeController = {
+			stateManager: { flushPendingState },
+			task: createSessionFixture({
+				taskId: "task-1",
+				owners: {
+					settings: { mode: "act" as const, setProfileIdentityBindings, restoreProfileState },
+					api: { rebuild },
+					providerRetry: { handBack },
+				},
+			}),
+			getOccupiedContextTokens: () => 0,
+			resolveTaskProfileName: vi.fn(() => "source-profile"),
+			resolveProfileTarget: vi.fn(() => undefined),
+			validateProfileSwitch: vi.fn(() => true),
+			postStateToWebview: vi.fn(async () => undefined),
+			restartAccountUsagePolling: vi.fn(),
+		}
+		const createContextTransitionEngine = Reflect.get(Controller.prototype, "createContextTransitionEngine") as (
+			this: typeof fakeController,
+		) => ContextTransitionEngine
+		const createProfileSwitchCoordinator = Reflect.get(Controller.prototype, "createProfileSwitchCoordinator") as (
+			this: typeof fakeController,
+		) => ProfileSwitchCoordinator
+		Object.assign(fakeController, { profileTransitionEngine: createContextTransitionEngine.call(fakeController) })
+		const coordinator = createProfileSwitchCoordinator.call(fakeController)
+
+		const result = await coordinator.request({
+			taskId: "task-1",
+			targetProfileId: "target-id",
+			targetProfile: "target-profile",
+			targetModes: ["act"],
+		})
+
+		expect(result.status).toBe("rejected")
+		expect(restoreProfileState).toHaveBeenCalledWith(previous)
+		// Rebuilt once for the target and once more back onto the restored bindings.
+		expect(rebuild).toHaveBeenCalledTimes(2)
+		// An uncommitted switch leaves the running retry countdown alone.
+		expect(handBack).not.toHaveBeenCalled()
 	})
 })

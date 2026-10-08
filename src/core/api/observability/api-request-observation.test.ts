@@ -1,9 +1,8 @@
 import { InMemoryLogRecordExporter, LoggerProvider, SimpleLogRecordProcessor } from "@opentelemetry/sdk-logs"
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-node"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { createRunningTaskState } from "@/core/task/kernel/__fixtures__/task-state"
 import { TaskTurnTelemetry } from "@/core/task/observability/task-turn-telemetry"
-import { createTaskRuntimeState } from "@/core/task/runtime/TaskRuntimeState"
-import { TaskPhase } from "@/core/task/TaskPhase"
 import { OpenTelemetryTelemetryProvider } from "@/services/telemetry/providers/opentelemetry/OpenTelemetryTelemetryProvider"
 import { OpenTelemetryTraceProvider } from "@/services/telemetry/providers/opentelemetry/OpenTelemetryTraceProvider"
 import { forwardRuntimeEvent } from "@/services/telemetry/runtime/provider-event-bridge"
@@ -108,12 +107,7 @@ function handler(send: () => ApiStream, taskId: string, abort?: () => void): Api
 }
 
 function task(taskId: string) {
-	const state = createTaskRuntimeState({
-		taskId,
-		phase: TaskPhase.STREAMING,
-		revision: 42,
-		anchor: { apiIndex: 3, turnId: "turn-a" },
-	})
+	const state = createRunningTaskState({ taskId, turnId: "turn-a", revision: 42 })
 	const timeline = new TaskTurnTelemetry(
 		taskId,
 		() => state,
@@ -121,7 +115,7 @@ function task(taskId: string) {
 	)
 	cleanup.push(() => timeline.dispose())
 	timeline.committed("API_STARTED", state)
-	timeline.snapshot("persisted", { taskId, phase: state.phase, apiIndex: 3, revision: 41, timestamp: Date.now() })
+	timeline.snapshot("persisted", { state: createRunningTaskState({ taskId, turnId: "turn-a", revision: 41 }), outbox: [] })
 	return { state, timeline }
 }
 

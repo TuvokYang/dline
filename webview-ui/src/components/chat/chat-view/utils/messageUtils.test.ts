@@ -1,6 +1,7 @@
-import type { ClineMessage, TaskViewState } from "@shared/ExtensionMessage"
+import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import {
+	filterVisibleMessages,
 	findGroupedMessageByTs,
 	groupLowStakesTools,
 	groupMessages,
@@ -10,25 +11,47 @@ import {
 	toggleMessageRowExpansion,
 } from "./messageUtils"
 
-const createTextMessage = (ts: number, text: string): ClineMessage => ({
+const createTextMessage = (ts: number, text: string): UiMessage => ({
 	type: "say",
 	say: "text",
 	text,
 	ts,
 })
 
-const createToolMessage = (ts: number, tool: string): ClineMessage => ({
+const createToolMessage = (ts: number, tool: string): UiMessage => ({
 	type: "say",
 	say: "tool",
 	text: JSON.stringify({ tool, path: "src/file.ts" }),
 	ts,
 })
 
-const createReasoningMessage = (ts: number, text: string): ClineMessage => ({
+const createReasoningMessage = (ts: number, text: string): UiMessage => ({
 	type: "say",
 	say: "reasoning",
 	text,
 	ts,
+})
+
+const createRequestMessage = (ts: number, info: Record<string, unknown>): UiMessage => ({
+	type: "say",
+	say: "api_req_started",
+	text: JSON.stringify(info),
+	ts,
+})
+
+describe("filterVisibleMessages request rows", () => {
+	it("hides a cancelled request so its reasoning renders once", () => {
+		const request = createRequestMessage(1, { cost: 0, cancelReason: "user_cancelled" })
+		const reasoning = createReasoningMessage(2, "thought")
+
+		expect(filterVisibleMessages([request, reasoning])).toEqual([reasoning])
+	})
+
+	it("keeps a request whose stream failed", () => {
+		const request = createRequestMessage(1, { cost: 0, streamingFailedMessage: "boom" })
+
+		expect(filterVisibleMessages([request])).toEqual([request])
+	})
 })
 
 /**
@@ -139,7 +162,7 @@ describe("resolveApiErrorMessage", () => {
 })
 
 describe("image generation row expansion", () => {
-	const imageMessage: ClineMessage = {
+	const imageMessage: UiMessage = {
 		ts: 42,
 		type: "say",
 		say: "tool",
@@ -192,8 +215,8 @@ describe("groupMessages", () => {
 
 		expect(grouped).toHaveLength(2)
 		expect(grouped.every(Array.isArray)).toBe(true)
-		expect((grouped[0] as ClineMessage[]).map((message) => message.ts)).toEqual([1, 2, 3])
-		expect((grouped[1] as ClineMessage[]).map((message) => message.ts)).toEqual([4, 5])
+		expect((grouped[0] as UiMessage[]).map((message) => message.ts)).toEqual([1, 2, 3])
+		expect((grouped[1] as UiMessage[]).map((message) => message.ts)).toEqual([4, 5])
 	})
 })
 

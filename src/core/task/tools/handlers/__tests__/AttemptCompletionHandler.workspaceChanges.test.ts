@@ -1,8 +1,8 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import type { ToolUse } from "../../../../assistant-message"
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { AttemptCompletionHandler } from "../AttemptCompletionHandler"
 
@@ -17,10 +17,10 @@ const COMPLETION_TS = 123
  */
 function createConfig(options: { hasNewChanges: boolean; rewriteAsAsk?: boolean }): {
 	config: TaskConfig
-	messages: ClineMessage[]
+	messages: UiMessage[]
 } {
-	const messages: ClineMessage[] = []
-	const updateClineMessage = vi.fn(async (index: number, updates: Partial<ClineMessage>) => {
+	const messages: UiMessage[] = []
+	const updateClineMessage = vi.fn(async (index: number, updates: Partial<UiMessage>) => {
 		messages[index] = { ...messages[index], ...updates }
 	})
 	const config = {
@@ -29,7 +29,7 @@ function createConfig(options: { hasNewChanges: boolean; rewriteAsAsk?: boolean 
 		cwd: "e:\\workspace\\vscode\\dline",
 		mode: "act",
 		doubleCheckCompletionEnabled: false,
-		taskState: new TaskState(),
+		taskState: new DefaultToolHandlerState(),
 		interactions: {
 			complete: vi.fn(async () => {
 				if (options.rewriteAsAsk !== false) {
@@ -68,7 +68,7 @@ function createConfig(options: { hasNewChanges: boolean; rewriteAsAsk?: boolean 
 		} as unknown as TaskConfig["services"],
 		callbacks: {
 			say: vi.fn(async (type: string, text?: string) => {
-				messages.push({ ts: COMPLETION_TS, type: "say", say: type, text } as ClineMessage)
+				messages.push({ ts: COMPLETION_TS, type: "say", say: type, text } as UiMessage)
 				return COMPLETION_TS
 			}),
 			saveCheckpoint: vi.fn().mockResolvedValue(undefined),

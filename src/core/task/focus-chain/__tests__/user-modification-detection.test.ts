@@ -5,7 +5,7 @@ import path from "path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { Logger } from "@/shared/services/Logger"
 import { ensureTaskDirectoryExists } from "../../../storage/disk"
-import { TaskState } from "../../TaskState"
+import { DefaultToolHandlerState } from "../../tools/state/ToolHandlerState"
 import { createFocusChainMarkdownContent, getFocusChainFilePath } from "../file-utils"
 import { FocusChainManager } from "../index"
 
@@ -41,7 +41,7 @@ describe("FocusChainManager - user modification detection", () => {
 		await fs.rm(tempDocumentsDir, { recursive: true, force: true })
 	})
 
-	async function startWatchedManager(taskState: TaskState, postStateToWebview: () => Promise<void>) {
+	async function startWatchedManager(taskState: DefaultToolHandlerState, postStateToWebview: () => Promise<void>) {
 		manager = new FocusChainManager({
 			taskId,
 			taskState,
@@ -60,7 +60,7 @@ describe("FocusChainManager - user modification detection", () => {
 
 	it("does not report its own write of a reformatted checklist as a user modification", async () => {
 		const logSpy = vi.spyOn(Logger, "log")
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const postStateToWebview = vi.fn().mockResolvedValue(undefined)
 		const watched = await startWatchedManager(taskState, postStateToWebview)
 
@@ -85,7 +85,7 @@ describe("FocusChainManager - user modification detection", () => {
 
 	it("still reports a real item edit made in the checklist file", async () => {
 		const logSpy = vi.spyOn(Logger, "log")
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const postStateToWebview = vi.fn().mockResolvedValue(undefined)
 		const watched = await startWatchedManager(taskState, postStateToWebview)
 

@@ -15,7 +15,9 @@ export const webviewProjectConfig = {
 		testTimeout: 60_000,
 		clearMocks: false,
 		restoreMocks: false,
-		pool: "vmThreads",
+		// Isolated threads release each file's module registry instead of retaining VM graphs.
+		pool: "threads",
+		isolate: true,
 		maxWorkers: 4,
 	},
 	resolve: {

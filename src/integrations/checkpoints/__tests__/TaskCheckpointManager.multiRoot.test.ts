@@ -2,8 +2,8 @@ import type CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
 import { VcsType } from "@shared/multi-root/types"
 import * as path from "path"
 import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "@/core/task/TaskState"
-import type { ClineMessage, ClineSay } from "@/shared/ExtensionMessage"
+import { DefaultToolHandlerState } from "@/core/task/tools/state/ToolHandlerState"
+import type { UiMessage, UiSay } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
 
@@ -14,11 +14,11 @@ function createHarness(
 ) {
 	const rootA = path.resolve("C:/workspace-a")
 	const rootB = path.resolve("C:/workspace-b")
-	const messages: ClineMessage[] = []
-	const taskState = new TaskState()
+	const messages: UiMessage[] = []
+	const taskState = new DefaultToolHandlerState()
 	const restoreChatRuntime = vi.fn().mockResolvedValue(undefined)
 	let nextMessageTs = 42
-	const updateClineMessage = vi.fn(async (index: number, updates: Partial<ClineMessage>) =>
+	const updateClineMessage = vi.fn(async (index: number, updates: Partial<UiMessage>) =>
 		Object.assign(messages[index], updates),
 	)
 	const manager = createTaskCheckpointManager(
@@ -73,8 +73,8 @@ function createHarness(
 			updateTaskHistory: vi.fn(),
 			cancelTask: vi.fn(),
 			restoreChatRuntime,
-			say: vi.fn(async (say: ClineSay) => {
-				const message: ClineMessage = { ts: nextMessageTs++, type: "say", say }
+			say: vi.fn(async (say: UiSay) => {
+				const message: UiMessage = { ts: nextMessageTs++, type: "say", say }
 				messages.push(message)
 				return message.ts
 			}),

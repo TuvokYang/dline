@@ -1,5 +1,5 @@
 import { BROWSER_VIEWPORT_PRESETS } from "@shared/BrowserSettings"
-import { BrowserAction, ClineMessage } from "@shared/ExtensionMessage"
+import { BrowserAction, UiMessage } from "@shared/ExtensionMessage"
 import { StringRequest } from "@shared/proto/dline/common"
 import deepEqual from "fast-deep-equal"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
@@ -17,10 +17,10 @@ import { BrowserSessionToolbar } from "./browser-session/BrowserSessionToolbar"
 import { hasCancelledBrowserApiRequest, projectBrowserSession } from "./browser-session/browser-session-model"
 
 interface BrowserSessionRowProps {
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	expandedRows: Record<number, boolean>
 	onToggleExpand: (messageTs: number) => void
-	lastModifiedMessage?: ClineMessage
+	lastModifiedMessage?: UiMessage
 	isLast: boolean
 	onHeightChange: (isTaller: boolean) => void
 	onSetQuote: (text: string) => void

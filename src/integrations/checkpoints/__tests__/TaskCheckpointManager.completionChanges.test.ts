@@ -1,12 +1,12 @@
 import type CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 
 vi.unmock("@integrations/checkpoints")
 
 import { createTaskCheckpointManager } from "../index"
 
-function createManager(messages: ClineMessage[], changedFileCount: number) {
+function createManager(messages: UiMessage[], changedFileCount: number) {
 	const tracker = {
 		getDiffCount: vi.fn(),
 		getTaskDiffCount: vi.fn().mockResolvedValue(changedFileCount),
@@ -27,7 +27,7 @@ function createManager(messages: ClineMessage[], changedFileCount: number) {
 
 describe("TaskCheckpointManager completion change verdict", () => {
 	it("uses the previous ask-form completion and task-owned diff count", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{ ts: 1, type: "say", say: "checkpoint_created", lastCheckpointHash: ["task-start"] },
 			{ ts: 2, type: "ask", ask: "completion_result", lastCheckpointHash: ["previous"] },
 			{ ts: 3, type: "say", say: "completion_result", lastCheckpointHash: ["current"] },
@@ -40,7 +40,7 @@ describe("TaskCheckpointManager completion change verdict", () => {
 	})
 
 	it("uses the task-start checkpoint for the first completion", async () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{ ts: 1, type: "say", say: "checkpoint_created", lastCheckpointHash: ["task-start"] },
 			{ ts: 2, type: "say", say: "completion_result", lastCheckpointHash: ["current"] },
 		]

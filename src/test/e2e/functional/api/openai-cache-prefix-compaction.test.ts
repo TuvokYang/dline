@@ -63,6 +63,10 @@ const SIX_CYCLE_CORPUS_FILE_CHARS = 55 * 1024
 const CONSECUTIVE_CORPUS_FILE_CHARS = 60 * 1024
 // Leave headroom for frozen-prefix growth while keeping the complete provider request above the 446.4K trigger boundary.
 const LARGE_TURN_CORPUS_FILE_CHARS = 56 * 1024
+// The pending-completed scenario must fit the history turn plus the latest turn in the first hidden Pass for every seed.
+// At 57 KiB a seed with the maximum search count pushes T0..T2 past the Pass input ceiling, so the planner correctly
+// defers the latest turn; 48 KiB keeps that worst case inside the ceiling while the summary request stays above 350K.
+const PENDING_COMPLETED_CORPUS_FILE_CHARS = 48 * 1024
 const LARGE_TURN_EXTRA_FILE_CHARS = 8 * 1024
 const CONSECUTIVE_LARGE_TURN_EXTRA_FILE_CHARS = 512
 const CORPUS_USER_CHARS = 120 * 1024
@@ -596,7 +600,7 @@ e2e(
 		e2e.setTimeout(360_000)
 		await configureProfiles(dlineDir, 1_000)
 		await createPromptResources(workspaceDir, getE2EWorkspaceMcpUrl(server.baseUrl))
-		const scenario = await prepareScenario(workspaceDir, resolveScenarioSeed())
+		const scenario = await prepareScenario(workspaceDir, resolveScenarioSeed(), PENDING_COMPLETED_CORPUS_FILE_CHARS)
 		const historyTurn = scenario.turns[0]
 		const uniqueReadPaths = new Set<string>()
 		const historyReadCalls = historyTurn.toolCalls.filter((toolCall) => {

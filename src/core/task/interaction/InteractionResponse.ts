@@ -1,3 +1,4 @@
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { InteractionActionType } from "./Interaction"
 
 /** Draft content submitted with an interaction action. */
@@ -5,6 +6,13 @@ export interface InteractionDraft {
 	text: string
 	images: string[]
 	files: string[]
+	/**
+	 * The structure this draft was composed as, when the client submitted one.
+	 *
+	 * Carried so admission validates the submitted structure instead of
+	 * rediscovering commands and mentions in `text`.
+	 */
+	semanticInput?: SemanticInputDocument
 }
 
 /** Selection values submitted by selection-aware interactions. */

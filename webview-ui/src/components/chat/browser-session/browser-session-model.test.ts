@@ -1,10 +1,10 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
 import { projectBrowserSession } from "./browser-session-model"
 
 describe("projectBrowserSession", () => {
 	it("keeps browser actions in pages and projects ordinary messages outside the frame once", () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{ ts: 1, type: "say", say: "browser_action_launch", text: "https://example.com" },
 			{
 				ts: 2,

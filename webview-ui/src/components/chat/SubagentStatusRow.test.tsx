@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import SubagentStatusRow from "./SubagentStatusRow"
@@ -42,7 +42,7 @@ vi.mock("../common/MarkdownBlock", () => ({
 	default: ({ markdown }: { markdown: string }) => <div>{markdown}</div>,
 }))
 
-function makeMsg(overrides: Partial<ClineMessage> = {}): ClineMessage {
+function makeMsg(overrides: Partial<UiMessage> = {}): UiMessage {
 	return {
 		ts: Date.now(),
 		type: "say",

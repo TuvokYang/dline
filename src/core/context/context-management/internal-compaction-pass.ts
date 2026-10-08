@@ -2,7 +2,7 @@ import type { ApiHandler } from "@core/api"
 import { isOutputLimitExceededError } from "@core/api/stream/OutputLimitExceededError"
 import { createIdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiProviderStreamChunk } from "@core/api/transform/stream"
-import { parseAssistantMessageV2, type ToolUse } from "@core/assistant-message"
+import { parseAssistantMessage, type ToolUse } from "@core/assistant-message"
 import type { CompactionProviderInput } from "@core/task/compaction/CompactionProviderInput"
 import type { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
 import type { ProviderRequestRoundAdmission } from "@core/task/performance/provider-request-round-port"
@@ -485,7 +485,7 @@ function parseSummarizeTaskCalls(text: string): ToolUse[] {
 	if (!text.trim()) return []
 	let ts = 0
 	const identities = createIdentityFactory(() => String(++ts))
-	const blocks = parseAssistantMessageV2(text, {
+	const blocks = parseAssistantMessage(text, {
 		getOrCreateTsForBlock: () => ++ts,
 		getOrCreateToolIdentityForBlock: () => ({
 			function_id: identities.nextFunctionId(),

@@ -1,12 +1,14 @@
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 import {
 	type ApprovalDecision,
 	type ConfigurableCeilings,
 	type PermissionScopeContext,
 	resolveApprovalKind,
-} from "../../kernel/turn/approval-kind"
-import { resolveToolLanes, type ToolLane, type ToolLaneContext } from "../../kernel/turn/tool-lanes"
+	resolveToolLanes,
+	type ToolLane,
+	type ToolLaneContext,
+} from "../../kernel"
 
 /**
  * Two-phase tool admission.
@@ -41,7 +43,7 @@ export interface ToolPreflightRejection {
  */
 export interface ToolApprovalPresentation {
 	/** Interaction kind the Webview uses to render the request. */
-	ask: ClineAsk
+	ask: UiAsk
 	/** Serialized payload for that interaction. */
 	body: string
 	/** Whether a desktop notification should accompany the request. */
@@ -55,6 +57,19 @@ export type ToolSideEffect<T> = () => Promise<T>
 export interface ToolPreflightAdmission<T> {
 	outcome: "admitted"
 	decision: ApprovalDecision
+	/**
+	 * The classification facts the decision was resolved from.
+	 *
+	 * The decision itself is an output: `scope` and `ceiling` say which rule
+	 * applied, not why it applied. Anything that must reach the same conclusion
+	 * again — notably the approval policy, which re-resolves from value facts
+	 * alone — needs these inputs, because re-resolving without them silently
+	 * reclassifies the call. A safe command would land in the "all commands"
+	 * scope and be refused under a grant that does cover it.
+	 */
+	scope?: PermissionScopeContext
+	/** Whether this call inherits an approval its parent already obtained. */
+	inheritsApproval?: boolean
 	/**
 	 * Absent when the decision needs no user-facing request, which is the case
 	 * for policy-approved calls and for tools that present their own
@@ -151,6 +166,8 @@ export function admitToolCall<T>(
 	return {
 		outcome: "admitted",
 		decision,
+		scope: input.scope,
+		inheritsApproval: input.inheritsApproval,
 		// A decision that needs no user request carries no payload, so a caller
 		// cannot accidentally present one.
 		presentation: decision.kind === "manual" || decision.kind === "ai_approver" ? presentation : undefined,

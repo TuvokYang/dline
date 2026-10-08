@@ -1,8 +1,8 @@
 import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoContent } from "@integrations/misc/extract-text"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage } from "@shared/messages"
-import type { BlockLifecycle } from "../BlockPhaseMachine"
+import type { BlockLifecycle } from "./LegacyBlockLifecycle"
 import { assembleToolTurnContent } from "./ToolTurnContentAssembler"
 
 export interface MistakeLimitContinuationInput {
@@ -11,7 +11,7 @@ export interface MistakeLimitContinuationInput {
 		blocks: readonly BlockLifecycle[]
 	}
 	apiHistory: readonly ClineStorageMessage[]
-	uiHistory: readonly ClineMessage[]
+	uiHistory: readonly UiMessage[]
 	pendingContent: readonly ClineContent[]
 	feedback: {
 		text?: string

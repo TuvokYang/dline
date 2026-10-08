@@ -1,4 +1,4 @@
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { memo, useMemo, useState } from "react"
 import { TaskServiceClient } from "@/services/grpc-client"
@@ -23,7 +23,7 @@ const completedColor = "var(--vscode-descriptionForeground)"
  * @param metadata The hook metadata containing status
  * @returns true if the hook output should be expanded by default
  */
-function shouldExpandHookByDefault(message: ClineMessage, metadata: HookMetadata): boolean {
+function shouldExpandHookByDefault(message: UiMessage, metadata: HookMetadata): boolean {
 	// Always collapse historical messages (>5 seconds old) for better UX
 	const isHistorical = message.ts && Date.now() - message.ts > 5000
 	if (isHistorical) {
@@ -35,7 +35,7 @@ function shouldExpandHookByDefault(message: ClineMessage, metadata: HookMetadata
 }
 
 interface HookMessageProps {
-	message: ClineMessage
+	message: UiMessage
 	// CommandOutput component - we'll import and use it here
 	CommandOutput: React.ComponentType<{
 		output: string

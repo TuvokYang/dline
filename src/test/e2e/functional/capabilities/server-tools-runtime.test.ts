@@ -4,12 +4,17 @@ import type { MockApiConsumption, MockApiTarget } from "@e2e/fixtures/server"
 import { getE2EMockProviderBaseUrl } from "@e2e/fixtures/server/api"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskConversation, readTaskUiMessagesText, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 import { type BrowserSettings, DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ElectronApplication } from "playwright"
 // @ts-expect-error puppeteer-chromium-resolver does not publish TypeScript declarations.
 import PCR from "puppeteer-chromium-resolver"
+import { InstanceDatabase, InstanceLayout, openInstanceStorage } from "@/core/storage/instance"
+import { openTaskJournalStores } from "@/core/task/stores"
+import { FileTaskStateVault } from "@/core/task/stores/FileTaskStateVault"
+import { JournalConversationRewind } from "@/core/task/stores/JournalConversationRewind"
 
 type StoredWebToolsMode =
 	| "WEB_TOOLS_MODE_AUTO"
@@ -77,23 +82,8 @@ async function attachHostedWebResumeEvidence(
 	await attachHostedWebScreenshot(page, name)
 	const testInfo = e2e.info()
 	const taskId = await onlyTaskId(dlineDocsDir)
-	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-	const snapshot = await E2ETestHelper.waitForValue(async () => {
-		const content = await readFile(path.join(taskDir, "snapshot.json"), "utf8").catch(() => undefined)
-		if (!content) return undefined
-		const parsed = JSON.parse(content) as {
-			interaction?: { kind?: string; status?: string; persistedRequest?: boolean }
-		}
-		const interaction = parsed.interaction
-		// The legacy approval is migrated into the Resume that owns its persisted request.
-		return interaction?.kind === "resume" && interaction.status === "awaiting" && interaction.persistedRequest === true
-			? content
-			: undefined
-	}, 30_000)
-	const uiMessages = await E2ETestHelper.waitForValue(async () => {
-		const content = await readFile(path.join(taskDir, "ui_messages.jsonl"), "utf8").catch(() => undefined)
-		return content?.includes('"ask":"tool"') && content.includes('"hosted-web:') ? content : undefined
-	}, 30_000)
+	const journalConversation = `${JSON.stringify(await readTaskConversation(dlineDocsDir, taskId), null, 2)}\n`
+	const uiMessages = await readTaskUiMessagesText(dlineDocsDir, taskId)
 	const settings = await E2ETestHelper.waitForValue(async () => {
 		const content = await readFile(settingsPath(dlineDir), "utf8").catch(() => undefined)
 		if (!content) return undefined
@@ -102,7 +92,7 @@ async function attachHostedWebResumeEvidence(
 	}, 30_000)
 	const outputLog = await E2ETestHelper.readDlineOutput(userDataDir)
 	for (const evidence of [
-		{ fileName: `${name}-snapshot.json`, content: snapshot, contentType: "application/json" },
+		{ fileName: `${name}-journal-conversation.json`, content: journalConversation, contentType: "application/json" },
 		{ fileName: `${name}-ui_messages.jsonl`, content: uiMessages, contentType: "application/x-ndjson" },
 		{ fileName: `${name}-settings.json`, content: settings, contentType: "application/json" },
 		{ fileName: `${name}-dline-output.log`, content: outputLog, contentType: "text/plain" },
@@ -113,21 +103,39 @@ async function attachHostedWebResumeEvidence(
 	}
 }
 
-async function prepareWebFetchBrowser(dlineDir: string, dlineHomeDir: string): Promise<void> {
-	const workerDirectoryName = path.basename(path.dirname(dlineHomeDir))
-	const seedDir = path.join(E2ETestHelper.PUPPETEER_CACHE_DIR, workerDirectoryName)
-	const prepareSeed = async (): Promise<void> => {
+/** Budget for downloading the Chromium build once per worker; it is spent outside every test's own timeout. */
+const WEB_FETCH_CHROMIUM_SEED_TIMEOUT_MS = 600_000
+
+async function downloadChromiumSeed(seedDir: string): Promise<string> {
+	const download = async (): Promise<void> => {
 		await mkdir(seedDir, { recursive: true })
 		const stats = await PCR({ downloadPath: seedDir })
 		await access(stats.executablePath)
 	}
 	try {
-		await prepareSeed()
+		await download()
 	} catch {
 		await rm(seedDir, { recursive: true, force: true })
-		await prepareSeed()
+		await download()
 	}
+	return seedDir
+}
 
+/**
+ * Local Web Fetch launches a real Chromium build that is downloaded from the network. The download runs as a worker
+ * fixture with its own budget, so a slow mirror cannot consume the timeout of whichever Web Fetch test runs first.
+ */
+const webFetchE2e = e2e.extend<Record<never, never>, { webFetchChromiumSeed: string }>({
+	webFetchChromiumSeed: [
+		async ({}, use, workerInfo) => {
+			const seedDir = path.join(E2ETestHelper.PUPPETEER_CACHE_DIR, `worker-${workerInfo.workerIndex}`)
+			await use(await downloadChromiumSeed(seedDir))
+		},
+		{ scope: "worker", timeout: WEB_FETCH_CHROMIUM_SEED_TIMEOUT_MS },
+	],
+})
+
+async function prepareWebFetchBrowser(dlineDir: string, dlineHomeDir: string, seedDir: string): Promise<void> {
 	const testPuppeteerDir = path.join(dlineHomeDir, "puppeteer")
 	await rm(testPuppeteerDir, { recursive: true, force: true })
 	await cp(seedDir, testPuppeteerDir, { recursive: true })
@@ -391,62 +399,68 @@ function expectIsolatedDirectories(dlineDir: string, dlineHomeDir: string, dline
 
 async function seedLegacyHostedWebApproval(dlineDocsDir: string, taskId: string): Promise<void> {
 	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
-	const apiPath = path.join(taskDir, "api_conversation_history.jsonl")
-	const apiHistory = (await readFile(apiPath, "utf8"))
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as { role?: string; content?: unknown })
-	const [request, interrupted] = apiHistory
+	const layout = new InstanceLayout(taskDir)
+	const conversation = await readTaskConversation(dlineDocsDir, taskId)
+	const [request] = conversation
 	if (
-		apiHistory.length !== 2 ||
+		conversation.length !== 2 ||
 		request?.role !== "user" ||
-		!Array.isArray(request.content) ||
-		interrupted?.role !== "assistant" ||
-		!Array.isArray(interrupted.content) ||
-		interrupted.content.some(
-			(block) => typeof block === "object" && block !== null && "type" in block && block.type === "tool_use",
+		conversation.some(
+			(message) =>
+				!Array.isArray(message.content) ||
+				message.content.some(
+					(block) => typeof block === "object" && block !== null && "type" in block && block.type === "tool_use",
+				),
 		)
 	) {
-		const shape = apiHistory.map((message) => ({ role: message.role, contentIsArray: Array.isArray(message.content) }))
+		const shape = conversation.map((message) => ({ role: message.role, contentIsArray: Array.isArray(message.content) }))
 		throw new Error(`Expected one failed user request and no executed tool: ${JSON.stringify(shape)}`)
 	}
-	// Closing a real failed request writes an interrupted assistant row. The obsolete pre-send approval had no response yet.
-	await writeFile(apiPath, `${JSON.stringify(request)}\n`, "utf8")
+
+	// The runtime conversation is journal-backed. Rewind it to the original user
+	// request instead of editing the obsolete legacy JSONL import source.
+	const storage = openInstanceStorage(layout.root)
+	try {
+		const stores = await openTaskJournalStores(await storage.openDatabase(InstanceDatabase.Journal, "e2e-fixture-writer"))
+		const visible = (await stores.journal.project()).visibleMessages
+		if (visible.length < 2 || visible[0]?.source !== "intake") {
+			throw new Error(`Expected an intake followed by failed-turn journal entries, found ${visible.length}`)
+		}
+		await new JournalConversationRewind(stores.journal).rewindTo({
+			operationId: `e2e:legacy-hosted:${taskId}`,
+			target: visible[0].watermark,
+		})
+
+		const vault = new FileTaskStateVault(layout.stateFile)
+		const durable = await vault.load(taskId)
+		if (!durable) throw new Error("Expected current runtime state before seeding the legacy Hosted approval")
+		await vault.save({
+			state: {
+				...durable.state,
+				flow: { phase: "paused" },
+				dialog: { approvalsByBlock: {} },
+				halt: { status: "idle", generation: durable.state.generation },
+				journalWatermark: stores.journal.watermark(),
+			},
+			outbox: [],
+		})
+	} finally {
+		await storage.close()
+	}
 	const apiIndex = 0
-
-	const uiPath = path.join(taskDir, "ui_messages.jsonl")
-	const uiMessages = (await readFile(uiPath, "utf8"))
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.map((line) => JSON.parse(line) as Record<string, unknown>)
-	const failedAsk = uiMessages.findLast((message) => message.type === "ask" && message.ask === "api_req_failed")
-	if (!failedAsk || typeof failedAsk.ts !== "number") throw new Error("Expected a persisted failed-request ask")
-	const interactionId = `hosted-web:${taskId}:${apiIndex}`
-	failedAsk.ask = "tool"
-	failedAsk.interactionId = interactionId
-	failedAsk.conversationHistoryIndex = apiIndex
-	failedAsk.text = JSON.stringify({ tool: "webSearch", content: "Legacy Hosted Web approval" })
-
-	const snapshotPath = path.join(taskDir, "snapshot.json")
-	const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as Record<string, unknown>
-	if (snapshot.taskId !== taskId) throw new Error("Expected the closed task snapshot to match its task ID")
-	snapshot.phase = "awaiting_approval"
-	snapshot.apiIndex = apiIndex
-	snapshot.anchor = { apiIndex, turnId: interactionId, interactionId, uiMessageTs: failedAsk.ts }
-	snapshot.interaction = {
-		taskId,
-		turnId: interactionId,
-		interactionId,
-		kind: "hosted_web_approval",
-		status: "awaiting",
-		createdRevision: snapshot.revision,
-		anchor: { messageTs: failedAsk.ts, messageType: "ask", taskAsk: "tool" },
-	}
-	for (const field of ["turn", "cancellation", "error", "completion", "interruptedInteraction", "runtimeError"]) {
-		delete snapshot[field]
-	}
-	await writeFile(uiPath, `${uiMessages.map((message) => JSON.stringify(message)).join("\n")}\n`, "utf8")
-	await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8")
+	let failedAskTs: number | undefined
+	await rewriteTaskUiMessages(dlineDocsDir, taskId, (uiMessages) => {
+		const failedAsk = uiMessages.findLast((message) => message.type === "ask" && message.ask === "api_req_failed")
+		if (!failedAsk || typeof failedAsk.ts !== "number") throw new Error("Expected a persisted failed-request ask")
+		failedAskTs = failedAsk.ts
+		const interactionId = `hosted-web:${taskId}:${apiIndex}`
+		failedAsk.ask = "tool"
+		failedAsk.interactionId = interactionId
+		failedAsk.conversationHistoryIndex = apiIndex
+		failedAsk.text = JSON.stringify({ tool: "webSearch", content: "Legacy Hosted Web approval" })
+		return uiMessages
+	})
+	if (failedAskTs === undefined) throw new Error("Expected a hosted approval anchor timestamp")
 }
 
 async function expectHostedLifecycle(
@@ -649,7 +663,6 @@ e2e(
 			await expect(opened.sidebar.locator('vscode-button[aria-label="Retry"]')).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(1)
 			const taskId = await onlyTaskId(dlineDocsDir)
-			const taskDir = path.join(dlineDocsDir, "tasks", taskId)
 			await closeCurrentTask(opened.sidebar)
 			await seedLegacyHostedWebApproval(dlineDocsDir, taskId)
 
@@ -657,17 +670,6 @@ e2e(
 			// owns the persisted request, so no approval decision is left to replay.
 			for (let reopen = 0; reopen < 2; reopen++) {
 				await reopenTask(opened.sidebar, taskText)
-				await expect
-					.poll(
-						async () => {
-							const snapshot = JSON.parse(await readFile(path.join(taskDir, "snapshot.json"), "utf8")) as {
-								interaction?: { kind?: string; status?: string; persistedRequest?: boolean }
-							}
-							return snapshot.interaction
-						},
-						{ timeout: 30_000 },
-					)
-					.toMatchObject({ kind: "resume", status: "awaiting", persistedRequest: true })
 				await expect(opened.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })).toBeVisible({
 					timeout: 30_000,
 				})
@@ -678,7 +680,8 @@ e2e(
 			}
 
 			await attachHostedWebResumeEvidence(opened.page, dlineDir, dlineDocsDir, userDataDir, "legacy-hosted-resume")
-			await opened.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true }).click()
+			const resumeButton = opened.sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Resume"]')
+			await resumeButton.click({ force: true })
 			await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
 			const consumptions = server.getMockConsumptions("openai-compatible-responses")
@@ -1497,9 +1500,19 @@ e2e(
 	},
 )
 
-e2e(
+webFetchE2e(
 	"ServerTool runtime - OpenAI Responses manual Web Fetch reaches a terminal state within the product budget",
-	async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+	async ({
+		dlineDir,
+		dlineDocsDir,
+		dlineHomeDir,
+		helper,
+		openVSCode,
+		server,
+		userDataDir,
+		webFetchChromiumSeed,
+		workspaceDir,
+	}) => {
 		e2e.setTimeout(120_000)
 		expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
 		await prepareRuntimeProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAiResponses, {
@@ -1507,7 +1520,7 @@ e2e(
 			mode: "WEB_TOOLS_MODE_FORCE_LOCAL",
 			supportsWebSearch: true,
 		})
-		await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
+		await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
 		const url = `${server.baseUrl}/mock/web-fetch/page`
 		const prompt = "Return the local Web Fetch page content within the product budget"
 		const completion = "E2E_RESPONSES_MANUAL_WEB_FETCH_TERMINAL"
@@ -1573,9 +1586,19 @@ const webFetchCases = [
 ] as const
 
 for (const testCase of webFetchCases) {
-	e2e(
+	webFetchE2e(
 		`ServerTool runtime - ${testCase.title} executes local Web Fetch without a Cline login`,
-		async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		async ({
+			dlineDir,
+			dlineDocsDir,
+			dlineHomeDir,
+			helper,
+			openVSCode,
+			server,
+			userDataDir,
+			webFetchChromiumSeed,
+			workspaceDir,
+		}) => {
 			e2e.setTimeout(300_000)
 			expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
 			await prepareRuntimeProfile(dlineDir, testCase.profileName, {
@@ -1583,7 +1606,7 @@ for (const testCase of webFetchCases) {
 				mode: "WEB_TOOLS_MODE_AUTO",
 				supportsWebSearch: true,
 			})
-			await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
+			await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
 			const url = `${server.baseUrl}/mock/web-fetch/page`
 			const prompt = "Extract the local Web Fetch marker"
 			const completion = `E2E_${testCase.target.toUpperCase().replaceAll("-", "_")}_WEB_FETCH_OK`
@@ -1656,9 +1679,19 @@ for (const testCase of webFetchCases) {
 	)
 }
 
-e2e(
+webFetchE2e(
 	"ServerTool runtime - checkpoint Restore cancels an established Web Fetch before the first Resume",
-	async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+	async ({
+		dlineDir,
+		dlineDocsDir,
+		dlineHomeDir,
+		helper,
+		openVSCode,
+		server,
+		userDataDir,
+		webFetchChromiumSeed,
+		workspaceDir,
+	}) => {
 		e2e.setTimeout(480_000)
 		expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
 		await prepareRuntimeProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAiResponses, {
@@ -1666,13 +1699,22 @@ e2e(
 			mode: "WEB_TOOLS_MODE_FORCE_LOCAL",
 			supportsWebSearch: true,
 		})
-		await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
+		await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
 		const warmUrl = `${server.baseUrl}/mock/web-fetch/page`
 		const delayedUrl = `${server.baseUrl}/mock/web-fetch/page?delayMs=30000`
 		const resumeDraft = "E2E_WEB_FETCH_RESTORE_FIRST_RESUME_DRAFT"
 		const completion = "E2E_WEB_FETCH_RESTORE_FIRST_RESUME_OK"
 		server.enqueueResponses(
 			"openai-compatible-responses",
+			{
+				type: "tool",
+				id: "call_web_fetch_restore_checkpoint_anchor",
+				name: "write_to_file",
+				arguments: {
+					path: "web-fetch-restore-checkpoint-anchor.txt",
+					content: "E2E_WEB_FETCH_RESTORE_CHECKPOINT_ANCHOR",
+				},
+			},
 			{
 				type: "tool",
 				id: "call_web_fetch_restore_ready",
@@ -1719,12 +1761,16 @@ e2e(
 			app = opened.app
 			await setAutoApproveAction(opened.sidebar, "Use Web", false)
 			await sendTask(opened.sidebar, "Create a checkpoint before warming Web Fetch.")
+			const checkpointApproval = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
+			await expect(checkpointApproval).toBeVisible({ timeout: 60_000 })
+			await checkpointApproval.click()
 			await expect(opened.sidebar.getByText("E2E_WEB_FETCH_RESTORE_READY", { exact: true })).toBeVisible({
 				timeout: 60_000,
 			})
 
 			const checkpointLabels = opened.sidebar.getByText("Checkpoint", { exact: true })
-			await expect.poll(() => checkpointLabels.count(), { timeout: 30_000 }).toBeGreaterThan(0)
+			// The task-start baseline checkpoint plus the checkpoint committed after the approved write.
+			await expect.poll(() => checkpointLabels.count(), { timeout: 30_000 }).toBe(2)
 			const input = opened.sidebar.getByTestId("chat-input")
 			await input.fill("E2E_WARM_WEB_FETCH")
 			await input.press("Enter")
@@ -1753,9 +1799,20 @@ e2e(
 			await expect(restoreButton).toBeVisible({ timeout: 3_000 })
 			await restoreButton.click({ timeout: 3_000 })
 			const moreOptions = opened.sidebar.getByText("More options", { exact: true })
-			await expect(moreOptions).toBeVisible()
-			await moreOptions.click()
 			const restoreTaskButton = opened.sidebar.getByRole("button", { name: "Restore Task Only", exact: true })
+			await expect
+				.poll(
+					async () =>
+						(await moreOptions.isVisible())
+							? "more-options"
+							: (await restoreTaskButton.isVisible())
+								? "task-only"
+								: "pending",
+					{ timeout: 5_000 },
+				)
+				.toMatch(/^(more-options|task-only)$/)
+			if (await moreOptions.isVisible()) await moreOptions.click()
+			await expect(restoreTaskButton).toBeVisible()
 			const restoreStartedAt = Date.now()
 			await restoreTaskButton.click()
 
@@ -1770,8 +1827,8 @@ e2e(
 			await expect(input).toHaveValue("")
 			await expect(opened.sidebar.getByText(/stale_interaction|stale interaction/i)).toHaveCount(0)
 			await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(5)
-			const continuation = server.getMockConsumptions("openai-compatible-responses")[4]
+			await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(6)
+			const continuation = server.getMockConsumptions("openai-compatible-responses")[5]
 			expect(continuation.contractError).toBeUndefined()
 			expectSingleSearchRoute(continuation, "local")
 			expect(JSON.stringify(continuation.requestBody)).toContain(resumeDraft)
@@ -1832,9 +1889,19 @@ e2e(
 	},
 )
 
-e2e(
+webFetchE2e(
 	"ServerTool runtime - local Web Fetch failure is replayed to the model and restored as one terminal card",
-	async ({ dlineDir, dlineDocsDir, dlineHomeDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+	async ({
+		dlineDir,
+		dlineDocsDir,
+		dlineHomeDir,
+		helper,
+		openVSCode,
+		server,
+		userDataDir,
+		webFetchChromiumSeed,
+		workspaceDir,
+	}) => {
 		e2e.setTimeout(300_000)
 		expectIsolatedDirectories(dlineDir, dlineHomeDir, dlineDocsDir)
 		await prepareRuntimeProfile(dlineDir, E2E_PROFILE_NAMES.mockOpenAi, {
@@ -1842,7 +1909,7 @@ e2e(
 			mode: "WEB_TOOLS_MODE_AUTO",
 			supportsWebSearch: true,
 		})
-		await prepareWebFetchBrowser(dlineDir, dlineHomeDir)
+		await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
 		const url = "http://127.0.0.1:1/e2e-web-fetch-failure"
 		const prompt = "Extract content from the intentionally unreachable page"
 		const taskText = "Attempt the unreachable local Web Fetch, report its error, then finish."

@@ -4,10 +4,11 @@ import path from "node:path"
 import { FetchMessageRequest } from "@shared/proto/dline/task"
 import { convertProtoToClineMessage } from "@shared/proto-conversions/cline-message"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 import { UIMessage } from "../../../storage/UIMessage"
 import { MessageChannel } from "../../../task/MessageChannel"
 import { MessageStateHandler } from "../../../task/message-state"
-import { TaskState } from "../../../task/TaskState"
+import { DefaultToolHandlerState } from "../../../task/tools/state/ToolHandlerState"
 import { fetchMessage } from "../fetchMessage"
 
 describe("fetchMessage durable user_feedback integration", () => {
@@ -26,12 +27,13 @@ describe("fetchMessage durable user_feedback integration", () => {
 		} else {
 			process.env.DLINE_DOCS_DIR = previousDocsDir
 		}
+		await closeInstanceStoragesUnder(docsDir)
 		await rm(docsDir, { force: true, recursive: true })
 	})
 
 	it("persists final user_feedback and returns it through the fetchMessage RPC boundary", async () => {
 		const taskId = "task-user-feedback"
-		const taskState = new TaskState()
+		const taskState = new DefaultToolHandlerState()
 		const uiMessage = await UIMessage.open(taskId)
 		const messageStateHandler = new MessageStateHandler({
 			taskId,
@@ -55,10 +57,12 @@ describe("fetchMessage durable user_feedback integration", () => {
 
 		const reopened = await UIMessage.open(taskId)
 		const persistedMessages = [...reopened.getAll()]
-		const owner = {
-			taskId,
-			taskInstanceId: "open-feedback",
-			fetchDisplayMessages: async (referenceIndex: number, count: number) => {
+		const opening = { taskId, taskInstanceId: "open-feedback" }
+		// The Controller pages the opened surface's durable messages; this double
+		// serves them straight from the reopened store.
+		const controller = {
+			currentOpening: () => opening,
+			fetchCurrentTaskMessages: async (referenceIndex: number, count: number) => {
 				const startIndex = referenceIndex === -1 ? Math.max(0, persistedMessages.length - count) : referenceIndex
 				return {
 					messages: persistedMessages.slice(startIndex, startIndex + count),
@@ -68,7 +72,7 @@ describe("fetchMessage durable user_feedback integration", () => {
 			},
 		}
 		const response = await fetchMessage(
-			{ task: owner } as never,
+			controller as never,
 			FetchMessageRequest.create({ taskId, taskInstanceId: "open-feedback", referenceIndex: -1, count: 20 }),
 		)
 		const messages = response.messages.map(convertProtoToClineMessage)

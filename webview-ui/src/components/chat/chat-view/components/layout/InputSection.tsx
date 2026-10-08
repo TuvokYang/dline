@@ -1,10 +1,12 @@
 import { flushPendingTaskSettingsRequests } from "@components/settings/utils/settingsHandlers"
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
+import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import React, { useEffect, useRef, useState } from "react"
 import ChatTextArea from "@/components/chat/ChatTextArea"
 import { InputQueuePanel, type InputQueuePanelEntry } from "@/components/chat/input/InputQueuePanel"
 import type { ModeSwitchDraft } from "@/components/chat/mode-switch/useModeSwitch"
 import QuotedMessagePreview from "@/components/chat/QuotedMessagePreview"
+import { provenanceForRecalledDraft, rebaseProvenance } from "@/services/input-semantics/paste-provenance"
 import type { AcceptedInteractionSettlement, InteractionDraft } from "@/task-interaction/types"
 import { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
 import { resolveSendDisposition } from "./submit-or-enqueue"
@@ -17,13 +19,15 @@ interface InputSectionProps {
 	shouldDisableFilesAndImages: boolean
 	selectFilesAndImages: () => Promise<void>
 	draft: InteractionDraft
+	/** The catalog every submission of this view is composed against. */
+	semanticCatalog: InputSemanticCatalog
 	enabled?: boolean
 	onSubmit?: (draft: InteractionDraft) => Promise<AcceptedInteractionSettlement | undefined>
 	onDraftAccepted: (settlement: AcceptedInteractionSettlement) => void
 	submissionScope?: string
 	/** Causal owner used to deduplicate only repeated dispatches of the same submission. */
 	submissionIdentity?: string
-	clineAsk?: ClineAsk
+	clineAsk?: UiAsk
 	/** Queue entries owned by the backend; the composer only renders them. */
 	inputQueue?: readonly InputQueuePanelEntry[]
 	/**
@@ -34,12 +38,15 @@ interface InputSectionProps {
 	 * from the user with no way for it to ever be sent.
 	 */
 	canQueueInput?: boolean
-	/** Receives a send that was blocked because the task is still busy. */
-	onEnqueueInput?: (draft: { text: string; images: string[]; files: string[]; activeQuote?: string }) => void
+	/** Receives a send that was blocked because the task is still busy; resolves false when refused. */
+	onEnqueueInput?: (draft: import("@/components/chat/input/useInputQueue").InputQueueDraft) => Promise<boolean> | void
 	/** Marks an entry as being edited so it is held back from delivery. */
 	onEditQueuedInput?: (id: string) => void
 	/** Replaces an edited entry's content, keeping its position and mode. */
-	onCommitQueuedInput?: (id: string, draft: { text: string; images: string[]; files: string[]; activeQuote?: string }) => void
+	onCommitQueuedInput?: (
+		id: string,
+		draft: import("@/components/chat/input/useInputQueue").InputQueueDraft,
+	) => Promise<boolean> | void
 	/** Releases an edit without changing the entry, making it deliverable again. */
 	onCancelQueuedInput?: (id: string) => void
 	onToggleQueuedMode?: (id: string) => void
@@ -58,6 +65,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
 	shouldDisableFilesAndImages,
 	selectFilesAndImages,
 	draft: currentDraft,
+	semanticCatalog,
 	enabled,
 	onSubmit,
 	onDraftAccepted,
@@ -89,6 +97,9 @@ export const InputSection: React.FC<InputSectionProps> = ({
 		setSelectedFiles,
 		textAreaRef,
 		handleFocusChange,
+		pasteProvenance,
+		commitPasteProvenance,
+		restoreDraft,
 	} = chatState
 
 	const { isAtBottom, scrollToBottomAuto } = scrollBehavior
@@ -112,10 +123,16 @@ export const InputSection: React.FC<InputSectionProps> = ({
 						files: [...capturedDraft.files],
 						activeQuote,
 						ownerRevision: currentDraft.ownerRevision,
+						...(capturedDraft.semanticInput === undefined ? {} : { semanticInput: capturedDraft.semanticInput }),
 					}
 				: currentDraft
 			if (!onSubmit) {
-				await messageHandlers.handleSendMessage(draft.text, draft.images, draft.files)
+				// A new task adds the quote itself, so it composes from the pasted spans
+				// rather than from a document that does not include the quote.
+				await messageHandlers.handleSendMessage(draft.text, draft.images, draft.files, {
+					spans: rebaseProvenance(pasteProvenance, draft.text).spans,
+					catalog: semanticCatalog,
+				})
 				return
 			}
 			const settlement = await onSubmit(draft)
@@ -180,14 +197,24 @@ export const InputSection: React.FC<InputSectionProps> = ({
 			images: [...capturedDraft.images],
 			files: [...capturedDraft.files],
 			...(activeQuote ? { activeQuote } : {}),
+			...(capturedDraft.semanticInput === undefined ? {} : { semanticInput: capturedDraft.semanticInput }),
+		}
+		// A refused queue change must not cost the user the draft: put it back
+		// while the composer is still empty, as the interaction paths do.
+		const restoreIfRefused = (result: Promise<boolean> | void) => {
+			void Promise.resolve(result).then((accepted) => {
+				if (accepted !== false || textAreaRef.current?.value) return
+				restoreDraft({ ...draft, activeQuote: draft.activeQuote ?? null })
+			})
 		}
 		// Only commit when the entry is still there; otherwise this is ordinary
 		// new input and must be queued rather than dropped.
 		if (editingEntryId && editedEntryExists && onCommitQueuedInput) {
 			handedToQueueRef.current = capturedDraft.text
-			onCommitQueuedInput(editingEntryId, draft)
+			const committed = onCommitQueuedInput(editingEntryId, draft)
 			setEditingEntryId(undefined)
 			clearComposerDraft()
+			restoreIfRefused(committed)
 			return
 		}
 		// Nothing will drain the queue, so the draft stays in the composer where
@@ -198,8 +225,9 @@ export const InputSection: React.FC<InputSectionProps> = ({
 			return
 		}
 		handedToQueueRef.current = capturedDraft.text
-		onEnqueueInput(draft)
+		const enqueued = onEnqueueInput(draft)
 		clearComposerDraft()
+		restoreIfRefused(enqueued)
 	}
 
 	// Every entry point — the Enter key, the send button and a resume — decides
@@ -236,6 +264,9 @@ export const InputSection: React.FC<InputSectionProps> = ({
 			return
 		}
 		setInputValue(entry.text)
+		// Recalling the text alone would release what the entry still holds
+		// back, and an edit could then complete a pasted fragment into a command.
+		commitPasteProvenance(provenanceForRecalledDraft(entry.text, entry.semanticInput))
 		setSelectedImages([...entry.images])
 		setSelectedFiles([...entry.files])
 		// The composer now represents this entry, so an unrelated quote left in
@@ -280,6 +311,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
 			<ChatTextArea
 				activeQuote={activeQuote}
 				clineAsk={clineAsk}
+				commitPasteProvenance={commitPasteProvenance}
 				inputValue={inputValue}
 				onFocusChange={handleFocusChange}
 				onHeightChange={() => {
@@ -290,11 +322,13 @@ export const InputSection: React.FC<InputSectionProps> = ({
 				onSelectFilesAndImages={selectFilesAndImages}
 				onSend={handleSend}
 				onSendBlocked={onEnqueueInput ? enqueueBlockedDraft : undefined}
+				pasteProvenance={pasteProvenance}
 				placeholderText={placeholderText}
 				redoInputValue={redoInputValue}
 				ref={textAreaRef}
 				selectedFiles={selectedFiles}
 				selectedImages={selectedImages}
+				semanticCatalog={semanticCatalog}
 				sendingDisabled={enabled === undefined ? sendingDisabled : !enabled}
 				setInputValue={setInputValue}
 				setSelectedFiles={setSelectedFiles}

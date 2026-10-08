@@ -1,4 +1,4 @@
-import type { ClineAsk } from "@shared/ExtensionMessage"
+import type { UiAsk } from "@shared/ExtensionMessage"
 
 /** All primary interaction definitions supported by the task runtime. */
 export type InteractionKind =
@@ -22,6 +22,7 @@ export type InteractionKind =
 	| "mistake_limit"
 	| "completion"
 	| "resume"
+	| "cancelled_resume"
 
 /** Interaction actions understood by the causal response protocol. */
 export type InteractionActionType =
@@ -80,7 +81,7 @@ export type InteractionContinuation = "handler" | "api" | "resume" | "completion
 
 export interface InteractionDefinition {
 	kind: InteractionKind
-	taskAsk: ClineAsk
+	taskAsk: UiAsk
 	presentationKind: InteractionKind
 	input: InputPolicy
 	actions: readonly InteractionActionDefinition[]

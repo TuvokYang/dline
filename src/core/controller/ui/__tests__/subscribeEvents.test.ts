@@ -18,8 +18,13 @@ import { sendWorktreesButtonClickedEvent, subscribeToWorktreesButtonClicked } fr
  * Creates a minimal mock Controller object that can serve as a unique Map key.
  * The subscription handlers only use controller as an identity key.
  */
-function createMockController(id: string): Controller {
-	return { taskId: id, task: { taskId: id, taskInstanceId: `open-${id}` } } as unknown as Controller
+function createMockController(id: string): Controller & { opening: { taskId: string; taskInstanceId: string } } {
+	const controller = {
+		taskId: id,
+		opening: { taskId: id, taskInstanceId: `open-${id}` },
+		currentOpening: () => controller.opening,
+	}
+	return controller as unknown as Controller & { opening: { taskId: string; taskInstanceId: string } }
 }
 
 /**
@@ -99,10 +104,25 @@ describe("Per-Controller Event Isolation", () => {
 			await subscribeToPartialMessage(ctrlB, {} as any, streamB.handler)
 
 			const msg = { type: "say", say: "text", text: "hello", ts: 123 } as any
-			await sendPartialMessageEvent(ctrlA, msg, ctrlA.task!)
+			await sendPartialMessageEvent(ctrlA, msg, ctrlA.opening)
 
 			assert.equal(streamA.received.length, 1)
 			assert.equal(streamB.received.length, 0)
+			assert.deepEqual(
+				{ taskId: (streamA.received[0] as any).taskId, taskInstanceId: (streamA.received[0] as any).taskInstanceId },
+				ctrlA.opening,
+			)
+		})
+
+		it("drops a row from an opening the controller no longer shows", async () => {
+			const ctrl = createMockController("R")
+			const stream = createMockResponseStream()
+			await subscribeToPartialMessage(ctrl, {} as any, stream.handler)
+			const replaced = { taskId: "R", taskInstanceId: "open-previous" }
+
+			await sendPartialMessageEvent(ctrl, { type: "say", say: "text", text: "late", ts: 789 } as any, replaced)
+
+			assert.equal(stream.received.length, 0)
 		})
 
 		it("global callback subscribers still receive events", async () => {
@@ -116,7 +136,7 @@ describe("Per-Controller Event Isolation", () => {
 			const unsub = registerPartialMessageCallback((msg) => callbackReceived.push(msg))
 
 			const msg = { type: "say", say: "text", text: "global", ts: 456 } as any
-			await sendPartialMessageEvent(ctrl, msg, ctrl.task!)
+			await sendPartialMessageEvent(ctrl, msg, ctrl.opening)
 
 			assert.equal(stream.received.length, 1, "gRPC subscriber should receive")
 			assert.equal(callbackReceived.length, 1, "global callback should receive")

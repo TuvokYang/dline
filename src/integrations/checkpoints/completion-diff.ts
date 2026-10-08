@@ -1,8 +1,8 @@
 import { type CheckpointReferenceSet, readCheckpointReferenceSet } from "@shared/checkpoints"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 /** Return true when a persisted row represents a completed task boundary. */
-function isCompletionMessage(message: ClineMessage): boolean {
+function isCompletionMessage(message: UiMessage): boolean {
 	return message.say === "completion_result" || message.ask === "completion_result"
 }
 
@@ -16,7 +16,7 @@ function isCompletionMessage(message: ClineMessage): boolean {
  * checkpoint hash.
  */
 export function resolveCompletionDiffBaseReferences(
-	messages: readonly ClineMessage[],
+	messages: readonly UiMessage[],
 	messageIndex: number,
 ): CheckpointReferenceSet | undefined {
 	for (let index = messageIndex - 1; index >= 0; index--) {
@@ -34,9 +34,4 @@ export function resolveCompletionDiffBaseReferences(
 		}
 	}
 	return undefined
-}
-
-/** Compatibility helper for callers that still operate on one workspace. */
-export function resolveCompletionDiffBaseHash(messages: readonly ClineMessage[], messageIndex: number): string | undefined {
-	return resolveCompletionDiffBaseReferences(messages, messageIndex)?.hashes.find(Boolean)
 }

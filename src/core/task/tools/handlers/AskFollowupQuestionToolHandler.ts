@@ -1,13 +1,13 @@
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { showSystemNotification } from "@integrations/notifications"
 import { findLastIndex, parsePartialArrayString } from "@shared/array"
-import { ClineAsk, ClineAskQuestion } from "@shared/ExtensionMessage"
+import { UiAsk, UiAskQuestion } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { telemetryService } from "@/services/telemetry"
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
-import { ToolResponse } from "../.."
-import type { InteractionOutcome } from "../../interaction/InteractionCoordinator"
+import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
+import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
@@ -26,12 +26,12 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 		const sharedMessage = {
 			question: uiHelpers.removeClosingTag(block, "question", question),
 			options: parsePartialArrayString(uiHelpers.removeClosingTag(block, "options", optionsRaw)),
-		} satisfies ClineAskQuestion
+		} satisfies UiAskQuestion
 
-		await uiHelpers.ask("followup" as ClineAsk, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
+		await uiHelpers.ask("followup" as UiAsk, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const question: string | undefined = block.params.question
 		const optionsRaw: string | undefined = block.params.options
 
@@ -62,7 +62,7 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 		const sharedMessage = {
 			question: question,
 			options: parsePartialArrayString(optionsRaw || "[]"),
-		} satisfies ClineAskQuestion
+		} satisfies UiAskQuestion
 
 		const options = parsePartialArrayString(optionsRaw || "[]")
 
@@ -77,10 +77,10 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 	}
 
 	/** Consume a follow-up response without replaying notification or presentation setup. */
-	async continueInteraction(config: TaskConfig, block: ToolUse, outcome: InteractionOutcome): Promise<ToolResponse> {
+	async continueInteraction(config: TaskConfig, block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
 		const optionsRaw: string | undefined = block.params.options
 		const options = parsePartialArrayString(optionsRaw || "[]")
-		const sharedMessage = { question: block.params.question || "", options } satisfies ClineAskQuestion
+		const sharedMessage = { question: block.params.question || "", options } satisfies UiAskQuestion
 		const text = outcome.draft?.text
 		const images = outcome.draft?.images
 		const followupFiles = outcome.draft?.files
@@ -99,16 +99,19 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
 				const updatedText = JSON.stringify({
 					...sharedMessage,
 					selected: selectedOption,
-				} satisfies ClineAskQuestion)
+				} satisfies UiAskQuestion)
 				await config.callbacks.updateClineMessage(lastFollowupMessageIndex, { text: updatedText })
 				await config.messageState.flushMessageUpdate(lastFollowupMessageIndex)
 			}
 		} else {
 			telemetryService.captureOptionsIgnored(config.ulid ?? "", options.length, "act")
 		}
-		await sayFeedbackOnce(config, "messageResponse", text, images, followupFiles)
+		await sayFeedbackOnce(config, "messageResponse", text, images, followupFiles, outcome)
 
-		const fileContentString = await attachToolFeedbackFiles(config.taskState.userMessageContent, followupFiles)
-		return formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString)
+		const attachments = await attachToolFeedbackFiles(followupFiles)
+		return withToolDocuments(
+			formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, attachments.text),
+			attachments.documents,
+		)
 	}
 }

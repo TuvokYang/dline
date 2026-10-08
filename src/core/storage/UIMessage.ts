@@ -1,75 +1,62 @@
 import { normalizeStoredCheckpointMessage } from "@shared/checkpoints"
-import { fileExistsAtPath } from "@utils/fs"
 import path from "path"
-import { ClineMessage } from "@/shared/ExtensionMessage"
+import { UiMessage } from "@/shared/ExtensionMessage"
 import type { BufferedUnifyStore } from "./backend/api/UnifyStore"
-import { FileLock } from "./backend/jsonl/FileLock"
-import { openBufferedJsonlStore } from "./backend/jsonl/JsonlUnifyStore"
-import { appendJsonl, canAppendJsonl, readJsonl, writeJsonl } from "./backend/jsonl/jsonl-utils"
-import { dedupeClineMessagesByTs, ensureTaskDirectoryExists, GlobalFileNames, getDlineDocumentsPath } from "./disk"
+import { BufferedUnifyStore as BufferedStore } from "./backend/core/BufferedUnifyStore"
+import { dedupeClineMessagesByTs } from "./disk"
+import { ensureInstanceLayout, InstanceDatabase, resolveInstanceLayout } from "./instance"
+import { importLegacyUiMessages } from "./messages/importLegacyUiMessages"
+import { openUiMessageRows, UI_MESSAGE_WRITER } from "./messages/openUiMessageRows"
+import { UI_MESSAGE_ORDINAL, UI_MESSAGE_TIMESTAMP } from "./messages/UiMessageRowStore"
+import type { UiMessageRecord } from "./messages/UiMessageRows"
 import { UIMessageWindowReader } from "./UIMessageWindowReader"
 
-function projectPersistedMessages(messages: ClineMessage[]): ClineMessage[] {
-	const selections = new Map<number, { hasPartial: boolean; lastPartial?: number; lastComplete?: number }>()
-	for (let index = 0; index < messages.length; index++) {
-		const message = messages[index]
-		const selection = selections.get(message.ts) ?? { hasPartial: false }
-		if (message.partial === true) {
-			selection.hasPartial = true
-			selection.lastPartial = index
-		} else {
-			selection.lastComplete = index
-		}
-		selections.set(message.ts, selection)
-	}
-	return messages.filter((message, index) => {
-		const selection = selections.get(message.ts)
-		if (!selection?.hasPartial) return true
-		return index === (selection.lastComplete ?? selection.lastPartial)
-	})
-}
-
-async function ensureUiMessageFile(taskId: string): Promise<string> {
-	const dir = await ensureTaskDirectoryExists(taskId)
-	const filePath = path.join(dir, GlobalFileNames.uiMessages)
-	if (await fileExistsAtPath(filePath)) return filePath
-
-	for (const legacyName of ["ui_messages.json", "claude_messages.json"]) {
-		const legacyPath = path.join(dir, legacyName)
-		if (!(await fileExistsAtPath(legacyPath))) continue
-		const legacyMessages = dedupeClineMessagesByTs(await readJsonl<ClineMessage>(legacyPath))
-		if (legacyMessages.length > 0) await writeJsonl(filePath, legacyMessages)
-		break
-	}
-	return filePath
+function subscriptionKey(databasePath: string): string {
+	const resolved = path.resolve(databasePath)
+	return process.platform === "win32" ? resolved.toLowerCase() : resolved
 }
 
 /**
- * UI messages store backed by ui_messages.jsonl.
+ * Chat history of one task, stored in the task's `messages.db`.
  *
- * Uses the backend-neutral buffered layer over the raw JSONL backend.
+ * This store is the only writer of that database. A legacy `ui_messages.jsonl` (or
+ * older JSON file) is imported once on open and then renamed to `<name>.migrated`.
  */
 export class UIMessage {
-	private store: BufferedUnifyStore<ClineMessage>
+	private store: BufferedUnifyStore<UiMessage>
 
-	private constructor(store: BufferedUnifyStore<ClineMessage>) {
+	private constructor(store: BufferedUnifyStore<UiMessage>) {
 		this.store = store
 	}
 
-	/** Open (or create) the writable ui_messages.jsonl for a given task. */
+	/** Opens the writable chat history of a task, importing a legacy file first. */
 	static async open(taskId: string): Promise<UIMessage> {
-		const filePath = await ensureUiMessageFile(taskId)
-		const store = await openBufferedJsonlStore<ClineMessage>(filePath, {
-			schemaId: "ui-message",
-			acceptInitialItem: (message) => message.ts > 0,
-			// Older stores can contain several streaming rows for one timestamp.
-			// Prefer the complete row, or the latest partial when no complete row
-			// exists, without rewriting a large history merely because it was opened.
-			normalizeReadItems: projectPersistedMessages,
+		const layout = await ensureInstanceLayout({ taskId })
+		const rows = await openUiMessageRows(layout.root, UI_MESSAGE_WRITER)
+		try {
+			await importLegacyUiMessages(layout.root, rows)
+		} catch (error) {
+			await rows.close().catch(() => undefined)
+			throw error
+		}
+		const store = await BufferedStore.open<UiMessageRecord, UiMessage>({
+			store: rows,
+			mapping: {
+				ordinal: UI_MESSAGE_ORDINAL,
+				timestamp: UI_MESSAGE_TIMESTAMP,
+				toItem: (record) => record.message,
+				toEntity: (message, ordinal) => ({ ordinal, ts: message.ts, message }),
+			},
+			bufferOptions: {
+				subscriptionKey: subscriptionKey(layout.database(InstanceDatabase.Messages)),
+				storeKind: "ui_message",
+				acceptInitialItem: (message) => message.ts > 0,
+			},
 		})
 		const stored = store.getAll()
+		// Rows written before checkpoint references became multi-root carry a scalar hash.
 		const hasLegacyCheckpointHash = stored.some(
-			(message) => typeof (message as ClineMessage & { lastCheckpointHash?: unknown }).lastCheckpointHash === "string",
+			(message) => typeof (message as { lastCheckpointHash?: unknown }).lastCheckpointHash === "string",
 		)
 		if (new Set(stored.map((message) => message.ts)).size !== stored.length || hasLegacyCheckpointHash) {
 			await store.mutate((current) => dedupeClineMessagesByTs(current).map(normalizeStoredCheckpointMessage))
@@ -77,48 +64,25 @@ export class UIMessage {
 		return new UIMessage(store)
 	}
 
-	/** Open a bounded read-only historical window without materializing every message body. */
-	static async openWindow(taskId: string, options?: { readOnly?: boolean }): Promise<UIMessageWindowReader> {
-		if (!options?.readOnly) return await UIMessageWindowReader.open(await ensureUiMessageFile(taskId))
-		const directory = path.join(await getDlineDocumentsPath(), "tasks", taskId)
-		for (const name of [GlobalFileNames.uiMessages, "ui_messages.json", "claude_messages.json"]) {
-			const candidate = path.join(directory, name)
-			if (await fileExistsAtPath(candidate)) return await UIMessageWindowReader.open(candidate)
-		}
-		return await UIMessageWindowReader.open(path.join(directory, GlobalFileNames.uiMessages))
-	}
-
 	/**
-	 * Register a canonical stopped ask without materializing the execution cache.
-	 * JSONL's last row for a timestamp is authoritative, just as during open().
-	 * Legacy arrays require a compatibility rewrite before they can be appended.
-	 * The caller must own the Task lock; this is not a read capability.
+	 * Opens a bounded read-only window over a task's history.
+	 *
+	 * It never writes: a missing task directory, database or legacy file yields an
+	 * empty window instead of creating anything on disk.
 	 */
-	static async persistHistoricalMessage(taskId: string, message: ClineMessage): Promise<ClineMessage> {
-		if (!Number.isFinite(message.ts) || message.ts <= 0 || message.partial === true) {
-			throw new Error("Historical UI persistence requires a complete timestamped message")
-		}
-		const filePath = await ensureUiMessageFile(taskId)
-		const stored = { ...message, partial: false }
-		await new FileLock().withLock(filePath, async () => {
-			if (await canAppendJsonl(filePath)) {
-				await appendJsonl(filePath, stored)
-			} else {
-				const current = await readJsonl<ClineMessage>(filePath)
-				await writeJsonl(filePath, dedupeClineMessagesByTs([...current, stored]).map(normalizeStoredCheckpointMessage))
-			}
-		})
-		return stored
+	static async openWindow(taskId: string): Promise<UIMessageWindowReader> {
+		const layout = await resolveInstanceLayout({ taskId })
+		return await UIMessageWindowReader.open(layout)
 	}
 
 	// ── Read ──
-	getAll(): ReadonlyArray<ClineMessage> {
+	getAll(): ReadonlyArray<UiMessage> {
 		return this.store.getAll()
 	}
-	getByTs(ts: number): ClineMessage | undefined {
+	getByTs(ts: number): UiMessage | undefined {
 		return this.store.getByTimestamp(ts)
 	}
-	getAt(index: number): ClineMessage | undefined {
+	getAt(index: number): UiMessage | undefined {
 		return this.store.getAt(index)
 	}
 	findIndexByTs(ts: number): number {
@@ -129,22 +93,26 @@ export class UIMessage {
 	}
 
 	// ── Low-level Write (delegated) ──
-	async append(msg: ClineMessage): Promise<void> {
+	async append(msg: UiMessage): Promise<void> {
 		await this.store.append(msg)
 	}
-	async appendDurable(msg: ClineMessage): Promise<ClineMessage> {
+	async appendDurable(msg: UiMessage): Promise<UiMessage> {
 		return await this.store.appendDurable(msg)
+	}
+	/** Commit any staged rewrite, then append one row durably, without another write in between. */
+	async commitPendingAndAppendDurable(msg: UiMessage): Promise<UiMessage> {
+		return await this.store.commitPendingAndAppendDurable(msg)
 	}
 	async truncate(beforeTs: number): Promise<void> {
 		await this.store.truncateBeforeTimestamp(beforeTs)
 	}
-	async overwrite(items: ClineMessage[]): Promise<void> {
+	async overwrite(items: UiMessage[]): Promise<void> {
 		await this.store.replaceAll(items)
 	}
-	async insertAt(index: number, msg: ClineMessage): Promise<void> {
+	async insertAt(index: number, msg: UiMessage): Promise<void> {
 		await this.store.insertAt(index, msg)
 	}
-	async updateAt(index: number, msg: ClineMessage): Promise<void> {
+	async updateAt(index: number, msg: UiMessage): Promise<void> {
 		await this.store.stageUpdateAt(index, msg)
 	}
 	async deleteAt(index: number): Promise<void> {
@@ -170,7 +138,7 @@ export class UIMessage {
 	 *
 	 * @returns The index and message as stored
 	 */
-	async addMessage(msg: ClineMessage): Promise<{ index: number; message: ClineMessage }> {
+	async addMessage(msg: UiMessage): Promise<{ index: number; message: UiMessage }> {
 		if (msg.partial === true) {
 			return this.upsertMessage(msg)
 		}
@@ -188,8 +156,8 @@ export class UIMessage {
 	 * @param msg The message to upsert
 	 * @returns The index and message as stored
 	 */
-	async upsertMessage(msg: ClineMessage): Promise<{ index: number; message: ClineMessage }> {
-		const all = this.store.getAll() as ClineMessage[]
+	async upsertMessage(msg: UiMessage): Promise<{ index: number; message: UiMessage }> {
+		const all = this.store.getAll() as UiMessage[]
 		const existingIndex = all.findIndex((m) => m.ts === msg.ts)
 
 		if (existingIndex >= 0) {
@@ -217,7 +185,7 @@ export class UIMessage {
 	 * @param msg The finalized message (partial must be false)
 	 * @returns The finalized message
 	 */
-	async finalizeMessage(msg: ClineMessage): Promise<ClineMessage> {
+	async finalizeMessage(msg: UiMessage): Promise<UiMessage> {
 		msg.partial = false
 		await this.store.stageUpsertByTimestamp(msg)
 		return msg
@@ -231,7 +199,7 @@ export class UIMessage {
 	 * @param updates Partial fields to merge into the existing message
 	 * @returns The updated message
 	 */
-	async updateMessage(index: number, updates: Partial<ClineMessage>): Promise<ClineMessage> {
+	async updateMessage(index: number, updates: Partial<UiMessage>): Promise<UiMessage> {
 		return await this.store.stagePatchAt(index, updates)
 	}
 
@@ -241,8 +209,8 @@ export class UIMessage {
 	 * @param index Zero-based index
 	 * @returns The deleted message
 	 */
-	async deleteMessage(index: number): Promise<ClineMessage> {
-		const all = this.store.getAll() as ClineMessage[]
+	async deleteMessage(index: number): Promise<UiMessage> {
+		const all = this.store.getAll() as UiMessage[]
 		if (index < 0 || index >= all.length) {
 			throw new Error(`UIMessage.deleteMessage: index ${index} out of range [0, ${all.length})`)
 		}
@@ -284,7 +252,7 @@ export class UIMessage {
 		let removed = 0
 		await this.store.mutate((items) => {
 			const before = items.length
-			const kept = (items as unknown as ClineMessage[]).filter((m) => m.partial !== true)
+			const kept = (items as unknown as UiMessage[]).filter((m) => m.partial !== true)
 			removed = before - kept.length
 			return kept as unknown as typeof items
 		})
@@ -303,7 +271,7 @@ export class UIMessage {
 		let removed = 0
 		await this.store.mutate((items) => {
 			const before = items.length
-			const kept = (items as unknown as ClineMessage[]).filter((m) => !tsSet.has(m.ts))
+			const kept = (items as unknown as UiMessage[]).filter((m) => !tsSet.has(m.ts))
 			removed = before - kept.length
 			return kept as unknown as typeof items
 		})
@@ -315,7 +283,7 @@ export class UIMessage {
 	 * Partial messages are never persisted to disk, so this is memory-only.
 	 */
 	clearPartialFlags(): void {
-		const all = this.store.getAll() as ClineMessage[]
+		const all = this.store.getAll() as UiMessage[]
 		for (const msg of all) {
 			if (msg.partial === true) {
 				msg.partial = false

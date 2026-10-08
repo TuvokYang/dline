@@ -1,4 +1,4 @@
-import type { ClineMessage, ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { parseImageGenerationToolText } from "@shared/image-generation"
 import { useState } from "react"
 import { ApiErrorBox } from "@/components/chat/ApiErrorBox"
@@ -7,17 +7,17 @@ import { CopyButton } from "@/components/common/CopyButton"
 
 /** Props shared by pure interaction presentation renderers. */
 export interface PresentationProps {
-	message: ClineMessage
+	message: UiMessage
 	selection: string[]
 	onSelectionChange: (selection: string[]) => void
 }
 
 /** Render one pure presentation shell. */
-function shell(message: ClineMessage) {
+function shell(message: UiMessage) {
 	return <div>{message.text}</div>
 }
 
-const TOOL_APPROVAL_TITLES: Record<ClineSayTool["tool"], string> = {
+const TOOL_APPROVAL_TITLES: Record<UiSayTool["tool"], string> = {
 	editedExistingFile: "Dline wants to edit this file:",
 	newFileCreated: "Dline wants to create this file:",
 	fileDeleted: "Dline wants to delete this file:",
@@ -42,20 +42,20 @@ const TOOL_APPROVAL_TITLES: Record<ClineSayTool["tool"], string> = {
 	generateImage: "Dline wants to generate an image:",
 }
 
-function parseTool(text: string | undefined): ClineSayTool | undefined {
+function parseTool(text: string | undefined): UiSayTool | undefined {
 	if (!text) return undefined
 	try {
 		const parsed = JSON.parse(text) as unknown
 		if (typeof parsed !== "object" || parsed === null || !("tool" in parsed) || typeof parsed.tool !== "string") {
 			return undefined
 		}
-		return parsed as ClineSayTool
+		return parsed as UiSayTool
 	} catch {
 		return undefined
 	}
 }
 
-function toolDetail(tool: ClineSayTool): string | undefined {
+function toolDetail(tool: UiSayTool): string | undefined {
 	if (tool.tool === "searchFiles" && tool.regex) {
 		return `"${tool.regex}"${tool.path ? ` in ${tool.path}` : tool.filePattern ? ` in ${tool.filePattern}` : ""}`
 	}
@@ -156,8 +156,8 @@ function subagentSummary(payload: Record<string, unknown> | undefined, fallback:
 	}
 }
 
-/** Resolve the title and body for approvals whose payload is not a `ClineSayTool`. */
-function askApprovalSummary(message: ClineMessage): ApprovalSummary {
+/** Resolve the title and body for approvals whose payload is not a `UiSayTool`. */
+function askApprovalSummary(message: UiMessage): ApprovalSummary {
 	const payload = parseObject(message.text)
 	const fallback = message.text?.trim() ? message.text : undefined
 	switch (message.ask) {
@@ -236,7 +236,7 @@ export function ResumeRenderer(props: PresentationProps) {
 }
 
 /** Parse pending focus-chain item labels from the persisted plan payload. */
-function focusItems(message: ClineMessage): string[] {
+function focusItems(message: UiMessage): string[] {
 	let plan = message.text ?? ""
 	try {
 		const parsed = JSON.parse(plan) as { plan?: string }

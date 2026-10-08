@@ -1,10 +1,10 @@
 import type {
-	ClineAsk,
-	ClineMessage,
 	TaskInputViewState,
 	TaskViewAction,
 	TaskViewActionType,
 	TaskViewState,
+	UiAsk,
+	UiMessage,
 } from "@shared/ExtensionMessage"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { ExtensionStateContextType } from "@/context/ExtensionStateContext"
@@ -56,7 +56,7 @@ function action(
 
 const APPROVAL_ACTIONS = [action("approve", "Approve", "draft"), action("reject", "Reject", "draft", "danger")]
 
-const STORY_INTERACTIONS: Partial<Record<ClineAsk, StoryInteractionDefinition>> = {
+const STORY_INTERACTIONS: Partial<Record<UiAsk, StoryInteractionDefinition>> = {
 	tool: {
 		kind: "tool_approval",
 		presentationKind: "tool_approval",
@@ -146,13 +146,13 @@ const STORY_INTERACTIONS: Partial<Record<ClineAsk, StoryInteractionDefinition>> 
 	},
 }
 
-function isTaskTitle(message: ClineMessage): boolean {
+function isTaskTitle(message: UiMessage): boolean {
 	return message.type === "say" && message.say === "task"
 }
 
-function findInteractionAnchor(messages: readonly ClineMessage[]): {
+function findInteractionAnchor(messages: readonly UiMessage[]): {
 	index: number
-	message: ClineMessage & { type: "ask"; ask: ClineAsk }
+	message: UiMessage & { type: "ask"; ask: UiAsk }
 	definition: StoryInteractionDefinition
 } | null {
 	for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -170,10 +170,10 @@ function findInteractionAnchor(messages: readonly ClineMessage[]): {
 }
 
 function normalizeInteraction(
-	messages: ClineMessage[],
+	messages: UiMessage[],
 	taskId: string,
 ): {
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	view: TaskViewState
 } {
 	const anchor = findInteractionAnchor(messages)
@@ -191,7 +191,7 @@ function normalizeInteraction(
 	}
 
 	const interactionId = anchor.message.interactionId ?? `storybook-${anchor.message.ask}-${anchor.message.ts}`
-	const normalizedAnchor: ClineMessage & { type: "ask"; ask: ClineAsk } = { ...anchor.message, interactionId }
+	const normalizedAnchor: UiMessage & { type: "ask"; ask: UiAsk } = { ...anchor.message, interactionId }
 	const normalizedMessages = [...messages]
 	normalizedMessages[anchor.index] = normalizedAnchor
 
@@ -218,7 +218,7 @@ function normalizeInteraction(
 	}
 }
 
-function createTaskTitle(text: string, timestamp: number): ClineMessage {
+function createTaskTitle(text: string, timestamp: number): UiMessage {
 	return {
 		ts: timestamp,
 		type: "say",
@@ -227,7 +227,7 @@ function createTaskTitle(text: string, timestamp: number): ClineMessage {
 	}
 }
 
-function createHistoryItem(taskId: string, taskTitle: ClineMessage): HistoryItem {
+function createHistoryItem(taskId: string, taskTitle: UiMessage): HistoryItem {
 	return {
 		id: taskId,
 		ulid: "01HZZZ1A1B2C3D4E5F6G7H8J9K",

@@ -1,4 +1,4 @@
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import type { Decorator, Meta, StoryObj } from "@storybook/react-vite"
 import { expect, userEvent, within } from "storybook/test"
 import { createStorybookDecorator } from "@/config/StorybookDecorator"
@@ -6,7 +6,7 @@ import type { ClineAuthContextType } from "@/context/ClineAuthContext"
 import ErrorRow from "./ErrorRow"
 
 // Mock data factories
-const createMockMessage = (overrides: Partial<ClineMessage> = {}): ClineMessage => ({
+const createMockMessage = (overrides: Partial<UiMessage> = {}): UiMessage => ({
 	ts: Date.now(),
 	type: "say",
 	say: "error",

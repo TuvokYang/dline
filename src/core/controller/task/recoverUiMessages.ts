@@ -1,33 +1,46 @@
+import { readTaskConversation } from "@core/task/conversation/TaskConversationReader"
 import fs from "fs/promises"
 import * as path from "path"
-import { ClineMessage } from "@/shared/ExtensionMessage"
+import { UiMessage } from "@/shared/ExtensionMessage"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
-import {
-	ensureTaskDirectoryExists,
-	GlobalFileNames,
-	getSavedApiConversationHistory,
-	saveClineMessages,
-} from "../../../core/storage/disk"
+import { writeJsonAtomic } from "@/shared/storage/atomic-file"
+import { ensureTaskDirectoryExists, getSavedClineMessages } from "../../../core/storage/disk"
+import { UIMessage } from "../../../core/storage/UIMessage"
 import { extractFocusChainListFromText } from "../../task/focus-chain/file-utils"
 import { Controller } from ".."
 
 /**
- * Back up the existing ui_messages.jsonl file if it exists.
- * @returns Path to the backup file, or undefined if no backup was made.
+ * Exports the current chat history next to the task before recovery replaces it.
+ * @returns Path to the backup file, or undefined when there was no history to keep.
  */
-async function backupUiMessages(taskDir: string): Promise<string | undefined> {
-	const uiPath = path.join(taskDir, GlobalFileNames.uiMessages)
-	try {
-		await fs.access(uiPath)
-	} catch {
-		return undefined
-	}
-	const ts = Date.now()
-	const backupPath = path.join(taskDir, `ui_messages.jsonl.backup.${ts}`)
-	await fs.copyFile(uiPath, backupPath)
+async function backupUiMessages(taskId: string, taskDir: string): Promise<string | undefined> {
+	const current = await getSavedClineMessages(taskId)
+	if (current.length === 0) return undefined
+	const backupPath = path.join(taskDir, `ui_messages.backup.${Date.now()}.json`)
+	await writeJsonAtomic(backupPath, current)
 	Logger.info(`[recoverUiMessages] Backup created: ${backupPath}`)
 	return backupPath
+}
+
+/**
+ * Stores the recovered history through the task's single `messages.db` writer.
+ *
+ * The open task already owns that writer, so its message state replaces the
+ * history. A task that is not open here is opened just long enough to write.
+ */
+async function storeRecoveredMessages(controller: Controller | undefined, taskId: string, messages: UiMessage[]) {
+	const activeTask = controller?.task?.taskId === taskId ? controller.task : undefined
+	if (activeTask) {
+		await activeTask.owners.messages.replaceClineMessages(messages)
+		return
+	}
+	const store = await UIMessage.open(taskId)
+	try {
+		await store.overwrite(messages)
+	} finally {
+		await store.close()
+	}
 }
 
 /**
@@ -42,7 +55,7 @@ function stripXml(text: string, tag: string): string {
 /**
  * Check if a text block is a system-generated block that should be filtered out.
  */
-/** Map tool_use names to ClineAsk types */
+/** Map tool_use names to UiAsk types */
 function toolToAskType(name: string): string | undefined {
 	const map: Record<string, string> = {
 		ask_followup_question: "followup",
@@ -106,7 +119,7 @@ function isSystemBlock(text: string): boolean {
 }
 
 /**
- * Convert an API conversation history entry to approximate ClineMessage entries.
+ * Convert an API conversation history entry to approximate UiMessage entries.
  */
 /**
  * Build an api_req_started text payload from the metrics stored on the
@@ -131,8 +144,8 @@ function buildApiReqStartedText(metrics?: ClineStorageMessage["metrics"]): strin
 	})
 }
 
-function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessage[] {
-	const result: ClineMessage[] = []
+function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): UiMessage[] {
+	const result: UiMessage[] = []
 	const baseTs = Date.now()
 	const genTs = (offset: number): number => baseTs + offset
 
@@ -150,7 +163,7 @@ function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessag
 					// Strip <task> XML wrapper from the task description
 					text = stripXml(text, "task")
 					if (text) {
-						result.push({ ts: genTs(result.length), type: "say", say: "task", text } as ClineMessage)
+						result.push({ ts: genTs(result.length), type: "say", say: "task", text } as UiMessage)
 						isFirstUser = false
 					}
 					continue
@@ -162,7 +175,7 @@ function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessag
 				// Strip <user_response> wrapper
 				text = stripXml(text, "user_response")
 
-				result.push({ ts: genTs(result.length), type: "say", say: "user_feedback", text } as ClineMessage)
+				result.push({ ts: genTs(result.length), type: "say", say: "user_feedback", text } as UiMessage)
 			}
 			// Build api_req_started from the NEXT assistant message's metrics
 			const nextMsg = apiMessages[i + 1] as ClineStorageMessage | undefined
@@ -171,11 +184,11 @@ function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessag
 				type: "say",
 				say: "api_req_started",
 				text: buildApiReqStartedText(nextMsg?.metrics),
-			} as ClineMessage)
+			} as UiMessage)
 		} else if (msg.role === "assistant") {
 			for (const block of contentBlocks) {
 				if (block.type === "text" && block.text) {
-					result.push({ ts: genTs(result.length), type: "say", say: "text", text: block.text } as ClineMessage)
+					result.push({ ts: genTs(result.length), type: "say", say: "text", text: block.text } as UiMessage)
 				} else if (block.type === "tool_use") {
 					const input = (block.input as Record<string, unknown>) || {}
 					const askType = toolToAskType(block.name)
@@ -187,11 +200,11 @@ function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessag
 							ask: askType,
 							text: askText,
 							interactionId: block.dline_tid,
-						} as ClineMessage)
+						} as UiMessage)
 					} else {
 						// Read-only tools: render as text
 						const toolDesc = `**Tool: ${block.name}**\n\`\`\`json\n${JSON.stringify(block.input, null, 2)}\n\`\`\``
-						result.push({ ts: genTs(result.length), type: "say", say: "text", text: toolDesc } as ClineMessage)
+						result.push({ ts: genTs(result.length), type: "say", say: "text", text: toolDesc } as UiMessage)
 					}
 				}
 			}
@@ -204,14 +217,14 @@ function convertApiToUiMessages(apiMessages: ClineStorageMessage[]): ClineMessag
 /**
  * Recover UI messages from API conversation history.
  *
- * 1. Backs up existing ui_messages.jsonl (if any)
- * 2. Reads api_conversation_history.jsonl
+ * 1. Exports the existing chat history (if any) to a JSON backup
+ * 2. Reads the API conversation history
  * 3. Converts API messages to UI messages
- * 4. Writes new ui_messages.jsonl
- * 5. Auto-reloads the active task to show recovered messages immediately
+ * 4. Replaces the chat history through the task's single writer
+ * 5. Refreshes the active task so the recovered messages show immediately
  */
-export async function recoverUiMessages(controller: Controller, taskId?: string): Promise<void> {
-	const id = taskId || controller.task?.taskId
+export async function recoverUiMessages(controller: Controller | undefined, taskId?: string): Promise<void> {
+	const id = taskId || controller?.task?.taskId
 	if (!id) {
 		throw new Error("No task ID available. Open a task first or provide a task ID.")
 	}
@@ -219,10 +232,10 @@ export async function recoverUiMessages(controller: Controller, taskId?: string)
 	const taskDir = await ensureTaskDirectoryExists(id)
 
 	// 1. Backup existing UI messages
-	const backupPath = await backupUiMessages(taskDir)
+	const backupPath = await backupUiMessages(id, taskDir)
 
-	// 2. Read API conversation history
-	const apiMessages = await getSavedApiConversationHistory(id)
+	// 2. Read the provider conversation, from the journal or a legacy task's history file
+	const apiMessages = await readTaskConversation(id)
 	if (apiMessages.length === 0) {
 		throw new Error(`No API conversation history found for task ${id}`)
 	}
@@ -232,7 +245,7 @@ export async function recoverUiMessages(controller: Controller, taskId?: string)
 	const uiMessages = convertApiToUiMessages(apiMessages)
 
 	// 4. Write new UI messages
-	await saveClineMessages(id, uiMessages)
+	await storeRecoveredMessages(controller, id, uiMessages)
 
 	Logger.info(
 		`[recoverUiMessages] Recovered ${uiMessages.length} UI messages from ${apiMessages.length} API messages for task ${id}` +
@@ -242,14 +255,13 @@ export async function recoverUiMessages(controller: Controller, taskId?: string)
 	// 5. If controller has an active task for this ID, reload it to show recovered messages
 	if (controller?.task?.taskId === id) {
 		try {
-			await controller.task.displayHistory()
 			// Reload focus chain checklist from disk so TODOs reflect recovered state
 			const fcPath = path.join(taskDir, `focus_chain_taskid_${id}.md`)
 			try {
 				const fcContent = await fs.readFile(fcPath, "utf-8")
 				if (fcContent.trim()) {
 					const checklist = extractFocusChainListFromText(fcContent) || fcContent
-					controller.task.taskState.currentFocusChainChecklist = checklist
+					controller.task.owners.toolState.currentFocusChainChecklist = checklist
 				}
 			} catch {
 				// Focus chain file may not exist — that's OK

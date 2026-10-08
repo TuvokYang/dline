@@ -1,4 +1,3 @@
-import { buildApiHandler } from "@core/api"
 import {
 	DEFAULT_AUTO_CONDENSE_MAX_RESERVE_TOKENS,
 	DEFAULT_AUTO_CONDENSE_MIN_RESERVE_TOKENS,
@@ -12,7 +11,6 @@ import { resolveMaxParallelSubagents, resolveMaxParallelToolCalls } from "@share
 import { Empty } from "@shared/proto/dline/common"
 import { PlanActMode, McpDisplayMode as ProtoMcpDisplayMode, UpdateSettingsRequest } from "@shared/proto/dline/state"
 import type { SettingsKey } from "@shared/storage/state-keys"
-import { OpenaiReasoningEffort } from "@shared/storage/types"
 import { TelemetrySetting } from "@shared/TelemetrySetting"
 import { isLocalSearchEngineId } from "@shared/web-search"
 import { ClineEnv } from "@/config"
@@ -100,23 +98,12 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 				actModeProfile: getStringConfigField(protoApiConfiguration, "actModeProfile"),
 				imageProfileId: getStringConfigField(protoApiConfiguration, "imageProfileId"),
 				imageProfile: getStringConfigField(protoApiConfiguration, "imageProfile"),
-				planModeReasoningEffort: getConfigField(protoApiConfiguration, "planModeReasoningEffort") as
-					| OpenaiReasoningEffort
-					| undefined,
-				actModeReasoningEffort: getConfigField(protoApiConfiguration, "actModeReasoningEffort") as
-					| OpenaiReasoningEffort
-					| undefined,
 			}
 
 			controller.stateManager.setApiConfiguration(convertedApiConfigurationFromProto)
 
 			if (controller.task) {
-				const currentMode = controller.stateManager.getGlobalSettingsKey("mode")
-				const apiConfigForHandler = {
-					...controller.stateManager.getApiConfiguration(),
-					ulid: controller.task.ulid,
-				}
-				controller.task.api = buildApiHandler(apiConfigForHandler, currentMode)
+				await controller.task.owners.api.rebuild()
 			}
 		}
 
@@ -134,13 +121,15 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 		if (request.planActSeparateModelsSetting !== undefined) {
 			const wasSeparate = controller.stateManager.getCanonicalSettingsKey("planActSeparateModelsSetting")
 			if (wasSeparate && !request.planActSeparateModelsSetting && controller.task) {
-				const taskState = controller.task.taskSm
-				const profileId = taskState.mode === "plan" ? taskState.planModeProfileId : taskState.actModeProfileId
-				const profileName = taskState.mode === "plan" ? taskState.planModeProfile : taskState.actModeProfile
+				const settings = controller.task.owners.settings
+				const profileId = settings.mode === "plan" ? settings.planModeProfileId : settings.actModeProfileId
+				const profileName = settings.mode === "plan" ? settings.planModeProfile : settings.actModeProfile
 				if (!profileName) {
 					throw new Error("Cannot disable Profile split without an active task Profile binding.")
 				}
-				await controller.task.commitProfileBindings(profileId ? { profileId, profileName } : profileName, ["plan", "act"])
+				const binding = { profileId: profileId ?? profileName, profileName }
+				settings.setProfileIdentityBindings({ plan: binding, act: binding })
+				await controller.task.owners.api.rebuild({ abortPrevious: true })
 				controller.stateManager.setGlobalStateBatch({
 					planModeProfileId: profileId,
 					planModeProfile: profileName,
@@ -250,13 +239,18 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 			const isEnabled = !!request.hooksEnabled
 			controller.stateManager.setGlobalState("hooksEnabled", isEnabled)
 			if (controller.task && wasEnabled !== isEnabled) {
-				telemetryService.captureFeatureToggle(controller.task.ulid, "hooks", isEnabled, controller.task.api.getModel().id)
+				telemetryService.captureFeatureToggle(
+					controller.task.owners.identity.taskIncarnationId,
+					"hooks",
+					isEnabled,
+					controller.task.owners.api.current().getModel().id,
+				)
 			}
 		}
 		// Update yolo mode setting
 		if (request.yoloModeToggled !== undefined) {
 			if (controller.task) {
-				telemetryService.captureYoloModeToggle(controller.task.ulid, request.yoloModeToggled)
+				telemetryService.captureYoloModeToggle(controller.task.owners.identity.taskIncarnationId, request.yoloModeToggled)
 			}
 			controller.stateManager.setGlobalState("yoloModeToggled", request.yoloModeToggled)
 		}
@@ -268,7 +262,10 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 		// Update Web Tools settings. Credentials must remain in Secret Storage.
 		if (request.clineWebToolsEnabled !== undefined) {
 			if (controller.task) {
-				telemetryService.captureClineWebToolsToggle(controller.task.ulid, request.clineWebToolsEnabled)
+				telemetryService.captureClineWebToolsToggle(
+					controller.task.owners.identity.taskIncarnationId,
+					request.clineWebToolsEnabled,
+				)
 			}
 			controller.stateManager.setGlobalState("clineWebToolsEnabled", request.clineWebToolsEnabled)
 		}
@@ -305,9 +302,9 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 		if (request.useAutoCondense !== undefined) {
 			if (controller.task) {
 				telemetryService.captureAutoCondenseToggle(
-					controller.task.ulid,
+					controller.task.owners.identity.taskIncarnationId,
 					request.useAutoCondense,
-					controller.task.api.getModel().id,
+					controller.task.owners.api.current().getModel().id,
 				)
 			}
 			controller.stateManager.setGlobalState("useAutoCondense", request.useAutoCondense)
@@ -431,17 +428,16 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 			controller.stateManager.setGlobalState("nativeToolCallEnabled", !!request.nativeToolCallEnabled)
 			if (controller.task) {
 				telemetryService.captureFeatureToggle(
-					controller.task.ulid,
+					controller.task.owners.identity.taskIncarnationId,
 					"native-tool-call",
 					request.nativeToolCallEnabled,
-					controller.task.api.getModel().id,
+					controller.task.owners.api.current().getModel().id,
 				)
 			}
 		}
 
 		if (request.enableParallelToolCalling !== undefined) {
 			controller.stateManager.setGlobalState("enableParallelToolCalling", !!request.enableParallelToolCalling)
-			controller.task?.notifyToolConcurrencyLimitChanged()
 		}
 
 		// Clamp on the way in as well as on the way out. Storing an out-of-range
@@ -453,7 +449,7 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 				"maxParallelToolCalls",
 				resolveMaxParallelToolCalls(request.maxParallelToolCalls, true),
 			)
-			controller.task?.notifyToolConcurrencyLimitChanged()
+			controller.task?.owners.toolExecution.notifyToolConcurrencyLimitChanged()
 		}
 
 		if (request.maxParallelSubagents !== undefined) {
@@ -461,7 +457,7 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 				"maxParallelSubagents",
 				resolveMaxParallelSubagents(request.maxParallelSubagents),
 			)
-			controller.task?.notifySubagentConcurrencyLimitChanged()
+			controller.task?.owners.toolExecution.notifySubagentConcurrencyLimitChanged()
 		}
 
 		if (request.optOutOfRemoteConfig !== undefined) {
@@ -561,7 +557,7 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 		// process, so a local RPC would otherwise never invalidate.
 		const publishStartedAt = performance.now()
 		if (controller.task && settingsAffectPromptFreshness(fields as SettingsKey[])) {
-			await controller.task.flushPromptFreshnessInvalidation("settings")
+			await controller.task.owners.prompt.flush("settings")
 		} else {
 			await controller.postStateToWebview()
 		}

@@ -75,6 +75,29 @@ describe("projectTaskHistory", () => {
 		expect(items[0]).toBe(malformed)
 	})
 
+	it("leaves the saved context-window figure out of the pushed list without touching the stored entry", () => {
+		const contextWindowIndicator = {
+			taskId: "task-1",
+			revision: 3,
+			epoch: 1,
+			phase: "stable",
+			durableContextTokens: 10,
+			pendingSendTokens: 0,
+			receivingTokens: 0,
+			environmentTokens: 5,
+			contextWindow: 100,
+			mode: "act",
+			updatedAt: 1,
+			lineage: { kind: "baseline" },
+		} as const
+		const stored = item({ isFavorited: true, contextWindowIndicator })
+		const [listed] = projectTaskHistory([stored]).items
+
+		expect(listed).not.toHaveProperty("contextWindowIndicator")
+		expect(listed).toMatchObject({ id: "task-1", task: "short task", isFavorited: true })
+		expect(stored.contextWindowIndicator).toBe(contextWindowIndicator)
+	})
+
 	it("bounds a legacy history persisted before the write-time summary", () => {
 		const history = Array.from({ length: 100 }, (_, index) => item({ id: `task-${index}`, task: "g".repeat(128 * 1024) }))
 		const projectedBytes = Buffer.byteLength(JSON.stringify(projectTaskHistory(history).items), "utf8")

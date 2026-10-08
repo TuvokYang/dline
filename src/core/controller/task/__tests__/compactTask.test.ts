@@ -1,19 +1,26 @@
+import { requestTaskCompaction } from "@core/task/compaction/TaskCompactionRequest"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { CompactTaskRequest } from "@shared/proto/dline/task"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { compactTask } from "../compactTask"
 
-interface CompactTask {
-	taskId: string
-	compactTask(expectedRevision: number): Promise<{ accepted: boolean; result: string }>
-	forceTruncateTask?(expectedRevision: number): Promise<{ accepted: boolean; result: string }>
-}
+vi.mock("@core/task/compaction/TaskCompactionRequest", () => ({
+	requestTaskCompaction: vi.fn(),
+}))
 
-/** Create a controller-shaped test boundary with one optional active task. */
-function controller(task?: CompactTask): { task?: CompactTask } {
-	return task ? { task } : {}
+const requestCompaction = vi.mocked(requestTaskCompaction)
+
+/** Create a controller-shaped test boundary with one optional active session. */
+function controller(taskId?: string) {
+	return taskId ? { task: createSessionFixture({ taskId }) } : {}
 }
 
 describe("compactTask", () => {
+	beforeEach(() => {
+		requestCompaction.mockReset()
+		requestCompaction.mockResolvedValue({ accepted: true, result: "accepted" })
+	})
+
 	it("rejects a request when no task is active", async () => {
 		const response = await compactTask(
 			controller() as never,
@@ -21,55 +28,57 @@ describe("compactTask", () => {
 		)
 
 		expect(response).toMatchObject({ accepted: false, result: "missing_task" })
+		expect(requestCompaction).not.toHaveBeenCalled()
 	})
 
 	it("rejects a request for a different active task without invoking compaction", async () => {
-		const compact = vi.fn(async () => ({ accepted: true, result: "accepted" }))
 		const response = await compactTask(
-			controller({ taskId: "task-1", compactTask: compact }) as never,
+			controller("task-1") as never,
 			CompactTaskRequest.create({ taskId: "task-2", stateRevision: 7 }),
 		)
 
 		expect(response).toMatchObject({ accepted: false, result: "missing_task" })
-		expect(compact).not.toHaveBeenCalled()
+		expect(requestCompaction).not.toHaveBeenCalled()
 	})
 
 	it("forwards the task revision and preserves an accepted result", async () => {
-		const compact = vi.fn(async (expectedRevision: number) => ({
-			accepted: true,
-			result: `accepted:${expectedRevision}`,
-		}))
+		requestCompaction.mockResolvedValue({ accepted: true, result: "accepted:12" })
+		const session = createSessionFixture({ taskId: "task-1" })
+
 		const response = await compactTask(
-			controller({ taskId: "task-1", compactTask: compact }) as never,
+			{ task: session } as never,
 			CompactTaskRequest.create({ taskId: "task-1", stateRevision: 12 }),
 		)
 
-		expect(compact).toHaveBeenCalledOnce()
-		expect(compact).toHaveBeenCalledWith(12)
+		expect(requestCompaction).toHaveBeenCalledOnce()
+		// The header control is the user asking, so the request is recorded as manual and reviewed before landing.
+		expect(requestCompaction).toHaveBeenCalledWith(session, { stateRevision: 12, mode: "summarize", trigger: "manual" })
 		expect(response).toMatchObject({ accepted: true, result: "accepted:12" })
 	})
 
 	it("routes an explicit force-truncate request without invoking rolling compaction", async () => {
-		const compact = vi.fn(async () => ({ accepted: true, result: "compacted" }))
-		const forceTruncate = vi.fn(async (expectedRevision: number) => ({
-			accepted: true,
-			result: `truncated:${expectedRevision}`,
-		}))
+		requestCompaction.mockResolvedValue({ accepted: true, result: "truncated:12" })
+		const session = createSessionFixture({ taskId: "task-1" })
+
 		const response = await compactTask(
-			controller({ taskId: "task-1", compactTask: compact, forceTruncateTask: forceTruncate }) as never,
+			{ task: session } as never,
 			CompactTaskRequest.create({ taskId: "task-1", stateRevision: 12, forceTruncate: true }),
 		)
 
-		expect(forceTruncate).toHaveBeenCalledOnce()
-		expect(forceTruncate).toHaveBeenCalledWith(12)
-		expect(compact).not.toHaveBeenCalled()
+		expect(requestCompaction).toHaveBeenCalledOnce()
+		expect(requestCompaction).toHaveBeenCalledWith(session, {
+			stateRevision: 12,
+			mode: "force_truncate",
+			trigger: "manual",
+		})
 		expect(response).toMatchObject({ accepted: true, result: "truncated:12" })
 	})
 
 	it("preserves a stale-state rejection from the task", async () => {
-		const compact = vi.fn(async () => ({ accepted: false, result: "stale_state" }))
+		requestCompaction.mockResolvedValue({ accepted: false, result: "stale_state" })
+
 		const response = await compactTask(
-			controller({ taskId: "task-1", compactTask: compact }) as never,
+			controller("task-1") as never,
 			CompactTaskRequest.create({ taskId: "task-1", stateRevision: 3 }),
 		)
 

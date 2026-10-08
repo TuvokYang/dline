@@ -204,7 +204,9 @@ function normalizePathForMatch(value) {
 }
 
 export function getTaskState(task) {
-	return task?.result?.state || "unknown"
+	if (task?.result?.state) return task.result.state
+	// Vitest omits result objects for explicitly skipped or todo descendants.
+	return task?.mode === "skip" || task?.mode === "todo" ? task.mode : "unknown"
 }
 
 export function walkTasks(task, callback, ancestors = []) {

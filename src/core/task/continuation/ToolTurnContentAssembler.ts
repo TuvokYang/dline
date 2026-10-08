@@ -1,13 +1,13 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages"
-import { type BlockLifecycle, BlockPhase } from "../BlockPhaseMachine"
-import { parseDurableToolResult } from "../DurableToolResult"
+import { type DurableToolResultRecord, readDurableToolResult, replayContentOf } from "../DurableToolResult"
+import { type BlockLifecycle, BlockPhase } from "./LegacyBlockLifecycle"
 
 export interface AssembleToolTurnContentInput {
 	blocks: readonly BlockLifecycle[]
 	assistantApiIndex: number
 	apiHistory: readonly ClineStorageMessage[]
-	uiHistory: readonly ClineMessage[]
+	uiHistory: readonly UiMessage[]
 	pendingContent: readonly ClineContent[]
 	synthesizeMissing: "all" | "terminal_only"
 	deferMissingDlineTids?: readonly string[]
@@ -40,12 +40,12 @@ function pendingResults(content: readonly ClineContent[]): Map<string, ClineUser
 	return results
 }
 
-function durableResults(messages: readonly ClineMessage[]): Map<string, ClineUserToolResultContentBlock> {
-	const results = new Map<string, ClineUserToolResultContentBlock>()
+function durableResults(messages: readonly UiMessage[]): Map<string, DurableToolResultRecord> {
+	const results = new Map<string, DurableToolResultRecord>()
 	for (const message of messages) {
 		if (message.type !== "say" || message.say !== "partial_tool_result" || !message.text) continue
-		const parsed = parseDurableToolResult(message.text)
-		if (parsed) results.set(resultKey(parsed.dline_tid, parsed.function_id), parsed)
+		const record = readDurableToolResult(message.text)
+		if (record) results.set(resultKey(record.block.dline_tid, record.block.function_id), record)
 	}
 	return results
 }
@@ -81,18 +81,27 @@ export function assembleToolTurnContent(input: AssembleToolTurnContentInput): Cl
 	const durable = durableResults(input.uiHistory)
 	const deferred = new Set(input.deferMissingDlineTids ?? [])
 	const results: ClineUserToolResultContentBlock[] = []
+	// A result whose call was never recorded as a tool call has nothing to pair
+	// with, so it returns as prose; paired results stay first, as providers require.
+	const prose: ClineContent[] = []
 
 	for (const block of input.blocks) {
 		const key = resultKey(block.dlineTid, block.functionId)
 		if (persisted.has(key)) continue
-		const existing = pending.get(key) ?? durable.get(key)
-		if (existing) {
-			results.push(existing)
+		const pendingResult = pending.get(key)
+		if (pendingResult) {
+			results.push(pendingResult)
+			continue
+		}
+		const durableResult = durable.get(key)
+		if (durableResult) {
+			if (durableResult.replay) prose.push(...replayContentOf(durableResult))
+			else results.push(durableResult.block)
 			continue
 		}
 		if (deferred.has(block.dlineTid)) continue
 		if (input.synthesizeMissing === "all" || isTerminal(block.phase)) results.push(interruptedResult(block))
 	}
 
-	return [...results, ...input.pendingContent.filter((content) => !isToolResult(content))]
+	return [...results, ...prose, ...input.pendingContent.filter((content) => !isToolResult(content))]
 }

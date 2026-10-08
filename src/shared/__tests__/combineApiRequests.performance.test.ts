@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { combineApiRequests } from "../combineApiRequests"
-import { type ClineMessage } from "../ExtensionMessage"
+import { type UiMessage } from "../ExtensionMessage"
 
 /**
  * Performance regression lock for combineApiRequests.
@@ -31,8 +31,8 @@ const RATIO_THRESHOLD = 3.2
  */
 const MIN_RATIO_BASELINE_MS = 10
 
-function buildPairedApiRequestMessages(pairCount: number): ClineMessage[] {
-	const messages: ClineMessage[] = []
+function buildPairedApiRequestMessages(pairCount: number): UiMessage[] {
+	const messages: UiMessage[] = []
 	let ts = 1_700_000_000_000
 	for (let i = 0; i < pairCount; i++) {
 		messages.push({
@@ -57,13 +57,13 @@ function median(values: number[]): number {
 	return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
 }
 
-function measureOnce(messages: ClineMessage[]): number {
+function measureOnce(messages: UiMessage[]): number {
 	const start = performance.now()
 	combineApiRequests(messages)
 	return performance.now() - start
 }
 
-function measureMedian(messages: ClineMessage[], samples: number): number {
+function measureMedian(messages: UiMessage[], samples: number): number {
 	// Warm up before measuring so JIT/GC warm state matches steady state.
 	combineApiRequests(messages)
 	const runs: number[] = []
@@ -78,7 +78,7 @@ function measureMedian(messages: ClineMessage[], samples: number): number {
  * minimum tracks the algorithmic cost that a doubling ratio compares; a median still absorbs a pause
  * that lands in most samples of the larger input.
  */
-function measureFastest(messages: ClineMessage[], samples: number): number {
+function measureFastest(messages: UiMessage[], samples: number): number {
 	combineApiRequests(messages)
 	let fastest = Number.POSITIVE_INFINITY
 	for (let i = 0; i < samples; i++) {

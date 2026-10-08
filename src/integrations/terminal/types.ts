@@ -4,7 +4,7 @@
  * the StandaloneTerminalManager used in CLI/JetBrains environments.
  */
 
-import type { CommandExecutionMode, CommandStatus, SubagentInjectionState } from "@shared/ExtensionMessage"
+import type { CommandExecutionMode, CommandStatus } from "@shared/ExtensionMessage"
 import type { ClineToolResponseContent } from "@shared/messages"
 import type { EventEmitter } from "events"
 import type { WindowsProcessTreeProvider } from "./process-tree"
@@ -184,13 +184,6 @@ export interface ITerminal {
 }
 
 /**
- * Terminal process result interface.
- * @deprecated Use ITerminalProcess instead.
- * This is kept for backwards compatibility.
- */
-export type ITerminalProcessResult = ITerminalProcess
-
-/**
  * Promise-like interface for terminal process results.
  * Combines Promise<void> with ITerminalProcess for flexible usage.
  * This allows the process to be awaited while also providing access to events.
@@ -334,6 +327,10 @@ export interface BackgroundCommandScope {
 	taskId?: string
 }
 
+export interface BackgroundCommandSettlementListener {
+	settled(command: Readonly<BackgroundCommand>): Promise<void>
+}
+
 export interface BackgroundCommand {
 	/** Unique identifier for the background command */
 	id: string
@@ -366,10 +363,15 @@ export interface BackgroundCommand {
 	lineCount: number
 	/** Output line count represented in the most recent successful API request. */
 	lastApiSentLineCount?: number
+	/**
+	 * A successful API request has reported this command's terminal status.
+	 *
+	 * A settled command stays in the environment's background command list
+	 * until one request has told the model how it ended, then drops out.
+	 */
+	finalStatusReported?: boolean
 	/** Exit code if the command completed or errored */
 	exitCode?: number
-	/** Context injection lifecycle state for background command visibility */
-	injectionState?: SubagentInjectionState
 	/**
 	 * The terminal process running the command.
 	 *
@@ -394,19 +396,6 @@ export interface ShellIntegrationWarningTracker {
 	timestamps: number[]
 	/** Timestamp when the suggestion was last shown */
 	lastSuggestionShown?: number
-}
-
-/**
- * Represents an active background command that can be cancelled
- * @deprecated Use BackgroundCommand instead
- */
-export interface ActiveBackgroundCommand {
-	process: {
-		terminate?: () => void
-		continue?: () => void
-	}
-	command: string
-	outputLines: string[]
 }
 
 /**

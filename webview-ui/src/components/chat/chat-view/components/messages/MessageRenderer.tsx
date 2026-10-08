@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type React from "react"
 import { useMemo } from "react"
 import BrowserSessionRow from "@/components/chat/BrowserSessionRow"
@@ -17,15 +17,15 @@ import { ToolGroupRenderer } from "./ToolGroupRenderer"
 
 interface MessageRendererProps {
 	index: number
-	messageOrGroup: ClineMessage | ClineMessage[]
-	groupedMessages: (ClineMessage | ClineMessage[])[]
-	modifiedMessages: ClineMessage[]
+	messageOrGroup: UiMessage | UiMessage[]
+	groupedMessages: (UiMessage | UiMessage[])[]
+	modifiedMessages: UiMessage[]
 	expandedRows: Record<number, boolean>
 	onToggleExpand: (ts: number) => void
 	onHeightChange: (isTaller: boolean) => void
 	onAddToInput: (text: string) => void
 	onSetQuote: (quote: string | null) => void
-	onFollowupOptionSelect: (message: ClineMessage, option: string) => Promise<void>
+	onFollowupOptionSelect: (message: UiMessage, option: string) => Promise<void>
 	messageHandlers: MessageHandlers
 	footerActive: boolean
 }
@@ -142,18 +142,18 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
  * This allows us to encapsulate the rendering logic while maintaining performance
  */
 export const createMessageRenderer = (
-	groupedMessages: (ClineMessage | ClineMessage[])[],
-	modifiedMessages: ClineMessage[],
+	groupedMessages: (UiMessage | UiMessage[])[],
+	modifiedMessages: UiMessage[],
 	expandedRows: Record<number, boolean>,
 	onToggleExpand: (ts: number) => void,
 	onHeightChange: (isTaller: boolean) => void,
 	onAddToInput: (text: string) => void,
 	onSetQuote: (quote: string | null) => void,
-	onFollowupOptionSelect: (message: ClineMessage, option: string) => Promise<void>,
+	onFollowupOptionSelect: (message: UiMessage, option: string) => Promise<void>,
 	messageHandlers: MessageHandlers,
 	footerActive: boolean,
 ) => {
-	return (index: number, messageOrGroup: ClineMessage | ClineMessage[]) => (
+	return (index: number, messageOrGroup: UiMessage | UiMessage[]) => (
 		<MessageRenderer
 			expandedRows={expandedRows}
 			footerActive={footerActive}

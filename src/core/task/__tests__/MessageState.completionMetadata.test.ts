@@ -3,7 +3,6 @@ import os from "node:os"
 import path from "node:path"
 import { UIMessage } from "@core/storage/UIMessage"
 import { MessageStateHandler } from "@core/task/message-state"
-import { TaskState } from "@core/task/TaskState"
 import type { HistoryItem } from "@shared/HistoryItem"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -31,7 +30,6 @@ describe("MessageState completion metadata boundary", () => {
 		const messageState = new MessageStateHandler({
 			taskId: "task-1",
 			ulid: "ulid-1",
-			taskState: new TaskState(),
 			updateTaskHistory,
 			uiMessage,
 		})

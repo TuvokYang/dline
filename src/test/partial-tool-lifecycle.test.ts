@@ -1,7 +1,6 @@
 import { strict as assert } from "node:assert"
 import { beforeEach, describe, it } from "vitest"
 import { advanceLifecycle, getDeferredToolAction, type PartialToolLifecycle } from "../core/task/partial-tool-lifecycle"
-import { TaskState } from "../core/task/TaskState"
 
 describe("getDeferredToolAction", () => {
 	it("undefined lifecycle => skip", () => {
@@ -106,60 +105,31 @@ describe("advanceLifecycle", () => {
 	})
 })
 
-describe("TaskState integration", () => {
-	it("partialToolLifecycleByTs uses PartialToolLifecycle type and clear works", () => {
-		const state = new TaskState()
-		assert.equal(state.partialToolLifecycleByTs.size, 0)
+describe("lifecycle map integration", () => {
+	it("retains independent concurrent lifecycle states", () => {
+		const lifecycleByTs = new Map<number, PartialToolLifecycle>([
+			[10, "partial-shown"],
+			[20, "partial-shown"],
+		])
 
-		state.partialToolLifecycleByTs.set(1, "partial-shown")
-		state.partialToolLifecycleByTs.set(2, "complete-done")
-		assert.equal(state.partialToolLifecycleByTs.size, 2)
+		advanceLifecycle(lifecycleByTs, 10, "start-execute")
+		advanceLifecycle(lifecycleByTs, 10, "execution-success")
 
-		state.partialToolLifecycleByTs.clear()
-		assert.equal(state.partialToolLifecycleByTs.size, 0)
+		assert.equal(lifecycleByTs.get(10), "complete-done")
+		assert.equal(lifecycleByTs.get(20), "partial-shown")
+		assert.equal(getDeferredToolAction(lifecycleByTs.get(10), false, true), "skip")
+		assert.equal(getDeferredToolAction(lifecycleByTs.get(20), false, true), "execute")
 	})
 
-	it("complete-done persists after execution (presentAssistantMessage would see it)", () => {
-		const state = new TaskState()
-		const ts = 42
-		// Simulate reRenderUpdatedPartialBlocks deferred execution
-		state.partialToolLifecycleByTs.set(ts, "partial-shown")
-		advanceLifecycle(state.partialToolLifecycleByTs, ts, "start-execute")
-		advanceLifecycle(state.partialToolLifecycleByTs, ts, "execution-success")
-		// After execution, lifecycle is complete-done
-		// presentAssistantMessage switch would encounter this state
-		assert.equal(
-			state.partialToolLifecycleByTs.get(ts),
-			"complete-done",
-			"complete-done must be visible to presentAssistantMessage for skip guard",
-		)
-	})
+	it("clears every turn-scoped lifecycle entry", () => {
+		const lifecycleByTs = new Map<number, PartialToolLifecycle>([
+			[1, "partial-shown"],
+			[2, "complete-done"],
+			[3, "complete-running"],
+		])
 
-	it("concurrent tools: mixed lifecycle states", () => {
-		const state = new TaskState()
-		const tsDone = 10
-		const tsPending = 20
-		state.partialToolLifecycleByTs.set(tsDone, "partial-shown")
-		state.partialToolLifecycleByTs.set(tsPending, "partial-shown")
-		// Execute tool 1
-		advanceLifecycle(state.partialToolLifecycleByTs, tsDone, "start-execute")
-		advanceLifecycle(state.partialToolLifecycleByTs, tsDone, "execution-success")
-		// Tool 1: complete-done, Tool 2: still partial-shown
-		assert.equal(state.partialToolLifecycleByTs.get(tsDone), "complete-done")
-		assert.equal(state.partialToolLifecycleByTs.get(tsPending), "partial-shown")
-		// deferred path: tool 1 skipped, tool 2 executed
-		assert.equal(getDeferredToolAction(state.partialToolLifecycleByTs.get(tsDone), false, true), "skip")
-		assert.equal(getDeferredToolAction(state.partialToolLifecycleByTs.get(tsPending), false, true), "execute")
-	})
+		lifecycleByTs.clear()
 
-	it("stream reset: clear lifecycle map", () => {
-		const state = new TaskState()
-		state.partialToolLifecycleByTs.set(1, "partial-shown")
-		state.partialToolLifecycleByTs.set(2, "complete-done")
-		state.partialToolLifecycleByTs.set(3, "complete-running")
-		assert.equal(state.partialToolLifecycleByTs.size, 3)
-		// Simulate stream reset (index.ts line 3932)
-		state.partialToolLifecycleByTs.clear()
-		assert.equal(state.partialToolLifecycleByTs.size, 0)
+		assert.equal(lifecycleByTs.size, 0)
 	})
 })

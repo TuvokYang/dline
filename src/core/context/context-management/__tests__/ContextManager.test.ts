@@ -1,4 +1,4 @@
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineContent, ClineStorageMessage, ClineTextContentBlock } from "@shared/messages/content"
 import { expect } from "chai"
 import fs from "fs/promises"
@@ -20,7 +20,7 @@ function createApiReqMessage(tokens: {
 	cacheWrites?: number
 	cacheReads?: number
 	estimatedContextTokens?: number
-}): ClineMessage {
+}): UiMessage {
 	return {
 		ts: Date.now(),
 		type: "say",
@@ -712,7 +712,7 @@ describe("ContextManager", () => {
 
 		it("does not compact below a configured 75 percent point", () => {
 			const api = createMockApi(200_000)
-			const clineMessages: ClineMessage[] = [createApiReqMessage({ tokensIn: 30_000, tokensOut: 3_000 })]
+			const clineMessages: UiMessage[] = [createApiReqMessage({ tokensIn: 30_000, tokensOut: 3_000 })]
 
 			const result = contextManager.shouldCompactContextWindow(clineMessages, api, 0, { triggerPercent: 75 })
 			expect(result).to.equal(false)
@@ -720,7 +720,7 @@ describe("ContextManager", () => {
 
 		it("compacts when a configured percentage reserve reaches the guarded trigger", () => {
 			const api = createMockApi(200_000)
-			const clineMessages: ClineMessage[] = [createApiReqMessage({ tokensIn: 150_000, tokensOut: 15_500 })]
+			const clineMessages: UiMessage[] = [createApiReqMessage({ tokensIn: 150_000, tokensOut: 15_500 })]
 
 			const result = contextManager.shouldCompactContextWindow(clineMessages, api, 0, { triggerPercent: 75 })
 			expect(result).to.equal(true)
@@ -728,7 +728,7 @@ describe("ContextManager", () => {
 
 		it("clamps a low trigger percentage to the maximum reserve", () => {
 			const api = createMockApi(200_000)
-			const clineMessages: ClineMessage[] = [createApiReqMessage({ tokensIn: 164_000, tokensOut: 1_500 })]
+			const clineMessages: UiMessage[] = [createApiReqMessage({ tokensIn: 164_000, tokensOut: 1_500 })]
 
 			const result = contextManager.shouldCompactContextWindow(clineMessages, api, 0, { triggerPercent: 5 })
 			expect(result).to.equal(true)
@@ -736,7 +736,7 @@ describe("ContextManager", () => {
 
 		it("uses the default summary-aware safety threshold when settings are omitted", () => {
 			const api = createMockApi(200_000)
-			const clineMessages: ClineMessage[] = [createApiReqMessage({ tokensIn: 150_000, tokensOut: 5_000 })]
+			const clineMessages: UiMessage[] = [createApiReqMessage({ tokensIn: 150_000, tokensOut: 5_000 })]
 
 			const result = contextManager.shouldCompactContextWindow(clineMessages, api, 0)
 			expect(result).to.equal(false)
@@ -744,7 +744,7 @@ describe("ContextManager", () => {
 
 		it("uses the configured absolute maximum context", () => {
 			const api = createMockApi(200_000)
-			const clineMessages: ClineMessage[] = [createApiReqMessage({ tokensIn: 150_000, tokensOut: 5_000 })]
+			const clineMessages: UiMessage[] = [createApiReqMessage({ tokensIn: 150_000, tokensOut: 5_000 })]
 
 			const result = contextManager.shouldCompactContextWindow(clineMessages, api, 0, {
 				maxContextTokens: 150_000,
@@ -754,7 +754,7 @@ describe("ContextManager", () => {
 
 		it("does not compact at observed 232K pressure on 272K input context", () => {
 			const api = createMockApi(272_000)
-			const clineMessages: ClineMessage[] = [
+			const clineMessages: UiMessage[] = [
 				createApiReqMessage({ tokensIn: 100_000, tokensOut: 12_000, cacheWrites: 0, cacheReads: 120_000 }),
 			]
 
@@ -764,7 +764,7 @@ describe("ContextManager", () => {
 
 		it("does not reserve generated summary output against input context", () => {
 			const api = createMockApi(272_000)
-			const clineMessages: ClineMessage[] = [
+			const clineMessages: UiMessage[] = [
 				createApiReqMessage({ tokensIn: 130_000, tokensOut: 10_000, cacheWrites: 0, cacheReads: 115_000 }),
 			]
 
@@ -774,7 +774,7 @@ describe("ContextManager", () => {
 
 		it("compacts when summarize instruction overhead and safety buffer are exhausted", () => {
 			const api = createMockApi(272_000)
-			const clineMessages: ClineMessage[] = [
+			const clineMessages: UiMessage[] = [
 				createApiReqMessage({ tokensIn: 130_000, tokensOut: 10_000, cacheWrites: 0, cacheReads: 122_000 }),
 			]
 
@@ -785,7 +785,7 @@ describe("ContextManager", () => {
 		it("keeps cacheWrites and cacheReads in total token count", () => {
 			const api = createMockApi(200_000)
 			// Low direct tokens but high cache reads push total over threshold
-			const clineMessages: ClineMessage[] = [
+			const clineMessages: UiMessage[] = [
 				createApiReqMessage({ tokensIn: 5_000, tokensOut: 500, cacheWrites: 0, cacheReads: 160_000 }),
 			]
 
@@ -795,7 +795,7 @@ describe("ContextManager", () => {
 
 		it("keeps reliable usage plus comparable failed-request estimate growth in the early guard", () => {
 			const api = createMockApi(200_000)
-			const clineMessages: ClineMessage[] = [
+			const clineMessages: UiMessage[] = [
 				createApiReqMessage({ tokensIn: 145_000, tokensOut: 5_000, estimatedContextTokens: 150_000 }),
 				{
 					ts: Date.now() + 1,
@@ -815,7 +815,7 @@ describe("ContextManager", () => {
 
 		it("returns false when previousApiReqIndex is negative", () => {
 			const api = createMockApi(200_000)
-			const clineMessages: ClineMessage[] = [createApiReqMessage({ tokensIn: 200_000 })]
+			const clineMessages: UiMessage[] = [createApiReqMessage({ tokensIn: 200_000 })]
 
 			const result = contextManager.shouldCompactContextWindow(clineMessages, api, -1, { triggerPercent: 75 })
 			expect(result).to.equal(false)
@@ -823,7 +823,7 @@ describe("ContextManager", () => {
 
 		it("caps a high percentage at the summary-aware safety boundary", () => {
 			const api = createMockApi(200_000)
-			const clineMessages: ClineMessage[] = [createApiReqMessage({ tokensIn: 192_000 })]
+			const clineMessages: UiMessage[] = [createApiReqMessage({ tokensIn: 192_000 })]
 
 			const result = contextManager.shouldCompactContextWindow(clineMessages, api, 0, { triggerPercent: 97 })
 			expect(result).to.equal(true)
@@ -835,7 +835,7 @@ describe("ContextManager", () => {
 			const contextWindow = 600_000
 			const preCompactionProviderTokens = 564_737
 
-			function completedCompactionCard(): ClineMessage {
+			function completedCompactionCard(): UiMessage {
 				return {
 					ts: Date.now(),
 					type: "say",
@@ -844,7 +844,7 @@ describe("ContextManager", () => {
 				}
 			}
 
-			function postCompactionEstimate(estimatedContextTokens: number): ClineMessage {
+			function postCompactionEstimate(estimatedContextTokens: number): UiMessage {
 				return {
 					ts: Date.now() + 1,
 					type: "say",
@@ -855,7 +855,7 @@ describe("ContextManager", () => {
 
 			it("ignores Provider usage recorded before the compaction boundary", () => {
 				const api = createMockApi(contextWindow)
-				const clineMessages: ClineMessage[] = [
+				const clineMessages: UiMessage[] = [
 					createApiReqMessage({ tokensIn: preCompactionProviderTokens }),
 					completedCompactionCard(),
 					// The first post-compaction request failed before reporting Provider usage.
@@ -868,7 +868,7 @@ describe("ContextManager", () => {
 
 			it("does not fall back to pre-compaction usage when no pressure follows the boundary", () => {
 				const api = createMockApi(contextWindow)
-				const clineMessages: ClineMessage[] = [
+				const clineMessages: UiMessage[] = [
 					createApiReqMessage({ tokensIn: preCompactionProviderTokens }),
 					completedCompactionCard(),
 				]
@@ -879,7 +879,7 @@ describe("ContextManager", () => {
 
 			it("still compacts when pressure recorded after the boundary reaches the trigger", () => {
 				const api = createMockApi(contextWindow)
-				const clineMessages: ClineMessage[] = [
+				const clineMessages: UiMessage[] = [
 					createApiReqMessage({ tokensIn: preCompactionProviderTokens }),
 					completedCompactionCard(),
 					createApiReqMessage({ tokensIn: preCompactionProviderTokens }),
@@ -901,7 +901,7 @@ describe("ContextManager", () => {
 		it("does not truncate standard context at observed 232K pressure on 272K input context", async () => {
 			const api = createMockApi(272_000)
 			const apiConversationHistory = createMessages(10)
-			const clineMessages: ClineMessage[] = [
+			const clineMessages: UiMessage[] = [
 				createApiReqMessage({ tokensIn: 100_000, tokensOut: 12_000, cacheWrites: 0, cacheReads: 120_000 }),
 			]
 			const taskDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "dline-context-test-"))
@@ -924,7 +924,7 @@ describe("ContextManager", () => {
 		it("does not advance a pairing-safe range for an internal compaction request", async () => {
 			const api = createMockApi(272_000)
 			const apiConversationHistory = createMessages(8)
-			const clineMessages: ClineMessage[] = [createApiReqMessage({ tokensIn: 299_000, tokensOut: 1_000 })]
+			const clineMessages: UiMessage[] = [createApiReqMessage({ tokensIn: 299_000, tokensOut: 1_000 })]
 			const taskDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "dline-context-test-"))
 
 			const result = await contextManager.getNewContextMessagesAndMetadata(
@@ -979,7 +979,7 @@ describe("ContextManager", () => {
 					],
 				},
 			]
-			const clineMessages: ClineMessage[] = [createApiReqMessage({ tokensIn: 130_000, cacheReads: 132_000 })]
+			const clineMessages: UiMessage[] = [createApiReqMessage({ tokensIn: 130_000, cacheReads: 132_000 })]
 			const taskDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "dline-context-test-"))
 
 			const shouldCompact = await contextManager.attemptFileReadOptimization(

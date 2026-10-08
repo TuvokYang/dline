@@ -1,3 +1,4 @@
+import type { ContextWindowIndicatorSnapshot } from "./context-window-indicator"
 import type { Mode } from "./storage/types"
 
 /**
@@ -51,4 +52,10 @@ export type HistoryItem = {
 	spawnedTaskIds?: string[]
 	/** The parent task ID if this task was spawned from another. */
 	parentTaskId?: string
+	/**
+	 * Last context-window occupancy the task showed, kept so a reopened task can
+	 * draw its header before it sends anything. Only the task's own panel reads
+	 * it; the pushed history list leaves it out.
+	 */
+	contextWindowIndicator?: ContextWindowIndicatorSnapshot
 }

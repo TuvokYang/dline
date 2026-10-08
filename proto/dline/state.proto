@@ -23,7 +23,6 @@ service StateService {
   rpc requestProfileSwitch(ProfileSwitchRequest) returns (ProfileSwitchResponse);
   rpc confirmProfileSwitch(ProfileSwitchOperationRequest) returns (ProfileSwitchResponse);
   rpc cancelProfileSwitch(ProfileSwitchOperationRequest) returns (ProfileSwitchResponse);
-  rpc restoreContextCompaction(ContextCompactionRestoreRequest) returns (ContextCompactionRestoreResponse);
   rpc updateAutoApprovalSettings(AutoApprovalSettingsRequest) returns (Empty);
   rpc updateSettings(UpdateSettingsRequest) returns (Empty);
   rpc updateTaskSettings(UpdateTaskSettingsRequest) returns (Empty);
@@ -139,22 +138,15 @@ message Secrets {
 // in src/shared/storage/state-keys.ts and use the scripts/generate-state-proto.mjs
 // script to regenerate this list.
 message Settings {
+  reserved 47, 52, 53, 74, 75, 76, 87, 92, 93, 114, 115, 116;
+  reserved "plan_mode_reasoning_effort", "plan_mode_open_router_model_id", "plan_mode_open_router_model_info";
+  reserved "plan_mode_oca_model_id", "plan_mode_oca_model_info", "plan_mode_oca_reasoning_effort";
+  reserved "act_mode_reasoning_effort", "act_mode_open_router_model_id", "act_mode_open_router_model_info";
+  reserved "act_mode_oca_model_id", "act_mode_oca_model_info", "act_mode_oca_reasoning_effort";
   optional string lite_llm_base_url = 1;
   optional string requesty_base_url = 23;
   optional int32 request_timeout_ms = 32;
   optional string oca_mode = 41;
-  optional OpenaiReasoningEffort plan_mode_reasoning_effort = 47;
-  optional string plan_mode_open_router_model_id = 52;
-  optional OpenRouterModelInfo plan_mode_open_router_model_info = 53;
-  optional string plan_mode_oca_model_id = 74;
-  optional OcaModelInfo plan_mode_oca_model_info = 75;
-  optional string plan_mode_oca_reasoning_effort = 76;
-  optional OpenaiReasoningEffort act_mode_reasoning_effort = 87;
-  optional string act_mode_open_router_model_id = 92;
-  optional OpenRouterModelInfo act_mode_open_router_model_info = 93;
-  optional string act_mode_oca_model_id = 114;
-  optional OcaModelInfo act_mode_oca_model_info = 115;
-  optional string act_mode_oca_reasoning_effort = 116;
   optional AutoApprovalSettings auto_approval_settings = 128;
   optional string global_cline_rules_toggles = 129;
   optional string global_workflow_toggles = 130;
@@ -373,36 +365,6 @@ message ProfileSwitchResponse {
 message ProfileSwitchOperationRequest {
   Metadata metadata = 1;
   string operation_id = 2;
-}
-
-enum ContextCompactionRestoreTarget {
-  CONTEXT_COMPACTION_RESTORE_TARGET_UNSPECIFIED = 0;
-  CONTEXT_COMPACTION_RESTORE_TARGET_PREVIOUS = 1;
-  CONTEXT_COMPACTION_RESTORE_TARGET_INITIAL = 2;
-}
-
-message ContextCompactionRestoreRequest {
-  Metadata metadata = 1;
-  string operation_id = 2;
-  ContextCompactionRestoreTarget target = 3;
-  string expected_head_checkpoint_id = 4;
-  int32 expected_chain_revision = 5;
-}
-
-enum ContextCompactionRestoreStatus {
-  CONTEXT_COMPACTION_RESTORE_STATUS_UNSPECIFIED = 0;
-  CONTEXT_COMPACTION_RESTORE_STATUS_RESTORED = 1;
-  CONTEXT_COMPACTION_RESTORE_STATUS_REJECTED = 2;
-}
-
-message ContextCompactionRestoreResponse {
-  ContextCompactionRestoreStatus status = 1;
-  optional string operation_id = 2;
-  optional string checkpoint_id = 3;
-  optional string head_checkpoint_id = 4;
-  optional int32 chain_revision = 5;
-  optional string branch_id = 6;
-  optional string error = 7;
 }
 
 enum PlanActMode {

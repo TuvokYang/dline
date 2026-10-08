@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { ClineDefaultTool } from "@/shared/tools"
+import { normalizeToolExecutionResult } from "../../ToolExecutionResult"
 import { StatusUpdateHandler } from "../StatusUpdateHandler"
 
 const IMAGE_DATA = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
@@ -93,11 +94,13 @@ describe("StatusUpdateHandler", () => {
 			files: ["/work/ack.pdf"],
 		})
 
-		const result = await handler.execute(config, {
-			name: ClineDefaultTool.STATUS_UPDATE,
-			dline_tid: "tid-status-acknowledge",
-			params: { response: "请确认", requires_acknowledgment: "true" },
-		} as any)
+		const { response: result, documents } = normalizeToolExecutionResult(
+			await handler.execute(config, {
+				name: ClineDefaultTool.STATUS_UPDATE,
+				dline_tid: "tid-status-acknowledge",
+				params: { response: "请确认", requires_acknowledgment: "true" },
+			} as any),
+		)
 
 		const text = textOf(result)
 		expect(text).toContain("User acknowledged")
@@ -114,6 +117,9 @@ describe("StatusUpdateHandler", () => {
 				}),
 			]),
 		)
-		expect(config.taskState.userMessageContent).toEqual([pdfDocument])
+		// The PDF returns with the result, so the journal records it beside the result;
+		// nothing is left in a buffer the runtime never drains.
+		expect(documents).toEqual([pdfDocument])
+		expect(config.taskState.userMessageContent).toEqual([])
 	})
 })

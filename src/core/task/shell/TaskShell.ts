@@ -1,0 +1,222 @@
+import { planRecoveryDialog } from "../kernel/recovery"
+import type { EventSubmissionResult, RuntimeFacade } from "../runtime"
+import type { TaskUiAction } from "./TaskUiAction"
+
+export interface TaskInput {
+	readonly entryId: string
+	readonly payloadRef: string
+	readonly mode?: "queued" | "steering"
+	readonly sequence?: number
+}
+
+export interface TaskHaltRearmPort {
+	rearm(haltId: string): Promise<void>
+	forceClose(haltId: string): void
+}
+
+/** Reconciles retained queue journal facts only after every owning writer drained. */
+export interface TaskRetainedQueueSettlementPort {
+	settle(): Promise<void>
+}
+
+/** Stops every executor for checkpoint restore and deliberately keeps their fences installed. */
+export interface TaskCheckpointRestoreSuspensionPort {
+	stopAndFence(haltId: string): Promise<EventSubmissionResult>
+}
+
+/**
+ * Shows an accepted submission as the user's own chat row.
+ *
+ * Presentation is split in two because the row's position is part of its
+ * meaning. Everything the row needs is resolved before the runtime is told to
+ * submit, so the row is ordered ahead of the work the submission causes; the
+ * commit is withheld until the submission is accepted, so a refused entry still
+ * leaves no message behind. Resolving after submission instead let the turn
+ * allocate its blocks first, which placed the user's own message after the
+ * replies to it.
+ */
+export interface TaskInputPresentationPort {
+	prepare(input: TaskInput): Promise<TaskInputPresentationCommit>
+}
+
+/** A prepared chat row, not yet visible. */
+export interface TaskInputPresentationCommit {
+	commit(): Promise<void>
+}
+
+async function haltUntilQuiescent(
+	runtime: RuntimeFacade,
+	retainedQueueSettlement: TaskRetainedQueueSettlementPort | undefined,
+	type: "user.cancel" | "user.terminate",
+	haltId: string,
+): Promise<EventSubmissionResult> {
+	const result = await runtime.submit({ type, generation: runtime.getState().generation, haltId })
+	if (result.kind === "rejected") return result
+	await runtime.waitForDomainCompletion(result.state.revision)
+	if (runtime.getState().halt.status === "stopping") return result
+	await runtime.waitForQuiescence()
+	await retainedQueueSettlement?.settle()
+	return result
+}
+
+/** Checkpoint-only halt capability kept outside the six-use-case TaskShell facade. */
+export class TaskCheckpointRestoreSuspension implements TaskCheckpointRestoreSuspensionPort {
+	constructor(
+		private readonly runtime: RuntimeFacade,
+		private readonly retainedQueueSettlement?: TaskRetainedQueueSettlementPort,
+	) {}
+
+	async stopAndFence(haltId: string): Promise<EventSubmissionResult> {
+		const result = await haltUntilQuiescent(this.runtime, this.retainedQueueSettlement, "user.cancel", haltId)
+		if (result.kind !== "rejected" && this.runtime.getState().halt.status === "stopping")
+			throw new Error(`CheckpointRestoreHaltTimedOut:${haltId}`)
+		return result
+	}
+}
+
+export class TaskShell {
+	constructor(
+		private readonly runtime: RuntimeFacade,
+		private readonly halt: TaskHaltRearmPort,
+		private readonly presentation?: TaskInputPresentationPort,
+		private readonly retainedQueueSettlement?: TaskRetainedQueueSettlementPort,
+	) {}
+
+	async start(input: TaskInput): Promise<EventSubmissionResult> {
+		const opened = await this.open()
+		if (opened.kind === "rejected") return opened
+		return this.submitInput(input)
+	}
+
+	async submitInput(input: TaskInput): Promise<EventSubmissionResult> {
+		// Prepared before submission so the row precedes the work it causes, and
+		// committed only after acceptance so a refused entry leaves no message.
+		const presentation = await this.presentation?.prepare(input)
+		const submitted = await this.runtime.submit({
+			type: "user.submit",
+			generation: this.runtime.getState().generation,
+			entryId: input.entryId,
+			payloadRef: input.payloadRef,
+			mode: input.mode,
+			sequence: input.sequence,
+		})
+		if (submitted.kind !== "rejected") await presentation?.commit()
+		return submitted
+	}
+
+	async respond(action: TaskUiAction): Promise<EventSubmissionResult> {
+		const dialog = await this.runtime.submit({
+			type: "dialog.responded",
+			generation: action.generation ?? this.runtime.getState().generation,
+			taskId: action.taskId,
+			turnId: action.turnId,
+			interactionId: action.interactionId,
+			stateRevision: action.stateRevision,
+			receiverGeneration: action.receiverGeneration,
+			actionId: action.type === "approval.respond" ? (action.approved ? "approve" : "reject") : action.actionId,
+			draftRef: action.draftRef,
+			selectionRef: action.selectionRef,
+			queueDeliveryId: action.queueDeliveryId,
+			queueDeliveryEntries: action.queueDeliveryEntries,
+			queueDeliveryMode: action.queueDeliveryMode,
+		})
+		if (dialog.kind === "rejected" || action.type === "dialog.respond") return dialog
+		await this.runtime.waitForDurable(dialog.state.revision)
+		return this.runtime.submit({
+			type: "approval.responded",
+			generation: this.runtime.getState().generation,
+			turnId: action.turnId,
+			blockId: action.blockId,
+			interactionId: action.interactionId,
+			approved: action.approved,
+			feedbackRef: action.draftRef,
+		})
+	}
+
+	cancel(haltId: string): Promise<EventSubmissionResult> {
+		return this.haltTask("user.cancel", haltId)
+	}
+
+	terminate(haltId: string): Promise<EventSubmissionResult> {
+		return this.haltTask("user.terminate", haltId)
+	}
+
+	/**
+	 * Take ownership of the task. Only a window holding the task lock may call this.
+	 *
+	 * The runtime becomes writable first, because reconciling the retained queue
+	 * writes. Recovered work held while the window did not own the lock is then
+	 * dispatched, and only after that is `lifecycle.open` submitted: an
+	 * interrupted task is paused and rejects `lifecycle.open`, yet its recovered
+	 * work still runs.
+	 */
+	async open(): Promise<EventSubmissionResult> {
+		this.runtime.grantWriteOwnership()
+		await this.retainedQueueSettlement?.settle()
+		this.runtime.releaseRestoredCommands()
+		return this.runtime.submit({ type: "lifecycle.open", generation: this.runtime.getState().generation })
+	}
+
+	private async haltTask(type: "user.cancel" | "user.terminate", haltId: string): Promise<EventSubmissionResult> {
+		const activeBefore = this.runtime.getState().halt
+		let result = await haltUntilQuiescent(this.runtime, this.retainedQueueSettlement, type, haltId)
+		if (result.kind === "rejected") return result
+
+		if (type === "user.terminate") {
+			let forcedHaltId = activeBefore.status === "stopping" ? activeBefore.haltId : undefined
+			const current = this.runtime.getState().halt
+			if (current.status === "stopping") {
+				forcedHaltId = current.haltId
+				result = await haltUntilQuiescent(this.runtime, this.retainedQueueSettlement, "user.terminate", current.haltId)
+				if (result.kind === "rejected") return result
+			}
+			if (forcedHaltId && result.state.flow.forcedClosedParticipants?.length) this.halt.forceClose(forcedHaltId)
+			return result
+		}
+
+		if (this.runtime.getState().halt.status === "stopping") {
+			void this.finishTimedOutHalt(type, haltId).catch(() => undefined)
+			return result
+		}
+		// A concurrent terminate may have escalated this cancel while its original
+		// halt command was still completing. Never reopen those terminal fences.
+		if (this.runtime.getState().flow.phase === "terminated") return result
+		await this.halt.rearm(haltId)
+		await this.offerResume()
+		return result
+	}
+
+	private async finishTimedOutHalt(type: "user.cancel" | "user.terminate", haltId: string): Promise<void> {
+		await this.halt.rearm(haltId)
+		await this.runtime.waitForQuiescence()
+		await this.retainedQueueSettlement?.settle()
+		if (type === "user.cancel") await this.offerResume()
+	}
+
+	/**
+	 * Offer the stopped task a way back to work.
+	 *
+	 * Cancelling only pauses: the conversation is intact and the user is
+	 * expected to resume, but nothing else plans that dialog. Hydration covers
+	 * the task that was reopened from a snapshot, so a round stopped inside a
+	 * live session was the one case left with no interaction at all — the
+	 * footer offered neither Cancel nor Resume and the task could not continue.
+	 *
+	 * Raised here rather than from the halt reducer because the dialog executor
+	 * is fenced for the whole halt: a command derived while stopping is dropped
+	 * and never retried. After rearm the same command runs normally.
+	 */
+	private async offerResume(): Promise<void> {
+		const state = this.runtime.getState()
+		// Terminal tasks have nothing to resume, and an existing primary dialog is
+		// already the question the user has to answer.
+		if (state.flow.phase !== "paused" || state.dialog.primary) return
+		const plan = planRecoveryDialog({
+			taskId: state.taskId,
+			revision: state.revision,
+			reason: "cancelled",
+			turnId: state.turn.turnId ?? `cancelled:${state.taskId}`,
+		})
+		await this.runtime.submit({ type: "dialog.requested", generation: state.generation, ...plan })
+	}
+}

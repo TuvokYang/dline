@@ -270,7 +270,6 @@ describe("TaskStateManager - Multi-window Profile Isolation", () => {
 			planModeProfile: "plan-source",
 			planModeReasoningOverrideKind: "budget",
 			planModeThinkingBudgetTokens: 2_048,
-			planModeReasoningEffort: "high",
 			planModeServiceTierOverrideKind: "tier",
 			planModeServiceTierOverrideTier: "scale",
 			actModeProfileId: "act-source-id",
@@ -278,7 +277,6 @@ describe("TaskStateManager - Multi-window Profile Isolation", () => {
 			actModeReasoningOverrideKind: "effort",
 			actModeReasoningOverrideEffort: "low",
 			actModeThinkingBudgetTokens: 4_096,
-			actModeReasoningEffort: "medium",
 			actModeServiceTierOverrideKind: "tier",
 			actModeServiceTierOverrideTier: "priority",
 		})
@@ -297,7 +295,6 @@ describe("TaskStateManager - Multi-window Profile Isolation", () => {
 			actModeReasoningOverrideKind: "effort",
 			actModeReasoningOverrideEffort: "low",
 			actModeThinkingBudgetTokens: 4_096,
-			actModeReasoningEffort: "medium",
 			actModeServiceTierOverrideKind: "tier",
 			actModeServiceTierOverrideTier: "priority",
 		})
@@ -305,11 +302,11 @@ describe("TaskStateManager - Multi-window Profile Isolation", () => {
 		expect(taskSm.actModeProfile).toBe("act-target")
 		expect(taskSm.getReasoningOverride("act")).toBeUndefined()
 		expect(taskSm.getServiceTierOverride("act")).toBeUndefined()
-		expect(cache.actModeReasoningEffort).toBeUndefined()
+		expect(cache.actModeReasoningOverrideKind).toBeUndefined()
 		expect(taskSm.planModeProfileId).toBe("plan-source-id")
 		expect(taskSm.getReasoningOverride("plan")).toEqual({ kind: "budget", budgetTokens: 2_048 })
 		expect(taskSm.getServiceTierOverride("plan")).toEqual({ kind: "tier", tier: "scale" })
-		expect(cache.planModeReasoningEffort).toBe("high")
+		expect(cache.planModeThinkingBudgetTokens).toBe(2_048)
 
 		taskSm.restoreProfileState(snapshot)
 		expect(taskSm.actModeProfileId).toBe("act-source-id")
@@ -317,7 +314,7 @@ describe("TaskStateManager - Multi-window Profile Isolation", () => {
 		expect(taskSm.getReasoningOverride("act")).toEqual({ kind: "effort", effort: "low" })
 		expect(taskSm.getServiceTierOverride("act")).toEqual({ kind: "tier", tier: "priority" })
 		expect(cache.actModeThinkingBudgetTokens).toBe(4_096)
-		expect(cache.actModeReasoningEffort).toBe("medium")
+		expect(cache.actModeReasoningOverrideEffort).toBe("low")
 
 		taskSm.setProfileIdentityBindings(
 			{ act: { profileId: "act-target-id", profileName: "act-target" } },
@@ -334,7 +331,7 @@ describe("TaskStateManager - Multi-window Profile Isolation", () => {
 		expect(reopenedTaskSm.actModeProfile).toBe("act-target")
 		expect(reopenedTaskSm.getReasoningOverride("act")).toBeUndefined()
 		expect(reopenedTaskSm.getServiceTierOverride("act")).toBeUndefined()
-		expect(reopenedCache.actModeReasoningEffort).toBeUndefined()
+		expect(reopenedCache.actModeReasoningOverrideKind).toBeUndefined()
 		expect(reopenedTaskSm.planModeProfileId).toBe("plan-source-id")
 		expect(reopenedTaskSm.getReasoningOverride("plan")).toEqual({ kind: "budget", budgetTokens: 2_048 })
 		expect(reopenedTaskSm.getServiceTierOverride("plan")).toEqual({ kind: "tier", tier: "scale" })

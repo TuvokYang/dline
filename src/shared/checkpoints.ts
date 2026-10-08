@@ -1,5 +1,5 @@
 import * as path from "path"
-import type { ClineMessage } from "./ExtensionMessage"
+import type { UiMessage } from "./ExtensionMessage"
 
 export interface CheckpointReferenceSet {
 	hashes: string[]
@@ -55,14 +55,14 @@ export function readCheckpointReferenceSet(input: {
 }
 
 /** Normalize one persisted message without retaining the legacy scalar representation. */
-export function normalizeStoredCheckpointMessage(message: ClineMessage): ClineMessage {
-	const legacyValue = (message as ClineMessage & { lastCheckpointHash?: unknown }).lastCheckpointHash
+export function normalizeStoredCheckpointMessage(message: UiMessage): UiMessage {
+	const legacyValue = (message as UiMessage & { lastCheckpointHash?: unknown }).lastCheckpointHash
 	if (legacyValue === undefined) {
 		return message
 	}
 	const hashes = normalizeCheckpointHashes(legacyValue)
 	const workspaceRoots = normalizeCheckpointWorkspaceRoots(
-		(message as ClineMessage & { checkpointWorkspaceRoots?: unknown }).checkpointWorkspaceRoots,
+		(message as UiMessage & { checkpointWorkspaceRoots?: unknown }).checkpointWorkspaceRoots,
 	)
 	return {
 		...message,

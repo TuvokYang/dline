@@ -3,7 +3,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
-import { TaskState } from "../../../TaskState"
+import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { AskFollowupQuestionToolHandler } from "../AskFollowupQuestionToolHandler"
 import { GenerateReportHandler } from "../GenerateReportHandler"
@@ -23,7 +23,7 @@ vi.mock("@/services/telemetry", () => ({
  * @returns TaskConfig test double with stable ask and state dependencies.
  */
 function createConfig(text: string): TaskConfig {
-	const taskState = new TaskState()
+	const taskState = new DefaultToolHandlerState()
 	taskState.ackedFeedback = {
 		response: "messageResponse",
 		text,
@@ -71,7 +71,7 @@ function createConfig(text: string): TaskConfig {
 		enableParallelToolCalling: false,
 		isSubagentExecution: false,
 		taskState,
-		taskController: {} as TaskConfig["taskController"],
+		blockState: {} as TaskConfig["blockState"],
 		messageState: Object.assign(Object.create(null), {
 			clineMessages: [],
 			updateTaskHistory: vi.fn(async () => []),
@@ -223,6 +223,26 @@ describe("turn-ending feedback handlers", () => {
 		expect(config.callbacks.say).toHaveBeenCalledOnce()
 		expect(config.callbacks.say).toHaveBeenCalledWith("user_feedback", response, [], [])
 		expect(result).toContain(`<feedback>\n${response}\n</feedback>`)
+	})
+
+	it("keeps retained model guidance out of feedback rows owned by a causal presenter", async () => {
+		const text = '<user_message description="internal guidance">\n## User text\n</user_message>'
+		const handlers = [
+			{ handler: new AskFollowupQuestionToolHandler(), tool: ClineDefaultTool.ASK },
+			{ handler: new MakePlanHandler(), tool: ClineDefaultTool.MAKE_PLAN },
+			{ handler: new GenerateReportHandler(), tool: ClineDefaultTool.GENERATE_REPORT },
+		]
+		for (const { handler, tool } of handlers) {
+			const config = createConfig(text)
+			config.taskState.ackedFeedback = undefined
+			const result = await handler.continueInteraction(config, createBlock(tool, { options: "[]" }), {
+				actionId: "reply",
+				draft: { text, images: [], files: [] },
+				feedbackPresented: true,
+			})
+			expect(JSON.stringify(result)).toContain("internal guidance")
+			expect(config.callbacks.say).not.toHaveBeenCalled()
+		}
 	})
 
 	it("opens the canonical make_plan interaction without legacy options", async () => {

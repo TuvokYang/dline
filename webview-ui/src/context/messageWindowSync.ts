@@ -1,4 +1,4 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 
 /**
  * Reconciliation of the local message window against a fetched window.
@@ -17,7 +17,7 @@ import type { ClineMessage } from "@shared/ExtensionMessage"
 /** A fetched window together with the absolute range it covers. */
 export interface FetchedMessageWindow {
 	/** Messages returned by the backend, ordered by timestamp. */
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	/** Absolute index of the first returned message. */
 	startIndex: number
 	/** Total messages the backend holds, when reported. */
@@ -26,16 +26,27 @@ export interface FetchedMessageWindow {
 
 /** The local window, described the same way. */
 export interface LocalMessageWindow {
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	startIndex: number
 }
 
 /** Result of reconciling the local window against a fetched one. */
 export interface ReconciledMessageWindow {
-	messages: ClineMessage[]
+	messages: UiMessage[]
 	startIndex: number
 	/** True when the reconciliation dropped locally held messages. */
 	removed: boolean
+}
+
+export interface MessageWindowReconciliationOptions {
+	/**
+	 * Local timestamps present when the fetch started. A timestamp absent from
+	 * this set arrived after the backend snapshot began and must survive an
+	 * omission from that older snapshot.
+	 */
+	localTimestampsAtFetchStart?: ReadonlySet<number>
+	/** Keep in-flight rows while the task is actively streaming. */
+	preserveOmittedPartials?: boolean
 }
 
 /**
@@ -45,7 +56,11 @@ export interface ReconciledMessageWindow {
  * @param fetched Window just returned by the backend.
  * @returns Reconciled window and whether messages were dropped.
  */
-export function reconcileMessageWindow(local: LocalMessageWindow, fetched: FetchedMessageWindow): ReconciledMessageWindow {
+export function reconcileMessageWindow(
+	local: LocalMessageWindow,
+	fetched: FetchedMessageWindow,
+	options: MessageWindowReconciliationOptions = {},
+): ReconciledMessageWindow {
 	if (fetched.messages.length === 0) {
 		// An empty answer proves deletion only when the backend also reports an
 		// empty conversation. Otherwise it is a range that holds nothing yet.
@@ -74,6 +89,7 @@ export function reconcileMessageWindow(local: LocalMessageWindow, fetched: Fetch
 	const authoritativeTs = new Set(fetched.messages.map((message) => message.ts))
 	const oldestFetchedTs = fetched.messages[0].ts
 	const newestFetchedTs = fetched.messages[fetched.messages.length - 1].ts
+	const fetchedReachesBackendTail = fetched.total !== undefined && fetchedEndExclusive >= fetched.total
 
 	// The fetch reports absolute indexes, but the local window indexes its own
 	// slice. Timestamps are the only identity shared by both, so the covered
@@ -86,13 +102,20 @@ export function reconcileMessageWindow(local: LocalMessageWindow, fetched: Fetch
 	//   - what a surviving timestamp contains: the fetch is not authoritative,
 	//     because a slow response can carry an older snapshot than a realtime
 	//     event that already arrived.
-	const survivors: ClineMessage[] = []
+	const survivors: UiMessage[] = []
 	const localByTs = new Map(local.messages.map((message) => [message.ts, message]))
 	let removed = false
 
 	for (const message of local.messages) {
 		const withinFetchedSpan = message.ts >= oldestFetchedTs && message.ts <= newestFetchedTs
-		if (withinFetchedSpan && !authoritativeTs.has(message.ts)) {
+		// A latest-window fetch is also authoritative after its newest timestamp:
+		// when it reaches the reported backend tail, a locally held later row is a
+		// deleted tail row rather than content outside the fetched range.
+		const beyondFetchedTail = fetchedReachesBackendTail && message.ts > newestFetchedTs
+		const arrivedAfterFetchStarted = options.localTimestampsAtFetchStart?.has(message.ts) === false
+		const preserveOmittedMessage =
+			arrivedAfterFetchStarted || (message.partial === true && options.preserveOmittedPartials === true)
+		if ((withinFetchedSpan || beyondFetchedTail) && !authoritativeTs.has(message.ts) && !preserveOmittedMessage) {
 			removed = true
 			continue
 		}

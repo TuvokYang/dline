@@ -113,6 +113,32 @@ describe("logical turn indexing", () => {
 		expect(result).not.toHaveProperty("protectedTail")
 	})
 
+	// The journal keeps an input and the environment snapshot sent with it as
+	// separate messages. They are one round: splitting them made the reply that
+	// opens a round a turn of its own, so a Pass could summarize the user's
+	// words while the answer to them went into the next Pass.
+	it("keeps consecutive user messages before the answer in one round", () => {
+		const history = [
+			textMessage("user", "<task>Turn A</task>"),
+			textMessage("user", "# Environment A"),
+			toolUse("call-a"),
+			toolResult("call-a", "[qna_respond] Result:\n<feedback>Turn B request</feedback>"),
+			textMessage("user", "# Environment B"),
+			toolUse("call-b"),
+			toolResult("call-b", "[qna_respond] Result:\n<feedback>Turn C request</feedback>"),
+		]
+
+		const result = indexLogicalTurns(history)
+
+		expect(result.turns.map(({ startMessageIndex, endMessageIndex }) => [startMessageIndex, endMessageIndex])).toEqual([
+			[0, 2],
+			[3, 5],
+		])
+		expect(serialized(spanMessages(history, result.turns[1]))).toContain("Turn B request")
+		expect(serialized(spanMessages(history, result.turns[1]))).toContain("# Environment B")
+		expect(result.protectedStartMessageIndex).toBe(6)
+	})
+
 	it("keeps parallel ordinary tool results atomic when their payload contains user-content tags", () => {
 		const history: ClineStorageMessage[] = [
 			textMessage("user", "<task>Inspect the implementation</task>"),

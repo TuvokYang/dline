@@ -3,6 +3,7 @@ syntax = "proto3";
 package dline;
 
 import "dline/common.proto";
+import "dline/input.proto";
 import "dline/state.proto";
 import "dline/ui.proto";
 
@@ -73,6 +74,8 @@ service TaskService {
   rpc moveCommandToBackground(MoveCommandToBackgroundRequest) returns (MoveCommandToBackgroundResponse);
   // Applies one user-driven change to the task input queue
   rpc mutateInputQueue(MutateInputQueueRequest) returns (MutateInputQueueResponse);
+  // Stores an oversized composer paste as a task-owned input resource
+  rpc createInputTextResource(CreateInputTextResourceRequest) returns (CreateInputTextResourceResponse);
 }
 
 // Request message for creating a new task
@@ -82,6 +85,9 @@ message NewTaskRequest {
   repeated string images = 3;
   repeated string files = 4;
   optional Settings task_settings = 5;
+  // Structured input. When present it is the only semantic truth; text, images
+  // and files are a compatibility mirror and must not be parsed again.
+  optional SemanticInputDocument semantic_input = 6;
 }
 
 // Request message for toggling task favorite status
@@ -255,6 +261,8 @@ message AskResponseRequest {
   string text = 3;
   repeated string images = 4;
   repeated string files = 5;
+  // Structured input; see NewTaskRequest.semantic_input.
+  optional SemanticInputDocument semantic_input = 6;
 }
 
 // Draft content submitted with an interaction response
@@ -262,6 +270,8 @@ message InteractionDraft {
   string text = 1;
   repeated string images = 2;
   repeated string files = 3;
+  // Structured input; see NewTaskRequest.semantic_input.
+  optional SemanticInputDocument semantic_input = 4;
 }
 
 // Selection values submitted with a selection-aware interaction response
@@ -306,6 +316,8 @@ message InputQueueDraft {
   repeated string images = 2;
   repeated string files = 3;
   optional string active_quote = 4;
+  // Structured input; see NewTaskRequest.semantic_input.
+  optional SemanticInputDocument semantic_input = 5;
 }
 
 // Adds a draft to the back of the queue as a queued entry
@@ -363,6 +375,26 @@ message MutateInputQueueRequest {
 message MutateInputQueueResponse {
   bool accepted = 1;
   string result = 2;
+}
+
+// Composer text that exceeds the inline budget and must become a file
+message CreateInputTextResourceRequest {
+  string text = 1;
+  // File extension the editor should open the stored copy with
+  optional string extension = 2;
+}
+
+// Task-owned resource created from composer input
+message CreateInputTextResourceResponse {
+  bool created = 1;
+  // Why the text stayed inline; the composer keeps the original paste
+  string result = 2;
+  optional string resource_id = 3;
+  optional string absolute_path = 4;
+  optional string display_name = 5;
+  optional int32 line_count = 6;
+  optional int64 byte_size = 7;
+  optional string content_hash = 8;
 }
 
 // Request for executing a quick win task

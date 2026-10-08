@@ -2,7 +2,7 @@ import { describe, it, vi } from "vitest"
 import "should"
 import type { ToolUse } from "@core/assistant-message"
 import * as HookExecutor from "@core/hooks/hook-executor"
-import { TaskState } from "@core/task/TaskState"
+import { DefaultToolHandlerState } from "@core/task/tools/state/ToolHandlerState"
 import { ClineDefaultTool } from "@shared/tools"
 // sinon import removed
 import { ToolHookUtils } from "../ToolHookUtils"
@@ -14,7 +14,7 @@ describe("ToolHookUtils", () => {
 			const cancelTaskSpy = vi.fn(async () => {})
 
 			const config: any = {
-				taskState: new TaskState(),
+				taskState: new DefaultToolHandlerState(),
 				services: {
 					stateManager: {
 						getGlobalSettingsKey: (key: string) => (key === "hooksEnabled" ? false : undefined),
@@ -55,7 +55,7 @@ describe("ToolHookUtils", () => {
 			const getModelSpy = vi.fn(() => ({ id: "test-model" }))
 
 			const config: any = {
-				taskState: new TaskState(),
+				taskState: new DefaultToolHandlerState(),
 				taskId: "test-task-id",
 				api: {
 					getModel: getModelSpy,

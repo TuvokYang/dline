@@ -13,7 +13,6 @@ import { Logger } from "@/shared/services/Logger"
 
 const SENSITIVE_METHODS_BY_SERVICE: Readonly<Record<string, ReadonlySet<string>>> = {
 	AccountService: new Set([
-		"openAiCodexSignIn",
 		"startOpenAiCodexSignIn",
 		"getOpenAiCodexAuthStatus",
 		"completeOpenAiCodexCallbackUri",

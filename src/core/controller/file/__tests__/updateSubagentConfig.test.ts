@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert"
+import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { parseAgentConfigFromYaml } from "@core/task/tools/subagent/AgentConfigLoader"
 import { UpdateSubagentConfigRequest } from "@shared/proto/dline/file"
 import fs from "fs/promises"
@@ -13,7 +14,7 @@ function createController() {
 	const flushPromptFreshnessInvalidation = vi.fn().mockResolvedValue(undefined)
 	return {
 		controller: {
-			task: { flushPromptFreshnessInvalidation },
+			task: createSessionFixture({ owners: { prompt: { flush: flushPromptFreshnessInvalidation } } }),
 			postStateToWebview: vi.fn().mockResolvedValue(undefined),
 		} as never,
 		flushPromptFreshnessInvalidation,

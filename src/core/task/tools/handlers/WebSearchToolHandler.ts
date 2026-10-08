@@ -1,6 +1,6 @@
 import { getPrompt } from "@core/prompts/i18n"
 import { isInteractionCancellationError } from "@core/task/interaction/InteractionCancellationError"
-import { ClineSayTool } from "@shared/ExtensionMessage"
+import { UiSayTool } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { DEFAULT_LOCAL_SEARCH_ENGINE, isLocalSearchEngineId, LOCAL_SEARCH_ENGINE_LABELS } from "@shared/web-search"
 import { telemetryService } from "@/services/telemetry"
@@ -9,8 +9,8 @@ import type { LocalSearchRegistry, LocalSearchResultItem } from "@/services/web-
 import { parsePartialArrayString } from "@/shared/array"
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
-import { ToolResponse } from "../.."
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
@@ -68,7 +68,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
 		const query = block.params.query || ""
 		const normalizedQuery = uiHelpers.removeClosingTag(block, "query", query)
-		const sharedMessageProps: ClineSayTool = {
+		const sharedMessageProps: UiSayTool = {
 			tool: "webSearch",
 			path: normalizedQuery,
 			content: `Searching for: ${normalizedQuery}`,
@@ -78,7 +78,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 				status: "running",
 				query: normalizedQuery,
 			},
-		} satisfies ClineSayTool
+		} satisfies UiSayTool
 
 		const partialMessage = JSON.stringify(sharedMessageProps)
 
@@ -86,11 +86,11 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
-		let terminalMessage: ClineSayTool | undefined
+		let terminalMessage: UiSayTool | undefined
 		let failureWritten = false
 		const writeFailure = async (message: string): Promise<void> => {
 			if (failureWritten || !terminalMessage?.webSearch) return
-			const failedMessage: ClineSayTool = {
+			const failedMessage: UiSayTool = {
 				...terminalMessage,
 				content: `Web search failed: ${message}`,
 				webSearch: {
@@ -150,7 +150,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 			}
 
 			// Create message for approval with the exact engine frozen for this execution.
-			const sharedMessageProps: ClineSayTool = {
+			const sharedMessageProps: UiSayTool = {
 				tool: "webSearch",
 				path: query,
 				content: `Searching for: ${query}`,
@@ -205,7 +205,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
 			}
 			const response = await registry.search(engineId, { query })
 			const items = filterByDomains(response.items, allowedDomains, blockedDomains)
-			const completedMessage: ClineSayTool = {
+			const completedMessage: UiSayTool = {
 				...sharedMessageProps,
 				content: `${descriptor.label} search completed`,
 				webSearch: {

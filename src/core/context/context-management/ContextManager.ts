@@ -3,7 +3,7 @@ import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import { appendJsonl, writeJsonl } from "@core/storage/backend/jsonl/jsonl-utils"
 import { GlobalFileNames } from "@core/storage/disk"
-import { ClineApiReqInfo, ClineMessage } from "@shared/ExtensionMessage"
+import { UiApiReqInfo, UiMessage } from "@shared/ExtensionMessage"
 import { USER_CONTENT_TAGS } from "@shared/messages/constants"
 import type {
 	ClineAssistantToolUseBlock,
@@ -218,7 +218,7 @@ export class ContextManager {
 	 * when the first post-compaction request fails before reporting fresh usage and is retried.
 	 */
 	shouldCompactContextWindow(
-		clineMessages: ClineMessage[],
+		clineMessages: UiMessage[],
 		api: ApiHandler,
 		previousApiReqIndex: number,
 		triggerOptions: CompactTriggerOptions = {},
@@ -244,7 +244,7 @@ export class ContextManager {
 	 * Returns the token counts and context window info that drove summarization
 	 */
 	getContextTelemetryData(
-		clineMessages: ClineMessage[],
+		clineMessages: UiMessage[],
 		api: ApiHandler,
 		triggerIndex?: number,
 	): {
@@ -290,7 +290,7 @@ export class ContextManager {
 	 */
 	async getNewContextMessagesAndMetadata(
 		apiConversationHistory: ClineStorageMessage[],
-		clineMessages: ClineMessage[],
+		clineMessages: UiMessage[],
 		api: ApiHandler,
 		conversationHistoryDeletedRange: [number, number] | undefined,
 		previousApiReqIndex: number,
@@ -306,7 +306,7 @@ export class ContextManager {
 				const previousRequestText = clineMessages[previousApiReqIndex]?.text
 				if (previousRequestText) {
 					const timestamp = clineMessages[previousApiReqIndex].ts
-					const requestInfo: ClineApiReqInfo = JSON.parse(previousRequestText)
+					const requestInfo: UiApiReqInfo = JSON.parse(previousRequestText)
 					const totalTokens = getContextTokens(requestInfo)
 					const { contextWindow } = getContextWindowInfo(api)
 					const triggerTokens = computeCompactTrigger(contextWindow, computeSummarizeBudget(), triggerOptions)
@@ -923,7 +923,7 @@ export class ContextManager {
 	async attemptFileReadOptimization(
 		apiConversationHistory: ClineStorageMessage[],
 		conversationHistoryDeletedRange: [number, number] | undefined,
-		clineMessages: ClineMessage[],
+		clineMessages: UiMessage[],
 		previousApiReqIndex: number,
 		taskDirectory: string,
 	): Promise<boolean> {

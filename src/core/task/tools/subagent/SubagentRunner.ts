@@ -8,7 +8,7 @@ import type { ApiProviderStreamChunk } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { ApiUsageAccumulator } from "@core/api/transform/usage-accumulator"
 import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
-import { parseAssistantMessageV2, ToolUse } from "@core/assistant-message"
+import { parseAssistantMessage, ToolUse } from "@core/assistant-message"
 import { discoverAvailableSkills } from "@core/context/instructions/user-instructions/skills"
 import { createImageProfileResolverForProfile } from "@core/image-generation/runtime"
 import { formatResponse } from "@core/prompts/responses"
@@ -42,10 +42,10 @@ import { ClineError, ClineErrorType } from "@/services/error"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { calculateApiCostAnthropic } from "@/utils/cost"
 import { isNativeToolCallingConfig, isNextGenModelFamily } from "@/utils/model-utils"
-import { TaskState } from "../../TaskState"
 import { canonicalizeAttemptCompletionParams } from "../attempt-completion-params"
 import { partitionDeferredHostedCalls } from "../deferred-hosted-rows"
 import { type DeferredServerToolCall, ServerToolLifecycle } from "../ServerToolLifecycle"
+import { DefaultToolHandlerState, type ToolHandlerState } from "../state/ToolHandlerState"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -450,7 +450,7 @@ function parseNonNativeToolCalls(assistantText: string, identityFactory: Identit
 			return identity
 		},
 	}
-	const parsedBlocks = parseAssistantMessageV2(assistantText, registry)
+	const parsedBlocks = parseAssistantMessage(assistantText, registry)
 
 	return parsedBlocks
 		.filter((block): block is ToolUse => block.type === "tool_use")
@@ -520,6 +520,9 @@ export class SubagentRunner {
 	private abortingCommands = false
 	private apiLogRequestIndex = 0
 	private interruptionController: AbortController | undefined
+	private activeToolState: DefaultToolHandlerState | undefined
+	/** Capture the parent's operation scope once; a later rearm cannot revive this run. */
+	private inheritedOperationSignal: AbortSignal | undefined
 	/**
 	 * Tool executions the run stopped waiting for but that are still running.
 	 *
@@ -553,6 +556,7 @@ export class SubagentRunner {
 
 	async abort(): Promise<void> {
 		this.abortRequested = true
+		this.activeToolState?.cancelOperations("subagent_run_cancelled")
 		await this.interruptActiveWork("abort")
 	}
 
@@ -584,12 +588,10 @@ export class SubagentRunner {
 	/**
 	 * Wait for a tool call, but stop waiting once the run is interrupted.
 	 *
-	 * A tool handler has no cancellation channel of its own, and the abort flag
-	 * is only polled between tool calls. A tool that never settles - a contended
-	 * parser lock, a wedged host request - therefore used to hold the whole run
-	 * open with no way out. Racing the interruption signal releases the runner so
-	 * it can report `cancelled`; the abandoned tool still runs to completion in
-	 * the background, but it no longer owns the run's lifetime.
+	 * Cooperative handlers receive the run's operation signal. A handler that
+	 * ignores it can still be wedged on a parser lock or host request, so racing
+	 * the interruption signal releases the runner's wait while retaining the
+	 * abandoned work for resource and capacity accounting.
 	 */
 	private async executeToolWithInterruption(execute: () => Promise<unknown>): Promise<unknown> {
 		const signal = this.interruptionController?.signal
@@ -716,7 +718,7 @@ export class SubagentRunner {
 	}
 
 	private shouldAbort(): boolean {
-		return this.abortRequested || (this.options.inheritTaskAbort !== false && this.baseConfig.taskState.abort)
+		return this.abortRequested || this.inheritedOperationSignal?.aborted === true
 	}
 
 	private async getWorkspaceMetadataJson(): Promise<string | null> {
@@ -784,7 +786,14 @@ export class SubagentRunner {
 		this.running = true
 		this.activeRetryAbortController = new AbortController()
 		this.interruptionController = new AbortController()
-		const state = new TaskState()
+		const state = new DefaultToolHandlerState()
+		this.activeToolState = state
+		const parentSignal = this.options.inheritTaskAbort === false ? undefined : this.baseConfig.taskState.operationSignal
+		this.inheritedOperationSignal = parentSignal
+		const onParentAbort = () => {
+			if (this.activeToolState !== state) return
+			void this.abort().catch((error) => Logger.error("[SubagentRunner] Failed to cancel inherited operation scope", error))
+		}
 		let emptyAssistantResponseRetries = 0
 		let invalidCompletionRetries = 0
 		let convergenceRejections = 0
@@ -825,6 +834,8 @@ export class SubagentRunner {
 			const outputBudget = resolveSubagentOutputBudget(this.baseConfig, this.agent.getConfiguredMaxOutputTokens())
 			const promptWithBudget = buildSubagentOutputBudgetPrompt(prompt, outputBudget.outputTokens)
 			this.activeApiAbort = api.abort?.bind(api)
+			parentSignal?.addEventListener("abort", onParentAbort, { once: true })
+			if (parentSignal?.aborted) onParentAbort()
 
 			// Use handler's provider ID to avoid cross-task interference from global StateManager
 			const providerId = api.getProviderId?.() ?? DEFAULT_API_PROVIDER
@@ -1667,14 +1678,20 @@ export class SubagentRunner {
 			onProgress({ status: "failed", error: errorText, stats: { ...stats } })
 			return { status: "failed", error: errorText, retryable, stats }
 		} finally {
-			activeProviderExecution?.finish()
-			await activeHostedServerToolLifecycle?.finalizeOpen(HOSTED_SERVER_TOOL_STREAM_ENDED_REASON)
-			// The run makes no further request, so nothing can resume what is still deferred.
-			await activeHostedServerToolLifecycle?.failDeferred(HOSTED_SERVER_TOOL_DEFERRED_ABANDONED_REASON)
-			this.activeApiAbort = undefined
-			this.activeRetryAbortController = undefined
-			this.interruptionController = undefined
-			this.running = false
+			parentSignal?.removeEventListener("abort", onParentAbort)
+			try {
+				activeProviderExecution?.finish()
+				await activeHostedServerToolLifecycle?.finalizeOpen(HOSTED_SERVER_TOOL_STREAM_ENDED_REASON)
+				// The run makes no further request, so nothing can resume what is still deferred.
+				await activeHostedServerToolLifecycle?.failDeferred(HOSTED_SERVER_TOOL_DEFERRED_ABANDONED_REASON)
+			} finally {
+				this.activeApiAbort = undefined
+				this.activeRetryAbortController = undefined
+				this.interruptionController = undefined
+				this.activeToolState = undefined
+				this.inheritedOperationSignal = undefined
+				this.running = false
+			}
 		}
 	}
 
@@ -1695,7 +1712,7 @@ export class SubagentRunner {
 	}
 
 	private createSubagentTaskConfig(
-		state: TaskState,
+		state: ToolHandlerState,
 		webToolsEnabled: boolean,
 		webSearchRoutingPlan: WebSearchRoutingPlan,
 		imageGenerationService: TaskConfig["services"]["imageGenerationService"],

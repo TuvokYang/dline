@@ -96,7 +96,7 @@ export async function createSkillFile(controller: Controller, request: CreateSki
 	const content = SKILL_TEMPLATE.replace(/\{\{SKILL_NAME\}\}/g, sanitizedName)
 	await fs.writeFile(skillMdPath, content, "utf-8")
 	if (controller.task) {
-		await controller.task.flushPromptFreshnessInvalidation("capability_mutation")
+		await controller.task.owners.prompt.flush("capability_mutation")
 	} else {
 		await controller.postStateToWebview()
 	}

@@ -135,6 +135,11 @@ function loadSharedProfiles(catalogRevision?: number, force = false): Promise<Ap
 	return request
 }
 
+/** Wait until every optimistic Profile Catalog mutation has settled at the backend boundary. */
+export async function flushPendingApiProfileWrites(): Promise<void> {
+	await sharedPersistQueue
+}
+
 function persistSharedProfiles(profiles: ApiProfile[], clearApiKeyProfileIds: readonly string[], writeGeneration: number): void {
 	const settle = (): void => {
 		sharedSettledWriteGeneration = Math.max(sharedSettledWriteGeneration, writeGeneration)

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import { ClineDefaultTool } from "@shared/tools"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ToolValidator } from "../../ToolValidator"
@@ -85,7 +85,7 @@ describe("WriteToFileToolHandler missing replace_in_file target", () => {
 		await expect(fs.access(path.join(workspace, "missing-dir"))).rejects.toMatchObject({ code: "ENOENT" })
 
 		const [, payload] = say.mock.calls.at(-1) as [string, string]
-		const card = JSON.parse(payload) as ClineSayTool
+		const card = JSON.parse(payload) as UiSayTool
 		expect(card.blockErrors).toEqual(["File not found"])
 	})
 })

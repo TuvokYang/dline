@@ -2,8 +2,8 @@ import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
 import { ClineDefaultTool } from "@/shared/tools"
 import { hasChecklistTitle, hasValidTodoItem } from "../../focus-chain/file-utils"
-import type { ToolResponse } from "../../index"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
+import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 
 /**

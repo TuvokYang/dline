@@ -2,8 +2,8 @@ import type { ToolUse } from "@core/assistant-message"
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import { ClineDefaultTool } from "@shared/tools"
-import type { ToolResponse } from "../../index"
-import type { InteractionOutcome } from "../../interaction/InteractionCoordinator"
+import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
+import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
@@ -27,7 +27,7 @@ export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler
 		}
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const title: string = (block.params as Record<string, string>).title || ""
 		const content: string = (block.params as Record<string, string>).content || ""
 
@@ -54,13 +54,14 @@ export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler
 	}
 
 	/** Consume a report response without replaying report presentation. */
-	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolResponse> {
+	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
 		const text = outcome.draft?.text
 		const images = outcome.draft?.images
 		const files = outcome.draft?.files
 
 		config.taskState.isAwaitingPlanResponse = false
-		const fileContentString = await attachToolFeedbackFiles(config.taskState.userMessageContent, files)
+		const attachments = await attachToolFeedbackFiles(files)
+		const fileContentString = attachments.text
 
 		// Handle mode switching response (same as MakePlanHandler)
 		if (config.taskState.didRespondToPlanAskBySwitchingMode) {
@@ -68,12 +69,15 @@ export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler
 			const switchMsg = text
 				? renderPrompt("toolHandlers", "planSwitchToActWithMessage", { TEXT: text })
 				: getPrompt("toolHandlers", "planSwitchToAct")
-			return formatResponse.toolResult(switchMsg, images, fileContentString)
+			return withToolDocuments(formatResponse.toolResult(switchMsg, images, fileContentString), attachments.documents)
 		}
 
 		if (text || (images && images.length > 0) || fileContentString) {
-			await sayFeedbackOnce(config, "messageResponse", text, images, files)
-			return formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString)
+			await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
+			return withToolDocuments(
+				formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString),
+				attachments.documents,
+			)
 		}
 
 		return formatResponse.toolResult("[GENERATE_REPORT] User reviewed the report and continued.")

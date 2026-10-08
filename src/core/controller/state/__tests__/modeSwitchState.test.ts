@@ -10,6 +10,7 @@ import {
 } from "@shared/proto/dline/state"
 import { describe, expect, it, vi } from "vitest"
 import type { StreamingResponseHandler } from "@/core/controller/grpc-handler"
+import { OpeningHandoff } from "@/core/controller/task/OpeningHandoff"
 import { cancelModeSwitch } from "../cancelModeSwitch"
 import { confirmModeSwitch } from "../confirmModeSwitch"
 import { cleanupStateSubscriptions, sendAccountUsageUpdate, sendStateUpdate, subscribeToState } from "../subscribeToState"
@@ -127,6 +128,7 @@ describe("mode switch state integration", () => {
 	/** Drop an older asynchronous state result after a newer revision has been sent. */
 	it("does not send an older state revision after a newer revision", async () => {
 		const controller = Object.create(Controller.prototype) as Controller
+		Object.assign(controller, { openingHandoff: new OpeningHandoff() })
 		vi.spyOn(controller, "ensureWorkspaceManager").mockResolvedValue(undefined)
 		const firstState = createDeferred<ExtensionState>()
 		let latestRevision = 0

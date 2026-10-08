@@ -12,7 +12,7 @@ export async function taskCompletionViewChanges(controller: Controller, request:
 	try {
 		if (request.value && controller.task) {
 			// presentMultifileDiff is optional on ICheckpointManager, so capture then optionally invoke
-			await controller.task.checkpointManager?.presentMultifileDiff?.(request.value, true)
+			await controller.task.owners.checkpoints?.presentMultifileDiff?.(request.value, true)
 		}
 		return Empty.create()
 	} catch (error) {

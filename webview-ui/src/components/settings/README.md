@@ -25,7 +25,7 @@ settings/
 │   └── ...
 └── utils/                       # Utility functions
     ├── pricingUtils.ts         # Pricing formatting utilities
-    └── providerUtils.ts        # API configuration normalization
+    └── providerUtils.ts        # Static model catalog lookup per provider
 
 ```
 
@@ -44,79 +44,62 @@ ApiOptions
 
 ### Data Flow
 
-1. `ApiOptions` receives the current API configuration from the extension state
-2. When a provider is selected, it renders the corresponding provider component
-3. Provider-specific components receive `apiConfiguration` and `handleInputChange` to manage their state
-4. Changes are propagated back to the extension via the `handleInputChange` callback
+1. `ApiOptions` resolves the `ApiProfile` used by the current mode; the profile's `provider` selects the component to render
+2. Each provider component receives the `profile` and an `onUpdate` callback
+3. Edits are written back as partial `ApiProfile` updates through `useApiProfiles().updateProfile`
 
 ## Adding a New Provider
 
 To add a new provider:
 
 1. Create a new file in the `providers` directory, e.g. `MyNewProvider.tsx`
-2. Implement the provider component using this template:
+2. Implement the provider component against the profile contract:
 
 ```tsx
-import { ApiConfiguration, myNewProviderModels } from "@shared/api"
+import { resolveProfileModelId, resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { ApiKeyField } from "../common/ApiKeyField"
-import { BaseUrlField } from "../common/BaseUrlField"
-import { ModelSelector } from "../common/ModelSelector"
+import { ModelAutocomplete } from "../common/ModelAutocomplete"
 import { ModelInfoView } from "../common/ModelInfoView"
-import { normalizeApiConfiguration } from "../utils/providerUtils"
+import type { ApiProfile } from "./ProviderProfile"
+import { useProviderModelOptions } from "./useProviderModelOptions"
 
-/**
- * Props for the MyNewProvider component
- */
 interface MyNewProviderProps {
-  apiConfiguration: ApiConfiguration
-  handleInputChange: (field: keyof ApiConfiguration) => (event: any) => void
   showModelOptions: boolean
   isPopup?: boolean
+  profile: ApiProfile
+  onUpdate: (updates: Partial<ApiProfile>) => void
 }
 
-/**
- * The MyNewProvider configuration component
- */
-export const MyNewProvider = ({
-  apiConfiguration,
-  handleInputChange,
-  showModelOptions,
-  isPopup,
-}: MyNewProviderProps) => {
-  // Get the normalized configuration
-  const { selectedModelId, selectedModelInfo } = normalizeApiConfiguration(apiConfiguration)
+export const MyNewProvider = ({ showModelOptions, isPopup, profile, onUpdate }: MyNewProviderProps) => {
+  const { models, defaultModelId, options, optionOrigins, refreshRemoteModels } = useProviderModelOptions({
+    providerId: "mynewprovider",
+    profileId: profile.id,
+    baseUrl: profile.baseUrl,
+    apiKey: profile.apiKey,
+    selectedModelId: resolveProfileModelId(profile),
+  })
+  const modelId = resolveProfileModelId(profile, { defaultModelId })
+  const modelInfo = resolveProfileModelInfo(profile, { models, defaultModelId })
 
   return (
     <div>
-      {/* Add provider-specific fields */}
       <ApiKeyField
-        value={apiConfiguration?.myNewProviderApiKey || ""}
-        onChange={handleInputChange("myNewProviderApiKey")}
+        initialValue={profile.apiKey}
+        onChange={(value) => onUpdate({ apiKey: value })}
         providerName="My New Provider"
         signupUrl="https://mynewprovider.com/signup"
       />
-
-      {/* Optional: Base URL field if the provider supports custom endpoints */}
-      <BaseUrlField
-        value={apiConfiguration?.myNewProviderBaseUrl}
-        onChange={handleInputChange("myNewProviderBaseUrl")}
-        defaultPlaceholder="https://api.mynewprovider.com"
-      />
-
       {showModelOptions && (
         <>
-          <ModelSelector
-            models={myNewProviderModels}
-            selectedModelId={selectedModelId}
-            onChange={handleInputChange("apiModelId")}
+          <ModelAutocomplete
             label="Model"
+            models={options}
+            onChange={(newModelId) => onUpdate({ modelId: newModelId, modelInfo: models[newModelId] })}
+            onOpen={refreshRemoteModels}
+            optionOrigins={optionOrigins}
+            selectedModelId={modelId}
           />
-
-          <ModelInfoView
-            selectedModelId={selectedModelId}
-            modelInfo={selectedModelInfo}
-            isPopup={isPopup}
-          />
+          <ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
         </>
       )}
     </div>
@@ -124,28 +107,20 @@ export const MyNewProvider = ({
 }
 ```
 
-3. Import and add the new provider component to `ApiOptions.tsx`:
+3. Render it from `ApiOptions.tsx` when the profile selects it:
 
 ```tsx
-import { MyNewProvider } from "./providers/MyNewProvider"
-
-// ...
-
-{apiConfiguration && selectedProvider === "mynewprovider" && (
+{currentProfile && selectedProvider === "mynewprovider" && (
   <MyNewProvider
-    apiConfiguration={apiConfiguration}
-    handleInputChange={handleInputChange}
-    showModelOptions={showModelOptions}
     isPopup={isPopup}
+    onUpdate={handleProfileUpdate}
+    profile={currentProfile}
+    showModelOptions={showModelOptions}
   />
 )}
 ```
 
-4. Add the provider to the dropdown options:
-
-```tsx
-<VSCodeOption value="mynewprovider">My New Provider</VSCodeOption>
-```
+4. Register the provider in `PROVIDER_OPTIONS` (`src/shared/providers/providers.ts`) so it appears in the provider search.
 
 ## Best Practices
 

@@ -66,7 +66,7 @@ vi.mock("@services/grpc-client", () => ({
 
 vi.mock("./ClineAccountInfoCard", () => ({ ClineAccountInfoCard: () => <div /> }))
 vi.mock("./utils/useApiConfigurationHandlers", () => ({
-	useApiConfigurationHandlers: () => ({ handleModeFieldsChange: vi.fn(), handleFieldChange: vi.fn() }),
+	useApiConfigurationHandlers: () => ({ handleFieldChange: vi.fn() }),
 }))
 vi.mock("./common/ContextWindowSwitcher", () => ({ ContextWindowSwitcher: () => null }))
 

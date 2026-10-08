@@ -2,6 +2,15 @@
 
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- 任务运行时改为基于日志（journal）的会话存储：升级后首次继续旧任务时，其原有对话会原样导入新存储，后续请求带着完整历史继续；任务状态由 `state.json` 取代 `snapshot.json`，迁移只导入待发送队列，旧的完成状态不迁移
+- 升级前的任务重新打开后可能显示为已中断（interrupted），包括升级时仍在进行或已完成的任务，可通过 Resume 或直接发送消息继续；升级后打开过的任务不支持降级回旧版本 Dline 继续使用
+- 每任务存储改为 `messages.db`、`activities.db` 与 `metrics.db`：旧的 `ui_messages.jsonl` 与 `activities.json` 首次打开时导入并重命名为 `*.migrated`，旧的 `<任务 ID>.db` 移为 `metrics.db`；`api_conversation_history.jsonl` 保持不变
+- 同一任务已在另一窗口打开时，本窗口只读显示：输入框与底部操作被禁用，回复、队列、压缩、活动控制、模式/Profile 切换和检查点恢复都会被拒绝，需通过任务锁提示中的强制解锁接管后才能继续
+- 移除已废弃的按模式 OCA/OpenRouter 模型 ID、模型信息与推理强度设置项（启动时一次性清理），旧任务继续时改用所选 Profile 的默认推理强度；同时移除旧的 `updateApiConfigurationProto` RPC，以及 Webview 中未使用的 Groq/Hugging Face/Baseten 模型列表状态
+
 ## [0.10.0]
 
 0.10.0 是 0.9.4 内容的正式发布版本号：0.9.4 的同号 pre-release 已占用注册表中的 0.9.4，正式版因此改用新的偶数 minor 发布。下方 0.9.4 的全部内容均包含在本版本中。

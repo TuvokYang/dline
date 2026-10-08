@@ -1,4 +1,4 @@
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import type { HostedWebSearchOperation } from "@shared/web-tools"
 import { ChevronDownIcon, ChevronRightIcon, SearchIcon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
@@ -8,7 +8,7 @@ import ToolCardHeader from "./ToolCardHeader"
 interface WebSearchRowProps {
 	messageType: "ask" | "say"
 	query?: string
-	webSearch?: ClineSayTool["webSearch"]
+	webSearch?: UiSayTool["webSearch"]
 }
 
 function operationTitle(messageType: "ask" | "say", operation: HostedWebSearchOperation | undefined): string {

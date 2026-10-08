@@ -1,7 +1,9 @@
-import { readdir, writeFile } from "node:fs/promises"
+import { readdir } from "node:fs/promises"
 import * as path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { rewriteTaskActivities } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
+import type { TaskActivityRecord } from "@shared/task-activity"
 
 /** Messages are published before any optional history IO, so this bound holds on every runner. */
 const MESSAGE_SURFACE_BUDGET_MS = 500
@@ -61,7 +63,13 @@ function readHistorySurfaceStageDurations(output: string, taskId: string): Recor
 	return durations as Record<HistorySurfaceStage, number>
 }
 
-async function seedLargeTransientActivityHistory(taskDirectory: string, taskId: string): Promise<void> {
+/** The output written since `before` was read, so an earlier opening of the same task is not measured. */
+function outputSince(userDataDir: string, before: string): string {
+	const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? ""
+	return output.startsWith(before) ? output.slice(before.length) : output
+}
+
+async function seedLargeTransientActivityHistory(dlineDocsDir: string, taskId: string): Promise<void> {
 	const createdAt = Date.now()
 	const detail = "E2E_HISTORY_LIVENESS_ACTIVITY_DETAIL_".padEnd(64 * 1024, "x")
 	const output = "E2E_HISTORY_LIVENESS_ACTIVITY_OUTPUT_".padEnd(64 * 1024, "y")
@@ -81,7 +89,7 @@ async function seedLargeTransientActivityHistory(taskDirectory: string, taskId: 
 		timeoutSeconds: 0,
 		events: [],
 	}))
-	await writeFile(path.join(taskDirectory, "activities.json"), JSON.stringify({ schemaVersion: 1, taskId, activities }), "utf8")
+	await rewriteTaskActivities(dlineDocsDir, taskId, () => activities as unknown as TaskActivityRecord[])
 }
 
 e2e(
@@ -125,8 +133,7 @@ e2e(
 		await closeCurrentTask(sidebar)
 
 		const taskId = await onlyTaskId(dlineDocsDir)
-		const taskDirectory = path.join(dlineDocsDir, "tasks", taskId)
-		await seedLargeTransientActivityHistory(taskDirectory, taskId)
+		await seedLargeTransientActivityHistory(dlineDocsDir, taskId)
 
 		const historyTask = sidebar.getByText(taskText, { exact: true }).last()
 		await expect(historyTask).toBeVisible({ timeout: 30_000 })
@@ -141,21 +148,22 @@ e2e(
 		const resumeButton = footer.getByText("Resume", { exact: true })
 		await expect(resumeButton).toBeVisible({ timeout: 5_000 })
 		const browserSurfaceMs = Math.round(performance.now() - historyClickedAt)
-		const extensionStages = await E2ETestHelper.waitForValue(() => {
-			const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? ""
-			const currentOpeningOutput = output.startsWith(outputBeforeHistoryOpen)
-				? output.slice(outputBeforeHistoryOpen.length)
-				: output
-			return readHistorySurfaceStageDurations(currentOpeningOutput, taskId)
-		}, 5_000)
+		// The extension's share is measured by its own stage timings: a browser
+		// clock also counts Webview transport, rendering, and the poll interval.
+		const extensionStages = await E2ETestHelper.waitForValue(
+			() => readHistorySurfaceStageDurations(outputSince(userDataDir, outputBeforeHistoryOpen), taskId),
+			5_000,
+		)
 		const extensionSurfaceMs = HISTORY_SURFACE_STAGES.reduce((total, stage) => total + extensionStages[stage], 0)
-		const messageSurfaceMs = await E2ETestHelper.waitForValue(() => {
-			const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? ""
-			const currentOpeningOutput = output.startsWith(outputBeforeHistoryOpen)
-				? output.slice(outputBeforeHistoryOpen.length)
-				: output
-			return readCompletedHistoryStageDurationMs(currentOpeningOutput, taskId, "history_message_surface")
-		}, 5_000)
+		const messageSurfaceMs = await E2ETestHelper.waitForValue(
+			() =>
+				readCompletedHistoryStageDurationMs(
+					outputSince(userDataDir, outputBeforeHistoryOpen),
+					taskId,
+					"history_message_surface",
+				),
+			5_000,
+		)
 		const timing = { browserMessageSurfaceMs, browserSurfaceMs, messageSurfaceMs, extensionSurfaceMs, extensionStages }
 		console.log(`[history-resume-liveness] ${JSON.stringify(timing)}`)
 		await e2e.info().attach("history-resume-liveness.json", {

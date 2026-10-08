@@ -7,7 +7,6 @@ import { toProtobufModelInfo } from "@shared/proto-conversions/models/typeConver
 import { readMcpMarketplaceCatalogFromCache } from "@/core/storage/disk"
 import { getTelemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
-import { GlobalStateAndSettings } from "@/shared/storage/state-keys"
 import type { Controller } from "../index"
 import { sendMcpMarketplaceCatalogEvent } from "../mcp/subscribeToMcpMarketplaceCatalog"
 import { refreshBasetenModels } from "../models/refreshBasetenModels"
@@ -42,32 +41,7 @@ export async function initializeWebview(controller: Controller, _request: EmptyR
 			.catch((error) => Logger.error("Failed to load cached OpenRouter models:", error))
 
 		// Refresh OpenRouter models from API (public API, always available)
-		refreshOpenRouterModels(controller).then(async (models) => {
-			if (models && Object.keys(models).length > 0) {
-				const planActSeparateModelsSetting = controller.stateManager.getGlobalSettingsKey("planActSeparateModelsSetting")
-				const currentMode = controller.stateManager.getGlobalSettingsKey("mode")
-				const savedPlanModelId = controller.stateManager.getGlobalSettingsKey("planModeOpenRouterModelId")
-				const savedActModelId = controller.stateManager.getGlobalSettingsKey("actModeOpenRouterModelId")
-
-				if (planActSeparateModelsSetting) {
-					const modelId = currentMode === "plan" ? savedPlanModelId : savedActModelId
-					const modelInfoField = currentMode === "plan" ? "planModeOpenRouterModelInfo" : "actModeOpenRouterModelInfo"
-					if (modelId && models[modelId]) {
-						controller.stateManager.setGlobalState(modelInfoField as keyof GlobalStateAndSettings, models[modelId])
-						await controller.postStateToWebview()
-					}
-				} else {
-					const updates: Partial<GlobalStateAndSettings> = {}
-					if (savedPlanModelId && models[savedPlanModelId])
-						updates.planModeOpenRouterModelInfo = models[savedPlanModelId]
-					if (savedActModelId && models[savedActModelId]) updates.actModeOpenRouterModelInfo = models[savedActModelId]
-					if (Object.keys(updates).length > 0) {
-						controller.stateManager.setGlobalStateBatch(updates)
-						await controller.postStateToWebview()
-					}
-				}
-			}
-		})
+		void refreshOpenRouterModels(controller).catch((error) => Logger.error("Failed to refresh OpenRouter models:", error))
 
 		// Only refresh provider-specific models if the corresponding credentials are configured.
 		// This avoids unnecessary network requests for unauthenticated users or providers

@@ -1,6 +1,6 @@
 import { COMMAND_OUTPUT_STRING, COMMAND_REQ_APP_STRING } from "@shared/combineCommandSequences"
 import { COMMAND_LOG_NOTICE_LABEL, findCommandLogNotice } from "@shared/command-log-notice"
-import { ClineMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import AnsiUp from "ansi-to-html"
 import DOMPurify from "dompurify"
 import { BringToFrontIcon, CircleSlashIcon, FolderRootIcon, SendToBackIcon, TerminalIcon } from "lucide-react"
@@ -238,7 +238,7 @@ export const CommandOutputRow = memo(
 		isCollapsed,
 		onToggleCollapsed,
 	}: {
-		message: ClineMessage
+		message: UiMessage
 		exitCode?: number | null
 		isCommandExecuting?: boolean
 		isCommandPending?: boolean

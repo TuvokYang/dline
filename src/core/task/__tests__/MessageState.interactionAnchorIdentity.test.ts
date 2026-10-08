@@ -1,11 +1,11 @@
 import { UIMessage } from "@core/storage/UIMessage"
 import { MessageStateHandler } from "@core/task/message-state"
-import { TaskState } from "@core/task/TaskState"
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 
 /**
  * An awaiting approval is reachable only while its ask row still carries the
@@ -24,6 +24,7 @@ describe("interaction anchor identity", () => {
 
 	afterEach(async () => {
 		vi.unstubAllEnvs()
+		await closeInstanceStoragesUnder(dlineDocsDir)
 		await fs.rm(dlineDocsDir, { recursive: true, force: true })
 	})
 
@@ -33,7 +34,6 @@ describe("interaction anchor identity", () => {
 		const messageState = new MessageStateHandler({
 			taskId,
 			ulid: "test-ulid",
-			taskState: new TaskState(),
 			updateTaskHistory: async () => [],
 			uiMessage: writer,
 		})
@@ -44,7 +44,7 @@ describe("interaction anchor identity", () => {
 	const INTERACTION_ID = "dline_tid_approval"
 
 	/** Durable approval anchor written when the interaction opens. */
-	function anchorRow(): ClineMessage {
+	function anchorRow(): UiMessage {
 		return {
 			ts: ANCHOR_TS,
 			type: "ask",

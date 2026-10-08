@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto"
 import { createWriteStream } from "node:fs"
-import { mkdir, rename, rm } from "node:fs/promises"
+import { mkdir, rm } from "node:fs/promises"
 import { dirname } from "node:path"
 import archiver from "archiver"
+import { renameWithRetry } from "@/shared/storage/atomic-file"
 import type { BuiltBundle } from "./bundle-builder"
 
 /**
@@ -17,9 +18,12 @@ import type { BuiltBundle } from "./bundle-builder"
 /** Compression level. Diagnostic JSON compresses well; speed matters more than ratio. */
 const COMPRESSION_LEVEL = 6
 
-/** Attempts to commit the staged archive before reporting a failure. */
-const RENAME_RETRY_LIMIT = 5
-const RENAME_RETRY_DELAY_MS = 20
+/**
+ * Backoff for committing the staged archive. On Windows a rename onto a path another process
+ * has open fails with EPERM or EBUSY, and clicking export twice is a normal user action, so a
+ * brief retry is preferable to reporting a failure for a bundle that was written correctly.
+ */
+const COMMIT_RETRY_DELAYS_MS = [20, 20, 20, 20, 20] as const
 
 export interface BundleArchiveResult {
 	readonly path: string
@@ -54,7 +58,7 @@ export async function writeBundleArchive(bundle: BuiltBundle, destinationPath: s
 		const byteLength = await writeArchive(bundle, temporaryPath)
 		// Rename is the commit point: until it succeeds, no file with the
 		// user-visible name exists.
-		await commitStagedArchive(temporaryPath, destinationPath)
+		await renameWithRetry(temporaryPath, destinationPath, COMMIT_RETRY_DELAYS_MS)
 		return { path: destinationPath, byteLength, entryCount: bundle.entries.length }
 	} catch (error) {
 		const cleanupFailure = await discardPartial(temporaryPath)
@@ -69,35 +73,6 @@ export async function writeBundleArchive(bundle: BuiltBundle, destinationPath: s
 		}
 		throw new BundleArchiveError(`failed to write diagnostic bundle to ${destinationPath}`, error)
 	}
-}
-
-/**
- * Move the staged archive onto the user-visible name.
- *
- * On Windows a rename onto a path another process has open fails with EPERM or
- * EBUSY. Two concurrent exports of the same session are a normal user action —
- * clicking the button twice — so a brief retry is preferable to reporting a
- * failure for a bundle that was written correctly.
- */
-async function commitStagedArchive(temporaryPath: string, destinationPath: string): Promise<void> {
-	const retryableCodes = new Set(["EPERM", "EBUSY", "EACCES"])
-
-	for (let attempt = 0; ; attempt++) {
-		try {
-			await rename(temporaryPath, destinationPath)
-			return
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code
-			if (attempt >= RENAME_RETRY_LIMIT || !code || !retryableCodes.has(code)) {
-				throw error
-			}
-			await delay(RENAME_RETRY_DELAY_MS)
-		}
-	}
-}
-
-function delay(milliseconds: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function writeArchive(bundle: BuiltBundle, temporaryPath: string): Promise<number> {

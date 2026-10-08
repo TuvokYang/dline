@@ -1,4 +1,4 @@
-import type { ClineSayTool } from "@shared/ExtensionMessage"
+import type { UiSayTool } from "@shared/ExtensionMessage"
 import { StringRequest } from "@shared/proto/dline/common"
 import { ChevronDownIcon, ChevronRightIcon, Link2Icon, TriangleAlertIcon } from "lucide-react"
 import { useState } from "react"
@@ -9,10 +9,10 @@ import ToolCardHeader from "./ToolCardHeader"
 interface WebFetchRowProps {
 	messageType: "ask" | "say"
 	url?: string
-	webFetch?: ClineSayTool["webFetch"]
+	webFetch?: UiSayTool["webFetch"]
 }
 
-function sourceLabel(webFetch: ClineSayTool["webFetch"]): string | undefined {
+function sourceLabel(webFetch: UiSayTool["webFetch"]): string | undefined {
 	const source = webFetch?.source
 	if (!source) return undefined
 	const suffix = source.execution === "hosted" ? "Hosted" : "Dline"

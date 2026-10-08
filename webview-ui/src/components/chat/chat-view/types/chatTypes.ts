@@ -2,7 +2,7 @@
  * Shared types and interfaces for the chat view components
  */
 
-import { ClineAsk, ClineMessage } from "@shared/ExtensionMessage"
+import { UiAsk, UiMessage } from "@shared/ExtensionMessage"
 import { ListRange, VirtuosoHandle } from "react-virtuoso"
 import type { InteractionDraft } from "../../../../task-interaction/types"
 import type { ScrollRequest } from "../utils/scrollArbiter"
@@ -27,6 +27,10 @@ export interface ChatState {
 	undoInputValue: () => string | undefined
 	redoInputValue: () => string | undefined
 	resetInputValue: (value?: string) => void
+	/** Pasted spans of `inputValue`; always describes exactly the current text. */
+	pasteProvenance: import("@/services/input-semantics/paste-provenance").PasteProvenance
+	/** Record the provenance of an edit the composer observed. */
+	commitPasteProvenance: (provenance: import("@/services/input-semantics/paste-provenance").PasteProvenance) => void
 	activeQuote: string | null
 	setActiveQuote: React.Dispatch<React.SetStateAction<string | null>>
 	isTextAreaFocused: boolean
@@ -50,8 +54,8 @@ export interface ChatState {
 	textAreaRef: React.RefObject<HTMLTextAreaElement>
 
 	// Derived presentation values
-	lastMessage: ClineMessage | undefined
-	secondLastMessage: ClineMessage | undefined
+	lastMessage: UiMessage | undefined
+	secondLastMessage: UiMessage | undefined
 
 	// Handlers
 	handleFocusChange: (isFocused: boolean) => void
@@ -65,11 +69,18 @@ export interface ChatState {
 	pendingScrollToMessage?: number | null
 }
 
+/** What a new task needs to compose its structured input (WS-041 AC-09). */
+export interface NewTaskComposition {
+	/** Pasted spans of the submitted text. */
+	readonly spans: readonly import("@/services/input-semantics/paste-provenance").TextSpan[]
+	readonly catalog: import("@shared/input-semantics/catalog").InputSemanticCatalog
+}
+
 /**
  * Message handlers interface
  */
 export interface MessageHandlers {
-	handleSendMessage: (text: string, images: string[], files: string[]) => Promise<void>
+	handleSendMessage: (text: string, images: string[], files: string[], composition?: NewTaskComposition) => Promise<void>
 	handleTaskCloseButtonClick: () => Promise<void>
 	startNewTask: () => Promise<void>
 }
@@ -103,7 +114,7 @@ export interface ScrollBehavior {
 	setIsAtBottom: React.Dispatch<React.SetStateAction<boolean>>
 	pendingScrollToMessage: number | null
 	setPendingScrollToMessage: React.Dispatch<React.SetStateAction<number | null>>
-	scrolledPastUserMessage: ClineMessage | null
+	scrolledPastUserMessage: UiMessage | null
 	handleRangeChanged: (range: ListRange) => void
 }
 
@@ -131,8 +142,8 @@ export interface InputState {
  * Task section props
  */
 export interface TaskSectionProps {
-	task: ClineMessage
-	messages: ClineMessage[]
+	task: UiMessage
+	messages: UiMessage[]
 	scrollBehavior: ScrollBehavior
 	buttonState: ButtonState
 	messageHandlers: MessageHandlers
@@ -153,8 +164,8 @@ export interface TaskSectionProps {
 		supportsImages: boolean
 	}
 	isStreaming: boolean
-	clineAsk?: ClineAsk
-	modifiedMessages: ClineMessage[]
+	clineAsk?: UiAsk
+	modifiedMessages: UiMessage[]
 }
 
 /**

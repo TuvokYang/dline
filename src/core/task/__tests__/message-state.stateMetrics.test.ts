@@ -1,8 +1,6 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { MessageStateHandler } from "../message-state"
-import { TaskMetricsOwner } from "../performance/TaskMetricsOwner"
-import type { TaskUsageReader } from "../performance/task-usage-reader"
 
 /**
  * Behavior guard for the metrics aggregate a state publication reads.
@@ -15,37 +13,36 @@ import type { TaskUsageReader } from "../performance/task-usage-reader"
  */
 
 interface CountingStore {
-	getAll(): ClineMessage[]
+	getAll(): UiMessage[]
 	reads: number
 }
 
-function createStore(messages: ClineMessage[]): CountingStore {
+function createStore(messages: UiMessage[]): CountingStore {
 	return {
 		reads: 0,
-		getAll(): ClineMessage[] {
+		getAll(): UiMessage[] {
 			this.reads++
 			return messages
 		},
 	}
 }
 
-function apiRequest(ts: number, tokensIn: number, tokensOut: number): ClineMessage {
+function apiRequest(ts: number, tokensIn: number, tokensOut: number): UiMessage {
 	return {
 		ts,
 		type: "say",
 		say: "api_req_started",
 		text: JSON.stringify({ tokensIn, tokensOut, cost: 0 }),
-	} as ClineMessage
+	} as UiMessage
 }
 
-function createHandler(store: CountingStore, metricsReader?: TaskUsageReader): MessageStateHandler {
+function createHandler(store: CountingStore): MessageStateHandler {
 	return new MessageStateHandler({
 		taskId: "metrics-task",
 		ulid: "metrics-ulid",
 		taskState: { conversationHistoryDeletedRange: undefined } as never,
 		updateTaskHistory: async () => [],
 		uiMessage: store as never,
-		metricsReader,
 	} as never)
 }
 
@@ -59,33 +56,19 @@ function bumpRevision(handler: MessageStateHandler): void {
 }
 
 describe("MessageStateHandler.readStateMetrics", () => {
-	it("uses the metrics owner's complete usage without requiring a working Task", async () => {
-		const messages: ClineMessage[] = [
+	it("includes subagent and deleted request usage in the complete aggregate", () => {
+		const messages: UiMessage[] = [
 			{ ts: 1, type: "say", say: "task", text: "Synthetic Task" },
 			apiRequest(2, 10, 20),
 			{ ts: 3, type: "say", say: "subagent_usage", text: JSON.stringify({ tokensIn: 5, tokensOut: 6, cost: 0.25 }) },
 			{ ts: 4, type: "say", say: "deleted_api_reqs", text: JSON.stringify({ tokensIn: 7, tokensOut: 9, cost: 0.5 }) },
 		]
-		const owner = new TaskMetricsOwner({ taskId: "metrics-task", readOnly: true })
-		const handler = createHandler(createStore(messages), owner.reader)
-		try {
-			const metrics = handler.readStateMetrics()
-			expect(metrics).toMatchObject({ totalTokensIn: 22, totalTokensOut: 35, totalCost: 0.75 })
-			expect(owner.reader.getSnapshot()).toMatchObject(metrics)
-			expect(await owner.reader.readUsageSummary()).toEqual(metrics)
+		const handler = createHandler(createStore(messages))
+		expect(handler.readStateMetrics()).toMatchObject({ totalTokensIn: 22, totalTokensOut: 35, totalCost: 0.75 })
 
-			messages[2] = { ...messages[2], text: JSON.stringify({ tokensIn: 8, tokensOut: 10, cost: 0.75 }) }
-			bumpRevision(handler)
-			expect(handler.readStateMetrics()).toMatchObject({ totalTokensIn: 25, totalTokensOut: 39, totalCost: 1.25 })
-			expect(await owner.reader.readUsageSummary()).toMatchObject({
-				totalTokensIn: 25,
-				totalTokensOut: 39,
-				totalCost: 1.25,
-			})
-		} finally {
-			await owner.close()
-		}
-		await expect(owner.reader.readUsageSummary()).rejects.toThrow("closed")
+		messages[2] = { ...messages[2], text: JSON.stringify({ tokensIn: 8, tokensOut: 10, cost: 0.75 }) }
+		bumpRevision(handler)
+		expect(handler.readStateMetrics()).toMatchObject({ totalTokensIn: 25, totalTokensOut: 39, totalCost: 1.25 })
 	})
 
 	it("computes once while the message sequence is unchanged", () => {
@@ -109,7 +92,7 @@ describe("MessageStateHandler.readStateMetrics", () => {
 
 	it("reuses old request usage when unrelated streaming text changes", () => {
 		const requestText = JSON.stringify({ request: "synthetic request ".repeat(8_000), tokensIn: 10 })
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{ ts: 1, type: "say", say: "api_req_started", text: requestText },
 			{ ts: 2, type: "say", say: "api_req_finished", text: JSON.stringify({ tokensOut: 20, cacheReads: 0, cost: 0.25 }) },
 			{ ts: 3, type: "say", say: "text", partial: true, text: "First chunk" },
@@ -131,7 +114,7 @@ describe("MessageStateHandler.readStateMetrics", () => {
 	})
 
 	it("does not serialize request bodies to aggregate paired usage", () => {
-		const messages: ClineMessage[] = [
+		const messages: UiMessage[] = [
 			{
 				ts: 1,
 				type: "say",
@@ -193,7 +176,7 @@ describe("MessageStateHandler.readStateMetrics", () => {
 
 		const stateMetrics = handler.readStateMetrics()
 		const historyMetrics = (
-			handler as unknown as { readAggregatedMetrics(all: ClineMessage[]): { totalTokensIn: number } }
+			handler as unknown as { readAggregatedMetrics(all: UiMessage[]): { totalTokensIn: number } }
 		).readAggregatedMetrics(messages)
 
 		expect(stateMetrics.totalTokensIn).toBe(12)

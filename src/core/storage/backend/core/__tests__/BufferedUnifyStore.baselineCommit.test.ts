@@ -200,6 +200,32 @@ describe("BufferedUnifyStore baseline commit", () => {
 		}
 	})
 
+	it("keeps a durable append complete after a tail append was torn", async () => {
+		const filePath = createFixturePath()
+		seed(filePath, ROWS.slice(0, 2))
+		const store = await openStore(filePath)
+		const appended = { ts: 99, value: "durable" }
+		const expected = [...ROWS.slice(0, 3), appended]
+		try {
+			await store.append(ROWS[2])
+			const realAppendFile = fs.appendFile.bind(fs)
+			const appendSpy = vi.spyOn(fs, "appendFile").mockImplementationOnce(async (file, data) => {
+				// The disk filled partway through the line, leaving it torn.
+				await realAppendFile(file, String(data).slice(0, 6))
+				throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" })
+			})
+			await expect(store.flush()).rejects.toThrow(/ENOSPC/)
+			appendSpy.mockRestore()
+
+			// The buffer still only adds a tail, which must not land after the torn line.
+			await store.commitPendingAndAppendDurable(appended)
+
+			expect(readRows(filePath)).toEqual(expected)
+		} finally {
+			await store.close()
+		}
+	})
+
 	it("merges instead of trusting the baseline when another handle changed the collection", async () => {
 		const filePath = createFixturePath()
 		seed(filePath, ROWS.slice(0, 2))

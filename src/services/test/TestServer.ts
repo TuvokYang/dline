@@ -1,4 +1,5 @@
-import { getSavedApiConversationHistory, getSavedClineMessages } from "@core/storage/disk"
+import { getSavedClineMessages } from "@core/storage/disk"
+import { readTaskConversation } from "@core/task/conversation/TaskConversationReader"
 import { WebviewProvider } from "@core/webview"
 import { AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { ApiProvider } from "@shared/api"
@@ -312,7 +313,7 @@ export async function createTestServer(controller: Controller): Promise<http.Ser
 
 						try {
 							if (typeof taskId === "string") {
-								apiConversationHistory = await getSavedApiConversationHistory(taskId)
+								apiConversationHistory = await readTaskConversation(taskId)
 							}
 						} catch (error) {
 							Logger.log(`Error getting saved API conversation history: ${error}`)

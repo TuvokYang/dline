@@ -24,6 +24,7 @@ import { TerminalOutputFrameScheduler } from "../TerminalOutputFrameScheduler"
 import type {
 	BackgroundCommand,
 	BackgroundCommandScope,
+	BackgroundCommandSettlementListener,
 	CommandCancellationOwner,
 	CommandOrigin,
 	ITerminalManager,
@@ -124,6 +125,7 @@ export class StandaloneTerminalManager implements ITerminalManager {
 
 	/** Map of background command ID to command info */
 	private backgroundCommands: Map<string, BackgroundCommand> = new Map()
+	private backgroundCommandSettlement?: BackgroundCommandSettlementListener
 
 	/** Map of background command ID to log file write stream */
 	private logStreams: Map<string, fs.WriteStream> = new Map()
@@ -497,6 +499,13 @@ export class StandaloneTerminalManager implements ITerminalManager {
 	// Background Command Tracking Methods
 	// =========================================================================
 
+	bindBackgroundCommandSettlement(listener: BackgroundCommandSettlementListener): () => void {
+		this.backgroundCommandSettlement = listener
+		return () => {
+			if (this.backgroundCommandSettlement === listener) this.backgroundCommandSettlement = undefined
+		}
+	}
+
 	/**
 	 * Track a command that will continue running in the background.
 	 * Called when user clicks "Proceed While Running".
@@ -569,7 +578,6 @@ export class StandaloneTerminalManager implements ITerminalManager {
 			logFilePath,
 			lineCount: ownership.existingLineCount ?? existingOutput.length,
 			lastApiSentLineCount: 0,
-			injectionState: "pending",
 			process,
 		}
 
@@ -734,6 +742,14 @@ export class StandaloneTerminalManager implements ITerminalManager {
 			this.outputErrorHandlers.delete(id)
 			this.releaseSettledBackgroundCommand(id)
 		}
+		const command = this.backgroundCommands.get(id)
+		if (command && command.status !== "running") {
+			try {
+				await this.backgroundCommandSettlement?.settled(command)
+			} catch (error) {
+				Logger.warn(`[StandaloneTerminalManager] Background result delivery remains pending for ${id}`, error)
+			}
+		}
 	}
 
 	/**
@@ -793,59 +809,16 @@ export class StandaloneTerminalManager implements ITerminalManager {
 		return Array.from(this.backgroundCommands.values())
 	}
 
-	/**
-	 * Mark background commands as injected into model context.
-	 * @param ids Background command identifiers.
-	 */
-	markBackgroundCommandsInjected(ids: string[]): void {
-		this.markBackgroundCommands(ids, "injected")
-	}
-
-	/**
-	 * Mark background commands as consumed by a sent model request.
-	 * @param ids Background command identifiers.
-	 */
-	markBackgroundCommandsConsumed(ids: string[]): void {
-		this.markBackgroundCommands(ids, "consumed")
-	}
-
 	/** Advance output baselines to the line counts represented in a successful API request. */
-	markBackgroundCommandOutputSent(snapshots: readonly { id: string; lineCount: number }[]): void {
+	markBackgroundCommandOutputSent(snapshots: readonly { id: string; lineCount: number; settled?: boolean }[]): void {
 		for (const snapshot of snapshots) {
 			const command = this.backgroundCommands.get(snapshot.id)
 			if (!command) continue
 			const currentBaseline = command.lastApiSentLineCount ?? 0
 			const sentLineCount = Math.max(0, Math.min(snapshot.lineCount, command.lineCount))
 			command.lastApiSentLineCount = Math.max(currentBaseline, sentLineCount)
+			if (snapshot.settled) command.finalStatusReported = true
 		}
-	}
-
-	/**
-	 * Move background command injection state forward only.
-	 * @param ids Background command identifiers.
-	 * @param state Requested injection lifecycle state.
-	 */
-	private markBackgroundCommands(ids: string[], state: NonNullable<BackgroundCommand["injectionState"]>): void {
-		for (const id of ids) {
-			const command = this.backgroundCommands.get(id)
-			if (!command) continue
-			const current = command.injectionState ?? "pending"
-			if (this.canMoveInjectionState(current, state)) command.injectionState = state
-		}
-	}
-
-	/**
-	 * Check whether a background command injection state transition is valid.
-	 * @param current Current injection lifecycle state.
-	 * @param next Requested injection lifecycle state.
-	 * @returns True when the transition moves forward by one step.
-	 */
-	private canMoveInjectionState(
-		current: NonNullable<BackgroundCommand["injectionState"]>,
-		next: NonNullable<BackgroundCommand["injectionState"]>,
-	): boolean {
-		const order: Record<NonNullable<BackgroundCommand["injectionState"]>, number> = { pending: 0, injected: 1, consumed: 2 }
-		return order[next] === order[current] + 1
 	}
 
 	/**

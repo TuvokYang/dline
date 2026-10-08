@@ -225,11 +225,13 @@ export class DeepSeekHandler implements ApiHandler {
 			}
 
 			if (delta && "reasoning_content" in delta && delta.reasoning_content) {
-				if (thinking.enabled) {
-					yield {
-						type: "reasoning",
-						reasoning: (delta.reasoning_content as string | undefined) || "",
-					}
+				// If the provider sends reasoning, preserve it even when the local
+				// request projection did not explicitly enable thinking. Recovery can
+				// receive reasoning as the first observable chunk, and dropping it makes
+				// an active request look stalled until its later tool call arrives.
+				yield {
+					type: "reasoning",
+					reasoning: (delta.reasoning_content as string | undefined) || "",
 				}
 			}
 

@@ -6,6 +6,7 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { closeInstanceStoragesUnder } from "@/core/storage/instance"
 
 const ARTIFACT_ID = `image:sha256:${"e".repeat(64)}`
 const PROVIDER_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
@@ -37,6 +38,7 @@ describe("image generation persistence boundaries", () => {
 	afterEach(async () => {
 		if (originalDocumentsDirectory === undefined) delete process.env.DLINE_DOCS_DIR
 		else process.env.DLINE_DOCS_DIR = originalDocumentsDirectory
+		await closeInstanceStoragesUnder(documentsDirectory)
 		await fs.rm(documentsDirectory, { recursive: true, force: true })
 	})
 
@@ -65,16 +67,19 @@ describe("image generation persistence boundaries", () => {
 			imageGeneration: presentation,
 		})
 		await ui.addMessage({ ts: 2, type: "say", say: "partial_tool_result", text: serializeDurableToolResult(toolResult) })
-		await ui.flush()
+		await ui.close()
 
 		const api = await ApiConversation.open(taskId)
 		const apiMessage: ClineStorageMessage = { role: "user", content: [toolResult], ts: 3 }
 		await api.addMessage(apiMessage)
-		await api.flush()
+		await api.close()
 
+		const reopened = await UIMessage.open(taskId)
+		const storedUiMessages = JSON.stringify(reopened.getAll())
+		await reopened.close()
 		const taskDirectory = path.join(documentsDirectory, "tasks", taskId)
 		const persisted = [
-			await fs.readFile(path.join(taskDirectory, "ui_messages.jsonl"), "utf8"),
+			storedUiMessages,
 			await fs.readFile(path.join(taskDirectory, "api_conversation_history.jsonl"), "utf8"),
 			serializeDurableToolResult(toolResult),
 		].join("\n")

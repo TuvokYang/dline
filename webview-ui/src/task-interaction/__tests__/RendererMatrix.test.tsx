@@ -1,9 +1,9 @@
-import type { ClineMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { PRESENTATION_KINDS, renderPresentation } from "../renderer-registry"
 
-const MESSAGE: ClineMessage = { ts: 100, type: "ask", ask: "tool", text: "Presentation text" }
+const MESSAGE: UiMessage = { ts: 100, type: "ask", ask: "tool", text: "Presentation text" }
 
 const APPROVAL_PRESENTATION_KINDS = [
 	"tool_approval",
@@ -39,7 +39,7 @@ describe("renderer registry", () => {
 
 	it("reports focus-chain checked items through selection state", () => {
 		const onSelectionChange = vi.fn()
-		const message: ClineMessage = {
+		const message: UiMessage = {
 			ts: 100,
 			type: "ask",
 			ask: "change_todo_list",

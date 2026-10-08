@@ -32,7 +32,6 @@ export interface TaskRuntimeOverrideUpdate {
 interface ModeFieldNames {
 	readonly profileId: "planModeProfileId" | "actModeProfileId"
 	readonly profile: "planModeProfile" | "actModeProfile"
-	readonly legacyEffort: "planModeReasoningEffort" | "actModeReasoningEffort"
 	readonly reasoningKind: "planModeReasoningOverrideKind" | "actModeReasoningOverrideKind"
 	readonly reasoningEffort: "planModeReasoningOverrideEffort" | "actModeReasoningOverrideEffort"
 	readonly thinkingBudget: "planModeThinkingBudgetTokens" | "actModeThinkingBudgetTokens"
@@ -44,7 +43,6 @@ const MODE_FIELDS: Record<Mode, ModeFieldNames> = {
 	plan: {
 		profileId: "planModeProfileId",
 		profile: "planModeProfile",
-		legacyEffort: "planModeReasoningEffort",
 		reasoningKind: "planModeReasoningOverrideKind",
 		reasoningEffort: "planModeReasoningOverrideEffort",
 		thinkingBudget: "planModeThinkingBudgetTokens",
@@ -54,7 +52,6 @@ const MODE_FIELDS: Record<Mode, ModeFieldNames> = {
 	act: {
 		profileId: "actModeProfileId",
 		profile: "actModeProfile",
-		legacyEffort: "actModeReasoningEffort",
 		reasoningKind: "actModeReasoningOverrideKind",
 		reasoningEffort: "actModeReasoningOverrideEffort",
 		thinkingBudget: "actModeThinkingBudgetTokens",
@@ -136,7 +133,6 @@ function reasoningMutations(fields: ModeFieldNames, override: TaskReasoningOverr
 		{ key: fields.reasoningKind, value: values.kind },
 		{ key: fields.reasoningEffort, value: values.effort },
 		{ key: fields.thinkingBudget, value: values.budgetTokens },
-		{ key: fields.legacyEffort, value: undefined },
 	]
 }
 
