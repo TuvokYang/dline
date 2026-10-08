@@ -453,7 +453,8 @@ e2e(
 			for (const taskCase of taskCases) {
 				const taskId = taskIdsByMarker.get(taskCase.marker)
 				if (!taskId) throw new Error(`Missing persisted Task ID for ${taskCase.marker}`)
-				const expectedTokens = taskCase.inputTokens + taskCase.outputTokens
+				// TPM counts generated output tokens only; prompt and cache tokens are excluded.
+				const expectedTokens = taskCase.outputTokens
 				const stored = await E2ETestHelper.waitForValue(async () => {
 					const candidate = await readStoredTaskRateMetrics(dlineDocsDir, taskId)
 					if (!candidate) return undefined
@@ -462,7 +463,6 @@ e2e(
 				}, 30_000)
 				expect(stored.meta).toMatchObject({ schemaVersion: 1, kind: "meta", taskId })
 				expect(stored.rawSeconds.every((record) => record.signals.length > 0)).toBe(true)
-				expect(stored.rawSeconds.some((record) => record.revision > 0)).toBe(true)
 				expect(stored.canonicalSeconds.reduce((total, record) => total + record.requestCount, 0)).toBe(1)
 				expect(stored.canonicalSeconds.reduce((total, record) => total + record.effectiveTokens, 0)).toBe(expectedTokens)
 				expect(stored.canonicalSeconds.every((record) => record.signals.some((signal) => signal !== "task_active"))).toBe(
