@@ -132,8 +132,31 @@ describe("package topology safety", () => {
 			.sort()
 		expect(matrixFolders).toEqual(folders)
 		expect(releaseWorkflow).toContain("fail-fast: false")
-		expect(releaseWorkflow).toContain('"src/test/e2e/functional/${FUNCTIONAL_FOLDER}/"')
+		expect(releaseWorkflow).toContain(
+			'npx playwright test -c playwright.functional.config.ts "src/test/e2e/functional/${FUNCTIONAL_FOLDER}/" --project "functional e2e tests"',
+		)
 		expect(releaseWorkflow).toContain("name: playwright-functional-production-${{ matrix.folder }}-ubuntu-${{ github.sha }}")
+	})
+
+	it("never places a positional test filter after the variadic Playwright --project option", async () => {
+		const workflowDir = path.join(PROJECT_ROOT, ".github/workflows")
+		const workflowFiles = (await fs.readdir(workflowDir)).filter((name) => name.endsWith(".yml"))
+		// `--project <name...>` consumes every following non-option token, so a path written after it
+		// becomes a second project name and Playwright aborts before running a single test.
+		// The project name is one quoted or bare token; capture the first character of the token after it.
+		const tokenAfterProject = /--project\s+(?:"[^"]*"|[^\s"]+)\s+(\S)/
+		const offending: string[] = []
+		for (const name of workflowFiles) {
+			const content = await readProjectFile(`.github/workflows/${name}`)
+			for (const line of content.split("\n")) {
+				if (!line.includes("playwright test")) continue
+				const nextTokenStart = line.match(tokenAfterProject)?.[1]
+				if (nextTokenStart !== undefined && nextTokenStart !== "-") {
+					offending.push(`${name}: ${line.trim()}`)
+				}
+			}
+		}
+		expect(offending).toEqual([])
 	})
 
 	it("serializes builds against concurrent runs of the shared dist output", async () => {

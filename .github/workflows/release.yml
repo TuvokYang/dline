@@ -156,10 +156,12 @@ jobs:
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
+      # The folder filter must precede --project: that option is variadic and would
+      # otherwise read the path as a second project name.
       - name: Run functional E2E folder
         env:
           FUNCTIONAL_FOLDER: ${{ matrix.folder }}
-        run: xvfb-run -a npx playwright test -c playwright.functional.config.ts --project "functional e2e tests" "src/test/e2e/functional/${FUNCTIONAL_FOLDER}/"
+        run: xvfb-run -a npx playwright test -c playwright.functional.config.ts "src/test/e2e/functional/${FUNCTIONAL_FOLDER}/" --project "functional e2e tests"
 
       - name: Upload failed functional artifacts
         if: failure()
