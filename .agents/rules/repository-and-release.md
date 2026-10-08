@@ -209,6 +209,10 @@ A deleted Marketplace extension ID cannot be reused, so renaming a channel means
 
 Packaging is not publishing. Producing a VSIX never implies authorization to publish it; Marketplace publication remains a separate external write under §3.
 
+Registry publication currently targets Open VSX only. `publish-vsix-registries.yml` skips the VS Code Marketplace job unless a caller passes `publish_marketplace: true`, and the registry gate records the Marketplace as disabled rather than failed.
+
+A registry keys a version only by publisher, name, and number; the pre-release track is a flag on that version. Because the pre-release channel reuses the tag version, publishing `dev-vX.Y.Z` to a registry occupies `X.Y.Z` there, and the production `vX.Y.Z` can no longer reach that registry. The Open VSX job checks the existing version's track and fails on a mismatch instead of reporting a skipped duplicate as published.
+
 ## 11. Workflow and skill authoring rules
 
 Git, PR, and release instructions must:
