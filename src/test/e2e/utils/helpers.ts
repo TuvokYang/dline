@@ -88,7 +88,11 @@ export interface E2ETestConfigs {
  * does not serve. They fire on timers, so they can land in any test's log
  * window and would otherwise turn every suite into a flaky one.
  */
-const ALWAYS_ALLOWED_DLINE_OUTPUT_ERRORS: RegExp[] = [/Error fetching OpenRouter models/i, /Failed to refresh MCP marketplace/i]
+const ALWAYS_ALLOWED_DLINE_OUTPUT_ERRORS: RegExp[] = [
+	/Error fetching OpenRouter models/i,
+	/Error fetching Vercel AI Gateway models/i,
+	/Failed to refresh MCP marketplace/i,
+]
 
 export class E2ETestHelper {
 	// Constants
