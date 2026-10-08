@@ -599,7 +599,7 @@ e2e("Dline task panels preserve independent editor groups across window reload",
 	await secondTaskTab.click()
 	// VS Code transfers focus into a selected custom-editor iframe asynchronously.
 	// Let that transfer finish before opening QuickInput so it cannot close the palette afterward.
-	await expect.poll(() => secondPanel.evaluate(() => document.hasFocus())).toBe(true)
+	await expect.poll(() => secondPanel.evaluate(() => document.hasFocus()), { timeout: 60_000 }).toBe(true)
 	await E2ETestHelper.runCommandPalette(page, "View: Move Editor into Next Group")
 	await expect(dlineEditorGroups(page, reloadTaskMarkers)).toHaveCount(2)
 
