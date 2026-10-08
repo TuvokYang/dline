@@ -7,6 +7,7 @@ import { resolve } from "path"
 import * as typescript from "typescript"
 import { defineConfig, type Plugin, type PluginOption, type ViteDevServer } from "vite"
 import checker from "vite-plugin-checker"
+import { gitReader, readRepositoryWebUrl, resolveSourceRef } from "../scripts/source-revision.mjs"
 import { supportsVitePluginCheckerTypeScript } from "./vite-checker-compatibility"
 import { virtuosoUpwardCompensationPlugin } from "./vite-virtuoso-upward-compensation"
 
@@ -50,6 +51,10 @@ if (!VALID_PLATFORMS.includes(platform)) {
 	throw new Error(`Invalid PLATFORM "${platform}". Must be one of: ${VALID_PLATFORMS.join(", ")}`)
 }
 console.log("Building webview for", platform)
+
+// Links shipped in the webview follow the revision this build is compiled from.
+const repositoryUrl = readRepositoryWebUrl(resolve(__dirname, "../package.json"))
+const sourceRef = resolveSourceRef(process.env, gitReader(__dirname))
 
 export default defineConfig({
 	base: "./",
@@ -137,6 +142,8 @@ export default defineConfig({
 	},
 	define: {
 		__PLATFORM__: JSON.stringify(platform),
+		__DLINE_REPOSITORY_URL__: JSON.stringify(repositoryUrl),
+		__DLINE_SOURCE_REF__: JSON.stringify(sourceRef),
 		process: JSON.stringify({
 			platform: JSON.stringify(process?.platform),
 			env: {
