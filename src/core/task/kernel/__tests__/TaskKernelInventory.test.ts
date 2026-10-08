@@ -23,6 +23,7 @@ const EXPECTED_TASK_VIEW_FILES = [
 	"src/core/controller/task/HistoryDisplaySession.ts",
 	"src/core/controller/task/TaskViewMessageAdapter.ts",
 	"src/core/controller/task/history-task-readiness.ts",
+	"src/core/controller/task/readOnlyTaskView.ts",
 	"src/shared/ExtensionMessage.ts",
 	"webview-ui/src/components/chat/ChatRow.tsx",
 	"webview-ui/src/components/chat/ChatView.tsx",
