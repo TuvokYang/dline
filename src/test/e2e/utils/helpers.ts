@@ -33,6 +33,9 @@ import {
 } from "./vscode-launch-isolation"
 import { resolveVSCodeDownloadPlatform, resolveVSCodeDownloadVersion } from "./vscode-version-resolver"
 
+/** Bound for re-proving a palette option is clickable; a closed QuickInput fails here and is retried. */
+const COMMAND_OPTION_ACTIONABLE_TIMEOUT_MS = 5_000
+
 interface E2ETaskDirectories {
 	dlineDir: string
 	dlineDocsDir: string
@@ -203,8 +206,7 @@ export class E2ETestHelper {
 						return frame
 					}
 				} catch (error: unknown) {
-					const message = error instanceof Error ? error.message : String(error)
-					if (!message.includes("detached") && !message.includes("navigation")) {
+					if (!E2ETestHelper.isStaleFrameError(page, error)) {
 						throw error
 					}
 				}
@@ -324,7 +326,9 @@ export class E2ETestHelper {
 		await expect(dlineTab).toBeVisible({ timeout: 60_000 })
 		for (let attempt = 1; attempt <= 3; attempt++) {
 			if ((await dlineTab.getAttribute("aria-expanded")) === "true") return
-			await dlineTab.locator("a").click()
+			// Click the activity item itself: its progress badge overlays the inner label link while a
+			// view is busy, but the badge is a descendant of the item, so the click still reaches it.
+			await dlineTab.click()
 			try {
 				await expect(dlineTab).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 })
 				return
@@ -341,16 +345,31 @@ export class E2ETestHelper {
 	 */
 	public static async runCommandPalette(page: Page, command: string): Promise<void> {
 		const maxAttempts = 3
+		let commandOption: Locator
 		for (let attempt = 1; ; attempt++) {
 			try {
-				const commandOption = await E2ETestHelper.openCommandPaletteOption(page, command)
-				await commandOption.click()
-				return
+				commandOption = await E2ETestHelper.openCommandPaletteOption(page, command)
+				// A trial click proves the option is still actionable without executing it.
+				await commandOption.click({ trial: true, timeout: COMMAND_OPTION_ACTIONABLE_TIMEOUT_MS })
+				break
 			} catch (error) {
 				if (attempt === maxAttempts) throw error
 				await E2ETestHelper.closeQuickInput(page)
 			}
 		}
+		// The real click is the commit point. Replaying it could run a non-idempotent command such as
+		// Reload Window twice, so a failure here is reported instead of retried.
+		await commandOption.click()
+	}
+
+	/**
+	 * A frame that detached, navigated, or lost its out-of-process target while being queried is stale
+	 * (for example a webview torn down by Reload Window), not a failure, as long as the page itself is open.
+	 */
+	private static isStaleFrameError(page: Page, error: unknown): boolean {
+		if (page.isClosed()) return false
+		const message = error instanceof Error ? error.message : String(error)
+		return message.includes("detached") || message.includes("navigation") || message.includes("has been closed")
 	}
 
 	private static async closeQuickInput(page: Page): Promise<void> {

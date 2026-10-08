@@ -1211,9 +1211,13 @@ e2e(
 
 		const emittedPath = path.join(workspaceDir, "e2e-terminal-tail.emitted")
 		const parentScriptPath = path.join(workspaceDir, "e2e-terminal-tail-parent.cjs")
+		// The marker is replaced by rename: a kill between the truncate and the write of a plain
+		// writeFileSync would otherwise leave it permanently empty instead of holding the last sequence.
+		// A failed rename (for example a scanner holding the file on Windows) only leaves an older
+		// sequence behind, which keeps the captured-output lower bound below valid.
 		await writeFile(
 			parentScriptPath,
-			`const fs = require("node:fs")\nconst emitted = ${JSON.stringify(emittedPath)}\nlet sequence = 0\nconsole.log("E2E_TERMINAL_CANCEL_DRAIN_STARTED")\nsetInterval(() => {\n  sequence += 1\n  fs.writeSync(1, \`E2E_TERMINAL_CANCEL_TAIL_\${sequence}\\n\`)\n  fs.writeFileSync(emitted, String(sequence))\n}, 1)\n`,
+			`const fs = require("node:fs")\nconst emitted = ${JSON.stringify(emittedPath)}\nconst staged = emitted + ".staged"\nlet sequence = 0\nconsole.log("E2E_TERMINAL_CANCEL_DRAIN_STARTED")\nsetInterval(() => {\n  sequence += 1\n  fs.writeSync(1, \`E2E_TERMINAL_CANCEL_TAIL_\${sequence}\\n\`)\n  fs.writeFileSync(staged, String(sequence))\n  try { fs.renameSync(staged, emitted) } catch {}\n}, 1)\n`,
 			"utf8",
 		)
 
