@@ -9,7 +9,12 @@ import {
 	type ToolPreflightResult,
 	type ToolSideEffect,
 } from "../executors/tool/ToolPreflight"
-import { authorizeExplicitToolExecution } from "../explicit-instructions/explicit-tool-gate"
+import {
+	authorizeExplicitToolExecution,
+	explicitToolRefusalMessage,
+	findHandlerlessExplicitRefusal,
+} from "../explicit-instructions/explicit-tool-gate"
+import type { ExplicitInstructionFailureCode } from "../explicit-instructions/types"
 import { AccessMcpResourceHandler } from "./handlers/AccessMcpResourceHandler"
 import { ActModeRespondHandler } from "./handlers/ActModeRespondHandler"
 import { ApplyPatchHandler } from "./handlers/ApplyPatchHandler"
@@ -309,6 +314,8 @@ export class ToolExecutorCoordinator {
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const handler = this.getHandler(block.name)
 		if (!handler) {
+			const refusal = findHandlerlessExplicitRefusal(block.name, config.explicitInstructions)
+			if (refusal) return formatResponse.toolError(explicitToolRefusalMessage(block.name, refusal))
 			throw new Error(`No handler registered for tool: ${block.name}`)
 		}
 		if (block.dline_tid) this.preparedHandlers.delete(block.dline_tid)
@@ -316,7 +323,7 @@ export class ToolExecutorCoordinator {
 		if (!authorized.ok) {
 			// The code is what the model reads back, so it can tell a missing grant
 			// from a spent one instead of retrying a call that can never run.
-			return formatResponse.toolError(`Explicit-only tool '${block.name}' was rejected: ${authorized.code}.`)
+			return formatResponse.toolError(explicitToolRefusalMessage(block.name, authorized.code))
 		}
 		// Effects that ride on a call without belonging to any tool. The surface
 		// decides which of them it has, so a task with no checklist and no
@@ -339,7 +346,9 @@ export class ToolExecutorCoordinator {
 	private authorize(
 		config: TaskConfig,
 		tool: ClineDefaultTool,
-	): { readonly ok: true; readonly config: TaskConfig } | { readonly ok: false; readonly code: string } {
+	):
+		| { readonly ok: true; readonly config: TaskConfig }
+		| { readonly ok: false; readonly code: ExplicitInstructionFailureCode } {
 		const gated = authorizeExplicitToolExecution(tool, config.explicitInstructions)
 		if (!gated.ok) return { ok: false, code: gated.code }
 		if (!gated.authorization) return { ok: true, config }

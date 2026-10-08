@@ -96,8 +96,10 @@ jobs:
           install-webview: "true"
           include-optional: "true"
 
-      - name: Generate Protobuf code for E2E harness
-        run: npm run protos
+      # Multi-instance and installVsix:false tests launch the checkout bundle, and some tests read
+      # dist/extension.js.map as a corpus. Build it before the tested VSIX is placed in dist/.
+      - name: Build source E2E bundle for checkout-launched harness tests
+        run: npm run e2e:bundle
 
       - name: Download production VSIX
         uses: actions/download-artifact@v8

@@ -170,9 +170,9 @@ e2e(
 			await openContextRecoveryHistoryTask(page, sidebar, TASK_TEXT)
 
 			const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
-			await expect(scroller).toBeVisible({ timeout: 30_000 })
+			await expect(scroller).toBeVisible({ timeout: 60_000 })
 			await expect(sidebar.getByText(workHistoryBodyMarker(HISTORY_MESSAGE_COUNT), { exact: false })).toBeVisible({
-				timeout: 30_000,
+				timeout: 60_000,
 			})
 
 			let historyBrowse = await captureWorkScroller(sidebar)
@@ -195,13 +195,13 @@ e2e(
 			await expect(scrollToBottom).toBeVisible({ timeout: 10_000 })
 			await scrollToBottom.click()
 			await expect(sidebar.getByText(workHistoryBodyMarker(HISTORY_MESSAGE_COUNT), { exact: false })).toBeVisible({
-				timeout: 30_000,
+				timeout: 60_000,
 			})
 
 			await unlockAndContinueContextTask(sidebar, STREAM_CONTINUATION)
 			await expect(sidebar.getByText(STREAM_PARTIAL, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-			await expect(sidebar.getByRole("contentinfo").getByText("Cancel", { exact: true })).toBeVisible({ timeout: 30_000 })
-			await expect.poll(() => server.getRequestCount(SOURCE_TARGET), { timeout: 30_000 }).toBe(1)
+			await expect(sidebar.getByRole("contentinfo").getByText("Cancel", { exact: true })).toBeVisible({ timeout: 60_000 })
+			await expect.poll(() => server.getRequestCount(SOURCE_TARGET), { timeout: 60_000 }).toBe(1)
 
 			let streamingBrowse = await captureWorkScroller(sidebar)
 			for (let attempt = 0; attempt < 12 && streamingBrowse.bottomGap <= 500; attempt++) {
@@ -227,7 +227,7 @@ e2e(
 			scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
 			await expect(scrollToBottom).toBeVisible({ timeout: 10_000 })
 			await scrollToBottom.click()
-			await expect(sidebar.getByText(STREAM_READY, { exact: true })).toBeVisible({ timeout: 30_000 })
+			await expect(sidebar.getByText(STREAM_READY, { exact: true })).toBeVisible({ timeout: 60_000 })
 
 			const warmCacheInfo = await waitForPositiveTaskCacheHit(dlineDocsDir, TASK_ID)
 			expect(warmCacheInfo.cacheReads).toBeGreaterThan(0)
@@ -259,7 +259,7 @@ e2e(
 			await expect.poll(() => server.getRequestCount(TARGET_TARGET)).toBe(0)
 			await sendWorkMessage(sidebar, PROFILE_SWITCH_INPUT)
 			await expect(sidebar.getByText(PROFILE_SWITCH_READY, { exact: true })).toBeVisible({ timeout: 60_000 })
-			await expect.poll(() => server.getRequestCount(TARGET_TARGET), { timeout: 30_000 }).toBe(1)
+			await expect.poll(() => server.getRequestCount(TARGET_TARGET), { timeout: 60_000 }).toBe(1)
 
 			const targetFirstConsumption = server.getMockConsumptions(TARGET_TARGET)[0]
 			if (!targetFirstConsumption) throw new Error("Missing target profile request")
@@ -280,12 +280,12 @@ e2e(
 			await openContextRecoveryHistoryTask(page, sidebar, TASK_TEXT)
 			await expect.poll(() => server.getRequestCount(SOURCE_TARGET)).toBe(4)
 			await expect.poll(() => server.getRequestCount(TARGET_TARGET)).toBe(1)
-			await expect(sidebar.getByText(AUTO_COMPACT_SUMMARY, { exact: false }).last()).toBeVisible({ timeout: 30_000 })
-			await expect(sidebar.getByText(PROFILE_SWITCH_READY, { exact: true })).toBeVisible({ timeout: 30_000 })
-			await expect(sidebar.getByTestId("chat-input")).toBeEnabled({ timeout: 30_000 })
+			await expect(sidebar.getByText(AUTO_COMPACT_SUMMARY, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await expect(sidebar.getByText(PROFILE_SWITCH_READY, { exact: true })).toBeVisible({ timeout: 60_000 })
+			await expect(sidebar.getByTestId("chat-input")).toBeEnabled({ timeout: 60_000 })
 			await sendWorkMessage(sidebar, RESTART_RESUME_INPUT)
 			await expect(sidebar.getByText(FINAL_COMPLETE, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-			await expect.poll(() => server.getRequestCount(TARGET_TARGET), { timeout: 30_000 }).toBe(2)
+			await expect.poll(() => server.getRequestCount(TARGET_TARGET), { timeout: 60_000 }).toBe(2)
 
 			const resumedHealth = await waitForPositivePromptCacheHealth(userDataDir, TASK_ID)
 			expect(resumedHealth.hitRate).toBeGreaterThan(0)

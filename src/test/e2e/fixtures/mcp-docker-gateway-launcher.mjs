@@ -1,17 +1,20 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
+import { z } from "zod/v4"
 
 /**
  * E2E stand-in for the `docker mcp gateway run --profile dline` command.
  *
- * Keeps the exact user-facing config shape (command docker, args [...]) while
- * letting the test control startup failures deterministically:
+ * Keeps the user-facing stdio config shape while letting the test control
+ * startup failures deterministically:
  * - Before the marker file exists: exits immediately (simulates a gateway that
  *   is still starting / a transient spawn failure).
- * - After the marker file exists: forwards to the real `docker mcp gateway
- *   run --profile dline` so the server connects like in production.
+ * - After the marker file exists: serves a deterministic stdio MCP catalog in
+ *   process. CI runners have no Docker MCP gateway or `dline` profile, so the
+ *   recovery path must not depend on one.
  */
 
 const markerPath = process.env.DLINE_E2E_MCP_MARKER
@@ -20,12 +23,18 @@ if (!markerPath || !existsSync(markerPath)) {
 	process.exit(1)
 }
 
-const child = spawn("docker", ["mcp", "gateway", "run", "--profile", "dline"], { stdio: "inherit" })
-child.on("error", (error) => {
-	console.error(`Failed to start docker mcp gateway: ${error.message}`)
-	process.exit(1)
+const server = new McpServer({
+	name: "dline-e2e-docker-gateway",
+	version: "1.0.0",
 })
-child.on("exit", (code, signal) => {
-	if (signal) process.kill(process.pid, signal)
-	process.exit(code ?? 0)
-})
+
+server.registerTool(
+	"e2e_gateway_echo",
+	{
+		description: "E2E stand-in for a tool exposed by the Docker MCP gateway",
+		inputSchema: { value: z.string() },
+	},
+	async ({ value }) => ({ content: [{ type: "text", text: value }] }),
+)
+
+await server.connect(new StdioServerTransport())

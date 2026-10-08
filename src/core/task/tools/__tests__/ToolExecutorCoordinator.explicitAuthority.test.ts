@@ -76,6 +76,49 @@ describe("ToolExecutorCoordinator explicit authority", () => {
 		expect(JSON.stringify(result)).toContain("explicit_instruction_missing")
 	})
 
+	// summarize_task text is owned by ContextCompactionSession, so production
+	// registers no handler for it. The model still has to read the gate's reason.
+	it("refuses an unauthorized handler-less summarize_task with the explicit gate code", async () => {
+		const coordinator = new ToolExecutorCoordinator()
+
+		const result = await coordinator.execute({} as TaskConfig, block(ClineDefaultTool.SUMMARIZE_TASK))
+
+		expect(JSON.stringify(result)).toContain(
+			"Explicit-only tool 'summarize_task' was rejected: explicit_instruction_missing.",
+		)
+		expect(JSON.stringify(result)).not.toContain("No handler registered")
+	})
+
+	it("refuses the retired condense tool with the retirement code", async () => {
+		const coordinator = new ToolExecutorCoordinator()
+
+		const result = await coordinator.execute({} as TaskConfig, block(ClineDefaultTool.CONDENSE))
+
+		expect(JSON.stringify(result)).toContain("explicit_instruction_retired")
+	})
+
+	it("leaves pending authority unconsumed when a handler-less explicit tool is called", async () => {
+		const authority = new TaskTurnAuthority()
+		authority.grant("turn-1", [
+			{ type: "summarize_task", source: "manual_compact_command", targetTool: ClineDefaultTool.SUMMARIZE_TASK },
+		])
+		const coordinator = new ToolExecutorCoordinator()
+		const config = { explicitInstructions: authority.read("turn-1") } as TaskConfig
+
+		await expect(coordinator.execute(config, block(ClineDefaultTool.SUMMARIZE_TASK))).rejects.toThrow(
+			"No handler registered for tool: summarize_task",
+		)
+		expect(authority.read("turn-1")?.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)).toBeDefined()
+	})
+
+	it("keeps a missing handler an ordinary failure for tools outside the explicit gate", async () => {
+		const coordinator = new ToolExecutorCoordinator()
+
+		await expect(coordinator.execute({} as TaskConfig, block(ClineDefaultTool.FILE_READ))).rejects.toThrow(
+			"No handler registered for tool: read_file",
+		)
+	})
+
 	it("does not touch a tool that needs no explicit authority", async () => {
 		const authority = new TaskTurnAuthority()
 		authority.grant("turn-1", [

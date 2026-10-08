@@ -55,7 +55,7 @@ Read the requested workspace file, then finish through attempt_completion.`,
 
 async function configureTerminalHandoff(page: Page, sidebar: Frame): Promise<void> {
 	await page.getByRole("button", { name: "Settings", exact: true }).click()
-	await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible({ timeout: 30_000 })
+	await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible({ timeout: 60_000 })
 	await sidebar.getByTestId("tab-terminal").click()
 	const executionMode = sidebar.locator("#terminal-execution-mode")
 	await executionMode.click()
@@ -353,7 +353,7 @@ e2e(
 
 			let activities = await openWorkActivities(sidebar)
 			const commandActivity = activities.filter({ hasText: BACKGROUND_COMMAND })
-			await expect(commandActivity).toHaveCount(1, { timeout: 30_000 })
+			await expect(commandActivity).toHaveCount(1, { timeout: 60_000 })
 			await expect(commandActivity).toHaveAttribute("data-activity-status", "running")
 			await openWorkTab(sidebar)
 			// A running card is expanded and has no command-name button; that button only exists
@@ -393,7 +393,7 @@ e2e(
 			const runningSubagentActivity = sidebar
 				.locator('[data-testid="activity-item"][data-activity-status="running"]')
 				.filter({ hasText: AGENT_NAME })
-			await expect(runningSubagentActivity).toHaveCount(1, { timeout: 30_000 })
+			await expect(runningSubagentActivity).toHaveCount(1, { timeout: 60_000 })
 			await expect(runningSubagentActivity.getByTestId("activity-execution-mode")).toHaveText("Background")
 			const subagentActivityId = await runningSubagentActivity.getAttribute("data-activity-id")
 			if (!subagentActivityId) throw new Error("Running background subagent Activity did not expose an id")

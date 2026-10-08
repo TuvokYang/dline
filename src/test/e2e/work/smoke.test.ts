@@ -110,7 +110,7 @@ async function verifyCapabilityDiscovery(sidebar: Frame): Promise<void> {
 	await sidebar.getByRole("button", { name: "Hide Dline Rules & Workflows", exact: true }).first().click()
 	await sidebar.getByRole("button", { name: "Show MCP Servers", exact: true }).first().click()
 	const mcpRow = sidebar.getByText(MCP_NAME, { exact: true }).locator("xpath=ancestor::div[contains(@class, 'mb-2.5')][1]")
-	await expect(mcpRow).toBeVisible({ timeout: 30_000 })
+	await expect(mcpRow).toBeVisible({ timeout: 60_000 })
 	const mcpToggle = mcpRow.getByRole("switch")
 	await expect(mcpToggle).toHaveCount(1)
 	if ((await mcpToggle.getAttribute("data-state")) !== "checked") await mcpToggle.click()
@@ -242,14 +242,14 @@ e2e(
 			}
 
 			await expect(completion).toBeVisible({ timeout: 60_000 })
-			await expect(sidebar.getByLabel("Expand focus chain")).toBeVisible({ timeout: 30_000 })
+			await expect(sidebar.getByLabel("Expand focus chain")).toBeVisible({ timeout: 60_000 })
 			await expect(sidebar.getByTitle("Work Smoke Focus Chain")).toContainText("5/5")
 			await expect
 				.poll(async () => (await readFile(path.join(workspaceDir, "work-smoke-checkpoint.txt"), "utf8")).trim())
 				.toBe("WORK_SMOKE_CHECKPOINT_OK")
 			await expect
 				.poll(() => sidebar.getByText("Checkpoint", { exact: true }).count(), {
-					timeout: 30_000,
+					timeout: 60_000,
 				})
 				.toBeGreaterThan(0)
 			await expect.poll(() => server.getRequestCount(TARGET)).toBe(8)

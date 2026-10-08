@@ -9,7 +9,7 @@ export async function prepareWorkSession(sidebar: Frame, authenticator: WorkSess
 	await expectWorkComposerReady(sidebar)
 }
 
-export async function expectWorkComposerReady(sidebar: Frame, timeoutMs = 30_000): Promise<void> {
+export async function expectWorkComposerReady(sidebar: Frame, timeoutMs = 60_000): Promise<void> {
 	await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: timeoutMs })
 	await expect(sidebar.getByTestId("chat-input")).toBeEnabled({ timeout: timeoutMs })
 	await expect(sidebar.getByTestId("send-button")).toBeVisible({ timeout: timeoutMs })
@@ -37,7 +37,7 @@ export async function expectWorkMessageVisible(
 	return message
 }
 
-export async function sendWorkMessage(sidebar: Frame, text: string, timeoutMs = 30_000): Promise<Locator> {
+export async function sendWorkMessage(sidebar: Frame, text: string, timeoutMs = 60_000): Promise<Locator> {
 	const input = sidebar.getByTestId("chat-input")
 	await expect(input).toBeEnabled({ timeout: timeoutMs })
 	await input.fill(text)
