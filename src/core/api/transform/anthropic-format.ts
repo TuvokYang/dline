@@ -31,12 +31,10 @@ export function sanitizeAnthropicMessages(
 	const deferral = planDeferredHostedTurns(clineMessages, options)
 	const conversionOptions =
 		deferral.omitHostedCallIds.size > 0 ? { ...options, omitHostedCallIds: deferral.omitHostedCallIds } : options
-	const anthropicMessages = clineMessages
-		.map((msg, index) => {
-			const converted = convertClineStorageToAnthropicMessage(msg, undefined, conversionOptions)
-			return deferral.toolResultOnlyFollowUps.has(index) ? foldIntoToolResults(converted) : converted
-		})
-		.filter((msg) => !isEmptyAssistantMessage(msg))
+	const converted = clineMessages.map((msg) => convertClineStorageToAnthropicMessage(msg, undefined, conversionOptions))
+	const anthropicMessages = applyToolResultOnlyFollowUps(converted, deferral.toolResultOnlyFollowUps).filter(
+		(msg) => !isEmptyAssistantMessage(msg),
+	)
 	if (!supportCache) {
 		return anthropicMessages
 	}
@@ -50,8 +48,8 @@ export function sanitizeAnthropicMessages(
 interface DeferredHostedTurnPlan {
 	/** Deferred call and result segments the request must not carry. */
 	omitHostedCallIds: ReadonlySet<string>
-	/** Indices of user messages that answer a turn with a deferred call the request carries. */
-	toolResultOnlyFollowUps: ReadonlySet<number>
+	/** User message runs answering a turn with a deferred call the request carries, keyed by their first index. */
+	toolResultOnlyFollowUps: ReadonlyMap<number, readonly number[]>
 }
 
 /**
@@ -78,10 +76,47 @@ function planDeferredHostedTurns(
 			if (callId !== undefined && !carried.has(callId)) omitHostedCallIds.add(callId)
 		}
 	}
-	return {
-		omitHostedCallIds,
-		toolResultOnlyFollowUps: new Set(calls.filter((call) => call.state !== "dropped").map((call) => call.messageIndex + 1)),
+	const toolResultOnlyFollowUps = new Map<number, readonly number[]>()
+	for (const call of calls) {
+		const first = call.followUpIndices[0]
+		if (call.state !== "dropped" && first !== undefined) toolResultOnlyFollowUps.set(first, call.followUpIndices)
 	}
+	return { omitHostedCallIds, toolResultOnlyFollowUps }
+}
+
+/**
+ * Send each follow-up run as one user message reduced to its tool results.
+ *
+ * Stored history may split one user turn into several messages (tool results, then environment details); the
+ * provider reads them as one turn, so they are merged before the non-result blocks fold into the last result.
+ */
+function applyToolResultOnlyFollowUps(
+	messages: readonly Anthropic.MessageParam[],
+	followUps: ReadonlyMap<number, readonly number[]>,
+): Anthropic.MessageParam[] {
+	if (followUps.size === 0) return [...messages]
+	const absorbed = new Set<number>()
+	const result: Anthropic.MessageParam[] = []
+	messages.forEach((message, index) => {
+		if (absorbed.has(index)) return
+		const run = followUps.get(index)
+		if (!run) {
+			result.push(message)
+			return
+		}
+		for (const member of run.slice(1)) absorbed.add(member)
+		result.push(foldIntoToolResults(mergeUserMessages(run.map((member) => messages[member]))))
+	})
+	return result
+}
+
+function mergeUserMessages(messages: readonly Anthropic.MessageParam[]): Anthropic.MessageParam {
+	if (messages.length === 1) return messages[0]
+	const content = messages.flatMap((message): Anthropic.ContentBlockParam[] => {
+		if (typeof message.content !== "string") return message.content
+		return message.content ? [{ type: "text", text: message.content }] : []
+	})
+	return { role: "user", content }
 }
 
 /**

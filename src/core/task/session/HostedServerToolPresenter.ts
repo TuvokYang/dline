@@ -1,3 +1,4 @@
+import { recordHostedToolDeferralResolved } from "@core/api/observability/hosted-tool-deferral"
 import type { WebSearchRoutingPlan } from "@core/api/server-tools"
 import type { ApiStreamServerToolChunk } from "@core/api/transform/stream"
 import {
@@ -8,13 +9,20 @@ import {
 } from "@shared/code-execution-tools"
 import type { UiSayTool } from "@shared/ExtensionMessage"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
-import { normalizeWebSearchItems } from "@shared/web-tools"
+import {
+	type HostedCallPresentation,
+	normalizeHostedWebFetchContent,
+	normalizeWebSearchItems,
+	type WebToolPresentationStatus,
+} from "@shared/web-tools"
 import type {
+	DeferredHostedResumeRequest,
 	ProviderServerToolPresentationPort,
 	ProviderServerToolPresentationSession,
 	ProviderServerToolRequestContext,
 } from "../executors/provider/service/DefaultProductionProviderService"
 import type { MessageStateHandler } from "../message-state"
+import { type DeferredHostedRow, planDeferredHostedRows } from "../tools/deferred-hosted-rows"
 import { HostedImageGenerationLifecycle } from "../tools/HostedImageGenerationLifecycle"
 import { type HostedServerToolUpdate, ServerToolLifecycle } from "../tools/ServerToolLifecycle"
 import type { PresentationIdSequence } from "./PresentationIdSequence"
@@ -24,6 +32,16 @@ function providerLabel(providerId: string): string {
 	if (providerId === "openai") return "OpenAI"
 	if (providerId === "deepseek") return "DeepSeek"
 	return providerId
+}
+
+/** Row status of a hosted web call; a started call is still running. */
+function webToolStatus(update: HostedServerToolUpdate): WebToolPresentationStatus {
+	return update.status === "started" ? "running" : update.status
+}
+
+/** A deferred row names its hosted call, so the request that resumes it finishes this row. */
+function deferredHostedCall(update: HostedServerToolUpdate): { hostedCall?: HostedCallPresentation } {
+	return update.status === "deferred" ? { hostedCall: { functionId: update.functionId, traceId: update.dlineTid } } : {}
 }
 
 /** Present one hosted Web Search call. */
@@ -38,7 +56,7 @@ function buildWebSearchMessage(update: HostedServerToolUpdate, providerId: strin
 		operationIsLocatedInWorkspace: false,
 		webSearch: {
 			schemaVersion: 1,
-			status: update.status === "failed" ? "failed" : update.status === "completed" ? "completed" : "running",
+			status: webToolStatus(update),
 			source: {
 				id: `${providerId}-hosted`,
 				label: `${label} Web Search`,
@@ -49,6 +67,7 @@ function buildWebSearchMessage(update: HostedServerToolUpdate, providerId: strin
 			operation: update.operation,
 			...(items.length > 0 ? { items } : {}),
 			...(update.error === undefined ? {} : { error: update.error }),
+			...deferredHostedCall(update),
 		},
 	}
 }
@@ -77,6 +96,7 @@ function hostedFetchError(update: HostedServerToolUpdate): string | undefined {
 function buildWebFetchMessage(update: HostedServerToolUpdate, providerId: string): UiSayTool {
 	const url = hostedFetchUrl(update)
 	const error = hostedFetchError(update)
+	const content = normalizeHostedWebFetchContent(update.result)
 	const label = providerLabel(providerId)
 	return {
 		tool: "webFetch",
@@ -85,7 +105,7 @@ function buildWebFetchMessage(update: HostedServerToolUpdate, providerId: string
 		operationIsLocatedInWorkspace: false,
 		webFetch: {
 			schemaVersion: 1,
-			status: update.status === "failed" ? "failed" : update.status === "completed" ? "completed" : "running",
+			status: webToolStatus(update),
 			source: {
 				id: `${providerId}-hosted`,
 				label: `${label} Web Fetch`,
@@ -93,7 +113,9 @@ function buildWebFetchMessage(update: HostedServerToolUpdate, providerId: string
 				provider: providerId,
 			},
 			url,
+			...(content === undefined ? {} : { content }),
 			...(error === undefined ? {} : { error }),
+			...deferredHostedCall(update),
 		},
 	}
 }
@@ -136,11 +158,15 @@ function buildHostedMessage(update: HostedServerToolUpdate, providerId: string):
 	return buildWebSearchMessage(update, providerId)
 }
 
+/** Failure shown on a deferred row once the conversation no longer lets the provider run its call. */
+const DEFERRED_HOSTED_CALL_ABANDONED_REASON =
+	"The provider never ran this deferred hosted call: the conversation moved on before a request could resume it."
+
 /**
  * Owns chat presentation for all provider-hosted calls in one provider response.
  *
  * Rows are transient while a call runs and become durable only when its lifecycle
- * reaches a terminal update. A stable row identity also lets a late provider
+ * reaches a terminal or deferred update. A stable row identity also lets a late provider
  * result enrich an already-completed call without appending a duplicate card.
  */
 class HostedServerToolPresentationSession implements ProviderServerToolPresentationSession {
@@ -150,7 +176,7 @@ class HostedServerToolPresentationSession implements ProviderServerToolPresentat
 
 	constructor(
 		taskId: string,
-		context: ProviderServerToolRequestContext,
+		private readonly context: ProviderServerToolRequestContext,
 		private readonly messages: MessageStateHandler,
 		private readonly nextPresentationId: PresentationIdSequence,
 		private readonly realtime?: RealtimeMessagePublisher,
@@ -175,6 +201,49 @@ class HostedServerToolPresentationSession implements ProviderServerToolPresentat
 	async finalizeOpen(reason: string): Promise<void> {
 		await this.images.finalizeOpen()
 		await this.webTools.finalizeOpen(reason)
+	}
+
+	/**
+	 * Read the deferred rows from the durable chat, fail those this request cannot resume, and adopt the rest
+	 * under their original rows so the result the provider opens its reply with completes them in place.
+	 *
+	 * Returns provider call id → trace identity of the calls this request resumes.
+	 */
+	async resumeDeferred(request: DeferredHostedResumeRequest): Promise<ReadonlyMap<string, string>> {
+		const plan = planDeferredHostedRows(this.messages.clineMessages, request.history, request)
+		for (const row of plan.abandoned) await this.abandonDeferred(row)
+		for (const row of plan.carried) this.rowIds.set(row.dlineTid, row.ts)
+		this.webTools.adopt(plan.carried)
+		return new Map(plan.carried.map((row) => [row.functionId, row.dlineTid]))
+	}
+
+	/**
+	 * Fail a deferred row in place. It is written directly rather than through the lifecycle, because the
+	 * current request may no longer route the tool, and it keeps the provider that announced the call.
+	 */
+	private async abandonDeferred(row: DeferredHostedRow): Promise<void> {
+		this.rowIds.set(row.dlineTid, row.ts)
+		try {
+			const update: HostedServerToolUpdate = {
+				dlineTid: row.dlineTid,
+				functionId: row.functionId,
+				tool: row.tool,
+				status: "failed",
+				partial: false,
+				query: row.query,
+				operation: row.operation,
+				...(row.input === undefined ? {} : { input: row.input }),
+				error: DEFERRED_HOSTED_CALL_ABANDONED_REASON,
+			}
+			await this.present(row.dlineTid, buildHostedMessage(update, row.providerId ?? this.context.providerId), false)
+		} finally {
+			this.rowIds.delete(row.dlineTid)
+		}
+		recordHostedToolDeferralResolved({
+			apiFormat: "anthropic_messages",
+			hostedTool: row.tool === ServerTool.WEB_FETCH ? "web_fetch" : "web_search",
+			resolution: "not_resumed",
+		})
 	}
 
 	private async present(dlineTid: string, message: UiSayTool, partial: boolean): Promise<void> {

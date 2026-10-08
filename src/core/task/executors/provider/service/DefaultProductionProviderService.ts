@@ -1,6 +1,7 @@
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiStreamChunk, ApiStreamServerToolChunk, ApiStreamToolCallsChunk } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
+import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
 import { parseAssistantMessage, type ToolUse } from "@core/assistant-message"
 import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
 import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
@@ -8,8 +9,10 @@ import {
 	type ClineAssistantContent,
 	type ClineAssistantToolUseBlock,
 	type ClineStorageMessage,
+	type HostedToolReplayProtocol,
 	projectInternalMessagesForProvider,
 } from "@shared/messages/content"
+import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import { Logger } from "@shared/services/Logger"
 import { ClineError } from "@/services/error"
 import { isTurnEndingToolName } from "../../../assistant-message-order"
@@ -73,9 +76,23 @@ export const DEFAULT_PROVIDER_RETRY_POLICY: ProviderRetryPolicy = {
 	wait: async (delayMs, signal) => ((await waitRetryDelayUnlessAborted(delayMs, signal)) ? "send" : "cancelled"),
 }
 
+/** The request a reply is about to answer, as the deferred hosted calls of earlier replies see it. */
+export interface DeferredHostedResumeRequest {
+	/** History exactly as the endpoint receives it. */
+	readonly history: readonly ClineStorageMessage[]
+	readonly protocol?: HostedToolReplayProtocol
+	/** Hosted tool names the request declares. */
+	readonly replayHostedTools?: ReadonlySet<string>
+}
+
 export interface ProviderServerToolPresentationSession {
 	consume(chunk: ApiStreamServerToolChunk): Promise<boolean>
 	finalizeOpen(reason: string): Promise<void>
+	/**
+	 * Settle the calls earlier replies deferred before this request is sent: fail those it cannot resume and
+	 * return, by provider call id, the trace id of each call it resumes, so the result completes the same row.
+	 */
+	resumeDeferred?(request: DeferredHostedResumeRequest): Promise<ReadonlyMap<string, string>>
 }
 
 export interface ProviderServerToolPresentationPort {
@@ -130,6 +147,8 @@ export interface DefaultProductionProviderServiceOptions {
  */
 class TurnRequest {
 	private through: JournalWatermark | undefined
+	/** Trace id of each deferred hosted call this turn resumes, by provider call id. */
+	carriedServerToolTraceIds: ReadonlyMap<string, string> = new Map()
 
 	constructor(
 		private current: PreparedProviderRequest,
@@ -158,6 +177,19 @@ class TurnRequest {
 	abandon(): void {
 		this.current.api.abort?.()
 		this.current.authority?.cancel()
+	}
+}
+
+/** What earlier deferred hosted calls need to know about the request this turn sends. */
+function deferredHostedResumeRequest(request: PreparedProviderRequest): DeferredHostedResumeRequest {
+	const protocol = request.api.getHostedToolReplayProtocol?.()
+	return {
+		history: projectForEndpoint(request, request.messages),
+		protocol,
+		// Only the Messages API defers a hosted call behind client tools.
+		...(protocol === "anthropic_messages"
+			? { replayHostedTools: declaredAnthropicHostedToolNames(request.options?.serverTools) }
+			: {}),
 	}
 }
 
@@ -336,6 +368,8 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		const newReasoning = () => new StreamResponseHandler(() => Date.now()).getHandlers().reasonsHandler
 		let reasoning = newReasoning()
 		const nativeTools = new Map<string, PendingNativeTool>()
+		// Hosted calls the provider ran (or deferred) in this reply; later requests replay them verbatim.
+		const hostedToolBlocks: ClineAssistantContent[] = []
 		// Shared by every send of this turn, before and after a first chunk.
 		// A manual Retry owns this request, so its failure returns to the user
 		// rather than opening a second automatic sequence.
@@ -359,10 +393,12 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		let authoritativeContextTokens = 0
 
 		try {
+			serverTools = this.options.serverTools?.begin(turn.request.serverToolContext)
+			turn.carriedServerToolTraceIds =
+				(await serverTools?.resumeDeferred?.(deferredHostedResumeRequest(turn.request))) ?? new Map()
 			for (;;) {
 				const stream = yield* this.openStream(turn, input.signal, retryBudget)
 				if (!stream) return
-				serverTools ??= this.options.serverTools?.begin(turn.request.serverToolContext)
 				try {
 					for await (const chunk of stream) {
 						if (input.signal.aborted) break
@@ -433,6 +469,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 								break
 							case "server_tool":
 								toolActivity = true
+								if (chunk.replay) hostedToolBlocks.push(chunk.replay)
 								await serverTools?.consume(chunk)
 								yield {
 									kind: "partial",
@@ -470,6 +507,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 					encryptedReasoningShown = false
 					reasoning = newReasoning()
 					nativeTools.clear()
+					hostedToolBlocks.length = 0
 					receiving = new ContextWindowReceivingTracker()
 					usage = new ProviderUsageIncrements()
 					receivingTokens = 0
@@ -516,9 +554,14 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			request.nativeTools || nativeTools.size > 0
 				? this.materializeNativeTools(nativeTools, text)
 				: this.materializeXmlTools(text)
-		const content: ClineAssistantContent[] = [...reasoning.getRedactedThinking()]
+		// The provider opens its reply with the results of calls an earlier reply
+		// deferred, and only accepts the next request when the turn keeps them first.
+		const hostedTurn = splitResumedHostedResults(hostedToolBlocks)
+		const content: ClineAssistantContent[] = [...hostedTurn.resumed, ...reasoning.getRedactedThinking()]
 		const thinking = reasoning.getCurrentReasoning()
 		if (thinking) content.push(thinking)
+		// Hosted calls ran before the visible answer, so they precede it in the stored turn.
+		content.push(...hostedTurn.others)
 		// History records what the model actually sent. A call it wrote as markup
 		// beside native tools stays markup there: turning it into a native call
 		// would replay an invented call id the provider never issued.
@@ -640,7 +683,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 					budget.attempts,
 					request.api.createMessage(request.systemPrompt, messages, request.tools, request.options),
 				)
-				iterator = normalizeApiStream(apiStream, createStreamNormalizer(this.identities))[Symbol.asyncIterator]()
+				const normalizer = createStreamNormalizer(this.identities, {
+					carriedServerToolTraceId: (functionId) => turn.carriedServerToolTraceIds.get(functionId),
+				})
+				iterator = normalizeApiStream(apiStream, normalizer)[Symbol.asyncIterator]()
 				const first = await iterator.next()
 				if (!first.done) return continueFrom(first.value, iterator)
 				failure = new Error("API stream ended without producing any content")
