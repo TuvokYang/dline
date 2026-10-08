@@ -115,6 +115,27 @@ describe("package topology safety", () => {
 		expect(releaseWorkflow).toContain("needs: [verify-tag, tests, functional-e2e]")
 	})
 
+	it("shards the release functional gate across every functional folder", async () => {
+		const releaseWorkflow = await readProjectFile(".github/workflows/release.yml")
+		const functionalRoot = path.join(PROJECT_ROOT, "src/test/e2e/functional")
+		const folders = (await fs.readdir(functionalRoot, { withFileTypes: true }))
+			.filter((entry) => entry.isDirectory())
+			.map((entry) => entry.name)
+			.sort()
+
+		// A folder missing from the matrix would silently drop its tests from the release gate.
+		const matrixLine = releaseWorkflow.match(/^\s*folder: \[([^\]]+)\]\s*$/m)
+		expect(matrixLine).not.toBeNull()
+		const matrixFolders = (matrixLine?.[1] ?? "")
+			.split(",")
+			.map((folder) => folder.trim())
+			.sort()
+		expect(matrixFolders).toEqual(folders)
+		expect(releaseWorkflow).toContain("fail-fast: false")
+		expect(releaseWorkflow).toContain('"src/test/e2e/functional/${FUNCTIONAL_FOLDER}/"')
+		expect(releaseWorkflow).toContain("name: playwright-functional-production-${{ matrix.folder }}-ubuntu-${{ github.sha }}")
+	})
+
 	it("serializes builds against concurrent runs of the shared dist output", async () => {
 		const packageJson = JSON.parse(await readProjectFile("package.json")) as RootPackageJson
 		const scripts = packageJson.scripts ?? {}
