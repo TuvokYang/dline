@@ -436,9 +436,13 @@ async function selectRuntimeOverrides(sidebar: Frame, step: RuntimeOverrideStep)
 	const thinking = sidebar.getByRole("combobox", { name: "Task thinking override" })
 	await expect(thinking).toBeEnabled()
 	if (!(await thinking.textContent())?.includes(step.thinkingLabel)) {
-		await thinking.click()
 		const option = sidebar.getByRole("option", { name: step.thinkingLabel, exact: true })
-		await expect(option).toBeVisible()
+		// The combobox re-renders while task state is still streaming in and can
+		// swallow a single click, so reopen it until the listbox is shown.
+		await expect(async () => {
+			if (!(await option.isVisible())) await thinking.click()
+			await expect(option).toBeVisible({ timeout: 2_000 })
+		}).toPass({ timeout: 15_000 })
 		await option.press("Enter")
 	}
 	await expect(thinking).toContainText(step.thinkingLabel)

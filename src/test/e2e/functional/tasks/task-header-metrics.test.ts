@@ -98,8 +98,9 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 	}, 30_000)
 }
 
-function expectedTotalTokens(usage: MockTokenUsage): number {
-	return usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+// TPM counts generated output tokens only; prompt and cache tokens are excluded.
+function expectedRateTokens(usage: MockTokenUsage): number {
+	return usage.outputTokens
 }
 
 async function readFinalRequestInfo(dlineDocsDir: string, taskId: string): Promise<ApiRequestInfo | undefined> {
@@ -181,7 +182,7 @@ async function waitForPersistedMetrics(
 			request.cacheWrites !== (usage.cacheWriteTokens ?? 0) ||
 			typeof request.cost !== "number" ||
 			request.cost <= 0 ||
-			rate.tokenCount !== expectedTotalTokens(usage)
+			rate.tokenCount !== expectedRateTokens(usage)
 		) {
 			return undefined
 		}
@@ -211,7 +212,7 @@ async function expectTaskHeaderMetrics(
 	await expect(rate).toBeVisible()
 	const stableRate = await E2ETestHelper.waitForValue(async () => {
 		const persistedRate = await readRateSummary(dlineDocsDir, taskId)
-		if (!persistedRate || persistedRate.tokenCount !== expectedTotalTokens(usage)) return undefined
+		if (!persistedRate || persistedRate.tokenCount !== expectedRateTokens(usage)) return undefined
 		const ariaLabel = await rate.getAttribute("aria-label")
 		if (!ariaLabel?.match(/(?:^|; )RPM: [1-9]\d*(?:;|$)/)) return undefined
 		if (!ariaLabel.includes(`TPM: ${persistedRate.tokensPerMinute}`)) return undefined
