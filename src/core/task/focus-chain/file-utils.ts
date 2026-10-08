@@ -178,6 +178,14 @@ export function extractFocusChainListFromText(text: string): string | null {
 }
 
 /**
+ * Whether two checklist texts describe the same checklist once reduced to their persisted form.
+ * Blank lines, indentation and non-checklist prose are formatting, not checklist content.
+ */
+export function isEquivalentFocusChainList(left: string, right: string): boolean {
+	return extractFocusChainListFromText(left) === extractFocusChainListFromText(right)
+}
+
+/**
  * Check if all items in the old list are completed.
  * Used to trigger archiving when a task group is fully done.
  * @param text - The focus chain content to check
