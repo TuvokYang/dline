@@ -28,6 +28,11 @@ on:
         description: SHA-256 recorded by the verification job.
         type: string
         required: true
+      publish_marketplace:
+        description: Also publish to the VS Code Marketplace. Disabled by default, which leaves Open VSX as the only registry.
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   actions: read
@@ -221,11 +226,13 @@ jobs:
   publish-marketplace:
     needs: verify-source
     name: Publish VS Code Marketplace
-    if: github.repository == 'TuvokYang/dline'
+    # Marketplace publication is switched off unless a caller opts in; the
+    # aggregate gate records it as disabled rather than as a failed registry.
+    if: inputs.publish_marketplace && github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # One registry being unavailable must not withhold the release from the
-    # other. The aggregate gate below derives the stage conclusion from the two
+    # other. The aggregate gate below derives the stage conclusion from the
     # reported statuses, so this job reports its outcome instead of imposing it.
     continue-on-error: true
     environment:
@@ -373,6 +380,7 @@ jobs:
         id: publish
         env:
           OVSX_PAT: ${{ secrets.DLINE_VSCODE_OVSX_PAT }}
+          CHANNEL: ${{ inputs.channel }}
           ASSET_NAME: ${{ inputs.asset_name }}
           EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
           OVSX_BIN: ${{ steps.ovsx.outputs.bin }}
@@ -407,6 +415,41 @@ jobs:
             fail "Open VSX package changed after verification."
           fi
 
+          # Open VSX identifies a version only by namespace, name, and number;
+          # the pre-release track is a flag on that version. --skip-duplicate
+          # alone therefore cannot tell an idempotent rerun from a number already
+          # taken by the other track, and a skipped upload must never be reported
+          # as a published release.
+          manifest_path="$RUNNER_TEMP/ovsx-package.json"
+          unzip -p "$vsix_path" extension/package.json > "$manifest_path"
+          namespace=$(jq -r '.publisher' "$manifest_path")
+          extension=$(jq -r '.name' "$manifest_path")
+          version=$(jq -r '.version' "$manifest_path")
+          expected_pre_release=false
+          if [[ "$CHANNEL" == 'pre-release' ]]; then
+            expected_pre_release=true
+          fi
+          existing_path="$RUNNER_TEMP/ovsx-existing-version.json"
+          http_code=$(curl -sS --max-time 30 -o "$existing_path" -w '%{http_code}' \
+            "https://open-vsx.org/api/${namespace}/${extension}/${version}") \
+            || fail "could not query Open VSX for ${namespace}.${extension}@${version}."
+          case "$http_code" in
+            404)
+              ;;
+            200)
+              existing_pre_release=$(jq -r '.preRelease // false' "$existing_path")
+              if [[ "$existing_pre_release" != "$expected_pre_release" ]]; then
+                fail "Open VSX already has ${namespace}.${extension}@${version} with preRelease=${existing_pre_release}, but the ${CHANNEL} channel requires preRelease=${expected_pre_release}. Registry versions are unique across tracks; release a new version instead."
+              fi
+              echo "Open VSX already has ${namespace}.${extension}@${version} on the ${CHANNEL} track; nothing to publish."
+              echo "status=published" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            *)
+              fail "Open VSX version lookup returned HTTP ${http_code}."
+              ;;
+          esac
+
           # Open VSX reads the pre-release track from the VSIX marker verified
           # in verify-source, so both channels publish the file unchanged.
           set +e
@@ -421,15 +464,16 @@ jobs:
   require-one-registry:
     name: Require one published registry
     needs: [verify-source, publish-marketplace, publish-open-vsx]
-    # always(): both publish jobs tolerate their own failure, so this gate must
-    # still run to decide whether the release reached any registry at all.
+    # always(): the publish jobs tolerate their own failure and Marketplace may
+    # be skipped, so this gate must still run to decide whether the release
+    # reached any enabled registry at all.
     if: always() && github.repository == 'TuvokYang/dline'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Evaluate registry publication
         env:
-          MARKETPLACE_STATUS: ${{ needs.publish-marketplace.outputs.status }}
+          MARKETPLACE_STATUS: ${{ inputs.publish_marketplace && (needs.publish-marketplace.outputs.status || 'unreported') || 'disabled' }}
           OPEN_VSX_STATUS: ${{ needs.publish-open-vsx.outputs.status }}
         shell: bash
         run: |
@@ -442,6 +486,10 @@ jobs:
           for entry in "marketplace=${MARKETPLACE_STATUS:-unreported}" "open-vsx=${OPEN_VSX_STATUS:-unreported}"; do
             registry="${entry%%=*}"
             status="${entry#*=}"
+            if [[ "$status" == "disabled" ]]; then
+              echo "Skipping ${registry}: publication is disabled."
+              continue
+            fi
             if [[ "$status" == "published" ]]; then
               published+=("$registry")
             else

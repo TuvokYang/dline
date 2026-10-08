@@ -70,6 +70,15 @@ describe("package topology safety", () => {
 		expect(productionPublisher).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
 		expect(registryWorkflow).toContain('"$VSCE_BIN" publish --skip-duplicate "${track_args[@]}" --packagePath "$vsix_path"')
 		expect(registryWorkflow).toContain('"$OVSX_BIN" publish "$vsix_path" --skip-duplicate')
+		// Marketplace publication is opt-in and reported as disabled, not as a failed registry.
+		expect(registryWorkflow).toMatch(/publish_marketplace:\r?\n(?: {8}.*\r?\n)*? {8}default: false\r?\n/)
+		expect(registryWorkflow).toContain("if: inputs.publish_marketplace && github.repository == 'TuvokYang/dline'")
+		expect(registryWorkflow).toContain(
+			"MARKETPLACE_STATUS: ${{ inputs.publish_marketplace && (needs.publish-marketplace.outputs.status || 'unreported') || 'disabled' }}",
+		)
+		// A version already held by the other Open VSX track must fail instead of being skipped as published.
+		expect(registryWorkflow).toContain('"https://open-vsx.org/api/${namespace}/${extension}/${version}"')
+		expect(registryWorkflow).toContain('if [[ "$existing_pre_release" != "$expected_pre_release" ]]; then')
 		// The source gate and both registry jobs independently download the same verified artifact.
 		expect(registryWorkflow.match(/name: \$\{\{ inputs\.artifact_name \}\}/g)).toHaveLength(3)
 	})
@@ -104,6 +113,27 @@ describe("package topology safety", () => {
 		)
 		expect(releaseWorkflow).toContain("npx playwright test -c playwright.functional.config.ts")
 		expect(releaseWorkflow).toContain("needs: [verify-tag, tests, functional-e2e]")
+	})
+
+	it("shards the release functional gate across every functional folder", async () => {
+		const releaseWorkflow = await readProjectFile(".github/workflows/release.yml")
+		const functionalRoot = path.join(PROJECT_ROOT, "src/test/e2e/functional")
+		const folders = (await fs.readdir(functionalRoot, { withFileTypes: true }))
+			.filter((entry) => entry.isDirectory())
+			.map((entry) => entry.name)
+			.sort()
+
+		// A folder missing from the matrix would silently drop its tests from the release gate.
+		const matrixLine = releaseWorkflow.match(/^\s*folder: \[([^\]]+)\]\s*$/m)
+		expect(matrixLine).not.toBeNull()
+		const matrixFolders = (matrixLine?.[1] ?? "")
+			.split(",")
+			.map((folder) => folder.trim())
+			.sort()
+		expect(matrixFolders).toEqual(folders)
+		expect(releaseWorkflow).toContain("fail-fast: false")
+		expect(releaseWorkflow).toContain('"src/test/e2e/functional/${FUNCTIONAL_FOLDER}/"')
+		expect(releaseWorkflow).toContain("name: playwright-functional-production-${{ matrix.folder }}-ubuntu-${{ github.sha }}")
 	})
 
 	it("serializes builds against concurrent runs of the shared dist output", async () => {

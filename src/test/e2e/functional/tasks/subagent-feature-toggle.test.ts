@@ -207,7 +207,9 @@ e2e(
 
 		await sendTask(sidebar, "Use the default subagent now that the feature is enabled.")
 
-		await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 60_000 }).toBe(2)
+		// The child and parent follow-up requests are served without delay, so the
+		// count can pass 2 between polls; the exact total is asserted at the end.
+		await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 60_000 }).toBeGreaterThanOrEqual(2)
 		const enabledRequest = server.getMockConsumptions("openai-compatible-chat")[1]
 		expect(requestToolNames(enabledRequest)).toContain("use_subagent")
 		expect(enabledRequest.contractError).toBeUndefined()

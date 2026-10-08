@@ -15,6 +15,7 @@ Follow `repository-and-release` before using this workflow. Repository identity,
 - The integrated `dev` commit is unambiguous and the working tree used for verification is clean.
 - `package.json`, `package-lock.json`, `CHANGELOG.md`, and `docs/changelog/CHANGELOG_en.md` describe the same target version.
 - No unresolved release blocker or unrelated work is being included.
+- The release version has an even minor, as the version bump rules in repository-and-release require; stop and prepare a new version with dev-version-bump when it is odd.
 - The user has not yet implicitly authorized any commit, push, merge, tag, Release edit, or Marketplace publication.
 
 ## 1. Discover repository state

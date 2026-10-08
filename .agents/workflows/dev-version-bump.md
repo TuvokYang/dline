@@ -27,6 +27,8 @@ Do not include unrelated or unknown working-tree changes.
 
 Confirm the target `X.Y.Z` and a precise previous version ref. Never infer the base from the newest lexicographic tag alone because development and production tags have different roles.
 
+Choose the target by the version bump rules in repository-and-release: a production release (`vX.Y.Z`) uses an even minor, a pre-release (`dev-vX.Y.Z`) uses an odd minor, and the minor never decreases. Start a new production line at the next even minor, a fix release at the next patch of the current even minor, and a pre-release line at the next odd minor. Stop when the requested target has the wrong parity for its channel; packaging rejects it.
+
 ```text
 git --no-pager log --oneline <previous-version-ref>..HEAD
 git --no-pager diff --stat <previous-version-ref>..HEAD

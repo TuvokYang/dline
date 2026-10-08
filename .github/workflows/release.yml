@@ -76,14 +76,21 @@ jobs:
       OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
 
   functional-e2e:
-    name: Full functional E2E (ubuntu)
+    name: Functional E2E - ${{ matrix.folder }} (ubuntu)
     needs: [verify-tag, tests]
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 120
+    # One shard per functional folder: the gate takes as long as the slowest
+    # folder, and a rerun of failed jobs repeats only the folders that failed.
+    # fail-fast stays off so one failing folder still reports every other one.
+    strategy:
+      fail-fast: false
+      matrix:
+        folder: [api, capabilities, chat, context, harness, performance, profiles, tasks]
     env:
       DLINE_E2E_INSTALL_VSIX: "1"
       DLINE_E2E_PROFILE: mock-openai
-      DLINE_E2E_RUN_ID: production-functional-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu
+      DLINE_E2E_RUN_ID: production-functional-${{ matrix.folder }}-${{ github.run_id }}-${{ github.run_attempt }}-ubuntu
     steps:
       - name: Checkout validated tag
         uses: actions/checkout@v6
@@ -149,14 +156,16 @@ jobs:
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
-      - name: Run complete functional E2E suite
-        run: xvfb-run -a npx playwright test -c playwright.functional.config.ts --project "functional e2e tests"
+      - name: Run functional E2E folder
+        env:
+          FUNCTIONAL_FOLDER: ${{ matrix.folder }}
+        run: xvfb-run -a npx playwright test -c playwright.functional.config.ts --project "functional e2e tests" "src/test/e2e/functional/${FUNCTIONAL_FOLDER}/"
 
       - name: Upload failed functional artifacts
         if: failure()
         uses: actions/upload-artifact@v5
         with:
-          name: playwright-functional-production-ubuntu-${{ github.sha }}
+          name: playwright-functional-production-${{ matrix.folder }}-ubuntu-${{ github.sha }}
           path: tmp/test-result/
           if-no-files-found: warn
           include-hidden-files: true
