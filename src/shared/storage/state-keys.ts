@@ -1,5 +1,5 @@
 import { AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
-import { ApiProvider, ModelInfo, type OcaModelInfo } from "@shared/api"
+import { ApiProvider } from "@shared/api"
 import {
 	DEFAULT_AUTO_CONDENSE_MAX_CONTEXT_TOKENS,
 	DEFAULT_AUTO_CONDENSE_MAX_RESERVE_TOKENS,
@@ -18,7 +18,7 @@ import { HistoryItem } from "@shared/HistoryItem"
 import { DEFAULT_MCP_DISPLAY_MODE, McpDisplayMode } from "@shared/McpDisplayMode"
 import { WorkspaceRoot } from "@shared/multi-root/types"
 import { GlobalInstructionsFile } from "@shared/remote-config/schema"
-import { Mode, OpenaiReasoningEffort } from "@shared/storage/types"
+import { Mode } from "@shared/storage/types"
 import { TelemetrySetting } from "@shared/TelemetrySetting"
 import { DEFAULT_TERMINAL_COMMAND_HANDOFF_SECONDS, DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
 import { UserInfo } from "@shared/UserInfo"
@@ -261,38 +261,12 @@ const USER_SETTINGS_FIELDS = {
 	openTelemetryLogBatchTimeout: { default: 5000 as number | undefined },
 	openTelemetryLogMaxQueueSize: { default: 2048 as number | undefined },
 
-	// @deprecated — Replaced by planModeProfile / actModeProfile (ApiProfile-driven model selection)
-	planModeOcaModelId: { default: undefined as string | undefined },
-	// @deprecated
-	planModeOcaModelInfo: { default: undefined as OcaModelInfo | undefined },
-	// @deprecated
-	planModeOcaReasoningEffort: { default: undefined as string | undefined },
-	// @deprecated
-	actModeOcaModelId: { default: undefined as string | undefined },
-	// @deprecated
-	actModeOcaModelInfo: { default: undefined as OcaModelInfo | undefined },
-	// @deprecated
-	actModeOcaReasoningEffort: { default: undefined as string | undefined },
-	// @deprecated
-	planModeOpenRouterModelId: { default: undefined as string | undefined },
-	// @deprecated
-	planModeOpenRouterModelInfo: { default: undefined as ModelInfo | undefined },
-	// @deprecated
-	actModeOpenRouterModelId: { default: undefined as string | undefined },
-	// @deprecated
-	actModeOpenRouterModelInfo: { default: undefined as ModelInfo | undefined },
-
 	// Provider base URL overrides
 	liteLlmBaseUrl: { default: undefined as string | undefined },
 	requestyBaseUrl: { default: undefined as string | undefined },
 
 	// OCA configuration
 	ocaMode: { default: undefined as string | undefined },
-
-	// @deprecated — Replaced by ApiProfile.modelInfo.capabilities.thinking.effortLevels
-	planModeReasoningEffort: { default: undefined as OpenaiReasoningEffort | undefined },
-	// @deprecated
-	actModeReasoningEffort: { default: undefined as OpenaiReasoningEffort | undefined },
 } satisfies FieldDefinitions
 
 const SETTINGS_FIELDS = { ...API_HANDLER_SETTINGS_FIELDS, ...USER_SETTINGS_FIELDS }

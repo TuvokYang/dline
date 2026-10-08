@@ -31,7 +31,6 @@ const TASK_PROFILE_MODE_FIELDS: Record<Mode, TaskProfileModeFields> = {
 			"planModeReasoningOverrideKind",
 			"planModeReasoningOverrideEffort",
 			"planModeThinkingBudgetTokens",
-			"planModeReasoningEffort",
 			"planModeServiceTierOverrideKind",
 			"planModeServiceTierOverrideTier",
 		],
@@ -43,7 +42,6 @@ const TASK_PROFILE_MODE_FIELDS: Record<Mode, TaskProfileModeFields> = {
 			"actModeReasoningOverrideKind",
 			"actModeReasoningOverrideEffort",
 			"actModeThinkingBudgetTokens",
-			"actModeReasoningEffort",
 			"actModeServiceTierOverrideKind",
 			"actModeServiceTierOverrideTier",
 		],
@@ -222,17 +220,14 @@ export class TaskStateManager {
 		return state
 	}
 
-	/** Return the Task-local reasoning override for one mode, including legacy effort migration. */
+	/** Return the Task-local reasoning override for one mode. */
 	getReasoningOverride(mode: Mode): TaskReasoningOverride | undefined {
 		const prefix = mode === "plan" ? "planMode" : "actMode"
-		return taskReasoningOverrideFromFields(
-			{
-				kind: this.cache[`${prefix}ReasoningOverrideKind`] as string | undefined,
-				effort: this.cache[`${prefix}ReasoningOverrideEffort`] as string | undefined,
-				budgetTokens: this.cache[`${prefix}ThinkingBudgetTokens`] as number | undefined,
-			},
-			this.cache[`${prefix}ReasoningEffort`] as string | undefined,
-		)
+		return taskReasoningOverrideFromFields({
+			kind: this.cache[`${prefix}ReasoningOverrideKind`] as string | undefined,
+			effort: this.cache[`${prefix}ReasoningOverrideEffort`] as string | undefined,
+			budgetTokens: this.cache[`${prefix}ThinkingBudgetTokens`] as number | undefined,
+		})
 	}
 
 	/** Persist or clear one mode's Task-local reasoning override. */
@@ -242,7 +237,6 @@ export class TaskStateManager {
 		this.writeOptionalSetting(`${prefix}ReasoningOverrideKind`, fields.kind)
 		this.writeOptionalSetting(`${prefix}ReasoningOverrideEffort`, fields.effort)
 		this.writeOptionalSetting(`${prefix}ThinkingBudgetTokens`, fields.budgetTokens)
-		this.writeOptionalSetting(`${prefix}ReasoningEffort`, undefined)
 	}
 
 	/** Return the Task-local OpenAI service tier override for one mode. */

@@ -29,10 +29,7 @@ export interface TaskReasoningOverrideFields {
 	readonly budgetTokens?: number
 }
 
-export function taskReasoningOverrideFromFields(
-	fields: TaskReasoningOverrideFields,
-	legacyEffort?: string,
-): TaskReasoningOverride | undefined {
+export function taskReasoningOverrideFromFields(fields: TaskReasoningOverrideFields): TaskReasoningOverride | undefined {
 	const kind = fields.kind?.trim()
 	if (kind === "effort") {
 		return { kind, effort: fields.effort }
@@ -42,9 +39,6 @@ export function taskReasoningOverrideFromFields(
 	}
 	if (kind === "inherit") {
 		return { kind }
-	}
-	if (legacyEffort !== undefined && legacyEffort.trim() !== "") {
-		return { kind: "effort", effort: legacyEffort.trim() }
 	}
 	return undefined
 }

@@ -25,28 +25,6 @@ import {
 	xaiDefaultModelId,
 } from "../api"
 
-const ProviderKeyMap: Partial<Record<ApiProvider, string>> = {
-	openrouter: "OpenRouterModelId",
-	cline: "ClineModelId",
-	openai: "OpenAiModelId",
-	ollama: "OllamaModelId",
-	lmstudio: "LmStudioModelId",
-	litellm: "LiteLlmModelId",
-	requesty: "RequestyModelId",
-	together: "TogetherModelId",
-	fireworks: "FireworksModelId",
-	sapaicore: "SapAiCoreModelId",
-	groq: "GroqModelId",
-	baseten: "BasetenModelId",
-	huggingface: "HuggingFaceModelId",
-	"huawei-cloud-maas": "HuaweiCloudMaasModelId",
-	oca: "OcaModelId",
-	aihubmix: "AihubmixModelId",
-	hicap: "HicapModelId",
-	nousResearch: "NousResearchModelId",
-	"vercel-ai-gateway": "VercelAiGatewayModelId",
-} as const
-
 export const ProviderToApiKeyMap: Partial<Record<ApiProvider, keyof Secrets | (keyof Secrets)[]>> = {
 	cline: ["clineApiKey", "clineAccountId"],
 	anthropic: "apiKey",
@@ -116,22 +94,6 @@ const ProviderDefaultModelMap: Partial<Record<ApiProvider, string>> = {
 	deepseek: deepSeekDefaultModelId,
 	wandb: wandbDefaultModelId,
 } as const
-
-/**
- * Get the provider-specific model ID key for a given provider and mode.
- * Different providers store their model IDs in different state keys.
- */
-export function getProviderModelIdKey(provider: ApiProvider, mode: "act" | "plan"): string {
-	const keySuffix = ProviderKeyMap[provider]
-	if (keySuffix) {
-		// E.g. actModeOpenAiModelId, planModeOpenAiModelId, etc.
-		return `${mode}Mode${keySuffix}`
-	}
-
-	// For providers without a specific key (anthropic, gemini, bedrock, etc.),
-	// they use the generic actModeApiModelId/planModeApiModelId
-	return `${mode}ModeApiModelId`
-}
 
 export function getProviderDefaultModelId(provider: ApiProvider): string | null {
 	return ProviderDefaultModelMap[provider] || ""

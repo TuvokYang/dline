@@ -36,7 +36,6 @@ vi.mock("@/services/grpc-client", () => {
 			refreshOpenRouterModelsRpc: neverResolving,
 			refreshHicapModels: modelMocks.refreshHicap,
 			refreshLiteLlmModelsRpc: neverResolving,
-			refreshBasetenModelsRpc: neverResolving,
 			refreshVercelAiGatewayModelsRpc: neverResolving,
 			refreshClineModelsRpc: neverResolving,
 		},

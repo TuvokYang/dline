@@ -11,7 +11,6 @@ import { resolveMaxParallelSubagents, resolveMaxParallelToolCalls } from "@share
 import { Empty } from "@shared/proto/dline/common"
 import { PlanActMode, McpDisplayMode as ProtoMcpDisplayMode, UpdateSettingsRequest } from "@shared/proto/dline/state"
 import type { SettingsKey } from "@shared/storage/state-keys"
-import { OpenaiReasoningEffort } from "@shared/storage/types"
 import { TelemetrySetting } from "@shared/TelemetrySetting"
 import { isLocalSearchEngineId } from "@shared/web-search"
 import { ClineEnv } from "@/config"
@@ -99,12 +98,6 @@ export async function updateSettings(controller: Controller, request: UpdateSett
 				actModeProfile: getStringConfigField(protoApiConfiguration, "actModeProfile"),
 				imageProfileId: getStringConfigField(protoApiConfiguration, "imageProfileId"),
 				imageProfile: getStringConfigField(protoApiConfiguration, "imageProfile"),
-				planModeReasoningEffort: getConfigField(protoApiConfiguration, "planModeReasoningEffort") as
-					| OpenaiReasoningEffort
-					| undefined,
-				actModeReasoningEffort: getConfigField(protoApiConfiguration, "actModeReasoningEffort") as
-					| OpenaiReasoningEffort
-					| undefined,
 			}
 
 			controller.stateManager.setApiConfiguration(convertedApiConfigurationFromProto)

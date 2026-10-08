@@ -1,6 +1,6 @@
 import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { ApiProfile } from "@shared/proto/dline/profile"
-import { OpenaiReasoningEffort, UpdateTaskSettingsRequest } from "@shared/proto/dline/state"
+import { UpdateTaskSettingsRequest } from "@shared/proto/dline/state"
 import { createTaskCapabilityToggles, serializeTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Controller } from "../.."
@@ -149,16 +149,6 @@ describe("updateTaskSettings Task runtime overrides", () => {
 			UpdateTaskSettingsRequest.create({ taskId: "task-1", settings: { actModeProfile: "Other profile" } }),
 		)
 		expect(profileFixture.rebuildApiHandler).toHaveBeenCalledWith({ abortPrevious: true })
-
-		const legacyEffortFixture = createController()
-		await updateTaskSettings(
-			legacyEffortFixture.controller,
-			UpdateTaskSettingsRequest.create({
-				taskId: "task-1",
-				settings: { actModeReasoningEffort: OpenaiReasoningEffort.HIGH },
-			}),
-		)
-		expect(legacyEffortFixture.rebuildApiHandler).toHaveBeenCalledWith({ abortPrevious: true })
 	})
 
 	it("rejects a positive budget below the effective minimum before any durable mutation", async () => {
@@ -248,7 +238,6 @@ describe("updateTaskSettings Task runtime overrides", () => {
 			"planModeReasoningOverrideKind",
 			"planModeReasoningOverrideEffort",
 			"planModeThinkingBudgetTokens",
-			"planModeReasoningEffort",
 			"planModeServiceTierOverrideKind",
 			"planModeServiceTierOverrideTier",
 		]) {

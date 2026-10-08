@@ -731,13 +731,9 @@ export async function getApiProfiles(controller: Controller, _request: EmptyRequ
 	} catch (err: any) {
 		if (err.code === "ENOENT") {
 			const initializeStartedAt = performance.now()
-			// Try migration from providers first, then fall back to legacy config
-			let profiles = await migrateFromProviders(controller)
+			// Profiles are created from the providers configured before profiles existed.
+			const profiles = await migrateFromProviders(controller)
 			Logger.log(`[getApiProfiles] migrateFromProviders returned ${profiles.length} profiles`)
-			if (profiles.length === 0) {
-				profiles = initializeFromApiConfig(controller)
-				Logger.log(`[getApiProfiles] initializeFromApiConfig returned ${profiles.length} profiles`)
-			}
 			await hydrateModelInfoFromRegistry(profiles)
 			await saveProfilesToFile(filePath, profiles)
 			// Flush any pending globalState writes before ensureProfileDefaults
@@ -909,38 +905,6 @@ async function migrateFromProviders(controller: Controller): Promise<ApiProfile[
 		Logger.log(`[migrateFromProviders] Migrated API key for ${providerName}`)
 	}
 
-	return profiles
-}
-
-/**
- * @deprecated Use ensureProfileDefaults and profile-driven model selection instead.
- * Reads legacy apiConfiguration via StateManager to create initial ApiProfiles.
- */
-function initializeFromApiConfig(controller: Controller): ApiProfile[] {
-	const config = controller.stateManager.getApiConfiguration() as Record<string, unknown> | undefined
-	if (!config) return []
-	const profiles: ApiProfile[] = []
-	const modes = [
-		{ mode: "plan", prefix: "planMode" },
-		{ mode: "act", prefix: "actMode" },
-	]
-	for (const { mode, prefix } of modes) {
-		const provider = config[`${prefix}ApiProvider`]
-		const modelId = config[`${prefix}ApiModelId`]
-		if (provider && modelId) {
-			profiles.push(
-				ApiProfile.create({
-					id: crypto.randomUUID(),
-					name: `${provider}:${modelId}`,
-					provider: String(provider),
-					apiKey: "",
-					modelId: String(modelId),
-					usedFor: [mode],
-					enabled: true,
-				}),
-			)
-		}
-	}
 	return profiles
 }
 

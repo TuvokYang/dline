@@ -22,10 +22,6 @@ import { fromProtobufModels } from "@shared/proto-conversions/models/typeConvers
 import type React from "react"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import {
-	basetenDefaultModelId,
-	basetenModels,
-	groqDefaultModelId,
-	groqModels,
 	type ModelInfo,
 	openRouterDefaultModelId,
 	openRouterDefaultModelInfo,
@@ -185,9 +181,6 @@ export interface ExtensionStateContextType extends ExtensionState {
 	liteLlmModels: Record<string, ModelInfo>
 	openAiModels: string[]
 	requestyModels: Record<string, ModelInfo>
-	groqModels: Record<string, ModelInfo>
-	basetenModels: Record<string, ModelInfo>
-	huggingFaceModels: Record<string, ModelInfo>
 	mcpServers: McpServer[]
 	mcpMarketplaceCatalog: McpMarketplaceCatalog
 	totalTasksSize: number | null
@@ -210,9 +203,6 @@ export interface ExtensionStateContextType extends ExtensionState {
 	setShouldShowAnnouncement: (value: boolean) => void
 	setMcpServers: (value: McpServer[]) => void
 	setRequestyModels: (value: Record<string, ModelInfo>) => void
-	setGroqModels: (value: Record<string, ModelInfo>) => void
-	setBasetenModels: (value: Record<string, ModelInfo>) => void
-	setHuggingFaceModels: (value: Record<string, ModelInfo>) => void
 	setGlobalClineRulesToggles: (toggles: Record<string, boolean>) => void
 	setLocalClineRulesToggles: (toggles: Record<string, boolean>) => void
 	setLocalCursorRulesToggles: (toggles: Record<string, boolean>) => void
@@ -896,14 +886,6 @@ export const ExtensionStateContextProvider: React.FC<{
 	const [requestyModels, setRequestyModels] = useState<Record<string, ModelInfo>>({
 		[requestyDefaultModelId]: requestyDefaultModelInfo,
 	})
-	const [groqModelsState, setGroqModels] = useState<Record<string, ModelInfo>>({
-		[groqDefaultModelId]: groqModels[groqDefaultModelId],
-	})
-	const [basetenModelsState, setBasetenModels] = useState<Record<string, ModelInfo>>({
-		...basetenModels,
-		[basetenDefaultModelId]: basetenModels[basetenDefaultModelId],
-	})
-	const [huggingFaceModels, setHuggingFaceModels] = useState<Record<string, ModelInfo>>({})
 	const [mcpServers, setMcpServers] = useState<McpServer[]>([])
 	const [mcpMarketplaceCatalog, setMcpMarketplaceCatalog] = useState<McpMarketplaceCatalog>({ items: [] })
 
@@ -1383,17 +1365,6 @@ export const ExtensionStateContextProvider: React.FC<{
 			.catch((error: Error) => console.error("Failed to refresh LiteLLM models:", error))
 	}, [])
 
-	const refreshBasetenModels = useCallback(() => {
-		ModelsServiceClient.refreshBasetenModelsRpc(EmptyRequest.create({}))
-			.then((response) => {
-				setBasetenModels({
-					[basetenDefaultModelId]: basetenModels[basetenDefaultModelId],
-					...fromProtobufModels(response.models),
-				})
-			})
-			.catch((err) => console.error("Failed to refresh Baseten models:", err))
-	}, [])
-
 	const refreshVercelAiGatewayModels = useCallback(() => {
 		ModelsServiceClient.refreshVercelAiGatewayModelsRpc(EmptyRequest.create({}))
 			.then((response: OpenRouterCompatibleModelInfo) => {
@@ -1420,16 +1391,12 @@ export const ExtensionStateContextProvider: React.FC<{
 			refreshVercelAiGatewayModels()
 		}
 		if (state.apiConfiguration?.planModeProfile) {
-			refreshBasetenModels()
-		}
-		if (state.apiConfiguration?.planModeProfile) {
 			refreshLiteLlmModels()
 		}
 	}, [
 		refreshOpenRouterModels,
 		refreshVercelAiGatewayModels,
 		state?.apiConfiguration?.planModeProfile,
-		refreshBasetenModels,
 		refreshLiteLlmModels,
 		openRouterModels,
 		vercelAiGatewayModels,
@@ -1508,9 +1475,6 @@ export const ExtensionStateContextProvider: React.FC<{
 			liteLlmModels,
 			openAiModels,
 			requestyModels,
-			groqModels: groqModelsState,
-			basetenModels: basetenModelsState,
-			huggingFaceModels,
 			mcpServers,
 			mcpMarketplaceCatalog,
 			totalTasksSize,
@@ -1558,9 +1522,6 @@ export const ExtensionStateContextProvider: React.FC<{
 			setShouldShowAnnouncement,
 			setMcpServers,
 			setRequestyModels,
-			setGroqModels,
-			setBasetenModels,
-			setHuggingFaceModels,
 			setMcpMarketplaceCatalog,
 			setShowMcp,
 			closeMcpView,
@@ -1596,9 +1557,6 @@ export const ExtensionStateContextProvider: React.FC<{
 			liteLlmModels,
 			openAiModels,
 			requestyModels,
-			groqModelsState,
-			basetenModelsState,
-			huggingFaceModels,
 			mcpServers,
 			mcpMarketplaceCatalog,
 			totalTasksSize,

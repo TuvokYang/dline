@@ -7,7 +7,6 @@ import { Settings } from "@shared/storage/state-keys"
 import { DEFAULT_BROWSER_SETTINGS } from "../../../shared/BrowserSettings"
 import { Controller } from ".."
 import { inputSemanticCatalogService } from "../slash/input-semantic-catalog"
-import { normalizeOpenaiReasoningEffort } from "../state/reasoningEffort"
 
 /**
  * Creates a new task with the given text and optional images
@@ -54,12 +53,6 @@ export async function newTask(controller: Controller, request: NewTaskRequest): 
 					disableToolUse: request.taskSettings.browserSettings.disableToolUse,
 					customArgs: request.taskSettings.browserSettings.customArgs,
 				},
-			}),
-			...(request.taskSettings?.planModeReasoningEffort !== undefined && {
-				planModeReasoningEffort: normalizeOpenaiReasoningEffort(request.taskSettings.planModeReasoningEffort),
-			}),
-			...(request.taskSettings?.actModeReasoningEffort !== undefined && {
-				actModeReasoningEffort: normalizeOpenaiReasoningEffort(request.taskSettings.actModeReasoningEffort),
 			}),
 			...(request.taskSettings?.mode !== undefined && {
 				mode: convertPlanActMode(request.taskSettings.mode),

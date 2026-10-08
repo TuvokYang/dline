@@ -7,7 +7,10 @@ import { createStorageContext } from "@shared/storage/storage-context"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
+import { readTaskSettingsFromStorage, writeTaskSettingsToStorage } from "../disk"
+import { REMOVED_SETTINGS_KEYS } from "../removed-settings-keys"
 import { StateManager } from "../StateManager"
+import { SettingsRepository } from "../settings/SettingsRepository"
 
 function getTaskStateCache(sm: StateManager): Map<string, any> {
 	return (sm as any).taskStateCache
@@ -427,17 +430,70 @@ describe("StateManager — Per-Task Settings Isolation", () => {
 			const storageCtx = createStorageContext({ clineDir: tempDir })
 			storageCtx.taskHistoryPath.should.equal(path.join(tempDir, "tasks", "taskHistory.jsonl"))
 		})
+	})
 
-		it("should filter deprecated keys and migrate valid keys", async () => {
-			// Deprecated keys should NOT appear in settings store after migration
-			const storageCtx = createStorageContext({ clineDir: tempDir })
-			const deprecatedVal = storageCtx.settings.get("planModeOcaModelId")
-			;(deprecatedVal === undefined).should.be.true()
+	describe("removed settings keys", () => {
+		const settingsFile = () => path.join(tempDir, "data", "settings", "settings.json")
 
-			// Valid settings keys should be migrated and readable
-			sm.setGlobalState("preferredLanguage" as any, "zh-CN" as any)
+		async function seedSettings(values: Record<string, unknown>): Promise<void> {
+			await StateManager.resetForTest()
+			await createStorageContext({ clineDir: tempDir }).settings.setBatch(values)
+		}
+
+		it("removes them from settings.json on startup and leaves a clean document untouched", async () => {
+			await seedSettings({ planModeOcaModelId: "oca-model", actModeReasoningEffort: "high", preferredLanguage: "zh-CN" })
+
+			const restarted = await StateManager.initialize(createStorageContext({ clineDir: tempDir }))
+
+			const persisted = createStorageContext({ clineDir: tempDir }).settings
+			expect(persisted.get("planModeOcaModelId")).toBeUndefined()
+			expect(persisted.get("actModeReasoningEffort")).toBeUndefined()
+			expect(persisted.get("preferredLanguage")).toBe("zh-CN")
+			expect(restarted.getGlobalSettingsKey("preferredLanguage")).toBe("zh-CN")
+
+			const cleaned = await fs.readFile(settingsFile(), "utf8")
+			await StateManager.resetForTest()
+			await StateManager.initialize(createStorageContext({ clineDir: tempDir }))
+			expect(await fs.readFile(settingsFile(), "utf8")).toBe(cleaned)
+		})
+
+		it("does not block startup when the cleanup write fails, and retries on the next launch", async () => {
+			await seedSettings({ planModeOpenRouterModelId: "openrouter/model" })
+			const original = SettingsRepository.prototype.mutateResolved
+			const spy = vi.spyOn(SettingsRepository.prototype, "mutateResolved").mockImplementation(function (
+				this: SettingsRepository,
+				resolvePatch,
+				sourceId,
+			) {
+				const patch = resolvePatch(this.readSnapshot().values)
+				if (Object.keys(patch).some((key) => REMOVED_SETTINGS_KEYS.includes(key))) {
+					return Promise.reject(new Error("disk full"))
+				}
+				return original.call(this, resolvePatch, sourceId)
+			})
+
+			await StateManager.initialize(createStorageContext({ clineDir: tempDir }))
+			expect(createStorageContext({ clineDir: tempDir }).settings.get("planModeOpenRouterModelId")).toBe("openrouter/model")
+
+			spy.mockRestore()
+			await StateManager.resetForTest()
+			await StateManager.initialize(createStorageContext({ clineDir: tempDir }))
+			expect(createStorageContext({ clineDir: tempDir }).settings.get("planModeOpenRouterModelId")).toBeUndefined()
+		})
+
+		it("strips them from a task settings document when the task loads", async () => {
+			await writeTaskSettingsToStorage("task-legacy", {
+				actModeReasoningEffort: "high",
+				actModeReasoningOverrideKind: "inherit",
+			} as Record<string, unknown>)
+
+			await sm.loadTaskSettings("task-legacy")
+			expect(getTaskStateCache(sm).get("task-legacy")).not.toHaveProperty("actModeReasoningEffort")
 			await sm.flushPendingState()
-			sm.getGlobalSettingsKey("preferredLanguage" as any)?.should.equal("zh-CN")
+
+			const persisted = (await readTaskSettingsFromStorage("task-legacy")) as Record<string, unknown>
+			expect(persisted).not.toHaveProperty("actModeReasoningEffort")
+			expect(persisted.actModeReasoningOverrideKind).toBe("inherit")
 		})
 	})
 })

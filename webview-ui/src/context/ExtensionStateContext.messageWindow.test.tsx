@@ -48,7 +48,6 @@ vi.mock("../services/grpc-client", () => {
 			refreshOpenRouterModelsRpc: vi.fn(async () => ({ models: {} })),
 			refreshHicapModels: vi.fn(async () => ({ models: {} })),
 			refreshLiteLlmModelsRpc: vi.fn(async () => ({ models: {} })),
-			refreshBasetenModelsRpc: vi.fn(async () => ({ models: {} })),
 			refreshVercelAiGatewayModelsRpc: vi.fn(async () => ({ models: {} })),
 			refreshClineModelsRpc: vi.fn(async () => ({ models: {} })),
 		},

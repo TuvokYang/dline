@@ -138,22 +138,15 @@ message Secrets {
 // in src/shared/storage/state-keys.ts and use the scripts/generate-state-proto.mjs
 // script to regenerate this list.
 message Settings {
+  reserved 47, 52, 53, 74, 75, 76, 87, 92, 93, 114, 115, 116;
+  reserved "plan_mode_reasoning_effort", "plan_mode_open_router_model_id", "plan_mode_open_router_model_info";
+  reserved "plan_mode_oca_model_id", "plan_mode_oca_model_info", "plan_mode_oca_reasoning_effort";
+  reserved "act_mode_reasoning_effort", "act_mode_open_router_model_id", "act_mode_open_router_model_info";
+  reserved "act_mode_oca_model_id", "act_mode_oca_model_info", "act_mode_oca_reasoning_effort";
   optional string lite_llm_base_url = 1;
   optional string requesty_base_url = 23;
   optional int32 request_timeout_ms = 32;
   optional string oca_mode = 41;
-  optional OpenaiReasoningEffort plan_mode_reasoning_effort = 47;
-  optional string plan_mode_open_router_model_id = 52;
-  optional OpenRouterModelInfo plan_mode_open_router_model_info = 53;
-  optional string plan_mode_oca_model_id = 74;
-  optional OcaModelInfo plan_mode_oca_model_info = 75;
-  optional string plan_mode_oca_reasoning_effort = 76;
-  optional OpenaiReasoningEffort act_mode_reasoning_effort = 87;
-  optional string act_mode_open_router_model_id = 92;
-  optional OpenRouterModelInfo act_mode_open_router_model_info = 93;
-  optional string act_mode_oca_model_id = 114;
-  optional OcaModelInfo act_mode_oca_model_info = 115;
-  optional string act_mode_oca_reasoning_effort = 116;
   optional AutoApprovalSettings auto_approval_settings = 128;
   optional string global_cline_rules_toggles = 129;
   optional string global_workflow_toggles = 130;

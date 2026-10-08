@@ -10,7 +10,6 @@ import {
 	LocalStateKeys,
 	SecretKeys,
 	Secrets,
-	type Settings,
 } from "@shared/storage/state-keys"
 import { Logger } from "@/shared/services/Logger"
 import { ClineMemento } from "@/shared/storage"
@@ -111,43 +110,6 @@ async function handleAsyncProperties(result: any): Promise<void> {
 	// taskHistory is loaded via TaskHistory instance in StateManager.initialize()
 	// and later refreshed by loadFullTaskHistoryAsync(). Set empty array as placeholder.
 	result.taskHistory = []
-}
-
-/**
- * Read settings from the settings.json-backed store.
- * Filters out deprecated and sentinel keys.
- * Used by StateManager.initialize() to populate the settings cache.
- */
-export function readSettingsFromStorage(store: ClineFileStorage): Partial<Settings> {
-	const DEPRECATED_SETTINGS = new Set([
-		"planModeOcaModelId",
-		"planModeOcaModelInfo",
-		"planModeOcaReasoningEffort",
-		"actModeOcaModelId",
-		"actModeOcaModelInfo",
-		"actModeOcaReasoningEffort",
-		"planModeOpenRouterModelId",
-		"planModeOpenRouterModelInfo",
-		"actModeOpenRouterModelId",
-		"actModeOpenRouterModelInfo",
-		"liteLlmBaseUrl",
-		"requestyBaseUrl",
-		"ocaMode",
-		"planModeReasoningEffort",
-		"actModeReasoningEffort",
-	])
-
-	const result: Record<string, any> = {}
-	const keys = store.keys()
-	for (const key of keys) {
-		if (key.startsWith("__")) continue // skip sentinel keys
-		if (DEPRECATED_SETTINGS.has(key)) continue
-		const value = store.get(key)
-		if (value !== undefined) {
-			result[key] = value
-		}
-	}
-	return result as Partial<Settings>
 }
 
 export async function resetWorkspaceState() {

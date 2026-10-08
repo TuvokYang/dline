@@ -3,7 +3,6 @@ import { PlanActMode, UpdateTaskSettingsRequest } from "@shared/proto/dline/stat
 import { Logger } from "@shared/services/Logger"
 import { Mode } from "@/shared/storage/types"
 import { Controller } from ".."
-import { normalizeOpenaiReasoningEffort } from "./reasoningEffort"
 import { prepareTaskRuntimeOverrideUpdate } from "./taskRuntimeOverrides"
 
 // Concurrency ceilings are global-only. They are carried on the shared Settings
@@ -54,17 +53,8 @@ export async function updateTaskSettings(controller: Controller, request: Update
 		const taskRuntimeOverrideUpdate = hasTaskRuntimeOverrideUpdate
 			? prepareTaskRuntimeOverrideUpdate(request.settings, controller.stateManager.getApiConfigurationForTask(taskId))
 			: { mutations: [], changed: false }
-		const {
-			autoApprovalSettings,
-			planModeReasoningEffort,
-			actModeReasoningEffort,
-			planModeProfile,
-			actModeProfile,
-			mode,
-			customPrompt,
-			browserSettings,
-			...simpleSettings
-		} = request.settings
+		const { autoApprovalSettings, planModeProfile, actModeProfile, mode, customPrompt, browserSettings, ...simpleSettings } =
+			request.settings
 
 		const filteredSettings = Object.fromEntries(
 			Object.entries(simpleSettings).filter(
@@ -105,22 +95,6 @@ export async function updateTaskSettings(controller: Controller, request: Update
 			controller.stateManager.setTaskSettings(taskId, "autoApprovalSettings", mergedSettings)
 		}
 
-		if (planModeReasoningEffort !== undefined) {
-			controller.stateManager.setTaskSettings(
-				taskId,
-				"planModeReasoningEffort",
-				normalizeOpenaiReasoningEffort(planModeReasoningEffort),
-			)
-		}
-
-		if (actModeReasoningEffort !== undefined) {
-			controller.stateManager.setTaskSettings(
-				taskId,
-				"actModeReasoningEffort",
-				normalizeOpenaiReasoningEffort(actModeReasoningEffort),
-			)
-		}
-
 		if (mode !== undefined) {
 			const converted = convertPlanActMode(mode)
 			const currentMode = controller.stateManager.getGlobalSettingsKey("mode")
@@ -147,14 +121,11 @@ export async function updateTaskSettings(controller: Controller, request: Update
 			controller.stateManager.setTaskSettings(taskId, "actModeProfile", actModeProfile)
 		}
 
-		const taskReasoningChanged =
-			planModeReasoningEffort !== undefined || actModeReasoningEffort !== undefined || taskRuntimeOverrideUpdate.changed
 		const taskModeChanged = mode !== undefined
-		const shouldRebuild = taskProfileChanged || taskReasoningChanged || taskModeChanged
+		const shouldRebuild = taskProfileChanged || taskRuntimeOverrideUpdate.changed || taskModeChanged
 		// A task-local runtime override applies to the next request; aborting the
 		// one in flight would turn it into an implicit retry that consumes the reply.
-		const abortCurrentRequest =
-			taskProfileChanged || taskModeChanged || planModeReasoningEffort !== undefined || actModeReasoningEffort !== undefined
+		const abortCurrentRequest = taskProfileChanged || taskModeChanged
 
 		if (browserSettings !== undefined) {
 			const currentSettings = controller.stateManager.getGlobalSettingsKey("browserSettings")
@@ -194,8 +165,6 @@ export async function updateTaskSettings(controller: Controller, request: Update
 				taskId,
 				planModeProfile: planModeProfile ?? "(unchanged)",
 				actModeProfile: actModeProfile ?? "(unchanged)",
-				planModeReasoningEffort: planModeReasoningEffort ?? "(unchanged)",
-				actModeReasoningEffort: actModeReasoningEffort ?? "(unchanged)",
 				taskRuntimeOverrideChanged: taskRuntimeOverrideUpdate.changed,
 				mode: mode ?? "(unchanged)",
 			})
