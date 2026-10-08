@@ -58,20 +58,22 @@ VS Code API 调用应当留在宿主和集成边界内。
 
 ## Task 运行时
 
-`src/core/task/index.ts` 中的 `Task` 是任务的主协调者，生命周期由以下组件分担：
+任务运行在基于日志（journal）的内核之上。Controller 为每个打开的任务持有一个 `session/ActiveTaskSession.ts`，所有生命周期变化都经过以下组件：
 
 | 源码 | 职责 |
 |---|---|
-| `runtime/TaskRuntime.ts` | 串行分发任务事件 |
-| `runtime/TaskReducer.ts`、`runtime/TaskEvent.ts`、`TaskPhase.ts` | 定义合法的生命周期转换 |
-| `TaskController.ts` | 协调块阶段、审批归属和保留的展示状态 |
-| `MessageChannel.ts` | 串行投递消息 |
-| `message-state.ts` | 管理 API 与界面消息状态 |
-| `interaction/InteractionCoordinator.ts` | 管理审批、重试、恢复、问答、计划和完成等用户交互 |
-| `TaskSnapshotPersistence.ts` | 合并快照写入，用于崩溃恢复 |
+| `shell/Task.ts`、`shell/TaskShell.ts` | 任务的对外接口：打开、启动、提交输入、响应、取消和终止 |
+| `kernel/transition.ts` | 纯转换函数，按任务状态校验每个事件 |
+| `kernel/hydrate.ts`、`kernel/recovery.ts` | 任务重新打开时从 `state.json` 与日志重建状态，并恢复被中断的工作 |
+| `runtime/TaskRuntime.ts` | 串行处理事件，经提交管线持久化，并从持久化的 outbox 分发命令 |
+| `stores/` | 每次提交背后的日志、载荷与状态存储 |
+| `composition/` | 组装会话的运行时、存储与执行器，包括导入旧版本对话的升级流程 |
+| `session/ActiveTaskSession.ts` | 管理一个打开任务的资源，以及本窗口是否可以写入它 |
+| `session/TaskInteractionOwner.ts` | 管理审批、重试、恢复、问答、计划和完成等用户交互 |
+| `MessageChannel.ts`、`message-state.ts` | 串行投递消息并投影聊天行 |
 | `activity/TaskActivityStore.ts` | 管理聊天和 Activities 视图中的任务活动 |
 
-以上路径都相对于 `src/core/task/`。新的生命周期转换应当表达为事件，经 reducer 校验，再投影到界面并按需持久化；不要在 `TaskRuntime` 旁边另建布尔状态机。
+以上路径都相对于 `src/core/task/`。新的生命周期转换应当表达为事件，经内核转换函数校验，再投影到界面；不要在 `TaskRuntime` 旁边另建布尔状态机。只有持有任务锁的窗口可以写入任务：在 `TaskShell.open()` 授予写入所有权之前，运行时以 `read_only` 拒绝所有事件，Controller 以只读方式显示该任务。
 
 ## 工具
 

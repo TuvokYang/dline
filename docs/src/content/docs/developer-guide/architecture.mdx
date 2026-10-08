@@ -58,20 +58,22 @@ RPC between the extension and the Webview uses ProtoBus request/response envelop
 
 ## Task runtime
 
-`Task` in `src/core/task/index.ts` is the primary task coordinator. Its lifecycle is split across these components:
+A task runs on a journaled kernel. The Controller holds one `session/ActiveTaskSession.ts` per open task, and every lifecycle change flows through these components:
 
 | Source | Responsibility |
 |---|---|
-| `runtime/TaskRuntime.ts` | Dispatches task events serially |
-| `runtime/TaskReducer.ts`, `runtime/TaskEvent.ts`, `TaskPhase.ts` | Define the valid lifecycle transitions |
-| `TaskController.ts` | Coordinates block phases, approval ownership, and retained presentation state |
-| `MessageChannel.ts` | Delivers messages serially |
-| `message-state.ts` | Manages API and UI message state |
-| `interaction/InteractionCoordinator.ts` | Owns user interactions such as approval, retry, resume, Q&A, plan, and completion |
-| `TaskSnapshotPersistence.ts` | Coalesces snapshot writes used for crash recovery |
+| `shell/Task.ts`, `shell/TaskShell.ts` | The task's public surface: open, start, submit input, respond, cancel, and terminate |
+| `kernel/transition.ts` | The pure transition function that validates every event against the task state |
+| `kernel/hydrate.ts`, `kernel/recovery.ts` | Rebuild the state from `state.json` and the journal when a task reopens, and recover interrupted work |
+| `runtime/TaskRuntime.ts` | Serializes events, commits them through the commit pipeline, and dispatches commands from the durable outbox |
+| `stores/` | The journal, payload, and state stores behind each commit |
+| `composition/` | Assembles a session's runtime, stores, and executors, including the upgrade import of an earlier version's conversation |
+| `session/ActiveTaskSession.ts` | Owns one open task's resources and whether this window may write it |
+| `session/TaskInteractionOwner.ts` | Owns user interactions such as approval, retry, resume, Q&A, plan, and completion |
+| `MessageChannel.ts`, `message-state.ts` | Deliver messages serially and project the chat rows |
 | `activity/TaskActivityStore.ts` | Owns the task activities shown in chat and the Activities view |
 
-All paths are relative to `src/core/task/`. Express a new lifecycle transition as an event, validate it in the reducer, then project it to the UI and persist it when needed; do not add a parallel boolean lifecycle next to `TaskRuntime`.
+All paths are relative to `src/core/task/`. Express a new lifecycle transition as an event, validate it in the kernel transition, then project it to the UI; do not add a parallel boolean lifecycle next to `TaskRuntime`. Only the window holding the task lock may write a task: until `TaskShell.open()` grants write ownership, the runtime refuses every event with a `read_only` rejection, and the Controller shows the task read-only.
 
 ## Tools
 
