@@ -238,3 +238,22 @@ export const Overview = () => {
 		</div>
 	)
 }
+
+const LONG_DIALOG_LINES = Array.from({ length: 40 }, (_, index) => `line-${index + 1}`)
+
+/** An open dialog whose body is taller than a short sidebar, used by the overflow regression. */
+export const LongContent = () => (
+	<Dialog open>
+		<DialogContent>
+			<DialogHeader>
+				<DialogTitle>Long dialog</DialogTitle>
+				<DialogDescription>The body is taller than the webview.</DialogDescription>
+			</DialogHeader>
+			{LONG_DIALOG_LINES.map((line) => (
+				<p data-testid="long-dialog-line" key={line}>
+					{line}: a dialog body that keeps going past the bottom of a short sidebar.
+				</p>
+			))}
+		</DialogContent>
+	</Dialog>
+)

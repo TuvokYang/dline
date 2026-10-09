@@ -28,11 +28,9 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ open, onClose, ver
 
 	return (
 		<Dialog onOpenChange={(isOpen) => !isOpen && onClose()} open={open}>
-			{/* Bound the dialog to the webview and scroll only the body, so the title and the
-			    close button stay on screen in a short or narrow sidebar. */}
-			<DialogContent
-				aria-describedby="whats-new-description"
-				className="pt-5 px-5 pb-4 gap-0 flex flex-col max-h-[calc(100vh-2rem)]">
+			{/* DialogContent is already bounded to the webview; scrolling only the body keeps the
+			    title pinned while the announcement scrolls in a short or narrow sidebar. */}
+			<DialogContent aria-describedby="whats-new-description" className="pt-5 px-5 pb-4 gap-0 flex flex-col">
 				<DialogTitle
 					className="shrink-0 leading-normal tracking-normal mb-3 pr-6"
 					style={{ color: "var(--vscode-editor-foreground)" }}>
