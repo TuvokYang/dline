@@ -4,5 +4,5 @@ import { webviewProjectConfig } from "./vitest.project"
 
 export default defineConfig({
 	...webviewProjectConfig,
-	plugins: [react()],
+	plugins: [...webviewProjectConfig.plugins, react()],
 })

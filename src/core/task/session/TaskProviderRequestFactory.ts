@@ -81,8 +81,8 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
 
 	/** The conversation the draft was composed with. */
 	private conversationOf(draft: ProviderDraftEnvelope) {
-		if (draft.journalThrough) return this.options.conversation.messages(draft.journalThrough)
-		return this.options.conversation.messages()
+		if (draft.journalThrough) return this.options.conversation.providerMessages(draft.journalThrough)
+		return this.options.conversation.providerMessages()
 	}
 
 	/**

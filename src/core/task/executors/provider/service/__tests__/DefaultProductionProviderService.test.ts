@@ -801,7 +801,10 @@ describe("DefaultProductionProviderService request retry", () => {
 	})
 
 	it("rebuilds the pairing exactly once when the provider rejects it", async () => {
-		const pairing = httpError(400, "No tool output found for function call call_1.")
+		const pairing = httpError(
+			400,
+			"messages.188: `tool_use` ids were found without `tool_result` blocks immediately after: call_1. Each `tool_use` block must have a corresponding `tool_result` block in the next message.",
+		)
 		const harness = scripted([{ error: pairing }, { chunks: [text("paired now")] }])
 
 		const chunks = await collect(harness.service)

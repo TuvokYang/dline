@@ -202,6 +202,7 @@ export class TaskSessionCompositionService {
 		// share it, and each journal payload is rendered once rather than once per round.
 		const journalMessages = new ProviderJournalMessageMaterializer(persistence.payloads)
 		const conversationView = new JournalConversationView(persistence.ports.journal, journalMessages)
+		const providerConversation = { messages: () => conversationView.providerMessages() }
 		const conversationRewind = new JournalConversationRewind(persistence.ports.journal, conversationView)
 		const checkpointRepository = new CanonicalCheckpointRepository({
 			taskId: options.taskId,
@@ -610,7 +611,7 @@ export class TaskSessionCompositionService {
 		const contextWindowGuard = new FinalContextWindowGuard({
 			taskId: options.taskId,
 			frames: providerRequests,
-			conversation: conversationView,
+			conversation: providerConversation,
 			requestPressures: () => collectContextWindowRequestPressures(messages.clineMessages),
 			triggerOptions: readCompactTriggerOptions,
 			compaction,
@@ -678,7 +679,7 @@ export class TaskSessionCompositionService {
 				new MessageStateCompactionLanding(compactionCards),
 				new ContextUsageCompactionLanding({
 					frames: providerRequests,
-					conversation: conversationView,
+					conversation: providerConversation,
 					usage: contextUsage,
 				}),
 			]),

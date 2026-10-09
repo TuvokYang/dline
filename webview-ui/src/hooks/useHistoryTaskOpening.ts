@@ -6,7 +6,7 @@ import { getTaskViewKey } from "@/services/task-messages"
 export type HistoryTaskTarget = Pick<HistoryItem, "id" | "task">
 export type HistoryTaskOpening = {
 	target: HistoryTaskTarget
-	status: "loading" | "failed"
+	status: "loading"
 	previousKey?: string
 	requestId: number
 	rpcCompleted?: boolean
@@ -18,11 +18,13 @@ export function useHistoryTaskOpening({
 	hasMessageSurface,
 	requestOpen,
 	navigateToChat,
+	onOpenFailed,
 }: {
 	taskViewState?: TaskViewState
 	hasMessageSurface: boolean
 	requestOpen: (id: string) => Promise<unknown>
 	navigateToChat: () => void
+	onOpenFailed: (target: HistoryTaskTarget, error: unknown) => void
 }) {
 	const [historyTaskOpening, setHistoryTaskOpening] = useState<HistoryTaskOpening>()
 	const generation = useRef(0)
@@ -44,18 +46,14 @@ export function useHistoryTaskOpening({
 							opening?.requestId === requestId ? { ...opening, rpcCompleted: true } : opening,
 						)
 					},
-					() => {
+					(error) => {
 						if (generation.current !== requestId) return
-						setHistoryTaskOpening((opening) => ({
-							target,
-							status: "failed",
-							previousKey: opening?.previousKey,
-							requestId,
-						}))
+						setHistoryTaskOpening(undefined)
+						onOpenFailed(target, error)
 					},
 				)
 		},
-		[navigateToChat, requestOpen],
+		[navigateToChat, onOpenFailed, requestOpen],
 	)
 
 	const dismissHistoryTaskOpening = useCallback(() => {

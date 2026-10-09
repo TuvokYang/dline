@@ -111,11 +111,20 @@ const HistoryViewItem = ({
 			/>
 
 			<div
+				aria-label="Open Task"
 				className="flex flex-col gap-2 py-2 pl-2 pr-3 relative flex-grow min-w-0"
 				onClick={(e) => {
 					e.stopPropagation()
 					handleShowTask()
-				}}>
+				}}
+				onKeyDown={(e) => {
+					if (e.key !== "Enter" && e.key !== " ") return
+					e.preventDefault()
+					handleShowTask()
+				}}
+				role="button"
+				tabIndex={0}
+				title="Open Task">
 				<div className="flex items-center gap-2">
 					<div className="line-clamp-1 overflow-hidden break-words whitespace-pre-wrap flex-1 min-w-0">
 						<span className="ph-no-capture">{item.task}</span>

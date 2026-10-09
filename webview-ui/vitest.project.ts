@@ -1,10 +1,14 @@
 import { resolve } from "node:path"
 import type { UserConfig } from "vitest/config"
+import { whatsNewPlugin } from "./vite-whats-new"
 
 export const webviewProjectConfig = {
 	root: __dirname,
+	plugins: [whatsNewPlugin()],
 	define: {
 		__PLATFORM__: JSON.stringify("vscode"),
+		__DLINE_REPOSITORY_URL__: JSON.stringify("https://github.com/TuvokYang/Dline"),
+		__DLINE_SOURCE_REF__: JSON.stringify("test-ref"),
 	},
 	test: {
 		name: "webview",

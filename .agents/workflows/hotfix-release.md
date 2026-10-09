@@ -44,6 +44,7 @@ Load `dev-version-bump` on `dev` or a recommended independent release-preparatio
 
 - `CHANGELOG.md`;
 - `docs/changelog/CHANGELOG_en.md`;
+- `docs/whats-new/WHATS_NEW.md` and `docs/whats-new/WHATS_NEW_en.md`, with a new `## X.Y.Z` section that carries forward the current minor's highlights and adds the hotfix;
 - `package.json`;
 - `package-lock.json`.
 

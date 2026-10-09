@@ -15,6 +15,12 @@ describe("compaction retryability", () => {
 		new Error("HTTP 400: No tool output found for function call fc_1."),
 		new Error("API Error 400: Messages with role 'tool' must be a response to a preceding message with 'tool_calls'."),
 		Object.assign(new Error("tool_result has no corresponding tool_use"), { statusCode: 400 }),
+		Object.assign(
+			new Error(
+				"messages.188: `tool_use` ids were found without `tool_result` blocks immediately after: toolu_1. Each `tool_use` block must have a corresponding `tool_result` block in the next message.",
+			),
+			{ status: 400 },
+		),
 	])("classifies an explicit tool-pairing 400 as deterministic", (error) => {
 		expect(isDeterministicToolPairingError(error)).toBe(true)
 		expect(isRetryableCompactionError(error)).toBe(false)

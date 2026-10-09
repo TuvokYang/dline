@@ -142,6 +142,7 @@ import { composeBackgroundHandoffAvailability } from "./task/BackgroundHandoffAv
 import { describeDialogState, describeDispatch } from "./task/describeInteractionDispatch"
 import { dispatchInteraction } from "./task/dispatchInteraction"
 import { HistoryDisplaySession } from "./task/HistoryDisplaySession"
+import { inspectHistoryTaskLock, projectHistoryTaskLockStatus } from "./task/HistoryTaskLockPreflight"
 import { measureHistoryReadinessStage } from "./task/history-readiness-telemetry"
 import { prepareHistoryTaskForDisplay } from "./task/history-task-readiness"
 import { ControllerTaskSessionHostFactory } from "./task/host/ControllerTaskSessionHostFactory"
@@ -1475,12 +1476,11 @@ export class Controller {
 		// window would add their latency to the first visible frame. Neither
 		// promise rejects: a lock that cannot be read counts as unlocked, and
 		// unreadable settings fall back to the global Profile.
-		const durableFacts = Promise.all([
-			this.stateManager.loadTaskSettings(session.taskId).catch((error: unknown) => {
-				Logger.warn(`[History] Failed to load task settings for ${session.taskId}:`, error)
-			}),
-			this.isTaskLockedByAnotherInstance(session.taskId),
-		])
+		const taskSettings = this.stateManager.loadTaskSettings(session.taskId).catch((error: unknown) => {
+			Logger.warn(`[History] Failed to load task settings for ${session.taskId}:`, error)
+		})
+		const lockStatus = inspectHistoryTaskLock(this.lockService, session.taskId)
+		const durableFacts = Promise.all([taskSettings, lockStatus])
 
 		const isCurrent = () => this.historyDisplaySession === session
 		const publishReadyHistory = async () => {
@@ -1502,7 +1502,9 @@ export class Controller {
 		const remainsCurrent = await prepareHistoryTaskForDisplay({
 			taskId: session.taskId,
 			displayHistory: async () => {
-				const ownerless = durableFacts.then(([, lockedByAnotherInstance]) => !lockedByAnotherInstance)
+				const [, lock] = await durableFacts
+				if (lock.foreignLock) session.markLocked(lock.foreignLock)
+				const ownerless = Promise.resolve(lock.ownerless)
 				// Only the owning surface may rewrite task settings. Resolving the
 				// Profile and flushing the binding cost hundreds of milliseconds,
 				// so the first frame does not wait for them: the header is redrawn
@@ -1525,7 +1527,6 @@ export class Controller {
 				}
 				const [owned] = await Promise.all([ownerless, session.load({ ownerless, onMaintained })])
 				if (this.historyDisplaySession !== session || owned) return
-				session.markLocked()
 				// The surface no longer owns the lock a previous task held, so an
 				// unlock must take the task over rather than find it already owned.
 				this.taskLockAcquired = false
@@ -3516,28 +3517,6 @@ export class Controller {
 	}
 
 	/**
-	 * Report whether a live lock on this task belongs to a different instance.
-	 *
-	 * A stale lock is not ownership: `checkTaskLock` releases it and reports the
-	 * task as unlocked, so this instance may take it over. A lock this instance
-	 * already holds is also not a conflict.
-	 *
-	 * @param taskId Task whose lock file should be inspected.
-	 * @returns True when another live instance owns the task.
-	 */
-	private async isTaskLockedByAnotherInstance(taskId: string): Promise<boolean> {
-		try {
-			const status = await this.lockService.checkTaskLock(taskId)
-			return status.isLocked && status.lockedBy !== this.lockService.instanceAddress
-		} catch (error) {
-			// Failing open here would silently drop the read-only guard, so treat an
-			// unreadable lock as unlocked only after reporting it.
-			Logger.error(`[Lock] Failed to read lock state for task ${taskId}:`, error)
-			return false
-		}
-	}
-
-	/**
 	 * Computes the current task lock status for the frontend.
 	 * Returns undefined when the lock is acquired (normal operation)
 	 * or when there is no active task.
@@ -3545,9 +3524,8 @@ export class Controller {
 	 * @returns TaskLockStatus if in read-only mode, undefined otherwise
 	 */
 	private getTaskLockStatus(): TaskLockStatus | undefined {
-		if (this.historyDisplaySession?.isLocked()) {
-			return { isLocked: true, lockedBy: "", lockedAt: 0, isStale: false } as TaskLockStatus
-		}
+		const historyLock = projectHistoryTaskLockStatus(this.historyDisplaySession)
+		if (historyLock) return historyLock
 		if (!this.task?.taskId) {
 			return undefined
 		}

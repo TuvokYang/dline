@@ -86,4 +86,22 @@ describe("UseMcpToolHandler auto-approval", () => {
 
 		expect(config.services.mcpHub.callTool).toHaveBeenCalledWith("docs", "search", {}, "ulid-1")
 	})
+
+	it("does not expose internal MCP failures to the chat or provider", async () => {
+		const config = createConfig(true, true)
+		config.services.mcpHub.callTool = vi.fn(async () => {
+			throw new Error("INTERNAL_XML_AND_TRANSPORT_DETAILS")
+		})
+		const handler = new UseMcpToolHandler()
+
+		const result = await handler.execute(config, block)
+
+		expect(result).not.toContain("INTERNAL_XML_AND_TRANSPORT_DETAILS")
+		expect(result).toContain("Check the MCP server logs for details")
+		expect(config.callbacks.say).toHaveBeenCalledWith(
+			"mcp_server_response",
+			"MCP tool 'search' on server 'docs' failed. Check the MCP server logs for details.",
+		)
+		expect(config.taskState.consecutiveMistakeCount).toBe(1)
+	})
 })

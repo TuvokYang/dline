@@ -169,7 +169,7 @@ describe("HistoryDisplaySession", () => {
 		await fs.rm(dlineDocsDir, { recursive: true, force: true })
 	})
 
-	it("projects one synthetic Resume interaction when no canonical snapshot exists", async () => {
+	it("projects one synthetic Resume interaction without adding a blank chat row", async () => {
 		const taskId = "history-synthetic-resume"
 		await seedMessages(taskId, [{ ts: 10, type: "say", say: "task", text: "Original task" }])
 		const session = new HistoryDisplaySession(createHistoryItem(taskId))
@@ -188,10 +188,7 @@ describe("HistoryDisplaySession", () => {
 				stateRevision: 0,
 				anchorVerified: true,
 			})
-			expect(session.getMessages()).toEqual([
-				expect.objectContaining({ ts: 10, type: "say", say: "task" }),
-				expect.objectContaining({ type: "ask", ask: "resume_task", partial: false }),
-			])
+			expect(session.getMessages()).toEqual([expect.objectContaining({ ts: 10, type: "say", say: "task" })])
 			expect(session.accepts(requestFor(session))).toBe(true)
 			expect(session.accepts(requestFor(session, { stateRevision: 1 }))).toBe(false)
 			expect(session.accepts(requestFor(session, { interactionId: "stale-interaction" }))).toBe(false)
@@ -322,7 +319,7 @@ describe("HistoryDisplaySession", () => {
 			const interaction = session.getViewState().activeInteraction
 			expect(interaction).toMatchObject({ kind: "resume", status: "awaiting", anchorVerified: true })
 			expect(interaction?.interactionId).not.toBe(legacyId)
-			expect(session.getMessages().at(-1)).toMatchObject({ type: "ask", ask: "resume_task" })
+			expect(session.getMessages().at(-1)).toMatchObject({ type: "ask", ask: "tool" })
 			expect(session.accepts(requestFor(session))).toBe(true)
 			expect(session.accepts(requestFor(session, { interactionId: legacyId, actionId: "approve" }))).toBe(false)
 		} finally {
@@ -669,10 +666,7 @@ describe("HistoryDisplaySession", () => {
 				kind: "resume",
 				status: "awaiting",
 			})
-			expect(session.getMessages()).toEqual([
-				partialAnchor,
-				expect.objectContaining({ type: "ask", ask: "resume_task", partial: false }),
-			])
+			expect(session.getMessages()).toEqual([partialAnchor])
 			expect(session.accepts(requestFor(session))).toBe(true)
 			expect(session.accepts(requestFor(session, { interactionId }))).toBe(false)
 		} finally {
@@ -752,7 +746,7 @@ describe("HistoryDisplaySession", () => {
 				kind: "resume",
 				status: "awaiting",
 			})
-			expect(session.getMessages().at(-1)).toMatchObject({ type: "ask", ask: "resume_task", partial: false })
+			expect(session.getMessages().at(-1)).toMatchObject({ type: "say", text: "later-249" })
 			expect(session.accepts(requestFor(session))).toBe(true)
 		} finally {
 			await session.dispose()
@@ -778,17 +772,17 @@ describe("HistoryDisplaySession", () => {
 		try {
 			await session.load()
 
-			expect(session.getMessageCount()).toBe(261)
-			expect(session.getMessages()).toHaveLength(201)
+			expect(session.getMessageCount()).toBe(260)
+			expect(session.getMessages()).toHaveLength(200)
 			expect(session.getTaskTitleMessage()).toMatchObject({ ts: 1, say: "task" })
 			await expect(session.fetchMessages(0, 2)).resolves.toMatchObject({
 				startIndex: 0,
-				totalCount: 261,
+				totalCount: 260,
 				messages: [{ ts: 1 }, { ts: 2 }],
 			})
 			await expect(session.fetchMessages(-1, 2)).resolves.toMatchObject({
-				startIndex: 259,
-				messages: [{ ts: 260 }, { type: "ask", ask: "resume_task" }],
+				startIndex: 258,
+				messages: [{ ts: 259 }, { ts: 260 }],
 			})
 		} finally {
 			await session.dispose()

@@ -90,9 +90,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		currentTaskItem,
 		taskTitleMessage,
 		historyTaskOpening,
-		openHistoryTask,
 		dismissHistoryTaskOpening,
-		navigateToHistory,
 	} = useExtensionState()
 	const [contentTab, setContentTab] = useState<TaskContentTab>("chat")
 	const [focusedActivityId, setFocusedActivityId] = useState<string>()
@@ -608,10 +606,10 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	)
 	const taskInputEnabled = Boolean(taskViewState?.input.enabled && taskViewState.input.enterAction && interactionSynchronized)
 	// The queue is drained at a turn end or a tool round, and only a task that
-	// is still working reaches either. Retaining a send after that would hide it
-	// in a queue nothing will come back for. A compaction in progress holds new
-	// input until its summary lands, so a send then stays in the composer too.
-	const queueCanDeliver = taskViewState && !contextCompactionActive ? taskPhaseStillDelivers(taskViewState.phase) : false
+	// is still working reaches either. Compaction blocks compose, not intake:
+	// input submitted while it runs must enter the durable queue and is admitted
+	// after the summary lands instead of being trapped in the composer.
+	const queueCanDeliver = taskViewState ? taskPhaseStillDelivers(taskViewState.phase) : false
 	const canRenderCompactTask = Boolean(taskViewState?.taskId)
 	const canRenderForceTruncate = taskViewState?.forceTruncateAvailable === true
 	useEffect(() => {
@@ -721,14 +719,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 	if (historyTaskOpening) {
 		return (
 			<ChatLayout isHidden={isHidden}>
-				<HistoryTaskOpeningView
-					onBack={() => {
-						dismissHistoryTaskOpening()
-						navigateToHistory()
-					}}
-					onRetry={() => openHistoryTask(historyTaskOpening.target)}
-					opening={historyTaskOpening}
-				/>
+				<HistoryTaskOpeningView opening={historyTaskOpening} />
 			</ChatLayout>
 		)
 	}

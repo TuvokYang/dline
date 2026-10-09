@@ -4,6 +4,7 @@ import { formatResponse } from "@core/prompts/responses"
 import { UiAskUseMcpServer } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { truncateContent } from "@/shared/content-limits"
+import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
@@ -160,7 +161,11 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 			// Return formatted result (only pass images if model supports them)
 			return formatResponse.toolResult(toolResultText, supportsImages ? toolResultImages : undefined)
 		} catch (error) {
-			return `Error executing MCP tool: ${(error as Error)?.message}`
+			config.taskState.consecutiveMistakeCount++
+			Logger.error(`[UseMcpToolHandler] ${server_name}/${tool_name} failed`, error instanceof Error ? error : undefined)
+			const safeMessage = `MCP tool '${tool_name}' on server '${server_name}' failed. Check the MCP server logs for details.`
+			await config.callbacks.say("mcp_server_response", safeMessage)
+			return formatResponse.toolError(safeMessage)
 		}
 	}
 }

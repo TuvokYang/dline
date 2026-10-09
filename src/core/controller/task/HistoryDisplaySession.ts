@@ -6,6 +6,7 @@ import type { QueuedInputEntry } from "@shared/InputQueue"
 import type { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { Logger } from "@shared/services/Logger"
 import type { TaskActivityRecord } from "@shared/task-activity"
+import type { TaskLockStatus as CoreTaskLockStatus } from "@/core/locks/TaskLockService"
 import { InstanceDatabase, instanceDatabaseExists, openInstanceStorage, resolveInstanceLayout } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
@@ -98,6 +99,7 @@ export class HistoryDisplaySession {
 	private inputQueue: QueuedInputEntry[] = []
 	private viewState: TaskViewState
 	private locked = false
+	private lockStatus?: CoreTaskLockStatus
 	private loaded = false
 	private disposed = false
 	/** Activity hydration and orphan recovery, which run after the first message window is out. */
@@ -244,17 +246,23 @@ export class HistoryDisplaySession {
 		return this.locked ? readOnlyTaskView(this.viewState) : this.viewState
 	}
 
-	markLocked(): void {
+	markLocked(status: CoreTaskLockStatus): void {
 		this.locked = true
+		this.lockStatus = status
 	}
 
 	/** Restore the writable projection once this window owns the task lock. */
 	markUnlocked(): void {
 		this.locked = false
+		this.lockStatus = undefined
 	}
 
 	isLocked(): boolean {
 		return this.locked
+	}
+
+	getLockStatus(): CoreTaskLockStatus | undefined {
+		return this.lockStatus
 	}
 
 	accepts(request: DispatchInteractionRequest): boolean {
@@ -491,9 +499,10 @@ export class HistoryDisplaySession {
 		durableMessages: UiMessage[],
 	): { messages: UiMessage[]; view: TaskViewState; syntheticMessage?: UiMessage } {
 		if (!display.synthetic) return { messages: durableMessages, view: this.projectView(display.state, durableMessages) }
-		const syntheticMessage = historyDisplayAnchorRow(display.synthetic, durableMessages)
-		const messages = [...durableMessages, syntheticMessage]
-		return { messages, view: this.projectView(display.state, messages), syntheticMessage }
+		const syntheticAnchor = historyDisplayAnchorRow(display.synthetic, durableMessages)
+		// The synthetic row is interaction evidence, not conversation history. It
+		// must not enter paging or rendering, where its empty text becomes a blank row.
+		return { messages: durableMessages, view: this.projectView(display.state, [...durableMessages, syntheticAnchor]) }
 	}
 
 	private projectView(state: TaskState, messages: readonly UiMessage[]): TaskViewState {

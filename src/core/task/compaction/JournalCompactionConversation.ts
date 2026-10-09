@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { ContextManager } from "@core/context/context-management/ContextManager"
 import { USER_CONTENT_TAGS } from "@shared/messages/constants"
 import {
 	type ClineImageContentBlock,
@@ -72,6 +73,47 @@ interface ConversationItem {
 	readonly message: ClineStorageMessage
 	/** Set on the reply a landed summary replays after itself; that reply is still the user's open input. */
 	readonly continuation?: CompactionContinuation
+}
+
+/**
+ * Repair imported legacy messages before deciding what is settled.
+ *
+ * Legacy JSONL may contain a tool call followed only by environment or background
+ * context because the old runtime repaired that pairing when it built a request
+ * rather than when it persisted history. Treating the first such call as an open
+ * turn protects the entire remaining conversation from compaction. The provider
+ * repair is index preserving except for a synthetic user message inserted between
+ * consecutive assistants; that synthetic message belongs to the call's journal
+ * entry and is never considered user-authored input.
+ */
+function repairConversationItems(items: readonly ConversationItem[]): ConversationItem[] {
+	const ranges = items.map(({ entry }) => [entry.watermark.seq, entry.watermark.seq] as const)
+	const repaired = new ContextManager().repairProviderMessagesWithRanges(
+		items.map(({ message }) => structuredClone(message)),
+		[...ranges],
+	)
+	const originalsBySeq = new Map<number, ConversationItem[]>()
+	for (const item of items) {
+		const sequence = originalsBySeq.get(item.entry.watermark.seq) ?? []
+		sequence.push(item)
+		originalsBySeq.set(item.entry.watermark.seq, sequence)
+	}
+
+	const projected: ConversationItem[] = []
+	for (let index = 0; index < repaired.messages.length; index++) {
+		const message = repaired.messages[index]
+		const range = repaired.canonicalRanges[index]
+		if (range) {
+			const original = originalsBySeq.get(range[0])?.shift()
+			if (!original) throw new Error(`CompactionPairingRangeMissing:${range[0]}`)
+			projected.push({ ...original, message })
+			continue
+		}
+		const previous = projected.at(-1)
+		if (!previous) throw new Error("CompactionPairingRepairMissingAnchor")
+		projected.push({ entry: previous.entry, kind: "pairing_repair", message })
+	}
+	return projected
 }
 
 /** Tool id to tool name, so a result can be told apart by the call it answers. */
@@ -657,6 +699,6 @@ export class JournalCompactionConversation implements CompactionConversationPort
 			items.push({ entry, kind, message })
 			for (const reply of carried) items.push({ entry, kind, message: reply, ...(continuation ? { continuation } : {}) })
 		}
-		return items
+		return repairConversationItems(items)
 	}
 }
