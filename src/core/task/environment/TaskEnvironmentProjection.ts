@@ -12,6 +12,7 @@ import {
 } from "@core/task/background/BackgroundContextInjector"
 import { detectAvailableCliTools } from "@core/task/cli-tool-detector"
 import { showContextUsage } from "@core/task/environment-context"
+import type { FocusChainInstructionPort } from "@core/task/focus-chain"
 import { formatFocusChainTaskProgressSection } from "@core/task/focus-chain/file-utils"
 import type { MessageStateHandler } from "@core/task/message-state"
 import type { DefaultToolHandlerState } from "@core/task/tools/state/ToolHandlerState"
@@ -57,6 +58,7 @@ export type EnvironmentHandlerState = Pick<
 interface EnvironmentConversation {
 	readonly messages: MessageStateHandler
 	readonly taskState: EnvironmentHandlerState
+	readonly focusChain?: FocusChainInstructionPort
 }
 
 interface EnvironmentExecution {
@@ -125,6 +127,7 @@ export class TaskEnvironmentProjection {
 		const host = await this.options.host.getHostVersion()
 		const effectiveApi = buildOptions.api ?? this.options.runtime.getApi()
 		const effectiveMode = buildOptions.mode ?? this.options.runtime.getMode()
+		if (buildOptions.preview !== true) this.options.conversation.focusChain?.beginRequest()
 		const platform = host.platform || "Unknown"
 		let details = `# Dline Version\n${host.clineVersion || "unknown"}`
 		details += this.formatWorkspaceRootsSection()
@@ -138,7 +141,7 @@ export class TaskEnvironmentProjection {
 		if (includeFileDetails) details += await this.fileDetailsSection()
 		details += this.contextUsageSection(effectiveApi)
 		details += this.modeSection(effectiveMode)
-		details += this.focusChainSection(effectiveApi, effectiveMode, requestPromptProfile)
+		details += this.focusChainSection(effectiveApi, effectiveMode, requestPromptProfile, buildOptions.preview === true)
 		return `<environment_details>\n${details.trim()}\n</environment_details>`
 	}
 
@@ -259,14 +262,21 @@ export class TaskEnvironmentProjection {
 			: "\n\n# Current Mode\nACT MODE"
 	}
 
-	private focusChainSection(api: ApiHandler, mode: Mode, requested?: PromptProfile): string {
+	private focusChainSection(api: ApiHandler, mode: Mode, requested?: PromptProfile, preview = false): string {
 		const settings = this.options.workspace.stateManager.getGlobalSettingsKey("focusChainSettings")
 		const profile =
 			requested ??
 			resolvePromptProfile({ modelId: api.getModel().id, contextWindow: api.getModel().info.capabilities?.contextWindow })
 		const taskState = this.options.conversation.taskState
-		if (profile !== PromptProfile.Standard || !settings?.enabled || !taskState.currentFocusChainChecklist) return ""
-		return `\n\n${formatFocusChainTaskProgressSection(taskState.currentFocusChainChecklist, taskState.currentInProgressItemIndex)}`
+		if (profile !== PromptProfile.Standard || !settings?.enabled) return ""
+		const checklist = taskState.currentFocusChainChecklist
+			? formatFocusChainTaskProgressSection(taskState.currentFocusChainChecklist, taskState.currentInProgressItemIndex)
+			: ""
+		const reminder = preview ? "" : (this.options.conversation.focusChain?.project({ mode }) ?? "")
+		return [checklist, reminder.trim()]
+			.filter(Boolean)
+			.map((section) => `\n\n${section}`)
+			.join("")
 	}
 }
 

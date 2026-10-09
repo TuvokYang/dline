@@ -64,6 +64,14 @@ export interface AcceptedCompactionPass {
 	hasMoreTurns: boolean
 }
 
+export interface CompactionResumeCheckpoint {
+	readonly sourceHistoryHash: string
+	readonly coveredTurnCount: number
+	readonly passIndex: number
+	readonly cumulativeSummary: string
+	readonly nextPassSummaryCarryLimitTokens?: number
+}
+
 /** Start rolling fitting only when canonical history contains a complete logical turn. */
 export function tryStartTargetWindowFitting(
 	index: LogicalTurnIndex,
@@ -101,6 +109,38 @@ export function startTargetWindowFitting(
 		passEndTurnIndex: -1,
 		passStartMessageIndex: 0,
 		passEndMessageIndex: -1,
+		passPlanned: false,
+	}
+}
+
+/** Rebuild an accepted rolling-compaction boundary against the current immutable source. */
+export function restoreTargetWindowFitting(
+	state: TargetWindowFittingState,
+	checkpoint: CompactionResumeCheckpoint,
+): TargetWindowFittingState | undefined {
+	const cumulativeSummary = checkpoint.cumulativeSummary.trim()
+	if (
+		checkpoint.sourceHistoryHash !== state.sourceHistoryHash ||
+		!cumulativeSummary ||
+		checkpoint.coveredTurnCount <= 0 ||
+		checkpoint.coveredTurnCount >= state.turns.length ||
+		checkpoint.passIndex <= 0
+	) {
+		return undefined
+	}
+	const coveredTurnCount = checkpoint.coveredTurnCount
+	const nextMessageIndex = state.turns[coveredTurnCount]?.startMessageIndex ?? state.protectedStartMessageIndex
+	return {
+		...state,
+		passIndex: checkpoint.passIndex,
+		coveredTurnCount,
+		passStartTurnIndex: coveredTurnCount,
+		passEndTurnIndex: coveredTurnCount - 1,
+		passStartMessageIndex: nextMessageIndex,
+		passEndMessageIndex: nextMessageIndex - 1,
+		summaryBaselineHash: hashSummaryBaseline(cumulativeSummary),
+		cumulativeSummary,
+		nextPassSummaryCarryLimitTokens: checkpoint.nextPassSummaryCarryLimitTokens,
 		passPlanned: false,
 	}
 }

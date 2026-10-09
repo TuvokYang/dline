@@ -1,5 +1,9 @@
-import type { CompactionPassIdentity } from "@core/context/context-management/target-window-fitting"
+import { createCompactionSourceSnapshot } from "@core/context/context-management/compaction-source-snapshot"
+import { indexLogicalTurns } from "@core/context/context-management/logical-turns"
+import type { CompactionPassIdentity, TargetWindowFittingState } from "@core/context/context-management/target-window-fitting"
+import { startTargetWindowFitting } from "@core/context/context-management/target-window-fitting"
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
+import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it } from "vitest"
 import type { ContextCompactionSessionEvent } from "../../ContextCompactionSession"
 import type { MessageStateHandler } from "../../message-state"
@@ -39,6 +43,9 @@ function createMessageStub(conversationSize = 4) {
 		get clineMessages() {
 			return [...rows.values()]
 		},
+		get durableClineMessages() {
+			return [...rows.entries()].filter(([ts]) => durable.has(ts)).map(([, row]) => row)
+		},
 		upsertTransientClineMessage(message: UiMessage) {
 			rows.set(message.ts, message)
 			return message
@@ -62,6 +69,18 @@ function createMessageStub(conversationSize = 4) {
 		},
 	}
 	return { handler: handler as unknown as MessageStateHandler, rows, durable }
+}
+
+function fitting(operationId: string, suffix = ""): TargetWindowFittingState {
+	const history: ClineStorageMessage[] = [
+		{ role: "user", content: [{ type: "text", text: `<task>task${suffix}</task>` }] },
+		{ role: "assistant", content: [{ type: "text", text: `answer-a${suffix}` }] },
+		{ role: "user", content: [{ type: "text", text: `turn-b${suffix}` }] },
+		{ role: "assistant", content: [{ type: "text", text: `answer-b${suffix}` }] },
+		{ role: "user", content: [{ type: "text", text: `turn-c${suffix}` }] },
+	]
+	const snapshot = createCompactionSourceSnapshot(history)
+	return startTargetWindowFitting(indexLogicalTurns(snapshot.messages), operationId, snapshot)
 }
 
 function sequence(start = 500): () => number {
@@ -236,13 +255,60 @@ describe("MessageStateCompactionCards", () => {
 				attempt: attempt0,
 				content: "first",
 				projection: { status: "continue" },
+				state: {
+					sourceHistoryHash: "sha256:source",
+					coveredTurnCount: 3,
+					passIndex: 1,
+					nextPassSummaryCarryLimitTokens: 700,
+				} as TargetWindowFittingState,
 			}),
 		)
 		await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(1), attempt: attempt0 }))
 
 		expect(cards.withdraw(OPERATION)).toBe(true)
 		expect([...rows.keys()]).toEqual([501])
-		expect(cardOf(rows.get(501))).toMatchObject({ content: "first", compactionDurable: true })
+		expect(cardOf(rows.get(501))).toMatchObject({
+			content: "first",
+			compactionDurable: true,
+			compactionPassIndex: 0,
+			compactionSourceHistoryHash: "sha256:source",
+			compactionCoveredTurnCount: 3,
+			compactionResumePassIndex: 1,
+			compactionSummaryCarryLimitTokens: 700,
+		})
+	})
+
+	it("restores the latest durable accepted Pass only for the same source history", async () => {
+		const { handler } = createMessageStub()
+		const cards = new MessageStateCompactionCards(handler, sequence())
+		const initial = fitting("old-operation")
+
+		await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+		await cards.present(
+			OPERATION,
+			event({
+				kind: "pass_completed",
+				passIdentity: pass(0),
+				attempt: attempt0,
+				content: "durable summary",
+				projection: { status: "continue" },
+				state: {
+					...initial,
+					passIndex: 1,
+					coveredTurnCount: 1,
+					nextPassSummaryCarryLimitTokens: 640,
+				} satisfies TargetWindowFittingState,
+			}),
+		)
+
+		expect(cards.restore(fitting("new-operation"))).toMatchObject({
+			operationId: "new-operation",
+			passIndex: 1,
+			coveredTurnCount: 1,
+			cumulativeSummary: "durable summary",
+			nextPassSummaryCarryLimitTokens: 640,
+		})
+		expect(cards.restore(fitting("changed-operation", "-changed"))).toBeUndefined()
 	})
 
 	it("records the run on its last card's row and delivers the rewrite as a row", async () => {

@@ -39,6 +39,11 @@ export interface FocusChainProjectionOptions {
 	didSwitchFromPlan?: boolean
 }
 
+export interface FocusChainInstructionPort {
+	beginRequest(): void
+	project(options?: FocusChainProjectionOptions): string
+}
+
 export interface FocusChainState
 	extends Pick<
 		ToolConversationState,
@@ -289,6 +294,18 @@ export class FocusChainManager {
 			return FocusChainPrompts.recommended
 		}
 		return FocusChainPrompts.apiRequestCount(this.taskState.apiRequestCount)
+	}
+
+	/** Count one real provider request; previews never call this boundary. */
+	public beginRequest(): void {
+		if (this.currentSettings().enabled !== true) return
+		this.taskState.apiRequestCount += 1
+		this.taskState.apiRequestsSinceLastTodoUpdate += 1
+	}
+
+	/** Project reminder text only when the configured cadence or another trigger requires it. */
+	public projectInstructions(options: FocusChainProjectionOptions = {}): string {
+		return this.shouldIncludeFocusChainInstructions(options) ? this.generateFocusChainInstructions(options) : ""
 	}
 
 	/**
@@ -637,13 +654,14 @@ export class FocusChainManager {
 	 * @returns boolean - True if instructions should be included in AI prompt, false otherwise
 	 */
 	public shouldIncludeFocusChainInstructions(options: FocusChainProjectionOptions = {}): boolean {
+		const settings = this.currentSettings()
+		if (settings.enabled !== true) return false
 		// Include when switching from Plan > Act
 		const justSwitchedFromPlanMode = options.didSwitchFromPlan || this.taskState.didRespondToPlanAskBySwitchingMode
 		// Include when user had edited the list manually
 		const userUpdatedList = this.taskState.todoListWasUpdatedByUser
 		// Include when reaching the reminder interval, configured by settings
-		const reachedReminderInterval =
-			this.taskState.apiRequestsSinceLastTodoUpdate >= this.focusChainSettings.remindClineInterval
+		const reachedReminderInterval = this.taskState.apiRequestsSinceLastTodoUpdate >= Math.max(1, settings.remindClineInterval)
 		// Include on first API request if list does not exist
 		const isFirstApiRequest = this.taskState.apiRequestCount === 1 && !this.taskState.currentFocusChainChecklist
 
@@ -653,6 +671,10 @@ export class FocusChainManager {
 			reachedReminderInterval || justSwitchedFromPlanMode || userUpdatedList || isFirstApiRequest || hasPendingRejection
 
 		return shouldInclude
+	}
+
+	private currentSettings(): FocusChainSettings {
+		return this.stateManager.getGlobalSettingsKey("focusChainSettings") ?? this.focusChainSettings
 	}
 
 	/**

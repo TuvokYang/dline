@@ -612,6 +612,14 @@ export interface UiSayTool {
 	compactionOperationId?: string
 	/** Zero-based immutable Pass index within the compaction operation. */
 	compactionPassIndex?: number
+	/** Immutable source-history identity used to resume an interrupted rolling compaction. */
+	compactionSourceHistoryHash?: string
+	/** Complete logical turns already represented by this card's cumulative summary. */
+	compactionCoveredTurnCount?: number
+	/** Number of accepted rolling Passes represented by the resumable checkpoint. */
+	compactionResumePassIndex?: number
+	/** Carry ceiling calibrated for the next Pass, retained across task reopen. */
+	compactionSummaryCarryLimitTokens?: number
 	/** Zero-based Provider attempt index currently owning this card update. */
 	compactionAttemptIndex?: number
 	/** Request-scoped authorization attempt identity for stale-event rejection. */

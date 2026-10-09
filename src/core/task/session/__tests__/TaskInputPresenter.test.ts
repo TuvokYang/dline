@@ -97,4 +97,28 @@ describe("TaskInputPresenter", () => {
 
 		expect(state.rows[0]).toMatchObject({ images: ["image-1"], files: ["file-1"] })
 	})
+
+	it("does not render an empty internal continuation used only to resume execution", async () => {
+		const state = messageState()
+		const ids = sequence()
+		const presenter = new TaskInputPresenter(
+			payloadStore({ text: "", admittedText: "", semanticInput: { schemaVersion: 1, nodes: [], resources: [] } as never }),
+			state.messages,
+			ids,
+		)
+
+		await present(presenter, "entry-1")
+
+		expect(state.rows).toEqual([])
+		expect(ids()).toBe(1001)
+	})
+
+	it("still renders an attachment-only submission", async () => {
+		const state = messageState()
+		const presenter = new TaskInputPresenter(payloadStore({ text: "", files: ["context.txt"] }), state.messages, sequence())
+
+		await present(presenter, "entry-1")
+
+		expect(state.rows).toEqual([expect.objectContaining({ say: "task", text: "", files: ["context.txt"] })])
+	})
 })

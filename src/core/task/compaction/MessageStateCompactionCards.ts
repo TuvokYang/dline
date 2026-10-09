@@ -1,3 +1,4 @@
+import { restoreTargetWindowFitting, type TargetWindowFittingState } from "@core/context/context-management/target-window-fitting"
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { ContextCompactionPresentation, type ContextCompactionPresentationSnapshot } from "../ContextCompactionPresentation"
 import type { ContextCompactionSessionEvent } from "../ContextCompactionSession"
@@ -21,6 +22,7 @@ export interface CompactionProgressPort {
 	 * republishing the task per chunk would cost more than the summary itself.
 	 */
 	present(operationId: string, event: ContextCompactionSessionEvent): Promise<boolean>
+	restore(state: TargetWindowFittingState): TargetWindowFittingState | undefined
 }
 
 /** Writes the card a run ends with: its landed summary, or why it failed. */
@@ -68,8 +70,44 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
 		})
 		if (snapshot.existingTs === undefined) this.presentation.bindMessageTs(snapshot, ts)
 		this.realtime?.publish(row)
-		if (isKeptStep(event)) await this.keep({ ...snapshot, existingTs: ts })
+		if (isKeptStep(event)) {
+			const state = event.kind === "pass_completed" || event.kind === "summary_refit_completed" ? event.state : undefined
+			await this.keep({ ...snapshot, existingTs: ts }, state)
+		}
 		return !isStreamedText(event)
+	}
+
+	restore(state: TargetWindowFittingState): TargetWindowFittingState | undefined {
+		for (let index = this.messages.durableClineMessages.length - 1; index >= 0; index -= 1) {
+			const message = this.messages.durableClineMessages[index]
+			if (message?.type !== "say" || message.say !== "tool" || !message.text) continue
+			let card: UiSayTool
+			try {
+				card = JSON.parse(message.text) as UiSayTool
+			} catch {
+				continue
+			}
+			if (
+				card.tool !== "summarizeTask" ||
+				card.compactionStatus !== "completed" ||
+				card.compactionDurable !== true ||
+				typeof card.content !== "string" ||
+				typeof card.compactionSourceHistoryHash !== "string" ||
+				typeof card.compactionCoveredTurnCount !== "number" ||
+				typeof card.compactionResumePassIndex !== "number"
+			) {
+				continue
+			}
+			const restored = restoreTargetWindowFitting(state, {
+				sourceHistoryHash: card.compactionSourceHistoryHash,
+				coveredTurnCount: card.compactionCoveredTurnCount,
+				passIndex: card.compactionResumePassIndex,
+				cumulativeSummary: card.content,
+				nextPassSummaryCarryLimitTokens: card.compactionSummaryCarryLimitTokens,
+			})
+			if (restored) return restored
+		}
+		return undefined
 	}
 
 	async record(operationId: string, card: UiSayTool): Promise<void> {
@@ -98,13 +136,29 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
 	}
 
 	/** Write a completed step the run builds on as a card of its own. */
-	private async keep(snapshot: ContextCompactionPresentationSnapshot & { existingTs: number }): Promise<void> {
+	private async keep(
+		snapshot: ContextCompactionPresentationSnapshot & { existingTs: number },
+		state: TargetWindowFittingState | undefined,
+	): Promise<void> {
 		await this.commitRow({
 			ts: snapshot.existingTs,
 			type: "say",
 			say: "tool",
 			partial: false,
-			text: JSON.stringify({ ...cardOf(snapshot), compactionDurable: true } satisfies UiSayTool),
+			text: JSON.stringify({
+				...cardOf(snapshot),
+				compactionDurable: true,
+				...(state
+					? {
+							compactionSourceHistoryHash: state.sourceHistoryHash,
+							compactionCoveredTurnCount: state.coveredTurnCount,
+							compactionResumePassIndex: state.passIndex,
+						}
+					: {}),
+				...(state?.nextPassSummaryCarryLimitTokens === undefined
+					? {}
+					: { compactionSummaryCarryLimitTokens: state.nextPassSummaryCarryLimitTokens }),
+			} satisfies UiSayTool),
 		})
 		this.presentation.markDurable(snapshot)
 	}

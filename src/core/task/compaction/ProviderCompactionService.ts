@@ -250,6 +250,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			)
 		return {
 			getPassInputCeiling: () => policy().passInputCeilingTokens,
+			restoreAcceptedPasses: async (_sessionInput, state) => this.options.progress?.restore(state),
 			// Only an indivisible turn may use the window up to the closure reserve.
 			getSingleTurnInputCeiling: () =>
 				Math.max(
