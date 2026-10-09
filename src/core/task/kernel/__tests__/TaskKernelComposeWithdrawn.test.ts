@@ -20,9 +20,10 @@ function composing() {
 }
 
 /**
- * A round withdrawn at its barrier - a `/compact` the user placed that did not
- * complete - must neither reach the provider nor open an error to retry: the
- * compaction domain already told the user, and the task waits for them.
+ * A round withdrawn at its barrier - a `/compact` the user stopped or whose
+ * review they withdrew - must neither reach the provider nor open an error to
+ * retry: the user made that decision, and the task waits for them. A `/compact`
+ * that failed is not withdrawn; it fails the round so Retry is offered.
  */
 describe("task kernel compose.withdrawn", () => {
 	it("settles the round without a provider request or an error dialog", () => {
@@ -33,7 +34,7 @@ describe("task kernel compose.withdrawn", () => {
 				generation: 0,
 				commandId: compose.command.commandId,
 				originRevision: compose.command.originRevision,
-				reason: "manual_compaction_failed",
+				reason: "manual_compaction_withdrawn",
 			}),
 		)
 
@@ -54,7 +55,7 @@ describe("task kernel compose.withdrawn", () => {
 				generation: 0,
 				commandId: compose.command.commandId,
 				originRevision: compose.command.originRevision,
-				reason: "manual_compaction_failed",
+				reason: "manual_compaction_withdrawn",
 			}),
 		)
 		const next = accepted(
@@ -71,7 +72,7 @@ describe("task kernel compose.withdrawn", () => {
 			generation: 0,
 			commandId: "compose:stale",
 			originRevision: compose.command.originRevision,
-			reason: "manual_compaction_failed",
+			reason: "manual_compaction_withdrawn",
 		})
 
 		expect(result).toMatchObject({ kind: "rejected", reason: "identity_mismatch" })

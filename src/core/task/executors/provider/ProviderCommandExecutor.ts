@@ -295,8 +295,8 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 					interrupted = chunk
 					continue
 				}
-				// Keep draining after a stop: the stream ends by itself once the provider
-				// notices, and only then does it report what the reply had already said.
+				// After a stop the service ends the stream without waiting for the
+				// provider; only its closing interrupted report still counts.
 				if (signal.aborted) continue
 				// Handled before anything else: it carries no content, so it is neither
 				// a first chunk ending a retry nor a reply that could be the final one.

@@ -36,14 +36,20 @@ function controller(interaction?: { interactionId: string; turnId: string }, wri
 }
 
 describe("askResponse legacy boundary", () => {
-	it("routes a legacy button press into the awaiting causal interaction", async () => {
+	it("routes a legacy button press into the awaiting causal interaction of this opening", async () => {
 		const { value, session } = controller({ interactionId: "interaction-1", turnId: "turn-1" })
 
 		await askResponse(value as never, AskResponseRequest.create({ responseType: "yesButtonClicked", text: "legacy" }))
 
+		// dispatchInteraction refuses a reply that names no opening.
+		expect(session.taskInstanceId).toBeTruthy()
 		expect(dispatchInteraction).toHaveBeenCalledWith(
 			value,
-			expect.objectContaining({ interactionId: "interaction-1", actionId: "approve" }),
+			expect.objectContaining({
+				interactionId: "interaction-1",
+				actionId: "approve",
+				taskInstanceId: session.taskInstanceId,
+			}),
 		)
 		expect(session.task.submitInput).not.toHaveBeenCalled()
 	})

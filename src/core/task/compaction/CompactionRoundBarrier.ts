@@ -27,6 +27,9 @@ export const AUTOMATIC_COMPACTION_FAILED = "automatic_compaction_failed"
 /** Why a round stopped after the automatic compaction it waited on was cancelled or abandoned. */
 export const AUTOMATIC_COMPACTION_WITHDRAWN = "automatic_compaction_withdrawn"
 
+/** Why a round stopped after the `/compact` it owed failed once its retries ran out. */
+export const MANUAL_COMPACTION_FAILED = "manual_compaction_failed"
+
 interface CompactionRunResult {
 	readonly outcome: CompactionRunOutcome
 	/** Why a run that ran failed, in the words its failure card used. */
@@ -90,6 +93,15 @@ export class CompactionRoundBarrier
 	private compactedThisRound = false
 	/** A `/compact` typed into a dialog reply, owed to the round that reply opens. */
 	private replied: { readonly command: LifecycleCommand; readonly generation: number } | undefined
+	/**
+	 * A `/compact` whose run failed, owed to the round the user retries.
+	 *
+	 * Its input was released when the round gave up, so nothing else would
+	 * carry the command - or the guidance typed with it - into that round.
+	 * Bound to the generation it failed in, so a stop retires it, and retired
+	 * when the user dismisses the failure instead of retrying it.
+	 */
+	private failedManual: { readonly command: LifecycleCommand; readonly generation: number } | undefined
 	/** Rounds waiting on a run, keyed by the run so a stale one only releases its own waiter. */
 	private readonly waiters = new Map<string, (result: CompactionRunResult) => void>()
 	/** The last run that ended before any round waited on it. */
@@ -125,6 +137,7 @@ export class CompactionRoundBarrier
 	 * the terminal event the kernel commits.
 	 */
 	committed(state: Readonly<TaskState>): void {
+		if (this.failedManual && dismissedFailure(state)) this.failedManual = undefined
 		for (const [compactionId, release] of [...this.waiters]) {
 			if (!isAbandoned(state, compactionId)) continue
 			this.waiters.delete(compactionId)
@@ -224,7 +237,9 @@ export class CompactionRoundBarrier
 		readonly lifecycle: readonly LifecycleCommand[]
 	}): Promise<RoundReadiness> {
 		const replied = this.takeReplied()
+		const retried = this.takeFailedManual()
 		const manual = mergeOwedCompactions([
+			...(retried ? [retried] : []),
 			...input.lifecycle.filter((command) => this.owns(command.commandId)),
 			...(replied ? [replied] : []),
 		])
@@ -239,9 +254,18 @@ export class CompactionRoundBarrier
 		if (!session) return ROUND_READY
 		if (manual) {
 			this.compactedThisRound = true
-			const { outcome } = await this.compact(session, "manual", input.signal, manual.premessage)
-			if (outcome === "completed") return ROUND_READY
-			return { kind: "withdrawn", reason: `manual_compaction_${outcome === "refused" ? "failed" : outcome}` }
+			const result = await this.compact(session, "manual", input.signal, manual.premessage)
+			if (result.outcome === "completed") return ROUND_READY
+			// A run that failed after its retries is an error the user can retry,
+			// as dev offers Retry and Start New Task; a stop, a withdrawn review or
+			// a refused schedule is not, and simply gives the round up.
+			if (result.outcome !== "failed") return { kind: "withdrawn", reason: `manual_compaction_${result.outcome}` }
+			this.failedManual = { command: manual, generation: this.options.state().generation }
+			return {
+				kind: "failed",
+				reason: MANUAL_COMPACTION_FAILED,
+				presentation: result.error ?? COMPACTION_FAILURE_MESSAGE,
+			}
 		}
 		if (!observed || this.options.enabled?.() === false) return ROUND_READY
 		if (!shouldCompactAutomatically(this.options.state(), observed)) return ROUND_READY
@@ -263,6 +287,13 @@ export class CompactionRoundBarrier
 		const replied = this.replied
 		this.replied = undefined
 		return replied && replied.generation === this.options.state().generation ? replied.command : undefined
+	}
+
+	/** A failed `/compact`, unless a stop since it failed retired it. */
+	private takeFailedManual(): LifecycleCommand | undefined {
+		const failed = this.failedManual
+		this.failedManual = undefined
+		return failed && failed.generation === this.options.state().generation ? failed.command : undefined
 	}
 
 	private async compact(
@@ -356,6 +387,16 @@ function isAbandoned(state: Readonly<TaskState>, compactionId: string): boolean 
 	if (!compaction) return false
 	if (compaction.compactionId !== compactionId) return true
 	return compaction.status !== "scheduled" && compaction.status !== "running"
+}
+
+/**
+ * Whether the user dismissed the failure that stopped the round.
+ *
+ * Dismissing hands the task back with one ordinary reply instead of retrying
+ * the round, so a `/compact` that failed in it is no longer owed to anything.
+ */
+function dismissedFailure(state: Readonly<TaskState>): boolean {
+	return state.flow.phase === "waiting" && state.flow.replyAdmission === "profile_recovery"
 }
 
 /** Resolve with the run's result, or as withdrawn as soon as the signal aborts. */

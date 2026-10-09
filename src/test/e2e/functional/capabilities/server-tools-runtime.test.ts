@@ -397,8 +397,30 @@ function expectIsolatedDirectories(dlineDir: string, dlineHomeDir: string, dline
 	expect(path.resolve(dlineDocsDir)).not.toBe(path.resolve(dlineDir))
 }
 
+/**
+ * Wait until the closed task has released its stores.
+ *
+ * Close returns the surface to Recent before the detached task is torn down;
+ * the task keeps flushing its journal and state until it removes its lock.
+ * A fixture written before then is overwritten by that final flush.
+ */
+async function waitForTaskRelease(taskDir: string): Promise<void> {
+	const lockFile = path.join(taskDir, ".lock")
+	await expect
+		.poll(
+			() =>
+				access(lockFile).then(
+					() => "held",
+					() => "released",
+				),
+			{ timeout: 30_000 },
+		)
+		.toBe("released")
+}
+
 async function seedLegacyHostedWebApproval(dlineDocsDir: string, taskId: string): Promise<void> {
 	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
+	await waitForTaskRelease(taskDir)
 	const layout = new InstanceLayout(taskDir)
 	const conversation = await readTaskConversation(dlineDocsDir, taskId)
 	const [request] = conversation

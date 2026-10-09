@@ -219,13 +219,13 @@ describe("ProductionComposeAdapter background results", () => {
 			journal,
 			readState: () => state,
 			compactionBarrier: {
-				settleBeforeRound: async () => ({ kind: "withdrawn", reason: "manual_compaction_failed" }),
+				settleBeforeRound: async () => ({ kind: "withdrawn", reason: "manual_compaction_withdrawn" }),
 			},
 		})
 
 		const result = await adapter.compose({ admittedEntryIds: ["entry-1"], signal: new AbortController().signal })
 
-		expect(result).toEqual({ withdrawn: { reason: "manual_compaction_failed" } })
+		expect(result).toEqual({ withdrawn: { reason: "manual_compaction_withdrawn" } })
 		expect(await journaledKinds(journal, store)).toEqual([])
 	})
 })

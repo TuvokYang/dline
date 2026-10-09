@@ -5,7 +5,12 @@ import { createInitialTaskState, type TaskState } from "../../kernel"
 import type { ActiveTaskSession } from "../../session/ActiveTaskSession"
 import { decodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { CompactionContextEnvelope, LifecycleCommand } from "../../stores/payload/TaskPayloadEnvelopes"
-import { AUTOMATIC_COMPACTION_WITHDRAWN, COMPACT_COMMAND_ID, CompactionRoundBarrier } from "../CompactionRoundBarrier"
+import {
+	AUTOMATIC_COMPACTION_WITHDRAWN,
+	COMPACT_COMMAND_ID,
+	CompactionRoundBarrier,
+	MANUAL_COMPACTION_FAILED,
+} from "../CompactionRoundBarrier"
 
 const TRIGGER = 100_000
 /** Far beyond any deadline the barrier could have had: dev waits on the run itself. */
@@ -411,16 +416,67 @@ describe("CompactionRoundBarrier - manual", () => {
 		expect(p.contexts[0].context).toMatchObject({ guidance: "keep A\n\nkeep B\n\nkeep the reply notes" })
 	})
 
-	it("withdraws the round when the compaction the user asked for fails", async () => {
+	it("fails the round retryably when the compaction the user asked for fails, and retries it", async () => {
 		const state = running()
 		const p = probe(() => state)
 		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
 
-		const waiting = barrier.settleBeforeRound(round([COMPACT]))
+		const waiting = barrier.settleBeforeRound(round([{ commandId: COMPACT_COMMAND_ID, premessage: "keep the notes" }]))
 		await drain()
 		await run(barrier, p.scheduled[0], "reject")
 
-		await expect(waiting).resolves.toEqual({ kind: "withdrawn", reason: "manual_compaction_failed" })
+		// A failure after retries is an error the user can retry, not a withdrawal.
+		await expect(waiting).resolves.toEqual({
+			kind: "failed",
+			reason: MANUAL_COMPACTION_FAILED,
+			presentation: expect.any(String),
+		})
+		// The input that carried `/compact` is released, so Retry opens a round
+		// with no command; the barrier still owes it the failed compaction.
+		const retried = barrier.settleBeforeRound(round([]))
+		await drain()
+		expect(p.scheduled).toHaveLength(2)
+		expect(p.contexts[1].context).toMatchObject({ guidance: "keep the notes" })
+		await run(barrier, p.scheduled[1])
+		await expect(retried).resolves.toEqual({ kind: "ready" })
+
+		// Once it completed, later rounds owe nothing.
+		await expect(barrier.settleBeforeRound(round([]))).resolves.toEqual({ kind: "ready" })
+		expect(p.scheduled).toHaveLength(2)
+	})
+
+	it("retires a failed /compact when the user stops the task instead of retrying it", async () => {
+		let state = running()
+		const p = probe(() => state)
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+		const waiting = barrier.settleBeforeRound(round([{ commandId: COMPACT_COMMAND_ID, premessage: "keep the notes" }]))
+		await drain()
+		await run(barrier, p.scheduled[0], "reject")
+		await expect(waiting).resolves.toMatchObject({ kind: "failed", reason: MANUAL_COMPACTION_FAILED })
+
+		// A stop advances the generation; the round resumed after it owes nothing.
+		state = running(state.generation + 1)
+		await expect(barrier.settleBeforeRound(round([]))).resolves.toEqual({ kind: "ready" })
+		expect(p.scheduled).toHaveLength(1)
+	})
+
+	it("retires a failed /compact when the user dismisses the failure", async () => {
+		let state = running()
+		const p = probe(() => state)
+		const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+		const waiting = barrier.settleBeforeRound(round([{ commandId: COMPACT_COMMAND_ID, premessage: "keep the notes" }]))
+		await drain()
+		await run(barrier, p.scheduled[0], "reject")
+		await expect(waiting).resolves.toMatchObject({ kind: "failed", reason: MANUAL_COMPACTION_FAILED })
+
+		// Dismissing hands the task back with one ordinary reply, not a retry.
+		state = { ...state, flow: { phase: "waiting", replyAdmission: "profile_recovery" } }
+		barrier.committed(state)
+		state = running()
+		await expect(barrier.settleBeforeRound(round([]))).resolves.toEqual({ kind: "ready" })
+		expect(p.scheduled).toHaveLength(1)
 	})
 
 	it("withdraws the round when the user withdraws the review", async () => {

@@ -61,7 +61,8 @@ export class OpenAiCodexHandler implements ApiHandler {
 	private client?: OpenAI
 	private responsesWs: UndiciWebSocket | undefined
 	private responsesWsCredentialContext: OpenAiCodexCredentialContext | undefined
-	private websocketRequestInFlight = false
+	/** The request holding the single websocket slot; each request releases only its own claim. */
+	private websocketRequestOwner?: AbortSignal
 	// Abort controller for cancelling ongoing requests
 	private abortController?: AbortController
 	private accountUsageController?: AbortController
@@ -334,12 +335,19 @@ export class OpenAiCodexHandler implements ApiHandler {
 		tools?: ChatCompletionTool[],
 		options?: ApiRequestOptions,
 	): ApiStream {
+		// One controller per request, published before the first await so a cancel during
+		// credential lookup still reaches it. A cancelled request can keep unwinding after a
+		// newer one starts, so every step below reads this signal, never the shared field.
+		const controller = new AbortController()
+		const { signal } = controller
+		this.abortController = controller
 		const releaseRuntime = this.beginRuntimeOperation()
 		try {
 			const model = this.getModel()
 
 			// Resolve token and account identity from one Profile-owned snapshot.
 			let credential = await openAiCodexOAuthManager.getCredentialContext(this.profileId)
+			signal.throwIfAborted()
 			if (!credential) {
 				throw new Error(
 					"Not authenticated with OpenAI Codex. Please sign in using the OpenAI Codex OAuth flow in settings.",
@@ -367,12 +375,13 @@ export class OpenAiCodexHandler implements ApiHandler {
 			// Make the request with retry on auth failure
 			for (let attempt = 0; attempt < 2; attempt++) {
 				try {
-					yield* this.executeRequest(requestBody, fallbackRequestBody, model, credential, usePreviousResponseId)
+					yield* this.executeRequest(requestBody, fallbackRequestBody, model, credential, usePreviousResponseId, signal)
 					return
 				} catch (error) {
-					if (this.isAuthenticationFailure(error)) {
+					if (!signal.aborted && this.isAuthenticationFailure(error)) {
 						if (attempt === 0) {
 							const refreshed = await openAiCodexOAuthManager.forceRefreshCredentialContext(this.profileId)
+							signal.throwIfAborted()
 							if (refreshed) {
 								credential = refreshed
 								continue
@@ -387,6 +396,7 @@ export class OpenAiCodexHandler implements ApiHandler {
 				}
 			}
 		} finally {
+			if (this.abortController === controller) this.abortController = undefined
 			releaseRuntime()
 		}
 	}
@@ -453,60 +463,62 @@ export class OpenAiCodexHandler implements ApiHandler {
 		model: { id: string; info: ModelInfo },
 		credential: OpenAiCodexCredentialContext,
 		useWebsocketMode: boolean,
+		signal: AbortSignal,
 	): ApiStream {
-		// Create AbortController for cancellation
-		this.abortController = new AbortController()
+		// Build Codex-specific headers from the same credential and task identity snapshot.
+		const codexHeaders = this.buildCodexHeaders(credential)
 
-		try {
-			// Build Codex-specific headers from the same credential and task identity snapshot.
-			const codexHeaders = this.buildCodexHeaders(credential)
-
-			if (useWebsocketMode) {
-				try {
-					yield* this.createResponseStreamWebsocket(requestBody, fallbackRequestBody, credential, codexHeaders, model)
-					return
-				} catch (error) {
-					if (isOutputLimitExceededError(error) || this.isAuthenticationFailure(error)) {
-						throw error
-					}
-					const diagnostic = this.toProviderError(error)
-					Logger.error(
-						`OpenAI Codex websocket mode failed; falling back to HTTP Responses API (status=${diagnostic.status ?? "unknown"}, code=${diagnostic.code ?? "unknown"}).`,
-					)
-					this.closeResponsesWebsocket()
-				}
-			}
-
-			// Try using OpenAI SDK first
+		if (useWebsocketMode) {
 			try {
-				const client =
-					this.client ??
-					new OpenAI({
-						apiKey: credential.accessToken,
-						baseURL: this.runtimeConfig.apiBaseUrl,
-						defaultHeaders: codexHeaders,
-						fetch: providerFetch,
-					})
-
-				const stream = (await (client as any).responses.create(requestBody, {
-					signal: this.abortController.signal,
-					headers: codexHeaders,
-				})) as AsyncIterable<any>
-
-				if (typeof (stream as any)?.[Symbol.asyncIterator] !== "function") {
-					throw new Error("OpenAI SDK did not return an AsyncIterable")
-				}
-
-				yield* this.handleResponseEvents(stream, model)
+				yield* this.createResponseStreamWebsocket(
+					requestBody,
+					fallbackRequestBody,
+					credential,
+					codexHeaders,
+					model,
+					signal,
+				)
+				return
 			} catch (error) {
-				if (isOutputLimitExceededError(error) || this.isAuthenticationFailure(error)) {
+				// A cancelled request neither falls back nor closes the socket a newer request may own.
+				if (signal.aborted || isOutputLimitExceededError(error) || this.isAuthenticationFailure(error)) {
 					throw error
 				}
-				// Fallback to manual SSE via fetch
-				yield* this.makeCodexRequest(requestBody, model, credential)
+				const diagnostic = this.toProviderError(error)
+				Logger.error(
+					`OpenAI Codex websocket mode failed; falling back to HTTP Responses API (status=${diagnostic.status ?? "unknown"}, code=${diagnostic.code ?? "unknown"}).`,
+				)
+				this.closeResponsesWebsocket()
 			}
-		} finally {
-			this.abortController = undefined
+		}
+
+		// Try using OpenAI SDK first
+		try {
+			const client =
+				this.client ??
+				new OpenAI({
+					apiKey: credential.accessToken,
+					baseURL: this.runtimeConfig.apiBaseUrl,
+					defaultHeaders: codexHeaders,
+					fetch: providerFetch,
+				})
+
+			const stream = (await (client as any).responses.create(requestBody, {
+				signal,
+				headers: codexHeaders,
+			})) as AsyncIterable<any>
+
+			if (typeof (stream as any)?.[Symbol.asyncIterator] !== "function") {
+				throw new Error("OpenAI SDK did not return an AsyncIterable")
+			}
+
+			yield* this.handleResponseEvents(stream, model)
+		} catch (error) {
+			if (signal.aborted || isOutputLimitExceededError(error) || this.isAuthenticationFailure(error)) {
+				throw error
+			}
+			// Fallback to manual SSE via fetch
+			yield* this.makeCodexRequest(requestBody, model, credential, signal)
 		}
 	}
 
@@ -516,20 +528,22 @@ export class OpenAiCodexHandler implements ApiHandler {
 		credential: OpenAiCodexCredentialContext,
 		codexHeaders: Record<string, string>,
 		model: { id: string; info: ModelInfo },
+		signal: AbortSignal,
 	): ApiStream {
 		try {
 			yield* this.handleResponseEvents(
-				this.createResponseEventsViaWebsocket(primaryParams, credential, codexHeaders),
+				this.createResponseEventsViaWebsocket(primaryParams, credential, codexHeaders, signal),
 				model,
 			)
 		} catch (error) {
-			if (this.shouldRetryWebsocketWithFullContext(error, !!primaryParams.previous_response_id)) {
+			// A cancelled request must not open a fresh socket or close the one a newer request owns.
+			if (!signal.aborted && this.shouldRetryWebsocketWithFullContext(error, !!primaryParams.previous_response_id)) {
 				Logger.log(
 					"Retrying Codex websocket response with full context after previous_response_not_found or socket reset",
 				)
 				this.closeResponsesWebsocket()
 				yield* this.handleResponseEvents(
-					this.createResponseEventsViaWebsocket(fallbackParams, credential, codexHeaders),
+					this.createResponseEventsViaWebsocket(fallbackParams, credential, codexHeaders, signal),
 					model,
 				)
 				return
@@ -560,6 +574,7 @@ export class OpenAiCodexHandler implements ApiHandler {
 	private async ensureResponsesWebsocket(
 		credential: OpenAiCodexCredentialContext,
 		codexHeaders: Record<string, string>,
+		signal: AbortSignal,
 	): Promise<UndiciWebSocket> {
 		if (
 			this.responsesWs &&
@@ -570,6 +585,7 @@ export class OpenAiCodexHandler implements ApiHandler {
 		}
 
 		this.closeResponsesWebsocket()
+		signal.throwIfAborted()
 
 		const ws = new UndiciWebSocket(this.runtimeConfig.responsesWebsocketUrl, {
 			headers: {
@@ -579,11 +595,14 @@ export class OpenAiCodexHandler implements ApiHandler {
 			},
 		})
 
+		// A socket cancelled while connecting is not published yet, so abort() cannot reach
+		// it through the shared field; the request closes it here instead.
 		await new Promise<void>((resolve, reject) => {
 			const cleanup = () => {
 				ws.removeEventListener("open", handleOpen)
 				ws.removeEventListener("error", handleError)
 				ws.removeEventListener("close", handleClose)
+				signal.removeEventListener("abort", handleAbort)
 			}
 			const handleOpen = () => {
 				cleanup()
@@ -597,9 +616,17 @@ export class OpenAiCodexHandler implements ApiHandler {
 				cleanup()
 				reject(new Error("Codex Responses websocket closed before opening"))
 			}
+			const handleAbort = () => {
+				cleanup()
+				try {
+					ws.close()
+				} catch {}
+				reject(signal.reason)
+			}
 			ws.addEventListener("open", handleOpen)
 			ws.addEventListener("error", handleError)
 			ws.addEventListener("close", handleClose)
+			signal.addEventListener("abort", handleAbort, { once: true })
 		})
 
 		this.responsesWs = ws
@@ -623,15 +650,29 @@ export class OpenAiCodexHandler implements ApiHandler {
 		params: OpenAI.Responses.ResponseCreateParamsStreaming,
 		credential: OpenAiCodexCredentialContext,
 		codexHeaders: Record<string, string>,
+		signal: AbortSignal,
 	): AsyncGenerator<OpenAI.Responses.ResponseStreamEvent> {
-		if (this.websocketRequestInFlight) {
+		if (this.websocketRequestOwner) {
 			const error: Error & { code?: string } = new Error("Websocket response.create is already in progress")
 			error.code = "websocket_concurrency_limit"
 			throw error
 		}
+		// Claimed before connecting so a second request cannot open a competing socket meanwhile.
+		this.websocketRequestOwner = signal
+		try {
+			yield* this.streamWebsocketResponse(params, credential, codexHeaders, signal)
+		} finally {
+			if (this.websocketRequestOwner === signal) this.websocketRequestOwner = undefined
+		}
+	}
 
-		const ws = await this.ensureResponsesWebsocket(credential, codexHeaders)
-		this.websocketRequestInFlight = true
+	private async *streamWebsocketResponse(
+		params: OpenAI.Responses.ResponseCreateParamsStreaming,
+		credential: OpenAiCodexCredentialContext,
+		codexHeaders: Record<string, string>,
+		signal: AbortSignal,
+	): AsyncGenerator<OpenAI.Responses.ResponseStreamEvent> {
+		const ws = await this.ensureResponsesWebsocket(credential, codexHeaders, signal)
 
 		const eventQueue: OpenAI.Responses.ResponseStreamEvent[] = []
 		let resolver: (() => void) | undefined
@@ -718,14 +759,23 @@ export class OpenAiCodexHandler implements ApiHandler {
 			}
 		}
 
+		// Cancellation ends the wait even when the socket never reports its close.
+		const handleAbort = () => {
+			failure = Object.assign(new Error("Codex request aborted"), { name: "AbortError" })
+			completed = true
+			wake()
+		}
+
 		ws.addEventListener("message", handleMessage)
 		ws.addEventListener("error", handleError)
 		ws.addEventListener("close", handleClose)
+		signal.addEventListener("abort", handleAbort, { once: true })
 
 		try {
 			const responseEvents = await observeProviderStream(
 				() =>
 					(async function* () {
+						signal.throwIfAborted()
 						const websocketParams = { ...params } as Record<string, unknown>
 						delete websocketParams.stream
 						ws.send(
@@ -749,14 +799,14 @@ export class OpenAiCodexHandler implements ApiHandler {
 
 						if (failure) throw failure
 					})(),
-				this.abortController?.signal ? { signal: this.abortController.signal } : {},
+				{ signal },
 			)
 			yield* responseEvents
 		} finally {
 			ws.removeEventListener("message", handleMessage)
 			ws.removeEventListener("error", handleError)
 			ws.removeEventListener("close", handleClose)
-			this.websocketRequestInFlight = false
+			signal.removeEventListener("abort", handleAbort)
 		}
 	}
 
@@ -764,6 +814,7 @@ export class OpenAiCodexHandler implements ApiHandler {
 		requestBody: any,
 		model: { id: string; info: ModelInfo },
 		credential: OpenAiCodexCredentialContext,
+		signal: AbortSignal,
 	): ApiStream {
 		const url = `${this.runtimeConfig.apiBaseUrl}/responses`
 
@@ -778,7 +829,7 @@ export class OpenAiCodexHandler implements ApiHandler {
 				method: "POST",
 				headers,
 				body: JSON.stringify(requestBody),
-				signal: this.abortController?.signal,
+				signal,
 			})
 
 			if (!response.ok) {
@@ -805,7 +856,7 @@ export class OpenAiCodexHandler implements ApiHandler {
 				throw new Error("No response body from Codex API")
 			}
 
-			yield* this.handleStreamResponse(response.body, model)
+			yield* this.handleStreamResponse(response.body, model, signal)
 		} catch (error) {
 			if (isOutputLimitExceededError(error)) {
 				throw error
@@ -814,11 +865,15 @@ export class OpenAiCodexHandler implements ApiHandler {
 		}
 	}
 
-	private async *handleStreamResponse(body: ReadableStream<Uint8Array>, model: { id: string; info: ModelInfo }): ApiStream {
-		yield* this.handleResponseEvents(this.readStreamEvents(body), model)
+	private async *handleStreamResponse(
+		body: ReadableStream<Uint8Array>,
+		model: { id: string; info: ModelInfo },
+		signal: AbortSignal,
+	): ApiStream {
+		yield* this.handleResponseEvents(this.readStreamEvents(body, signal), model)
 	}
 
-	private async *readStreamEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
+	private async *readStreamEvents(body: ReadableStream<Uint8Array>, signal: AbortSignal): AsyncGenerator<unknown> {
 		const reader = body.getReader()
 		const decoder = new TextDecoder()
 		let buffer = ""
@@ -827,7 +882,7 @@ export class OpenAiCodexHandler implements ApiHandler {
 
 		try {
 			while (true) {
-				if (this.abortController?.signal.aborted) {
+				if (signal.aborted) {
 					terminalReason = new DOMException("Codex request aborted", "AbortError")
 					return
 				}

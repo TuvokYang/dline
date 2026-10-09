@@ -210,6 +210,15 @@ e2e(
 		server.enqueueResponses(
 			"openai-compatible-responses",
 			{ type: "tool", id: "call_image_rejected", name: "generate_image", arguments: { prompt: rejectedPrompt, count: 1 } },
+			// Refusing the turn's last open block continues the turn, so the model is
+			// asked once more with the refusal; without this reply that round would
+			// take the next task's response whenever it leaves before the close.
+			{
+				type: "tool",
+				id: "call_image_rejected_ack",
+				name: "attempt_completion",
+				arguments: { result: "E2E_IMAGE_REJECTED_ACK" },
+			},
 			{ type: "tool", id: "call_image_approved", name: "generate_image", arguments: { prompt: approvedPrompt, count: 1 } },
 			{
 				type: "hosted-image-generation",
@@ -265,6 +274,8 @@ e2e(
 			await rejectButton.click()
 			await expect(sidebar.getByText("Image generation rejected", { exact: true }).last()).toBeVisible({ timeout: 30_000 })
 			await expect(sidebar.getByText(rejectedPrompt, { exact: true }).last()).toBeVisible()
+			await expect(sidebar.getByText("E2E_IMAGE_REJECTED_ACK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(2)
 			expect(hostedImageConsumptions()).toHaveLength(0)
 
 			const closeTask = sidebar.getByRole("button", { name: "Close Task", exact: true })
@@ -283,8 +294,14 @@ e2e(
 			await expect(sidebar.getByText("E2E_IMAGE_APPROVED_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect(sidebar.getByText("Image generation completed", { exact: true }).last()).toBeVisible()
 			const consumptions = server.getMockConsumptions("openai-compatible-responses")
-			expect(consumptions).toHaveLength(4)
-			expect(consumptions.map((entry) => entry.responseType)).toEqual(["tool", "tool", "hosted-image-generation", "tool"])
+			expect(consumptions).toHaveLength(5)
+			expect(consumptions.map((entry) => entry.responseType)).toEqual([
+				"tool",
+				"tool",
+				"tool",
+				"hosted-image-generation",
+				"tool",
+			])
 			expect(consumptions.every((entry) => entry.contractError === undefined)).toBe(true)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 		} finally {

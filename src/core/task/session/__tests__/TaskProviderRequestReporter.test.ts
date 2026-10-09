@@ -258,8 +258,10 @@ describe("TaskProviderRequestReporter", () => {
 		await record.retrying?.({ attempt: 2, maxAttempts: 5, delayMs: 5000, errorMessage: "second" })
 		await record.recovered?.()
 
-		// The api_req_started row took ts 101, so the cards are 102 and 103.
-		expect(harness.delivered).toEqual(["row:102:attempt:1", "row:103:attempt:2", "state:none"])
+		// The api_req_started row took ts 101, so the cards are 102 and 103. Each new
+		// card publishes the task state first, so the chat already shows the task
+		// whose row arrives next and cannot drop the first attempt.
+		expect(harness.delivered).toEqual(["state:card", "row:102:attempt:1", "state:card", "row:103:attempt:2", "state:none"])
 	})
 
 	it("delivers the exhausted card so the chat stops the countdown", async () => {
@@ -269,7 +271,7 @@ describe("TaskProviderRequestReporter", () => {
 		await record.retrying?.({ attempt: 5, maxAttempts: 5, delayMs: 30_000, errorMessage: "still down" })
 		await record.settle({ outcome: "failed" })
 
-		expect(harness.delivered).toEqual(["row:102:attempt:5", "row:102:attempt:5:failed"])
+		expect(harness.delivered).toEqual(["state:card", "row:102:attempt:5", "row:102:attempt:5:failed"])
 	})
 
 	it("keeps retrying and settling when the chat cannot receive the card", async () => {

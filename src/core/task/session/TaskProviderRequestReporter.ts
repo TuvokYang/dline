@@ -58,7 +58,11 @@ export interface TaskProviderRequestReporterOptions {
 export interface RetryCardView {
 	/** Delivers a card row that was added or rewritten. */
 	showRow(row: UiMessage): Promise<void>
-	/** Publishes the task state after a card was removed. */
+	/**
+	 * Publishes the task state. A new card publishes it before its row, because the
+	 * chat drops a row of a task it has not been shown yet, and the card is
+	 * replaced before a dropped first attempt could be fetched again.
+	 */
 	publishState(): Promise<void>
 }
 
@@ -317,6 +321,7 @@ class RetryCard {
 		await this.messages.addToClineMessages(row)
 		this.ts = ts
 		this.notice = notice
+		await this.present(() => this.view?.publishState())
 		await this.present(() => this.view?.showRow(this.storedRow(ts) ?? row))
 	}
 
