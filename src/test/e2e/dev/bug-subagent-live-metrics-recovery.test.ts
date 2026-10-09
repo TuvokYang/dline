@@ -1,7 +1,8 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readdir, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskActivities } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page, type TestInfo } from "@playwright/test"
 
 interface PersistedSubagentMetrics {
@@ -83,26 +84,20 @@ async function readPersistedSubagentMetrics(
 	minimumToolCalls: number,
 ): Promise<PersistedSubagentMetrics> {
 	return E2ETestHelper.waitForValue(async () => {
-		const activityPath = path.join(dlineDocsDir, "tasks", taskId, "activities.json")
-		const persisted = await readFile(activityPath, "utf8").then(
-			(value) =>
-				JSON.parse(value) as {
-					activities?: Array<{
-						activityId?: string
-						kind?: string
-						status?: string
-						metrics?: {
-							toolCalls?: number
-							inputTokens?: number
-							outputTokens?: number
-							contextTokens?: number
-							contextWindow?: number
-						}
-					}>
-				},
-			() => undefined,
-		)
-		const activity = persisted?.activities?.find(
+		// Activities persist in the task's activities.db; the JSON file is only a legacy import source.
+		const activities = (await readTaskActivities(dlineDocsDir, taskId)) as unknown as Array<{
+			activityId?: string
+			kind?: string
+			status?: string
+			metrics?: {
+				toolCalls?: number
+				inputTokens?: number
+				outputTokens?: number
+				contextTokens?: number
+				contextWindow?: number
+			}
+		}>
+		const activity = activities.find(
 			(candidate) => candidate.kind === "subagent" && (candidate.metrics?.toolCalls ?? 0) >= minimumToolCalls,
 		)
 		if (!activity?.activityId || !activity.status || !activity.metrics) return undefined
