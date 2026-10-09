@@ -1133,7 +1133,7 @@ describe("ContextCompactionSession", () => {
 		expect(events.at(-1)).toMatchObject({
 			kind: "failed",
 			state: { passIndex: 1, coveredTurnCount: 2 },
-			error: "Context compaction could not fit the complete target request below the required 80% exit target of 800 tokens for the effective context limit 1000, because no complete logical turn remains.",
+			error: "Context compaction could not fit the complete target request below the hard effective context limit of 1000 tokens after all complete logical turns were compacted (projected 100 tokens).",
 		})
 	})
 })

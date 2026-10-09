@@ -2,6 +2,7 @@ import type { ClineStorageMessage } from "@shared/messages/content"
 import type { ConversationHistoryReader } from "../../../conversation/ConversationHistoryReader"
 import type { ConversationJournal, JournalEntry, JournalWatermark } from "../../../stores"
 import type { MaterializedPayload, ProviderJournalMessageMaterializer } from "./ProviderJournalMessageMaterializer"
+import { repairProviderPairing } from "./ProviderPairingRepair"
 
 /** One visible journal entry together with what it contributes to the provider conversation. */
 export interface ConversationViewEntry extends MaterializedPayload {
@@ -87,6 +88,17 @@ export class JournalConversationView implements ConversationHistoryReader {
 	/** The provider messages through `through`, in journal order. */
 	async messages(through?: JournalWatermark): Promise<ClineStorageMessage[]> {
 		return (await this.entries(through)).flatMap((item) => [...item.messages])
+	}
+
+	/**
+	 * Messages ready for a provider request.
+	 *
+	 * Legacy JSONL imports can contain a tool_use whose terminal result was never
+	 * persisted. Keep the canonical journal immutable, but repair that projection
+	 * before sizing or sending it so both paths see the same valid conversation.
+	 */
+	async providerMessages(through?: JournalWatermark): Promise<ClineStorageMessage[]> {
+		return repairProviderPairing(await this.messages(through))
 	}
 
 	read(): Promise<ClineStorageMessage[]> {

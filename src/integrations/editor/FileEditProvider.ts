@@ -1,17 +1,17 @@
 import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
-import * as fs from "fs/promises"
+import { HostProvider } from "@/hosts/host-provider"
 import { Logger } from "@/shared/services/Logger"
 
 /**
- * A file-system-based implementation of DiffViewProvider that performs direct file operations
- * without visual editor integration. This provider uses the Node.js fs package to handle
- * file edits in-memory and then writes them to disk.
+ * A host-backed implementation of DiffViewProvider that keeps edits in memory until save.
+ * Saving goes through the HostBridge document boundary so the host can preserve editor
+ * history without opening a tab or changing focus.
  *
  * Visual operations like scrolling are implemented as no-ops since there is no UI component.
  * This makes it suitable for headless or non-interactive environments.
  */
 export class FileEditProvider extends DiffViewProvider {
-	private documentContent?: string
+	protected documentContent?: string
 
 	override showFile(_absolutePath: string): Promise<void> {
 		// No-op: No visual editor to show the file
@@ -111,18 +111,23 @@ export class FileEditProvider extends DiffViewProvider {
 	}
 
 	protected override async saveDocument(): Promise<boolean> {
-		if (!this.absolutePath || !this.documentContent) {
+		if (!this.absolutePath || this.documentContent === undefined) {
 			return false
 		}
 
 		try {
-			// Always use UTF-8 for writing - it's the modern standard and handles all characters
-			// including emojis. The detected fileEncoding was used for reading to preserve
-			// compatibility, but writing as UTF-8 ensures no character corruption.
-			await fs.writeFile(this.absolutePath, this.documentContent, { encoding: "utf8" })
-			return true
+			const result = await HostProvider.workspace.applyTextDocumentEdit({
+				filePath: this.absolutePath,
+				expectedContent: this.originalContent ?? "",
+				content: this.documentContent,
+			})
+			if (result.conflict) {
+				throw new Error(`Document changed after the background edit started: ${this.absolutePath}`)
+			}
+			if (result.saved) this.documentContent = result.content
+			return result.saved
 		} catch (error) {
-			Logger.error(`Failed to save document to ${this.absolutePath}:`, error)
+			Logger.error(`Failed to save document through the host: ${this.absolutePath}:`, error)
 			return false
 		}
 	}

@@ -22,8 +22,13 @@ export function decideTargetWindowFitting(input: DecideTargetWindowFittingInput)
 	const scope = resolveTargetContextScope(input)
 	const projectedUsageTokens = normalizeCandidateTokens(input.candidateEstimatedTokens)
 	const mustContinue = shouldContinueTargetWindowFitting(projectedUsageTokens, scope)
+	const exceedsHardWindow = projectedUsageTokens >= scope.targetContextWindow
 	return {
-		status: mustContinue ? (input.hasMoreTurns ? "continue" : "exhausted") : "complete",
+		// The 80% boundary is the target for another iterative Pass, not a final
+		// validity gate. Once no complete turn remains, landing a request that still
+		// fits the hard window is strictly better than discarding the summary and
+		// terminating the task. Only a candidate the provider cannot hold is exhausted.
+		status: mustContinue && input.hasMoreTurns ? "continue" : exceedsHardWindow ? "exhausted" : "complete",
 		projectedUsageTokens,
 		targetContextWindow: scope.targetContextWindow,
 		effectiveContextLimit: scope.effectiveContextLimit,

@@ -15,6 +15,8 @@ export function isDeterministicToolPairingError(error: unknown): boolean {
 		/no tool output found for function call/i,
 		/messages? with role ['"]?tool['"]?.*preceding message.*tool_calls?/i,
 		/tool_result.*no corresponding tool_use/i,
+		/tool_use.*(?:without|missing|requires?).*tool_result/i,
+		/each tool_use block.*corresponding tool_result/i,
 		/tool (?:message|output|result).*(?:without|missing|requires?).*tool_(?:call|use)/i,
 	].some((pattern) => pattern.test(message))
 }

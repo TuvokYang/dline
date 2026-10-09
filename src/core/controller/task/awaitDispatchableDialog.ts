@@ -42,7 +42,10 @@ export async function awaitDispatchableDialog(
 		const dispatchable = dispatchableDialog(state, options.actionId)
 		if (dispatchable) return dispatchable
 		if (state.halt.status === "stopping" || options.isCurrent?.() === false) return undefined
-		if (!hasUnrevealedDialog(state)) return undefined
+		// Hydration can still be creating the recovery dialog while the task is in
+		// its initializing phase. Returning here loses the user's edited draft and
+		// leaves the newly created Resume dialog behind after promotion.
+		if (!hasUnrevealedDialog(state) && state.flow.phase !== "initializing") return undefined
 		if (Date.now() >= deadline) return undefined
 		await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
 	}

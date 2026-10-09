@@ -158,4 +158,29 @@ describe("JournalConversationView", () => {
 		expect(textsOf(summary?.messages ?? [])).toEqual(["summary", "open reply"])
 		expect(summary?.continuation).toEqual({ text: "open reply" })
 	})
+
+	it("repairs missing legacy tool results only in the provider-ready projection", async () => {
+		const { journal, payloads, view } = open()
+		await write(journal, payloads, "legacy:1", {
+			kind: "api_history_message",
+			message: {
+				role: "assistant",
+				content: [{ type: "tool_use", function_id: "call_1", name: "read_file", input: { path: "a.ts" } }],
+			},
+		})
+		await write(journal, payloads, "legacy:2", {
+			kind: "api_history_message",
+			message: { role: "user", content: [{ type: "text", text: "environment" }] },
+		})
+
+		const canonical = await view.messages()
+		const providerReady = await view.providerMessages()
+
+		expect(canonical).toHaveLength(2)
+		expect(providerReady).toHaveLength(2)
+		expect(providerReady[1]?.content).toEqual([
+			expect.objectContaining({ type: "tool_result", function_id: "call_1" }),
+			{ type: "text", text: "environment" },
+		])
+	})
 })

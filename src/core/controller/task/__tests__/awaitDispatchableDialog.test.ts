@@ -29,6 +29,11 @@ function answerable(): TaskState {
 	} as TaskState
 }
 
+function withoutDialog(phase: TaskState["flow"]["phase"]): TaskState {
+	const state = createInitialTaskState("task-1")
+	return { ...state, flow: { ...state.flow, phase }, dialog: { approvalsByBlock: {} } } as TaskState
+}
+
 function withPendingApproval(state: TaskState): TaskState {
 	return {
 		...state,
@@ -57,6 +62,17 @@ function withPendingApproval(state: TaskState): TaskState {
 const LONG_WAIT_MS = 5_000
 
 describe("awaitDispatchableDialog", () => {
+	it("waits while initialization has not created the recovery dialog yet", async () => {
+		let current = withoutDialog("initializing")
+		setTimeout(() => {
+			current = answerable()
+		}, 30)
+
+		const dialog = await awaitDispatchableDialog({ state: () => current }, { timeoutMs: LONG_WAIT_MS, actionId: "resume" })
+
+		expect(dialog?.interactionId).toBe("recovery-1")
+	})
+
 	it("returns the recovery dialog once its reveal makes it answerable", async () => {
 		let current = planned()
 		setTimeout(() => {
@@ -81,7 +97,11 @@ describe("awaitDispatchableDialog", () => {
 
 	it("stops waiting once no dialog that could accept the action is still being revealed", async () => {
 		const state = withPendingApproval(answerable())
-		const revealed = { ...state, dialog: { ...state.dialog, interrupted: undefined } } as TaskState
+		const revealed = {
+			...state,
+			flow: { ...state.flow, phase: "paused" },
+			dialog: { ...state.dialog, interrupted: undefined },
+		} as TaskState
 		const started = Date.now()
 
 		const dialog = await awaitDispatchableDialog({ state: () => revealed }, { timeoutMs: LONG_WAIT_MS, actionId: "resume" })

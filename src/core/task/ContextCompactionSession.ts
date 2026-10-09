@@ -556,7 +556,7 @@ export class ContextCompactionSession {
 					}
 					if (decision.status === "exhausted") {
 						throw new Error(
-							`Context compaction could not fit the complete target request below the required 80% exit target of ${decision.fittingExitTarget} tokens for the effective context limit ${decision.effectiveContextLimit}, because no complete logical turn remains.`,
+							`Context compaction could not fit the complete target request below the hard effective context limit of ${decision.effectiveContextLimit} tokens after all complete logical turns were compacted (projected ${decision.projectedUsageTokens} tokens).`,
 						)
 					}
 				} catch (error) {

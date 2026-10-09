@@ -354,7 +354,7 @@ export abstract class DiffViewProvider {
 		// get the contents before save operation which may do auto-formatting
 		const preSaveContent = await this.getDocumentText()
 
-		if (!this.relPath || !this.absolutePath || !this.newContent || preSaveContent === undefined) {
+		if (!this.relPath || !this.absolutePath || this.newContent === undefined || preSaveContent === undefined) {
 			return {
 				newProblemsMessage: undefined,
 				userEdits: undefined,

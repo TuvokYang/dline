@@ -18,6 +18,7 @@ import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { captureAccepted, getModelInfo } from "../utils/AiOutputTelemetry"
+import { withConfiguredEditProvider } from "../utils/configured-edit-provider"
 import { type FileOpsResult, FileProviderOperations } from "../utils/FileProviderOperations"
 import { PatchParser } from "../utils/PatchParser"
 import { PathResolver } from "../utils/PathResolver"
@@ -69,9 +70,10 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 		if (!this.pathResolver || this.config !== config) {
 			this.pathResolver = new PathResolver(config, this.validator)
 		}
-		if (!this.providerOps) {
-			this.providerOps = new FileProviderOperations(config.services.diffViewProvider)
-		}
+		// The configured provider can change between foreground and background
+		// invocations. Bind operations to this invocation instead of retaining the
+		// visual provider that happened to be used first.
+		this.providerOps = new FileProviderOperations(config.services.diffViewProvider)
 	}
 
 	getDescription(_block: ToolUse): string {
@@ -120,6 +122,7 @@ export class ApplyPatchHandler implements IFullyManagedTool {
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+		config = withConfiguredEditProvider(config)
 		const provider = config.services.diffViewProvider
 		const rawInput = block.params.input
 

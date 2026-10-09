@@ -7,6 +7,7 @@ import type { JournalSource, TaskPayloadStore } from "../../stores"
 import { InMemoryConversationJournal } from "../../stores/InMemoryRuntimeStores"
 import { encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
+	ApiHistoryMessageEnvelope,
 	EnvironmentDetailsEnvelope,
 	ProviderFinalEnvelope,
 	ToolResultEnvelope,
@@ -41,7 +42,12 @@ async function write(
 	journal: InMemoryConversationJournal,
 	payloads: MemoryPayloads,
 	operationId: string,
-	payload: UserInputEnvelope | ProviderFinalEnvelope | ToolResultEnvelope | EnvironmentDetailsEnvelope,
+	payload:
+		| UserInputEnvelope
+		| ProviderFinalEnvelope
+		| ToolResultEnvelope
+		| EnvironmentDetailsEnvelope
+		| ApiHistoryMessageEnvelope,
 	source: JournalSource = "intake",
 ) {
 	const payloadRef = await payloads.put(encodeTaskPayload(payload))
@@ -210,6 +216,38 @@ describe("JournalCompactionConversation", () => {
 			"first answer",
 			"follow up",
 			"second answer",
+		])
+	})
+
+	it("repairs a missing legacy tool result before choosing the settled compaction span", async () => {
+		const { journal, payloads, conversation } = open()
+		await write(journal, payloads, "intake:1", { kind: "user_input", text: "original task" })
+		await write(journal, payloads, "provider:1", call("call-legacy", "read_file"), "provider")
+		await write(
+			journal,
+			payloads,
+			"legacy:environment",
+			{
+				kind: "api_history_message",
+				message: { role: "user", content: [{ type: "text", text: "<environment_details>legacy</environment_details>" }] },
+			},
+			"system",
+		)
+		await write(
+			journal,
+			payloads,
+			"provider:2",
+			{ kind: "provider_final", text: "continued after repair", turnPlan: { mode: "serial", blocks: [] } },
+			"provider",
+		)
+
+		const source = await conversation.read()
+
+		expect(source.span?.to.seq).toBe(4)
+		expect(source.tail).toEqual([])
+		expect(source.messages[2]?.content).toEqual([
+			expect.objectContaining({ type: "tool_result", function_id: "call-legacy" }),
+			{ type: "text", text: "<environment_details>legacy</environment_details>" },
 		])
 	})
 

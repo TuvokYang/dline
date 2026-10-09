@@ -18,12 +18,13 @@ function harness(initialView = view("old", "old-opening")) {
 	const requests = [deferred(), deferred()]
 	const requestOpen = vi.fn().mockReturnValueOnce(requests[0].promise).mockReturnValueOnce(requests[1].promise)
 	const navigateToChat = vi.fn()
+	const onOpenFailed = vi.fn()
 	const hook = renderHook(
 		({ taskViewState, hasMessageSurface }: { taskViewState?: TaskViewState; hasMessageSurface: boolean }) =>
-			useHistoryTaskOpening({ taskViewState, hasMessageSurface, requestOpen, navigateToChat }),
+			useHistoryTaskOpening({ taskViewState, hasMessageSurface, requestOpen, navigateToChat, onOpenFailed }),
 		{ initialProps: { taskViewState: initialView, hasMessageSurface: false } },
 	)
-	return { ...hook, requests, requestOpen, navigateToChat }
+	return { ...hook, requests, requestOpen, navigateToChat, onOpenFailed }
 }
 
 describe("useHistoryTaskOpening", () => {
@@ -51,8 +52,8 @@ describe("useHistoryTaskOpening", () => {
 		expect(result.current.historyTaskOpening).toBeUndefined()
 	})
 
-	it("ignores stale failures and stale canonical surfaces after a newer selection", async () => {
-		const { result, requests, rerender } = harness()
+	it("ignores stale failures and returns a current failure to Recent", async () => {
+		const { result, requests, rerender, onOpenFailed } = harness()
 		act(() => result.current.openHistoryTask({ id: "first", task: "First" }))
 		act(() => result.current.openHistoryTask({ id: "second", task: "Second" }))
 		await act(async () => {
@@ -63,19 +64,20 @@ describe("useHistoryTaskOpening", () => {
 		await act(async () => {
 			requests[1].reject(new Error("current request failed"))
 		})
-		expect(result.current.historyTaskOpening?.status).toBe("failed")
-		act(() => result.current.dismissHistoryTaskOpening())
 		expect(result.current.historyTaskOpening).toBeUndefined()
+		expect(onOpenFailed).toHaveBeenCalledOnce()
+		expect(onOpenFailed).toHaveBeenCalledWith(expect.objectContaining({ id: "second" }), expect.any(Error))
 	})
 
-	it("allows retry and ignores a late failure after dismissal", async () => {
-		const { result, requests, requestOpen } = harness()
+	it("allows a later explicit open and ignores a late failure after dismissal", async () => {
+		const { result, requests, requestOpen, onOpenFailed } = harness()
 		const target = { id: "next", task: "Next" }
 		act(() => result.current.openHistoryTask(target))
 		await act(async () => {
 			requests[0].reject(new Error("failed"))
 		})
-		expect(result.current.historyTaskOpening?.status).toBe("failed")
+		expect(result.current.historyTaskOpening).toBeUndefined()
+		expect(onOpenFailed).toHaveBeenCalledOnce()
 		act(() => result.current.openHistoryTask(target))
 		expect(result.current.historyTaskOpening?.status).toBe("loading")
 		act(() => result.current.dismissHistoryTaskOpening())

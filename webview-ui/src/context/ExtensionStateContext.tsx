@@ -440,12 +440,20 @@ export const ExtensionStateContextProvider: React.FC<{
 	// Atomic sliding window state via React 18 auto-batching
 	const [clineMessages, setClineMessages] = useState<UiMessage[]>([])
 	const [firstItemIndex, setFirstItemIndex] = useState(0)
+	const handleHistoryTaskOpenFailure = useCallback(
+		(target: HistoryTaskTarget) => {
+			navigateToHistory()
+			window.alert(`Could not open task '${target.task || target.id}'.`)
+		},
+		[navigateToHistory],
+	)
 	const { historyTaskOpening, openHistoryTask, dismissHistoryTaskOpening } = useHistoryTaskOpening({
 		taskViewState: state.taskViewState,
 		// Hand off once the backend window is ready, not after the next paging RPC.
 		hasMessageSurface: !!state.taskTitleMessage && (state.totalMessageCount ?? 0) > 0,
 		requestOpen: requestHistoryTaskOpen,
 		navigateToChat,
+		onOpenFailed: handleHistoryTaskOpenFailure,
 	})
 	const clineMessagesRef = useRef<UiMessage[]>([])
 	// Fetch callbacks resolve after their scheduling render, so reconciliation

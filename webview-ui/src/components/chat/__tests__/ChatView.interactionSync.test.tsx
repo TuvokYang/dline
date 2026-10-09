@@ -318,7 +318,8 @@ describe("ChatView interaction anchor synchronization", () => {
 			historyTaskOpening: { target: { id: "next", task: "Next saved task" }, status: "loading", requestId: 1 },
 		}
 		rendered.rerender(chatView())
-		expect(screen.getByRole("status")).toHaveTextContent("Opening task history")
+		expect(screen.getByRole("status")).toHaveTextContent("Opening task")
+		expect(screen.queryByText("Next saved task")).not.toBeInTheDocument()
 		expect(screen.queryByRole("textbox", { name: "Task input" })).not.toBeInTheDocument()
 		expect(screen.queryByRole("button", { name: "Compact task" })).not.toBeInTheDocument()
 		mocks.extensionState = { ...mocks.extensionState, historyTaskOpening: undefined }
@@ -463,9 +464,7 @@ describe("ChatView interaction anchor synchronization", () => {
 		expect(mocks.compactTask).not.toHaveBeenCalled()
 	})
 
-	// The queue would deliver into the round the compaction holds, so a send
-	// while it runs stays in the composer instead of being handed over.
-	it("keeps a blocked send in the composer while backend compaction is active", () => {
+	it("allows a send to enter the durable queue while backend compaction is active", () => {
 		const view = taskView()
 		view.phase = "streaming"
 		renderChat([ASK], view)
@@ -474,7 +473,7 @@ describe("ChatView interaction anchor synchronization", () => {
 
 		view.contextCompaction = { active: true, operationId: "manual-compaction:task-1:8" }
 		renderChat([ASK], view)
-		expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "false")
+		expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "true")
 	})
 
 	it("disables Compact immediately while the command dispatch is pending and rejects a duplicate dispatch", async () => {

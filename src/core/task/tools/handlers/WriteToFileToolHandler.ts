@@ -30,6 +30,7 @@ import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { captureAccepted, getModelInfo } from "../utils/AiOutputTelemetry"
+import { withConfiguredEditProvider } from "../utils/configured-edit-provider"
 import {
 	countAppliedLines,
 	describeBlockOutcomes,
@@ -131,6 +132,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+		config = withConfiguredEditProvider(config)
 		const pathResolution = resolveToolPathParam(block.params)
 		const rawRelPath = pathResolution.param?.value
 		const rawContent = block.params.content // for write_to_file

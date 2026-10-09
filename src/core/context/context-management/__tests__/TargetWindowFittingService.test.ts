@@ -36,7 +36,7 @@ describe("target window fitting decision", () => {
 		})
 	})
 
-	it("fails when no complete turn remains and the candidate is still above the 80 percent target", () => {
+	it("completes when no complete turn remains and the candidate still fits the hard window", () => {
 		expect(
 			decideTargetWindowFitting({
 				candidateEstimatedTokens: 250_000,
@@ -45,7 +45,7 @@ describe("target window fitting decision", () => {
 				hasMoreTurns: false,
 			}),
 		).toEqual({
-			status: "exhausted",
+			status: "complete",
 			projectedUsageTokens: 250_000,
 			targetContextWindow: 272_000,
 			effectiveContextLimit: 272_000,
