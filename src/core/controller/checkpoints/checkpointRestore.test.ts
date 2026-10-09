@@ -57,4 +57,20 @@ describe("checkpointRestore controller", () => {
 		expect(cancel).not.toHaveBeenCalled()
 		expect(restoreCheckpoint).toHaveBeenCalledWith(42, restoreType, undefined, undefined)
 	})
+
+	it("passes edited historical input to the restore transaction for immediate continuation", async () => {
+		const { controller, restoreCheckpoint } = createController()
+
+		await checkpointRestore(
+			controller as never,
+			CheckpointRestoreRequest.create({
+				number: 42,
+				restoreType: "task",
+				offset: 7,
+				editedText: "continue from the edited request",
+			}),
+		)
+
+		expect(restoreCheckpoint).toHaveBeenCalledWith(42, "task", 7, "continue from the edited request")
+	})
 })

@@ -7,6 +7,7 @@ import type { BackgroundSubagentProvider } from "../background/BackgroundContext
 import type { TaskEnvironmentHost } from "../composition/TaskSessionPorts"
 import { TaskEnvironmentProjection } from "../environment/TaskEnvironmentProjection"
 import type { ComposeEnvironmentPort } from "../executors/compose/ProductionComposeAdapter"
+import type { FocusChainInstructionPort } from "../focus-chain"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { TaskStateManager } from "../TaskStateManager"
@@ -30,6 +31,7 @@ export interface TaskEnvironmentOwnerOptions {
 	readonly commands: CommandExecutor
 	readonly subagents: BackgroundSubagentProvider
 	readonly readState: () => Readonly<TaskState>
+	readonly focusChain?: FocusChainInstructionPort
 }
 
 /**
@@ -58,7 +60,7 @@ export class TaskEnvironmentOwner implements ComposeEnvironmentPort {
 				getMode: () => options.settings.mode,
 				getPhase: () => options.readState().flow.phase,
 			},
-			conversation: { messages: options.messages, taskState: options.toolState },
+			conversation: { messages: options.messages, taskState: options.toolState, focusChain: options.focusChain },
 			execution: { terminals: options.terminals, tools: options.subagents, commands: options.commands },
 			tracking: { files: options.services.fileContextTracker, taskFiles: options.services.taskFileTracker },
 		})

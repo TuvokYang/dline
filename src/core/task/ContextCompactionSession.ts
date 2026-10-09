@@ -234,6 +234,10 @@ export interface ContextCompactionSessionPorts {
 	getPassInputCeiling(input: ContextCompactionSessionInput): number
 	/** Summary-safe hard ceiling available only to an indivisible first uncovered logical turn. */
 	getSingleTurnInputCeiling?(input: ContextCompactionSessionInput): number
+	restoreAcceptedPasses?(
+		input: ContextCompactionSessionInput,
+		state: TargetWindowFittingState,
+	): Promise<TargetWindowFittingState | undefined>
 	estimatePassInput(
 		input: ContextCompactionSessionInput,
 		passHistory: readonly ClineStorageMessage[],
@@ -353,10 +357,11 @@ export class ContextCompactionSession {
 			this.active = undefined
 			return "failed"
 		}
+		state = (await this.ports.restoreAcceptedPasses?.(input, state)) ?? state
 		this.active.state = snapshotFittingState(state)
 
 		let consecutiveSummaryRefitAttempts = 0
-		const commitOutcome: ContextCompactionCommitOutcome = { acceptedPassCount: 0 }
+		const commitOutcome: ContextCompactionCommitOutcome = { acceptedPassCount: state.passIndex }
 		try {
 			while (true) {
 				try {

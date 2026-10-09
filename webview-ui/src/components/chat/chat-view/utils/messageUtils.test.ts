@@ -40,6 +40,19 @@ const createRequestMessage = (ts: number, info: Record<string, unknown>): UiMess
 })
 
 describe("filterVisibleMessages request rows", () => {
+	it("hides legacy empty resume continuations without hiding attachment-only feedback", () => {
+		const emptyContinuation: UiMessage = { ts: 1, type: "say", say: "user_feedback", text: "" }
+		const attachmentOnly: UiMessage = {
+			ts: 2,
+			type: "say",
+			say: "user_feedback",
+			text: "",
+			files: ["context.txt"],
+		}
+
+		expect(filterVisibleMessages([emptyContinuation, attachmentOnly])).toEqual([attachmentOnly])
+	})
+
 	it("hides a cancelled request so its reasoning renders once", () => {
 		const request = createRequestMessage(1, { cost: 0, cancelReason: "user_cancelled" })
 		const reasoning = createReasoningMessage(2, "thought")

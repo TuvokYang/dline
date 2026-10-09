@@ -482,6 +482,7 @@ export class TaskSessionCompositionService {
 					commands: tool.commands,
 					subagents: toolExecution,
 					readState,
+					focusChain: tool.focusChain,
 				})
 			: undefined
 		const providerRequests = new TaskProviderRequestFactory({

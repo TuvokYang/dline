@@ -209,6 +209,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
 		return {
 			services,
 			callbacks: callbackOwner.callbacks,
+			focusChain: callbackOwner.focusChainInstructions,
 			browser: callbackOwner.browserSession,
 			commands,
 			terminals: terminalManager,

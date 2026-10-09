@@ -829,6 +829,71 @@ e2e(
 )
 
 e2e(
+	"Follow-up replies - restored free-text Enter leaves no empty continuation row",
+	async ({ helper, server, sidebar, userDataDir }) => {
+		e2e.setTimeout(180_000)
+		await helper.signin(sidebar)
+		server.resetOpenAiMock()
+		server.enqueueOpenAiResponses(
+			{
+				type: "tool",
+				id: "call_restored_followup_free_text",
+				name: "ask_followup_question",
+				arguments: {
+					question: "E2E_RESTORED_FOLLOWUP_FREE_TEXT_QUESTION",
+					options: ["E2E_RESTORED_FOLLOWUP_A", "E2E_RESTORED_FOLLOWUP_B"],
+				},
+			},
+			{
+				type: "tool",
+				id: "call_restored_followup_free_text_done",
+				name: "attempt_completion",
+				arguments: { result: "E2E_RESTORED_FOLLOWUP_FREE_TEXT_OK" },
+				expectedToolResults: [
+					{
+						callId: "call_restored_followup_free_text",
+						contentIncludes: ["E2E_RESTORED_FOLLOWUP_CUSTOM_REPLY"],
+					},
+				],
+			},
+		)
+
+		const taskText = "E2E_RESTORED_FOLLOWUP_FREE_TEXT_TASK"
+		await sendTask(sidebar, taskText)
+		await expect(sidebar.getByText("E2E_RESTORED_FOLLOWUP_FREE_TEXT_QUESTION", { exact: true })).toBeVisible({
+			timeout: 60_000,
+		})
+
+		await closeCurrentTask(sidebar)
+		await reopenTask(sidebar, taskText)
+		await submitWithEnter(sidebar, "E2E_RESTORED_FOLLOWUP_CUSTOM_REPLY")
+		await expect(sidebar.getByText("E2E_RESTORED_FOLLOWUP_FREE_TEXT_OK", { exact: false }).last()).toBeVisible({
+			timeout: 60_000,
+		})
+		await expectSingleUserFeedback(sidebar, "E2E_RESTORED_FOLLOWUP_CUSTOM_REPLY")
+		const directInputs = sidebar.getByTestId("direct-user-input")
+		await expect(directInputs).toHaveCount(2)
+		expect((await directInputs.allTextContents()).map((text) => text.trim())).toEqual([
+			taskText,
+			"E2E_RESTORED_FOLLOWUP_CUSTOM_REPLY",
+		])
+
+		await closeCurrentTask(sidebar)
+		await reopenTask(sidebar, taskText)
+		await expectSingleUserFeedback(sidebar, "E2E_RESTORED_FOLLOWUP_CUSTOM_REPLY")
+		await expect(directInputs).toHaveCount(2)
+		expect((await directInputs.allTextContents()).map((text) => text.trim())).toEqual([
+			taskText,
+			"E2E_RESTORED_FOLLOWUP_CUSTOM_REPLY",
+		])
+		expect(server.getMockConsumptions("openai-compatible-chat").every((entry) => entry.contractError === undefined)).toBe(
+			true,
+		)
+		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+	},
+)
+
+e2e(
 	"Follow-up replies - option and free-text Enter render once and match tool results",
 	async ({ helper, server, sidebar, userDataDir }) => {
 		e2e.setTimeout(180_000)

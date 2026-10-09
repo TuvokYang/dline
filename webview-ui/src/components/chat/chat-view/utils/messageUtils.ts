@@ -119,6 +119,18 @@ export function resolveApiErrorMessage(input: ApiErrorMessageInput): string | un
  */
 export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
 	return messages.filter((message, index, arr) => {
+		// Older runtimes presented their internal resume-only intake as an empty
+		// user reply. Keep those durable rows for recovery evidence, but never give
+		// them a virtualized chat item (which appears as a blank bar).
+		if (
+			message.type === "say" &&
+			message.say === "user_feedback" &&
+			!message.text?.trim() &&
+			!message.images?.length &&
+			!message.files?.length
+		) {
+			return false
+		}
 		switch (message.ask) {
 			case "completion_result":
 				// don't show a chat row for a completion_result ask without text. This specific type of message only occurs if cline wants to execute a command as part of its completion result, in which case we interject the completion_result tool with the execute_command tool.

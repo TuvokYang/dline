@@ -25,6 +25,11 @@ export class TaskInputPresenter implements TaskInputPresentationPort {
 		const rows = this.messages.clineMessages
 		const alreadyShown = rows.some((row) => row.interactionId === input.entryId)
 		if (payload.kind !== "user_input" || alreadyShown) return { commit: async () => {} }
+		// Recovery sometimes needs an intake event only to start the next round.
+		// Its actual user reply is already shown by the restored tool interaction,
+		// so rendering the empty continuation as feedback leaves a blank chat row.
+		const hasVisibleContent = Boolean(payload.text?.trim() || payload.images?.length || payload.files?.length)
+		if (!hasVisibleContent) return { commit: async () => {} }
 		// Stamped from the session's shared sequence, and before submission. Rows
 		// are ordered by this id, and the submission begins allocating its own
 		// ids as soon as it is accepted; a wall-clock reading taken afterwards

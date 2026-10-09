@@ -10,6 +10,7 @@ import {
 	buildTargetCandidateHistory,
 	isIterativeCompactionPass,
 	refitCompactionSummary,
+	restoreTargetWindowFitting,
 	startTargetWindowFitting,
 	type TargetWindowFittingState,
 	tryStartTargetWindowFitting,
@@ -181,6 +182,35 @@ describe("target window rolling fitting", () => {
 			passPlanned: false,
 			nextPassSummaryCarryLimitTokens: 750,
 		})
+	})
+
+	it("restores an accepted Pass only against the same immutable source history", () => {
+		const history = createHistory()
+		const accepted = acceptCompactionPass(planThrough(startFitting(history, "operation-old"), 0, 750), "RESTORED").state
+		const resumed = restoreTargetWindowFitting(startFitting(history, "operation-new"), {
+			sourceHistoryHash: accepted.sourceHistoryHash,
+			coveredTurnCount: accepted.coveredTurnCount,
+			passIndex: accepted.passIndex,
+			cumulativeSummary: accepted.cumulativeSummary!,
+			nextPassSummaryCarryLimitTokens: accepted.nextPassSummaryCarryLimitTokens,
+		})
+
+		expect(resumed).toMatchObject({
+			operationId: "operation-new",
+			passIndex: 1,
+			coveredTurnCount: 1,
+			cumulativeSummary: "RESTORED",
+			nextPassSummaryCarryLimitTokens: 750,
+			passPlanned: false,
+		})
+		expect(
+			restoreTargetWindowFitting(startFitting([...history, message("user", "changed")], "operation-changed"), {
+				sourceHistoryHash: accepted.sourceHistoryHash,
+				coveredTurnCount: accepted.coveredTurnCount,
+				passIndex: accepted.passIndex,
+				cumulativeSummary: accepted.cumulativeSummary!,
+			}),
+		).toBeUndefined()
 	})
 
 	it("refits only the cumulative summary without advancing source coverage", () => {

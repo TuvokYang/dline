@@ -5,7 +5,7 @@ import { getHookModelContext } from "@core/hooks/hook-model-context"
 import { getHooksEnabledSafe } from "@core/hooks/hooks-utils"
 import { formatResponse } from "@core/prompts/responses"
 import type { StateManager } from "@core/storage/StateManager"
-import { FocusChainManager } from "@core/task/focus-chain"
+import { type FocusChainInstructionPort, FocusChainManager } from "@core/task/focus-chain"
 import type { InteractionKind } from "@core/task/interaction/Interaction"
 import type { MessageStateHandler } from "@core/task/message-state"
 import type { PresentationIdSequence } from "@core/task/session/PresentationIdSequence"
@@ -95,6 +95,7 @@ function legacyResponse(actionId: string): ClineAskResponse {
 /** Owns tool callback behavior without expanding the Task facade. */
 export class ControllerTaskCallbacksOwner {
 	readonly callbacks: TaskCallbacks
+	readonly focusChainInstructions: FocusChainInstructionPort
 	private commandExecutor?: CommandExecutor
 	private checkpointManager?: ICheckpointManager
 	private browser: BrowserSession
@@ -111,6 +112,10 @@ export class ControllerTaskCallbacksOwner {
 			say: (...args) => this.say(...args),
 			focusChainSettings: options.stateManager.getGlobalSettingsKey("focusChainSettings"),
 		})
+		this.focusChainInstructions = {
+			beginRequest: () => this.focusChain.beginRequest(),
+			project: (projectionOptions) => this.focusChain.projectInstructions(projectionOptions),
+		}
 		this.callbacks = {
 			say: (...args) => this.say(...args),
 			ask: (...args) => this.ask(...args),

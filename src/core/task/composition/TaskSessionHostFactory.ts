@@ -5,6 +5,7 @@ import type { BrowserSession } from "@services/browser/BrowserSession"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
 import type { PeerTaskSpawnPort } from "../executors/spawn/PeerTaskSpawnPort"
 import type { ToolDomainSurface } from "../executors/tool/ToolDomainSurface"
+import type { FocusChainInstructionPort } from "../focus-chain"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { ApiRateSnapshot } from "../performance/api-rate-tracker"
@@ -55,6 +56,7 @@ export interface TaskSessionHostContext {
 export interface TaskSessionHostResources {
 	readonly services: TaskServices
 	readonly callbacks: TaskCallbacks
+	readonly focusChain?: FocusChainInstructionPort
 	readonly browser: BrowserSession
 	readonly commands: CommandExecutor
 	/** Terminal registry behind `commands`; the environment lists its active terminals. */
