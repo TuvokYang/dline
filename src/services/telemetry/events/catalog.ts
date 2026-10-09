@@ -176,6 +176,7 @@ export const TELEMETRY_METRICS = {
 		TOKENS_INPUT_PER_RESPONSE: "dline.tokens.input.per_response",
 		TOKENS_OUTPUT_TOTAL: "dline.tokens.output.total",
 		TOKENS_OUTPUT_PER_RESPONSE: "dline.tokens.output.per_response",
+		TOKENS_THOUGHTS_TOTAL: "dline.tokens.thoughts.total",
 		TOKENS_TOTAL: "dline.tokens.total",
 		COST_TOTAL: "dline.cost.total",
 		COST_PER_EVENT: "dline.cost.per_event",
@@ -192,6 +193,7 @@ export const TELEMETRY_METRICS = {
 	TOOLS: {
 		CALLS_TOTAL: "dline.tool.calls.total",
 		CALLS_PER_TASK: "dline.tool.calls.per_task",
+		SERVER_REQUESTS_TOTAL: "dline.server_tool.requests.total",
 	},
 	// Pool measurements are attributed by a `pool` label rather than split into
 	// separate metric names, so one dashboard query compares the tool pool with

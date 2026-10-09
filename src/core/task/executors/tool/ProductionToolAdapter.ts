@@ -25,6 +25,13 @@ export interface ProductionToolExecutionService {
 	}>
 }
 
+class PersistedToolFailure extends Error {
+	constructor() {
+		super("ToolReportedFailure")
+		this.name = "PersistedToolFailure"
+	}
+}
+
 export interface ProductionToolAdapterOptions {
 	readonly payloads: TaskPayloadStore
 	readonly journal: ConversationJournal
@@ -135,8 +142,10 @@ export function createProductionToolAdapter(options: ProductionToolAdapterOption
 						...(result.documents === undefined ? {} : { documents: result.documents }),
 					})
 					await persistApprovalFeedback(options, command)
+					if (result.failed) throw new PersistedToolFailure()
 					if (result.postCommit) await options.publishPostCommit?.({ command, directive: result.postCommit })
 				} catch (error) {
+					if (error instanceof PersistedToolFailure) throw error
 					await persistResult(options, command, { content: failureContent(error), failed: true })
 					// A failed tool still consumed the approval, so the instruction the
 					// user attached to it must not leak into an unrelated later block.

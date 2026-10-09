@@ -92,4 +92,10 @@ export function mergeProviderUsage(
 }
 
 /** Usage fields a provider reports as a running total for the whole request. */
-const TOTAL_USAGE_KEYS: ReadonlySet<string> = new Set(["totalCost", "cacheUsageReported"])
+const TOTAL_USAGE_KEYS: ReadonlySet<string> = new Set([
+	"totalCost",
+	"cacheUsageReported",
+	"thoughtsUsageReported",
+	"costUsageReported",
+	"serverToolUsageReported",
+])

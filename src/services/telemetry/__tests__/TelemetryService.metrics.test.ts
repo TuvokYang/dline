@@ -171,6 +171,37 @@ describe("TelemetryService metrics", () => {
 		assert.strictEqual(costHist?.value, 0.42)
 	})
 
+	it("captureTokenUsage preserves reasoning and hosted server-tool usage", () => {
+		const provider = new FakeProvider()
+		const service = createTelemetryService(provider)
+
+		service.captureTokenUsage("task-1", 120, 80, "anthropic", "model-a", {
+			thoughtsTokens: 24,
+			webSearchRequests: 2,
+			webFetchRequests: 1,
+		})
+
+		const thoughts = provider.counters.find((entry) => entry.name === TelemetryService.METRICS.TASK.TOKENS_THOUGHTS_TOTAL)
+		assert.ok(thoughts)
+		assert.strictEqual(thoughts.value, 24)
+
+		const serverTools = provider.counters.filter(
+			(entry) => entry.name === TelemetryService.METRICS.TOOLS.SERVER_REQUESTS_TOTAL,
+		)
+		assert.deepStrictEqual(
+			serverTools.map((entry) => ({ value: entry.value, serverTool: entry.attributes.server_tool })),
+			[
+				{ value: 2, serverTool: "web_search" },
+				{ value: 1, serverTool: "web_fetch" },
+			],
+		)
+
+		const event = provider.logs.find((entry) => entry.event === "task.tokens")
+		assert.strictEqual(event?.properties?.thoughtsTokens, 24)
+		assert.strictEqual(event?.properties?.webSearchRequests, 2)
+		assert.strictEqual(event?.properties?.webFetchRequests, 1)
+	})
+
 	it("captureTokenUsage skips cache/cost metrics when options fields are undefined", () => {
 		const provider = new FakeProvider()
 		const service = createTelemetryService(provider)

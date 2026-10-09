@@ -11,9 +11,26 @@ import {
 import { registerTaskTraceSource, type TaskTraceSource } from "@/services/telemetry/service/task-trace-context"
 import type { TaskState } from "../kernel"
 import type { ApiRateSnapshot } from "../performance/api-rate-tracker"
-import type { DurableTaskSnapshot } from "../stores"
+import type { DurableTaskSnapshot, StateVault } from "../stores"
 
 const SEGMENT_EVENT_LIMIT = 96
+
+/** Observe durable snapshots without creating a second persistence authority. */
+export function observeTaskStateVault(vault: StateVault, telemetry: TaskTurnTelemetry): StateVault {
+	return {
+		load: (taskId) => vault.load(taskId),
+		save: async (snapshot) => {
+			telemetry.snapshot("scheduled", snapshot)
+			try {
+				await vault.save(snapshot)
+				telemetry.snapshot("persisted", snapshot)
+			} catch (error) {
+				telemetry.snapshot("failed", snapshot, error)
+				throw error
+			}
+		},
+	}
+}
 
 /** Task-owned observation only: state and usage are read from their existing authorities. */
 export class TaskTurnTelemetry implements TaskTraceSource {

@@ -1,8 +1,10 @@
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 import { apiHistoryImportPending, importApiHistory } from "../conversation/ApiHistoryImport"
 import { importSnapshotQueue, SnapshotQueueCleanupPendingError, snapshotQueueSource } from "../input-queue/SnapshotQueueImport"
 import type { TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
+import { legacyConversationRepairPending, repairLegacyConversation } from "./LegacyConversationRepair"
 
 /**
  * A task written by an earlier version could not carry its conversation into
@@ -28,6 +30,10 @@ export interface TaskUpgradeImportInput {
 	readonly persistence: TaskPersistenceAssembly
 	/** The task's `api_conversation_history.jsonl`, as the message store read it. */
 	readonly apiHistory: readonly ClineStorageMessage[]
+	/** Chat rows may carry compaction ranges written before the journal became canonical. */
+	readonly uiMessages?: readonly UiMessage[]
+	/** Legacy index range hidden by ContextManager truncation. */
+	readonly conversationHistoryDeletedRange?: readonly [number, number]
 }
 
 /**
@@ -41,6 +47,7 @@ export interface TaskUpgradeImportInput {
  */
 export async function importTaskUpgrade(input: TaskUpgradeImportInput): Promise<void> {
 	await importConversation(input)
+	await importLegacyCompactionState(input)
 	await importInputQueue(input)
 }
 
@@ -56,6 +63,7 @@ export async function taskUpgradeImportPending(input: TaskUpgradeImportInput): P
 		if (await apiHistoryImportPending({ journal: input.persistence.ports.journal, history: input.apiHistory })) {
 			return true
 		}
+		if (await legacyCompactionImportPending(input)) return true
 		return (await (await snapshotQueueSource(input.taskId)).read()) !== undefined
 	} catch (error) {
 		Logger.warn(
@@ -64,6 +72,20 @@ export async function taskUpgradeImportPending(input: TaskUpgradeImportInput): P
 		)
 		return true
 	}
+}
+
+async function legacyCompactionImportPending(input: TaskUpgradeImportInput): Promise<boolean> {
+	return legacyConversationRepairPending(input.persistence.ports.journal)
+}
+
+async function importLegacyCompactionState(input: TaskUpgradeImportInput): Promise<void> {
+	await repairLegacyConversation({
+		journal: input.persistence.ports.journal,
+		payloads: input.persistence.payloads,
+		canonicalLength: input.apiHistory.length,
+		uiMessages: input.uiMessages,
+		deletedRange: input.conversationHistoryDeletedRange,
+	})
 }
 
 async function importConversation(input: TaskUpgradeImportInput): Promise<void> {

@@ -11,7 +11,12 @@ import type { LifecycleBarrierPort } from "../session/TaskInputAdmission"
 import type { ContextPressureObserverPort } from "../session/TaskProviderRequestReporter"
 import type { CompactionTrigger, LifecycleCommand } from "../stores/payload/TaskPayloadEnvelopes"
 import { shouldCompactAutomatically } from "./AutomaticCompactionPolicy"
-import type { CompactionRecoveryPort, CompactionRunOutcome } from "./CompactionRecovery"
+import {
+	AUTOMATIC_COMPACTION_FAILED,
+	automaticCompactionFailureAwaitsRecovery,
+	type CompactionRecoveryPort,
+	type CompactionRunOutcome,
+} from "./CompactionRecovery"
 import type { AdmissionCompaction, AdmissionCompactionPort } from "./FinalContextWindowGuard"
 import { COMPACTION_FAILURE_MESSAGE } from "./MessageStateCompactionFailure"
 import { NOTHING_TO_COMPACT, requestTaskCompaction } from "./TaskCompactionRequest"
@@ -21,8 +26,7 @@ export const COMPACT_COMMAND_ID = "command.compact"
 
 const ROUND_READY: RoundReadiness = { kind: "ready" }
 
-/** Why a round stopped after the automatic compaction it waited on failed. */
-export const AUTOMATIC_COMPACTION_FAILED = "automatic_compaction_failed"
+export { AUTOMATIC_COMPACTION_FAILED } from "./CompactionRecovery"
 
 /** Why a round stopped after the automatic compaction it waited on was cancelled or abandoned. */
 export const AUTOMATIC_COMPACTION_WITHDRAWN = "automatic_compaction_withdrawn"
@@ -91,6 +95,8 @@ export class CompactionRoundBarrier
 	private stoppedOnFailure = false
 	/** The round being composed already compacted, so it must not summarize its own summary. */
 	private compactedThisRound = false
+	/** The next round is the failed one the user recovered by explicitly truncating. */
+	private recoveredByTruncation = false
 	/** A `/compact` typed into a dialog reply, owed to the round that reply opens. */
 	private replied: { readonly command: LifecycleCommand; readonly generation: number } | undefined
 	/**
@@ -118,11 +124,17 @@ export class CompactionRoundBarrier
 	}
 
 	truncationOffered(): boolean {
-		return this.stoppedOnFailure
+		return this.stoppedOnFailure || automaticCompactionFailureAwaitsRecovery(this.options.state())
 	}
 
 	async settlement(compactionId: string): Promise<CompactionRunOutcome> {
 		return (await this.awaitRun(compactionId, new AbortController().signal)).outcome
+	}
+
+	truncated(): void {
+		this.observed = undefined
+		this.stoppedOnFailure = false
+		this.recoveredByTruncation = true
 	}
 
 	/**
@@ -249,7 +261,11 @@ export class CompactionRoundBarrier
 		this.observed = undefined
 		// This is the round the user chose to go on with instead of truncating.
 		this.stoppedOnFailure = false
-		this.compactedThisRound = false
+		// A successful explicit truncation belongs to this retried round. Consume
+		// it once so the final guard sends the truncated conversation instead of
+		// immediately compacting again from the previous request's stale usage.
+		this.compactedThisRound = this.recoveredByTruncation
+		this.recoveredByTruncation = false
 		const session = this.options.session()
 		if (!session) return ROUND_READY
 		if (manual) {

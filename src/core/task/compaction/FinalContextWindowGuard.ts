@@ -148,6 +148,11 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
 		const { estimate, projection } = measured
 		return {
 			estimatedTokens: estimate.tokens,
+			estimatedTextBytes: estimate.textBytes,
+			estimatedMediaTokens: estimate.mediaTokens,
+			providerId: estimate.providerId,
+			modelId: estimate.modelId,
+			apiFormat: estimate.apiFormat,
 			projectedUsageTokens: projection.projectedUsageTokens,
 			segments: estimateContextWindowIndicatorSegments({
 				providerInput: estimate.input,

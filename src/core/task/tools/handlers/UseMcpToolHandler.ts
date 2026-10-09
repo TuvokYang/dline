@@ -1,15 +1,24 @@
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { UiAskUseMcpServer } from "@shared/ExtensionMessage"
+import { UiAskUseMcpServer, UiSayMcpServerResponse } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { truncateContent } from "@/shared/content-limits"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
+import type { ToolHandlerResult } from "../ToolExecutionResult"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
+
+function failed(
+	response: ToolResponse,
+	stage: "validation" | "authorization" | "execution" | "remote",
+	code: string,
+): ToolHandlerResult {
+	return { response, failure: { stage, code } }
+}
 
 export class UseMcpToolHandler implements IFullyManagedTool {
 	readonly name = ClineDefaultTool.MCP_USE
@@ -33,7 +42,7 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 		await uiHelpers.say("use_mcp_server", partialMessage, undefined, undefined, true, block.ts)
 	}
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
+	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
 		const server_name: string | undefined = block.params.server_name
 		const tool_name: string | undefined = block.params.tool_name
 		const mcp_arguments: string | undefined = block.params.arguments
@@ -46,17 +55,29 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 		// Validate required parameters
 		if (!server_name) {
 			config.taskState.consecutiveMistakeCount++
-			return await config.callbacks.sayAndCreateMissingParamError(block.name, "server_name", undefined, block.ts)
+			return failed(
+				await config.callbacks.sayAndCreateMissingParamError(block.name, "server_name", undefined, block.ts),
+				"validation",
+				"missing_server_name",
+			)
 		}
 
 		if (!tool_name) {
 			config.taskState.consecutiveMistakeCount++
-			return await config.callbacks.sayAndCreateMissingParamError(block.name, "tool_name", undefined, block.ts)
+			return failed(
+				await config.callbacks.sayAndCreateMissingParamError(block.name, "tool_name", undefined, block.ts),
+				"validation",
+				"missing_tool_name",
+			)
 		}
 
 		if (config.capabilityToggles.mcpServers[server_name] !== true) {
 			config.taskState.consecutiveMistakeCount++
-			return formatResponse.toolError(`MCP server '${server_name}' is not enabled for this task.`)
+			return failed(
+				formatResponse.toolError(`MCP server '${server_name}' is not enabled for this task.`),
+				"authorization",
+				"server_disabled_for_task",
+			)
 		}
 
 		// Parse and validate arguments if provided
@@ -67,7 +88,11 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 			} catch (_error) {
 				config.taskState.consecutiveMistakeCount++
 				await config.callbacks.say("error", `Dline tried to use ${tool_name} with an invalid JSON argument. Retrying...`)
-				return formatResponse.toolError(formatResponse.invalidMcpToolArgumentError(server_name, tool_name))
+				return failed(
+					formatResponse.toolError(formatResponse.invalidMcpToolArgumentError(server_name, tool_name)),
+					"validation",
+					"invalid_arguments_json",
+				)
 			}
 		}
 
@@ -123,31 +148,32 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 				await config.callbacks.say("mcp_notification", `[${notification.serverName}] ${notification.message}`)
 			}
 
-			// Process tool result
-			const toolResultImages =
-				toolResult?.content.flatMap((item) =>
-					item.type === "image" ? [`data:${item.mimeType};base64,${item.data}`] : [],
-				) ?? []
+			// Keep every MCP content item as one durable response group. The Webview
+			// renders the group as one collapsible card attached to this request.
+			const responseItems =
+				toolResult?.content
+					.map((item) => {
+						if (item.type === "text") return item.text
+						if (item.type === "image") return `data:${item.mimeType};base64,${item.data}`
+						if (item.type === "resource") {
+							const { blob: _blob, ...rest } = item.resource
+							return JSON.stringify(rest, null, 2)
+						}
+						return ""
+					})
+					.filter(Boolean) ?? []
+			if (responseItems.length === 0) responseItems.push("(No response)")
+			if (toolResult?.isError) responseItems[0] = `Error:\n${responseItems[0]}`
 
-			let toolResultText =
-				(toolResult?.isError ? "Error:\n" : "") +
-					toolResult?.content
-						.map((item) => {
-							if (item.type === "text") {
-								return item.text
-							}
-							if (item.type === "resource") {
-								const { blob: _blob, ...rest } = item.resource
-								return JSON.stringify(rest, null, 2)
-							}
-							return ""
-						})
-						.filter(Boolean)
-						.join("\n\n") || "(No response)"
+			const responsePresentation = JSON.stringify({
+				type: "mcp_server_response",
+				requestTs: block.ts,
+				responses: responseItems,
+			} satisfies UiSayMcpServerResponse)
+			await config.callbacks.say("mcp_server_response", responsePresentation)
 
-			// webview extracts images from the text response to display in the UI
-			const toolResultToDisplay = toolResultText + toolResultImages.map((image) => `\n\n${image}`).join("")
-			await config.callbacks.say("mcp_server_response", toolResultToDisplay)
+			const toolResultImages = responseItems.filter((item) => item.startsWith("data:image/"))
+			let toolResultText = responseItems.filter((item) => !item.startsWith("data:image/")).join("\n\n")
 
 			// Handle model image support
 			const supportsImages = config.api.getModel().info.capabilities?.supportsImages ?? false
@@ -159,13 +185,21 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 			toolResultText = truncateContent(toolResultText)
 
 			// Return formatted result (only pass images if model supports them)
-			return formatResponse.toolResult(toolResultText, supportsImages ? toolResultImages : undefined)
+			const response = formatResponse.toolResult(toolResultText, supportsImages ? toolResultImages : undefined)
+			return toolResult?.isError ? failed(response, "remote", "remote_tool_error") : response
 		} catch (error) {
 			config.taskState.consecutiveMistakeCount++
 			Logger.error(`[UseMcpToolHandler] ${server_name}/${tool_name} failed`, error instanceof Error ? error : undefined)
 			const safeMessage = `MCP tool '${tool_name}' on server '${server_name}' failed. Check the MCP server logs for details.`
-			await config.callbacks.say("mcp_server_response", safeMessage)
-			return formatResponse.toolError(safeMessage)
+			await config.callbacks.say(
+				"mcp_server_response",
+				JSON.stringify({
+					type: "mcp_server_response",
+					requestTs: block.ts,
+					responses: [safeMessage],
+				} satisfies UiSayMcpServerResponse),
+			)
+			return failed(formatResponse.toolError(safeMessage), "execution", "mcp_call_failed")
 		}
 	}
 }

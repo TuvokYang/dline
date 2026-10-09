@@ -1,7 +1,8 @@
 import sizeOf from "image-size"
 import { shouldCompactProjectedUsage } from "./context-window-utils"
 
-const TOKEN_ESTIMATE_BYTES = 4
+/** Conservative fallback used only until Provider usage supplies a request-scoped calibration. */
+export const DEFAULT_TOKEN_PER_BYTE = 1 / 4
 const OPENAI_IMAGE_PATCH_PIXELS = 32
 /** Anthropic documents image cost as width * height / 750; used as the conservative default. */
 const AREA_IMAGE_TOKENS_PER_PIXEL_DIVISOR = 750
@@ -34,6 +35,13 @@ export interface ContextWindowRequestPressure {
 	contextTokens?: number
 	estimatedContextTokens?: number
 	contextTokensSource?: "provider" | "estimate"
+	/** Exact request input only: input + cache write + cache read, excluding output. */
+	actualInputTokens?: number
+	estimatedTextBytes?: number
+	estimatedMediaTokens?: number
+	providerId?: string
+	modelId?: string
+	apiFormat?: number
 	cancelReason?: string
 }
 
@@ -47,11 +55,15 @@ export interface EstimateContextWindowCandidateInput {
 export interface ContextWindowCandidateEstimator {
 	providerId?: string
 	modelId?: string
+	/** Learned from exact Provider input usage for the same Provider/model/request shape. */
+	tokenPerByte?: number
 }
 
 export interface ContextWindowCandidateBreakdown {
 	totalTokens: number
 	textTokens: number
+	/** UTF-8 bytes after binary media payloads have been removed from the serialized request. */
+	textBytes: number
 	imageTokens: number
 }
 
@@ -105,7 +117,7 @@ export function estimateContextValueBreakdown(
 	const normalized =
 		JSON.stringify(value, (_key, candidate: unknown) => {
 			if (isAttachedPdf(candidate)) {
-				imageTokens += estimateAttachedPdfTokens(candidate)
+				imageTokens += estimateAttachedPdfTokens(candidate, resolveTokenPerByte(estimator.tokenPerByte))
 				return { type: candidate.type, path: candidate.path }
 			}
 			if (isBase64PdfDocument(candidate)) {
@@ -116,8 +128,13 @@ export function estimateContextValueBreakdown(
 			imageTokens += estimateImageTokens(candidate, model)
 			return { ...candidate, data: "" }
 		}) ?? ""
-	const textTokens = Math.ceil(Buffer.byteLength(normalized, "utf8") / TOKEN_ESTIMATE_BYTES)
-	return { totalTokens: Math.max(1, textTokens + imageTokens), textTokens, imageTokens }
+	const textBytes = Buffer.byteLength(normalized, "utf8")
+	const textTokens = Math.ceil(textBytes * resolveTokenPerByte(estimator.tokenPerByte))
+	return { totalTokens: Math.max(1, textTokens + imageTokens), textTokens, textBytes, imageTokens }
+}
+
+function resolveTokenPerByte(value: number | undefined): number {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : DEFAULT_TOKEN_PER_BYTE
 }
 
 /** Resolve reliable usage, uncovered sent growth, and the current unsent candidate into one pressure projection. */
@@ -242,8 +259,8 @@ function isBase64PdfDocument(value: unknown): value is PdfDocumentCandidate {
  * An attached PDF is sent either natively or as its extracted text, so charge the larger of the two;
  * the estimate then holds whichever projection the target endpoint receives.
  */
-function estimateAttachedPdfTokens(block: AttachedPdfCandidate): number {
-	const textTokens = Math.ceil(Buffer.byteLength(block.fallback_text, "utf8") / TOKEN_ESTIMATE_BYTES)
+function estimateAttachedPdfTokens(block: AttachedPdfCandidate, tokenPerByte: number): number {
+	const textTokens = Math.ceil(Buffer.byteLength(block.fallback_text, "utf8") * tokenPerByte)
 	const pageTokens = typeof block.page_count === "number" ? block.page_count * PDF_PAGE_TOKENS : 0
 	return Math.max(1, textTokens, pageTokens)
 }

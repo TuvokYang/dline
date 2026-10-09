@@ -47,6 +47,8 @@ export interface TokenUsage {
 	thoughtsTokens?: number
 	apiFormat?: ApiFormat
 	totalCost?: number
+	webSearchRequests?: number
+	webFetchRequests?: number
 	cacheUsageReported?: boolean
 	requestsPerMinute?: number
 	tokensPerMinute?: number
@@ -269,6 +271,24 @@ export class TaskEventRecorder extends DomainRecorder {
 			this.sink.recordHistogram(TELEMETRY_METRICS.TASK.TOKENS_OUTPUT_PER_RESPONSE, tokensOut, attributes)
 		}
 
+		if (Number.isFinite(options?.thoughtsTokens)) {
+			this.sink.recordCounter(TELEMETRY_METRICS.TASK.TOKENS_THOUGHTS_TOTAL, options?.thoughtsTokens ?? 0, attributes)
+		}
+
+		if (Number.isFinite(options?.webSearchRequests) && (options?.webSearchRequests ?? 0) > 0) {
+			this.sink.recordCounter(TELEMETRY_METRICS.TOOLS.SERVER_REQUESTS_TOTAL, options?.webSearchRequests ?? 0, {
+				...attributes,
+				server_tool: "web_search",
+			})
+		}
+
+		if (Number.isFinite(options?.webFetchRequests) && (options?.webFetchRequests ?? 0) > 0) {
+			this.sink.recordCounter(TELEMETRY_METRICS.TOOLS.SERVER_REQUESTS_TOTAL, options?.webFetchRequests ?? 0, {
+				...attributes,
+				server_tool: "web_fetch",
+			})
+		}
+
 		if (cacheUsageReported) {
 			this.sink.recordCounter(
 				TELEMETRY_METRICS.CACHE.INPUT_TOTAL,
@@ -410,7 +430,6 @@ export class TaskEventRecorder extends DomainRecorder {
 			cacheHit: boolean
 			cacheHitPercentage?: number
 			apiSuccess: boolean
-			apiError?: string
 			throughputTokensPerSec?: number
 		},
 	): void {

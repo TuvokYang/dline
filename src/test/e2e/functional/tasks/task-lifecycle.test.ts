@@ -3,7 +3,11 @@ import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskConversationText, readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
-import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
+import {
+	readBlankMessageRows,
+	startFooterActionStabilityObserver,
+	stopFooterActionStabilityObserver,
+} from "@e2e/utils/ui-stability"
 import { expect, type Frame } from "@playwright/test"
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {
@@ -619,6 +623,7 @@ e2e(
 		await expect(sidebar.getByTestId("chat-input")).toBeEnabled()
 		await page.waitForTimeout(500)
 		expect(server.openAiRequestCount).toBe(3)
+		expect(await readBlankMessageRows(sidebar)).toEqual([])
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )
@@ -747,6 +752,7 @@ e2e(
 		expect(requestBodies[3]).toContain("E2E_REPORT_FEEDBACK")
 		await page.waitForTimeout(500)
 		expect(server.openAiRequestCount).toBe(4)
+		expect(await readBlankMessageRows(sidebar)).toEqual([])
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )
@@ -889,6 +895,7 @@ e2e(
 		expect(server.getMockConsumptions("openai-compatible-chat").every((entry) => entry.contractError === undefined)).toBe(
 			true,
 		)
+		expect(await readBlankMessageRows(sidebar)).toEqual([])
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )

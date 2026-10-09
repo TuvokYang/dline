@@ -289,9 +289,8 @@ export class ControllerTaskCallbacksOwner {
 		}
 	}
 
-	private async missingParameter(_toolName: ClineDefaultTool, paramName: string, relPath?: string, existingTs?: number) {
+	private async missingParameter(_toolName: ClineDefaultTool, paramName: string, relPath?: string, _existingTs?: number) {
 		const message = `${formatResponse.missingToolParameterError(paramName)}${relPath ? `\nPath: ${relPath}` : ""}`
-		await this.say("error", message, undefined, undefined, false, existingTs)
 		return formatResponse.toolError(message)
 	}
 

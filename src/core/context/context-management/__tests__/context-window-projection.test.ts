@@ -186,6 +186,21 @@ describe("context window projection", () => {
 		expect(large).toBeGreaterThan(small)
 	})
 
+	it("uses learned tokens-per-byte for text without scaling independent media costs", () => {
+		const candidate = candidateWithImage(ONE_PIXEL_PNG, "x".repeat(4_000))
+		const fallback = estimateContextWindowCandidateBreakdown(candidate, { providerId: "anthropic" })
+		const calibrated = estimateContextWindowCandidateBreakdown(candidate, {
+			providerId: "anthropic",
+			tokenPerByte: 0.1,
+		})
+
+		expect(calibrated.textBytes).toBe(fallback.textBytes)
+		expect(calibrated.textTokens).toBe(Math.ceil(calibrated.textBytes * 0.1))
+		expect(calibrated.textTokens).toBeLessThan(fallback.textTokens)
+		expect(calibrated.imageTokens).toBe(fallback.imageTokens)
+		expect(calibrated.totalTokens).toBe(calibrated.textTokens + calibrated.imageTokens)
+	})
+
 	it("does not treat an unsent base64 image payload as ordinary text pressure", () => {
 		const text = "x".repeat(960_000)
 		const previousCandidate = {

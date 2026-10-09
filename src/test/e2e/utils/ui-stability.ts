@@ -64,6 +64,21 @@ export async function stopFooterActionStabilityObserver(frame: Frame): Promise<s
 	})
 }
 
+/** Return rendered virtual message rows that have neither readable content nor an intentional visual control. */
+export async function readBlankMessageRows(frame: Frame): Promise<string[]> {
+	return frame.locator("[data-message-ts]").evaluateAll((rows) =>
+		rows
+			.filter((row) => {
+				const element = row as HTMLElement
+				if (element.innerText.trim()) return false
+				return !element.querySelector(
+					"button, input, textarea, img, video, canvas, svg, [role='progressbar'], [data-testid]",
+				)
+			})
+			.map((row) => row.getAttribute("data-message-ts") ?? "missing-ts"),
+	)
+}
+
 /** Sample a controlled settings input/checkbox and expose value reversion during persistence. */
 export async function startSettingControlStabilityObserver(
 	frame: Frame,

@@ -53,6 +53,20 @@ describe("filterVisibleMessages request rows", () => {
 		expect(filterVisibleMessages([emptyContinuation, attachmentOnly])).toEqual([attachmentOnly])
 	})
 
+	it("hides legacy blank content rows across continuation, text, Q&A, report, and completion projections", () => {
+		const blankRows: UiMessage[] = [
+			{ ts: 1, type: "say", say: "user_feedback", text: " \n " },
+			{ ts: 2, type: "say", say: "text", text: "\t" },
+			{ ts: 3, type: "say", say: "qna_respond", text: "" },
+			{ ts: 4, type: "ask", ask: "generate_report", text: " " },
+			{ ts: 5, type: "say", say: "completion_result", text: "" },
+			{ ts: 6, type: "ask", ask: "completion_result" },
+			{ ts: 7, type: "ask", ask: "status_acknowledgment", text: "" },
+		]
+
+		expect(filterVisibleMessages(blankRows)).toEqual([])
+	})
+
 	it("hides a cancelled request so its reasoning renders once", () => {
 		const request = createRequestMessage(1, { cost: 0, cancelReason: "user_cancelled" })
 		const reasoning = createReasoningMessage(2, "thought")

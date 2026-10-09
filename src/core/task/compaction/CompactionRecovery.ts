@@ -1,3 +1,13 @@
+import type { TaskState } from "../kernel"
+
+/** Why a round stopped after the automatic compaction it waited on failed. */
+export const AUTOMATIC_COMPACTION_FAILED = "automatic_compaction_failed"
+
+/** Durable recovery fact shared by the active runtime and the lightweight history display. */
+export function automaticCompactionFailureAwaitsRecovery(state: Pick<TaskState, "flow">): boolean {
+	return state.flow.compaction?.status === "failed" && state.flow.error === AUTOMATIC_COMPACTION_FAILED
+}
+
 /**
  * How one compaction run ended, as far as anyone waiting on it cares.
  *
@@ -20,4 +30,6 @@ export interface CompactionRecoveryPort {
 	truncationOffered(): boolean
 	/** Resolves once the run has settled, including its landing. */
 	settlement(compactionId: string): Promise<CompactionRunOutcome>
+	/** Marks the failed round as recovered by truncation, so its Retry is not compacted again from stale usage. */
+	truncated?(): void
 }

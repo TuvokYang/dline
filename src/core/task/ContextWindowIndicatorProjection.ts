@@ -19,6 +19,11 @@ export interface ContextWindowIndicatorSegments {
 export interface ContextWindowRequestOpening {
 	/** The local estimate of the complete request. */
 	readonly estimatedTokens: number
+	readonly estimatedTextBytes?: number
+	readonly estimatedMediaTokens?: number
+	readonly providerId?: string
+	readonly modelId?: string
+	readonly apiFormat?: number
 	/** The occupancy the request is projected to reach, on the scale earlier reports set. */
 	readonly projectedUsageTokens: number
 	/** The estimate split into the history the request carries, the round's own input, and the environment. */
@@ -41,7 +46,7 @@ export interface ProjectAuthoritativeContextWindowIndicatorSegmentsInput {
 export function estimateContextWindowIndicatorSegments(
 	input: EstimateContextWindowIndicatorSegmentsInput,
 ): ContextWindowIndicatorSegments {
-	const estimator = { providerId: input.providerId, modelId: input.modelId }
+	const estimator = { providerId: input.providerId, modelId: input.modelId, tokenPerByte: input.tokenPerByte }
 	const totalTokens = estimateContextWindowCandidate(input.providerInput, estimator)
 	const messagesWithoutEnvironment = stripLatestEnvironmentDetails(input.providerInput.messages)
 	const withoutEnvironmentTokens = Math.min(

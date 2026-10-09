@@ -39,6 +39,7 @@ function refusingRuntime(): ProductionToolHandlerRuntime {
 
 async function execute(invocation: ToolInvocationEnvelope): Promise<string> {
 	const service = new DefaultProductionToolExecutionService({
+		taskId: "task-1",
 		config: { create: () => toolConfig() },
 		runtime: refusingRuntime(),
 	})
@@ -80,6 +81,7 @@ describe("DefaultProductionToolExecutionService", () => {
 	it("bounds an oversized handler result to the canonical tool result limit", async () => {
 		const reply = `<feedback>\n${"x".repeat(MAX_TOOL_RESULT_TEXT_BYTES * 2)}\n</feedback>`
 		const service = new DefaultProductionToolExecutionService({
+			taskId: "task-1",
 			config: { create: () => toolConfig() },
 			runtime: {
 				coordinator: { getHandler: () => undefined },
@@ -112,6 +114,7 @@ describe("DefaultProductionToolExecutionService", () => {
 			restoreSubagentRetry: async () => false,
 		} as unknown as ProductionToolHandlerRuntime
 		const service = new DefaultProductionToolExecutionService({
+			taskId: "task-1",
 			config: {
 				create: () =>
 					toolConfig({

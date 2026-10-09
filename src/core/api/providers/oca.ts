@@ -25,6 +25,7 @@ import { convertToOpenAiMessages } from "../transform/openai-format"
 import { convertToOpenAIResponsesInput } from "../transform/openai-response-format"
 import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
+import { splitInclusiveInputUsage } from "../transform/usage-normalization"
 import { convertOpenAIToolsToAnthropicTools, handleAnthropicMessagesApiStreamResponse } from "../utils/messages_api_support"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
 import { resolveAnthropicReasoning } from "./anthropic/reasoning"
@@ -409,13 +410,18 @@ export class OcaHandler implements ApiHandler {
 
 				const cacheWriteTokens = usage.cache_creation_input_tokens || usage.prompt_cache_miss_tokens || 0
 				const cacheReadTokens = usage.cache_read_input_tokens || usage.prompt_cache_hit_tokens || 0
+				const normalizedInput = splitInclusiveInputUsage({
+					totalInputTokens: usage.prompt_tokens,
+					cacheWriteTokens,
+					cacheReadTokens,
+				})
 
 				yield {
 					type: "usage",
-					inputTokens: usage.prompt_tokens || 0,
+					inputTokens: normalizedInput.inputTokens,
 					outputTokens: usage.completion_tokens || 0,
-					cacheWriteTokens: cacheWriteTokens > 0 ? cacheWriteTokens : undefined,
-					cacheReadTokens: cacheReadTokens > 0 ? cacheReadTokens : undefined,
+					cacheWriteTokens: normalizedInput.cacheWriteTokens > 0 ? normalizedInput.cacheWriteTokens : undefined,
+					cacheReadTokens: normalizedInput.cacheReadTokens > 0 ? normalizedInput.cacheReadTokens : undefined,
 					totalCost,
 				}
 			}

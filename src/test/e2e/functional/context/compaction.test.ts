@@ -2,7 +2,12 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
-import { pauseTaskBetweenTurns, readTaskUiMessagesText, seedTaskConversation } from "@e2e/utils/task-instance-store"
+import {
+	pauseTaskBetweenTurns,
+	readTaskConversation,
+	readTaskUiMessagesText,
+	seedTaskConversation,
+} from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
@@ -428,8 +433,8 @@ async function closeCurrentTask(sidebar: Frame): Promise<void> {
 async function reopenTask(page: Page, sidebar: Frame, taskText: string): Promise<void> {
 	await page.getByRole("button", { name: "History", exact: true }).click()
 	await E2ETestHelper.dismissWhatsNewModal(sidebar)
-	const historyTask = sidebar.locator(".history-item").filter({ hasText: taskText })
-	await expect(historyTask).toHaveCount(1)
+	const historyTask = sidebar.locator(".history-preview-item, .history-item").filter({ hasText: taskText })
+	await expect(historyTask).toHaveCount(1, { timeout: 30_000 })
 	await historyTask.click()
 	await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
 	await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
@@ -1582,7 +1587,7 @@ e2e(
 for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
 	e2e(
 		`Context compaction - ${providerCase.label} rolling merge preserves complete logical-turn request content`,
-		async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 			e2e.setTimeout(300_000)
 			await configureRollingMergeTarget(dlineDir, providerCase)
 
@@ -1644,6 +1649,7 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
 					id: "call_rolling_summary_two",
 					name: "summarize_task",
 					arguments: { context: secondSummary },
+					...(providerCase.target === "openai-compatible-responses" ? { delayMs: 8_000 } : {}),
 					usage: { inputTokens: 217_600, outputTokens: 100 },
 					expectedRequestIncludes: [
 						"The current conversation is rapidly running out of context",
@@ -1687,6 +1693,16 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
 				const firstPass = server.getMockConsumptions(providerCase.target)[3]
 				expect(firstPass?.contractError).toBeUndefined()
 				expect(firstPass).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
+				if (providerCase.target === "openai-compatible-responses") {
+					const taskId = await onlyTaskId(dlineDocsDir)
+					const checkpoint = await E2ETestHelper.waitForValue(async () => {
+						const conversation = JSON.stringify(await readTaskConversation(dlineDocsDir, taskId))
+						return conversation.includes(firstSummary) ? conversation : undefined
+					}, 30_000)
+					expect(checkpoint).not.toContain(turnAMarker)
+					expect(checkpoint).toContain(turnBMarker)
+					expect(checkpoint).toContain(protectedTurnMarker)
+				}
 
 				await expect
 					.poll(() => server.getRequestCount(providerCase.target), { timeout: 60_000 })
@@ -1710,6 +1726,119 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
 		},
 	)
 }
+
+e2e(
+	"Context compaction - closing during Pass 2 resumes from the canonical Pass 1 checkpoint",
+	async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(300_000)
+		const providerCase = ROLLING_MERGE_PROVIDER_CASES.find((candidate) => candidate.target === "openai-compatible-responses")
+		if (!providerCase) throw new Error("Missing OpenAI Responses rolling provider case")
+		await configureRollingMergeTarget(dlineDir, providerCase)
+		const taskText = "E2E_ROLLING_RESTART_TASK"
+		const turnAMarker = "E2E_ROLLING_RESTART_TURN_A"
+		const turnBMarker = "E2E_ROLLING_RESTART_TURN_B"
+		const protectedMarker = "E2E_ROLLING_RESTART_PROTECTED"
+		const continuation = "E2E_ROLLING_RESTART_CONTINUE"
+		const firstSummary = "E2E_ROLLING_RESTART_SUMMARY_ONE covers turn A."
+		server.enqueueResponses(
+			providerCase.target,
+			{
+				type: "tool",
+				id: "call_rolling_restart_turn_a",
+				name: "qna_respond",
+				arguments: { response: `${turnAMarker}:${"A".repeat(520_000)}` },
+				usage: { inputTokens: 120_000, outputTokens: 100 },
+			},
+			{
+				type: "tool",
+				id: "call_rolling_restart_turn_b",
+				name: "qna_respond",
+				arguments: { response: `${turnBMarker}:${"B".repeat(520_000)}` },
+				usage: { inputTokens: 130_000, outputTokens: 100 },
+			},
+			{
+				type: "tool",
+				id: "call_rolling_restart_protected",
+				name: "qna_respond",
+				arguments: { response: `${protectedMarker}:${"C".repeat(300_000)}` },
+				usage: { inputTokens: 270_000, outputTokens: 100 },
+			},
+			{
+				type: "tool",
+				id: "call_rolling_restart_summary_one",
+				name: "summarize_task",
+				arguments: { context: firstSummary },
+				usage: { inputTokens: 700_000, outputTokens: 100 },
+				expectedRequestIncludes: [turnAMarker],
+				expectedRequestExcludes: [turnBMarker, protectedMarker],
+			},
+			{
+				type: "tool",
+				id: "call_rolling_restart_aborted_pass_two",
+				name: "summarize_task",
+				arguments: { context: "E2E_ROLLING_RESTART_ABORTED_SUMMARY" },
+				delayMs: 60_000,
+				expectedRequestIncludes: [firstSummary, turnBMarker],
+				expectedRequestExcludes: [turnAMarker, protectedMarker],
+			},
+			{
+				type: "tool",
+				id: "call_rolling_restart_complete",
+				name: "attempt_completion",
+				arguments: { result: "E2E_ROLLING_RESTART_OK" },
+				expectedRequestIncludes: [firstSummary, turnBMarker, protectedMarker, continuation],
+				expectedRequestExcludes: [turnAMarker, "E2E_ROLLING_RESTART_ABORTED_SUMMARY"],
+			},
+		)
+
+		let firstApp: ElectronApplication | undefined
+		let resumedApp: ElectronApplication | undefined
+		try {
+			firstApp = await openVSCode(workspaceDir)
+			const first = await openSidebar(firstApp, helper)
+			await sendTask(first, taskText)
+			await expect(first.getByText(turnAMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await submitTask(first, "E2E_ROLLING_RESTART_USER_B")
+			await expect(first.getByText(turnBMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await submitTask(first, "E2E_ROLLING_RESTART_USER_C")
+			await expect(first.getByText(protectedMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+			await submitTask(first, continuation)
+			const taskId = await onlyTaskId(dlineDocsDir)
+			await E2ETestHelper.waitForValue(async () => {
+				const projected = JSON.stringify(await readTaskConversation(dlineDocsDir, taskId))
+				return projected.includes(firstSummary) && !projected.includes(turnAMarker) ? projected : undefined
+			}, 30_000)
+			await expect.poll(() => server.getRequestCount(providerCase.target), { timeout: 30_000 }).toBeGreaterThanOrEqual(5)
+			await firstApp.close()
+			firstApp = undefined
+			helper.clearCachedFrame()
+
+			resumedApp = await openVSCode(workspaceDir)
+			const page = await resumedApp.firstWindow()
+			await E2ETestHelper.openClineSidebar(page)
+			const resumed = await helper.getSidebar(page)
+			await E2ETestHelper.dismissWhatsNewModal(resumed)
+			await helper.signin(resumed)
+			await reopenTask(page, resumed, taskText)
+			const resume = resumed.getByRole("contentinfo").locator('vscode-button[aria-label="Resume"]')
+			await expect(resume).toBeVisible({ timeout: 30_000 })
+			await resume.click()
+			await expect(resumed.getByText("E2E_ROLLING_RESTART_OK", { exact: false }).last()).toBeVisible({ timeout: 120_000 })
+
+			const uiHistory = await readTaskUiMessagesText(dlineDocsDir, taskId)
+			expect(countOccurrences(uiHistory, firstSummary)).toBe(1)
+			expect(uiHistory).not.toContain("E2E_ROLLING_RESTART_ABORTED_SUMMARY")
+			const finalConversation = JSON.stringify(await readTaskConversation(dlineDocsDir, taskId))
+			expect(finalConversation).toContain(firstSummary)
+			expect(finalConversation).not.toContain(turnAMarker)
+			expect(finalConversation).toContain(turnBMarker)
+			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+		} finally {
+			await firstApp?.close()
+			await resumedApp?.close()
+		}
+	},
+)
 
 e2e(
 	"OpenAI compaction budget - automatic request follows the available-remainder formula",
@@ -2154,7 +2283,7 @@ e2e(
 
 e2e(
 	"Context compaction - automatic failure does not truncate until Force Truncate is confirmed",
-	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+	async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(180_000)
 		await configureReducedCapScenario(dlineDir)
 		const turnAMarker = "E2E_FORCE_TRUNCATE_TURN_A"
@@ -2193,9 +2322,10 @@ e2e(
 			},
 		)
 
-		const app = await openVSCode(workspaceDir)
+		let app: ElectronApplication | undefined
 		try {
-			const sidebar = await openSidebar(app, helper)
+			app = await openVSCode(workspaceDir)
+			let sidebar = await openSidebar(app, helper)
 			await sendTask(sidebar, "E2E_FORCE_TRUNCATE_TASK")
 			await expect(sidebar.getByText(turnAMarker, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await submitTask(sidebar, middleMarker)
@@ -2217,6 +2347,16 @@ e2e(
 				"[NOTE] Some previous conversation history with the user has been removed",
 			)
 
+			await app.close()
+			helper.clearCachedFrame()
+			app = undefined
+			app = await openVSCode(workspaceDir)
+			const reopenedPage = await app.firstWindow()
+			await E2ETestHelper.openClineSidebar(reopenedPage)
+			sidebar = await helper.getSidebar(reopenedPage)
+			await reopenTask(reopenedPage, sidebar, "E2E_FORCE_TRUNCATE_TASK")
+			await expect(sidebar.getByTestId("compaction-failure")).toBeVisible({ timeout: 60_000 })
+
 			const expandTaskHeader = sidebar.getByLabel("Expand task header")
 			if (await expandTaskHeader.isVisible()) await expandTaskHeader.click()
 			const moreContextActions = sidebar.getByRole("button", { name: "More context actions" })
@@ -2234,6 +2374,15 @@ e2e(
 			await forceTruncateConfirmation.fill("TRUNCATE")
 			await sidebar.getByText("Force truncate conversation history", { exact: true }).last().click()
 			await expect(sidebar.getByRole("dialog")).not.toBeVisible()
+			const taskId = await onlyTaskId(dlineDocsDir)
+			const truncatedConversation = await E2ETestHelper.waitForValue(async () => {
+				const projected = JSON.stringify(await readTaskConversation(dlineDocsDir, taskId))
+				return projected.includes("[NOTE] Some previous conversation history with the user has been removed")
+					? projected
+					: undefined
+			})
+			expect(truncatedConversation).toContain(continueMarker)
+			expect(truncatedConversation).not.toContain(middleMarker)
 			await sidebar.getByRole("button", { name: "Retry", exact: true }).last().click()
 
 			await expect
@@ -2252,7 +2401,8 @@ e2e(
 			expect(recoveredRequestText).not.toContain(middleMarker)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/context window/i])
 		} finally {
-			await app.close()
+			await app?.close()
+			helper.clearCachedFrame()
 		}
 	},
 )

@@ -65,7 +65,7 @@ type ServiceOptions = ConstructorParameters<typeof ProviderCompactionService>[0]
 function service(
 	frame: ProviderRequestFrame,
 	triggerOptions?: ServiceOptions["triggerOptions"],
-	ports: Pick<ServiceOptions, "environment" | "indicator"> = {},
+	ports: Pick<ServiceOptions, "environment" | "indicator" | "requestPressures"> = {},
 ): ProviderCompactionService {
 	return new ProviderCompactionService({
 		frames: { frame: async () => frame },
@@ -174,6 +174,29 @@ describe("ProviderCompactionService", () => {
 			{ sourceHistory: SOURCE },
 		)
 		expect(outputCap(absolute.calls)).toBeLessThan(50_000)
+	})
+
+	it("uses exact Provider token-per-byte history to maximize complete turns in one Pass", async () => {
+		const calibrated = probe([{ type: "text", text: SUMMARY_TEXT }])
+		const requestPressures: NonNullable<ServiceOptions["requestPressures"]> = () => [
+			{
+				providerId: "openai",
+				modelId: "probe-model",
+				apiFormat: undefined,
+				estimatedTextBytes: 1_000,
+				estimatedMediaTokens: 0,
+				actualInputTokens: 100,
+			},
+		]
+
+		await run(service(calibrated.frame, undefined, { requestPressures }), TWO_LARGE_TURNS)
+
+		expect(calibrated.calls).toHaveLength(1)
+		const sent = JSON.stringify(calibrated.calls[0]?.[1])
+		expect(sent).toContain("task A")
+		expect(sent).toContain("task B")
+		expect(sent).toContain("a".repeat(1_000))
+		expect(sent).toContain("b".repeat(1_000))
 	})
 
 	// A Pass that cannot fit the window is refused before anything is sent:

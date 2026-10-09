@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto"
 import { createCompactionConversationRange } from "@core/context/context-management/compaction-conversation-range"
 import { CompactionPassBudgetError } from "@core/context/context-management/compaction-pass-budget-error"
 import { resolveCompactionWindowBudget } from "@core/context/context-management/compaction-window-budget"
-import { estimateContextWindowCandidate } from "@core/context/context-management/context-window-projection"
+import {
+	type ContextWindowCandidateEstimator,
+	type ContextWindowRequestPressure,
+	estimateContextWindowCandidate,
+} from "@core/context/context-management/context-window-projection"
 import {
 	COMPACTION_CLOSURE_RESERVE_TOKENS,
 	type CompactTriggerOptions,
@@ -18,6 +22,7 @@ import {
 	buildTargetCandidateHistory,
 	type TargetWindowFittingState,
 } from "@core/context/context-management/target-window-fitting"
+import { resolveTokenPerByte } from "@core/context/context-management/token-estimation"
 import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
 import { ClineDefaultTool } from "@shared/tools"
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry-schedule"
@@ -63,6 +68,8 @@ export interface ProviderCompactionServiceOptions {
 	readonly instruction: (frame: ProviderRequestFrame, budgetGuidance: string) => string
 	/** The auto-condense settings; absent means the provider window alone bounds the request. */
 	readonly triggerOptions?: () => CompactTriggerOptions
+	/** Settled ordinary requests used to calibrate text bytes against exact Provider input usage. */
+	readonly requestPressures?: () => readonly ContextWindowRequestPressure[]
 	/**
 	 * The handler a run is sent under when it is not the task's own, as for a
 	 * context transition that compacts for the target it is about to adopt.
@@ -186,8 +193,9 @@ export class ProviderCompactionService implements ProductionCompactionService {
 		// A stop during frame resolution happened before the listener below exists.
 		if (input.signal.aborted) throw input.signal.reason
 		const context = input.context
+		const estimator = this.estimator(frame)
 		const outcome: { committed?: TargetWindowFittingState; failure?: string } = {}
-		const session = new ContextCompactionSession(this.ports(frame, context, input, outcome), {
+		const session = new ContextCompactionSession(this.ports(frame, context, input, outcome, estimator), {
 			maxRetryAttempts: MAX_AUTO_RETRY_ATTEMPTS,
 		})
 		// The session checks its signal between steps; aborting the handler is
@@ -195,7 +203,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
 		const abort = () => session.cancel(input.compactionId)
 		input.signal.addEventListener("abort", abort, { once: true })
 		try {
-			const result = await session.run(this.sessionInput(frame, context, input, scope?.mode))
+			const result = await session.run(this.sessionInput(frame, context, input, scope?.mode, estimator))
 			if (input.signal.aborted) throw input.signal.reason
 			const summary = outcome.committed?.cumulativeSummary
 			if (result !== "completed" || !outcome.committed || !summary) {
@@ -215,6 +223,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
 		context: CompactionContext,
 		input: Parameters<ProductionCompactionService["run"]>[0],
 		mode: ContextCompactionSessionInput["targetMode"] | undefined,
+		estimator: ContextWindowCandidateEstimator,
 	): ContextCompactionSessionInput {
 		const ranges = context.sourceRanges
 		return {
@@ -225,6 +234,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			targetApi: frame.api,
 			// Only the ports below read the Mode, and they read the frame instead.
 			targetMode: mode ?? "act",
+			estimator,
 			sourceHistory: context.sourceHistory,
 			...(ranges && ranges.length === context.sourceHistory.length
 				? { sourceCanonicalRanges: ranges.map(([from, to]) => [from, to] as const) }
@@ -240,8 +250,8 @@ export class ProviderCompactionService implements ProductionCompactionService {
 		context: CompactionContext,
 		input: Parameters<ProductionCompactionService["run"]>[0],
 		outcome: { committed?: TargetWindowFittingState; failure?: string },
+		estimator: ContextWindowCandidateEstimator,
 	): ContextCompactionSessionPorts {
-		const estimator = { providerId: frame.api.getProviderId?.(), modelId: frame.api.getModel().id }
 		const policy = () =>
 			resolveCompactTriggerPolicy(
 				getContextWindowInfo(frame.api).contextWindow,
@@ -327,7 +337,18 @@ export class ProviderCompactionService implements ProductionCompactionService {
 					},
 				}
 			},
-			stageAcceptedPass: async () => {},
+			stageAcceptedPass: async (_sessionInput, state) => {
+				// Manual summaries remain proposals until the user accepts them in the adapter.
+				if (input.trigger === "manual" || !input.stageAcceptedPass || !state.cumulativeSummary) return
+				const coveredThrough = coveredSeq(state, context)
+				// Contexts written before canonical source ranges cannot safely land a partial prefix.
+				if (coveredThrough === undefined) return
+				await input.stageAcceptedPass({
+					passIndex: state.passIndex,
+					summary: state.cumulativeSummary,
+					coveredThrough,
+				})
+			},
 			commit: async (_sessionInput, state) => {
 				outcome.committed = { ...state }
 			},
@@ -398,7 +419,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
 				closureReserveTokens: COMPACTION_CLOSURE_RESERVE_TOKENS,
 				// The planner sizes the Pass range with this same estimator; measuring
 				// differently here would refuse a range the planner cannot shrink.
-				estimator: { providerId: frame.api.getProviderId?.(), modelId: model.id },
+				estimator: input.estimator ?? { providerId: frame.api.getProviderId?.(), modelId: model.id },
 				buildMessages,
 			})
 			if (
@@ -431,6 +452,18 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			scope.cancel()
 			throw error
 		}
+	}
+
+	private estimator(frame: ProviderRequestFrame): ContextWindowCandidateEstimator {
+		const providerId = frame.api.getProviderId?.()
+		const modelId = frame.api.getModel().id
+		const apiFormat = frame.api.getSelectedApiFormat?.()
+		const tokenPerByte = resolveTokenPerByte(this.options.requestPressures?.() ?? [], {
+			providerId,
+			modelId,
+			apiFormat,
+		})
+		return { providerId, modelId, ...(tokenPerByte === undefined ? {} : { tokenPerByte }) }
 	}
 }
 

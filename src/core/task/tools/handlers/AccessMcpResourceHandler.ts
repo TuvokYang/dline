@@ -1,7 +1,7 @@
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { UiAskUseMcpServer } from "@shared/ExtensionMessage"
+import { UiAskUseMcpServer, UiSayMcpServerResponse } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { truncateContent } from "@/shared/content-limits"
 import { ClineDefaultTool } from "@/shared/tools"
@@ -102,20 +102,20 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
 		// Execute the MCP resource access
 		const resourceResult = await config.services.mcpHub.readResource(server_name, uri)
 
-		// Process the resource result
-		const resourceResultPretty =
-			resourceResult?.contents
-				.map((item) => {
-					if (item.text) {
-						return item.text
-					}
-					return ""
-				})
-				.filter(Boolean)
-				.join("\n\n") || "(Empty response)"
+		// Preserve the result items as one response group so the Webview can
+		// present them in one collapsible card attached to this request.
+		const responseItems = resourceResult?.contents.map((item) => item.text || "").filter(Boolean) ?? []
+		if (responseItems.length === 0) responseItems.push("(Empty response)")
+		const resourceResultPretty = responseItems.join("\n\n")
 
-		// Display result to user
-		await config.callbacks.say("mcp_server_response", resourceResultPretty)
+		await config.callbacks.say(
+			"mcp_server_response",
+			JSON.stringify({
+				type: "mcp_server_response",
+				requestTs: block.ts,
+				responses: responseItems,
+			} satisfies UiSayMcpServerResponse),
+		)
 
 		// Truncate response if it exceeds 400KB to prevent context overflow
 		const truncatedResult = truncateContent(resourceResultPretty)

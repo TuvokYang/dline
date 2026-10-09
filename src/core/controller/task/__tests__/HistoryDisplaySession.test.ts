@@ -199,6 +199,57 @@ describe("HistoryDisplaySession", () => {
 		}
 	})
 
+	it("restores Force Truncate beside an anchored automatic-compaction failure", async () => {
+		const taskId = "history-force-truncate"
+		const turnId = "turn-force-truncate"
+		const interactionId = "error:compose.failed:24"
+		await seedMessages(taskId, [
+			{ ts: 10, type: "say", say: "task", text: "Original task" },
+			{ ts: 20, type: "ask", ask: "api_req_failed", text: "provider refused", interactionId },
+		])
+		await persistSnapshot(taskId, {
+			...createInitialTaskState(taskId),
+			revision: 25,
+			flow: {
+				phase: "terminated",
+				error: "automatic_compaction_failed",
+				compaction: {
+					compactionId: "compaction-1",
+					attempt: "attempt-1",
+					contextRef: "context-1",
+					status: "failed",
+				},
+			},
+			dialog: {
+				primary: {
+					turnId,
+					interactionId,
+					kind: "error_retry",
+					status: "awaiting",
+					createdRevision: 24,
+					presentationRef: "provider refused",
+					actionRules: [
+						{ actionId: "retry", payloadPolicy: "draft" },
+						{ actionId: "start_new_task", payloadPolicy: "draft" },
+					],
+					receiverGeneration: 0,
+				},
+				approvalsByBlock: {},
+			},
+		})
+		const session = new HistoryDisplaySession(createHistoryItem(taskId))
+
+		try {
+			await session.load()
+			expect(session.getViewState()).toMatchObject({
+				forceTruncateAvailable: true,
+				activeInteraction: { interactionId, kind: "error_retry", status: "awaiting" },
+			})
+		} finally {
+			await session.dispose()
+		}
+	})
+
 	it("draws the context-window figure the task last showed and ignores one saved for another task", () => {
 		const taskId = "history-context-window"
 		const saved = {

@@ -1,4 +1,4 @@
-import { estimateContextWindowCandidate } from "@core/context/context-management/context-window-projection"
+import { estimateContextWindowCandidateBreakdown } from "@core/context/context-management/context-window-projection"
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import type { ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
@@ -10,6 +10,9 @@ export interface FramedRequestEstimate {
 	readonly contextWindow: number
 	readonly providerId?: string
 	readonly modelId: string
+	readonly apiFormat?: number
+	readonly textBytes: number
+	readonly mediaTokens: number
 	/** The framed input that was measured, so its parts can be measured apart. */
 	readonly input: CompactionProviderInput
 }
@@ -35,6 +38,15 @@ export async function estimateFramedRequest(
 		tools: frame.tools,
 		serverTools: frame.options?.serverTools ?? [],
 	}
-	const tokens = estimateContextWindowCandidate(input, { providerId, modelId: model.id })
-	return { tokens, contextWindow: getContextWindowInfo(frame.api).contextWindow, providerId, modelId: model.id, input }
+	const breakdown = estimateContextWindowCandidateBreakdown(input, { providerId, modelId: model.id })
+	return {
+		tokens: breakdown.totalTokens,
+		contextWindow: getContextWindowInfo(frame.api).contextWindow,
+		providerId,
+		modelId: model.id,
+		apiFormat: frame.api.getSelectedApiFormat?.(),
+		textBytes: breakdown.textBytes,
+		mediaTokens: breakdown.imageTokens,
+		input,
+	}
 }

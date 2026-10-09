@@ -33,12 +33,14 @@ export async function checkpointRestore(controller: Controller, request: Checkpo
 		// The checkpoint owner owns validation, stop/fence and reopen as one transaction.
 		// Pre-cancelling here used the ordinary cancel path, which rearmed executors and
 		// offered a cancelled-resume dialog before the restore had even been validated.
-		await controller.task?.owners.checkpoints?.restoreCheckpoint(
+		const task = controller.task
+		await task?.owners.checkpoints?.restoreCheckpoint(
 			request.number,
 			request.restoreType as ClineCheckpointRestore,
 			request.offset,
 			request.editedText || undefined,
 		)
+		if (task) await controller.completeTaskCheckpointRestore(task.taskId)
 	}
 	return Empty.create({})
 }

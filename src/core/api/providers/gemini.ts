@@ -121,7 +121,7 @@ export class GeminiHandler implements ApiHandler {
 		let sdkFirstChunkTime: number | undefined
 		let ttftSdkMs: number | undefined
 		let apiSuccess = false
-		let apiError: string | undefined
+		let retryMessage: string | undefined
 		let promptTokens = 0
 		let outputTokens = 0
 		let cacheReadTokens = 0
@@ -243,7 +243,7 @@ export class GeminiHandler implements ApiHandler {
 		} catch (error) {
 			apiSuccess = false
 			if (error instanceof Error) {
-				apiError = error.message
+				retryMessage = error.message
 				if (error instanceof ApiError) {
 					if (error.status === 429) {
 						const response = this.attemptParse(error.message)
@@ -254,22 +254,22 @@ export class GeminiHandler implements ApiHandler {
 									(d: any) => d["@type"] === "type.googleapis.com/google.rpc.RetryInfo",
 								)
 								const detailedError = new RetriableError(
-									apiError,
+									retryMessage,
 									this.parseRetryDelay(detail?.retryDelay) || undefined,
 									{ cause: error },
 								)
 								throw detailedError
 							}
 						}
-						throw new RetriableError(apiError, undefined, { cause: error })
+						throw new RetriableError(retryMessage, undefined, { cause: error })
 					}
 					const isRateLimit = rateLimitPatterns.some((pattern) => pattern.test(error.message))
 					if (isRateLimit) {
-						throw new RetriableError(apiError, undefined, { cause: error })
+						throw new RetriableError(retryMessage, undefined, { cause: error })
 					}
 				}
 			} else {
-				apiError = String(error)
+				retryMessage = String(error)
 			}
 			throw error
 		} finally {
@@ -290,7 +290,6 @@ export class GeminiHandler implements ApiHandler {
 					cacheHit,
 					cacheHitPercentage,
 					apiSuccess,
-					apiError,
 					throughputTokensPerSec: throughputTokensPerSecSdk,
 				})
 			} else {

@@ -748,7 +748,7 @@
 						"uid": "${DS_LOKI}"
 					},
 					"editorMode": "code",
-					"expr": "{service_name=\"dline\",service_instance_id=~\"$instance\"} |~ `^(task\\.(state\\.committed|snapshot\\.(scheduled|persisted|failed)|usage\\.updated|api\\.(started|completed|cancelled)|error)|api\\.request\\.(started|completed|failed|cancelled))$` | telemetry_channel=\"runtime\" | canary_id!~\".+\" | runtime_trace_id=~\"$traceFilter\"",
+					"expr": "{service_name=\"dline\",service_instance_id=~\"$instance\"} |~ `^(task\\.(state\\.committed|snapshot\\.(scheduled|persisted|failed)|usage\\.updated|api\\.(started|completed|cancelled)|tool\\.(completed|failed)|mcp\\.(completed|failed)|error)|api\\.request\\.(started|completed|failed|cancelled)|tool\\.execution\\.(started|completed|failed)|mcp\\.tools\\.call\\.(started|completed|failed))$` | telemetry_channel=\"runtime\" | canary_id!~\".+\" | runtime_trace_id=~\"$traceFilter\"",
 					"queryType": "range",
 					"refId": "A"
 				}
@@ -807,6 +807,44 @@
 			"pluginVersion": "10.0.0",
 			"title": "How to Reconstruct an Error",
 			"type": "text"
+		},
+		{
+			"datasource": {
+				"type": "loki",
+				"uid": "${DS_LOKI}"
+			},
+			"description": "Content-free tool and MCP terminal failures. Use runtime_trace_id to open the exact task.turn -> tool.execution -> mcp.tools.call waterfall.",
+			"gridPos": {
+				"h": 10,
+				"w": 24,
+				"x": 0,
+				"y": 59
+			},
+			"id": 13,
+			"options": {
+				"dedupStrategy": "none",
+				"enableLogDetails": true,
+				"prettifyLogMessage": false,
+				"showCommonLabels": false,
+				"showLabels": false,
+				"showTime": true,
+				"sortOrder": "Descending",
+				"wrapLogMessage": false
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "loki",
+						"uid": "${DS_LOKI}"
+					},
+					"editorMode": "code",
+					"expr": "{service_name=\"dline\",service_instance_id=~\"$instance\"} |~ `^(tool\\.execution\\.failed|mcp\\.tools\\.call\\.failed)$` | telemetry_channel=\"runtime\" | canary_id!~\".+\" | runtime_trace_id=~\"$traceFilter\"",
+					"queryType": "range",
+					"refId": "A"
+				}
+			],
+			"title": "Recent Tool / MCP Failure Logs",
+			"type": "logs"
 		}
 	],
 	"refresh": "30s",
@@ -1021,6 +1059,6 @@
 	"timezone": "browser",
 	"title": "Dline OTel Errors and Traces",
 	"uid": "dline-otel-errors",
-	"version": 1,
+	"version": 2,
 	"weekStart": ""
 }

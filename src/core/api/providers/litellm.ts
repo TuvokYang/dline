@@ -11,6 +11,7 @@ import { ApiHandler, ApiHandlerContext } from ".."
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
+import { splitInclusiveInputUsage } from "../transform/usage-normalization"
 import { resolveAnthropicReasoning } from "./anthropic/reasoning"
 import { resolveOpenAIReasoningEffort } from "./openai/reasoning"
 
@@ -355,6 +356,11 @@ export class LiteLlmHandler implements ApiHandler {
 
 				const cacheWriteTokens = usage.cache_creation_input_tokens || usage.prompt_cache_miss_tokens || 0
 				const cacheReadTokens = usage.cache_read_input_tokens || usage.prompt_cache_hit_tokens || 0
+				const normalizedInput = splitInclusiveInputUsage({
+					totalInputTokens: usage.prompt_tokens,
+					cacheWriteTokens,
+					cacheReadTokens,
+				})
 
 				// Calculate cost using the actual token usage including cache tokens
 				const totalCost =
@@ -367,10 +373,10 @@ export class LiteLlmHandler implements ApiHandler {
 
 				yield {
 					type: "usage",
-					inputTokens: usage.prompt_tokens || 0,
+					inputTokens: normalizedInput.inputTokens,
 					outputTokens: usage.completion_tokens || 0,
-					cacheWriteTokens: cacheWriteTokens > 0 ? cacheWriteTokens : undefined,
-					cacheReadTokens: cacheReadTokens > 0 ? cacheReadTokens : undefined,
+					cacheWriteTokens: normalizedInput.cacheWriteTokens > 0 ? normalizedInput.cacheWriteTokens : undefined,
+					cacheReadTokens: normalizedInput.cacheReadTokens > 0 ? normalizedInput.cacheReadTokens : undefined,
 					totalCost,
 				}
 			}

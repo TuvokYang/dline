@@ -253,10 +253,14 @@ export class DifyHandler implements ApiHandler {
 								}
 								// Yield usage data if available
 								if (parsed.usage) {
+									const inputTokens = parsed.usage.prompt_tokens ?? 0
+									const outputTokens =
+										parsed.usage.completion_tokens ??
+										Math.max(0, (parsed.usage.total_tokens ?? inputTokens) - inputTokens)
 									yield {
 										type: "usage",
-										inputTokens: parsed.usage.prompt_tokens || 0,
-										outputTokens: parsed.usage.completion_tokens || parsed.usage.total_tokens || 0,
+										inputTokens,
+										outputTokens,
 										totalCost: parsed.usage.total_price || 0,
 									}
 								}

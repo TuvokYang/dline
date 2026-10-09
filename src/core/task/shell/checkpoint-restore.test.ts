@@ -38,9 +38,7 @@ describe("checkpoint restore coordinator", () => {
 		const result = await restoreCheckpoint({ taskId: "task-1", checkpointRef: "checkpoint:1", mode: "combined" }, subject)
 		expect(result.kind).toBe("restored")
 		expect(subject.calls).toEqual(["resolve", "stop", "workspace", "conversation", "save"])
-		expect(subject.save).toHaveBeenCalledWith(
-			expect.objectContaining({ outbox: [expect.objectContaining({ type: "dialog.prepare" })] }),
-		)
+		expect(subject.save).toHaveBeenCalledWith(expect.objectContaining({ outbox: [] }))
 	})
 
 	it("falls back to chat restore when combined workspace restore fails", async () => {
@@ -84,6 +82,23 @@ describe("checkpoint restore coordinator", () => {
 		expect(result.kind).toBe("restored")
 		expect(subject.calls).toEqual(["resolve", "stop", "conversation", "save"])
 		expect(subject.restoreWorkspace).not.toHaveBeenCalled()
+	})
+
+	it("discards commands owned by the rewound tail", async () => {
+		const subject = ports()
+		const resolved = await subject.resolve("checkpoint:1")
+		vi.mocked(subject.resolve).mockResolvedValue({
+			...resolved,
+			snapshot: {
+				...resolved.snapshot,
+				outbox: [{ type: "tool.run", effectId: "discarded-tool" } as never],
+			},
+		})
+		subject.calls.length = 0
+
+		await restoreCheckpoint({ taskId: "task-1", checkpointRef: "checkpoint:1", mode: "chat_only" }, subject)
+
+		expect(subject.save).toHaveBeenCalledWith(expect.objectContaining({ outbox: [] }))
 	})
 
 	it("rejects a combined checkpoint without a workspace reference before stopping", async () => {

@@ -39,6 +39,10 @@ export interface ToolCallSideEffectPort {
  */
 export function toolMayChangeWorkspace(tool: ClineDefaultTool): boolean {
 	if ((READ_ONLY_TOOLS as readonly ClineDefaultTool[]).includes(tool)) return false
+	// MCP calls may mutate external systems, but a Dline workspace checkpoint
+	// cannot restore those side effects. Emitting one after every response only
+	// creates misleading restore rows and duplicates the call/result presentation.
+	if (tool === ClineDefaultTool.MCP_USE || tool === ClineDefaultTool.MCP_ACCESS) return false
 	return !CONVERSATIONAL_TOOL_NAMES.has(tool)
 }
 

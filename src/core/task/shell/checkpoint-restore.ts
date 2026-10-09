@@ -1,4 +1,3 @@
-import { mergeCheckpointOutbox } from "../checkpoints/CanonicalCheckpointRepository"
 import { hydrate } from "../kernel/hydrate"
 import type { Diagnostic } from "../kernel/types"
 import type { DurableTaskSnapshot, JournalWatermark } from "../stores/contracts"
@@ -73,7 +72,12 @@ export async function restoreCheckpoint(
 	await ports.applyConversationBoundary(checkpoint.boundary)
 	const snapshot: DurableTaskSnapshot = {
 		state: hydrated.state,
-		outbox: mergeCheckpointOutbox(checkpoint.snapshot.outbox, hydrated.initialCommands),
+		// The stored outbox belongs to the state at capture time. Rewind deliberately
+		// removes that turn and its blocks, so replaying those commands (for example
+		// its tool.run) can only target discarded work and starve the restored Resume.
+		// The restored state's planned dialog is enough: reopen hydrate derives its
+		// command exactly once, whereas persisting it here duplicates dialog.prepare.
+		outbox: [],
 	}
 	await ports.save(snapshot)
 	return { kind: "restored", snapshot, diagnostics }

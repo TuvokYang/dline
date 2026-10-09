@@ -19,6 +19,7 @@ export { TELEMETRY_MASK_VALUE } from "../service/pipeline-port"
 const CONTENT_KEYS = new Set([
 	"args",
 	"arguments",
+	"apierror",
 	"body",
 	"cmd",
 	"code",

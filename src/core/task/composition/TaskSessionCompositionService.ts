@@ -46,6 +46,7 @@ import {
 import type { TaskState } from "../kernel"
 import { MessageStateHandler } from "../message-state"
 import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback, perRequestHistory } from "../new-task/new-task-feedback"
+import { observeTaskStateVault, TaskTurnTelemetry } from "../observability/task-turn-telemetry"
 import { formatApiRequestTiming } from "../performance/api-request-timing"
 import { TaskPerformanceOwner } from "../performance/TaskPerformanceOwner"
 import { TaskPerformanceRequestReporter } from "../performance/TaskPerformanceRequestReporter"
@@ -105,6 +106,7 @@ export interface TaskSessionMessageHost {
 	readonly uiMessage: UIMessage
 	readonly apiConversation: ApiConversation
 	readonly taskIsFavorited?: boolean
+	readonly legacyConversationHistoryDeletedRange?: readonly [number, number]
 	readonly updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
 	readonly publishTaskHistoryClose?: () => void
 	/**
@@ -190,6 +192,8 @@ export class TaskSessionCompositionService {
 			taskId: options.taskId,
 			persistence,
 			apiHistory: options.messages.apiConversation.getAll(),
+			uiMessages: options.messages.uiMessage.getAll(),
+			conversationHistoryDeletedRange: options.messages.legacyConversationHistoryDeletedRange,
 		}
 		// A window without the task lock must not write the stores; its session
 		// records the pending import so the window reopens it once it owns them.
@@ -298,6 +302,17 @@ export class TaskSessionCompositionService {
 			onChanged: () => void options.publishState().catch(() => undefined),
 		})
 		resources.add({ release: () => performance.release() })
+		const taskTelemetry = new TaskTurnTelemetry(options.taskId, readState, () => performance.getSnapshot())
+		taskTelemetry.registerAlias(taskIncarnationId)
+		resources.add({
+			release: async () => {
+				taskTelemetry.dispose()
+			},
+		})
+		const runtimePersistence: TaskPersistenceAssembly = {
+			...persistence,
+			ports: { ...persistence.ports, vault: observeTaskStateVault(persistence.ports.vault, taskTelemetry) },
+		}
 		const completionHost = options.messages.completion
 		const completion = completionHost
 			? new TaskCompletionProjector({
@@ -624,12 +639,13 @@ export class TaskSessionCompositionService {
 			deferRestoredCommands: options.deferRestoredCommands,
 			upgradeImportPending,
 			readAnchorRows: () => messages.durableClineMessages,
-			persistence,
+			persistence: runtimePersistence,
 			conversationView,
 			// A request's figure stays in flight until the run it belongs to comes
 			// to rest, and only a committed state says when that is.
 			taskView: {
 				notifyCommitted: async (state) => {
+					taskTelemetry.committed("runtime.state.committed", state)
 					// Applied first and synchronously, so the view it informs never
 					// delays the figure and a failing view cannot skip it.
 					contextUsage.committed(state)
@@ -784,6 +800,7 @@ export class TaskSessionCompositionService {
 				provider: new DefaultProductionProviderService({
 					requests: providerRequests,
 					nextPresentationId,
+					resolveMcpServerName: (key) => tool.services.mcpHub.resolveServerName(key),
 					retry: providerRetry,
 					// Each ordinary request is one logical round for the rate metrics,
 					// however many transport attempts it takes to be answered.
@@ -807,7 +824,11 @@ export class TaskSessionCompositionService {
 							}),
 						),
 				}),
-				tool: new DefaultProductionToolExecutionService({ config: toolExecution, runtime: toolRuntime }),
+				tool: new DefaultProductionToolExecutionService({
+					taskId: options.taskId,
+					config: toolExecution,
+					runtime: toolRuntime,
+				}),
 				toolResources: {
 					revertDiff: async () => {
 						await tool.services.diffViewProvider.revertChanges()

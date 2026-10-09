@@ -1,4 +1,5 @@
 import type { ClineUserAttachedDocumentBlock } from "@shared/messages/content"
+import type { ToolFailureObservation } from "../observability/tool-execution-observation"
 import type { ToolResponse } from "./ToolResponse"
 
 /** Data-only successor directive executed only after the canonical tool result and turn are closed. */
@@ -21,6 +22,8 @@ export interface ToolExecutionResult {
 	 * and the provider request places them after the result they belong to.
 	 */
 	readonly documents?: readonly ClineUserAttachedDocumentBlock[]
+	/** Stable, content-free failure classification for lifecycle and OTel projection. */
+	readonly failure?: ToolFailureObservation
 	readonly postCommit?: ToolPostCommitDirective
 }
 

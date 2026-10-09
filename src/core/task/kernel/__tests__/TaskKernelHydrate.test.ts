@@ -57,6 +57,42 @@ describe("task kernel hydrate forms", () => {
 		expect(result.initialCommands.map((command) => command.type)).toEqual(["dialog.prepare"])
 	})
 
+	it("preserves a terminal automatic-compaction failure as a recovery fact", () => {
+		const snapshot: TaskState = {
+			...base(),
+			flow: {
+				phase: "terminated",
+				error: "automatic_compaction_failed",
+				compaction: {
+					compactionId: "compaction-1",
+					attempt: "compaction-1:1",
+					contextRef: "context:1",
+					status: "failed",
+					message: "provider refused",
+				},
+			},
+			dialog: {
+				primary: {
+					...prepared("error_retry"),
+					interactionId: "error:compose.failed:5",
+					actionRules: [
+						{ actionId: "retry", payloadPolicy: "draft" },
+						{ actionId: "start_new_task", payloadPolicy: "draft" },
+					],
+				},
+				approvalsByBlock: {},
+			},
+		}
+
+		const result = ready(snapshot)
+
+		expect(result.state.flow).toMatchObject({
+			phase: "paused",
+			error: "automatic_compaction_failed",
+			compaction: { compactionId: "compaction-1", status: "failed" },
+		})
+	})
+
 	it("restores a pending manual tool approval instead of replacing it with Resume", () => {
 		const interactionId = "approval:dline_tid_01"
 		const result = ready({

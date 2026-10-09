@@ -12,7 +12,10 @@ const requestCompaction = vi.mocked(requestTaskCompaction)
 
 /** Create a controller-shaped test boundary with one optional active session. */
 function controller(taskId?: string) {
-	return taskId ? { task: createSessionFixture({ taskId }) } : {}
+	return {
+		...(taskId ? { task: createSessionFixture({ taskId }) } : {}),
+		promoteHistoryDisplayForActivityControl: vi.fn(async () => false),
+	}
 }
 
 describe("compactTask", () => {
@@ -39,6 +42,33 @@ describe("compactTask", () => {
 
 		expect(response).toMatchObject({ accepted: false, result: "missing_task" })
 		expect(requestCompaction).not.toHaveBeenCalled()
+	})
+
+	it("promotes a history display before handling Force Truncate", async () => {
+		const session = createSessionFixture({
+			taskId: "task-1",
+			patchState: (state) => ({ ...state, revision: 41 }),
+		})
+		const subject = {
+			task: undefined as typeof session | undefined,
+			promoteHistoryDisplayForActivityControl: vi.fn(async () => {
+				subject.task = session
+				return true
+			}),
+		}
+
+		const response = await compactTask(
+			subject as never,
+			CompactTaskRequest.create({ taskId: "task-1", stateRevision: 12, forceTruncate: true }),
+		)
+
+		expect(subject.promoteHistoryDisplayForActivityControl).toHaveBeenCalledWith("task-1")
+		expect(requestCompaction).toHaveBeenCalledWith(session, {
+			stateRevision: 41,
+			mode: "force_truncate",
+			trigger: "manual",
+		})
+		expect(response).toMatchObject({ accepted: true, result: "accepted" })
 	})
 
 	it("forwards the task revision and preserves an accepted result", async () => {
@@ -72,6 +102,24 @@ describe("compactTask", () => {
 			trigger: "manual",
 		})
 		expect(response).toMatchObject({ accepted: true, result: "truncated:12" })
+	})
+
+	it("does not claim Force Truncate settlement a second time after the task domain returns", async () => {
+		requestCompaction.mockResolvedValue({ accepted: true, result: "truncated", compactionId: "compaction-1" })
+		const session = createSessionFixture({ taskId: "task-1" })
+		const settlement = vi.fn()
+		;(session.owners as { compactionRecovery?: unknown }).compactionRecovery = {
+			truncationOffered: () => true,
+			settlement,
+		}
+
+		const response = await compactTask(
+			{ task: session, promoteHistoryDisplayForActivityControl: vi.fn() } as never,
+			CompactTaskRequest.create({ taskId: "task-1", stateRevision: 12, forceTruncate: true }),
+		)
+
+		expect(response).toMatchObject({ accepted: true, result: "truncated" })
+		expect(settlement).not.toHaveBeenCalled()
 	})
 
 	it("preserves a stale-state rejection from the task", async () => {

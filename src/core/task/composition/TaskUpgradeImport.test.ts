@@ -1,5 +1,8 @@
+import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
+import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import { hydrate } from "../kernel"
 import type { TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
 import { InMemoryConversationJournal, InMemoryStateVault, InMemoryTaskPayloadStore } from "../stores"
@@ -26,6 +29,7 @@ function persistence(journal = new InMemoryConversationJournal()) {
 	return {
 		journal,
 		vault,
+		payloads,
 		assembly: { ports: { journal, vault }, payloads } as unknown as TaskPersistenceAssembly,
 	}
 }
@@ -46,12 +50,12 @@ describe("TaskUpgradeImport", () => {
 
 		await importTaskUpgrade({ taskId: "task-1", persistence: stores.assembly, apiHistory })
 
-		expect(stores.journal.watermark()).toEqual({ seq: 2 })
+		expect(stores.journal.watermark()).toEqual({ seq: 3 })
 		const saved = await stores.vault.load("task-1")
 		if (!saved) throw new Error("expected state.json")
-		expect(saved.state.journalWatermark).toEqual({ seq: 2 })
-		const restored = hydrate({ taskId: "task-1", snapshot: saved.state, journalTail: { seq: 2 }, openReason: "resume" })
-		expect(restored.state.journalWatermark).toEqual({ seq: 2 })
+		expect(saved.state.journalWatermark).toEqual({ seq: 3 })
+		const restored = hydrate({ taskId: "task-1", snapshot: saved.state, journalTail: { seq: 3 }, openReason: "resume" })
+		expect(restored.state.journalWatermark).toEqual({ seq: 3 })
 		expect(restored.state.intake.queued.map((entry) => entry.entryId)).toEqual(["queued-1"])
 		expect(snapshotQueue.removeInputQueue).toHaveBeenCalledWith("sha256:queue")
 	})
@@ -100,5 +104,79 @@ describe("TaskUpgradeImport", () => {
 		await expect(taskUpgradeImportPending({ taskId: "task-1", persistence: stores.assembly, apiHistory })).resolves.toBe(
 			false,
 		)
+	})
+
+	it("refuses an out-of-bounds completed compaction range without marking the repair complete", async () => {
+		const stores = persistence()
+		const uiMessages: UiMessage[] = [
+			{
+				ts: 10,
+				type: "say",
+				say: "tool",
+				text: JSON.stringify({ tool: "summarizeTask", content: "invalid summary", compactionStatus: "completed" }),
+				compactionConversationRange: {
+					logicalTurnRange: [0, 0],
+					apiConversationRange: [0, apiHistory.length],
+					preCompactionApiEndIndex: apiHistory.length,
+				},
+			},
+		]
+
+		await expect(
+			importTaskUpgrade({ taskId: "task-1", persistence: stores.assembly, apiHistory, uiMessages }),
+		).rejects.toThrow(`LegacyCompactionRangeInvalid:0:${apiHistory.length}`)
+		await expect(
+			taskUpgradeImportPending({ taskId: "task-1", persistence: stores.assembly, apiHistory, uiMessages }),
+		).resolves.toBe(true)
+	})
+
+	it("refuses an invalid deleted range without marking the repair complete", async () => {
+		const stores = persistence()
+
+		await expect(
+			importTaskUpgrade({
+				taskId: "task-1",
+				persistence: stores.assembly,
+				apiHistory,
+				conversationHistoryDeletedRange: [1, apiHistory.length],
+			}),
+		).rejects.toThrow(`LegacyTruncationRangeInvalid:1:${apiHistory.length}`)
+		await expect(
+			taskUpgradeImportPending({
+				taskId: "task-1",
+				persistence: stores.assembly,
+				apiHistory,
+				conversationHistoryDeletedRange: [1, apiHistory.length],
+			}),
+		).resolves.toBe(true)
+	})
+
+	it("migrates a completed legacy compaction card into one canonical journal replacement", async () => {
+		const stores = persistence()
+		const summary = "legacy summary"
+		const uiMessages: UiMessage[] = [
+			{
+				ts: 10,
+				type: "say",
+				say: "tool",
+				text: JSON.stringify({ tool: "summarizeTask", content: summary, compactionStatus: "completed" }),
+				compactionConversationRange: {
+					logicalTurnRange: [0, 0],
+					apiConversationRange: [0, 1],
+					preCompactionApiEndIndex: 1,
+				},
+			},
+		]
+
+		await importTaskUpgrade({ taskId: "task-1", persistence: stores.assembly, apiHistory, uiMessages })
+		const view = new JournalConversationView(stores.journal, new ProviderJournalMessageMaterializer(stores.payloads))
+		const migrated = JSON.stringify(await view.messages())
+		expect(migrated).toContain(summary)
+		expect(migrated).not.toContain("<task>fix it</task>")
+		expect(migrated).not.toContain("done")
+		expect(stores.journal.watermark()).toEqual({ seq: 4 })
+
+		await importTaskUpgrade({ taskId: "task-1", persistence: stores.assembly, apiHistory, uiMessages })
+		expect(stores.journal.watermark()).toEqual({ seq: 4 })
 	})
 })

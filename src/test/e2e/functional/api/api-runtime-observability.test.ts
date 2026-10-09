@@ -1162,6 +1162,49 @@ e2e(
 )
 
 e2e(
+	"API recovery - upstream_http2_stream_error replays the same turn without duplicate UI",
+	async ({ helper, server, sidebar, userDataDir }) => {
+		e2e.setTimeout(180_000)
+		const task = "E2E_UPSTREAM_HTTP2_STREAM_ERROR_TASK"
+		const completion = "E2E_UPSTREAM_HTTP2_STREAM_ERROR_RECOVERED"
+		await helper.signin(sidebar)
+		await selectProfile(sidebar, E2E_PROFILE_NAMES.mockDeepSeek)
+		server.enqueueResponses(
+			"deepseek-chat",
+			{
+				type: "error",
+				status: 502,
+				code: "upstream_http2_stream_error",
+				message: "The upstream HTTP/2 stream was reset.",
+			},
+			{ type: "tool", name: "attempt_completion", arguments: { result: completion } },
+			{
+				type: "error",
+				status: 500,
+				code: "unexpected_http2_retry_request",
+				message: "The recovered HTTP/2 turn was sent more than once.",
+			},
+		)
+
+		await sendTask(sidebar, task)
+		await expect(sidebar.getByTestId("error-retry-box")).toContainText(retryAttemptLabel(1), { timeout: 90_000 })
+		await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+
+		const consumptions = server.getMockConsumptions("deepseek-chat")
+		expect(consumptions).toHaveLength(2)
+		expect(consumptions[1].requestBody).toEqual(consumptions[0].requestBody)
+		await expect(sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: task })).toHaveCount(1)
+		await expect(sidebar.getByText(completion, { exact: false })).toHaveCount(1)
+		await expect(
+			sidebar.locator(
+				'[data-testid="api-error-box"], [data-testid="error-message-box"], [data-testid="error-presentation-box"], [data-testid="error-retry-box"]',
+			),
+		).toHaveCount(0)
+		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/upstream_http2_stream_error|HTTP\/2 stream/])
+	},
+)
+
+e2e(
 	"API recovery - keyboard-typed draft stays local while an automatic retry completes",
 	async ({ helper, page, server, sidebar, userDataDir }) => {
 		e2e.setTimeout(180_000)

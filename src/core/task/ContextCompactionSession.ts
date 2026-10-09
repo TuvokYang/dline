@@ -13,6 +13,7 @@ import { planNextCompactionPass } from "@core/context/context-management/compact
 import { type ContextCompactionPhaseTiming, elapsedCompactionMs } from "@core/context/context-management/compaction-phase-timing"
 import { CompactionRetryPolicy } from "@core/context/context-management/compaction-retry-policy"
 import { createCompactionSourceSnapshot } from "@core/context/context-management/compaction-source-snapshot"
+import type { ContextWindowCandidateEstimator } from "@core/context/context-management/context-window-projection"
 import {
 	type InternalCompactionAttemptIdentity,
 	type InternalCompactionPassAttemptResult,
@@ -84,6 +85,8 @@ export interface ContextCompactionSessionInput {
 	compactionApi: ApiHandler
 	targetApi: ApiHandler
 	targetMode: Mode
+	/** One request-scoped estimator shared by source indexing, Pass planning, sending, and reprojection. */
+	estimator?: ContextWindowCandidateEstimator
 	sourceHistory: ClineStorageMessage[]
 	/** Canonical API range represented by each source message; synthetic boundary messages are undefined. */
 	sourceCanonicalRanges?: Array<CanonicalMessageRange | undefined>
@@ -342,10 +345,14 @@ export class ContextCompactionSession {
 			settle: () => settleActive?.(),
 		}
 		const signal = combineSignals(input.signal, abortController.signal)
-		const sourceSnapshot = createCompactionSourceSnapshot(input.sourceHistory, input.sourceCanonicalRanges, {
-			providerId: input.compactionApi.getProviderId?.(),
-			modelId: typeof input.compactionApi.getModel === "function" ? input.compactionApi.getModel().id : undefined,
-		})
+		const sourceSnapshot = createCompactionSourceSnapshot(
+			input.sourceHistory,
+			input.sourceCanonicalRanges,
+			input.estimator ?? {
+				providerId: input.compactionApi.getProviderId?.(),
+				modelId: typeof input.compactionApi.getModel === "function" ? input.compactionApi.getModel().id : undefined,
+			},
+		)
 		const logicalTurnIndexStartedAtMs = performance.now()
 		const logicalTurnIndex = indexLogicalTurns(sourceSnapshot.messages)
 		const logicalTurnIndexMs = elapsedCompactionMs(logicalTurnIndexStartedAtMs)

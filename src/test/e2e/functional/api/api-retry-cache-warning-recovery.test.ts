@@ -1,4 +1,5 @@
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readBlankMessageRows } from "@e2e/utils/ui-stability"
 import { expect, type Frame } from "@playwright/test"
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {
@@ -65,6 +66,7 @@ e2e(
 		await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 30_000 }).toBe(3)
 		await expect(sidebar.getByText("E2E_MANUAL_RETRY_RECOVERED", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 		await expect(errorCards).toHaveCount(0)
+		expect(await readBlankMessageRows(sidebar)).toEqual([])
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [
 			/Initial automatic retry failure/,
 			/Manual takeover request failed/,

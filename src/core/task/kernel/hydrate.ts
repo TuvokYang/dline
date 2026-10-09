@@ -286,6 +286,13 @@ function normalizeState(
 	const legacyIntake = snapshot.intake ?? { queued: [], background: [], coTask: [] }
 	// A review whose run died with the process has nobody left to answer it.
 	const dialog = withoutAbandonedReview(snapshot.dialog, snapshot.flow.compaction)
+	const terminalCompactionFailure =
+		snapshot.flow.compaction?.status === "failed"
+			? {
+					compaction: snapshot.flow.compaction,
+					...(snapshot.flow.error === undefined ? {} : { error: snapshot.flow.error }),
+				}
+			: {}
 	let state: TaskState = {
 		...snapshot,
 		revision,
@@ -296,6 +303,10 @@ function normalizeState(
 			form === "interrupted"
 				? {
 						phase: "paused",
+						// A terminal failure is a durable recovery fact, not a live
+						// process slot. Keep it so a promoted history task can offer
+						// the same explicit recovery choices it rendered before open.
+						...terminalCompactionFailure,
 						...(snapshot.flow.pendingQueueResponse
 							? { pendingQueueResponse: snapshot.flow.pendingQueueResponse }
 							: {}),
@@ -365,7 +376,10 @@ function initialCommands(state: TaskState): readonly Command[] {
 		.filter((interaction): interaction is DialogInteraction => interaction !== undefined)
 		.flatMap((interaction, index): readonly Command[] => {
 			const base = {
-				commandId: `${state.taskId}:${state.revision}:hydrate:${index}`,
+				commandId:
+					state.generation === 0
+						? `${state.taskId}:${state.revision}:hydrate:${index}`
+						: `${state.taskId}:g${state.generation}:${state.revision}:hydrate:${index}`,
 				originRevision: state.revision,
 				generation: state.generation,
 			}

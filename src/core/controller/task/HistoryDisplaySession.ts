@@ -12,6 +12,7 @@ import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
 import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
+import { automaticCompactionFailureAwaitsRecovery } from "@/core/task/compaction/CompactionRecovery"
 import { readFocusChainHistoryFile } from "@/core/task/focus-chain/file-utils"
 import { readHistoryContextWindowIndicator } from "@/core/task/HistoryContextWindow"
 import { getInteraction } from "@/core/task/interaction/InteractionRegistry"
@@ -485,7 +486,13 @@ export class HistoryDisplaySession {
 			// The anchor only proves the dialog is answerable; the retained window
 			// stays the latest page, and the surface pages back to the row itself.
 			const evidence = anchor ? [...durableMessages, anchor] : durableMessages
-			const adapted = adaptCanonicalTaskView(view, evidence)
+			const adapted = adaptCanonicalTaskView(
+				view,
+				evidence,
+				undefined,
+				false,
+				automaticCompactionFailureAwaitsRecovery(display.state),
+			)
 			if (adapted.activeInteraction || owningInteractionId === undefined) {
 				return { messages: durableMessages, view: adapted }
 			}
@@ -506,7 +513,13 @@ export class HistoryDisplaySession {
 	}
 
 	private projectView(state: TaskState, messages: readonly UiMessage[]): TaskViewState {
-		return adaptCanonicalTaskView(projectCanonicalTaskView(state), messages)
+		return adaptCanonicalTaskView(
+			projectCanonicalTaskView(state),
+			messages,
+			undefined,
+			false,
+			automaticCompactionFailureAwaitsRecovery(state),
+		)
 	}
 
 	/**

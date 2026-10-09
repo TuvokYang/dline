@@ -5,6 +5,7 @@ import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_s
 import { parseAssistantMessage, type ToolUse } from "@core/assistant-message"
 import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
 import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
+import { CLINE_MCP_TOOL_IDENTIFIER } from "@shared/mcp"
 import {
 	type ClineAssistantContent,
 	type ClineAssistantToolUseBlock,
@@ -15,6 +16,7 @@ import {
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import { Logger } from "@shared/services/Logger"
 import { ClineError } from "@/services/error"
+import { ClineDefaultTool } from "@/shared/tools"
 import { isTurnEndingToolName } from "../../../assistant-message-order"
 import { isRetryableProviderError, type ProviderIdentity, waitRetryDelayUnlessAborted } from "../../../auto-retry"
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry-schedule"
@@ -138,6 +140,8 @@ export interface DefaultProductionProviderServiceOptions {
 		bindOrdinaryAttempt<T>(turnId: string, attempt: number, stream: AsyncIterable<T>): AsyncIterable<T>
 	}
 	readonly serverTools?: ProviderServerToolPresentationPort
+	/** Resolve the UID/key encoded in an advertised native MCP function name. */
+	readonly resolveMcpServerName?: (key: string) => string
 	readonly contextRecovery?: ProviderContextRecoveryPort
 	/**
 	 * Receives the phase timing of each request whose stream ran to its end.
@@ -341,6 +345,27 @@ function toolParams(input: Readonly<Record<string, unknown>>): ToolUse["params"]
 	return Object.fromEntries(
 		Object.entries(input).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]),
 	) as ToolUse["params"]
+}
+
+/** Decode the native MCP function namespace into the canonical use_mcp_tool contract. */
+export function materializeNativeToolCall(
+	name: string,
+	argumentsValue: unknown,
+	resolveServerName: (key: string) => string = (key) => key,
+): Pick<ToolUse, "name" | "params"> {
+	const parsedArguments = parseArguments(argumentsValue)
+	const marker = name.indexOf(CLINE_MCP_TOOL_IDENTIFIER)
+	if (marker < 0) return { name: name as ToolUse["name"], params: toolParams(parsedArguments) }
+	const serverKey = name.slice(0, marker)
+	const toolName = name.slice(marker + CLINE_MCP_TOOL_IDENTIFIER.length)
+	return {
+		name: ClineDefaultTool.MCP_USE,
+		params: {
+			server_name: resolveServerName(serverKey),
+			tool_name: toolName,
+			arguments: JSON.stringify(parsedArguments),
+		},
+	}
 }
 
 /** Production provider executor: request preparation is injected; stream folding stays provider-domain local. */
@@ -815,8 +840,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 				...[...tools.values()].map(
 					(tool): ToolUse => ({
 						type: "tool_use",
-						name: tool.name as ToolUse["name"],
-						params: toolParams(parseArguments(tool.arguments)),
+						...materializeNativeToolCall(tool.name, tool.arguments, this.options.resolveMcpServerName),
 						partial: false,
 						ts: tool.presentationId,
 						isNativeToolCall: true,

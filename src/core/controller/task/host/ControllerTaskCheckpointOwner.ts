@@ -101,14 +101,11 @@ export class ControllerTaskCheckpointOwner {
 		// whatever dialog the rewound conversation last ended in.
 		const fence = this.pendingRestoreFence
 		if (!fence) throw new Error(`Checkpoint chat restore for ${this.options.taskId} has no canonical session fence`)
-		await this.options.controller.reopenTaskForCheckpointRestore(this.options.taskId, fence)
-		this.pendingRestoreFence = undefined
-		const session = this.options.controller.task
-		if (!session || session.taskId !== this.options.taskId) {
-			throw new Error(`Checkpoint chat restore could not reopen task ${this.options.taskId}`)
+		if (input.editedText === undefined) {
+			await this.options.controller.reopenTaskForCheckpointRestore(this.options.taskId, fence)
+		} else {
+			await this.options.controller.reopenTaskForCheckpointRestore(this.options.taskId, fence, input.editedText)
 		}
-		if (input.editedText === undefined) return
-		const continuation = await session.inputs.materialize({ text: input.editedText })
-		await session.task.submitInput(continuation)
+		this.pendingRestoreFence = undefined
 	}
 }

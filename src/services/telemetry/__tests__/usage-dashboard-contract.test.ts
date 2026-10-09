@@ -31,12 +31,14 @@ function panel(title: string): DashboardPanel {
 }
 
 describe("Dline OTel usage dashboard contract", () => {
-	it("includes active users and provider/model share panels", () => {
-		expect(dashboard.version).toBeGreaterThanOrEqual(2)
+	it("includes user, provider/model share, reasoning, and hosted-tool panels", () => {
+		expect(dashboard.version).toBeGreaterThanOrEqual(3)
 		expect(panel("Active Users").type).toBe("stat")
 		expect(panel("Token Share by Model").type).toBe("piechart")
 		expect(panel("Token Share by Provider").type).toBe("piechart")
 		expect(panel("Request Share by Provider").type).toBe("piechart")
+		expect(panel("Reasoning Tokens").type).toBe("stat")
+		expect(panel("Hosted Tool Requests").type).toBe("stat")
 	})
 
 	it("counts users from Loki distinct_id metadata without exposing identifiers", () => {
@@ -50,6 +52,12 @@ describe("Dline OTel usage dashboard contract", () => {
 		expect(query).toContain('provider=~"$provider"')
 		expect(query).toContain('model=~"$model"')
 		expect(query).toContain('apiFormatName=~"$apiFormat"')
+	})
+
+	it("queries the dedicated reasoning and hosted-tool usage metrics", () => {
+		expect(panel("Reasoning Tokens").targets?.[0]?.expr).toContain("dline_tokens_thoughts_total")
+		expect(panel("Hosted Tool Requests").targets?.[0]?.expr).toContain("dline_server_tool_requests_total")
+		expect(panel("Hosted Tool Requests").targets?.[0]?.expr).toContain("sum by (server_tool)")
 	})
 
 	it("keeps Prometheus usage filters on the emitted apiFormat label", () => {

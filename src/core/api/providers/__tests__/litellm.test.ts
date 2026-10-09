@@ -297,7 +297,7 @@ describe("LiteLlmHandler", () => {
 			expect(body.drop_params).to.equal(true)
 			expect(chunks).to.deep.equal([
 				{ type: "text", text: "test response" },
-				{ type: "usage", inputTokens: 100, outputTokens: 50, cacheWriteTokens: 20, cacheReadTokens: 10, totalCost: 1.9 },
+				{ type: "usage", inputTokens: 70, outputTokens: 50, cacheWriteTokens: 20, cacheReadTokens: 10, totalCost: 1.9 },
 			])
 		})
 

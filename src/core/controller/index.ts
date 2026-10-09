@@ -280,6 +280,9 @@ export class Controller {
 	 */
 	private pendingTaskTeardown?: Promise<void>
 	private readonly taskLifecycleMutex = new Mutex()
+	private pendingCheckpointRestore:
+		| { readonly taskId: string; readonly fence: CheckpointRestoreFence; readonly editedText?: string }
+		| undefined
 	private readonly taskHistoryProjectionMutex = new Mutex()
 
 	private readonly contextTransitionEngine: ContextTransitionEngine
@@ -1249,6 +1252,7 @@ export class Controller {
 					uiMessage,
 					apiConversation,
 					taskIsFavorited: historyItem?.isFavorited,
+					legacyConversationHistoryDeletedRange: historyItem?.conversationHistoryDeletedRange,
 					updateTaskHistory: (item) => workspaceHistoryManager.publishMetadata(item, workspaceHistorySession),
 					publishTaskHistoryClose: () => workspaceHistoryManager.closeTask(workspaceHistorySession),
 					completion: {
@@ -1689,19 +1693,62 @@ export class Controller {
 	 * opened as a restore so the runtime plans a resume from the rewound state
 	 * instead of whatever dialog the discarded tail last ended in.
 	 */
-	async reopenTaskForCheckpointRestore(taskId: string, fence: CheckpointRestoreFence): Promise<void> {
+	async reopenTaskForCheckpointRestore(taskId: string, fence: CheckpointRestoreFence, editedText?: string): Promise<void> {
+		const active = this.task
+		if (!active || active.taskId !== taskId || active.owners.identity.taskIncarnationId !== fence.taskIncarnationId) {
+			throw new Error(`Checkpoint restore session changed for task ${taskId}`)
+		}
+		this.pendingCheckpointRestore = { taskId, fence, ...(editedText === undefined ? {} : { editedText }) }
+	}
+
+	/** Finish a staged chat restore only after the old checkpoint operation has returned. */
+	async completeTaskCheckpointRestore(taskId: string): Promise<void> {
+		const pending = this.pendingCheckpointRestore
+		if (!pending || pending.taskId !== taskId) return
+		this.pendingCheckpointRestore = undefined
 		await this.runTaskLifecycleOperation(async (scope) => {
 			const active = this.task
-			if (!active || active.taskId !== taskId || active.owners.identity.taskIncarnationId !== fence.taskIncarnationId) {
+			if (
+				!active ||
+				active.taskId !== taskId ||
+				active.owners.identity.taskIncarnationId !== pending.fence.taskIncarnationId
+			) {
 				throw new Error(`Checkpoint restore session changed for task ${taskId}`)
 			}
 			const history = await this.getTaskWithId(taskId)
-			await scope.clearTask({ suppressPostState: true, checkpointRestoreFence: fence })
+			await scope.clearTask({ suppressPostState: true, checkpointRestoreFence: pending.fence })
 			await this.initTask(undefined, undefined, undefined, history.historyItem, undefined, {
 				activateHistory: true,
 				openReason: "checkpoint_restore",
 				skipInitialClear: true,
 			})
+			const session = this.task
+			if (!session || session.taskId !== taskId) {
+				throw new Error(`Checkpoint chat restore could not reopen task ${taskId}`)
+			}
+			if (pending.editedText !== undefined) {
+				const interaction = await awaitDispatchableDialog(session, {
+					actionId: "resume",
+					isCurrent: () => this.task === session,
+				})
+				if (!interaction) throw new Error(`Checkpoint chat restore has no Resume interaction for task ${taskId}`)
+				const state = session.state()
+				const response = await dispatchInteraction(
+					this,
+					DispatchInteractionRequest.create({
+						taskId: session.taskId,
+						taskInstanceId: session.taskInstanceId,
+						turnId: interaction.turnId,
+						interactionId: interaction.interactionId,
+						actionId: "resume",
+						stateRevision: state.revision,
+						draft: { text: pending.editedText, images: [], files: [] },
+					}),
+				)
+				if (!response.accepted) {
+					throw new Error(`Checkpoint chat restore Resume was refused for task ${taskId}: ${response.result}`)
+				}
+			}
 		})
 	}
 

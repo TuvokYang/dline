@@ -46,16 +46,54 @@ describe("ProviderUsageIncrements", () => {
 			{ type: "usage", usageMode: "delta", inputTokens: 0, outputTokens: 60, thoughtsTokenCount: 15 },
 		])
 
-		expect(settled).toMatchObject({ inputTokens: 300, outputTokens: 100, thoughtsTokenCount: 25, cacheUsageReported: 0 })
+		expect(settled).toMatchObject({
+			inputTokens: 300,
+			outputTokens: 100,
+			thoughtsTokenCount: 25,
+			thoughtsUsageReported: 1,
+			cacheUsageReported: 0,
+		})
 	})
 
 	it("keeps the request total cost when a later event omits it", () => {
 		const settled = settle([
-			{ type: "usage", inputTokens: 300, outputTokens: 10, totalCost: 0.02, serverToolUsage: { webSearchRequests: 2 } },
-			{ type: "usage", inputTokens: 300, outputTokens: 50, serverToolUsage: { webSearchRequests: 2 } },
+			{
+				type: "usage",
+				inputTokens: 300,
+				outputTokens: 10,
+				totalCost: 0.02,
+				serverToolUsage: { webSearchRequests: 2, webFetchRequests: 1 },
+			},
+			{
+				type: "usage",
+				inputTokens: 300,
+				outputTokens: 50,
+				serverToolUsage: { webSearchRequests: 2, webFetchRequests: 1 },
+			},
 		])
 
-		expect(settled).toMatchObject({ outputTokens: 50, totalCost: 0.02, webSearchRequests: 2 })
+		expect(settled).toMatchObject({
+			outputTokens: 50,
+			totalCost: 0.02,
+			costUsageReported: 1,
+			webSearchRequests: 2,
+			webFetchRequests: 1,
+			serverToolUsageReported: 1,
+		})
+	})
+
+	it("preserves explicit zero reasoning and cost as reported values", () => {
+		const settled = settle([
+			{ type: "usage", inputTokens: 300, outputTokens: 10, thoughtsTokenCount: 0, totalCost: 0 },
+			{ type: "usage", inputTokens: 300, outputTokens: 50 },
+		])
+
+		expect(settled).toMatchObject({
+			thoughtsTokenCount: 0,
+			thoughtsUsageReported: 1,
+			totalCost: 0,
+			costUsageReported: 1,
+		})
 	})
 
 	it("retains that cache usage was reported when later snapshots omit cache fields", () => {

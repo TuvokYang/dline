@@ -180,8 +180,8 @@ export class ToolEventRecorder extends DomainRecorder {
 	/**
 	 * Records when an MCP tool is called.
 	 *
-	 * Captures the tool's metadata (server, name, and argument keys) but never
-	 * the argument values, which routinely contain user content.
+	 * Captures only presence/count and stable status codes. MCP server names,
+	 * custom tool names, argument keys and values may all contain user content.
 	 *
 	 * @param ulid Unique identifier for the task.
 	 * @param serverName The name of the MCP server.
@@ -201,11 +201,11 @@ export class ToolEventRecorder extends DomainRecorder {
 	): void {
 		this.sink.captureEvent(TELEMETRY_EVENTS.TASK.MCP_TOOL_CALLED, {
 			ulid,
-			serverName,
-			toolName,
+			serverConfigured: serverName.length > 0,
+			toolConfigured: toolName.length > 0,
 			status,
-			errorMessage,
-			argumentKeys,
+			failureCode: status === "error" ? errorMessage : undefined,
+			argumentCount: argumentKeys?.length ?? 0,
 			isNativeToolCall,
 		})
 	}

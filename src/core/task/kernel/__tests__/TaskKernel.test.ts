@@ -100,6 +100,27 @@ describe("task kernel", () => {
 		])
 	})
 
+	it("includes the generation in command identity after a rewind can reuse revisions", () => {
+		const state: TaskState = {
+			...createInitialTaskState("task-1"),
+			revision: 12,
+			generation: 2,
+			halt: { status: "idle", generation: 2 },
+		}
+
+		const result = accepted(
+			transition(state, { type: "user.submit", generation: 2, entryId: "entry-restored", payloadRef: "payload-restored" }),
+		)
+
+		expect(result.commands).toHaveLength(1)
+		expect(result.commands[0]).toMatchObject({
+			commandId: "task-1:g2:13:0",
+			turnId: "turn:task-1:g2:13:0",
+			originRevision: 13,
+			generation: 2,
+		})
+	})
+
 	it("reveals a dialog only after the prepared event is committed", () => {
 		const state: TaskState = {
 			...createInitialTaskState("task-1"),

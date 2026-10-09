@@ -151,6 +151,44 @@ describe("CompactionRoundBarrier - automatic", () => {
 		})
 	})
 
+	it("restores Force Truncate eligibility from the persisted automatic failure state", () => {
+		const failed: TaskState = {
+			...running(),
+			flow: {
+				phase: "paused",
+				error: "automatic_compaction_failed",
+				compaction: {
+					compactionId: "compaction-1",
+					attempt: "attempt-1",
+					contextRef: "context:1",
+					status: "failed",
+				},
+			},
+		}
+		const barrier = new CompactionRoundBarrier({ session: () => undefined, state: () => failed })
+
+		expect(barrier.truncationOffered()).toBe(true)
+	})
+
+	it("does not restore Force Truncate eligibility for a manual compaction failure", () => {
+		const failed: TaskState = {
+			...running(),
+			flow: {
+				phase: "paused",
+				error: "manual_compaction_failed",
+				compaction: {
+					compactionId: "compaction-1",
+					attempt: "attempt-1",
+					contextRef: "context:1",
+					status: "failed",
+				},
+			},
+		}
+		const barrier = new CompactionRoundBarrier({ session: () => undefined, state: () => failed })
+
+		expect(barrier.truncationOffered()).toBe(false)
+	})
+
 	it("compacts again on the round that retries a failed automatic run", async () => {
 		const state = running()
 		const p = probe(() => state)
@@ -343,9 +381,11 @@ describe("CompactionRoundBarrier - automatic", () => {
 		const settlement = barrier.settlement("compaction:truncate")
 		await run(barrier, "compaction:truncate")
 		await expect(settlement).resolves.toBe("completed")
+		barrier.truncated()
 		expect(barrier.truncationOffered()).toBe(false)
 
 		await expect(barrier.settleBeforeRound(round())).resolves.toEqual({ kind: "ready" })
+		await expect(barrier.compactForAdmission(new AbortController().signal)).resolves.toEqual({ kind: "skipped" })
 		expect(p.scheduled).toHaveLength(1)
 	})
 

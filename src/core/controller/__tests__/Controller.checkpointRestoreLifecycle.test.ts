@@ -23,15 +23,18 @@ describe("Controller checkpoint restore lifecycle", () => {
 		const fence = { taskId: "task-1", taskIncarnationId: "incarnation-1", haltId: "restore-1" } as CheckpointRestoreFence
 
 		await Controller.prototype.reopenTaskForCheckpointRestore.call(controller as never, "task-1", fence)
+		await Controller.prototype.completeTaskCheckpointRestore.call(controller as never, "task-1")
 
 		expect(clearTask).toHaveBeenCalledExactlyOnceWith({
 			suppressPostState: true,
 			checkpointRestoreFence: fence,
 		})
-		expect(initTask).toHaveBeenCalledWith(undefined, undefined, undefined, { id: "task-1" }, undefined, {
-			activateHistory: true,
-			openReason: "checkpoint_restore",
-			skipInitialClear: true,
+		await vi.waitFor(() => {
+			expect(initTask).toHaveBeenCalledWith(undefined, undefined, undefined, { id: "task-1" }, undefined, {
+				activateHistory: true,
+				openReason: "checkpoint_restore",
+				skipInitialClear: true,
+			})
 		})
 	})
 

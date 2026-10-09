@@ -1569,6 +1569,129 @@
 			],
 			"title": "Request Share by Provider",
 			"type": "piechart"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${DS_PROMETHEUS}"
+			},
+			"description": "Reasoning tokens reported by providers. Output token totals remain inclusive, so this panel is a diagnostic subset and must not be added to total tokens.",
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "purple",
+								"value": null
+							}
+						]
+					},
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 5,
+				"w": 12,
+				"x": 0,
+				"y": 56
+			},
+			"id": 21,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "auto",
+				"wideLayout": true
+			},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${DS_PROMETHEUS}"
+					},
+					"editorMode": "code",
+					"expr": "sum(increase(dline_tokens_thoughts_total{canary_id!~\".+\",provider=~\"$provider\",model=~\"$model\",apiFormat=~\"$apiFormat\"}[$__range]))",
+					"instant": true,
+					"legendFormat": "Reasoning tokens",
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Reasoning Tokens",
+			"type": "stat"
+		},
+		{
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${DS_PROMETHEUS}"
+			},
+			"description": "Provider-hosted web search and web fetch request counts emitted with completed logical provider usage.",
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"mappings": [],
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"h": 5,
+				"w": 12,
+				"x": 12,
+				"y": 56
+			},
+			"id": 22,
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "auto",
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "auto",
+				"wideLayout": true
+			},
+			"pluginVersion": "10.0.0",
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${DS_PROMETHEUS}"
+					},
+					"editorMode": "code",
+					"expr": "sum by (server_tool) (increase(dline_server_tool_requests_total{canary_id!~\".+\",provider=~\"$provider\",model=~\"$model\",apiFormat=~\"$apiFormat\"}[$__range]))",
+					"instant": true,
+					"legendFormat": "{{server_tool}}",
+					"range": false,
+					"refId": "A"
+				}
+			],
+			"title": "Hosted Tool Requests",
+			"type": "stat"
 		}
 	],
 	"refresh": "30s",
@@ -1692,6 +1815,6 @@
 	"timezone": "browser",
 	"title": "Dline OTel Usage",
 	"uid": "dline-otel-usage",
-	"version": 2,
+	"version": 3,
 	"weekStart": ""
 }

@@ -59,10 +59,7 @@ describe("canonical input queue mutations", () => {
 		expect(pendingIntakeEntryIds(result.state.intake)).toEqual([])
 	})
 
-	// A send while the compaction barrier runs can neither overtake it nor be
-	// lost: refusing it leaves the draft with the user, who sends it once the
-	// summary has landed, instead of the queue slipping it into the held round.
-	it.each(["scheduled", "running"] as const)("refuses to retain input while a compaction is %s", (status) => {
+	it.each(["scheduled", "running"] as const)("durably retains input while a compaction is %s", (status) => {
 		const state: TaskState = {
 			...running(),
 			flow: {
@@ -71,14 +68,19 @@ describe("canonical input queue mutations", () => {
 			},
 		}
 
-		const result = transition(state, {
-			type: "input_queue.enqueued",
-			generation: 0,
-			entryId: "queue-1",
-			payloadRef: "payload:1",
-		})
+		const result = accepted(
+			transition(state, {
+				type: "input_queue.enqueued",
+				generation: 0,
+				entryId: "queue-1",
+				payloadRef: "payload:1",
+			}),
+		)
 
-		expect(result).toMatchObject({ kind: "rejected", reason: "phase_invalid", state })
+		expect(result.commands).toEqual([])
+		expect(result.state.intake.queued).toEqual([
+			expect.objectContaining({ entryId: "queue-1", state: "accepted", mode: "queued", queue: { editing: false } }),
+		])
 	})
 
 	it("retains input again once the compaction has landed", () => {

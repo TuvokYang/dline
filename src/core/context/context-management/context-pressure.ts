@@ -51,6 +51,15 @@ export function readContextWindowRequestPressure(text?: string): ContextWindowRe
 	try {
 		const info = JSON.parse(text) as UiApiReqInfo
 		const pressure: ContextWindowRequestPressure = {}
+		const actualInputTokens = normalizePositiveTokens((info.tokensIn || 0) + (info.cacheWrites || 0) + (info.cacheReads || 0))
+		if (actualInputTokens > 0) pressure.actualInputTokens = actualInputTokens
+		const estimatedTextBytes = normalizePositiveTokens(info.estimatedTextBytes)
+		if (estimatedTextBytes > 0) pressure.estimatedTextBytes = estimatedTextBytes
+		const estimatedMediaTokens = normalizeNonNegativeTokens(info.estimatedMediaTokens)
+		if (estimatedMediaTokens !== undefined) pressure.estimatedMediaTokens = estimatedMediaTokens
+		if (info.providerId) pressure.providerId = info.providerId
+		if (info.modelId) pressure.modelId = info.modelId
+		if (info.apiFormat) pressure.apiFormat = info.apiFormat
 		const estimatedContextTokens = normalizePositiveTokens(info.estimatedContextTokens)
 		if (estimatedContextTokens > 0) {
 			pressure.estimatedContextTokens = estimatedContextTokens
@@ -75,6 +84,10 @@ export function readContextWindowRequestPressure(text?: string): ContextWindowRe
 
 function normalizePositiveTokens(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+function normalizeNonNegativeTokens(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
 }
 
 /**

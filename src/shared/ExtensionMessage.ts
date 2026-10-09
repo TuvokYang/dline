@@ -803,6 +803,12 @@ export type BrowserActionResult = {
 	currentMousePosition?: string
 }
 
+export interface UiSayMcpServerResponse {
+	type: "mcp_server_response"
+	requestTs: number
+	responses: string[]
+}
+
 export interface UiAskUseMcpServer {
 	serverName: string
 	type: "use_mcp_tool" | "access_mcp_resource"
@@ -900,6 +906,13 @@ export interface UiApiReqInfo {
 	contextTokens?: number
 	/** Absolute request-pressure estimate captured before Provider admission. */
 	estimatedContextTokens?: number
+	/** UTF-8 request bytes after binary media payloads are removed. */
+	estimatedTextBytes?: number
+	/** Independently estimated image/document/audio/video tokens. */
+	estimatedMediaTokens?: number
+	providerId?: string
+	modelId?: string
+	apiFormat?: number
 	/** Distinguishes reliable Provider usage from a request-pressure estimate. */
 	contextTokensSource?: "provider" | "estimate"
 	tokensIn?: number

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { TelemetrySignalSink } from "../../service/signal-sink"
-import { TELEMETRY_METRICS } from "../catalog"
+import { TELEMETRY_EVENTS, TELEMETRY_METRICS } from "../catalog"
 import type { TaskAggregates } from "../task-aggregates"
 import { ToolEventRecorder } from "../tool-recorder"
 
@@ -63,6 +63,36 @@ function createRecorder(options: { readonly categoriesEnabled?: boolean } = {}) 
 	const recorder = new ToolEventRecorder(captured.sink, {} as TaskAggregates)
 	return { ...captured, recorder }
 }
+
+describe("MCP telemetry privacy", () => {
+	it("records only presence, counts, and stable failure codes", () => {
+		const { recorder, events } = createRecorder()
+
+		recorder.captureMcpToolCall(
+			"task-1",
+			"PRIVATE_SERVER_NAME",
+			"PRIVATE_TOOL_NAME",
+			"error",
+			"mcp_transport_error",
+			["PRIVATE_ARGUMENT_KEY"],
+			true,
+		)
+
+		const event = events.find((candidate) => candidate.name === TELEMETRY_EVENTS.TASK.MCP_TOOL_CALLED)
+		expect(event?.properties).toMatchObject({
+			serverConfigured: true,
+			toolConfigured: true,
+			status: "error",
+			failureCode: "mcp_transport_error",
+			argumentCount: 1,
+			isNativeToolCall: true,
+		})
+		const serialized = JSON.stringify(event?.properties)
+		expect(serialized).not.toContain("PRIVATE_SERVER_NAME")
+		expect(serialized).not.toContain("PRIVATE_TOOL_NAME")
+		expect(serialized).not.toContain("PRIVATE_ARGUMENT_KEY")
+	})
+})
 
 function findMeasurement(measurements: readonly RecordedMeasurement[], name: string, pool?: string) {
 	return measurements.find((entry) => entry.name === name && (pool === undefined || entry.attributes?.pool === pool))

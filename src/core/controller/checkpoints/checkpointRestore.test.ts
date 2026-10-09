@@ -7,24 +7,27 @@ import { checkpointRestore } from "./checkpointRestore"
 function createController() {
 	const cancel = vi.fn(async () => ({ kind: "accepted" as const }))
 	const restoreCheckpoint = vi.fn().mockResolvedValue({})
+	const completeTaskCheckpointRestore = vi.fn(async () => undefined)
 	const controller = {
 		task: createSessionFixture({
 			session: { task: { cancel } },
 			owners: { checkpoints: { restoreCheckpoint } },
 		}),
+		completeTaskCheckpointRestore,
 	}
 
-	return { controller, cancel, restoreCheckpoint }
+	return { controller, cancel, restoreCheckpoint, completeTaskCheckpointRestore }
 }
 
 describe("checkpointRestore controller", () => {
 	it("restores files without interrupting the active chat runtime", async () => {
-		const { controller, cancel, restoreCheckpoint } = createController()
+		const { controller, cancel, restoreCheckpoint, completeTaskCheckpointRestore } = createController()
 
 		await checkpointRestore(controller as never, CheckpointRestoreRequest.create({ number: 42, restoreType: "workspace" }))
 
 		expect(cancel).not.toHaveBeenCalled()
 		expect(restoreCheckpoint).toHaveBeenCalledWith(42, "workspace", undefined, undefined)
+		expect(completeTaskCheckpointRestore).toHaveBeenCalledWith(controller.task.taskId)
 	})
 
 	it("ignores deprecated compaction restore identity and uses the ordinary task restore transaction", async () => {

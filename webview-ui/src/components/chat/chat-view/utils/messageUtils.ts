@@ -114,29 +114,113 @@ export function resolveApiErrorMessage(input: ApiErrorMessageInput): string | un
 	return input.lastModifiedMessage?.ask === "api_req_failed" ? input.lastModifiedMessage.text : input.streamingFailedMessage
 }
 
+export interface ParsedMcpServerResponse {
+	requestTs?: number
+	responses: string[]
+}
+
+export function parseMcpServerResponse(text: string | undefined): ParsedMcpServerResponse {
+	const fallback = { responses: [text || ""] }
+	if (!text) return fallback
+	try {
+		const parsed = JSON.parse(text) as Partial<ParsedMcpServerResponse> & { type?: string }
+		if (
+			parsed.type === "mcp_server_response" &&
+			typeof parsed.requestTs === "number" &&
+			Array.isArray(parsed.responses) &&
+			parsed.responses.every((response) => typeof response === "string")
+		) {
+			return { requestTs: parsed.requestTs, responses: parsed.responses }
+		}
+	} catch {
+		// Legacy rows persist the response as plain text.
+	}
+	return fallback
+}
+
+function isMcpRequest(message: UiMessage): boolean {
+	return message.ask === "use_mcp_server" || message.say === "use_mcp_server"
+}
+
+function isAttachedMcpResponse(messages: UiMessage[], responseIndex: number): boolean {
+	const response = parseMcpServerResponse(messages[responseIndex]?.text)
+	if (response.requestTs !== undefined) {
+		return messages.some((message) => message.ts === response.requestTs && isMcpRequest(message))
+	}
+	for (let index = responseIndex - 1; index >= 0; index--) {
+		const candidate = messages[index]
+		if (isMcpRequest(candidate)) return true
+		if (
+			candidate.say === "mcp_server_request_started" ||
+			candidate.say === "mcp_notification" ||
+			candidate.say === "checkpoint_created" ||
+			candidate.say === "mcp_server_response"
+		) {
+			continue
+		}
+		return false
+	}
+	return false
+}
+
+export function collectMcpResponseTexts(messages: UiMessage[], requestTs: number): string[] {
+	const structured = messages.flatMap((message) => {
+		if (message.say !== "mcp_server_response") return []
+		const response = parseMcpServerResponse(message.text)
+		return response.requestTs === requestTs ? response.responses : []
+	})
+	if (structured.length > 0) return structured
+
+	const requestIndex = messages.findIndex((message) => message.ts === requestTs && isMcpRequest(message))
+	if (requestIndex === -1) return []
+	const responses: string[] = []
+	for (let index = requestIndex + 1; index < messages.length; index++) {
+		const candidate = messages[index]
+		if (isMcpRequest(candidate)) break
+		if (candidate.say === "mcp_server_response") {
+			responses.push(...parseMcpServerResponse(candidate.text).responses)
+			continue
+		}
+		if (
+			candidate.say === "mcp_server_request_started" ||
+			candidate.say === "mcp_notification" ||
+			candidate.say === "checkpoint_created"
+		) {
+			continue
+		}
+		break
+	}
+	return responses
+}
+
 /**
  * Filter messages that should be visible in the chat
  */
 export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
 	return messages.filter((message, index, arr) => {
-		// Older runtimes presented their internal resume-only intake as an empty
-		// user reply. Keep those durable rows for recovery evidence, but never give
-		// them a virtualized chat item (which appears as a blank bar).
-		if (
-			message.type === "say" &&
-			message.say === "user_feedback" &&
-			!message.text?.trim() &&
-			!message.images?.length &&
-			!message.files?.length
-		) {
-			return false
+		const hasNoVisibleContent = !message.text?.trim() && !message.images?.length && !message.files?.length
+		// Older runtimes persisted empty intake and turn-ending presentation rows.
+		// Keep them as recovery evidence, but never allocate a virtualized item for
+		// a content-only row that cannot render any user-visible content.
+		if (hasNoVisibleContent && message.type === "say") {
+			switch (message.say) {
+				case "user_feedback":
+				case "text":
+				case "qna_respond":
+				case "completion_result":
+					return false
+			}
 		}
 		switch (message.ask) {
 			case "completion_result":
 				// don't show a chat row for a completion_result ask without text. This specific type of message only occurs if cline wants to execute a command as part of its completion result, in which case we interject the completion_result tool with the execute_command tool.
-				if (message.text === "") {
+				if (hasNoVisibleContent) {
 					return false
 				}
+				break
+			case "generate_report":
+			case "status_acknowledgment":
+				if (hasNoVisibleContent) return false
 				break
 			case "api_req_failed": // this message is used to update the latest api_req_started that the request failed
 			case "resume_task":
@@ -191,12 +275,15 @@ export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
 			}
 			case "text":
 				// Sometimes cline returns an empty text message, we don't want to render these. (We also use a say text for user messages, so in case they just sent images we still render that)
-				if ((message.text ?? "") === "" && (message.images?.length ?? 0) === 0) {
+				if (hasNoVisibleContent) {
 					return false
 				}
 				break
 			case "mcp_server_request_started":
 				return false
+			case "mcp_server_response":
+				if (isAttachedMcpResponse(arr, index)) return false
+				break
 			case "use_subagents":
 				if (arr.slice(index + 1).some((candidate) => candidate.type === "say" && candidate.say === "subagent")) {
 					return false

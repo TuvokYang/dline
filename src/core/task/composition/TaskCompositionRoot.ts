@@ -1,5 +1,5 @@
 import type { CompactionSettlementObserverPort } from "../compaction/CompactionRoundBarrier"
-import { type CompactionLandingPort, CompositeCompactionLanding } from "../compaction/CompactionSummaryLanding"
+import { type CompactionLandingPort } from "../compaction/CompactionSummaryLanding"
 import {
 	type CompactionConversationPort,
 	type ContextTruncationPort,
@@ -192,10 +192,9 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
 					new ProductionCompactionAdapter({
 						payloads: persistence.payloads,
 						service: options.services.compaction,
-						landing: new CompositeCompactionLanding([
-							conversation,
-							...(options.compactionLanding ? [options.compactionLanding] : []),
-						]),
+						truncation: conversation,
+						canonicalLanding: conversation,
+						landing: options.compactionLanding,
 						review: options.compactionReview,
 						failure: options.compactionFailure,
 						progress: options.compactionProgress,

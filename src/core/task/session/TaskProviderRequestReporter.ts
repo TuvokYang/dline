@@ -260,7 +260,12 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
 		if (settlement.outcome !== "completed" || !usage) return
 		try {
 			const model = api.getModel()
-			const thoughtsTokens = optionalNonNegative(usage.thoughtsTokenCount)
+			const thoughtsTokens = usageWasReported(usage, "thoughtsUsageReported", "thoughtsTokenCount")
+				? optionalNonNegative(usage.thoughtsTokenCount)
+				: undefined
+			const serverToolUsageReported =
+				usageWasReported(usage, "serverToolUsageReported", "webSearchRequests") ||
+				Object.hasOwn(usage, "webFetchRequests")
 			const apiFormat = api.getSelectedApiFormat?.()
 			const telemetry = this.options.usageTelemetry ?? providerUsageTelemetry
 			telemetry.record({
@@ -272,6 +277,12 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
 				cacheUsageReported: cacheUsageWasReported(usage),
 				...(thoughtsTokens === undefined ? {} : { thoughtsTokens }),
 				...(tokens.totalCost === undefined ? {} : { totalCost: tokens.totalCost }),
+				...(serverToolUsageReported
+					? {
+							webSearchRequests: nonNegative(usage.webSearchRequests),
+							webFetchRequests: nonNegative(usage.webFetchRequests),
+						}
+					: {}),
 				provider: api.getProviderId?.() ?? "unknown",
 				model: model.id,
 				...(apiFormat === undefined ? {} : { apiFormat }),
@@ -442,14 +453,15 @@ function cancelReasonFor(outcome: ProviderRequestReport.ProviderRequestOutcome):
 }
 
 function readUsageTokens(usage: Readonly<Record<string, number>> | undefined): UsageTokens {
+	const costUsageReported = usageWasReported(usage, "costUsageReported", "totalCost")
 	return {
 		inputTokens: nonNegative(usage?.inputTokens),
 		outputTokens: nonNegative(usage?.outputTokens),
 		cacheWriteTokens: nonNegative(usage?.cacheWriteTokens),
 		cacheReadTokens: nonNegative(usage?.cacheReadTokens),
-		// An absent cost lets the finalizer price the request from model metadata,
-		// which a reported zero would suppress.
-		totalCost: typeof usage?.totalCost === "number" && usage.totalCost > 0 ? usage.totalCost : undefined,
+		// An absent cost lets the finalizer price the request from model metadata;
+		// an explicitly reported zero suppresses that fallback for subscriptions/free tiers.
+		totalCost: costUsageReported ? optionalNonNegative(usage?.totalCost) : undefined,
 	}
 }
 
@@ -465,4 +477,11 @@ function cacheUsageWasReported(usage: Readonly<Record<string, number>>): boolean
 	const marker = usage.cacheUsageReported
 	if (typeof marker === "number" && Number.isFinite(marker)) return marker > 0
 	return Object.hasOwn(usage, "cacheWriteTokens") || Object.hasOwn(usage, "cacheReadTokens")
+}
+
+function usageWasReported(usage: Readonly<Record<string, number>> | undefined, markerKey: string, valueKey: string): boolean {
+	if (!usage) return false
+	const marker = usage[markerKey]
+	if (typeof marker === "number" && Number.isFinite(marker)) return marker > 0
+	return Object.hasOwn(usage, valueKey)
 }

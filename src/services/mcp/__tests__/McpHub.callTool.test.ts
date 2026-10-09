@@ -219,7 +219,7 @@ describe("McpHub.callTool", () => {
 			// Second call: "error"
 			const errorCall = telemetryService.captureMcpToolCall.mock.calls[1]
 			errorCall[3].should.equal("error")
-			errorCall[4].should.equal("Network timeout")
+			errorCall[4].should.equal("mcp_transport_error")
 		})
 	})
 
@@ -234,6 +234,18 @@ describe("McpHub.callTool", () => {
 			;(telemetryService.captureMcpToolCall.mock.calls.length === 2).should.be.true()
 			telemetryService.captureMcpToolCall.mock.calls[0][3].should.equal("started")
 			telemetryService.captureMcpToolCall.mock.calls[1][3].should.equal("success")
+		})
+
+		it("should classify a remote MCP error result as error telemetry", async () => {
+			const client = createMockClient({ content: [{ type: "text", text: "safe" }], isError: true })
+			const { hub, telemetryService } = createMcpHub({ client })
+
+			const result = await hub.callTool("test-server", "list_pages", undefined, "ulid-remote-error")
+
+			should(result.isError).be.true()
+			const terminalCall = telemetryService.captureMcpToolCall.mock.calls[1]
+			terminalCall[3].should.equal("error")
+			terminalCall[4].should.equal("remote_tool_error")
 		})
 
 		it("should report undefined for argument keys when toolArguments is undefined", async () => {

@@ -41,7 +41,7 @@ describe("ProductionCompactionAdapter", () => {
 		})
 	})
 
-	it("truncates without asking the provider or the reviewer, landing the truncation notice on the span", async () => {
+	it("truncates through the pairing-safe canonical truncation port without asking the provider or reviewer", async () => {
 		const payloads = new MemoryPayloads()
 		const span = { from: { seq: 2 }, to: { seq: 4 } }
 		const context: CompactionContextEnvelope = {
@@ -52,7 +52,8 @@ describe("ProductionCompactionAdapter", () => {
 			context: { sourceHistory: [] },
 		}
 		const contextRef = await payloads.put(encodeTaskPayload(context))
-		const landed: Array<{ readonly summary: string; readonly span?: unknown }> = []
+		const landed: unknown[] = []
+		const truncated: Array<{ readonly notice: string; readonly signal?: AbortSignal }> = []
 		let asked = 0
 		const adapter = new ProductionCompactionAdapter({
 			payloads,
@@ -68,6 +69,13 @@ describe("ProductionCompactionAdapter", () => {
 					return { action: "accept" }
 				},
 			},
+			truncation: {
+				truncate: async (input) => {
+					truncated.push(input)
+					return { seq: 7 }
+				},
+			},
+			canonicalLanding: { land: async (input) => void landed.push(input) },
 			landing: { land: async (input) => void landed.push(input) },
 		})
 
@@ -80,9 +88,13 @@ describe("ProductionCompactionAdapter", () => {
 		})
 
 		expect(asked).toBe(0)
-		expect(landed).toHaveLength(1)
-		expect(landed[0].span).toEqual(span)
-		expect(landed[0].summary).toContain("[NOTE] Some previous conversation history with the user has been removed")
+		expect(landed).toHaveLength(0)
+		expect(truncated).toEqual([
+			{
+				notice: expect.stringContaining("[NOTE] Some previous conversation history with the user has been removed"),
+				signal: expect.any(AbortSignal),
+			},
+		])
 	})
 
 	it("lands the span the request fixed, not whatever the conversation holds when the summary returns", async () => {

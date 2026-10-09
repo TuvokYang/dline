@@ -5,6 +5,7 @@ import {
 	type CompactionSummary,
 	readCompactionSummary,
 } from "../../compaction/CompactionSummaryLanding"
+import type { ContextTruncationPort } from "../../compaction/JournalCompactionConversation"
 import type { TaskPayloadStore } from "../../stores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type {
@@ -23,6 +24,12 @@ export interface ProductionCompactionService {
 		readonly trigger?: CompactionTrigger
 		readonly signal: AbortSignal
 		readonly publish: CompactionExecutionInput["publish"]
+		/** Persist one accepted rolling Pass before the next Pass starts. */
+		readonly stageAcceptedPass?: (checkpoint: {
+			readonly passIndex: number
+			readonly summary: string
+			readonly coveredThrough: number
+		}) => Promise<void>
 	}): Promise<unknown>
 }
 
@@ -116,7 +123,11 @@ export interface CompactionProgressWithdrawalPort {
 export interface ProductionCompactionAdapterOptions {
 	readonly payloads: TaskPayloadStore
 	readonly service: ProductionCompactionService
-	/** Applies the finished summary to the conversation; absent in headless assemblies. */
+	/** Removes history at a pairing-safe journal boundary after explicit confirmation. */
+	readonly truncation?: ContextTruncationPort
+	/** Applies summaries to the canonical provider conversation. */
+	readonly canonicalLanding?: CompactionLandingPort
+	/** Applies the finished summary to presentation and derived projections. */
 	readonly landing?: CompactionLandingPort
 	/** Reviews manually requested summaries; absent means they land like automatic ones. */
 	readonly review?: CompactionReviewPort
@@ -164,21 +175,36 @@ export class ProductionCompactionAdapter implements CompactionPort {
 	private async condense(input: CompactionExecutionInput): Promise<{ readonly resultRef: string }> {
 		const context = decodeTaskPayload<CompactionContextEnvelope>(await this.options.payloads.read(input.contextRef))
 		if (context.kind !== "compaction_context") throw new Error("InvalidCompactionContextPayload")
-		const { result, summary } = await this.produce(input, context)
+		if (context.mode === "force_truncate") return this.truncate(input)
+		const { result, summary, canonicalCheckpointed } = await this.produce(input, context)
 		// Landing happens before the result is reported complete: the kernel only
 		// records the ref, so a summary that is not applied here is paid for and
 		// then discarded, leaving the context as full as it was.
-		if (summary && this.options.landing) {
-			await this.options.landing.land({
+		if (summary) {
+			const landing = {
 				compactionId: input.compactionId,
 				attempt: input.attempt,
 				signal: input.signal,
 				...summary,
 				...landedSpan(context, summary),
-			})
+			}
+			if (!canonicalCheckpointed) await this.options.canonicalLanding?.land(landing)
+			await this.options.landing?.land(landing)
 			if (input.signal.aborted) throw input.signal.reason
 		}
 		const envelope: CompactionResultEnvelope = { kind: "compaction_result", result }
+		return { resultRef: await this.options.payloads.put(encodeTaskPayload(envelope)) }
+	}
+
+	private async truncate(input: CompactionExecutionInput): Promise<{ readonly resultRef: string }> {
+		const notice = formatResponse.contextTruncationNotice()
+		const through = await this.options.truncation?.truncate({ notice, signal: input.signal })
+		if (!through) throw new Error("NothingToTruncate")
+		if (input.signal.aborted) throw input.signal.reason
+		const envelope: CompactionResultEnvelope = {
+			kind: "compaction_result",
+			result: { summary: notice, truncatedThrough: through.seq },
+		}
 		return { resultRef: await this.options.payloads.put(encodeTaskPayload(envelope)) }
 	}
 
@@ -193,24 +219,41 @@ export class ProductionCompactionAdapter implements CompactionPort {
 	private async produce(
 		input: CompactionExecutionInput,
 		context: CompactionContextEnvelope,
-	): Promise<{ readonly result: unknown; readonly summary?: CompactionSummary }> {
-		if (context.mode === "force_truncate") {
-			// The provider just failed to summarize this span, so nothing is asked
-			// of it; the user already confirmed the loss, so nothing is reviewed.
-			const summary = { summary: formatResponse.contextTruncationNotice() }
-			return { result: summary, summary }
-		}
+	): Promise<{ readonly result: unknown; readonly summary?: CompactionSummary; readonly canonicalCheckpointed: boolean }> {
 		const review = context.trigger === "manual" ? this.options.review : undefined
 		let requestContext = context.context
 		for (let regenerations = 0; ; regenerations++) {
+			let canonicalCheckpointed = false
 			const result = await this.options.service.run({
 				...input,
 				context: requestContext,
 				...(context.trigger === undefined ? {} : { trigger: context.trigger }),
+				...(this.options.canonicalLanding
+					? {
+							stageAcceptedPass: async (checkpoint: {
+								passIndex: number
+								summary: string
+								coveredThrough: number
+							}) => {
+								const summary: CompactionSummary = {
+									summary: checkpoint.summary,
+									coveredThrough: checkpoint.coveredThrough,
+								}
+								await this.options.canonicalLanding?.land({
+									compactionId: input.compactionId,
+									attempt: `${input.attempt}:pass:${checkpoint.passIndex}`,
+									signal: input.signal,
+									...summary,
+									...landedSpan(context, summary),
+								})
+								canonicalCheckpointed = true
+							},
+						}
+					: {}),
 			})
 			if (input.signal.aborted) throw input.signal.reason
 			const summary = readCompactionSummary(result)
-			if (!review || !summary) return { result, summary }
+			if (!review || !summary) return { result, summary, canonicalCheckpointed }
 			const decision = await review.review({
 				compactionId: input.compactionId,
 				attempt: input.attempt,
@@ -218,7 +261,7 @@ export class ProductionCompactionAdapter implements CompactionPort {
 				signal: input.signal,
 			})
 			if (input.signal.aborted) throw input.signal.reason
-			if (decision.action === "accept") return { result, summary }
+			if (decision.action === "accept") return { result, summary, canonicalCheckpointed }
 			if (regenerations >= MAX_REGENERATIONS) throw new Error("CompactionRegenerationLimit")
 			requestContext = regenerationContext(context.context, decision.feedback)
 		}

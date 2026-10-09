@@ -430,7 +430,6 @@ export class TelemetryService {
 			cacheHit: boolean
 			cacheHitPercentage?: number
 			apiSuccess: boolean
-			apiError?: string
 			throughputTokensPerSec?: number
 		},
 	) {

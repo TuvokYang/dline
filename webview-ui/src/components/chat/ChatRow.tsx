@@ -874,39 +874,50 @@ export const ChatRowContent = memo(
 							data-compaction-unit-index={tool.compactionUnitIndex}
 							data-compaction-unit-kind={tool.compactionUnitKind}
 							data-testid="compaction-pass">
-							<div className="bg-code overflow-hidden border border-editor-group-border rounded-[3px]">
-								<div className="flex items-center gap-2.5 px-2.5 py-2">
+							<div
+								className={cn(
+									"bg-code overflow-hidden border border-editor-group-border rounded-[3px]",
+									isExpanded && "flex max-h-[60vh] flex-col",
+								)}
+								data-testid="compaction-card-surface"
+								style={isExpanded ? { maxHeight: "60vh" } : undefined}>
+								<div className="flex shrink-0 items-center gap-2.5 px-2.5 py-2">
 									<FoldVerticalIcon className="size-2" />
 									<span className="min-w-0 flex-1 font-bold">{title}</span>
 								</div>
 								{status === "retrying" &&
 									tool.retryAttempt !== undefined &&
 									tool.maxRetryAttempts !== undefined && (
-										<div className="px-2.5 pb-2 text-description">
+										<div className="shrink-0 px-2.5 pb-2 text-description">
 											Attempt {tool.retryAttempt} of {tool.maxRetryAttempts}
 										</div>
 									)}
 								{status === "retrying" && failureReason && (
-									<div className="px-2.5 pb-2 text-description" data-testid="compaction-retry-reason">
+									<div className="shrink-0 px-2.5 pb-2 text-description" data-testid="compaction-retry-reason">
 										{failureReason}
 									</div>
 								)}
 								{content ? (
-									<div className="px-2.5 pb-2.5" data-testid="compaction-summary-content">
+									<div
+										className={cn("px-2.5 pb-2.5", isExpanded && "min-h-0 flex-1 overflow-hidden")}
+										data-testid="compaction-summary-content">
 										<button
 											aria-expanded={isExpanded}
 											aria-label={isExpanded ? "Collapse summary" : "Expand summary"}
-											className="text-description cursor-pointer select-none w-full bg-transparent border-0 p-0 text-inherit font-inherit text-left"
+											className={cn(
+												"text-description cursor-pointer select-none w-full bg-transparent border-0 p-0 text-inherit font-inherit text-left",
+												isExpanded && "flex h-full min-h-0 flex-col",
+											)}
 											onClick={handleToggle}
 											type="button">
 											{isExpanded ? (
-												<div>
-													<div className="flex items-center mb-2">
+												<div className="flex h-full min-h-0 w-full flex-col">
+													<div className="mb-2 flex shrink-0 items-center">
 														<span className="font-bold mr-1">{contentLabel}</span>
 														<div className="grow" />
 														<ChevronDownIcon className="my-0.5 shrink-0 size-4" />
 													</div>
-													<SummaryScrollContainer>
+													<SummaryScrollContainer className="min-h-0 flex-1">
 														<span className="ph-no-capture break-words whitespace-pre-wrap">
 															{content}
 														</span>

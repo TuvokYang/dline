@@ -21,6 +21,7 @@ describe("telemetry canonicalization", () => {
 				modelId: "gpt-5.3-codex",
 				apiFormat: "openai-responses",
 				model_list: ["gpt-5.3-codex", "gpt-5.2-codex"],
+				apiError: "upstream response included secret body",
 				nested: { prompt: "secret prompt", outcome: "success" },
 			},
 			new RuntimeContentPolicy(Buffer.alloc(32, 7)),
@@ -31,6 +32,7 @@ describe("telemetry canonicalization", () => {
 		expect(serialized).not.toContain("user-canary")
 		expect(serialized).not.toContain("org-canary")
 		expect(serialized).not.toContain("secret prompt")
+		expect(serialized).not.toContain("upstream response included secret body")
 		expect(result.attributes).toMatchObject({
 			user_name: TELEMETRY_MASK_VALUE,
 			userId: TELEMETRY_MASK_VALUE,
@@ -38,11 +40,13 @@ describe("telemetry canonicalization", () => {
 			provider: "openai-codex",
 			modelId: "gpt-5.3-codex",
 			apiFormat: "openai-responses",
+			apiError: TELEMETRY_MASK_VALUE,
 			"model_list.0": "gpt-5.3-codex",
 			"model_list.1": "gpt-5.2-codex",
 			"nested.prompt": TELEMETRY_MASK_VALUE,
 			"nested.outcome": "success",
 		})
+		expect(result.contentPolicy.rejections).toHaveProperty("apiError", "masked_content")
 		expect(result.contentPolicy.rejections).toHaveProperty("nested.prompt", "masked_content")
 	})
 })

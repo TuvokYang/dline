@@ -101,7 +101,16 @@ describe("TaskProviderRequestReporter", () => {
 		expect(requestInfo(harness.rows[0]).cost).toBeUndefined()
 
 		await record.settle({
-			usage: { inputTokens: 1_000, outputTokens: 200, cacheWriteTokens: 50, cacheReadTokens: 750, totalCost: 0.25 },
+			usage: {
+				inputTokens: 1_000,
+				outputTokens: 200,
+				cacheWriteTokens: 50,
+				cacheReadTokens: 750,
+				thoughtsTokenCount: 30,
+				totalCost: 0.25,
+				webSearchRequests: 2,
+				webFetchRequests: 1,
+			},
 			outcome: "completed",
 		})
 
@@ -125,12 +134,26 @@ describe("TaskProviderRequestReporter", () => {
 				cacheWriteTokens: 50,
 				cacheReadTokens: 750,
 				cacheUsageReported: true,
+				thoughtsTokens: 30,
 				totalCost: 0.25,
+				webSearchRequests: 2,
+				webFetchRequests: 1,
 				provider: "anthropic",
 				model: "test-model",
 				apiFormat: ApiFormat.ANTHROPIC_CHAT,
 			},
 		])
+	})
+
+	it("preserves an explicitly reported zero cost", async () => {
+		const harness = createReporter()
+		await (await harness.reporter.begin({ turnId: "turn-free" })).settle({
+			usage: { inputTokens: 10, outputTokens: 1, totalCost: 0, costUsageReported: 1 },
+			outcome: "completed",
+		})
+
+		expect(requestInfo(harness.rows[0]).cost).toBe(0)
+		expect(harness.telemetry[0]?.totalCost).toBe(0)
 	})
 
 	it("emits usage telemetry only for a completed request with Provider usage", async () => {

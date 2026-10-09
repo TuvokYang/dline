@@ -51,6 +51,31 @@ describe("ChatRow summarizeTask rendering", () => {
 		expect(screen.getByText(content)).toBeInTheDocument()
 	})
 
+	it("bounds the complete expanded compaction card to sixty percent of the viewport", () => {
+		const content = Array.from({ length: 100 }, (_, index) => `Long summary line ${index + 1}`).join("\n")
+		render(
+			<ChatRowContent
+				{...baseProps}
+				isExpanded={true}
+				message={{
+					ts: 2,
+					type: "say",
+					say: "tool",
+					partial: false,
+					text: JSON.stringify({ tool: "summarizeTask", content, compactionStatus: "completed" }),
+				}}
+			/>,
+		)
+
+		const surface = screen.getByTestId("compaction-card-surface")
+		expect(surface).toHaveClass("max-h-[60vh]", "flex", "flex-col", "overflow-hidden")
+		expect(surface.style.maxHeight).toBe("60vh")
+		const scroller = screen.getByTestId("summary-scroll-container")
+		expect(scroller).toHaveClass("max-h-[60vh]", "min-h-0", "flex-1", "overflow-y-auto")
+		expect(scroller.style.maxHeight).toBe("60vh")
+		expect(scroller.style.overflowY).toBe("auto")
+	})
+
 	it("renders a retrying compaction without presenting the partial text as a completed summary", () => {
 		render(
 			<ChatRowContent

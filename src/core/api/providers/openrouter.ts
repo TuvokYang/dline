@@ -195,12 +195,14 @@ export class OpenRouterHandler implements ApiHandler {
 					return undefined
 				}
 				// Logger.log("OpenRouter generation details:", generation)
+				const cacheWriteTokens = generation?.native_tokens_cache_write || 0
+				const cacheReadTokens = generation?.native_tokens_cached || 0
 				return {
 					type: "usage",
-					cacheWriteTokens: generation?.native_tokens_cache_write || 0,
-					cacheReadTokens: generation?.native_tokens_cached || 0,
+					cacheWriteTokens,
+					cacheReadTokens,
 					// openrouter generation endpoint fails often
-					inputTokens: (generation?.native_tokens_prompt || 0) - (generation?.native_tokens_cached || 0),
+					inputTokens: Math.max(0, (generation?.native_tokens_prompt || 0) - cacheReadTokens - cacheWriteTokens),
 					outputTokens: generation?.native_tokens_completion || 0,
 					totalCost: generation?.total_cost || 0,
 				}

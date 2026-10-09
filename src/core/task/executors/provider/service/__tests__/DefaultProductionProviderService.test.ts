@@ -719,6 +719,33 @@ describe("DefaultProductionProviderService request retry", () => {
 		expect(chunks.at(-1)).toMatchObject({ kind: "final", text: "Recovered answer." })
 	})
 
+	it("replays upstream_http2_stream_error as the same frozen turn", async () => {
+		const failure = Object.assign(
+			new Error(
+				JSON.stringify({
+					error: {
+						code: "upstream_http2_stream_error",
+						message: "The upstream HTTP/2 stream was reset.",
+						type: "upstream_error",
+					},
+				}),
+			),
+			{ code: "upstream_http2_stream_error", status: 502 },
+		)
+		const harness = scripted([{ error: failure }, { chunks: [text("Recovered HTTP/2 answer.")] }])
+
+		const chunks = await collect(harness.service)
+
+		expect(harness.prepare).toHaveBeenCalledOnce()
+		expect(harness.api.createMessage).toHaveBeenCalledTimes(2)
+		expect(harness.sent[1]).toEqual(harness.sent[0])
+		expect(harness.waits).toEqual([1000])
+		expect(chunks.filter((chunk) => chunk.kind === "retry")).toEqual([
+			{ kind: "retry", notice: expect.objectContaining({ attempt: 1, maxAttempts: 5, delayMs: 1000 }) },
+		])
+		expect(chunks.at(-1)).toMatchObject({ kind: "final", text: "Recovered HTTP/2 answer." })
+	})
+
 	it("fails once the retry budget is spent", async () => {
 		const failure = httpError(503, "Service Unavailable")
 		const harness = scripted([{ error: failure }], { maxAttempts: 2 })

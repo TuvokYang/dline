@@ -1,5 +1,5 @@
 import { InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-node"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { OpenTelemetryTraceProvider } from "@/services/telemetry/providers/opentelemetry/OpenTelemetryTraceProvider"
 import {
 	configureSignalRecording,
@@ -8,7 +8,7 @@ import {
 } from "@/services/telemetry/service/pipeline-port"
 import type { TaskState } from "../kernel"
 import { createRunningTaskState } from "../kernel/__fixtures__/task-state"
-import { TaskTurnTelemetry } from "./task-turn-telemetry"
+import { observeTaskStateVault, TaskTurnTelemetry } from "./task-turn-telemetry"
 
 const cleanup: Array<() => void | Promise<void>> = []
 
@@ -74,6 +74,27 @@ describe("TaskTurnTelemetry", () => {
 			.find((span) => span.spanContext().spanId === segmentAfterLimit.spanContext?.spanId)
 		expect(failed?.attributes).toMatchObject({ outcome: "failure", task_segment_end_reason: "error" })
 		expect(failed?.events.map((event) => event.name)).toContain("task.error")
+	})
+
+	it("observes the authoritative vault save without changing its result", async () => {
+		const state = streamingState("turn-a", 3)
+		const timeline = new TaskTurnTelemetry(
+			"task-1",
+			() => state,
+			() => ({ cacheUsageAvailable: false }),
+		)
+		cleanup.push(() => timeline.dispose())
+		const save = vi.fn(async () => undefined)
+		const vault = observeTaskStateVault({ load: async () => undefined, save }, timeline)
+		const snapshot = { state, outbox: [] }
+
+		await vault.save(snapshot)
+
+		expect(save).toHaveBeenCalledWith(snapshot)
+		expect(timeline.attributes()).toMatchObject({
+			task_snapshot_durable_available: true,
+			task_snapshot_durable_revision: 3,
+		})
 	})
 
 	it("ignores a delayed failure captured by a previous real turn", async () => {

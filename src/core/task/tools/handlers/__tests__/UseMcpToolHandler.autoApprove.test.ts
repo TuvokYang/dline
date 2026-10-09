@@ -87,6 +87,16 @@ describe("UseMcpToolHandler auto-approval", () => {
 		expect(config.services.mcpHub.callTool).toHaveBeenCalledWith("docs", "search", {}, "ulid-1")
 	})
 
+	it("classifies a missing server name as a validation failure before MCP execution", async () => {
+		const config = createConfig(true, true)
+		const handler = new UseMcpToolHandler()
+
+		const result = await handler.execute(config, { ...block, params: { tool_name: "search", arguments: "{}" } })
+
+		expect(result).toMatchObject({ failure: { stage: "validation", code: "missing_server_name" } })
+		expect(config.services.mcpHub.callTool).not.toHaveBeenCalled()
+	})
+
 	it("does not expose internal MCP failures to the chat or provider", async () => {
 		const config = createConfig(true, true)
 		config.services.mcpHub.callTool = vi.fn(async () => {
@@ -95,12 +105,14 @@ describe("UseMcpToolHandler auto-approval", () => {
 		const handler = new UseMcpToolHandler()
 
 		const result = await handler.execute(config, block)
+		const resultText = JSON.stringify(result)
 
-		expect(result).not.toContain("INTERNAL_XML_AND_TRANSPORT_DETAILS")
-		expect(result).toContain("Check the MCP server logs for details")
+		expect(resultText).not.toContain("INTERNAL_XML_AND_TRANSPORT_DETAILS")
+		expect(resultText).toContain("Check the MCP server logs for details")
+		expect(result).toMatchObject({ failure: { stage: "execution", code: "mcp_call_failed" } })
 		expect(config.callbacks.say).toHaveBeenCalledWith(
 			"mcp_server_response",
-			"MCP tool 'search' on server 'docs' failed. Check the MCP server logs for details.",
+			expect.stringContaining("Check the MCP server logs for details"),
 		)
 		expect(config.taskState.consecutiveMistakeCount).toBe(1)
 	})

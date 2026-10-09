@@ -47,6 +47,7 @@ import { TelemetryService } from "../telemetry/TelemetryService"
 import { DEFAULT_REQUEST_TIMEOUT_MS, MCP_CONNECT_TIMEOUT_MS } from "./constants"
 import { McpOAuthManager } from "./McpOAuthManager"
 import { resolveMcpToolAutoApprove, updateMcpToolAutoApproveConfig } from "./mcp-auto-approval"
+import { McpCallObservation } from "./mcp-call-observation"
 import { StreamableHttpReconnectHandler } from "./StreamableHttpReconnectHandler"
 import { BaseConfigSchema, McpSettingsSchema, ServerConfigSchema } from "./schemas"
 import { McpConnection, McpServerConfig, Transport } from "./types"
@@ -245,6 +246,11 @@ export class McpHub {
 	 */
 	public static getMcpServerByKey(key: string): string {
 		return McpHub.mcpServerKeys.get(key) || key
+	}
+
+	/** Resolve a native MCP function namespace without exposing the hub's static registry. */
+	resolveServerName(key: string): string {
+		return McpHub.getMcpServerByKey(key)
 	}
 
 	/**
@@ -1402,79 +1408,82 @@ export class McpHub {
 		toolArguments: Record<string, unknown> | undefined,
 		ulid: string,
 	): Promise<McpToolCallResponse> {
-		const connection = this.connections.find((conn) => conn.server.name === serverName)
-		if (!connection) {
-			throw new Error(
-				`No connection found for server: ${serverName}. Please make sure to use MCP servers available under 'Connected MCP Servers'.`,
-			)
-		}
+		const observation = new McpCallObservation({ taskId: ulid, argumentCount: Object.keys(toolArguments ?? {}).length })
+		return observation.run(async () => {
+			const connection = this.connections.find((conn) => conn.server.name === serverName)
+			if (!connection) {
+				throw new Error(
+					`No connection found for server: ${serverName}. Please make sure to use MCP servers available under 'Connected MCP Servers'.`,
+				)
+			}
 
-		if (connection.server.disabled) {
-			throw new Error(`Server "${serverName}" is disabled and cannot be used`)
-		}
+			if (connection.server.disabled) {
+				throw new Error(`Server "${serverName}" is disabled and cannot be used`)
+			}
 
-		let timeout = secondsToMs(DEFAULT_MCP_TIMEOUT_SECONDS) // sdk expects ms
-
-		try {
-			const config = JSON.parse(connection.server.config)
-			const parsedConfig = ServerConfigSchema.parse(config)
-			timeout = secondsToMs(parsedConfig.timeout)
-		} catch (error) {
-			Logger.error(`Failed to parse timeout configuration for server ${serverName}: ${error}`)
-		}
-
-		this.telemetryService.captureMcpToolCall(
-			ulid,
-			serverName,
-			toolName,
-			"started",
-			undefined,
-			toolArguments ? Object.keys(toolArguments) : undefined,
-		)
-
-		try {
-			const result = await connection.client.request(
-				{
-					method: "tools/call",
-					params: {
-						name: toolName,
-						arguments: toolArguments ?? {},
-					},
-				},
-				CallToolResultSchema,
-				{
-					timeout,
-				},
-			)
+			let timeout = secondsToMs(DEFAULT_MCP_TIMEOUT_SECONDS)
+			observation.setStage("configuration")
+			try {
+				const config = JSON.parse(connection.server.config)
+				const parsedConfig = ServerConfigSchema.parse(config)
+				timeout = secondsToMs(parsedConfig.timeout)
+			} catch (error) {
+				Logger.error(`Failed to parse timeout configuration for server ${serverName}: ${error}`)
+			}
 
 			this.telemetryService.captureMcpToolCall(
 				ulid,
 				serverName,
 				toolName,
-				"success",
+				"started",
 				undefined,
 				toolArguments ? Object.keys(toolArguments) : undefined,
 			)
 
-			return {
-				...result,
-				content: result.content ?? [],
+			observation.setStage("transport")
+			try {
+				const result = await connection.client.request(
+					{
+						method: "tools/call",
+						params: {
+							name: toolName,
+							arguments: toolArguments ?? {},
+						},
+					},
+					CallToolResultSchema,
+					{ timeout },
+				)
+
+				if (result.isError) observation.setStage("remote")
+				this.telemetryService.captureMcpToolCall(
+					ulid,
+					serverName,
+					toolName,
+					result.isError ? "error" : "success",
+					result.isError ? "remote_tool_error" : undefined,
+					toolArguments ? Object.keys(toolArguments) : undefined,
+				)
+
+				return {
+					...result,
+					content: result.content ?? [],
+				}
+			} catch (error) {
+				this.telemetryService.captureMcpToolCall(
+					ulid,
+					serverName,
+					toolName,
+					"error",
+					"mcp_transport_error",
+					toolArguments ? Object.keys(toolArguments) : undefined,
+				)
+				throw error
 			}
-		} catch (error) {
-			this.telemetryService.captureMcpToolCall(
-				ulid,
-				serverName,
-				toolName,
-				"error",
-				error instanceof Error ? error.message : String(error),
-				toolArguments ? Object.keys(toolArguments) : undefined,
-			)
-			throw error
-		}
+		})
 	}
 
 	/**
-	 * RPC variant of toggleToolAutoApprove that returns the updated servers instead of notifying the webview
+	 * RPC variant of toggleToolAutoApprove
 	 * @param serverName The name of the MCP server
 	 * @param toolNames Array of tool names to toggle auto-approve for
 	 * @param shouldAllow Whether to enable or disable auto-approve

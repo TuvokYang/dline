@@ -148,7 +148,6 @@ export class AskSageHandler implements ApiHandler {
 					outputTokens: result.usage.model_tokens.completion_tokens,
 					cacheReadTokens: 0,
 					cacheWriteTokens: 0,
-					totalCost: result.usage.asksage_tokens, // Cost = Consumed AskSage tokens
 				}
 			}
 		} catch (error) {

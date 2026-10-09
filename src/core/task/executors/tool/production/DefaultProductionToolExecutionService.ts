@@ -6,6 +6,7 @@ import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { ClineDefaultTool } from "@shared/tools"
 import { serializeDurableToolResult, toolResultReplayOf } from "../../../DurableToolResult"
 import { LOOP_DETECTION_SOFT_THRESHOLD, recordToolCall, toolCallSignature } from "../../../loop-detection"
+import { ToolExecutionObservation, type ToolFailureObservation } from "../../../observability/tool-execution-observation"
 import type { ToolInvocationEnvelope } from "../../../stores/payload/TaskPayloadEnvelopes"
 import { approvalInteractionId } from "../../../tools/approval-interaction"
 import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "../../../tools/ToolExecutionResult"
@@ -30,6 +31,7 @@ export interface ProductionToolConfigFactory {
 }
 
 export interface DefaultProductionToolExecutionServiceOptions {
+	readonly taskId: string
 	readonly config: ProductionToolConfigFactory
 	readonly runtime: ProductionToolHandlerRuntime
 }
@@ -37,6 +39,7 @@ export interface DefaultProductionToolExecutionServiceOptions {
 export interface ProductionToolExecutionResult {
 	readonly content: string
 	readonly failed?: boolean
+	readonly failure?: ToolFailureObservation
 	/** PDFs the user attached to the call's answer; they follow the result in the next request. */
 	readonly documents?: readonly ClineUserAttachedDocumentBlock[]
 	readonly postCommit?: ToolPostCommitDirective
@@ -114,7 +117,7 @@ function serializeResult(
 	invocation: ToolInvocationEnvelope,
 	response: ClineToolResponseContent,
 	description: string,
-	failed = false,
+	failure?: ToolFailureObservation,
 ): ProductionToolExecutionResult {
 	const described = typeof response === "string"
 	return {
@@ -126,11 +129,11 @@ function serializeResult(
 				content: ToolResultUtils.boundContent(
 					described ? ToolResultUtils.describeTextResult(description, response) : response,
 				),
-				...(failed ? { is_error: true } : {}),
+				...(failure ? { is_error: true } : {}),
 			},
 			toolResultReplayOf(invocation, described),
 		),
-		...(failed ? { failed: true } : {}),
+		...(failure ? { failed: true, failure } : {}),
 	}
 }
 
@@ -185,6 +188,20 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
 		readonly invocation: ToolInvocationEnvelope
 		readonly surface: ToolDomainSurface
 	}): Promise<ProductionToolExecutionResult> {
+		const observation = new ToolExecutionObservation({
+			taskId: this.options.taskId,
+			toolName: input.invocation.toolName,
+			turnId: input.command.turnId ?? "",
+			native: input.invocation.isNativeToolCall,
+		})
+		return observation.run(() => this.executeObserved(input))
+	}
+
+	private async executeObserved(input: {
+		readonly command: ToolRunCommand
+		readonly invocation: ToolInvocationEnvelope
+		readonly surface: ToolDomainSurface
+	}): Promise<ProductionToolExecutionResult> {
 		if (input.invocation.dlineTid !== input.command.dlineTid) {
 			throw new Error(`ToolInvocationIdentityMismatch:${input.invocation.dlineTid}:${input.command.dlineTid}`)
 		}
@@ -202,13 +219,17 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
 		) {
 			const fallback = canFallbackUnadvertisedWebSearch(config)
 			const message = await presentUnadvertisedHostedWebSearch(config, block, fallback, config.webSearchRoutingPlan.mode)
-			if (!fallback) return serializeResult(input.invocation, formatResponse.toolError(message), description, true)
+			if (!fallback)
+				return serializeResult(input.invocation, formatResponse.toolError(message), description, {
+					stage: "routing",
+					code: "hosted_fallback_unavailable",
+				})
 			config = createLocalWebSearchFallbackConfig(config)
 		}
 		const result = normalizeToolExecutionResult(await this.options.runtime.execute(config, block))
 		const response = applyRepeatedCallGuard(config, block, result.response)
 		return {
-			...serializeResult(input.invocation, response, description),
+			...serializeResult(input.invocation, response, description, result.failure),
 			...(result.documents?.length ? { documents: result.documents } : {}),
 			...(result.postCommit === undefined ? {} : { postCommit: result.postCommit }),
 		}

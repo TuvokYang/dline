@@ -107,6 +107,7 @@ export async function requestTaskCompaction(
 	// The user retries right after confirming, so the answer waits until the
 	// history is actually gone: a Retry that raced the landing would compact again.
 	const outcome = await recovery.settlement(compactionId)
+	if (outcome === "completed") recovery.truncated?.()
 	return outcome === "completed"
 		? { accepted: true, result: "truncated", compactionId }
 		: { accepted: false, result: `truncation_${outcome}` }

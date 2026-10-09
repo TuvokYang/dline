@@ -11,6 +11,8 @@ export interface ProviderUsageTelemetryRecord {
 	readonly cacheUsageReported: boolean
 	readonly thoughtsTokens?: number
 	readonly totalCost?: number
+	readonly webSearchRequests?: number
+	readonly webFetchRequests?: number
 	readonly provider: string
 	readonly model: string
 	readonly apiFormat?: ApiFormat
@@ -36,6 +38,8 @@ export const providerUsageTelemetry: ProviderUsageTelemetryPort = {
 				cacheUsageReported: usage.cacheUsageReported,
 				...(usage.thoughtsTokens === undefined ? {} : { thoughtsTokens: usage.thoughtsTokens }),
 				...(usage.totalCost === undefined ? {} : { totalCost: usage.totalCost }),
+				...(usage.webSearchRequests === undefined ? {} : { webSearchRequests: usage.webSearchRequests }),
+				...(usage.webFetchRequests === undefined ? {} : { webFetchRequests: usage.webFetchRequests }),
 				...(usage.apiFormat === undefined ? {} : { apiFormat: usage.apiFormat }),
 			},
 		)

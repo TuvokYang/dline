@@ -235,13 +235,14 @@ for (const dialogCase of DIALOG_CASES) {
 }
 
 e2e(
-	"Compact barrier - text sent while the summary is pending stays with the user until the compaction lands",
+	"Compact barrier - text sent while the summary is pending stays durable and editable in the input queue",
 	async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
 		e2e.setTimeout(240_000)
 		await configureAnthropicManualCompact(dlineDir)
 		const guidance = "E2E_PENDING_GUIDANCE"
 		const summary = "E2E_PENDING_SUMMARY keeps the pending-barrier context."
 		const later = "E2E_PENDING_LATER_TEXT continue after the summary."
+		const editedLater = "E2E_PENDING_EDITED_TEXT continue after the summary."
 		server.enqueueResponses(
 			PROVIDER,
 			{
@@ -275,7 +276,7 @@ e2e(
 				id: "call_pending_later",
 				name: "attempt_completion",
 				arguments: { result: "E2E_PENDING_LATER_DONE" },
-				expectedRequestIncludes: [summary, later],
+				expectedRequestIncludes: [summary, editedLater],
 				expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, guidance],
 			},
 		)
@@ -289,25 +290,30 @@ e2e(
 			await sendText(sidebar, `/compact ${guidance}`)
 			await expect.poll(() => server.getRequestCount(PROVIDER), { timeout: 60_000 }).toBe(2)
 
-			// A send while the barrier runs can neither overtake it nor be lost:
-			// the draft comes back to the composer, where the user sends it once
-			// the compaction has landed.
+			// The queue owns input sent while the immutable compaction source is in flight.
 			const input = sidebar.getByTestId("chat-input")
 			await input.fill(later)
 			await input.press("Enter")
-			await expect(input).toHaveValue(later, { timeout: 30_000 })
+			await expect(input).toHaveValue("", { timeout: 30_000 })
+			const queueToggle = sidebar.getByTestId("input-queue-toggle")
+			await expect(queueToggle).toContainText("Queue 1")
+			await queueToggle.click()
+			const queueOverlay = sidebar.getByTestId("input-queue-overlay")
+			await expect(queueOverlay).toContainText(later)
+			await queueOverlay.getByLabel("Edit queued input").click()
+			await expect(input).toHaveValue(later)
+			await input.fill(editedLater)
+			await input.press("Enter")
+			await expect(input).toHaveValue("")
+			await expect(queueToggle).toContainText("Queue 1")
 
 			const confirmButton = await expectSummaryUnderReview(sidebar, summary)
-			await expect(input).toHaveValue(later)
+			await expect(input).toHaveValue("")
 			expect(server.getRequestCount(PROVIDER)).toBe(2)
 
 			await confirmButton.click()
 			await expect(sidebar.getByText("E2E_PENDING_RESUMED", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getRequestCount(PROVIDER)).toBe(3)
-			await expect(input).toHaveValue(later)
-
-			await input.press("Enter")
-			await expect(input).toHaveValue("")
 			await expect(sidebar.getByText("E2E_PENDING_LATER_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 			await expect.poll(() => server.getRequestCount(PROVIDER)).toBe(4)
 
@@ -320,7 +326,8 @@ e2e(
 				"call_pending_later",
 			])
 			for (const request of requests) expect(request.contractError).toBeUndefined()
-			expect(requests.slice(0, 3).some((request) => requestText(request).includes(later))).toBe(false)
+			expect(requests.slice(0, 3).some((request) => requestText(request).includes(editedLater))).toBe(false)
+			await expect(sidebar.getByTestId("queued-user-input").filter({ hasText: editedLater })).toHaveCount(1)
 			expectOnlyInsideCompactionInstruction(requests[1], guidance)
 			expectCommandNeverSent(requests)
 			await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
