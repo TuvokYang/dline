@@ -77,7 +77,7 @@ Run the checks appropriate to the blast radius. At minimum, record focused tests
 
 Feature-branch verification does not replace the integration checks that run after the PR enters `dev`.
 
-Contributors must not create changelog-entry files or perform release version bumps unless the user explicitly requested release preparation. Maintainers curate release versions and changelogs through the release workflow.
+Contributors must not create changelog-entry files, add What's New sections, or perform release version bumps unless the user explicitly requested release preparation. Maintainers curate release versions, changelogs, and What's New through the release workflow.
 
 ## 6. Prepare the PR body
 

@@ -13,7 +13,7 @@ Follow `repository-and-release` before using this workflow. Repository identity,
 
 - Release preparation was completed on `dev`, either directly or by merging an ordinary PR from an independent source branch.
 - The integrated `dev` commit is unambiguous and the working tree used for verification is clean.
-- `package.json`, `package-lock.json`, `CHANGELOG.md`, and `docs/changelog/CHANGELOG_en.md` describe the same target version.
+- `package.json`, `package-lock.json`, `CHANGELOG.md`, `docs/changelog/CHANGELOG_en.md`, `docs/whats-new/WHATS_NEW.md`, and `docs/whats-new/WHATS_NEW_en.md` describe the same target version.
 - No unresolved release blocker or unrelated work is being included.
 - The release version has an even minor, as the version bump rules in repository-and-release require; stop and prepare a new version with dev-version-bump when it is odd.
 - The user has not yet implicitly authorized any commit, push, merge, tag, Release edit, or Marketplace publication.
@@ -54,6 +54,7 @@ Confirm:
 
 - the target version matches `X.Y.Z`;
 - both changelogs contain `## [X.Y.Z]` and equivalent user-visible content;
+- both What's New editions start with a `## X.Y.Z` section that stands alone for this release and has the same number of items, as dev-version-bump requires; the What's New Vitest file passes on the candidate;
 - `package.json` and `package-lock.json` use `X.Y.Z`;
 - the release candidate is not marked as preview;
 - no production `vX.Y.Z` tag already exists locally or remotely;
@@ -132,7 +133,7 @@ git merge-base --is-ancestor refs/remotes/<remote>/main refs/remotes/<remote>/de
 - the final `main` SHA is the squash commit and its parent is the previous `main` head;
 - the squash commit's tree equals the verified `dev` tree;
 - `main` is an ancestor of `dev`, so the back-merge landed;
-- version and changelog files are unchanged;
+- version, changelog, and What's New files are unchanged;
 - the production tag does not yet exist.
 
 If remote `main` or `dev` moved unexpectedly, stop instead of overwriting it.

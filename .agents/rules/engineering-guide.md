@@ -150,6 +150,7 @@ Follow `network`. Extension/core code must not introduce global `fetch`, an unco
 - `.agents` files use English.
 - `docs/` changes require Chinese and English deliverables for the same scope.
 - Root README and changelog files follow their established bilingual pairs.
+- Every version update adds a section to both What's New editions under `docs/whats-new/`; follow repository-and-release and dev-version-bump.
 
 Load `writing-documentation` for documentation work.
 

@@ -10,8 +10,9 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   release that ships, so do not put any other "##" heading above it.
 - A release holds one flat "- " list. Indent a continuation line by at least two spaces.
 - Inline syntax is limited to **bold**, `code`, and [text](https://...) links, without nesting.
-- The newest release must match the major.minor version in package.json, and WHATS_NEW.md must
-  carry the same version with the same number of items. Unit tests enforce both.
+- Every version bump adds a section here. The newest release must equal the version in
+  package.json, and WHATS_NEW.md must carry the same version with the same number of items.
+  Unit tests enforce both.
 -->
 
 ## 0.10.0

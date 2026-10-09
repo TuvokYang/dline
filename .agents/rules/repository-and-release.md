@@ -120,7 +120,7 @@ After changes enter `dev`, run and record the checks required by the actual blas
 - one production VSIX packaged before the required E2E gate, then the three-platform work smoke and four daily workflows against that exact artifact;
 - full functional E2E only for nightly or explicit investigation, and no dev-tier E2E in required CI or release gates;
 - VSIX identity, content, and tested-artifact verification;
-- version, lockfile, bilingual changelog, and manifest consistency for a release candidate.
+- version, lockfile, bilingual changelog, bilingual What's New, and manifest consistency for a release candidate.
 
 Promotion may be proposed only when the release candidate's required checks pass, blockers are resolved, and the target commit is unambiguous. Passing tests on one feature branch is not equivalent to passing the integrated `dev` gate.
 
@@ -134,7 +134,7 @@ Perform release promotion in this order:
 
 1. Fetch and read explicit `refs/remotes/<remote>/dev` and `refs/remotes/<remote>/main` SHAs, then compute the merge base and diff from those refs; never treat bare local `dev` or `main` as remote facts.
 2. Confirm that integrated `dev` passed the complete release gate.
-3. Confirm version, lockfile, bilingual changelog, and VSIX contracts.
+3. Confirm version, lockfile, bilingual changelog, bilingual What's New, and VSIX contracts.
 4. Show the squash method, the verified `dev` SHA, the resolved destination, and the release commit message.
 5. Obtain authorization to write `main`.
 6. On `main`, run `git merge --squash <verified-dev-sha>` and commit `release: X.Y.Z` with a body summarizing the release from the bilingual changelog.
@@ -202,6 +202,7 @@ Version bump rules:
 - Production releases use an even minor (`0.10.0`, `0.10.1`, `0.12.0`). Pre-releases use an odd minor (`0.11.0`, `0.11.1`, `0.13.0`). A pre-release never reuses a number a production release needs.
 - Insiders follows the pre-release line: its major and minor are the package version's when the minor is odd, and the next odd minor when the package minor is even, with the patch replaced by a timestamp. Every Insiders build therefore sorts above the production release it follows.
 - Preparing a production release bumps `package.json` on `dev` to the next even minor (or the next patch of the current even minor for a fix release). Starting a pre-release line bumps it to the next odd minor. The minor never decreases.
+- Every version bump, production, patch, or pre-release, also adds a `## X.Y.Z` section for the new version at the top of `docs/whats-new/WHATS_NEW_en.md` and `docs/whats-new/WHATS_NEW.md`. The webview build ships only that first section in the What's New dialog, so it must stand alone for the version; dev-version-bump defines its content and syntax. `webview-ui/src/__tests__/vite-whats-new.test.ts` fails until both editions start with the `package.json` version and carry the same number of items, so a bump without What's New cannot pass the Tests workflow that gates every release.
 - `scripts/release-version-policy.mjs` is the single source of these rules. `scripts/package-vsix.mjs` rejects a `vX.Y.Z` tag with an odd minor and a `dev-vX.Y.Z` tag with an even minor before packaging.
 - Versions released before this rule, up to `0.9.4`, keep their numbers; `0.10.0` is the first release under it.
 

@@ -1,6 +1,6 @@
 ---
 name: dev-version-bump
-description: Prepare package and bilingual changelog versions on dev or an isolated branch, with independent source branches required only when creating a PR into dev.
+description: Prepare package, bilingual changelog, and bilingual What's New versions on dev or an isolated branch, with independent source branches required only when creating a PR into dev.
 ---
 
 # Development Version Preparation
@@ -38,10 +38,12 @@ Review implementation, tests, and user-visible behavior rather than deriving rel
 
 ## 3. Update the release files
 
-Update all four release facts together:
+Update all six release facts together; every version bump, including a patch or pre-release, touches all of them:
 
 - `CHANGELOG.md` (Chinese);
 - `docs/changelog/CHANGELOG_en.md` (English);
+- `docs/whats-new/WHATS_NEW.md` (Chinese);
+- `docs/whats-new/WHATS_NEW_en.md` (English, rendered in the What's New dialog);
 - `package.json`;
 - `package-lock.json`.
 
@@ -57,6 +59,19 @@ Use the existing changelog structure and include only sections that contain real
 
 The two changelogs must describe the same user-visible changes, not independent release scopes.
 
+Add a What's New section for the exact target version at the top of both What's New files, above the previous release, which stays below as history:
+
+```markdown
+## X.Y.Z
+
+- **Short summary**: one sentence on what users can now do or what no longer goes wrong.
+```
+
+- The webview build ships only the first `##` section, and its heading must be a bare `X.Y.Z`. Do not place any other `##` heading above it.
+- That section must stand alone for the version. For a patch, carry forward the highlights of the current minor line that still apply and add the patch's user-visible fixes; do not write only "bug fixes".
+- Write three to six highlights selected from the changelog, each led by a bold summary. Allowed syntax is one flat `- ` list, two-space continuation lines, `**bold**`, `` `code` ``, and absolute `https://` links, without nesting; anything else fails the build.
+- The Chinese edition carries the same version, the same number of items, and the same meaning.
+
 Update package and lockfile versions without changing dependency ranges. If using a package-manager command to synchronize them, that dependency/tooling operation requires the applicable authorization and its resulting diff must be reviewed.
 
 ## 4. Validate the prepared state
@@ -67,7 +82,10 @@ At minimum run:
 npm run check-types
 npm run lint
 npm run test:smoke
+npx vitest run webview-ui/src/__tests__/vite-whats-new.test.ts
 ```
+
+The What's New test fails when either edition is malformed, when the first section's version differs from `package.json`, or when the two editions differ in version or item count.
 
 Run focused Vitest, functional E2E, Storybook, or package checks required by the changed release surface. When preparing the exact integrated release candidate, load `e2e-validation` and run `npm run test:e2e:work`; do not substitute full functional or dev-tier E2E for the required work gate. Review the final diff and ensure only intended release-preparation files and approved companion changes are present.
 
@@ -87,4 +105,4 @@ Do not create `vX.Y.Z` here. A `dev-vX.Y.Z` development release tag may be creat
 
 Re-run the integrated checks on the exact `dev` commit. Only the production release workflow may promote a passing release candidate to `main` and create `vX.Y.Z`.
 
-Report the target version, previous ref, changed release files, verification evidence, and any uncommitted, unpushed, or unmerged work.
+Report the target version, previous ref, changed release files including both What's New editions, verification evidence, and any uncommitted, unpushed, or unmerged work.

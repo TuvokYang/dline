@@ -6,10 +6,6 @@ import { parseWhatsNew, WHATS_NEW_SOURCE } from "../../vite-whats-new"
 const CHINESE_SOURCE = WHATS_NEW_SOURCE.replace(/WHATS_NEW_en\.md$/, "WHATS_NEW.md")
 const PACKAGE_MANIFEST = resolve(__dirname, "../../../package.json")
 
-function majorMinor(version: string): string {
-	return version.split(".").slice(0, 2).join(".")
-}
-
 function parse(markdown: string) {
 	return parseWhatsNew(markdown, "WHATS_NEW_en.md")
 }
@@ -118,11 +114,11 @@ describe("What's New documents", () => {
 	const english = parseWhatsNew(readFileSync(WHATS_NEW_SOURCE, "utf8"), WHATS_NEW_SOURCE)
 	const chinese = parseWhatsNew(readFileSync(CHINESE_SOURCE, "utf8"), CHINESE_SOURCE)
 
-	it("ships the release the announcement is shown for", () => {
-		// The dialog opens once per major.minor (src/utils/announcements.ts), so the shipped
-		// section must describe that line; add a new section when package.json moves to it.
+	it("ships a section written for the package version", () => {
+		// Every version bump adds a What's New section (repository-and-release), so a bump
+		// that skipped it fails here instead of shipping the previous release's highlights.
 		const manifest = JSON.parse(readFileSync(PACKAGE_MANIFEST, "utf8")) as { version: string }
-		expect(majorMinor(english.version)).toBe(majorMinor(manifest.version))
+		expect(english.version).toBe(manifest.version)
 	})
 
 	it("keeps the Chinese edition at the release and item count shipped in the dialog", () => {
