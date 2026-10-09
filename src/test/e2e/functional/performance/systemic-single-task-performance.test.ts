@@ -93,6 +93,7 @@ e2e(
 		if (!firstRequest) throw new Error("The ordinary Task never reached the mock provider")
 		const taskRequestMs = firstRequest.receivedAtMs - taskSubmittedAtMs
 		await expect(sidebar.getByText(TASK_READY, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+		const taskVisibleMs = Date.now() - firstRequest.receivedAtMs
 
 		await openFeatureSettings(page, sidebar)
 		const featureTips = sidebar.getByRole("switch", { name: "Feature Tips" })
@@ -113,7 +114,7 @@ e2e(
 		await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toHaveCount(0)
 		const closeMs = elapsedMs(closeStartedAt)
 
-		const timings = { profileMs, taskRequestMs, settingsMs, closeMs }
+		const timings = { profileMs, taskRequestMs, taskVisibleMs, settingsMs, closeMs }
 		console.log(`[systemic-single-task-performance] ${JSON.stringify(timings)}`)
 		await e2e.info().attach("systemic-single-task-performance.json", {
 			body: Buffer.from(`${JSON.stringify(timings, null, 2)}\n`, "utf8"),

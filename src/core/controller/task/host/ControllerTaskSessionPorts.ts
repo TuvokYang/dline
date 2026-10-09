@@ -54,6 +54,7 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
 					currentCwd,
 					excludeTaskId,
 				}),
+			activeTaskCount: () => OrchestratorController.getInstance().getControllerCount(),
 		}
 		this.presentation = {
 			publish: (row) => sendPartialMessageEvent(controller, convertClineMessageToProto(row), opening),

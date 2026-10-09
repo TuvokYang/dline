@@ -2,6 +2,7 @@ import type { ApiHandler } from "@core/api"
 import type { ApiStreamChunk } from "@core/api/transform/stream"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it, vi } from "vitest"
+import type { ApiRequestTiming } from "../../../../performance/api-request-timing"
 import { ProfileNotValidError } from "../../../../profile-admission"
 import type { ProviderDraftEnvelope } from "../../../../stores/payload/TaskPayloadEnvelopes"
 import type { ProductionProviderChunk } from "../../ProductionProviderAdapter"
@@ -55,7 +56,75 @@ function text(value: string): ApiStreamChunk {
 
 const MARKUP = "<summarize_task><context>SECRET_SUMMARY</context></summarize_task>"
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/** A service whose preparation, first chunk and later chunks each take `phaseMs`, reporting its timing. */
+function timedService(phaseMs: number, timings: ApiRequestTiming[]) {
+	const request = {
+		api: {
+			createMessage: async function* () {
+				for (const value of ["one", "two"]) {
+					await sleep(phaseMs)
+					yield text(value)
+				}
+			},
+			getModel: () => ({ id: "test-model", info: {} }),
+		} as unknown as ApiHandler,
+		systemPrompt: "",
+		nativeTools: true,
+		mode: "serial",
+		profile: "standard",
+		messages: [],
+		turnId: "turn-1",
+	} as unknown as PreparedProviderRequest
+	return new DefaultProductionProviderService({
+		requests: {
+			prepare: async () => {
+				await sleep(phaseMs)
+				return request
+			},
+		},
+		onRequestTiming: (timing) => timings.push(timing),
+	})
+}
+
 describe("DefaultProductionProviderService", () => {
+	// The multi-task pressure E2E reads this timing to tell the time Dline spends
+	// preparing a request from the time the provider takes to answer it.
+	it("reports one timing per completed request, split at the send and the first chunk", async () => {
+		const timings: ApiRequestTiming[] = []
+		const stream = timedService(40, timings).start({
+			draftRef: "draft-1",
+			draft: {} as ProviderDraftEnvelope,
+			signal: new AbortController().signal,
+		})
+		for await (const _chunk of stream) {
+			// Drain the request to its end.
+		}
+
+		expect(timings).toHaveLength(1)
+		const [timing] = timings
+		expect(timing.localPrepareMs).toBeGreaterThanOrEqual(30)
+		expect(timing.upstreamTtfbMs).toBeGreaterThanOrEqual(30)
+		expect(timing.streamMs).toBeGreaterThanOrEqual(30)
+		expect(timing.totalMs).toBeGreaterThanOrEqual(timing.localPrepareMs + timing.upstreamTtfbMs)
+	})
+
+	it("reports no timing for a request the user cancelled", async () => {
+		const timings: ApiRequestTiming[] = []
+		const controller = new AbortController()
+		const stream = timedService(5, timings).start({
+			draftRef: "draft-1",
+			draft: {} as ProviderDraftEnvelope,
+			signal: controller.signal,
+		})
+		for await (const chunk of stream) {
+			if (chunk.kind === "partial") controller.abort()
+		}
+
+		expect(timings).toEqual([])
+	})
+
 	// WS-013: a call the model writes as markup, even when offered native tools,
 	// is a call for the tool gate to decide, never prose shown to the user.
 	it("never shows tool markup a native-tool reply wrote into its prose, while streaming or after", async () => {

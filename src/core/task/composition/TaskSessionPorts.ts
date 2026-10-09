@@ -55,6 +55,8 @@ export interface TaskEnvironmentHost {
 	getVisibleFiles(): Promise<readonly string[]>
 	getOpenTabs(): Promise<readonly string[]>
 	buildActiveTasksSection(input: { readonly currentCwd: string; readonly excludeTaskId: string }): string
+	/** How many task surfaces this window has open; request diagnostics report it. */
+	activeTaskCount(): number
 }
 
 /** Delivers one already-persisted task row to its live surface. */

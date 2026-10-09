@@ -46,6 +46,7 @@ import {
 import type { TaskState } from "../kernel"
 import { MessageStateHandler } from "../message-state"
 import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback, perRequestHistory } from "../new-task/new-task-feedback"
+import { formatApiRequestTiming } from "../performance/api-request-timing"
 import { TaskPerformanceOwner } from "../performance/TaskPerformanceOwner"
 import { TaskPerformanceRequestReporter } from "../performance/TaskPerformanceRequestReporter"
 import { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
@@ -257,6 +258,8 @@ export class TaskSessionCompositionService {
 		// request, so every change of that ownership republishes the view. A
 		// Retry answered on a failed request hands that request to the user.
 		const providerRetry = new ProviderRetryGate(() => void options.publishState().catch(() => undefined))
+		// Numbers the requests this session timed, for the diagnostic line each one logs.
+		let timedRequests = 0
 		const interactions = new TaskInteractionOwner(
 			messages,
 			persistence.payloads,
@@ -792,6 +795,15 @@ export class TaskSessionCompositionService {
 						truncate: async (signal) =>
 							session?.contextTruncation?.truncate({ notice: formatResponse.contextTruncationNotice(), signal }),
 					},
+					onRequestTiming: (timing) =>
+						Logger.debug(
+							formatApiRequestTiming({
+								taskId: options.taskId,
+								request: ++timedRequests,
+								timing,
+								activeTasks: options.prompt.ports.environment.activeTaskCount(),
+							}),
+						),
 				}),
 				tool: new DefaultProductionToolExecutionService({ config: toolExecution, runtime: toolRuntime }),
 				toolResources: {

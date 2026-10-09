@@ -19,6 +19,7 @@ import { isTurnEndingToolName } from "../../../assistant-message-order"
 import { isRetryableProviderError, type ProviderIdentity, waitRetryDelayUnlessAborted } from "../../../auto-retry"
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry-schedule"
 import { ContextWindowReceivingTracker } from "../../../ContextWindowReceivingTracker"
+import { type ApiRequestTiming, calculateApiRequestTiming } from "../../../performance/api-request-timing"
 import { StreamResponseHandler } from "../../../StreamResponseHandler"
 import type { JournalWatermark } from "../../../stores"
 import type {
@@ -36,6 +37,12 @@ import { ProviderUsageIncrements } from "./ProviderUsageIncrements"
 /** The automatic retries one turn may still spend, shared by every send of it. */
 interface RetryBudget {
 	attempts: number
+}
+
+/** When the attempt that produced a turn's stream was sent and first answered. */
+interface AttemptClock {
+	providerRequestStartedAtMs: number
+	firstChunkAtMs: number
 }
 
 /** What a retry chunk tells the chat about the attempt being waited for. */
@@ -132,6 +139,14 @@ export interface DefaultProductionProviderServiceOptions {
 	}
 	readonly serverTools?: ProviderServerToolPresentationPort
 	readonly contextRecovery?: ProviderContextRecoveryPort
+	/**
+	 * Receives the phase timing of each request whose stream ran to its end.
+	 *
+	 * Local preparation covers everything before the attempt that answered was
+	 * sent, retries included, so it separates time spent in Dline from upstream
+	 * latency. A cancelled request reports nothing.
+	 */
+	readonly onRequestTiming?: (timing: ApiRequestTiming) => void
 }
 
 /**
@@ -347,6 +362,9 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		readonly turnId?: string
 		readonly signal: AbortSignal
 	}): AsyncIterable<ProductionProviderChunk> {
+		const requestStartedAtMs = performance.now()
+		const clock: AttemptClock = { providerRequestStartedAtMs: requestStartedAtMs, firstChunkAtMs: requestStartedAtMs }
+		let streamCompletedAtMs: number | undefined
 		// Prepared once: every retry below replays exactly this request, so a
 		// prompt refresh or a newer journal entry cannot change a turn in flight.
 		// Only a replaced handler prepares it again, for the same turn.
@@ -394,7 +412,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			turn.carriedServerToolTraceIds =
 				(await serverTools?.resumeDeferred?.(deferredHostedResumeRequest(turn.request))) ?? new Map()
 			for (;;) {
-				const stream = yield* this.openStream(turn, input.signal, retryBudget)
+				const stream = yield* this.openStream(turn, input.signal, retryBudget, clock)
 				if (!stream) return
 				try {
 					for await (const chunk of stream) {
@@ -491,6 +509,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 							yield { kind: "receiving", receivingTokens, authoritativeContextTokens }
 						}
 					}
+					streamCompletedAtMs = performance.now()
 					break
 				} catch (error) {
 					const notice = input.signal.aborted
@@ -540,6 +559,9 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			const interrupted = interruptedTurn(reasoningContent, reasoningText, visibleAssistantText(text))
 			if (interrupted) yield { kind: "interrupted", transientId, ...interrupted }
 			return
+		}
+		if (streamCompletedAtMs !== undefined) {
+			this.options.onRequestTiming?.(calculateApiRequestTiming({ requestStartedAtMs, ...clock, streamCompletedAtMs }))
 		}
 
 		// The request that produced the stream decides how its reply is read.
@@ -610,9 +632,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		turn: TurnRequest,
 		signal: AbortSignal,
 		budget: RetryBudget,
+		clock: AttemptClock,
 	): AsyncGenerator<ProductionProviderChunk, AsyncIterable<ApiStreamChunk> | undefined> {
 		try {
-			return yield* this.sendUntilFirstChunk(turn, signal, budget)
+			return yield* this.sendUntilFirstChunk(turn, signal, budget, clock)
 		} finally {
 			// However the loop ends, no countdown remains for the chat to show.
 			this.retry.settled?.()
@@ -652,6 +675,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		turn: TurnRequest,
 		signal: AbortSignal,
 		budget: RetryBudget,
+		clock: AttemptClock,
 	): AsyncGenerator<ProductionProviderChunk, AsyncIterable<ApiStreamChunk> | undefined> {
 		let pairingRebuilt = false
 		const messagesOf = (request: PreparedProviderRequest): ClineStorageMessage[] =>
@@ -675,6 +699,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 			let iterator: AsyncIterator<ApiStreamChunk> | undefined
 			let failure: unknown
 			try {
+				clock.providerRequestStartedAtMs = performance.now()
 				const apiStream = this.bindRound(
 					request.turnId,
 					budget.attempts,
@@ -687,7 +712,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 				// hold Cancel until the provider decides to end the stream.
 				iterator = detachOnAbort(normalizeApiStream(apiStream, normalizer), signal)[Symbol.asyncIterator]()
 				const first = await iterator.next()
-				if (!first.done) return continueFrom(first.value, iterator)
+				if (!first.done) {
+					clock.firstChunkAtMs = performance.now()
+					return continueFrom(first.value, iterator)
+				}
 				failure = new Error("API stream ended without producing any content")
 			} catch (error) {
 				failure = error

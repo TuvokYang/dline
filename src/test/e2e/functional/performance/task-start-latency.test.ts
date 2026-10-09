@@ -45,9 +45,6 @@ const WORKSPACE_FILE_BYTES = 2_048
 const PRE_CHECKPOINT_BUDGET_MS = 8_000
 
 const LOG_TIMESTAMP = String.raw`(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})`
-// `sending API request` is emitted at info level, so it is present regardless of
-// the log level the host was started with, unlike the debug-level task markers.
-const API_REQUEST_PATTERN = new RegExp(`^${LOG_TIMESTAMP} \\[info\\] \\[Task (\\d+)\\] sending API request`)
 const CHECKPOINT_PATTERN = new RegExp(`^${LOG_TIMESTAMP} \\[info\\] Creating new CheckpointTracker for task (\\d+)$`)
 
 function parseLogTimestamp(raw: string): number {
@@ -198,6 +195,11 @@ e2e(
 			await sidebar.getByTestId("chat-input").fill(TASK_TEXT)
 			const sendClickedAtMs = Date.now()
 			await sidebar.getByTestId("send-button").click()
+			await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 240_000 }).toBe(1)
+			const firstRequest = server.getMockConsumptions("openai-compatible-chat")[0]
+			if (!firstRequest) throw new Error("The Task never reached the mock provider")
+			expect(firstRequest.contractError).toBeUndefined()
+			const requestAtMs = firstRequest.receivedAtMs
 			await expect(sidebar.getByText(TURN_1_DONE, { exact: false }).last()).toBeVisible({ timeout: 240_000 })
 			await expect(sidebar.getByRole("contentinfo").getByText("Start New Task", { exact: true })).toBeVisible({
 				timeout: 240_000,
@@ -206,14 +208,13 @@ e2e(
 			const measurement = await E2ETestHelper.waitForValue(async () => {
 				const output = E2ETestHelper.readDlineOutputIfPresent(userDataDir)
 				if (!output) return undefined
-				const requestAtMs = findLogMoment(output, API_REQUEST_PATTERN, sendClickedAtMs)
-				if (requestAtMs === undefined) return undefined
 				const checkpointAtMs = findLogMoment(output, CHECKPOINT_PATTERN, sendClickedAtMs)
+				if (checkpointAtMs === undefined) return undefined
 				return {
 					startedAtMs: sendClickedAtMs,
 					requestAtMs,
 					sendToRequestMs: requestAtMs - sendClickedAtMs,
-					sendToCheckpointMs: checkpointAtMs === undefined ? undefined : checkpointAtMs - sendClickedAtMs,
+					sendToCheckpointMs: checkpointAtMs - sendClickedAtMs,
 				}
 			}, 240_000)
 
