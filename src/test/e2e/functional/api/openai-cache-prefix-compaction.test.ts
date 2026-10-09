@@ -662,7 +662,12 @@ e2e(
 					name: toolCall.name,
 					arguments: toolCall.arguments,
 				})),
-				usage: { inputTokens: 405_000, outputTokens: 100 },
+				// Reported usage alone stays well below the 95% trigger, so the round
+				// is not compacted before it is drafted; the three latest results
+				// (about 37K tokens for any seed) push the complete request well over
+				// it, so the final guard compacts with the latest turn included. 405K
+				// left only a few hundred tokens of margin and depended on the seed.
+				usage: { inputTokens: 420_000, outputTokens: 100 },
 				expectedRequestIncludes: [historyTurn.marker, latestUserMarker],
 				expectedRequestExcludes: [COMPACTION_MARKER],
 				expectedToolResults: [

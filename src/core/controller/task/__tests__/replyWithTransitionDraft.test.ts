@@ -28,7 +28,7 @@ function awaitingCompletion(): TaskState {
 }
 
 function controllerWith(state: TaskState) {
-	return { task: { taskId: "task-1", state: () => state } } as never
+	return { task: { taskId: "task-1", taskInstanceId: "open-1", state: () => state } } as never
 }
 
 const DRAFT = { message: "E2E_PLAN_DRAFT", images: ["image"], files: ["file"] }
@@ -36,7 +36,7 @@ const DRAFT = { message: "E2E_PLAN_DRAFT", images: ["image"], files: ["file"] }
 describe("replyWithTransitionDraft", () => {
 	beforeEach(() => dispatch.mockReset())
 
-	it("answers the awaiting dialog with the draft the user switched with", async () => {
+	it("answers the awaiting dialog for the opening the switch was committed on", async () => {
 		dispatch.mockResolvedValue(DispatchInteractionResponse.create({ accepted: true, result: "accepted" }))
 
 		await expect(replyWithTransitionDraft(controllerWith(awaitingCompletion()), DRAFT)).resolves.toBe("replied")
@@ -45,6 +45,8 @@ describe("replyWithTransitionDraft", () => {
 			expect.anything(),
 			expect.objectContaining({
 				taskId: "task-1",
+				// dispatchInteraction refuses a reply that names no opening.
+				taskInstanceId: "open-1",
 				turnId: "turn-1",
 				interactionId: "interaction-1",
 				actionId: "reply",

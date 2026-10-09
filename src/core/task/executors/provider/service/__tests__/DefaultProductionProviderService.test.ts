@@ -333,6 +333,69 @@ describe("DefaultProductionProviderService", () => {
 		expect(JSON.stringify(out)).not.toContain("NEVER")
 	})
 
+	// Anthropic cannot abort a pending read: Cancel must not wait for the
+	// provider to end the stream, or Resume stays unavailable until it does.
+	it("settles a cancelled reply before an un-abortable read ends, and drops what arrives after", async () => {
+		const controller = new AbortController()
+		let holdEntered!: () => void
+		let releaseHold!: () => void
+		const holding = new Promise<void>((resolve) => {
+			holdEntered = resolve
+		})
+		const held = new Promise<void>((resolve) => {
+			releaseHold = resolve
+		})
+		let sourceClosed = false
+		const createMessage = vi.fn(async function* () {
+			try {
+				yield text("Partial answer")
+				holdEntered()
+				// Deliberately ignores the abort, like a transport without one.
+				await held
+				yield text(" LATE_TEXT")
+				yield { type: "usage", inputTokens: 1, outputTokens: 1 } as ApiStreamChunk
+			} finally {
+				sourceClosed = true
+			}
+		})
+		const request = {
+			api: { createMessage, getModel: () => ({ id: "test-model", info: {} }) } as unknown as ApiHandler,
+			systemPrompt: "",
+			nativeTools: true,
+			mode: "serial",
+			profile: "standard",
+			messages: [],
+			turnId: "turn-1",
+			planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
+		} as unknown as PreparedProviderRequest
+		const out: ProductionProviderChunk[] = []
+		const collected = (async () => {
+			for await (const chunk of new DefaultProductionProviderService({ requests: { prepare: async () => request } }).start({
+				draftRef: "draft-1",
+				draft: {} as ProviderDraftEnvelope,
+				signal: controller.signal,
+			}))
+				out.push(chunk)
+		})()
+
+		await holding
+		controller.abort("cancelled")
+		const settledWhileHeld = await Promise.race([
+			collected.then(() => true),
+			new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 200)),
+		])
+		// Release the source either way, so a regression fails here instead of hanging.
+		releaseHold()
+		await collected
+		await vi.waitFor(() => expect(sourceClosed).toBe(true))
+
+		expect(settledWhileHeld).toBe(true)
+		expect(out.at(-1)).toMatchObject({ kind: "interrupted", transientId: "provider:turn-1", text: "Partial answer" })
+		expect(out.some((chunk) => chunk.kind === "final")).toBe(false)
+		expect(JSON.stringify(out)).not.toContain("LATE_TEXT")
+		expect(createMessage).toHaveBeenCalledOnce()
+	})
+
 	// Anthropic drops a thinking block it did not sign, and the Responses API
 	// replays reasoning from its summary and encrypted items, so the journaled
 	// turn must keep what the provider attached, not only the visible text.

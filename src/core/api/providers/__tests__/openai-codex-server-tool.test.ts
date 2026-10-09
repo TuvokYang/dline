@@ -604,6 +604,7 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
 					handler.getModel(),
 					{ accessToken: "access-token", expires: 1_900_000_000_000 },
 					false,
+					new AbortController().signal,
 				),
 			)
 		} catch (error) {
@@ -613,6 +614,73 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
 		expect(caught).to.be.instanceOf(OutputLimitExceededError)
 		expect(caught).to.deep.include({ protocol: "openai_responses", reason: "max_output_tokens" })
 		expect(fallback.mock.calls).to.have.length(0)
+	})
+
+	it("does not fall back to HTTP for a cancelled request", async () => {
+		const handler = createHandler()
+		const controller = new AbortController()
+		let rejectCancelled: ((error: unknown) => void) | undefined
+		;(handler as any).client = {
+			responses: {
+				create: vi.fn(
+					() =>
+						new Promise((_resolve, reject) => {
+							rejectCancelled = reject
+						}),
+				),
+			},
+		}
+		const fallback = vi.spyOn(handler as any, "makeCodexRequest").mockImplementation(async function* () {
+			yield { type: "text", text: "unexpected fallback" }
+		})
+		const credential = { accessToken: "access-token", expires: 1_900_000_000_000 }
+
+		const cancelled = collect(
+			(handler as any).executeRequest({}, {}, handler.getModel(), credential, false, controller.signal),
+		).then(
+			() => undefined,
+			(error: unknown) => error,
+		)
+		await vi.waitFor(() => expect(rejectCancelled).to.not.equal(undefined))
+		controller.abort()
+		rejectCancelled?.(new DOMException("Request was aborted", "AbortError"))
+
+		expect(String(await cancelled)).to.contain("aborted")
+		expect(fallback.mock.calls).to.have.length(0)
+	})
+
+	it("keeps a request cancelled during credential lookup off the transport and away from a newer request", async () => {
+		const handler = createHandler()
+		const credential = { accessToken: "access-a", expires: 1_900_000_000_000, accountId: "account-a" }
+		const lookup = deferred<typeof credential>()
+		vi.spyOn(openAiCodexOAuthManager, "getCredentialContext")
+			.mockImplementationOnce(() => lookup.promise)
+			.mockResolvedValue(credential)
+		const signals: AbortSignal[] = []
+		const gate = deferred<void>()
+		vi.spyOn(handler as any, "executeRequest").mockImplementation(async function* (...args: unknown[]) {
+			signals.push(args[5] as AbortSignal)
+			await gate.promise
+		})
+
+		const cancelled = collect(handler.createMessage("system", [{ role: "user", content: "first" }])).then(
+			() => undefined,
+			(error: unknown) => error,
+		)
+		handler.abort()
+		const newer = collect(handler.createMessage("system", [{ role: "user", content: "second" }]))
+		await vi.waitFor(() => expect(signals).to.have.length(1))
+		const newerController = (handler as any).abortController
+		lookup.resolve(credential)
+
+		expect(String(await cancelled)).to.contain("abort")
+		expect(signals).to.have.length(1)
+		expect(signals[0]?.aborted).to.equal(false)
+		expect((handler as any).abortController).to.equal(newerController)
+
+		gate.resolve()
+		await newer
+		expect((handler as any).abortController).to.equal(undefined)
 	})
 
 	it("maps a failed output item to one failed hosted lifecycle event", async () => {
@@ -656,7 +724,8 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
 			cancel: cancelBody,
 		})
 
-		for await (const _chunk of (handler as any).handleStreamResponse(body, handler.getModel())) break
+		for await (const _chunk of (handler as any).handleStreamResponse(body, handler.getModel(), new AbortController().signal))
+			break
 
 		expect(cancelBody.mock.calls).to.have.length(1)
 		expect(cancelBody.mock.calls[0]?.[0]).to.equal(undefined)
@@ -881,11 +950,54 @@ describe("OpenAiCodexHandler hosted Web Search", () => {
 				{ model: "gpt-5.6-sol", input: [], stream: true, tools: [{ type: "web_search" }] },
 				{ accessToken: "access-token", expires: 1_900_000_000_000 },
 				{},
+				new AbortController().signal,
 			),
 		)
 
 		expect(sent).to.deep.include({ type: "response.create", model: "gpt-5.6-sol" })
 		expect(sent?.tools).to.deep.equal([{ type: "web_search" }])
 		expect(sent).not.to.have.property("stream")
+		expect((handler as any).websocketRequestOwner).to.equal(undefined)
+	})
+
+	it("never sends a websocket request that was cancelled while the socket opened", async () => {
+		const handler = createHandler()
+		const controller = new AbortController()
+		const listeners = new Map<string, Set<(event: any) => void>>()
+		const send = vi.fn()
+		const socket = {
+			addEventListener(type: string, listener: (event: any) => void) {
+				const entries = listeners.get(type) ?? new Set()
+				entries.add(listener)
+				listeners.set(type, entries)
+			},
+			removeEventListener(type: string, listener: (event: any) => void) {
+				listeners.get(type)?.delete(listener)
+			},
+			send,
+		}
+		const opened = deferred<typeof socket>()
+		vi.spyOn(handler as any, "ensureResponsesWebsocket").mockReturnValue(opened.promise)
+
+		const request = collect(
+			(handler as any).createResponseEventsViaWebsocket(
+				{ model: "gpt-5.6-sol", input: [], stream: true },
+				{ accessToken: "access-token", expires: 1_900_000_000_000 },
+				{},
+				controller.signal,
+			),
+		).then(
+			() => undefined,
+			(error: unknown) => error,
+		)
+		// The slot is claimed while the socket is still connecting.
+		expect((handler as any).websocketRequestOwner).to.equal(controller.signal)
+		controller.abort()
+		opened.resolve(socket)
+
+		expect(String(await request)).to.contain("abort")
+		expect(send.mock.calls).to.have.length(0)
+		expect((handler as any).websocketRequestOwner).to.equal(undefined)
+		expect([...listeners.values()].every((entries) => entries.size === 0)).to.equal(true)
 	})
 })

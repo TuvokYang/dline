@@ -744,9 +744,11 @@ export class TaskSessionCompositionService {
 						admittedRequest: () => contextWindowGuard.admittedRequest(),
 						// Retries happen before the stream says anything, so each attempt's
 						// card has to be delivered to the chat rather than left for the countdown.
+						// The state goes out immediately: a coalesced post would let the card's
+						// partial row reach a Webview that has not yet adopted this opening.
 						retryView: {
 							showRow: (row) => options.prompt.ports.presentation.publish(row),
-							publishState: options.publishState,
+							publishState: () => options.publishState({ immediate: true }),
 						},
 						// Subscriptions report no token counts, so today's figures on the
 						// usage surfaces are counted here, against the Profile that served the request.

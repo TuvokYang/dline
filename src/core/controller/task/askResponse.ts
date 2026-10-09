@@ -72,6 +72,8 @@ export async function askResponse(controller: Controller, request: AskResponseRe
 			controller,
 			DispatchInteractionRequest.create({
 				taskId: session.taskId,
+				// The interaction was just read from this opening's state.
+				taskInstanceId: session.taskInstanceId,
 				turnId: interaction.turnId,
 				interactionId: interaction.interactionId,
 				actionId,

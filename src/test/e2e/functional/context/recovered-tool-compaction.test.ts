@@ -165,10 +165,6 @@ async function replyToResume(sidebar: Frame, reply: string): Promise<void> {
 	await expect(input).toHaveValue("")
 }
 
-async function readTaskSnapshot(dlineDocsDir: string, taskId: string): Promise<PersistedRecord> {
-	return JSON.parse(await readFile(path.join(dlineDocsDir, "tasks", taskId, "snapshot.json"), "utf8")) as PersistedRecord
-}
-
 function requestInputItems(consumption: MockApiConsumption | undefined): string[] {
 	const input = (consumption?.requestBody as PersistedRecord | undefined)?.input
 	if (!Array.isArray(input)) throw new Error("Expected an OpenAI Responses request with an input array")
@@ -749,18 +745,13 @@ e2e(
 			await expect(retryButton).toBeEnabled()
 			await expect
 				.poll(async () => {
-					const interaction = (await readTaskSnapshot(dlineDocsDir, taskId)).interaction as PersistedRecord | undefined
+					const interaction = (await readTaskRuntimeState(dlineDocsDir, taskId))?.dialog.primary
 					return `${String(interaction?.kind)}:${String(interaction?.status)}`
 				})
 				.toBe("error_retry:awaiting")
-			await expect
-				.poll(async () => {
-					const indicator = (await readTaskSnapshot(dlineDocsDir, taskId)).contextWindowIndicator as
-						| PersistedRecord
-						| undefined
-					return `${String(indicator?.phase)}:${Number(indicator?.receivingTokens ?? 0)}:${Number(indicator?.pendingSendTokens ?? 0)}`
-				})
-				.toBe("stable:0:0")
+			// The failed run's receiving and pending-send segments are rolled back.
+			const contextUsage = sidebar.getByRole("progressbar", { name: "Context window usage progress" })
+			await expect(contextUsage.getByRole("img", { name: /^(Receiving|Sending)\b/ })).toHaveCount(0)
 			// Two automatic retries are the whole budget; no fourth compaction attempt may start on its own.
 			await page.waitForTimeout(3_000)
 			expect(server.getRequestCount("openai-compatible-responses")).toBe(4)

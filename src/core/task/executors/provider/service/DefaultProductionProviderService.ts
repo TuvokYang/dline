@@ -28,6 +28,7 @@ import type {
 } from "../../../stores/payload/TaskPayloadEnvelopes"
 import type { ProductionProviderChunk, ProductionProviderService } from "../ProductionProviderAdapter"
 import { ProviderFailure } from "../ProviderFailure"
+import { closeQuietly, detachOnAbort } from "./detachOnAbort"
 import { repairProviderPairing } from "./ProviderPairingRepair"
 import type { PreparedProviderRequest, ProviderRequestFactory, ProviderServerToolRequestContext } from "./ProviderRequest"
 import { ProviderUsageIncrements } from "./ProviderUsageIncrements"
@@ -195,11 +196,15 @@ function deferredHostedResumeRequest(request: PreparedProviderRequest): Deferred
 
 /** Yield a stream's first chunk again, then the rest of it, forwarding early close to the source. */
 async function* continueFrom<T>(first: T, rest: AsyncIterator<T>): AsyncGenerator<T> {
-	yield first
-	yield* { [Symbol.asyncIterator]: () => rest }
+	try {
+		yield first
+		yield* { [Symbol.asyncIterator]: () => rest }
+	} finally {
+		// A consumer that stops at the first chunk never reaches the delegation that would close the source.
+		await closeQuietly(rest)
+	}
 }
 
-/** Release a failed attempt's stream; a stream that already failed has nothing left to report. */
 /**
  * Shape the canonical history for the endpoint this request targets.
  *
@@ -212,14 +217,6 @@ function projectForEndpoint(request: PreparedProviderRequest, messages: ClineSto
 		hostedToolReplayProtocol: request.api.getHostedToolReplayProtocol?.(),
 		documentInput: request.api.getDocumentInputLimits?.(),
 	})
-}
-
-async function closeQuietly(iterator: AsyncIterator<unknown> | undefined): Promise<void> {
-	try {
-		await iterator?.return?.(undefined)
-	} catch {
-		// The attempt already failed; its cleanup error carries no new information.
-	}
 }
 
 function mergeArguments(current: unknown, incoming: unknown, mode: ApiStreamToolCallsChunk["argumentsMode"]): unknown {
@@ -686,7 +683,9 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 				const normalizer = createStreamNormalizer(this.identities, {
 					carriedServerToolTraceId: (functionId) => turn.carriedServerToolTraceIds.get(functionId),
 				})
-				iterator = normalizeApiStream(apiStream, normalizer)[Symbol.asyncIterator]()
+				// Detached on abort: a transport that cannot abort a pending read must not
+				// hold Cancel until the provider decides to end the stream.
+				iterator = detachOnAbort(normalizeApiStream(apiStream, normalizer), signal)[Symbol.asyncIterator]()
 				const first = await iterator.next()
 				if (!first.done) return continueFrom(first.value, iterator)
 				failure = new Error("API stream ended without producing any content")

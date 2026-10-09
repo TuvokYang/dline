@@ -10,9 +10,10 @@ import { WINDOW_RECORDING } from "./utils/recording-presets"
  * recording this far into that wait trims idle running frames, and the lower frame rate
  * keeps the full-window GIF inside the 3 MB README budget: the running indicators on
  * three cards change every frame, so size tracks the frame count. The steps before the
- * "still running" check below take about 5 s, which leaves roughly 2 s of margin.
+ * "still running" check below take about 5-8 s in a real window, so the lead-in leaves
+ * about 3 s beyond the slowest observed run; 5.5 s left none and failed on every run.
  */
-const RECORDING_LEAD_IN_MS = 5_500
+const RECORDING_LEAD_IN_MS = 2_500
 const R5_RECORDING = { ...WINDOW_RECORDING, fps: 6 } as const
 
 demo("R5", async ({ finishRecording, focusCamera, helper, pace, page, registerRecording, server, sidebar, userDataDir }) => {

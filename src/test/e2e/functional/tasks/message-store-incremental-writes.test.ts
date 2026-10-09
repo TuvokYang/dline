@@ -1,17 +1,19 @@
 import { readdir, readFile, stat } from "node:fs/promises"
 import path from "node:path"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
+import { readTaskConversationText, readTaskUiMessages, readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
 
 /**
- * BUGFIX-098 — ordinary turns must extend the task's message files in place.
+ * BUGFIX-098 — ordinary turns must extend the task's message stores in place.
  *
- * A task holds the only writable handle on its message files, so a commit
- * writes from its in-memory baseline: appends go to the end and an edited
- * recent message only replaces the file's tail. Rewriting the whole file
- * through a temp file and a rename on every turn is what made long tasks
- * slow, and the rename is observable as a new inode.
+ * The chat history lives in `messages.db` and the provider conversation in
+ * `journal.db`. The task is the only writer of both, so a turn commits rows
+ * into the open databases. Rewriting a whole store through a temp file and a
+ * rename on every turn is what made long tasks slow, and the rename is
+ * observable as a new inode. The legacy JSONL files are import sources only
+ * and must never receive a turn.
  *
  * The restart half pins that what was written in place reads back complete.
  */
@@ -20,7 +22,8 @@ const TASK_TEXT = "E2E_INCREMENTAL_WRITES_TASK"
 const READY_MARKER = "E2E_INCREMENTAL_WRITES_READY"
 const FOLLOW_UP_TEXT = "E2E_INCREMENTAL_WRITES_FOLLOW_UP"
 const COMPLETION_MARKER = "E2E_INCREMENTAL_WRITES_DONE"
-const MESSAGE_FILES = ["ui_messages.jsonl", "api_conversation_history.jsonl"] as const
+const MESSAGE_DATABASES = ["messages.db", "journal.db"] as const
+const LEGACY_MESSAGE_FILES = ["ui_messages.jsonl", "api_conversation_history.jsonl"] as const
 
 async function openSidebar(app: ElectronApplication, helper: E2ETestHelper): Promise<Frame> {
 	const page = await app.firstWindow()
@@ -47,24 +50,27 @@ async function onlyTaskId(dlineDocsDir: string): Promise<string> {
 	}, 30_000)
 }
 
-/** Wait until every message file durably holds the marker, then report each file's inode. */
-async function inodesOnceDurable(taskDir: string, marker: string): Promise<number[]> {
+/** Wait until both stores durably hold the marker, then report each database's inode. */
+async function inodesOnceDurable(dlineDocsDir: string, taskId: string, marker: string): Promise<number[]> {
 	await expect
 		.poll(
-			async () =>
-				(
-					await Promise.all(
-						MESSAGE_FILES.map((name) =>
-							readFile(path.join(taskDir, name), "utf8")
-								.then((content) => content.includes(marker))
-								.catch(() => false),
-						),
-					)
-				).every(Boolean),
+			async () => {
+				const [chat, conversation] = await Promise.all([
+					readTaskUiMessagesText(dlineDocsDir, taskId),
+					readTaskConversationText(dlineDocsDir, taskId),
+				])
+				return chat.includes(marker) && conversation.includes(marker)
+			},
 			{ timeout: 30_000 },
 		)
 		.toBe(true)
-	return await Promise.all(MESSAGE_FILES.map(async (name) => (await stat(path.join(taskDir, name))).ino))
+	const taskDir = path.join(dlineDocsDir, "tasks", taskId)
+	return await Promise.all(MESSAGE_DATABASES.map(async (name) => (await stat(path.join(taskDir, name))).ino))
+}
+
+/** Legacy JSONL stores are import sources; a turn must leave them absent or empty. */
+async function legacyMessageFileContents(taskDir: string): Promise<string[]> {
+	return await Promise.all(LEGACY_MESSAGE_FILES.map((name) => readFile(path.join(taskDir, name), "utf8").catch(() => "")))
 }
 
 e2e(
@@ -83,22 +89,25 @@ e2e(
 			},
 		)
 
-		let taskDir: string
+		let taskId: string
 		const firstApp = await openVSCode(workspaceDir)
 		try {
 			const sidebar = await openSidebar(firstApp, helper)
 			await sendMessage(sidebar, TASK_TEXT)
 			await expect(sidebar.getByText(READY_MARKER, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-			taskDir = path.join(dlineDocsDir, "tasks", await onlyTaskId(dlineDocsDir))
-			const inodesAfterFirstTurn = await inodesOnceDurable(taskDir, READY_MARKER)
+			taskId = await onlyTaskId(dlineDocsDir)
+			const inodesAfterFirstTurn = await inodesOnceDurable(dlineDocsDir, taskId, READY_MARKER)
 
 			await sendMessage(sidebar, FOLLOW_UP_TEXT)
 			await expect(sidebar.getByText(COMPLETION_MARKER, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-			const inodesAfterSecondTurn = await inodesOnceDurable(taskDir, COMPLETION_MARKER)
+			const inodesAfterSecondTurn = await inodesOnceDurable(dlineDocsDir, taskId, COMPLETION_MARKER)
 
 			// A temp-file rename would give the path a new inode.
-			expect(inodesAfterSecondTurn, `in-place writes expected for ${MESSAGE_FILES.join(", ")}`).toEqual(
+			expect(inodesAfterSecondTurn, `in-place writes expected for ${MESSAGE_DATABASES.join(", ")}`).toEqual(
 				inodesAfterFirstTurn,
+			)
+			expect(await legacyMessageFileContents(path.join(dlineDocsDir, "tasks", taskId))).toEqual(
+				LEGACY_MESSAGE_FILES.map(() => ""),
 			)
 			const consumptions = server.getMockConsumptions()
 			expect(consumptions.map((consumption) => consumption.contractError)).toEqual([undefined, undefined])
@@ -117,13 +126,12 @@ e2e(
 			await expect(sidebar.getByText(READY_MARKER, { exact: false }).first()).toBeVisible({ timeout: 30_000 })
 			await expect(sidebar.getByText(COMPLETION_MARKER, { exact: false }).last()).toBeVisible({ timeout: 30_000 })
 
-			// Every line must still parse: a tail replaced in place must not leave
-			// a torn or duplicated record behind.
-			for (const name of MESSAGE_FILES) {
-				const lines = (await readFile(path.join(taskDir, name), "utf8")).split("\n").filter(Boolean)
-				const timestamps = lines.map((line) => (JSON.parse(line) as { ts: number }).ts)
-				expect(new Set(timestamps).size, `${name} holds each timestamp once`).toBe(timestamps.length)
-			}
+			// Rows committed in place must read back once each and keep both turns.
+			const timestamps = (await readTaskUiMessages(dlineDocsDir, taskId)).map((message) => message.ts)
+			expect(new Set(timestamps).size, "messages.db holds each timestamp once").toBe(timestamps.length)
+			const conversation = await readTaskConversationText(dlineDocsDir, taskId)
+			expect(conversation).toContain(READY_MARKER)
+			expect(conversation).toContain(COMPLETION_MARKER)
 		} finally {
 			await reopenedApp.close()
 		}

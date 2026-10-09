@@ -42,6 +42,8 @@ export async function replyWithTransitionDraft(
 		controller,
 		DispatchInteractionRequest.create({
 			taskId: session.taskId,
+			// The switch was committed on this opening, so the reply speaks for it.
+			taskInstanceId: session.taskInstanceId,
 			turnId: primary.turnId,
 			interactionId: primary.interactionId,
 			actionId: "reply",

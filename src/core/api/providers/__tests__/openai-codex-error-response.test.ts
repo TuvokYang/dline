@@ -40,11 +40,16 @@ describe("OpenAiCodexHandler error responses", () => {
 		await mockFetchForTesting(fetchMock, async () => {
 			await expect(
 				collect(
-					(handler as any).makeCodexRequest({}, handler.getModel(), {
-						accessToken: "access-token",
-						expires: 1_900_000_000_000,
-						accountId: "account-errors",
-					}),
+					(handler as any).makeCodexRequest(
+						{},
+						handler.getModel(),
+						{
+							accessToken: "access-token",
+							expires: 1_900_000_000_000,
+							accountId: "account-errors",
+						},
+						new AbortController().signal,
+					),
 				),
 			).rejects.toMatchObject({
 				message: payload.error.message,
@@ -65,10 +70,15 @@ describe("OpenAiCodexHandler error responses", () => {
 		await mockFetchForTesting(fetchMock, async () => {
 			await expect(
 				collect(
-					(handler as any).makeCodexRequest({}, handler.getModel(), {
-						accessToken: "access-token",
-						expires: 1_900_000_000_000,
-					}),
+					(handler as any).makeCodexRequest(
+						{},
+						handler.getModel(),
+						{
+							accessToken: "access-token",
+							expires: 1_900_000_000_000,
+						},
+						new AbortController().signal,
+					),
 				),
 			).rejects.toMatchObject({ message: responseBody, status: 400, responseBody })
 		})

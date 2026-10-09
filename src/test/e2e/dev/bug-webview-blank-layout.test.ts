@@ -87,7 +87,10 @@ e2e(
 			(message) =>
 				!message.includes("[DEP0169]") &&
 				!message.includes("Local webview dev server is not running") &&
-				!message.includes("`DialogContent` requires a `DialogTitle`"),
+				!message.includes("`DialogContent` requires a `DialogTitle`") &&
+				// The VS Code test build checks its bundled extensions' API proposals against
+				// product.json; that host mismatch says nothing about the Dline Webview.
+				!(message.includes("product.json") && message.includes("proposals")),
 		)
 		expect(unexpectedConsoleErrors).toEqual([])
 
