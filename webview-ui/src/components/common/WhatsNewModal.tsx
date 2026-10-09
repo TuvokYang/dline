@@ -38,7 +38,7 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ open, onClose, ver
 				</DialogTitle>
 
 				<div className="min-h-0 overflow-y-auto" id="whats-new-description">
-					<WhatsNewItems inlineCodeStyle={inlineCodeStyle} onClose={onClose} />
+					<WhatsNewItems inlineCodeStyle={inlineCodeStyle} />
 
 					{/* Repository Section */}
 					<div className="flex flex-col items-center gap-3 mt-4 pt-4 border-t border-[var(--vscode-widget-border)]">

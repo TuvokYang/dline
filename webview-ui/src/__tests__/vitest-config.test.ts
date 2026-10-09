@@ -29,4 +29,8 @@ describe("Webview Vitest project", () => {
 		expect(test?.minWorkers).toBeUndefined()
 		expect(test?.vmMemoryLimit).toBeUndefined()
 	})
+
+	it("serves the build-time What's New module to Webview tests", () => {
+		expect(webviewProjectConfig.plugins.map((plugin) => plugin.name)).toContain("dline-whats-new")
+	})
 })
