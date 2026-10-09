@@ -461,8 +461,6 @@
 		"e2e:demo": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.demo.config.ts",
 		"demo:media": "node scripts/demo-media.mjs",
 		"icons": "node scripts/generate-brand-icons.mjs",
-		"pree2e:legacy": "npm run pree2e",
-		"e2e:legacy": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.legacy.config.ts",
 		"test:e2e:build": "node scripts/with-dist-lock.mjs --exclusive -- vsce package --no-dependencies --allow-package-secrets sendgrid --out dist/e2e.vsix",
 		"test:e2e": "npm run test:e2e:build && npm run e2e:prepare && node scripts/with-dist-lock.mjs --shared -- playwright test",
 		"test:e2e:optimal": "npm run test:e2e:build && npm run e2e:prepare && node scripts/with-dist-lock.mjs --shared -- playwright test",

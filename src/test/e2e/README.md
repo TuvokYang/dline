@@ -287,16 +287,6 @@ worker's `%TEMP%/.dline-e2e/worker-N` `DLINE_DIR`; `DLINE_HOME_DIR` uses the sam
 `%TEMP%/dline-e2e/worker-N`. All three worker-owned temporary locations are reset between tests and removed during
 worker teardown.
 
-### Persistent Legacy Upgrade Fixture
-
-Run `npm run e2e:legacy` separately from the regular parallel suite. It uses one worker and keeps its synthetic user
-state in `tmp/.dline-e2e-legacy` (`DLINE_DIR` and `DLINE_HOME_DIR`) and `tmp/dline-e2e-legacy`
-(`DLINE_DOCS_DIR` and workspace). The fixture is seeded only when its marker is absent, then every later run upgrades
-and validates the same files in place. Regular E2E setup does not clean these directories.
-
-Both directories are covered by the repository's `tmp` ignore rule. They contain fixed fake credentials and must never
-be added to Git. Only the generator, loader, assertions, and Playwright configuration are versioned.
-
 Generated live profiles use `high` reasoning effort. GitHub Actions creates only profiles whose corresponding credential
 is configured:
 

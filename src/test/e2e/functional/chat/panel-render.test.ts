@@ -94,68 +94,58 @@ async function clearNotificationToasts(page: Page): Promise<void> {
 	}
 }
 
+// One launch walks the panel from first paint, through coexisting with the
+// sidebar, to finishing a task; each stage only adds to what the previous one
+// proved, so separate launches would repeat the same setup three times.
 e2e(
-	"Panel render - a newly opened panel renders content rather than a blank view",
-	async ({ helper, page, sidebar, userDataDir }) => {
+	"Panel render - a new panel renders, coexists with the sidebar, and runs a task to its result",
+	async ({ helper, page, server, sidebar, userDataDir }) => {
 		e2e.setTimeout(240_000)
 		await helper.signin(sidebar)
+		server.resetOpenAiMock()
+		server.enqueueOpenAiResponses({
+			type: "tool",
+			id: "call_panel_done",
+			name: "attempt_completion",
+			arguments: { result: "E2E_PANEL_TASK_DONE" },
+		})
 
 		const panel = await createDlinePanel(page)
 
-		// The chat input is the first thing a usable panel offers. Its absence is
-		// what the blank panel looked like from the user's side.
-		await expect(panel.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 })
+		await e2e.step("a newly opened panel renders content rather than a blank view", async () => {
+			// The chat input is the first thing a usable panel offers. Its absence is
+			// what the blank panel looked like from the user's side.
+			await expect(panel.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 })
 
-		// Nothing rendered at all is the defect; assert on the body directly so a
-		// future regression cannot pass by rendering only an invisible container.
-		await expect.poll(() => panelText(panel).then((text) => text.length), { timeout: 60_000 }).toBeGreaterThan(0)
+			// Nothing rendered at all is the defect; assert on the body directly so a
+			// future regression cannot pass by rendering only an invisible container.
+			await expect.poll(() => panelText(panel).then((text) => text.length), { timeout: 60_000 }).toBeGreaterThan(0)
 
-		// A panel that stalls in the loading state is also a failure: the fallback
-		// exists to explain a wait, not to become the resting state.
-		await expect(panel.getByTestId("hydration-pending")).toHaveCount(0)
-		await expect(panel.getByTestId("hydration-failed")).toHaveCount(0)
+			// A panel that stalls in the loading state is also a failure: the fallback
+			// exists to explain a wait, not to become the resting state.
+			await expect(panel.getByTestId("hydration-pending")).toHaveCount(0)
+			await expect(panel.getByTestId("hydration-failed")).toHaveCount(0)
+		})
+
+		await e2e.step("the panel stays usable while the sidebar is also open", async () => {
+			// Both webviews subscribe to state. The reported failure appeared with a
+			// panel opened alongside the sidebar, so neither may end up blank.
+			await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 })
+			await expect.poll(() => panelText(panel).then((text) => text.length), { timeout: 60_000 }).toBeGreaterThan(0)
+			await expect(panel.getByTestId("hydration-failed")).toHaveCount(0)
+		})
+
+		await e2e.step("a task started in the panel reaches its result", async () => {
+			// A panel that renders but cannot run a task is only half recovered, so the
+			// coverage goes past first paint to an actual result.
+			const input = panel.getByTestId("chat-input")
+			await input.fill("Finish immediately from the panel.")
+			await clearNotificationToasts(page)
+			await panel.getByTestId("send-button").click()
+
+			await expect(panel.getByText("E2E_PANEL_TASK_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+		})
 
 		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 	},
 )
-
-e2e("Panel render - a panel stays usable while the sidebar is also open", async ({ helper, page, sidebar, userDataDir }) => {
-	e2e.setTimeout(240_000)
-	await helper.signin(sidebar)
-
-	const panel = await createDlinePanel(page)
-	await expect(panel.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 })
-
-	// Both webviews subscribe to state. The reported failure appeared with a
-	// panel opened alongside the sidebar, so neither may end up blank.
-	await expect(sidebar.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 })
-	await expect.poll(() => panelText(panel).then((text) => text.length), { timeout: 60_000 }).toBeGreaterThan(0)
-	await expect(panel.getByTestId("hydration-failed")).toHaveCount(0)
-
-	await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-})
-
-e2e("Panel render - a task started in the panel reaches its result", async ({ helper, page, server, sidebar, userDataDir }) => {
-	e2e.setTimeout(240_000)
-	await helper.signin(sidebar)
-	server.resetOpenAiMock()
-	server.enqueueOpenAiResponses({
-		type: "tool",
-		id: "call_panel_done",
-		name: "attempt_completion",
-		arguments: { result: "E2E_PANEL_TASK_DONE" },
-	})
-
-	const panel = await createDlinePanel(page)
-	const input = panel.getByTestId("chat-input")
-	await expect(input).toBeVisible({ timeout: 60_000 })
-
-	// A panel that renders but cannot run a task is only half recovered, so the
-	// coverage goes past first paint to an actual result.
-	await input.fill("Finish immediately from the panel.")
-	await clearNotificationToasts(page)
-	await panel.getByTestId("send-button").click()
-
-	await expect(panel.getByText("E2E_PANEL_TASK_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-	await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-})

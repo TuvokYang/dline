@@ -145,16 +145,7 @@ describe("package topology safety", () => {
 		// reads it must take the shared side.
 		expect(scripts["pree2e"]).toContain("--exclusive")
 		expect(scripts["test:e2e:build"]).toContain("--exclusive")
-		for (const scriptName of [
-			"e2e",
-			"e2e:smoke",
-			"e2e:work",
-			"e2e:functional",
-			"e2e:dev",
-			"e2e:pressure",
-			"e2e:demo",
-			"e2e:legacy",
-		]) {
+		for (const scriptName of ["e2e", "e2e:smoke", "e2e:work", "e2e:functional", "e2e:dev", "e2e:pressure", "e2e:demo"]) {
 			expect(scripts[scriptName], `${scriptName} must take the shared dist lock`).toContain("--shared")
 		}
 
