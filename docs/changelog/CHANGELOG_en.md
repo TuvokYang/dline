@@ -11,6 +11,9 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - A task already open in another window is read-only in this window: input and footer actions are disabled, and replies, queue changes, compaction, activity controls, mode and Profile switches, and checkpoint restore are refused until you take the task over with force unlock in the lock banner
 - Removed the deprecated per-mode OCA/OpenRouter model ID, model info and reasoning effort settings (cleaned once at startup), so continued tasks use the selected Profile's default reasoning effort; also removed the legacy `updateApiConfigurationProto` RPC and unused Groq/Hugging Face/Baseten model list state in the Webview
 
+### Fixes
+- Dialogs stay within the Webview height and scroll their content, so a long dialog in a short sidebar no longer pushes its title and close button off screen
+
 ## [0.10.0]
 
 0.10.0 is the production version number for the 0.9.4 content: a pre-release with the same number already occupied 0.9.4 in the registry, so the production release moves to a new even minor. Everything listed under 0.9.4 below is included in this release.
