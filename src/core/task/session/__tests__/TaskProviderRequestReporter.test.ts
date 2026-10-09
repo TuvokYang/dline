@@ -1,7 +1,9 @@
 import type { ApiHandler } from "@core/api"
 import type { UiApiReqInfo, UiMessage } from "@shared/ExtensionMessage"
+import { ApiFormat } from "@shared/proto/dline/models/metadata"
 import { describe, expect, it, vi } from "vitest"
 import type { MessageStateHandler } from "../../message-state"
+import type { ProviderUsageTelemetryRecord } from "../../observability/provider-usage-telemetry"
 import { PromptCacheHealthTracker } from "../../prompt-cache/PromptCacheHealthTracker"
 import { TaskProviderRequestReporter } from "../TaskProviderRequestReporter"
 
@@ -10,6 +12,9 @@ function messageState() {
 	const rows: UiMessage[] = []
 	const flushed: number[] = []
 	const handler = {
+		get taskUlid() {
+			return "task-ulid-1"
+		},
 		get clineMessages() {
 			return rows
 		},
@@ -42,6 +47,8 @@ function apiHandler(): ApiHandler {
 				pricing: { inputPrice: 3, outputPrice: 15, currency: "USD" },
 			},
 		}),
+		getProviderId: () => "anthropic",
+		getSelectedApiFormat: () => ApiFormat.ANTHROPIC_CHAT,
 	} as unknown as ApiHandler
 }
 
@@ -55,12 +62,14 @@ function createReporter() {
 	const pressures: { contextTokens: number; compactTriggerTokens: number }[] = []
 	const usages: { turnId: string; contextTokens: number; contextWindow: number }[] = []
 	const lifecycle: string[] = []
+	const telemetry: ProviderUsageTelemetryRecord[] = []
 	let next = 100
 	const reporter = new TaskProviderRequestReporter({
 		messages: state.handler,
 		nextPresentationId: () => ++next,
 		api: apiHandler,
 		promptCache,
+		usageTelemetry: { record: (usage) => void telemetry.push(usage) },
 		pressure: { observe: (pressure) => void pressures.push({ ...pressure }) },
 		usage: {
 			started: async (request) => {
@@ -75,7 +84,7 @@ function createReporter() {
 			},
 		},
 	})
-	return { ...state, promptCache, samples, pressures, usages, lifecycle, reporter }
+	return { ...state, promptCache, samples, pressures, usages, lifecycle, telemetry, reporter }
 }
 
 function requestInfo(row: UiMessage): UiApiReqInfo {
@@ -108,6 +117,35 @@ describe("TaskProviderRequestReporter", () => {
 		})
 		expect(settled.cancelReason).toBeUndefined()
 		expect(harness.flushed).toEqual([0])
+		expect(harness.telemetry).toEqual([
+			{
+				taskUlid: "task-ulid-1",
+				inputTokens: 1_000,
+				outputTokens: 200,
+				cacheWriteTokens: 50,
+				cacheReadTokens: 750,
+				cacheUsageReported: true,
+				totalCost: 0.25,
+				provider: "anthropic",
+				model: "test-model",
+				apiFormat: ApiFormat.ANTHROPIC_CHAT,
+			},
+		])
+	})
+
+	it("emits usage telemetry only for a completed request with Provider usage", async () => {
+		const harness = createReporter()
+		await (await harness.reporter.begin({ turnId: "turn-cancelled" })).settle({
+			usage: { inputTokens: 10, outputTokens: 1 },
+			outcome: "cancelled",
+		})
+		await (await harness.reporter.begin({ turnId: "turn-failed" })).settle({
+			usage: { inputTokens: 20, outputTokens: 2 },
+			outcome: "failed",
+		})
+		await (await harness.reporter.begin({ turnId: "turn-unmeasured" })).settle({ outcome: "completed" })
+
+		expect(harness.telemetry).toEqual([])
 	})
 
 	it("records a cache sample only for a completed request", async () => {
@@ -236,6 +274,7 @@ describe("TaskProviderRequestReporter", () => {
 			nextPresentationId: () => ++next,
 			api: apiHandler,
 			promptCache: new PromptCacheHealthTracker("task-1", { debug: () => {}, warn: () => {} }),
+			usageTelemetry: { record: () => {} },
 			retryView: {
 				showRow: async (row) => {
 					if (options.failDelivery) throw new Error("webview gone")
@@ -348,6 +387,7 @@ describe("TaskProviderRequestReporter", () => {
 				})(),
 				api: apiHandler,
 				promptCache: new PromptCacheHealthTracker("task-1", { debug: () => {}, warn: () => {} }),
+				usageTelemetry: { record: () => {} },
 				profileTokens: {
 					activeProfileId: () => active.current,
 					record: (profileId, increment) => void recorded.push({ profileId, ...increment }),

@@ -134,6 +134,11 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 		this.conversation = params.conversation
 	}
 
+	/** Stable anonymous Task identity used by usage telemetry; never derived from message content. */
+	get taskUlid(): string {
+		return this.ulid
+	}
+
 	// ── ClineMessages (read from UIMessage store) ──
 
 	/** ClineMessages as a property getter — merges durable rows with transient presentation overlays by timestamp. */

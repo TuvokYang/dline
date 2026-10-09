@@ -30,7 +30,13 @@ describe("ProviderUsageIncrements", () => {
 			},
 		])
 
-		expect(settled).toMatchObject({ inputTokens: 400, outputTokens: 120, cacheWriteTokens: 9_000, cacheReadTokens: 10_000 })
+		expect(settled).toMatchObject({
+			inputTokens: 400,
+			outputTokens: 120,
+			cacheWriteTokens: 9_000,
+			cacheReadTokens: 10_000,
+			cacheUsageReported: 1,
+		})
 	})
 
 	it("adds explicit deltas", () => {
@@ -40,7 +46,7 @@ describe("ProviderUsageIncrements", () => {
 			{ type: "usage", usageMode: "delta", inputTokens: 0, outputTokens: 60, thoughtsTokenCount: 15 },
 		])
 
-		expect(settled).toMatchObject({ inputTokens: 300, outputTokens: 100, thoughtsTokenCount: 25 })
+		expect(settled).toMatchObject({ inputTokens: 300, outputTokens: 100, thoughtsTokenCount: 25, cacheUsageReported: 0 })
 	})
 
 	it("keeps the request total cost when a later event omits it", () => {
@@ -50,5 +56,14 @@ describe("ProviderUsageIncrements", () => {
 		])
 
 		expect(settled).toMatchObject({ outputTokens: 50, totalCost: 0.02, webSearchRequests: 2 })
+	})
+
+	it("retains that cache usage was reported when later snapshots omit cache fields", () => {
+		const settled = settle([
+			{ type: "usage", inputTokens: 300, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+			{ type: "usage", inputTokens: 300, outputTokens: 50 },
+		])
+
+		expect(settled).toMatchObject({ cacheUsageReported: 1 })
 	})
 })

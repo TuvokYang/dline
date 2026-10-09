@@ -17,16 +17,19 @@ export class ProviderUsageIncrements {
 	private readonly tokens = new ApiUsageAccumulator()
 	private readonly counted: Record<CountedExtra, number> = { thoughtsTokenCount: 0, webSearchRequests: 0 }
 	private totalCost = 0
+	private cacheUsageReported = false
 
 	next(chunk: ApiStreamUsageChunk): Record<string, number> {
 		const { delta } = this.tokens.apply(chunk)
 		const isDelta = chunk.usageMode === "delta"
 		if (isCount(chunk.totalCost)) this.totalCost = isDelta ? this.totalCost + chunk.totalCost : chunk.totalCost
+		this.cacheUsageReported ||= chunk.cacheWriteTokens !== undefined || chunk.cacheReadTokens !== undefined
 		return {
 			inputTokens: delta.inputTokens,
 			outputTokens: delta.outputTokens,
 			cacheWriteTokens: delta.cacheWriteTokens,
 			cacheReadTokens: delta.cacheReadTokens,
+			cacheUsageReported: this.cacheUsageReported ? 1 : 0,
 			thoughtsTokenCount: this.increment("thoughtsTokenCount", chunk.thoughtsTokenCount, isDelta),
 			totalCost: this.totalCost,
 			webSearchRequests: this.increment("webSearchRequests", chunk.serverToolUsage?.webSearchRequests, isDelta),

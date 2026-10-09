@@ -1,19 +1,11 @@
 import type { ApiHandler } from "@core/api"
-import {
-	computeSummarizeBudget,
-	getContextWindowInfo,
-	resolveCompactTriggerPolicy,
-} from "@core/context/context-management/context-window-utils"
+import * as ContextWindowManagement from "@core/context/context-management/context-window-utils"
 import { Logger } from "@shared/services/Logger"
 import type { UiApiReqCancelReason, UiApiReqInfo, UiMessage } from "@/shared/ExtensionMessage"
 import type { ContextWindowRequestOpening } from "../ContextWindowIndicatorProjection"
-import type {
-	ProviderRequestOutcome,
-	ProviderRequestRecord,
-	ProviderRequestReportPort,
-	ProviderRetryNotice,
-} from "../executors/provider/service/ProviderRequestReport"
+import type * as ProviderRequestReport from "../executors/provider/service/ProviderRequestReport"
 import type { MessageStateHandler } from "../message-state"
+import { type ProviderUsageTelemetryPort, providerUsageTelemetry } from "../observability/provider-usage-telemetry"
 import type { PromptCacheHealthTracker } from "../prompt-cache/PromptCacheHealthTracker"
 import { updateApiReqMsg } from "../utils"
 import type { PresentationIdSequence } from "./PresentationIdSequence"
@@ -32,6 +24,8 @@ export interface TaskProviderRequestReporterOptions {
 	readonly usage?: ContextUsageObserverPort
 	/** Told the tokens a settled request consumed, for the Profile's daily totals; absent when nothing counts them. */
 	readonly profileTokens?: ProfileTokenUsagePort
+	/** Overrides the default local OTel projection, for tests or a future remote usage coordinator. */
+	readonly usageTelemetry?: ProviderUsageTelemetryPort
 	/**
 	 * Delivers retry-card changes to the chat; absent in an assembly that renders nothing.
 	 *
@@ -157,13 +151,13 @@ export interface CompactTriggerSettings {
  * The row opens before the stream so a running request is visible, and settles
  * once the stream ends, which also feeds the prompt cache sample.
  */
-export class TaskProviderRequestReporter implements ProviderRequestReportPort {
+export class TaskProviderRequestReporter implements ProviderRequestReport.ProviderRequestReportPort {
 	/** The card a request that ran out of retries left behind, until a newer request supersedes it. */
 	private failedCard?: RetryCard
 
 	constructor(private readonly options: TaskProviderRequestReporterOptions) {}
 
-	async begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord> {
+	async begin(input: { readonly turnId: string }): Promise<ProviderRequestReport.ProviderRequestRecord> {
 		// The card of an exhausted request reports a failure the user has now
 		// acted on; keeping it beside the new request would stack two cards
 		// for one unresolved failure.
@@ -184,7 +178,7 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 				...(estimate === undefined ? {} : { estimatedContextTokens: estimate, contextTokensSource: "estimate" as const }),
 			} satisfies UiApiReqInfo),
 		})
-		const { contextWindow } = getContextWindowInfo(this.options.api())
+		const { contextWindow } = ContextWindowManagement.getContextWindowInfo(this.options.api())
 		await this.options.usage?.started({ turnId: input.turnId, contextWindow, ...(opening ? { opening } : {}) })
 		const retryCard = new RetryCard(this.options.messages, this.options.nextPresentationId, this.options.retryView)
 		const profileId = this.options.profileTokens?.activeProfileId()
@@ -209,7 +203,10 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 	private async settle(
 		ts: number,
 		turnId: string,
-		settlement: { readonly usage?: Readonly<Record<string, number>>; readonly outcome: ProviderRequestOutcome },
+		settlement: {
+			readonly usage?: Readonly<Record<string, number>>
+			readonly outcome: ProviderRequestReport.ProviderRequestOutcome
+		},
 		profileId: string | undefined,
 	): Promise<void> {
 		const index = this.options.messages.clineMessages.findIndex((message) => message.ts === ts)
@@ -232,8 +229,9 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 		// Flushed here because the request row is what a restarted task reads to
 		// rebuild context usage; leaving it buffered would lose the turn's cost.
 		await this.options.messages.flushMessageUpdate(index)
+		this.recordUsageTelemetry(api, settlement, tokens)
 		this.recordProfileTokens(profileId, tokens)
-		const { contextWindow } = getContextWindowInfo(api)
+		const { contextWindow } = ContextWindowManagement.getContextWindowInfo(api)
 		const compactTriggerTokens = this.recordCacheSample(api, settlement, tokens, contextTokens, contextWindow)
 		// Only a completed request describes the conversation that the next one
 		// will carry; a cancelled or failed turn never entered the history.
@@ -247,6 +245,40 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 		if (contextTokens > 0)
 			await this.options.usage?.record({ turnId, contextTokens, outputTokens: tokens.outputTokens, contextWindow })
 		else await this.options.usage?.unmeasured({ turnId })
+	}
+
+	/** Emits one usage event for the completed logical request, never once per retry or chunk. */
+	private recordUsageTelemetry(
+		api: ApiHandler,
+		settlement: {
+			readonly usage?: Readonly<Record<string, number>>
+			readonly outcome: ProviderRequestReport.ProviderRequestOutcome
+		},
+		tokens: UsageTokens,
+	): void {
+		const usage = settlement.usage
+		if (settlement.outcome !== "completed" || !usage) return
+		try {
+			const model = api.getModel()
+			const thoughtsTokens = optionalNonNegative(usage.thoughtsTokenCount)
+			const apiFormat = api.getSelectedApiFormat?.()
+			const telemetry = this.options.usageTelemetry ?? providerUsageTelemetry
+			telemetry.record({
+				taskUlid: this.options.messages.taskUlid,
+				inputTokens: tokens.inputTokens,
+				outputTokens: tokens.outputTokens,
+				cacheWriteTokens: tokens.cacheWriteTokens,
+				cacheReadTokens: tokens.cacheReadTokens,
+				cacheUsageReported: cacheUsageWasReported(usage),
+				...(thoughtsTokens === undefined ? {} : { thoughtsTokens }),
+				...(tokens.totalCost === undefined ? {} : { totalCost: tokens.totalCost }),
+				provider: api.getProviderId?.() ?? "unknown",
+				model: model.id,
+				...(apiFormat === undefined ? {} : { apiFormat }),
+			})
+		} catch (error) {
+			Logger.debug(`[provider] usage telemetry could not be recorded: ${String(error)}`)
+		}
 	}
 
 	/**
@@ -270,7 +302,10 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
 	/** Records the cache sample and reports the trigger it resolved for this request. */
 	private recordCacheSample(
 		api: ApiHandler,
-		settlement: { readonly usage?: Readonly<Record<string, number>>; readonly outcome: ProviderRequestOutcome },
+		settlement: {
+			readonly usage?: Readonly<Record<string, number>>
+			readonly outcome: ProviderRequestReport.ProviderRequestOutcome
+		},
 		tokens: UsageTokens,
 		contextTokens: number,
 		contextWindow: number,
@@ -304,7 +339,7 @@ export class TaskProviderRequestReporter implements ProviderRequestReportPort {
  */
 class RetryCard {
 	private ts?: number
-	private notice?: ProviderRetryNotice
+	private notice?: ProviderRequestReport.ProviderRetryNotice
 
 	constructor(
 		private readonly messages: MessageStateHandler,
@@ -312,7 +347,7 @@ class RetryCard {
 		private readonly view?: RetryCardView,
 	) {}
 
-	async show(notice: ProviderRetryNotice): Promise<void> {
+	async show(notice: ProviderRequestReport.ProviderRetryNotice): Promise<void> {
 		// The replaced card needs no publication of its own: the chat hides a
 		// card followed by a newer one, and the count it keeps reconciles the rest.
 		await this.remove()
@@ -364,7 +399,7 @@ class RetryCard {
 }
 
 /** The card payload the chat's retry box renders. */
-function cardText(notice: ProviderRetryNotice, failed = false): string {
+function cardText(notice: ProviderRequestReport.ProviderRetryNotice, failed = false): string {
 	return JSON.stringify({
 		attempt: notice.attempt,
 		maxAttempts: notice.maxAttempts,
@@ -382,7 +417,11 @@ function cardText(notice: ProviderRetryNotice, failed = false): string {
  * against the same trigger the request itself would have reported.
  */
 export function resolveCompactTriggerTokens(contextWindow: number, settings: CompactTriggerSettings = {}): number {
-	return resolveCompactTriggerPolicy(contextWindow, computeSummarizeBudget(), settings).compactTriggerTokens
+	return ContextWindowManagement.resolveCompactTriggerPolicy(
+		contextWindow,
+		ContextWindowManagement.computeSummarizeBudget(),
+		settings,
+	).compactTriggerTokens
 }
 
 interface UsageTokens {
@@ -397,7 +436,7 @@ interface UsageTokens {
  * A request the user stopped or that never produced a turn is recorded with the
  * reason it ended, which is also what stops the chat row reading as still running.
  */
-function cancelReasonFor(outcome: ProviderRequestOutcome): UiApiReqCancelReason | undefined {
+function cancelReasonFor(outcome: ProviderRequestReport.ProviderRequestOutcome): UiApiReqCancelReason | undefined {
 	if (outcome === "cancelled") return "user_cancelled"
 	return outcome === "failed" ? "streaming_failed" : undefined
 }
@@ -416,4 +455,14 @@ function readUsageTokens(usage: Readonly<Record<string, number>> | undefined): U
 
 function nonNegative(value: number | undefined): number {
 	return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0
+}
+
+function optionalNonNegative(value: number | undefined): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : undefined
+}
+
+function cacheUsageWasReported(usage: Readonly<Record<string, number>>): boolean {
+	const marker = usage.cacheUsageReported
+	if (typeof marker === "number" && Number.isFinite(marker)) return marker > 0
+	return Object.hasOwn(usage, "cacheWriteTokens") || Object.hasOwn(usage, "cacheReadTokens")
 }
