@@ -3,6 +3,7 @@ package dline;
 
 import "dline/browser.proto";
 import "dline/common.proto";
+import "dline/input.proto";
 import "dline/models.proto";
 
 option go_package = "github.com/dline/grpc-go/dline";
@@ -334,6 +335,8 @@ message ModeSwitchResponse {
   ModeSwitchStatus status = 1;
   optional string operation_id = 2;
   optional string error = 3;
+  // Set when the carried draft was rejected, so the composer can mark the node.
+  optional SemanticInputDiagnostic diagnostic = 4;
 }
 
 message ModeSwitchOperationRequest {
@@ -360,6 +363,8 @@ message ProfileSwitchResponse {
   ProfileSwitchStatus status = 1;
   optional string operation_id = 2;
   optional string error = 3;
+  // Set when the carried draft was rejected, so the composer can mark the node.
+  optional SemanticInputDiagnostic diagnostic = 4;
 }
 
 message ProfileSwitchOperationRequest {
@@ -385,10 +390,14 @@ enum McpDisplayMode {
   MARKDOWN = 2;
 }
 
+// Draft carried by a mode or profile transition. When semantic_input is set it
+// is the only semantic truth; message, images and files are a legacy mirror
+// that is never parsed again.
 message ChatContent {
   optional string message = 1;
   repeated string images = 2;
   repeated string files = 3;
+  optional SemanticInputDocument semantic_input = 4;
 }
 
 message ResetStateRequest {

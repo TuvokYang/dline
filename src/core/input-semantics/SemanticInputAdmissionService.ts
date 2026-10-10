@@ -4,6 +4,7 @@ import {
     type SemanticCommandInvocation,
     type SemanticCommandPlan,
 } from "@shared/input-semantics/command-plan"
+import { type SemanticInputDiagnostic, semanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import {
     isActiveEntity,
     isMentionNode,
@@ -13,7 +14,7 @@ import {
     type SlashCommandInputNode,
 } from "@shared/input-semantics/document"
 import { documentMatchesPresentation, presentationTextOfNode } from "@shared/input-semantics/presentation"
-import { type SemanticInputDiagnostic, validateSemanticInputDocument } from "@shared/input-semantics/validation"
+import { validateSemanticInputDocument } from "@shared/input-semantics/validation"
 import type { ExplicitInstructionDeclaration } from "@/core/task/explicit-instructions/types"
 
 export interface SemanticCommandExpansion {
@@ -136,12 +137,15 @@ export class SemanticInputAdmissionService {
         catalog: InputSemanticCatalog,
     ): readonly SemanticInputDiagnostic[] {
         const diagnostics: SemanticInputDiagnostic[] = []
+        const locator = { documentId: document.documentId }
         if (document.catalogRevision !== String(catalog.revision)) {
-            diagnostics.push({
-                code: "semantic_input_catalog_stale",
-                message: `document was composed against catalog revision ${document.catalogRevision}, current is ${catalog.revision}`,
-                documentId: document.documentId,
-            })
+            diagnostics.push(
+                semanticInputDiagnostic(
+                    "semantic_input_catalog_stale",
+                    `document was composed against catalog revision ${document.catalogRevision}, current is ${catalog.revision}`,
+                    locator,
+                ),
+            )
             return diagnostics
         }
 
@@ -149,34 +153,35 @@ export class SemanticInputAdmissionService {
         // submitted: a structure that no longer reproduces it could name a
         // command the visible text does not contain.
         if (!documentMatchesPresentation(document)) {
-            diagnostics.push({
-                code: "semantic_input_node_invalid",
-                message: "document nodes do not reproduce its raw text",
-                documentId: document.documentId,
-            })
+            diagnostics.push(
+                semanticInputDiagnostic("semantic_input_node_invalid", "document nodes do not reproduce its raw text", locator),
+            )
             return diagnostics
         }
 
         for (const node of document.nodes) {
             if (!isSlashCommandNode(node) || !isActiveEntity(node)) continue
             const descriptor = catalog.descriptors.find((candidate) => candidate.id === node.commandId)
+            const entityLocator = { ...locator, entityId: node.entityId }
             if (!descriptor) {
-                diagnostics.push({
-                    code: "semantic_input_command_unknown",
-                    message: `command ${node.commandId} is no longer in the catalog`,
-                    documentId: document.documentId,
-                    entityId: node.entityId,
-                })
+                diagnostics.push(
+                    semanticInputDiagnostic(
+                        "semantic_input_command_unknown",
+                        `command ${node.commandId} is no longer in the catalog`,
+                        entityLocator,
+                    ),
+                )
                 continue
             }
             const mismatch = commandNodeMismatch(node, descriptor)
             if (mismatch) {
-                diagnostics.push({
-                    code: "semantic_input_node_invalid",
-                    message: `command ${node.commandId} ${mismatch}`,
-                    documentId: document.documentId,
-                    entityId: node.entityId,
-                })
+                diagnostics.push(
+                    semanticInputDiagnostic(
+                        "semantic_input_node_invalid",
+                        `command ${node.commandId} ${mismatch}`,
+                        entityLocator,
+                    ),
+                )
             }
         }
         return diagnostics

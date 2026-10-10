@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest"
-import type { SemanticInputDocument, SemanticInputNode, SemanticResourceBindingRef } from "../document"
+import type { SemanticInputDocument, SemanticInputNode, SemanticResourceRef } from "../document"
 import { validateSemanticInputDocument } from "../validation"
+
+function ref(resourceId: string, expectedContentHash: string, mediaType = "image/png"): SemanticResourceRef {
+    return {
+        resourceId,
+        expectedContentHash,
+        mediaType,
+        byteLength: 10,
+        owner: { kind: "task", taskId: "task-1" },
+        generation: 1,
+    }
+}
 
 function document(
     nodes: readonly SemanticInputNode[],
-    resources: readonly SemanticResourceBindingRef[] = [],
+    resources: readonly SemanticResourceRef[] = [],
     overrides: Partial<SemanticInputDocument> = {},
 ): SemanticInputDocument {
     return {
@@ -42,7 +53,7 @@ describe("validateSemanticInputDocument", () => {
                 { kind: "text", text: " then this" },
                 { kind: "image", entityId: "e2", resourceId: "r1", displayName: "shot.png" },
             ],
-            [{ resourceId: "r1", expectedContentHash: "hash-1" }],
+            [ref("r1", "hash-1")],
         )
 
         expect(validateSemanticInputDocument(doc)).toEqual([])
@@ -126,7 +137,7 @@ describe("validateSemanticInputDocument", () => {
     })
 
     it("reports a binding that no node references and a binding without a hash", () => {
-        const doc = document([], [{ resourceId: "r1", expectedContentHash: "" }])
+        const doc = document([], [ref("r1", "")])
 
         expect(codes(validateSemanticInputDocument(doc))).toEqual([
             "semantic_input_resource_invalid",

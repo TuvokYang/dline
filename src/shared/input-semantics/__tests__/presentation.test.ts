@@ -28,8 +28,22 @@ function document(rawText: string): SemanticInputDocument {
         rawText,
         nodes,
         resources: [
-            { resourceId: "r1", expectedContentHash: "hash-1" },
-            { resourceId: "r2", expectedContentHash: "hash-2" },
+            {
+                resourceId: "r1",
+                expectedContentHash: "hash-1",
+                mediaType: "image/png",
+                byteLength: 10,
+                owner: { kind: "task", taskId: "task-1" },
+                generation: 1,
+            },
+            {
+                resourceId: "r2",
+                expectedContentHash: "hash-2",
+                mediaType: "text/plain",
+                byteLength: 10,
+                owner: { kind: "task", taskId: "task-1" },
+                generation: 1,
+            },
         ],
     }
 }

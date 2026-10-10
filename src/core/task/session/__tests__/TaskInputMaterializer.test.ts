@@ -1,3 +1,4 @@
+import { semanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { describe, expect, it } from "vitest"
 import type { TaskPayloadStore } from "../../stores"
@@ -89,7 +90,7 @@ function recordingBarriers(owns: boolean) {
 const refusing: TaskInputAdmissionPort = {
     admit: async () => ({
         ok: false,
-        diagnostics: [{ code: "semantic_input_catalog_stale", message: "stale", documentId: "doc-1" }],
+        diagnostics: [semanticInputDiagnostic("semantic_input_catalog_stale", "stale", { documentId: "doc-1" })],
     }),
 }
 

@@ -1,5 +1,5 @@
+import type { SemanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
-import type { SemanticInputDiagnostic } from "@shared/input-semantics/validation"
 import type { ExplicitInstructionDeclaration } from "../explicit-instructions/types"
 import type { LifecycleCommand } from "../stores/payload/TaskPayloadEnvelopes"
 

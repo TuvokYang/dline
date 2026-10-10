@@ -1,15 +1,19 @@
+import { type SemanticInputDiagnostic, semanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import type {
     FileNodeOrigin,
+    InputResourceOwner,
+    InputSource,
     MentionCapturePolicy,
     MentionKind,
     SemanticEntityState,
     SemanticInputDocument,
     SemanticInputNode,
+    SemanticResourceRef,
     SlashCommandComposition,
     SlashCommandNamespace,
 } from "@shared/input-semantics/document"
 import { SEMANTIC_INPUT_SCHEMA_VERSION } from "@shared/input-semantics/document"
-import type { SemanticInputDiagnostic } from "@shared/input-semantics/validation"
+import { validateSemanticInputDocument } from "@shared/input-semantics/validation"
 import {
     MentionCapturePolicy as WireCapturePolicy,
     SlashCommandComposition as WireComposition,
@@ -18,6 +22,9 @@ import {
     MentionKind as WireMentionKind,
     SlashCommandNamespace as WireNamespace,
     SemanticInputNode as WireNode,
+    InputResourceOwner as WireOwner,
+    SemanticResourceRef as WireResourceRef,
+    InputSource as WireSource,
     SemanticEntityState as WireState,
 } from "@shared/proto/dline/input"
 
@@ -64,6 +71,15 @@ const FILE_ORIGIN_TO_WIRE: Record<FileNodeOrigin, WireFileOrigin> = {
     uploaded_file: WireFileOrigin.FILE_NODE_ORIGIN_UPLOADED_FILE,
 }
 
+const SOURCE_TO_WIRE: Record<InputSource, WireSource> = {
+    typed: WireSource.INPUT_SOURCE_TYPED,
+    pasted: WireSource.INPUT_SOURCE_PASTED,
+    app_action: WireSource.INPUT_SOURCE_APP_ACTION,
+    editor_selection: WireSource.INPUT_SOURCE_EDITOR_SELECTION,
+    model_prefill: WireSource.INPUT_SOURCE_MODEL_PREFILL,
+    restored: WireSource.INPUT_SOURCE_RESTORED,
+}
+
 function invert<Domain extends string, Wire extends number>(map: Record<Domain, Wire>): ReadonlyMap<Wire, Domain> {
     return new Map((Object.entries(map) as [Domain, Wire][]).map(([domain, wire]) => [wire, domain]))
 }
@@ -74,11 +90,14 @@ const WIRE_TO_COMPOSITION = invert(COMPOSITION_TO_WIRE)
 const WIRE_TO_MENTION_KIND = invert(MENTION_KIND_TO_WIRE)
 const WIRE_TO_CAPTURE_POLICY = invert(CAPTURE_POLICY_TO_WIRE)
 const WIRE_TO_FILE_ORIGIN = invert(FILE_ORIGIN_TO_WIRE)
+const WIRE_TO_SOURCE = invert(SOURCE_TO_WIRE)
 
 function toProtoNode(node: SemanticInputNode): WireNode {
     switch (node.kind) {
         case "text":
             return WireNode.create({ text: { text: node.text } })
+        case "literal":
+            return WireNode.create({ literal: { text: node.text, source: SOURCE_TO_WIRE[node.source] } })
         case "slash_command":
             return WireNode.create({
                 slashCommand: {
@@ -125,6 +144,21 @@ function toProtoNode(node: SemanticInputNode): WireNode {
     }
 }
 
+function toProtoOwner(owner: InputResourceOwner): WireOwner {
+    return owner.kind === "draft" ? WireOwner.create({ draftId: owner.draftId }) : WireOwner.create({ taskId: owner.taskId })
+}
+
+function toProtoResourceRef(resource: SemanticResourceRef): WireResourceRef {
+    return WireResourceRef.create({
+        resourceId: resource.resourceId,
+        expectedContentHash: resource.expectedContentHash,
+        mediaType: resource.mediaType,
+        byteLength: resource.byteLength,
+        owner: toProtoOwner(resource.owner),
+        generation: resource.generation,
+    })
+}
+
 export function toProtoSemanticInputDocument(document: SemanticInputDocument): WireDocument {
     return WireDocument.create({
         schemaVersion: document.schemaVersion,
@@ -133,10 +167,7 @@ export function toProtoSemanticInputDocument(document: SemanticInputDocument): W
         documentId: document.documentId,
         rawText: document.rawText,
         nodes: document.nodes.map(toProtoNode),
-        resources: document.resources.map((resource) => ({
-            resourceId: resource.resourceId,
-            expectedContentHash: resource.expectedContentHash,
-        })),
+        resources: document.resources.map(toProtoResourceRef),
     })
 }
 
@@ -151,15 +182,25 @@ function decodeNode(
     | { readonly ok: true; readonly node: SemanticInputNode }
     | { readonly ok: false; readonly diagnostic: SemanticInputDiagnostic } {
     const invalid = (message: string, entityId?: string) =>
-        ({ ok: false, diagnostic: { code: "semantic_input_node_invalid", message, documentId, entityId } }) as const
+        ({
+            ok: false,
+            diagnostic: semanticInputDiagnostic("semantic_input_node_invalid", message, { documentId, entityId }),
+        }) as const
 
-    const payloads = [node.text, node.slashCommand, node.mention, node.image, node.file].filter(
+    const payloads = [node.text, node.literal, node.slashCommand, node.mention, node.image, node.file].filter(
         (payload) => payload !== undefined,
     )
     if (payloads.length === 0) return invalid("node carries no payload")
     if (payloads.length > 1) return invalid("node carries more than one payload")
 
     if (node.text) return { ok: true, node: { kind: "text", text: node.text.text } }
+
+    if (node.literal) {
+        // UNSPECIFIED is the wire default and maps to nothing, so a missing source is rejected.
+        const source = WIRE_TO_SOURCE.get(node.literal.source)
+        if (!source) return invalid("literal node carries no supported source")
+        return { ok: true, node: { kind: "literal", text: node.literal.text, source } }
+    }
 
     if (node.slashCommand) {
         const wire = node.slashCommand
@@ -239,21 +280,65 @@ function decodeNode(
 }
 
 /**
+ * Decode the owner oneof.
+ *
+ * The generated type exposes both arms as independent optionals, so a forged
+ * message could set both. Exactly one arm must be present; anything else is
+ * rejected instead of silently preferring one owner.
+ */
+function decodeOwner(owner: WireOwner | undefined): InputResourceOwner | undefined {
+    const draftId = owner?.draftId
+    const taskId = owner?.taskId
+    if (draftId && !taskId) return { kind: "draft", draftId }
+    if (taskId && !draftId) return { kind: "task", taskId }
+    return undefined
+}
+
+function decodeResourceRef(
+    wire: WireResourceRef,
+    documentId: string,
+):
+    | { readonly ok: true; readonly resource: SemanticResourceRef }
+    | { readonly ok: false; readonly diagnostic: SemanticInputDiagnostic } {
+    const owner = decodeOwner(wire.owner)
+    if (!owner) {
+        return {
+            ok: false,
+            diagnostic: semanticInputDiagnostic("semantic_input_resource_invalid", "resource reference needs exactly one owner", {
+                documentId,
+                resourceId: wire.resourceId,
+            }),
+        }
+    }
+    return {
+        ok: true,
+        resource: {
+            resourceId: wire.resourceId,
+            expectedContentHash: wire.expectedContentHash,
+            mediaType: wire.mediaType,
+            byteLength: wire.byteLength,
+            owner,
+            generation: wire.generation,
+        },
+    }
+}
+
+/**
  * Decode a wire document.
  *
- * Decoding is fail-closed: an undecodable node aborts the whole document instead
- * of being dropped, because silently losing a node would change what the user
- * submitted.
+ * Decoding is fail-closed: an undecodable node or resource reference aborts the
+ * whole document instead of being dropped, because silently losing either would
+ * change what the user submitted.
  */
 export function fromProtoSemanticInputDocument(wire: WireDocument): SemanticInputDecodeResult {
     if (wire.schemaVersion !== SEMANTIC_INPUT_SCHEMA_VERSION) {
         return {
             ok: false,
-            diagnostic: {
-                code: "semantic_input_schema_unsupported",
-                message: `unsupported semantic input schema version ${wire.schemaVersion}`,
-                documentId: wire.documentId,
-            },
+            diagnostic: semanticInputDiagnostic(
+                "semantic_input_schema_unsupported",
+                `unsupported semantic input schema version ${wire.schemaVersion}`,
+                { documentId: wire.documentId },
+            ),
         }
     }
 
@@ -262,6 +347,13 @@ export function fromProtoSemanticInputDocument(wire: WireDocument): SemanticInpu
         const decoded = decodeNode(node, wire.documentId)
         if (!decoded.ok) return decoded
         nodes.push(decoded.node)
+    }
+
+    const resources: SemanticResourceRef[] = []
+    for (const resource of wire.resources) {
+        const decoded = decodeResourceRef(resource, wire.documentId)
+        if (!decoded.ok) return decoded
+        resources.push(decoded.resource)
     }
 
     return {
@@ -273,10 +365,22 @@ export function fromProtoSemanticInputDocument(wire: WireDocument): SemanticInpu
             documentId: wire.documentId,
             rawText: wire.rawText,
             nodes,
-            resources: wire.resources.map((resource) => ({
-                resourceId: resource.resourceId,
-                expectedContentHash: resource.expectedContentHash,
-            })),
+            resources,
         },
     }
+}
+
+/**
+ * Decode a wire document and check its structure.
+ *
+ * Every wire entry point uses this instead of {@link fromProtoSemanticInputDocument}
+ * alone: a document that decodes can still carry duplicate identities, forged
+ * resource metadata or more than one lifecycle barrier, and none of that may
+ * cross the boundary.
+ */
+export function decodeAdmissibleSemanticInputDocument(wire: WireDocument): SemanticInputDecodeResult {
+    const decoded = fromProtoSemanticInputDocument(wire)
+    if (!decoded.ok) return decoded
+    const [problem] = validateSemanticInputDocument(decoded.document)
+    return problem ? { ok: false, diagnostic: problem } : decoded
 }

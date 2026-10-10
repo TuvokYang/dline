@@ -1,5 +1,8 @@
+import type { SemanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import type { ModeSwitchRequestResult, ModeSwitchRequestStatus } from "@shared/mode-switch"
 import { ModeSwitchResponse, ModeSwitchStatus, PlanActMode, TogglePlanActModeRequest } from "@shared/proto/dline/state"
+import { fromProtoChatContent } from "@shared/proto-conversions/input-semantics/chat-content"
+import { toProtoSemanticInputDiagnostic } from "@shared/proto-conversions/input-semantics/diagnostic"
 import type { Mode } from "@shared/storage/types"
 import { Logger } from "@/shared/services/Logger"
 import { Controller } from ".."
@@ -27,6 +30,14 @@ export function toModeSwitchResponse(result: ModeSwitchRequestResult): ModeSwitc
     })
 }
 
+/** Refuse the switch and locate the draft problem, so the Webview keeps the draft editable and marks the node. */
+function rejectDraft(diagnostic: SemanticInputDiagnostic): ModeSwitchResponse {
+    return ModeSwitchResponse.create({
+        ...toModeSwitchResponse({ status: "rejected", error: diagnostic.message }),
+        diagnostic: toProtoSemanticInputDiagnostic(diagnostic),
+    })
+}
+
 /** Request a task-local Plan/Act mode-switch transaction. */
 export async function togglePlanActModeProto(
     controller: Controller,
@@ -41,7 +52,9 @@ export async function togglePlanActModeProto(
         } else {
             throw new Error(`Invalid mode value: ${request.mode}`)
         }
-        const result = await controller.requestModeSwitch(mode, request.chatContent)
+        const draft = fromProtoChatContent(request.chatContent)
+        if (!draft.ok) return rejectDraft(draft.diagnostic)
+        const result = await controller.requestModeSwitch(mode, draft.content)
         return toModeSwitchResponse(result)
     } catch (error) {
         Logger.error("Failed to toggle Plan/Act mode:", error)

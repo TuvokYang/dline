@@ -1,41 +1,29 @@
+import { type SemanticInputDiagnostic, type SemanticInputDiagnosticCode, semanticInputDiagnostic } from "./diagnostics"
 import {
+    INPUT_SOURCES,
+    type InputResourceOwner,
     isActiveEntity,
     isIdentifiedNode,
+    isLiteralNode,
     isMentionNode,
     isResourceNode,
     isSlashCommandNode,
     SEMANTIC_INPUT_SCHEMA_VERSION,
     type SemanticInputDocument,
     type SemanticInputNode,
+    type SemanticResourceRef,
 } from "./document"
 
-/**
- * Stable diagnostic codes for structural input problems.
- *
- * Catalog membership, capability and access checks belong to Core admission;
- * this module only judges whether the document describes itself consistently.
+/*
+ * Structural validation only: catalog membership, capability, access and the
+ * resource store's own record belong to Core admission. This module judges
+ * whether the document describes itself consistently.
  */
-export type SemanticInputDiagnosticCode =
-    | "semantic_input_schema_unsupported"
-    | "semantic_input_parser_unsupported"
-    | "semantic_input_catalog_stale"
-    | "semantic_input_node_invalid"
-    | "semantic_input_command_unknown"
-    | "semantic_input_command_disabled"
-    | "semantic_input_resource_missing"
-    | "semantic_input_resource_invalid"
-    | "semantic_input_lifecycle_barrier_invalid"
-
-export interface SemanticInputDiagnostic {
-    readonly code: SemanticInputDiagnosticCode
-    /** English, actionable, and free of file contents or credentials. */
-    readonly message: string
-    readonly documentId: string
-    readonly entityId?: string
-    readonly resourceId?: string
-}
 
 function nodeIdentityProblem(node: SemanticInputNode): string | undefined {
+    if (isLiteralNode(node)) {
+        return INPUT_SOURCES.includes(node.source) ? undefined : "literal node carries an unknown source"
+    }
     if (!isIdentifiedNode(node)) return undefined
     if (!node.entityId) return "node is missing a stable entity id"
     if (isSlashCommandNode(node)) {
@@ -53,6 +41,29 @@ function nodeIdentityProblem(node: SemanticInputNode): string | undefined {
     return node.resourceId ? undefined : "resource node is missing a resource id"
 }
 
+function ownerProblem(owner: InputResourceOwner | undefined): string | undefined {
+    if (!owner) return "resource reference has no owner"
+    if (owner.kind === "draft") return owner.draftId ? undefined : "draft owner is missing its draft id"
+    if (owner.kind === "task") return owner.taskId ? undefined : "task owner is missing its task id"
+    return "resource reference names an unknown owner kind"
+}
+
+/** Problems with the metadata a reference claims, independent of any node. */
+function referenceProblems(resource: SemanticResourceRef): readonly string[] {
+    const problems: string[] = []
+    if (!resource.expectedContentHash) problems.push("resource reference is missing the frozen content hash")
+    if (!resource.mediaType) problems.push("resource reference is missing its media type")
+    if (!Number.isSafeInteger(resource.byteLength) || resource.byteLength < 0) {
+        problems.push("resource reference carries an invalid byte length")
+    }
+    if (!Number.isSafeInteger(resource.generation) || resource.generation < 1) {
+        problems.push("resource reference carries an invalid generation")
+    }
+    const owner = ownerProblem(resource.owner)
+    if (owner) problems.push(owner)
+    return problems
+}
+
 /**
  * Validate one document's internal consistency.
  *
@@ -64,7 +75,7 @@ export function validateSemanticInputDocument(document: SemanticInputDocument): 
     const diagnostics: SemanticInputDiagnostic[] = []
     const documentId = document.documentId
     const report = (code: SemanticInputDiagnosticCode, message: string, ids?: { entityId?: string; resourceId?: string }) =>
-        diagnostics.push({ code, message, documentId, ...ids })
+        diagnostics.push(semanticInputDiagnostic(code, message, { documentId, ...ids }))
 
     if (document.schemaVersion !== SEMANTIC_INPUT_SCHEMA_VERSION) {
         report("semantic_input_schema_unsupported", `unsupported semantic input schema version ${document.schemaVersion}`)
@@ -81,6 +92,7 @@ export function validateSemanticInputDocument(document: SemanticInputDocument): 
 
     const seenEntityIds = new Set<string>()
     const referencedResourceIds = new Set<string>()
+    const imageResourceIds = new Set<string>()
     let barriers = 0
 
     for (const node of document.nodes) {
@@ -97,6 +109,7 @@ export function validateSemanticInputDocument(document: SemanticInputDocument): 
         seenEntityIds.add(node.entityId)
 
         if (isResourceNode(node)) referencedResourceIds.add(node.resourceId)
+        if (node.kind === "image") imageResourceIds.add(node.resourceId)
         if (isSlashCommandNode(node) && isActiveEntity(node) && node.compositionMode === "lifecycle_barrier") barriers += 1
     }
 
@@ -110,8 +123,11 @@ export function validateSemanticInputDocument(document: SemanticInputDocument): 
             report("semantic_input_resource_invalid", "resource binding is missing a resource id")
             continue
         }
-        if (!binding.expectedContentHash) {
-            report("semantic_input_resource_invalid", "resource binding is missing the frozen content hash", {
+        for (const problem of referenceProblems(binding)) {
+            report("semantic_input_resource_invalid", problem, { resourceId: binding.resourceId })
+        }
+        if (imageResourceIds.has(binding.resourceId) && binding.mediaType && !binding.mediaType.startsWith("image/")) {
+            report("semantic_input_resource_invalid_mime", "image node is bound to content that is not an image", {
                 resourceId: binding.resourceId,
             })
         }

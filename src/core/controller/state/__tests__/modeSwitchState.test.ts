@@ -2,6 +2,7 @@ import { Controller } from "@core/controller"
 import type { ExtensionState } from "@shared/ExtensionMessage"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import {
+    ChatContent,
     ModeSwitchOperationRequest,
     ModeSwitchStatus,
     PlanActMode,
@@ -49,6 +50,34 @@ describe("mode switch state integration", () => {
         expect(result.status).toBe(ModeSwitchStatus.MODE_SWITCH_STATUS_CONFIRMATION_REQUIRED)
         expect(result.operationId).toBe("operation-1")
         expect(requestModeSwitch).toHaveBeenCalledWith("act", undefined)
+    })
+
+    /** A draft that cannot be admitted refuses the switch, locates the problem and never reaches the controller. */
+    it("rejects an invalid semantic draft with a located diagnostic", async () => {
+        const controller = Object.create(Controller.prototype) as Controller
+        const requestModeSwitch = vi.spyOn(controller, "requestModeSwitch")
+        const chatContent = ChatContent.create({
+            message: "draft",
+            semanticInput: {
+                schemaVersion: 1,
+                parserVersion: "1.0.0",
+                catalogRevision: "1",
+                documentId: "doc-switch",
+                rawText: "draft",
+                nodes: [{ literal: { text: "draft" } }],
+                resources: [],
+            },
+        })
+
+        const result = await togglePlanActModeProto(
+            controller,
+            TogglePlanActModeRequest.create({ mode: PlanActMode.ACT, chatContent }),
+        )
+
+        expect(result.status).toBe(ModeSwitchStatus.MODE_SWITCH_STATUS_REJECTED)
+        expect(result.diagnostic).toMatchObject({ code: "semantic_input_node_invalid", documentId: "doc-switch" })
+        expect(result.error).toBe(result.diagnostic?.message)
+        expect(requestModeSwitch).not.toHaveBeenCalled()
     })
 
     /** Preserve a stale confirm rejection as an explicit typed response. */

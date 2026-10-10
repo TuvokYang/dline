@@ -5,6 +5,9 @@
  * `nodes` are the authority for send order. `rawText` exists for accessibility,
  * history display and legacy mirroring, and is never re-parsed to discover
  * additional commands or mentions.
+ *
+ * Schema version 1 only grows additively: every persisted version 1 document
+ * must stay readable, so a field or node kind is never removed or repurposed.
  */
 
 export const SEMANTIC_INPUT_SCHEMA_VERSION = 1
@@ -26,9 +29,34 @@ export type MentionCapturePolicy = "snapshot_at_submit" | "resolve_at_execute"
 /** How a file node entered the document. */
 export type FileNodeOrigin = "pasted_text" | "pasted_file" | "uploaded_file"
 
+/** Where a span of input came from. */
+export type InputSource = "typed" | "pasted" | "app_action" | "editor_selection" | "model_prefill" | "restored"
+
+export const INPUT_SOURCES: readonly InputSource[] = [
+    "typed",
+    "pasted",
+    "app_action",
+    "editor_selection",
+    "model_prefill",
+    "restored",
+]
+
 export interface TextInputNode {
     readonly kind: "text"
     readonly text: string
+}
+
+/**
+ * Opaque text.
+ *
+ * Content the user did not type as intent, such as an editor selection, a
+ * pasted log or a model prefill, stays a literal: a `/command` or `@target`
+ * shape inside it never activates, whatever the catalog says.
+ */
+export interface LiteralInputNode {
+    readonly kind: "literal"
+    readonly text: string
+    readonly source: InputSource
 }
 
 export interface SlashCommandInputNode {
@@ -71,24 +99,44 @@ export interface FileInputNode {
     readonly lineCount?: number
 }
 
-export type SemanticInputNode = TextInputNode | SlashCommandInputNode | MentionInputNode | ImageInputNode | FileInputNode
+export type SemanticInputNode =
+    | TextInputNode
+    | LiteralInputNode
+    | SlashCommandInputNode
+    | MentionInputNode
+    | ImageInputNode
+    | FileInputNode
+
+/** A node that only contributes text and carries no entity identity. */
+export type ContentInputNode = TextInputNode | LiteralInputNode
 
 /** A node that carries an identity the composer, queue and diagnostics address directly. */
-export type IdentifiedInputNode = Exclude<SemanticInputNode, TextInputNode>
+export type IdentifiedInputNode = Exclude<SemanticInputNode, ContentInputNode>
 
-/** A node backed by a task-owned local resource. */
+/** A node backed by an owned local resource. */
 export type ResourceInputNode = ImageInputNode | FileInputNode
 
+/** Who holds a resource's bytes: a composer draft before its task exists, or a task. */
+export type InputResourceOwner =
+    | { readonly kind: "draft"; readonly draftId: string }
+    | { readonly kind: "task"; readonly taskId: string }
+
 /**
- * A binding to a task-owned resource.
+ * A reference to an owned input resource.
  *
  * The document never carries a path or payload: the hash freezes which content
  * this submission agreed to, so a later edit of the same file cannot silently
- * change an already confirmed input.
+ * change an already confirmed input. Media type and size are what the composer
+ * may show; owner and generation are claims Core verifies against its own
+ * record, and both change when a draft is adopted or a successor copies it.
  */
-export interface SemanticResourceBindingRef {
+export interface SemanticResourceRef {
     readonly resourceId: string
     readonly expectedContentHash: string
+    readonly mediaType: string
+    readonly byteLength: number
+    readonly owner: InputResourceOwner
+    readonly generation: number
 }
 
 export interface SemanticInputDocument {
@@ -98,11 +146,19 @@ export interface SemanticInputDocument {
     readonly documentId: string
     readonly rawText: string
     readonly nodes: readonly SemanticInputNode[]
-    readonly resources: readonly SemanticResourceBindingRef[]
+    readonly resources: readonly SemanticResourceRef[]
 }
 
 export function isTextNode(node: SemanticInputNode): node is TextInputNode {
     return node.kind === "text"
+}
+
+export function isLiteralNode(node: SemanticInputNode): node is LiteralInputNode {
+    return node.kind === "literal"
+}
+
+export function isContentNode(node: SemanticInputNode): node is ContentInputNode {
+    return isTextNode(node) || isLiteralNode(node)
 }
 
 export function isSlashCommandNode(node: SemanticInputNode): node is SlashCommandInputNode {
@@ -118,7 +174,12 @@ export function isResourceNode(node: SemanticInputNode): node is ResourceInputNo
 }
 
 export function isIdentifiedNode(node: SemanticInputNode): node is IdentifiedInputNode {
-    return !isTextNode(node)
+    return !isContentNode(node)
+}
+
+/** The reference a resource node points at, when the document binds it. */
+export function resourceRefOf(document: SemanticInputDocument, node: ResourceInputNode): SemanticResourceRef | undefined {
+    return document.resources.find((resource) => resource.resourceId === node.resourceId)
 }
 
 /** True when the entity takes effect on submit; any other state is content, not intent. */

@@ -1,5 +1,8 @@
+import type { SemanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import type { ProfileSwitchRequestResult, ProfileSwitchRequestStatus } from "@shared/profile-switch"
 import { PlanActMode, ProfileSwitchRequest, ProfileSwitchResponse, ProfileSwitchStatus } from "@shared/proto/dline/state"
+import { fromProtoChatContent } from "@shared/proto-conversions/input-semantics/chat-content"
+import { toProtoSemanticInputDiagnostic } from "@shared/proto-conversions/input-semantics/diagnostic"
 import type { Mode } from "@shared/storage/types"
 import { Controller } from ".."
 
@@ -26,6 +29,14 @@ export function toProfileSwitchResponse(result: ProfileSwitchRequestResult): Pro
     })
 }
 
+/** Refuse the switch and locate the draft problem, so the Webview keeps the draft editable and marks the node. */
+function rejectDraft(diagnostic: SemanticInputDiagnostic): ProfileSwitchResponse {
+    return ProfileSwitchResponse.create({
+        ...toProfileSwitchResponse({ status: "rejected", error: diagnostic.message }),
+        diagnostic: toProtoSemanticInputDiagnostic(diagnostic),
+    })
+}
+
 /** Convert a protobuf mode list without accepting unspecified values. */
 function fromProtoModes(modes: PlanActMode[]): Mode[] {
     return modes.map((mode) => {
@@ -40,7 +51,9 @@ export async function requestProfileSwitch(
     controller: Controller,
     request: ProfileSwitchRequest,
 ): Promise<ProfileSwitchResponse> {
+    const draft = fromProtoChatContent(request.chatContent)
+    if (!draft.ok) return rejectDraft(draft.diagnostic)
     return toProfileSwitchResponse(
-        await controller.requestProfileSwitch(request.targetProfile, fromProtoModes(request.targetModes), request.chatContent),
+        await controller.requestProfileSwitch(request.targetProfile, fromProtoModes(request.targetModes), draft.content),
     )
 }

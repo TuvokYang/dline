@@ -10,7 +10,10 @@ option java_package = "bot.dline.proto";
 //
 // Ordered nodes are the authority for send order. raw_text exists for
 // accessibility, history display and legacy mirroring, and is never re-parsed
-// to discover additional commands or mentions.
+// to discover additional commands or mentions. Schema version 1 only grows
+// additively for every shape a released build wrote, so those documents stay
+// readable. Released builds never wrote a resource reference (field 7), so a
+// reference without the owner and metadata below is rejected, not migrated.
 message SemanticInputDocument {
   int32 schema_version = 1;
   string parser_version = 2;
@@ -18,7 +21,7 @@ message SemanticInputDocument {
   string document_id = 4;
   string raw_text = 5;
   repeated SemanticInputNode nodes = 6;
-  repeated SemanticResourceBinding resources = 7;
+  repeated SemanticResourceRef resources = 7;
 }
 
 // One ordered node. Exactly one payload is set.
@@ -29,11 +32,30 @@ message SemanticInputNode {
     MentionInputNode mention = 3;
     ImageInputNode image = 4;
     FileInputNode file = 5;
+    LiteralInputNode literal = 6;
   }
 }
 
 message TextInputNode {
   string text = 1;
+}
+
+// Where a span of input came from. UNSPECIFIED is the wire default and is
+// rejected on decode, so a missing source never claims to be typed.
+enum InputSource {
+  INPUT_SOURCE_UNSPECIFIED = 0;
+  INPUT_SOURCE_TYPED = 1;
+  INPUT_SOURCE_PASTED = 2;
+  INPUT_SOURCE_APP_ACTION = 3;
+  INPUT_SOURCE_EDITOR_SELECTION = 4;
+  INPUT_SOURCE_MODEL_PREFILL = 5;
+  INPUT_SOURCE_RESTORED = 6;
+}
+
+// Opaque text: a command or mention shape inside it never activates.
+message LiteralInputNode {
+  string text = 1;
+  InputSource source = 2;
 }
 
 // How a semantic entity stands at submission time.
@@ -119,9 +141,33 @@ message FileInputNode {
   optional int32 line_count = 5;
 }
 
-// A binding to a task-owned resource. The hash freezes which content this
-// submission agreed to; the document never carries a path or payload.
-message SemanticResourceBinding {
+// Who holds a resource's bytes: a composer draft before its task exists, or a task.
+message InputResourceOwner {
+  oneof owner {
+    string draft_id = 1;
+    string task_id = 2;
+  }
+}
+
+// A reference to an owned input resource. The hash freezes which content this
+// submission agreed to; the document never carries a path or payload. The
+// owner and generation are claims that Core verifies against its own record.
+message SemanticResourceRef {
   string resource_id = 1;
   string expected_content_hash = 2;
+  string media_type = 3;
+  int64 byte_length = 4;
+  InputResourceOwner owner = 5;
+  int32 generation = 6;
+}
+
+// A machine-readable problem with semantic input, located at the document and,
+// when local, the entity or resource it concerns. The message is English and
+// already free of file contents, paths and credentials.
+message SemanticInputDiagnostic {
+  string code = 1;
+  string message = 2;
+  string document_id = 3;
+  optional string entity_id = 4;
+  optional string resource_id = 5;
 }
