@@ -1,7 +1,7 @@
 import { DiagnosticSeverity, FileDiagnostics } from "@shared/proto/index.dline"
-import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import { expect } from "chai"
 import * as path from "path"
+import { afterEach, beforeEach, describe, it, vi } from "vitest"
 // sinon import removed
 import * as pathUtils from "@/utils/path"
 import { diagnosticsToProblemsString, getNewDiagnostics } from "../"

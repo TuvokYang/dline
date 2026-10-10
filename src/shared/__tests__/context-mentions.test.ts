@@ -1,5 +1,5 @@
-import { describe, it } from "vitest"
 import { expect } from "chai"
+import { describe, it } from "vitest"
 
 import { mentionRegex, mentionRegexGlobal } from "../context-mentions"
 

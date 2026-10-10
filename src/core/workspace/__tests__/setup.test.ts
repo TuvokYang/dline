@@ -1,8 +1,8 @@
 import type { WorkspaceRoot } from "@shared/multi-root/types"
 import { VcsType } from "@shared/multi-root/types"
-import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import { expect } from "chai"
 import * as path from "path"
+import { afterEach, beforeEach, describe, it, vi } from "vitest"
 // sinon import removed: using vitest globals
 import { HostProvider } from "@/hosts/host-provider"
 import * as telemetry from "@/services/telemetry"

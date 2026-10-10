@@ -1,5 +1,6 @@
 import { defineConfig } from "@vscode/test-cli"
 import path from "path"
+
 const vscodeTestVersion = process.env.VSCODE_TEST_VERSION ?? "stable"
 
 export default defineConfig({

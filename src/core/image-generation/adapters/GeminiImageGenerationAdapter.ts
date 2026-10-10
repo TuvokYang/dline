@@ -1,4 +1,4 @@
-import { GoogleGenAI, type GenerateContentParameters, type GenerateContentResponse } from "@google/genai"
+import { type GenerateContentParameters, type GenerateContentResponse, GoogleGenAI } from "@google/genai"
 import type {
     ImageGenerationAdapter,
     ImageGenerationAdapterConfig,

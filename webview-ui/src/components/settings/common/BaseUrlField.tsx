@@ -40,7 +40,7 @@ export const BaseUrlField = ({
     return (
         <div className="flex min-w-0 flex-col gap-1">
             <div className="flex min-w-0 items-center gap-2">
-                <VSCodeCheckbox className="text-sm" checked={isEnabled} disabled={disabled} onChange={handleToggle}>
+                <VSCodeCheckbox checked={isEnabled} className="text-sm" disabled={disabled} onChange={handleToggle}>
                     {label}
                 </VSCodeCheckbox>
                 {showLockIcon && <i className="codicon codicon-lock text-(--vscode-descriptionForeground) text-sm" />}

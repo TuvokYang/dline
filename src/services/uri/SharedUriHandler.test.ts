@@ -1,5 +1,5 @@
 import { expect } from "chai"
-import { afterEach, beforeEach, describe, expect as vitestExpect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, it, vi, expect as vitestExpect } from "vitest"
 // sinon import removed
 import { WebviewProvider } from "@/core/webview"
 import { Logger } from "@/shared/services/Logger"

@@ -489,7 +489,7 @@
             "git add proto/dline/state.proto"
         ],
         "*": [
-            "biome check --write --staged --no-errors-on-unmatched --files-ignore-unknown=true"
+            "biome check --no-errors-on-unmatched --files-ignore-unknown=true --diagnostic-level=error"
         ]
     },
     "devDependencies": {
