@@ -196,6 +196,15 @@ Until that strategy is approved, the hotfix workflow must stop instead of invent
 
 `tuvokyang.dline` carries both the release and the pre-release track; `dline-insiders` is a separate extension with its own version sequence. A pre-release keeps the production manifest identity and differs only by the VSIX pre-release marker (`Microsoft.VisualStudio.Code.PreRelease`, set by vsce `preRelease`) and by the GitHub asset name `dline-X.Y.Z-pre-release.vsix`. Registry gates reject a pre-release VSIX without the marker and a production VSIX that carries it. A Marketplace `version` accepts only three numeric segments, so a semver pre-release suffix such as `0.9.4-rc.1` cannot be published.
 
+Changelog lifecycle:
+
+- `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md` are one bilingual release history. Their headings and user-visible scope must remain equivalent.
+- Every user-visible change integrated into `dev` is added to the paired `## [Unreleased]` sections after the behavior is implemented and verified. Do not record plans, unverified claims, or internal-only churn as shipped behavior.
+- Untagged Insiders builds show the cumulative `Unreleased` section in the latest maintainers-only draft. They do not create permanent version sections and do not bump `package.json` or What's New for each commit.
+- Preparing a pre-release or production patch freezes the applicable non-empty `Unreleased` content into the exact `## [X.Y.Z]` section and recreates an empty `## [Unreleased]` section above it. Later pre-release patches contain only the delta since the preceding pre-release.
+- A production release section must stand alone and summarize every user-visible change since the preceding production release, including changes already described across odd-minor pre-releases and any final `Unreleased` delta. It must not merely point readers to pre-release sections.
+- An empty `Unreleased` section is valid between integrations. A tagged pre-release or production section must exist and be non-empty; release-note generation fails rather than publishing incomplete notes.
+
 Version bump rules:
 
 - A registry keys a version only by publisher, name, and number; the pre-release track is a flag on that number. Production and pre-release therefore split one version space by minor parity, as the VS Code publishing guide recommends.
@@ -209,7 +218,7 @@ Version bump rules:
 Packaging rules:
 
 - A tagged channel is a release candidate, so the tag version, `package.json`, and every changelog language edition must already agree before packaging starts. A missing `## [X.Y.Z]` heading in either edition fails the run.
-- The untagged insiders channel is a rolling build and skips the changelog gate, because it does not represent a documented release.
+- The untagged insiders channel is a rolling build and skips the versioned changelog gate, because it does not represent a documented release; its draft may still render the current `Unreleased` section.
 - An explicit `--channel insiders` (the dev push Tests run) ignores release tags at `HEAD`. A `dev-vX.Y.Z` tag must name the dev head, so the same commit is packaged both as the tagged pre-release and as a timestamped Insiders build; rejecting tagged commits would fail every pre-release's dev Tests run.
 - Reject rather than guess: `main` without a tag is the unfinished middle of a promotion, a `vX.Y.Z` tag outside `main` or a `dev-vX.Y.Z` tag outside `dev` means the tag was created on the wrong branch, and any other branch has no channel.
 - Tag formats must be matched exactly (`^v\d+\.\d+\.\d+$` and `^dev-v\d+\.\d+\.\d+$`). An exact-match tag lookup without format validation makes a development tag package a production identity.

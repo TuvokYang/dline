@@ -15,6 +15,14 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   Unit tests enforce both.
 -->
 
+## 0.11.0
+
+- **Reliable long-task recovery**: compaction uses provider counts or real-usage calibration, persists accepted passes, and resumes from a safe checkpoint.
+- **Safe request retries**: ordinary tasks and subagents retry upstream HTTP/2 stream failures within a bound, while a manual Retry can take over a pending automatic retry.
+- **Clear tool output**: long `qna_respond`, `generate_report`, and `attempt_completion` replies stream continuously, and multiple MCP responses share one card.
+- **Concise Thinking and checkpoints**: encrypted reasoning shows one transient Thinking row without exposing ciphertext, and each user turn shows one restore baseline.
+- **Stable editing, history, and cost display**: Background Edit keeps editor focus intact, restored tasks avoid blank or stale state, and subagents use the effective model currency.
+
 ## 0.10.0
 
 - **Parallel tool calls**: calls in one turn that need no manual approval can run concurrently, with a configurable

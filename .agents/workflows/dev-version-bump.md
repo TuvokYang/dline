@@ -47,9 +47,18 @@ Update all six release facts together; every version bump, including a patch or 
 - `package.json`;
 - `package-lock.json`.
 
-Use the existing changelog structure and include only sections that contain real entries:
+Freeze the paired changelogs according to repository-and-release before changing the package version:
+
+- For a new pre-release or a production patch, move the applicable non-empty `Unreleased` body into the exact `## [X.Y.Z]` section.
+- For a production release after one or more pre-releases, write a standalone cumulative `## [X.Y.Z]` section covering every user-visible change since the preceding production release; consolidate the odd-minor pre-release sections and any final `Unreleased` delta instead of copying only the latest delta or referring readers elsewhere.
+- Recreate an empty `## [Unreleased]` section above the new version and keep all prior version sections as history.
+- Stop if the target section already exists with conflicting content, the two language editions describe different scopes, or the target section would be empty.
+
+Use the existing changelog structure and include only sections that contain real entries below the empty rolling section:
 
 ```markdown
+## [Unreleased]
+
 ## [X.Y.Z]
 
 ### Features
@@ -57,7 +66,7 @@ Use the existing changelog structure and include only sections that contain real
 ### Fixed
 ```
 
-The two changelogs must describe the same user-visible changes, not independent release scopes.
+The two changelogs must describe the same user-visible changes, not independent release scopes. Routine dev integrations update only `Unreleased`; they do not update package versions or What's New until this version-preparation workflow runs.
 
 Add a What's New section for the exact target version at the top of both What's New files, above the previous release, which stays below as history:
 

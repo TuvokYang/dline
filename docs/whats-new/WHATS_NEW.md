@@ -14,6 +14,14 @@ Dline 侧边栏的 What's New 对话框展示本目录下英文版 `WHATS_NEW_en
   保持相同的版本号和相同的条目数量，两项均由单元测试校验。
 -->
 
+## 0.11.0
+
+- **可靠的长任务恢复**：上下文压缩使用 Provider 计数或真实用量校准，持久保存已接受的 Pass，并从安全 checkpoint 继续。
+- **安全的请求重试**：普通任务和 Subagent 遇到上游 HTTP/2 流错误时会有界重试，手动 Retry 可接管等待中的自动重试。
+- **清晰的工具输出**：长 `qna_respond`、`generate_report` 和 `attempt_completion` 回复持续显示，MCP 多响应聚合为单张卡片。
+- **简洁的 Thinking 与 checkpoint**：加密 reasoning 只显示单一临时 Thinking，密文不进入界面，同一用户轮次只展示一个恢复基线。
+- **稳定的编辑、历史与成本显示**：Background Edit 不再抢焦点，恢复界面不再出现空白行或过期状态，Subagent 使用实际模型币种。
+
 ## 0.10.0
 
 - **并行工具调用**：同一轮中无需人工审批的工具调用可以并发执行，最大并行数可配置。

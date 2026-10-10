@@ -4,6 +4,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+## [0.11.0]
+
 ### Changed
 - The task runtime now stores conversations in a journal; the first time an existing task is continued after upgrading, its conversation is imported unchanged and later requests carry the full history; per-task `state.json` replaces `snapshot.json`, and the migration imports only the queued inputs, not the earlier completion state
 - Tasks from before the upgrade may reopen as interrupted, including tasks that were running or already completed, and continue through Resume or a new message; a task opened after upgrading cannot be continued by downgrading to an older Dline build

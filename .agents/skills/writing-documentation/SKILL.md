@@ -14,6 +14,7 @@ Use this skill for user-facing guides, feature pages, architecture documents, tr
 - Documentation under `docs/` must provide Chinese and English deliverables for the same scope.
 - Root documentation follows the established pairing, such as `README.md` (English, the default) and `README_zh.md` (Chinese).
 - Release notes follow the established pairing: `CHANGELOG.md` and `docs/changelog/CHANGELOG_en.md`.
+- User-visible changes integrated into `dev` are recorded in the paired `Unreleased` sections. Follow repository-and-release for the changelog lifecycle and load dev-version-bump when freezing those entries into a version; routine Insiders updates do not bump package versions or What's New.
 - The What's New dialog source follows the same pairing: `docs/whats-new/WHATS_NEW.md` (Chinese) and `docs/whats-new/WHATS_NEW_en.md` (English, the edition the dialog renders). Every version update adds a `## X.Y.Z` section to both; load dev-version-bump for the section rules, because the webview build rejects any other Markdown.
 - Before creating a new documentation pair, inspect neighboring files and `docs/docs.json` for the local naming and navigation convention. Preserve an existing convention rather than mass-renaming historical files.
 - If the target area has no discoverable bilingual naming convention, ask the user before inventing a new public URL structure.
