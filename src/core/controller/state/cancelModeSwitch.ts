@@ -4,5 +4,5 @@ import { toModeSwitchResponse } from "./togglePlanActModeProto"
 
 /** Cancel the active mode-switch transaction by operation identity. */
 export async function cancelModeSwitch(controller: Controller, request: ModeSwitchOperationRequest): Promise<ModeSwitchResponse> {
-	return toModeSwitchResponse(await controller.cancelModeSwitch(request.operationId))
+    return toModeSwitchResponse(await controller.cancelModeSwitch(request.operationId))
 }

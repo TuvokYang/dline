@@ -9,12 +9,12 @@ import { createHooksDirectory } from "./test-utils"
  * Test environment containing temp directories and cleanup functions.
  */
 export interface HookTestEnvironment {
-	/** Temporary directory for this test */
-	tempDir: string
-	/** Array of hooks directories (.agents/hooks paths) */
-	hooksDirs: string[]
-	/** Cleanup function to remove temp directories */
-	cleanup: () => Promise<void>
+    /** Temporary directory for this test */
+    tempDir: string
+    /** Array of hooks directories (.agents/hooks paths) */
+    hooksDirs: string[]
+    /** Cleanup function to remove temp directories */
+    cleanup: () => Promise<void>
 }
 
 /**
@@ -29,26 +29,26 @@ export interface HookTestEnvironment {
  * await env.cleanup() // Clean up after tests
  */
 export async function createHookTestEnvironment(): Promise<HookTestEnvironment> {
-	const tempDir = path.join(os.tmpdir(), `hook-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const tempDir = path.join(os.tmpdir(), `hook-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
 
-	await fs.mkdir(tempDir, { recursive: true })
+    await fs.mkdir(tempDir, { recursive: true })
 
-	const hooksDir = await createHooksDirectory(tempDir)
+    const hooksDir = await createHooksDirectory(tempDir)
 
-	return {
-		tempDir,
-		hooksDirs: [hooksDir],
-		cleanup: async () => {
-			try {
-				await fs.rm(tempDir, { recursive: true, force: true })
-			} catch (error: any) {
-				// Only ignore ENOENT (already deleted), log other errors
-				if (error.code !== "ENOENT") {
-					console.warn(`Cleanup warning for ${tempDir}:`, error.message)
-				}
-			}
-		},
-	}
+    return {
+        tempDir,
+        hooksDirs: [hooksDir],
+        cleanup: async () => {
+            try {
+                await fs.rm(tempDir, { recursive: true, force: true })
+            } catch (error: any) {
+                // Only ignore ENOENT (already deleted), log other errors
+                if (error.code !== "ENOENT") {
+                    console.warn(`Cleanup warning for ${tempDir}:`, error.message)
+                }
+            }
+        },
+    }
 }
 
 /**
@@ -68,32 +68,32 @@ export async function createHookTestEnvironment(): Promise<HookTestEnvironment> 
  * })
  */
 export function setupHookTests(): {
-	getEnv: () => HookTestEnvironment
+    getEnv: () => HookTestEnvironment
 } {
-	let env: HookTestEnvironment
-	let sandbox: sinon.SinonSandbox
+    let env: HookTestEnvironment
+    let sandbox: sinon.SinonSandbox
 
-	beforeEach(async () => {
-		sandbox = sinon.createSandbox()
-		env = await createHookTestEnvironment()
+    beforeEach(async () => {
+        sandbox = sinon.createSandbox()
+        env = await createHookTestEnvironment()
 
-		// Mock StateManager to return test workspace
-		mockStateManager(sandbox, [env.tempDir])
-	})
+        // Mock StateManager to return test workspace
+        mockStateManager(sandbox, [env.tempDir])
+    })
 
-	afterEach(async () => {
-		sandbox.restore()
-		await env.cleanup()
-	})
+    afterEach(async () => {
+        sandbox.restore()
+        await env.cleanup()
+    })
 
-	return {
-		getEnv: () => {
-			if (!env) {
-				throw new Error("Test environment not initialized. Called getEnv() outside of test?")
-			}
-			return env
-		},
-	}
+    return {
+        getEnv: () => {
+            if (!env) {
+                throw new Error("Test environment not initialized. Called getEnv() outside of test?")
+            }
+            return env
+        },
+    }
 }
 
 /**
@@ -110,7 +110,7 @@ export function setupHookTests(): {
  * sandbox.restore() // Clean up after tests
  */
 export function mockStateManager(sandbox: sinon.SinonSandbox, workspaceRoots: string[]): void {
-	sandbox.stub(StateManager, "get").returns({
-		getGlobalStateKey: () => workspaceRoots.map((rootPath) => ({ path: rootPath })),
-	} as any)
+    sandbox.stub(StateManager, "get").returns({
+        getGlobalStateKey: () => workspaceRoots.map((rootPath) => ({ path: rootPath })),
+    } as any)
 }

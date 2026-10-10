@@ -7,8 +7,8 @@
  * uses to recognise a failure a Profile switch resolves.
  */
 export class ProfileNotValidError extends Error {
-	constructor(message: string) {
-		super(message)
-		this.name = "ProfileNotValidError"
-	}
+    constructor(message: string) {
+        super(message)
+        this.name = "ProfileNotValidError"
+    }
 }

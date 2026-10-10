@@ -10,27 +10,27 @@ import type { ToolParamName, ToolUse } from "@core/assistant-message"
  * Keep this in sync with the TaskConfig interface
  */
 export const TASK_CONFIG_KEYS = [
-	"taskId",
-	"ulid",
-	"cwd",
-	"mode",
-	"strictPlanModeEnabled",
-	"yoloModeToggled",
-	"doubleCheckCompletionEnabled",
-	"vscodeTerminalExecutionMode",
-	"enableParallelToolCalling",
-	"isSubagentExecution",
-	"taskState",
-	"messageState",
-	"api",
-	"services",
-	"autoApprovalSettings",
-	"browserSettings",
-	"focusChainSettings",
-	"capabilityToggles",
-	"interactions",
-	"callbacks",
-	"coordinator",
+    "taskId",
+    "ulid",
+    "cwd",
+    "mode",
+    "strictPlanModeEnabled",
+    "yoloModeToggled",
+    "doubleCheckCompletionEnabled",
+    "vscodeTerminalExecutionMode",
+    "enableParallelToolCalling",
+    "isSubagentExecution",
+    "taskState",
+    "messageState",
+    "api",
+    "services",
+    "autoApprovalSettings",
+    "browserSettings",
+    "focusChainSettings",
+    "capabilityToggles",
+    "interactions",
+    "callbacks",
+    "coordinator",
 ] as const
 
 /**
@@ -38,17 +38,17 @@ export const TASK_CONFIG_KEYS = [
  * Keep this in sync with the TaskServices interface
  */
 export const TASK_SERVICES_KEYS = [
-	"mcpHub",
-	"browserSession",
-	"urlContentFetcher",
-	"diffViewProvider",
-	"fileContextTracker",
-	"taskFileTracker",
-	"ignoreController",
-	"commandPermissionController",
-	"contextManager",
-	"stateManager",
-	"imageGenerationService",
+    "mcpHub",
+    "browserSession",
+    "urlContentFetcher",
+    "diffViewProvider",
+    "fileContextTracker",
+    "taskFileTracker",
+    "ignoreController",
+    "commandPermissionController",
+    "contextManager",
+    "stateManager",
+    "imageGenerationService",
 ] as const
 
 /**
@@ -56,23 +56,23 @@ export const TASK_SERVICES_KEYS = [
  * Keep this in sync with the TaskCallbacks interface
  */
 export const TASK_CALLBACKS_KEYS = [
-	"say",
-	"ask",
-	"saveCheckpoint",
-	"sayAndCreateMissingParamError",
-	"executeCommandTool",
-	"doesLatestTaskCompletionHaveNewChanges",
-	"updateFCListFromToolResponse",
-	"postStateToWebview",
-	"reinitExistingTaskFromId",
-	"cancelTask",
-	"updateTaskHistory",
-	"switchToActMode",
-	"setActiveHookExecution",
-	"clearActiveHookExecution",
-	"getActiveHookExecution",
-	"runUserPromptSubmitHook",
-	"updateClineMessage",
+    "say",
+    "ask",
+    "saveCheckpoint",
+    "sayAndCreateMissingParamError",
+    "executeCommandTool",
+    "doesLatestTaskCompletionHaveNewChanges",
+    "updateFCListFromToolResponse",
+    "postStateToWebview",
+    "reinitExistingTaskFromId",
+    "cancelTask",
+    "updateTaskHistory",
+    "switchToActMode",
+    "setActiveHookExecution",
+    "clearActiveHookExecution",
+    "getActiveHookExecution",
+    "runUserPromptSubmitHook",
+    "updateClineMessage",
 ] as const
 
 /**
@@ -80,13 +80,13 @@ export const TASK_CALLBACKS_KEYS = [
  * Used for validation in ToolErrorHandler
  */
 export const PATH_REQUIRED_TOOLS = [
-	"read_file",
-	"write_to_file",
-	"replace_in_file",
-	"new_rule",
-	"list_files",
-	"list_code_definition_names",
-	"search_files",
+    "read_file",
+    "write_to_file",
+    "replace_in_file",
+    "new_rule",
+    "list_files",
+    "list_code_definition_names",
+    "search_files",
 ] as const
 
 /**
@@ -121,19 +121,19 @@ export type BrowserAction = (typeof BROWSER_ACTIONS)[number]
  * - Matches '<' or '</' optionally followed by any subset of characters from the tag name
  */
 export function removeClosingTag(block: ToolUse, tag: ToolParamName, text?: string): string {
-	if (!block.partial) {
-		return text || ""
-	}
-	if (!text) {
-		return ""
-	}
+    if (!block.partial) {
+        return text || ""
+    }
+    if (!text) {
+        return ""
+    }
 
-	const tagRegex = new RegExp(
-		`\\s?</?${tag
-			.split("")
-			.map((char) => `(?:${char})?`)
-			.join("")}$`,
-		"g",
-	)
-	return text.replace(tagRegex, "")
+    const tagRegex = new RegExp(
+        `\\s?</?${tag
+            .split("")
+            .map((char) => `(?:${char})?`)
+            .join("")}$`,
+        "g",
+    )
+    return text.replace(tagRegex, "")
 }

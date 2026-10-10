@@ -7,14 +7,14 @@ import { ensureTaskDirectoryExists, resolveTaskDirectory } from "../../storage/d
  * Generate the standard file path for a task's focusChain markdown file
  */
 export function getFocusChainFilePath(taskDir: string, taskId: string): string {
-	return path.join(taskDir, `focus_chain_taskid_${taskId}.md`)
+    return path.join(taskDir, `focus_chain_taskid_${taskId}.md`)
 }
 
 /**
  * Generate the file path for a task's focusChain history file
  */
 export function getFocusChainHistoryFilePath(taskDir: string, taskId: string): string {
-	return path.join(taskDir, `focus_chain_taskid_${taskId}_history.md`)
+    return path.join(taskDir, `focus_chain_taskid_${taskId}_history.md`)
 }
 
 /**
@@ -23,19 +23,19 @@ export function getFocusChainHistoryFilePath(taskDir: string, taskId: string): s
  * @returns The history text, or null when the task never recorded one.
  */
 export async function readFocusChainHistoryFile(taskId: string): Promise<string | null> {
-	try {
-		return await fs.readFile(getFocusChainHistoryFilePath(await resolveTaskDirectory(taskId), taskId), "utf8")
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
-		throw error
-	}
+    try {
+        return await fs.readFile(getFocusChainHistoryFilePath(await resolveTaskDirectory(taskId), taskId), "utf8")
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
+        throw error
+    }
 }
 
 /**
  * Create the standard markdown content structure for a focusChain file
  */
 export function createFocusChainMarkdownContent(taskId: string, focusChainList: string): string {
-	return `# Focus Chain List for Task ${taskId}
+    return `# Focus Chain List for Task ${taskId}
 
 <!-- Edit this markdown file to update your focus chain list -->
 <!-- Use the format: ## Section Title for grouping, - [ ] for incomplete items and - [x] for completed items -->
@@ -49,7 +49,7 @@ ${focusChainList}
  * Create the initial content for a focusChain history file
  */
 export function createFocusChainHistoryHeader(taskId: string): string {
-	return `# Focus Chain History for Task ${taskId}
+    return `# Focus Chain History for Task ${taskId}
 
 <!-- Completed task items are automatically archived here -->
 <!-- Each entry includes a timestamp and the completed items at that point -->
@@ -65,34 +65,34 @@ export function createFocusChainHistoryHeader(taskId: string): string {
  * @returns Formatted history entry string
  */
 export function formatHistoryEntry(focusChainText: string, timestamp: string): string {
-	if (!focusChainText.trim()) {
-		return ""
-	}
-	// Use local time with dynamic timezone offset
-	const now = new Date(timestamp)
-	const tzOffset = -now.getTimezoneOffset()
-	const tzHours = Math.floor(Math.abs(tzOffset) / 60)
-	const tzSign = tzOffset >= 0 ? "+" : "-"
-	const pad = (n: number) => String(n).padStart(2, "0")
-	const dateStr =
-		`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
-		`${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())} ` +
-		`UTC${tzSign}${tzHours}`
-	let entry = `\n## Completed — ${dateStr}\n`
+    if (!focusChainText.trim()) {
+        return ""
+    }
+    // Use local time with dynamic timezone offset
+    const now = new Date(timestamp)
+    const tzOffset = -now.getTimezoneOffset()
+    const tzHours = Math.floor(Math.abs(tzOffset) / 60)
+    const tzSign = tzOffset >= 0 ? "+" : "-"
+    const pad = (n: number) => String(n).padStart(2, "0")
+    const dateStr =
+        `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ` +
+        `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())} ` +
+        `UTC${tzSign}${tzHours}`
+    let entry = `\n## Completed — ${dateStr}\n`
 
-	// Preserve the full structure including # Title and ## Section headings
-	const lines = focusChainText.split("\n")
-	for (const line of lines) {
-		const trimmed = line.trim()
-		if (!trimmed) {
-			continue
-		}
-		// Keep headings and checklist items
-		if (trimmed.startsWith("# ") || trimmed.startsWith("## ") || isFocusChainItem(trimmed)) {
-			entry += `${trimmed}\n`
-		}
-	}
-	return entry
+    // Preserve the full structure including # Title and ## Section headings
+    const lines = focusChainText.split("\n")
+    for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) {
+            continue
+        }
+        // Keep headings and checklist items
+        if (trimmed.startsWith("# ") || trimmed.startsWith("## ") || isFocusChainItem(trimmed)) {
+            entry += `${trimmed}\n`
+        }
+    }
+    return entry
 }
 
 /**
@@ -103,29 +103,29 @@ export function formatHistoryEntry(focusChainText: string, timestamp: string): s
  * @param focusChainText - The complete focus chain text to archive
  */
 export async function appendToFocusChainHistory(taskDir: string, taskId: string, focusChainText: string): Promise<void> {
-	if (!focusChainText.trim()) {
-		return
-	}
+    if (!focusChainText.trim()) {
+        return
+    }
 
-	const historyPath = getFocusChainHistoryFilePath(taskDir, taskId)
+    const historyPath = getFocusChainHistoryFilePath(taskDir, taskId)
 
-	// Check if history file exists, create with header if not
-	let fileExists = false
-	try {
-		await fs.access(historyPath)
-		fileExists = true
-	} catch {
-		// File doesn't exist, create with header
-	}
+    // Check if history file exists, create with header if not
+    let fileExists = false
+    try {
+        await fs.access(historyPath)
+        fileExists = true
+    } catch {
+        // File doesn't exist, create with header
+    }
 
-	if (!fileExists) {
-		const header = createFocusChainHistoryHeader(taskId)
-		await fs.writeFile(historyPath, header, "utf8")
-	}
+    if (!fileExists) {
+        const header = createFocusChainHistoryHeader(taskId)
+        await fs.writeFile(historyPath, header, "utf8")
+    }
 
-	// Append the new entry
-	const entry = formatHistoryEntry(focusChainText, new Date().toISOString())
-	await fs.appendFile(historyPath, entry, "utf8")
+    // Append the new entry
+    const entry = formatHistoryEntry(focusChainText, new Date().toISOString())
+    await fs.appendFile(historyPath, entry, "utf8")
 }
 
 /**
@@ -133,36 +133,36 @@ export async function appendToFocusChainHistory(taskDir: string, taskId: string,
  * Returns array of lines that match focusChain item format
  */
 export function extractFocusChainItemsFromText(text: string): string[] {
-	const lines = text.split("\n")
-	return lines.filter((line) => {
-		const trimmed = line.trim()
-		return isFocusChainItem(trimmed)
-	})
+    const lines = text.split("\n")
+    return lines.filter((line) => {
+        const trimmed = line.trim()
+        return isFocusChainItem(trimmed)
+    })
 }
 
 /** Return the exact unchecked item at a checklist item index, or null when the index is stale. */
 export function getUncheckedFocusChainItemAtIndex(checklist: string, itemIndex: number | null): string | null {
-	if (itemIndex === null || itemIndex < 0) {
-		return null
-	}
+    if (itemIndex === null || itemIndex < 0) {
+        return null
+    }
 
-	const item = extractFocusChainItemsFromText(checklist)[itemIndex]?.trim()
-	if (!item || isCompletedFocusChainItem(item)) {
-		return null
-	}
-	return item
+    const item = extractFocusChainItemsFromText(checklist)[itemIndex]?.trim()
+    if (!item || isCompletedFocusChainItem(item)) {
+        return null
+    }
+    return item
 }
 
 /** Format the environment task_progress section without mutating canonical checklist item text. */
 export function formatFocusChainTaskProgressSection(checklist: string, itemIndex: number | null): string {
-	const currentItem = getUncheckedFocusChainItemAtIndex(checklist, itemIndex)
-	const currentSection = currentItem ? `\n\nCURRENT:\n${currentItem}` : ""
-	return `# task_progress\n${checklist}${currentSection}`
+    const currentItem = getUncheckedFocusChainItemAtIndex(checklist, itemIndex)
+    const currentSection = currentItem ? `\n\nCURRENT:\n${currentItem}` : ""
+    return `# task_progress\n${checklist}${currentSection}`
 }
 
 /** Return whether text contains at least one standard TODO item with non-empty item text. */
 export function hasValidTodoItem(text: string): boolean {
-	return text.split("\n").some((line) => parseFocusChainItem(line.trim()) !== null)
+    return text.split("\n").some((line) => parseFocusChainItem(line.trim()) !== null)
 }
 
 /**
@@ -170,25 +170,25 @@ export function hasValidTodoItem(text: string): boolean {
  * Returns the complete focus chain text including #/## headings and - [ ] items.
  */
 export function extractFocusChainListFromText(text: string): string | null {
-	const lines = text.split("\n")
-	const resultLines: string[] = []
+    const lines = text.split("\n")
+    const resultLines: string[] = []
 
-	for (const line of lines) {
-		const trimmed = line.trim()
-		if (!trimmed) {
-			continue
-		}
-		// Skip the template header line to prevent nesting
-		if (trimmed.startsWith("# Focus Chain List for Task")) {
-			continue
-		}
-		// Preserve headings and checklist items, skip other lines
-		if (trimmed.startsWith("# ") || trimmed.startsWith("## ") || isFocusChainItem(trimmed)) {
-			resultLines.push(trimmed)
-		}
-	}
+    for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) {
+            continue
+        }
+        // Skip the template header line to prevent nesting
+        if (trimmed.startsWith("# Focus Chain List for Task")) {
+            continue
+        }
+        // Preserve headings and checklist items, skip other lines
+        if (trimmed.startsWith("# ") || trimmed.startsWith("## ") || isFocusChainItem(trimmed)) {
+            resultLines.push(trimmed)
+        }
+    }
 
-	return resultLines.length > 0 ? resultLines.join("\n") : null
+    return resultLines.length > 0 ? resultLines.join("\n") : null
 }
 
 /**
@@ -196,7 +196,7 @@ export function extractFocusChainListFromText(text: string): string | null {
  * Blank lines, indentation and non-checklist prose are formatting, not checklist content.
  */
 export function isEquivalentFocusChainList(left: string, right: string): boolean {
-	return extractFocusChainListFromText(left) === extractFocusChainListFromText(right)
+    return extractFocusChainListFromText(left) === extractFocusChainListFromText(right)
 }
 
 /**
@@ -206,11 +206,11 @@ export function isEquivalentFocusChainList(left: string, right: string): boolean
  * @returns true if all items are [x]
  */
 export function isAllItemsCompleted(text: string): boolean {
-	const items = extractFocusChainItemsFromText(text)
-	if (items.length === 0) {
-		return false
-	}
-	return items.every((item) => isCompletedFocusChainItem(item))
+    const items = extractFocusChainItemsFromText(text)
+    if (items.length === 0) {
+        return false
+    }
+    return items.every((item) => isCompletedFocusChainItem(item))
 }
 
 /**
@@ -221,24 +221,24 @@ export function isAllItemsCompleted(text: string): boolean {
  * @returns Array of tampered item texts, or empty if clean
  */
 export function detectTampering(oldText: string, newText: string): string[] {
-	const oldItems = extractFocusChainItemsFromText(oldText)
-	const newItems = extractFocusChainItemsFromText(newText)
+    const oldItems = extractFocusChainItemsFromText(oldText)
+    const newItems = extractFocusChainItemsFromText(newText)
 
-	const normalizeItem = (item: string): string => {
-		return item.replace(/^-\s*\[[ xX]\]\s*/, "").trim()
-	}
+    const normalizeItem = (item: string): string => {
+        return item.replace(/^-\s*\[[ xX]\]\s*/, "").trim()
+    }
 
-	const newNormalized = new Set(newItems.map(normalizeItem))
+    const newNormalized = new Set(newItems.map(normalizeItem))
 
-	// Find old items that were [ ] (incomplete) but are now gone from the new list
-	return oldItems
-		.filter((item) => {
-			if (isCompletedFocusChainItem(item)) {
-				return false // [x] items can be removed (archived)
-			}
-			return !newNormalized.has(normalizeItem(item))
-		})
-		.map(normalizeItem)
+    // Find old items that were [ ] (incomplete) but are now gone from the new list
+    return oldItems
+        .filter((item) => {
+            if (isCompletedFocusChainItem(item)) {
+                return false // [x] items can be removed (archived)
+            }
+            return !newNormalized.has(normalizeItem(item))
+        })
+        .map(normalizeItem)
 }
 
 /**
@@ -248,7 +248,7 @@ export function detectTampering(oldText: string, newText: string): string[] {
  * @returns Array of completed item lines
  */
 export function findAllCompletedItems(text: string): string[] {
-	return extractFocusChainItemsFromText(text).filter((item) => isCompletedFocusChainItem(item))
+    return extractFocusChainItemsFromText(text).filter((item) => isCompletedFocusChainItem(item))
 }
 
 /**
@@ -262,31 +262,31 @@ export function findAllCompletedItems(text: string): string[] {
  * @returns true if the text contains # or ## header lines
  */
 export function hasNewChecklistHeader(text: string): boolean {
-	const lines = text.split("\n")
-	return lines.some((line) => {
-		const trimmed = line.trim()
-		return trimmed.startsWith("# ") || trimmed.startsWith("## ")
-	})
+    const lines = text.split("\n")
+    return lines.some((line) => {
+        const trimmed = line.trim()
+        return trimmed.startsWith("# ") || trimmed.startsWith("## ")
+    })
 }
 
 /** Return whether text contains the required top-level checklist title. */
 export function hasChecklistTitle(text: string): boolean {
-	return text.split("\n").some((line) => line.trim().startsWith("# "))
+    return text.split("\n").some((line) => line.trim().startsWith("# "))
 }
 
 /** Return whether text contains at least one non-empty unchecked checklist item. */
 export function hasUncheckedFocusChainItem(text: string): boolean {
-	return extractFocusChainItemsFromText(text).some((item) => !isCompletedFocusChainItem(item))
+    return extractFocusChainItemsFromText(text).some((item) => !isCompletedFocusChainItem(item))
 }
 
 /**
  * Result of merging completed items into the existing checklist.
  */
 export interface MergeResult {
-	/** The merged checklist text with completed items marked as - [x] */
-	mergedText: string
-	/** Items from the report that could not be matched to any checklist item */
-	unmatchedItems: string[]
+    /** The merged checklist text with completed items marked as - [x] */
+    mergedText: string
+    /** Items from the report that could not be matched to any checklist item */
+    unmatchedItems: string[]
 }
 
 /**
@@ -299,76 +299,76 @@ export interface MergeResult {
  * @returns MergeResult with updated checklist and any unmatched items
  */
 export function mergeCompletedItems(existingChecklist: string, completedItemsText: string): MergeResult {
-	const lines = existingChecklist.split("\n")
-	const reportedLines = completedItemsText
-		.split("\n")
-		.map((l) => l.trim())
-		.filter((l) => isCompletedFocusChainItem(l))
+    const lines = existingChecklist.split("\n")
+    const reportedLines = completedItemsText
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => isCompletedFocusChainItem(l))
 
-	// Normalize: strip "- [x] " prefix, trim whitespace
-	const normalizeItem = (item: string): string => {
-		return item.replace(/^-\s*\[[ xX]\]\s*/, "").trim()
-	}
+    // Normalize: strip "- [x] " prefix, trim whitespace
+    const normalizeItem = (item: string): string => {
+        return item.replace(/^-\s*\[[ xX]\]\s*/, "").trim()
+    }
 
-	const reportedTexts = reportedLines.map(normalizeItem)
-	const unmatchedItems: string[] = []
+    const reportedTexts = reportedLines.map(normalizeItem)
+    const unmatchedItems: string[] = []
 
-	// Build a map of normalized text -> whether already matched
-	const reportedMatched = new Map<string, boolean>()
-	for (const t of reportedTexts) {
-		reportedMatched.set(t, false)
-	}
+    // Build a map of normalized text -> whether already matched
+    const reportedMatched = new Map<string, boolean>()
+    for (const t of reportedTexts) {
+        reportedMatched.set(t, false)
+    }
 
-	// Process each line of the existing checklist
-	const mergedLines = lines.map((line) => {
-		const trimmed = line.trim()
-		// Only process unchecked items
-		if (!isFocusChainItem(trimmed) || isCompletedFocusChainItem(trimmed)) {
-			return line
-		}
+    // Process each line of the existing checklist
+    const mergedLines = lines.map((line) => {
+        const trimmed = line.trim()
+        // Only process unchecked items
+        if (!isFocusChainItem(trimmed) || isCompletedFocusChainItem(trimmed)) {
+            return line
+        }
 
-		const normalizedExisting = normalizeItem(trimmed)
+        const normalizedExisting = normalizeItem(trimmed)
 
-		// Check if this item matches any reported completed item
-		if (reportedMatched.has(normalizedExisting) && !reportedMatched.get(normalizedExisting)) {
-			reportedMatched.set(normalizedExisting, true)
-			// Replace the line, preserving original indentation
-			return line.replace(trimmed, trimmed.replace(/^-\s*\[ \]/, "- [x]"))
-		}
+        // Check if this item matches any reported completed item
+        if (reportedMatched.has(normalizedExisting) && !reportedMatched.get(normalizedExisting)) {
+            reportedMatched.set(normalizedExisting, true)
+            // Replace the line, preserving original indentation
+            return line.replace(trimmed, trimmed.replace(/^-\s*\[ \]/, "- [x]"))
+        }
 
-		return line
-	})
+        return line
+    })
 
-	// Collect unmatched items, excluding idempotent reports (already [x])
-	for (const [text, matched] of reportedMatched) {
-		if (!matched) {
-			// Idempotent check: item already completed in existing checklist
-			const alreadyDone = lines.some((line) => {
-				const t = line.trim()
-				return isCompletedFocusChainItem(t) && normalizeItem(t) === text
-			})
-			if (!alreadyDone) {
-				unmatchedItems.push(text)
-			}
-		}
-	}
+    // Collect unmatched items, excluding idempotent reports (already [x])
+    for (const [text, matched] of reportedMatched) {
+        if (!matched) {
+            // Idempotent check: item already completed in existing checklist
+            const alreadyDone = lines.some((line) => {
+                const t = line.trim()
+                return isCompletedFocusChainItem(t) && normalizeItem(t) === text
+            })
+            if (!alreadyDone) {
+                unmatchedItems.push(text)
+            }
+        }
+    }
 
-	return {
-		mergedText: mergedLines.join("\n"),
-		unmatchedItems,
-	}
+    return {
+        mergedText: mergedLines.join("\n"),
+        unmatchedItems,
+    }
 }
 
 /**
  * Result of processing a reported in-progress item (- [ ]).
  */
 export interface InProgressResult {
-	/** The checklist text with the in-progress item marked, or null if no match */
-	updatedText: string | null
-	/** The matched item text from the checklist */
-	matchedItem: string | null
-	/** 0-based index of the matched item among all checklist items (ignoring headings/blank lines) */
-	matchedItemIndex: number | null
+    /** The checklist text with the in-progress item marked, or null if no match */
+    updatedText: string | null
+    /** The matched item text from the checklist */
+    matchedItem: string | null
+    /** 0-based index of the matched item among all checklist items (ignoring headings/blank lines) */
+    matchedItemIndex: number | null
 }
 
 /**
@@ -380,57 +380,57 @@ export interface InProgressResult {
  * @returns InProgressResult with updated checklist text and matched item
  */
 export function mergeInProgressItem(existingChecklist: string, inProgressText: string): InProgressResult {
-	const reportedLines = inProgressText
-		.split("\n")
-		.map((l) => l.trim())
-		.filter((l) => isFocusChainItem(l) && !isCompletedFocusChainItem(l))
+    const reportedLines = inProgressText
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => isFocusChainItem(l) && !isCompletedFocusChainItem(l))
 
-	if (reportedLines.length === 0) {
-		return { updatedText: null, matchedItem: null, matchedItemIndex: null }
-	}
+    if (reportedLines.length === 0) {
+        return { updatedText: null, matchedItem: null, matchedItemIndex: null }
+    }
 
-	const inProgressLine = reportedLines[0]
-	const normalizeItem = (item: string): string => {
-		return item.replace(/^-\s*\[[ xX]\]\s*/, "").trim()
-	}
-	const normalizedInProgress = normalizeItem(inProgressLine)
+    const inProgressLine = reportedLines[0]
+    const normalizeItem = (item: string): string => {
+        return item.replace(/^-\s*\[[ xX]\]\s*/, "").trim()
+    }
+    const normalizedInProgress = normalizeItem(inProgressLine)
 
-	// Compute the index of the matched item among all checklist items
-	let itemIdx = 0
-	let matchedItemIndex: number | null = null
-	let matched = false
+    // Compute the index of the matched item among all checklist items
+    let itemIdx = 0
+    let matchedItemIndex: number | null = null
+    let matched = false
 
-	const mergedLines = existingChecklist.split("\n").map((line) => {
-		const trimmed = line.trim()
-		// Ignore headings and blank lines — they don't count as items
-		if (!isFocusChainItem(trimmed)) {
-			return line
-		}
-		// Already completed items — count but skip matching
-		if (isCompletedFocusChainItem(trimmed)) {
-			itemIdx++
-			return line
-		}
-		// This is an unchecked item — try to match
-		const normalizedExisting = normalizeItem(trimmed)
-		if (normalizedExisting === normalizedInProgress && !matched) {
-			matched = true
-			matchedItemIndex = itemIdx
-		}
-		itemIdx++
-		// Return the line as-is (no <- CURRENT marker written into text)
-		return line
-	})
+    const mergedLines = existingChecklist.split("\n").map((line) => {
+        const trimmed = line.trim()
+        // Ignore headings and blank lines — they don't count as items
+        if (!isFocusChainItem(trimmed)) {
+            return line
+        }
+        // Already completed items — count but skip matching
+        if (isCompletedFocusChainItem(trimmed)) {
+            itemIdx++
+            return line
+        }
+        // This is an unchecked item — try to match
+        const normalizedExisting = normalizeItem(trimmed)
+        if (normalizedExisting === normalizedInProgress && !matched) {
+            matched = true
+            matchedItemIndex = itemIdx
+        }
+        itemIdx++
+        // Return the line as-is (no <- CURRENT marker written into text)
+        return line
+    })
 
-	if (!matched) {
-		return { updatedText: null, matchedItem: null, matchedItemIndex: null }
-	}
+    if (!matched) {
+        return { updatedText: null, matchedItem: null, matchedItemIndex: null }
+    }
 
-	return {
-		updatedText: mergedLines.join("\n"),
-		matchedItem: inProgressLine,
-		matchedItemIndex,
-	}
+    return {
+        updatedText: mergedLines.join("\n"),
+        matchedItem: inProgressLine,
+        matchedItemIndex,
+    }
 }
 
 /**
@@ -442,32 +442,32 @@ export function mergeInProgressItem(existingChecklist: string, inProgressText: s
  * @returns Array of item texts (with - [ ] prefix)
  */
 export function extractExampleItems(checklist: string, count = 3): string[] {
-	return checklist
-		.split("\n")
-		.map((l) => l.trim())
-		.filter((l) => isFocusChainItem(l) && !isCompletedFocusChainItem(l))
-		.slice(0, count)
+    return checklist
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => isFocusChainItem(l) && !isCompletedFocusChainItem(l))
+        .slice(0, count)
 }
 
 export async function ensureFocusChainFile(taskId: string, initialFocusChainContent?: string): Promise<string> {
-	const taskDir = await ensureTaskDirectoryExists(taskId)
-	const focusChainFilePath = getFocusChainFilePath(taskDir, taskId)
+    const taskDir = await ensureTaskDirectoryExists(taskId)
+    const focusChainFilePath = getFocusChainFilePath(taskDir, taskId)
 
-	// Check if file exists
-	let fileExists = false
-	try {
-		await fs.access(focusChainFilePath)
-		fileExists = true
-	} catch {
-		// File doesn't exist
-	}
+    // Check if file exists
+    let fileExists = false
+    try {
+        await fs.access(focusChainFilePath)
+        fileExists = true
+    } catch {
+        // File doesn't exist
+    }
 
-	// Create file if it doesn't exist
-	if (!fileExists) {
-		const focusChainContent = initialFocusChainContent || ""
-		const fileContent = createFocusChainMarkdownContent(taskId, focusChainContent)
-		await fs.writeFile(focusChainFilePath, fileContent, "utf8")
-	}
+    // Create file if it doesn't exist
+    if (!fileExists) {
+        const focusChainContent = initialFocusChainContent || ""
+        const fileContent = createFocusChainMarkdownContent(taskId, focusChainContent)
+        await fs.writeFile(focusChainFilePath, fileContent, "utf8")
+    }
 
-	return focusChainFilePath
+    return focusChainFilePath
 }

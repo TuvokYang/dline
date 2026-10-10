@@ -28,37 +28,37 @@
  * @returns Normalized workspace-relative path
  */
 export function normalizeWorkspaceRelativeInputPath(input: string, platform: string = process.platform): string {
-	if (!input) {
-		return input
-	}
+    if (!input) {
+        return input
+    }
 
-	// No-op on POSIX: "/src/a.ts" is a valid absolute path on Linux/macOS
-	if (platform !== "win32") {
-		return input
-	}
+    // No-op on POSIX: "/src/a.ts" is a valid absolute path on Linux/macOS
+    if (platform !== "win32") {
+        return input
+    }
 
-	// Preserve workspace hints: "@frontend:src/index.ts"
-	if (input.startsWith("@")) {
-		return input
-	}
+    // Preserve workspace hints: "@frontend:src/index.ts"
+    if (input.startsWith("@")) {
+        return input
+    }
 
-	// Preserve Windows drive-letter absolute paths: C:\foo, C:/foo
-	if (/^[a-zA-Z]:[/\\]/.test(input)) {
-		return input
-	}
+    // Preserve Windows drive-letter absolute paths: C:\foo, C:/foo
+    if (/^[a-zA-Z]:[/\\]/.test(input)) {
+        return input
+    }
 
-	// Preserve UNC paths: \\server\share, //server/share
-	if (input.startsWith("\\\\") || input.startsWith("//")) {
-		return input
-	}
+    // Preserve UNC paths: \\server\share, //server/share
+    if (input.startsWith("\\\\") || input.startsWith("//")) {
+        return input
+    }
 
-	// Strip a single leading '/' or '\'
-	//   "/src/a.ts" → "src/a.ts"
-	//   "\src\a.ts" → "src\a.ts"
-	//   "/E:/x"     → "E:/x"
-	if (input.startsWith("/") || input.startsWith("\\")) {
-		return input.slice(1)
-	}
+    // Strip a single leading '/' or '\'
+    //   "/src/a.ts" → "src/a.ts"
+    //   "\src\a.ts" → "src\a.ts"
+    //   "/E:/x"     → "E:/x"
+    if (input.startsWith("/") || input.startsWith("\\")) {
+        return input.slice(1)
+    }
 
-	return input
+    return input
 }

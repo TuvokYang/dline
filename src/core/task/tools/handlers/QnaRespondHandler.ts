@@ -18,77 +18,77 @@ import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackU
  * execute uses ask() to finalize content, save checkpoint, and block for user input.
  */
 export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
-	readonly name = ClineDefaultTool.QNA_RESPOND
+    readonly name = ClineDefaultTool.QNA_RESPOND
 
-	getDescription(block: ToolUse): string {
-		return `[${block.name}]`
-	}
+    getDescription(block: ToolUse): string {
+        return `[${block.name}]`
+    }
 
-	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-		const response = uiHelpers.removeClosingTag(block, "response", block.params.response)
-		if (response) {
-			const sharedMessage: UiQnaResponse = { response }
-			await uiHelpers.ask(this.name, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
-		}
-	}
+    async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
+        const response = uiHelpers.removeClosingTag(block, "response", block.params.response)
+        if (response) {
+            const sharedMessage: UiQnaResponse = { response }
+            await uiHelpers.ask(this.name, JSON.stringify(sharedMessage), true, { existingTs: block.ts }).catch(() => {})
+        }
+    }
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
-		const response: string | undefined = (block.params as Record<string, string | undefined>).response
+    async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
+        const response: string | undefined = (block.params as Record<string, string | undefined>).response
 
-		if (!response) {
-			config.taskState.consecutiveMistakeCount++
-			return await config.callbacks.sayAndCreateMissingParamError(this.name, "response", undefined, block.ts)
-		}
+        if (!response) {
+            config.taskState.consecutiveMistakeCount++
+            return await config.callbacks.sayAndCreateMissingParamError(this.name, "response", undefined, block.ts)
+        }
 
-		config.taskState.consecutiveMistakeCount = 0
+        config.taskState.consecutiveMistakeCount = 0
 
-		const sharedMessage: UiQnaResponse = { response }
+        const sharedMessage: UiQnaResponse = { response }
 
-		config.taskState.isAwaitingPlanResponse = true
+        config.taskState.isAwaitingPlanResponse = true
 
-		try {
-			const outcome = await config.interactions.open({
-				turnId: interactionTurnId(block),
-				interactionId: interactionId(block),
-				kind: "qna_response",
-				presentation: JSON.stringify(sharedMessage),
-				existingTs: block.ts,
-			})
-			return await this.continueInteraction(config, block, outcome)
-		} finally {
-			config.taskState.isAwaitingPlanResponse = false
-		}
-	}
+        try {
+            const outcome = await config.interactions.open({
+                turnId: interactionTurnId(block),
+                interactionId: interactionId(block),
+                kind: "qna_response",
+                presentation: JSON.stringify(sharedMessage),
+                existingTs: block.ts,
+            })
+            return await this.continueInteraction(config, block, outcome)
+        } finally {
+            config.taskState.isAwaitingPlanResponse = false
+        }
+    }
 
-	/** Consume a Q&A response without replaying presentation or other pre-response work. */
-	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
-		config.taskState.isAwaitingPlanResponse = false
-		const text = outcome.draft?.text
-		const images = outcome.draft?.images
-		const files = outcome.draft?.files
+    /** Consume a Q&A response without replaying presentation or other pre-response work. */
+    async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
+        config.taskState.isAwaitingPlanResponse = false
+        const text = outcome.draft?.text
+        const images = outcome.draft?.images
+        const files = outcome.draft?.files
 
-		const attachments = await attachToolFeedbackFiles(files)
-		const fileContentString = attachments.text
+        const attachments = await attachToolFeedbackFiles(files)
+        const fileContentString = attachments.text
 
-		if (config.taskState.didRespondToPlanAskBySwitchingMode) {
-			config.taskState.didRespondToPlanAskBySwitchingMode = false
-			if (text || (images && images.length > 0) || fileContentString) {
-				await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
-			}
-			const switchMessage = text
-				? renderPrompt("toolHandlers", "planSwitchToActWithMessage", { TEXT: text })
-				: getPrompt("toolHandlers", "planSwitchToAct")
-			return withToolDocuments(formatResponse.toolResult(switchMessage, images, fileContentString), attachments.documents)
-		}
+        if (config.taskState.didRespondToPlanAskBySwitchingMode) {
+            config.taskState.didRespondToPlanAskBySwitchingMode = false
+            if (text || (images && images.length > 0) || fileContentString) {
+                await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
+            }
+            const switchMessage = text
+                ? renderPrompt("toolHandlers", "planSwitchToActWithMessage", { TEXT: text })
+                : getPrompt("toolHandlers", "planSwitchToAct")
+            return withToolDocuments(formatResponse.toolResult(switchMessage, images, fileContentString), attachments.documents)
+        }
 
-		if (text || (images && images.length > 0) || fileContentString) {
-			await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
-			return withToolDocuments(
-				formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString),
-				attachments.documents,
-			)
-		}
+        if (text || (images && images.length > 0) || fileContentString) {
+            await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
+            return withToolDocuments(
+                formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString),
+                attachments.documents,
+            )
+        }
 
-		return formatResponse.toolResult("User continued the conversation.")
-	}
+        return formatResponse.toolResult("User continued the conversation.")
+    }
 }

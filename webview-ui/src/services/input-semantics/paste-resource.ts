@@ -4,9 +4,9 @@ import { TaskServiceClient } from "@/services/grpc-client"
 
 /** A pasted block the active task now owns as a file. */
 export interface PastedTextResource {
-	readonly absolutePath: string
-	readonly displayName: string
-	readonly lineCount: number
+    readonly absolutePath: string
+    readonly displayName: string
+    readonly lineCount: number
 }
 
 /**
@@ -19,19 +19,19 @@ export interface PastedTextResource {
  * dropping what the user pasted would be worse than an oversized composer.
  */
 export async function storeOversizedPaste(text: string): Promise<PastedTextResource | undefined> {
-	if (!exceedsInlineTextBudget(text)) return undefined
+    if (!exceedsInlineTextBudget(text)) return undefined
 
-	try {
-		const response = await TaskServiceClient.createInputTextResource(CreateInputTextResourceRequest.create({ text }))
-		if (!response.created || !response.absolutePath) return undefined
+    try {
+        const response = await TaskServiceClient.createInputTextResource(CreateInputTextResourceRequest.create({ text }))
+        if (!response.created || !response.absolutePath) return undefined
 
-		return {
-			absolutePath: response.absolutePath,
-			displayName: response.displayName ?? response.absolutePath,
-			lineCount: response.lineCount ?? 0,
-		}
-	} catch (error) {
-		console.warn("Keeping the paste inline; the host could not store it", error)
-		return undefined
-	}
+        return {
+            absolutePath: response.absolutePath,
+            displayName: response.displayName ?? response.absolutePath,
+            lineCount: response.lineCount ?? 0,
+        }
+    } catch (error) {
+        console.warn("Keeping the paste inline; the host could not store it", error)
+        return undefined
+    }
 }

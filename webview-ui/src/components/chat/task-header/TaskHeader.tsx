@@ -23,276 +23,276 @@ import { hasNonZeroModelPricing } from "./util"
 
 const IS_DEV = process.env.IS_DEV === '"true"'
 interface TaskHeaderProps {
-	task: UiMessage
-	tokensIn: number
-	tokensOut: number
-	doesModelSupportPromptCache: boolean
-	cacheWrites?: number
-	cacheReads?: number
-	contextWindow?: number
-	totalCost: number
-	cacheHitRate?: number
-	currency?: string
-	taskId?: string
-	lastApiReqTotalTokens?: number
-	lastProgressMessageText?: string
-	showFocusChainPlaceholder?: boolean
-	pricing?: ModelPricing
-	compactTaskDisabled?: boolean
-	forceTruncateAvailable?: boolean
-	forceTruncateTaskDisabled?: boolean
-	requestsPerMinute?: number
-	tokensPerMinute?: number
-	onClose: () => Promise<void>
-	onDeleteConfirmed?: () => void
-	onCompactTask?: () => Promise<boolean>
-	onForceTruncateTask?: () => Promise<boolean>
+    task: UiMessage
+    tokensIn: number
+    tokensOut: number
+    doesModelSupportPromptCache: boolean
+    cacheWrites?: number
+    cacheReads?: number
+    contextWindow?: number
+    totalCost: number
+    cacheHitRate?: number
+    currency?: string
+    taskId?: string
+    lastApiReqTotalTokens?: number
+    lastProgressMessageText?: string
+    showFocusChainPlaceholder?: boolean
+    pricing?: ModelPricing
+    compactTaskDisabled?: boolean
+    forceTruncateAvailable?: boolean
+    forceTruncateTaskDisabled?: boolean
+    requestsPerMinute?: number
+    tokensPerMinute?: number
+    onClose: () => Promise<void>
+    onDeleteConfirmed?: () => void
+    onCompactTask?: () => Promise<boolean>
+    onForceTruncateTask?: () => Promise<boolean>
 }
 
 const BUTTON_CLASS = "max-h-3 border-0 font-bold bg-transparent hover:opacity-100 text-foreground"
 
 const TaskHeader: React.FC<TaskHeaderProps> = ({
-	task,
-	tokensIn,
-	tokensOut,
-	cacheWrites,
-	cacheReads,
-	contextWindow,
-	totalCost,
-	cacheHitRate,
-	currency,
-	taskId,
-	lastApiReqTotalTokens,
-	lastProgressMessageText,
-	showFocusChainPlaceholder,
-	pricing,
-	compactTaskDisabled,
-	forceTruncateAvailable,
-	forceTruncateTaskDisabled,
-	requestsPerMinute,
-	tokensPerMinute,
-	onClose,
-	onDeleteConfirmed,
-	onCompactTask,
-	onForceTruncateTask,
+    task,
+    tokensIn,
+    tokensOut,
+    cacheWrites,
+    cacheReads,
+    contextWindow,
+    totalCost,
+    cacheHitRate,
+    currency,
+    taskId,
+    lastApiReqTotalTokens,
+    lastProgressMessageText,
+    showFocusChainPlaceholder,
+    pricing,
+    compactTaskDisabled,
+    forceTruncateAvailable,
+    forceTruncateTaskDisabled,
+    requestsPerMinute,
+    tokensPerMinute,
+    onClose,
+    onDeleteConfirmed,
+    onCompactTask,
+    onForceTruncateTask,
 }) => {
-	const {
-		currentTaskItem,
-		taskViewState,
-		checkpointManagerErrorMessage,
-		contextWindowIndicator,
-		focusChainSettings,
-		navigateToSettings,
-		expandTaskHeader: isTaskExpanded,
-		setExpandTaskHeader: setIsTaskExpanded,
-		environment,
-		promptCacheHealth,
-		promptFreshness,
-		taskLockStatus,
-	} = useExtensionState()
+    const {
+        currentTaskItem,
+        taskViewState,
+        checkpointManagerErrorMessage,
+        contextWindowIndicator,
+        focusChainSettings,
+        navigateToSettings,
+        expandTaskHeader: isTaskExpanded,
+        setExpandTaskHeader: setIsTaskExpanded,
+        environment,
+        promptCacheHealth,
+        promptFreshness,
+        taskLockStatus,
+    } = useExtensionState()
 
-	const [isHighlightedTextExpanded, setIsHighlightedTextExpanded] = useState(false)
-	const [isTextOverflowing, setIsTextOverflowing] = useState(false)
-	const highlightedTextRef = React.useRef<HTMLDivElement>(null)
+    const [isHighlightedTextExpanded, setIsHighlightedTextExpanded] = useState(false)
+    const [isTextOverflowing, setIsTextOverflowing] = useState(false)
+    const highlightedTextRef = React.useRef<HTMLDivElement>(null)
 
-	const highlightedText = useHighlightedText(task.text, false)
+    const highlightedText = useHighlightedText(task.text, false)
 
-	// Check if text overflows the container (i.e., needs clamping)
-	useLayoutEffect(() => {
-		const el = highlightedTextRef.current
-		if (el && isTaskExpanded && !isHighlightedTextExpanded) {
-			// Check if content height exceeds the max-height
-			setIsTextOverflowing(el.scrollHeight > el.clientHeight)
-		}
-	}, [isTaskExpanded, isHighlightedTextExpanded])
+    // Check if text overflows the container (i.e., needs clamping)
+    useLayoutEffect(() => {
+        const el = highlightedTextRef.current
+        if (el && isTaskExpanded && !isHighlightedTextExpanded) {
+            // Check if content height exceeds the max-height
+            setIsTextOverflowing(el.scrollHeight > el.clientHeight)
+        }
+    }, [isTaskExpanded, isHighlightedTextExpanded])
 
-	// Handle click outside to collapse
-	React.useEffect(() => {
-		if (!isHighlightedTextExpanded) {
-			return
-		}
+    // Handle click outside to collapse
+    React.useEffect(() => {
+        if (!isHighlightedTextExpanded) {
+            return
+        }
 
-		const handleClickOutside = (event: MouseEvent) => {
-			if (highlightedTextRef.current && !highlightedTextRef.current.contains(event.target as Node)) {
-				setIsHighlightedTextExpanded(false)
-			}
-		}
+        const handleClickOutside = (event: MouseEvent) => {
+            if (highlightedTextRef.current && !highlightedTextRef.current.contains(event.target as Node)) {
+                setIsHighlightedTextExpanded(false)
+            }
+        }
 
-		document.addEventListener("mousedown", handleClickOutside)
-		return () => document.removeEventListener("mousedown", handleClickOutside)
-	}, [isHighlightedTextExpanded])
+        document.addEventListener("mousedown", handleClickOutside)
+        return () => document.removeEventListener("mousedown", handleClickOutside)
+    }, [isHighlightedTextExpanded])
 
-	const displayCurrency = (currency || "USD").toUpperCase()
-	const totalInputTokens = tokensIn + (cacheWrites ?? 0) + (cacheReads ?? 0)
-	const currentContextTokens = lastApiReqTotalTokens ?? totalInputTokens
-	const isCostAvailable = totalCost != null && hasNonZeroModelPricing(pricing)
-	const hasMetrics = isCostAvailable || totalInputTokens > 0 || tokensOut > 0 || cacheHitRate !== undefined
-	const hasRateMetrics = (requestsPerMinute ?? 0) > 0 || (tokensPerMinute ?? 0) > 0
-	const hasUnifiedMetrics = hasMetrics || hasRateMetrics
+    const displayCurrency = (currency || "USD").toUpperCase()
+    const totalInputTokens = tokensIn + (cacheWrites ?? 0) + (cacheReads ?? 0)
+    const currentContextTokens = lastApiReqTotalTokens ?? totalInputTokens
+    const isCostAvailable = totalCost != null && hasNonZeroModelPricing(pricing)
+    const hasMetrics = isCostAvailable || totalInputTokens > 0 || tokensOut > 0 || cacheHitRate !== undefined
+    const hasRateMetrics = (requestsPerMinute ?? 0) > 0 || (tokensPerMinute ?? 0) > 0
+    const hasUnifiedMetrics = hasMetrics || hasRateMetrics
 
-	// Event handlers
-	const toggleTaskExpanded = useCallback(() => setIsTaskExpanded(!isTaskExpanded), [setIsTaskExpanded, isTaskExpanded])
+    // Event handlers
+    const toggleTaskExpanded = useCallback(() => setIsTaskExpanded(!isTaskExpanded), [setIsTaskExpanded, isTaskExpanded])
 
-	const handleCheckpointSettingsClick = useCallback(() => {
-		navigateToSettings("features")
-	}, [navigateToSettings])
+    const handleCheckpointSettingsClick = useCallback(() => {
+        navigateToSettings("features")
+    }, [navigateToSettings])
 
-	const environmentBorderColor = getEnvironmentColor(environment, "border")
+    const environmentBorderColor = getEnvironmentColor(environment, "border")
 
-	return (
-		<div className="py-2 px-4 flex flex-col gap-2">
-			<PromptCacheHealthBanner health={promptCacheHealth} />
-			{/* Display Checkpoint Error */}
-			<CheckpointError
-				checkpointManagerErrorMessage={checkpointManagerErrorMessage}
-				handleCheckpointSettingsClick={handleCheckpointSettingsClick}
-			/>
-			{/* Display Task Lock Warning */}
-			<TaskLockBanner currentTaskId={taskId} taskLockStatus={taskLockStatus} />
-			{/* Task Header */}
-			<div
-				className={cn(
-					"@container relative overflow-hidden cursor-pointer rounded-sm flex flex-col gap-1.5 z-10 pt-2 pb-2 px-2 hover:opacity-100 bg-(--vscode-toolbar-hoverBackground)/65",
-					{
-						"opacity-100 border-1": isTaskExpanded, // No hover effects when expanded, add border
-						"hover:bg-toolbar-hover border-1": !isTaskExpanded, // Hover effects only when collapsed
-					},
-				)}
-				style={{
-					borderColor: environmentBorderColor,
-				}}>
-				{/* Task Title */}
-				<div
-					aria-label={isTaskExpanded ? "Collapse task header" : "Expand task header"}
-					className="flex justify-between items-center cursor-pointer"
-					onClick={(event) => {
-						if (!event.currentTarget.contains(event.target as Node)) return
-						toggleTaskExpanded()
-					}}
-					onKeyDown={(event) => {
-						if (!event.currentTarget.contains(event.target as Node)) return
-						if (event.key === "Enter" || event.key === " ") {
-							event.preventDefault()
-							event.stopPropagation()
-							toggleTaskExpanded()
-						}
-					}}>
-					<div className="flex justify-between items-center">
-						{isTaskExpanded ? <ChevronDownIcon size="16" /> : <ChevronRightIcon size="16" />}
-						{isTaskExpanded && (
-							<div className="mt-1 flex justify-end cursor-pointer opacity-80 gap-2 mx-2">
-								<CopyTaskButton className={BUTTON_CLASS} taskText={task.text} />
-								<RefreshPromptButton
-									className={BUTTON_CLASS}
-									currency={displayCurrency}
-									estimatedInputTokens={currentContextTokens}
-									inputPrice={pricing?.inputPrice}
-									promptFreshness={promptFreshness}
-									taskId={taskId}
-								/>
-								<DeleteTaskButton
-									className={BUTTON_CLASS}
-									onDeleteConfirmed={onDeleteConfirmed}
-									taskId={taskId}
-									taskSize={currentTaskItem?.size}
-								/>
-								{/* Only visible in development mode */}
-								{IS_DEV && <OpenDiskConversationHistoryButton className={BUTTON_CLASS} taskId={taskId} />}
-							</div>
-						)}
-					</div>
-					<div className="flex items-center select-none grow min-w-0 gap-1 justify-between">
-						{!isTaskExpanded && (
-							<div className="whitespace-nowrap overflow-hidden text-ellipsis grow min-w-0">
-								<span className="ph-no-capture text-base">{highlightedText}</span>
-							</div>
-						)}
-					</div>
-					<div className="inline-flex items-center justify-end select-none shrink-0 min-w-0">
-						{hasUnifiedMetrics && (
-							<TaskRateMetrics
-								cacheHitRate={cacheHitRate}
-								cacheReads={cacheReads}
-								cacheWrites={cacheWrites}
-								currency={displayCurrency}
-								isCostAvailable={isCostAvailable}
-								requestsPerMinute={requestsPerMinute ?? 0}
-								taskId={taskId}
-								taskInstanceId={
-									taskViewState && taskViewState.taskId === taskId ? taskViewState.taskInstanceId : undefined
-								}
-								tokensOut={tokensOut}
-								tokensPerMinute={tokensPerMinute ?? 0}
-								totalCost={totalCost}
-								totalInputTokens={totalInputTokens}
-							/>
-						)}
-						<NewTaskButton className={BUTTON_CLASS} onClick={onClose} />
-					</div>
-				</div>
+    return (
+        <div className="py-2 px-4 flex flex-col gap-2">
+            <PromptCacheHealthBanner health={promptCacheHealth} />
+            {/* Display Checkpoint Error */}
+            <CheckpointError
+                checkpointManagerErrorMessage={checkpointManagerErrorMessage}
+                handleCheckpointSettingsClick={handleCheckpointSettingsClick}
+            />
+            {/* Display Task Lock Warning */}
+            <TaskLockBanner currentTaskId={taskId} taskLockStatus={taskLockStatus} />
+            {/* Task Header */}
+            <div
+                className={cn(
+                    "@container relative overflow-hidden cursor-pointer rounded-sm flex flex-col gap-1.5 z-10 pt-2 pb-2 px-2 hover:opacity-100 bg-(--vscode-toolbar-hoverBackground)/65",
+                    {
+                        "opacity-100 border-1": isTaskExpanded, // No hover effects when expanded, add border
+                        "hover:bg-toolbar-hover border-1": !isTaskExpanded, // Hover effects only when collapsed
+                    },
+                )}
+                style={{
+                    borderColor: environmentBorderColor,
+                }}>
+                {/* Task Title */}
+                <div
+                    aria-label={isTaskExpanded ? "Collapse task header" : "Expand task header"}
+                    className="flex justify-between items-center cursor-pointer"
+                    onClick={(event) => {
+                        if (!event.currentTarget.contains(event.target as Node)) return
+                        toggleTaskExpanded()
+                    }}
+                    onKeyDown={(event) => {
+                        if (!event.currentTarget.contains(event.target as Node)) return
+                        if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            toggleTaskExpanded()
+                        }
+                    }}>
+                    <div className="flex justify-between items-center">
+                        {isTaskExpanded ? <ChevronDownIcon size="16" /> : <ChevronRightIcon size="16" />}
+                        {isTaskExpanded && (
+                            <div className="mt-1 flex justify-end cursor-pointer opacity-80 gap-2 mx-2">
+                                <CopyTaskButton className={BUTTON_CLASS} taskText={task.text} />
+                                <RefreshPromptButton
+                                    className={BUTTON_CLASS}
+                                    currency={displayCurrency}
+                                    estimatedInputTokens={currentContextTokens}
+                                    inputPrice={pricing?.inputPrice}
+                                    promptFreshness={promptFreshness}
+                                    taskId={taskId}
+                                />
+                                <DeleteTaskButton
+                                    className={BUTTON_CLASS}
+                                    onDeleteConfirmed={onDeleteConfirmed}
+                                    taskId={taskId}
+                                    taskSize={currentTaskItem?.size}
+                                />
+                                {/* Only visible in development mode */}
+                                {IS_DEV && <OpenDiskConversationHistoryButton className={BUTTON_CLASS} taskId={taskId} />}
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex items-center select-none grow min-w-0 gap-1 justify-between">
+                        {!isTaskExpanded && (
+                            <div className="whitespace-nowrap overflow-hidden text-ellipsis grow min-w-0">
+                                <span className="ph-no-capture text-base">{highlightedText}</span>
+                            </div>
+                        )}
+                    </div>
+                    <div className="inline-flex items-center justify-end select-none shrink-0 min-w-0">
+                        {hasUnifiedMetrics && (
+                            <TaskRateMetrics
+                                cacheHitRate={cacheHitRate}
+                                cacheReads={cacheReads}
+                                cacheWrites={cacheWrites}
+                                currency={displayCurrency}
+                                isCostAvailable={isCostAvailable}
+                                requestsPerMinute={requestsPerMinute ?? 0}
+                                taskId={taskId}
+                                taskInstanceId={
+                                    taskViewState && taskViewState.taskId === taskId ? taskViewState.taskInstanceId : undefined
+                                }
+                                tokensOut={tokensOut}
+                                tokensPerMinute={tokensPerMinute ?? 0}
+                                totalCost={totalCost}
+                                totalInputTokens={totalInputTokens}
+                            />
+                        )}
+                        <NewTaskButton className={BUTTON_CLASS} onClick={onClose} />
+                    </div>
+                </div>
 
-				{/* Expand/Collapse Task Details */}
-				{isTaskExpanded && (
-					<div className="flex flex-col break-words" key={`task-details-${taskId}:${taskViewState?.taskInstanceId}`}>
-						<div
-							className={cn(
-								"ph-no-capture whitespace-pre-wrap break-words px-0.5 text-sm mt-1 relative",
-								"max-h-[4.5rem] overflow-hidden",
-								{
-									"max-h-[25vh] overflow-y-auto scroll-smooth": isHighlightedTextExpanded,
-									"cursor-pointer": isTextOverflowing,
-								},
-							)}
-							onClick={() => isTextOverflowing && setIsHighlightedTextExpanded(true)}
-							ref={highlightedTextRef}
-							style={
-								!isHighlightedTextExpanded && isTextOverflowing
-									? {
-											WebkitMaskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
-											maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
-										}
-									: undefined
-							}>
-							{highlightedText}
-						</div>
+                {/* Expand/Collapse Task Details */}
+                {isTaskExpanded && (
+                    <div className="flex flex-col break-words" key={`task-details-${taskId}:${taskViewState?.taskInstanceId}`}>
+                        <div
+                            className={cn(
+                                "ph-no-capture whitespace-pre-wrap break-words px-0.5 text-sm mt-1 relative",
+                                "max-h-[4.5rem] overflow-hidden",
+                                {
+                                    "max-h-[25vh] overflow-y-auto scroll-smooth": isHighlightedTextExpanded,
+                                    "cursor-pointer": isTextOverflowing,
+                                },
+                            )}
+                            onClick={() => isTextOverflowing && setIsHighlightedTextExpanded(true)}
+                            ref={highlightedTextRef}
+                            style={
+                                !isHighlightedTextExpanded && isTextOverflowing
+                                    ? {
+                                          WebkitMaskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
+                                          maskImage: "linear-gradient(to bottom, black 60%, transparent 100%)",
+                                      }
+                                    : undefined
+                            }>
+                            {highlightedText}
+                        </div>
 
-						{((task.images && task.images.length > 0) || (task.files && task.files.length > 0)) && (
-							<Thumbnails files={task.files ?? []} images={task.images ?? []} />
-						)}
+                        {((task.images && task.images.length > 0) || (task.files && task.files.length > 0)) && (
+                            <Thumbnails files={task.files ?? []} images={task.images ?? []} />
+                        )}
 
-						<ContextWindow
-							cacheReads={cacheReads}
-							cacheWrites={cacheWrites}
-							compactTaskDisabled={compactTaskDisabled}
-							contextWindow={contextWindow}
-							contextWindowIndicator={contextWindowIndicator}
-							forceTruncateAvailable={forceTruncateAvailable}
-							forceTruncateTaskDisabled={forceTruncateTaskDisabled}
-							lastApiReqTotalTokens={lastApiReqTotalTokens}
-							onCompactTask={onCompactTask}
-							onForceTruncateTask={onForceTruncateTask}
-							taskId={taskId}
-							tokensIn={tokensIn}
-							tokensOut={tokensOut}
-							useAutoCondense={false} // Disable auto-condense configuration in UI for now
-						/>
-					</div>
-				)}
-			</div>
+                        <ContextWindow
+                            cacheReads={cacheReads}
+                            cacheWrites={cacheWrites}
+                            compactTaskDisabled={compactTaskDisabled}
+                            contextWindow={contextWindow}
+                            contextWindowIndicator={contextWindowIndicator}
+                            forceTruncateAvailable={forceTruncateAvailable}
+                            forceTruncateTaskDisabled={forceTruncateTaskDisabled}
+                            lastApiReqTotalTokens={lastApiReqTotalTokens}
+                            onCompactTask={onCompactTask}
+                            onForceTruncateTask={onForceTruncateTask}
+                            taskId={taskId}
+                            tokensIn={tokensIn}
+                            tokensOut={tokensOut}
+                            useAutoCondense={false} // Disable auto-condense configuration in UI for now
+                        />
+                    </div>
+                )}
+            </div>
 
-			{/* Display spawned sub-tasks */}
-			<SpawnedTasksBar />
+            {/* Display spawned sub-tasks */}
+            <SpawnedTasksBar />
 
-			{/* Display Focus Chain To-Do List */}
-			{focusChainSettings.enabled && (
-				<FocusChain
-					currentTaskItemId={taskId}
-					lastProgressMessageText={lastProgressMessageText}
-					showPlaceholderWhenEmpty={showFocusChainPlaceholder}
-				/>
-			)}
-		</div>
-	)
+            {/* Display Focus Chain To-Do List */}
+            {focusChainSettings.enabled && (
+                <FocusChain
+                    currentTaskItemId={taskId}
+                    lastProgressMessageText={lastProgressMessageText}
+                    showPlaceholderWhenEmpty={showFocusChainPlaceholder}
+                />
+            )}
+        </div>
+    )
 }
 
 export default TaskHeader

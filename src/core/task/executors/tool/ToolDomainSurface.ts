@@ -15,13 +15,13 @@
 export type SurfaceDenialReason = "subagent_execution" | "detached_domain"
 
 export class SurfaceDeniedError extends Error {
-	constructor(
-		readonly capability: string,
-		readonly reason: SurfaceDenialReason,
-	) {
-		super(`Tool domain surface denied '${capability}' (${reason})`)
-		this.name = "SurfaceDeniedError"
-	}
+    constructor(
+        readonly capability: string,
+        readonly reason: SurfaceDenialReason,
+    ) {
+        super(`Tool domain surface denied '${capability}' (${reason})`)
+        this.name = "SurfaceDeniedError"
+    }
 }
 
 /**
@@ -32,19 +32,19 @@ export class SurfaceDeniedError extends Error {
  * reviewable decision, whereas inheriting a callback map silently was not.
  */
 export interface UserFacingSurface {
-	readonly kind: "user_facing"
+    readonly kind: "user_facing"
 
-	/** Ask the user something and resolve with their response. */
-	ask(type: string, payload: string | undefined, partial: boolean | undefined): Promise<unknown>
+    /** Ask the user something and resolve with their response. */
+    ask(type: string, payload: string | undefined, partial: boolean | undefined): Promise<unknown>
 
-	/** Emit a message row into the owning conversation. */
-	say(type: string, payload: string | undefined, partial: boolean | undefined): Promise<void>
+    /** Emit a message row into the owning conversation. */
+    say(type: string, payload: string | undefined, partial: boolean | undefined): Promise<void>
 
-	/** Open a durable interaction, such as a tool approval. */
-	openInteraction(request: unknown): Promise<unknown>
+    /** Open a durable interaction, such as a tool approval. */
+    openInteraction(request: unknown): Promise<unknown>
 
-	/** Access the editor-visible diff surface. */
-	diff(): unknown
+    /** Access the editor-visible diff surface. */
+    diff(): unknown
 }
 
 /**
@@ -55,19 +55,19 @@ export interface UserFacingSurface {
  * output lands somewhere it does not belong.
  */
 export interface DeniedSurface {
-	readonly kind: "denied"
-	readonly reason: SurfaceDenialReason
+    readonly kind: "denied"
+    readonly reason: SurfaceDenialReason
 }
 
 export type ToolDomainSurface = UserFacingSurface | DeniedSurface
 
 export function createDeniedSurface(reason: SurfaceDenialReason): DeniedSurface {
-	return { kind: "denied", reason }
+    return { kind: "denied", reason }
 }
 
 /** Narrow a surface to its user-facing form, or undefined when denied. */
 export function asUserFacing(surface: ToolDomainSurface): UserFacingSurface | undefined {
-	return surface.kind === "user_facing" ? surface : undefined
+    return surface.kind === "user_facing" ? surface : undefined
 }
 
 /**
@@ -77,12 +77,12 @@ export function asUserFacing(surface: ToolDomainSurface): UserFacingSurface | un
  * that can degrade gracefully use {@link asUserFacing} and check for undefined.
  */
 export function requireUserFacing(surface: ToolDomainSurface, capability: string): UserFacingSurface {
-	if (surface.kind === "denied") {
-		throw new SurfaceDeniedError(capability, surface.reason)
-	}
-	return surface
+    if (surface.kind === "denied") {
+        throw new SurfaceDeniedError(capability, surface.reason)
+    }
+    return surface
 }
 
 export function isDenied(surface: ToolDomainSurface): surface is DeniedSurface {
-	return surface.kind === "denied"
+    return surface.kind === "denied"
 }

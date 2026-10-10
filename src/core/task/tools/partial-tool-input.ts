@@ -1,16 +1,16 @@
 const ESCAPE_MAP: Record<string, string> = {
-	"\\n": "\n",
-	"\\t": "\t",
-	"\\r": "\r",
-	'\\"': '"',
-	"\\\\": "\\",
+    "\\n": "\n",
+    "\\t": "\t",
+    "\\r": "\r",
+    '\\"': '"',
+    "\\\\": "\\",
 }
 
 const ESCAPE_PATTERN = /\\[ntr"\\]/g
 const STREAMING_TEXT_FIELDS = ["context", "content", "diff", "response", "result"] as const
 
 function unescapeJsonString(value: string): string {
-	return value.replace(ESCAPE_PATTERN, (match) => ESCAPE_MAP[match] ?? match)
+    return value.replace(ESCAPE_PATTERN, (match) => ESCAPE_MAP[match] ?? match)
 }
 
 /**
@@ -21,20 +21,20 @@ function unescapeJsonString(value: string): string {
  * closing quote so Q&A, reports, completion results and file edits stay live.
  */
 export function parsePartialToolInput(value: unknown): Readonly<Record<string, unknown>> {
-	if (value && typeof value === "object" && !Array.isArray(value)) return value as Readonly<Record<string, unknown>>
-	if (typeof value !== "string" || value.length === 0) return {}
-	try {
-		const parsed = JSON.parse(value) as unknown
-		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Readonly<Record<string, unknown>>) : {}
-	} catch {
-		const result: Record<string, unknown> = {}
-		const closedPattern = /"(\w+)":\s*"((?:[^"\\]|\\.)*)"/g
-		for (const match of value.matchAll(closedPattern)) result[match[1]] = unescapeJsonString(match[2])
-		for (const field of STREAMING_TEXT_FIELDS) {
-			if (result[field] !== undefined) continue
-			const match = value.match(new RegExp(`"${field}":\\s*"((?:[^"\\\\]|\\\\.)*)`))
-			if (match) result[field] = unescapeJsonString(match[1])
-		}
-		return result
-	}
+    if (value && typeof value === "object" && !Array.isArray(value)) return value as Readonly<Record<string, unknown>>
+    if (typeof value !== "string" || value.length === 0) return {}
+    try {
+        const parsed = JSON.parse(value) as unknown
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Readonly<Record<string, unknown>>) : {}
+    } catch {
+        const result: Record<string, unknown> = {}
+        const closedPattern = /"(\w+)":\s*"((?:[^"\\]|\\.)*)"/g
+        for (const match of value.matchAll(closedPattern)) result[match[1]] = unescapeJsonString(match[2])
+        for (const field of STREAMING_TEXT_FIELDS) {
+            if (result[field] !== undefined) continue
+            const match = value.match(new RegExp(`"${field}":\\s*"((?:[^"\\\\]|\\\\.)*)`))
+            if (match) result[field] = unescapeJsonString(match[1])
+        }
+        return result
+    }
 }

@@ -2,7 +2,7 @@ import type { ProviderRequestScope } from "../executors/provider/service/Provide
 
 /** Reads the handler and Mode one compaction run must be sent under. */
 export interface CompactionRequestScopeReader {
-	resolve(compactionId: string): ProviderRequestScope | undefined
+    resolve(compactionId: string): ProviderRequestScope | undefined
 }
 
 /**
@@ -15,17 +15,17 @@ export interface CompactionRequestScopeReader {
  * exists either, and a run without a binding uses the task's current handler.
  */
 export class CompactionRequestScopes implements CompactionRequestScopeReader {
-	private readonly scopes = new Map<string, ProviderRequestScope>()
+    private readonly scopes = new Map<string, ProviderRequestScope>()
 
-	bind(compactionId: string, scope: ProviderRequestScope): void {
-		this.scopes.set(compactionId, scope)
-	}
+    bind(compactionId: string, scope: ProviderRequestScope): void {
+        this.scopes.set(compactionId, scope)
+    }
 
-	resolve(compactionId: string): ProviderRequestScope | undefined {
-		return this.scopes.get(compactionId)
-	}
+    resolve(compactionId: string): ProviderRequestScope | undefined {
+        return this.scopes.get(compactionId)
+    }
 
-	release(compactionId: string): void {
-		this.scopes.delete(compactionId)
-	}
+    release(compactionId: string): void {
+        this.scopes.delete(compactionId)
+    }
 }

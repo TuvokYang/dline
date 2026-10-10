@@ -19,22 +19,22 @@ import { z } from "zod/v4"
 
 const markerPath = process.env.DLINE_E2E_MCP_MARKER
 if (!markerPath || !existsSync(markerPath)) {
-	console.error("MCP gateway not ready yet")
-	process.exit(1)
+    console.error("MCP gateway not ready yet")
+    process.exit(1)
 }
 
 const server = new McpServer({
-	name: "dline-e2e-docker-gateway",
-	version: "1.0.0",
+    name: "dline-e2e-docker-gateway",
+    version: "1.0.0",
 })
 
 server.registerTool(
-	"e2e_gateway_echo",
-	{
-		description: "E2E stand-in for a tool exposed by the Docker MCP gateway",
-		inputSchema: { value: z.string() },
-	},
-	async ({ value }) => ({ content: [{ type: "text", text: value }] }),
+    "e2e_gateway_echo",
+    {
+        description: "E2E stand-in for a tool exposed by the Docker MCP gateway",
+        inputSchema: { value: z.string() },
+    },
+    async ({ value }) => ({ content: [{ type: "text", text: value }] }),
 )
 
 await server.connect(new StdioServerTransport())

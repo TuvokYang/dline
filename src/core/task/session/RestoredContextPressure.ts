@@ -1,13 +1,13 @@
 import {
-	collectContextWindowRequestPressures,
-	getLatestReliableContextWindowTokens,
+    collectContextWindowRequestPressures,
+    getLatestReliableContextWindowTokens,
 } from "@core/context/context-management/context-pressure"
 import type { UiMessage } from "@shared/ExtensionMessage"
 
 /** Context pressure as the compaction barrier observes it. */
 export interface RestoredPressure {
-	readonly contextTokens: number
-	readonly compactTriggerTokens: number
+    readonly contextTokens: number
+    readonly compactTriggerTokens: number
 }
 
 /**
@@ -24,10 +24,10 @@ export interface RestoredPressure {
  * pressure must not be read as a full window.
  */
 export function readRestoredContextPressure(
-	messages: readonly UiMessage[],
-	compactTriggerTokens: number,
+    messages: readonly UiMessage[],
+    compactTriggerTokens: number,
 ): RestoredPressure | undefined {
-	const contextTokens = getLatestReliableContextWindowTokens(collectContextWindowRequestPressures(messages))
-	if (contextTokens <= 0 || compactTriggerTokens <= 0) return undefined
-	return { contextTokens, compactTriggerTokens }
+    const contextTokens = getLatestReliableContextWindowTokens(collectContextWindowRequestPressures(messages))
+    if (contextTokens <= 0 || compactTriggerTokens <= 0) return undefined
+    return { contextTokens, compactTriggerTokens }
 }

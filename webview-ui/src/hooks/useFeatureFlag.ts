@@ -9,20 +9,20 @@ import { useExtensionState } from "../context/ExtensionStateContext"
  * In self-hosted mode, always returns false since PostHog is disabled.
  */
 export const useHasFeatureFlag = (flagName: string): boolean => {
-	const { environment } = useExtensionState()
-	// Treat unknown/undefined/null/empty environment as selfHosted (safety fallback)
-	const isSelfHostedOrUnknown = !environment || environment === "selfHosted"
+    const { environment } = useExtensionState()
+    // Treat unknown/undefined/null/empty environment as selfHosted (safety fallback)
+    const isSelfHostedOrUnknown = !environment || environment === "selfHosted"
 
-	// Note: We must call useFeatureFlagEnabled unconditionally due to React's Rules of Hooks.
-	// In selfHosted mode, PostHog isn't initialized so this returns undefined (harmless no-op).
-	const flagEnabled = useFeatureFlagEnabled(isSelfHostedOrUnknown ? "" : flagName)
+    // Note: We must call useFeatureFlagEnabled unconditionally due to React's Rules of Hooks.
+    // In selfHosted mode, PostHog isn't initialized so this returns undefined (harmless no-op).
+    const flagEnabled = useFeatureFlagEnabled(isSelfHostedOrUnknown ? "" : flagName)
 
-	if (isSelfHostedOrUnknown) {
-		return false
-	}
+    if (isSelfHostedOrUnknown) {
+        return false
+    }
 
-	if (flagEnabled && typeof flagEnabled === "boolean") {
-		return flagEnabled
-	}
-	return false
+    if (flagEnabled && typeof flagEnabled === "boolean") {
+        return flagEnabled
+    }
+    return false
 }

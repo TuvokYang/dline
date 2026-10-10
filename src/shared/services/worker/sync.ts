@@ -30,7 +30,7 @@ let syncQueueInstance: SyncQueue | null = null
  * Get the sync queue file path.
  */
 function getSyncQueuePath(): string {
-	return path.join(getDlineCacheDir(), "sync-queue.json")
+    return path.join(getDlineCacheDir(), "sync-queue.json")
 }
 
 /**
@@ -38,15 +38,15 @@ function getSyncQueuePath(): string {
  * Returns null if S3 storage is not configured.
  */
 function getSyncQueue(): SyncQueue | null {
-	if (!blobStorage.isReady()) {
-		return null
-	}
+    if (!blobStorage.isReady()) {
+        return null
+    }
 
-	if (!syncQueueInstance) {
-		syncQueueInstance = SyncQueue.getInstance(getSyncQueuePath())
-	}
+    if (!syncQueueInstance) {
+        syncQueueInstance = SyncQueue.getInstance(getSyncQueuePath())
+    }
 
-	return syncQueueInstance
+    return syncQueueInstance
 }
 
 /**
@@ -57,29 +57,29 @@ function getSyncQueue(): SyncQueue | null {
  * @returns The SyncWorker instance, or null if S3 is not configured
  */
 function init(options?: SyncWorkerOptions): SyncWorker | null {
-	if (!options?.userDistinctId) {
-		return null
-	}
+    if (!options?.userDistinctId) {
+        return null
+    }
 
-	// Initialize blob storage with the provided settings
-	blobStorage.init(options)
-	if (!blobStorage.isReady()) {
-		return null
-	}
+    // Initialize blob storage with the provided settings
+    blobStorage.init(options)
+    if (!blobStorage.isReady()) {
+        return null
+    }
 
-	const queue = getSyncQueue()
-	if (!queue) {
-		return null
-	}
+    const queue = getSyncQueue()
+    if (!queue) {
+        return null
+    }
 
-	const worker = initSyncWorker(queue, options)
-	worker.start()
+    const worker = initSyncWorker(queue, options)
+    worker.start()
 
-	if (options.backfillEnabled) {
-		backfillTasks().catch((err) => Logger.error("Backfill tasks failed:", err))
-	}
+    if (options.backfillEnabled) {
+        backfillTasks().catch((err) => Logger.error("Backfill tasks failed:", err))
+    }
 
-	return worker
+    return worker
 }
 
 /**
@@ -87,12 +87,12 @@ function init(options?: SyncWorkerOptions): SyncWorker | null {
  * Should be called during extension deactivation.
  */
 async function dispose(): Promise<void> {
-	await disposeSyncWorker()
-	if (syncQueueInstance) {
-		syncQueueInstance.close()
-		syncQueueInstance = null
-	}
-	SyncQueue.reset()
+    await disposeSyncWorker()
+    if (syncQueueInstance) {
+        syncQueueInstance.close()
+        syncQueueInstance = null
+    }
+    SyncQueue.reset()
 }
 
 /**
@@ -104,23 +104,23 @@ async function dispose(): Promise<void> {
  * @param data Data to sync
  */
 function enqueue(taskId: string, key: string, data: string): void {
-	try {
-		const queue = getSyncQueue()
-		if (!queue || !data || !key) {
-			return
-		}
+    try {
+        const queue = getSyncQueue()
+        if (!queue || !data || !key) {
+            return
+        }
 
-		queue.enqueue(taskId, key, data)
-	} catch (err) {
-		Logger.error(`Failed to enqueue ${taskId}/${key} for sync:`, err)
-	}
+        queue.enqueue(taskId, key, data)
+    } catch (err) {
+        Logger.error(`Failed to enqueue ${taskId}/${key} for sync:`, err)
+    }
 }
 
 export function syncWorker() {
-	return {
-		init,
-		dispose,
-		getSyncQueue,
-		enqueue,
-	}
+    return {
+        init,
+        dispose,
+        getSyncQueue,
+        enqueue,
+    }
 }

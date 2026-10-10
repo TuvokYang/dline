@@ -14,26 +14,26 @@ let oauthStrategy: ClaudeCodeOAuthStrategy | undefined
  * and, with rotation, invalidate one another.
  */
 export function getClaudeCodeProfileAuthRepository(): ClaudeCodeProfileAuthRepository {
-	authRepository ??= new ClaudeCodeProfileAuthRepository()
-	return authRepository
+    authRepository ??= new ClaudeCodeProfileAuthRepository()
+    return authRepository
 }
 
 export function getClaudeCodeOAuthStrategy(): ClaudeCodeOAuthStrategy {
-	oauthStrategy ??= new ClaudeCodeOAuthStrategy()
-	return oauthStrategy
+    oauthStrategy ??= new ClaudeCodeOAuthStrategy()
+    return oauthStrategy
 }
 
 export function getClaudeCodeProfileSessionRegistry(): ClaudeCodeProfileSessionRegistry {
-	sessionRegistry ??= new ClaudeCodeProfileSessionRegistry({
-		repository: getClaudeCodeProfileAuthRepository(),
-		strategy: getClaudeCodeOAuthStrategy(),
-	})
-	return sessionRegistry
+    sessionRegistry ??= new ClaudeCodeProfileSessionRegistry({
+        repository: getClaudeCodeProfileAuthRepository(),
+        strategy: getClaudeCodeOAuthStrategy(),
+    })
+    return sessionRegistry
 }
 
 /** Resets the shared composition. Intended for tests that isolate storage roots. */
 export function resetClaudeCodeOAuthRegistryForTesting(): void {
-	sessionRegistry = undefined
-	authRepository = undefined
-	oauthStrategy = undefined
+    sessionRegistry = undefined
+    authRepository = undefined
+    oauthStrategy = undefined
 }

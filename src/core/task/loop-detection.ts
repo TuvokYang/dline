@@ -35,16 +35,16 @@ const IGNORED_PARAMS = new Set(["task_progress"])
  * string-valued, no nesting — so the replacer array is sufficient.
  */
 export function toolCallSignature(params: Partial<Record<string, string>> | undefined): string {
-	if (!params) return "{}"
-	const keys = Object.keys(params)
-		.filter((k) => !IGNORED_PARAMS.has(k))
-		.sort()
-	return JSON.stringify(params, keys)
+    if (!params) return "{}"
+    const keys = Object.keys(params)
+        .filter((k) => !IGNORED_PARAMS.has(k))
+        .sort()
+    return JSON.stringify(params, keys)
 }
 
 interface LoopDetectionResult {
-	softWarning: boolean
-	hardEscalation: boolean
+    softWarning: boolean
+    hardEscalation: boolean
 }
 
 /**
@@ -55,16 +55,16 @@ interface LoopDetectionResult {
  * counter, and returns which thresholds (if any) were crossed.
  */
 export function checkRepeatedToolCall(state: ToolAttemptState, toolName: string, currentSignature: string): LoopDetectionResult {
-	if (toolName === state.lastToolName && currentSignature === state.lastToolParams) {
-		state.consecutiveIdenticalToolCount++
-	} else {
-		state.consecutiveIdenticalToolCount = 1
-	}
+    if (toolName === state.lastToolName && currentSignature === state.lastToolParams) {
+        state.consecutiveIdenticalToolCount++
+    } else {
+        state.consecutiveIdenticalToolCount = 1
+    }
 
-	return {
-		softWarning: state.consecutiveIdenticalToolCount === LOOP_DETECTION_SOFT_THRESHOLD,
-		hardEscalation: state.consecutiveIdenticalToolCount === LOOP_DETECTION_HARD_THRESHOLD,
-	}
+    return {
+        softWarning: state.consecutiveIdenticalToolCount === LOOP_DETECTION_SOFT_THRESHOLD,
+        hardEscalation: state.consecutiveIdenticalToolCount === LOOP_DETECTION_HARD_THRESHOLD,
+    }
 }
 
 /**
@@ -88,8 +88,8 @@ export function checkRepeatedToolCall(state: ToolAttemptState, toolName: string,
  * @returns Which thresholds this call crossed.
  */
 export function recordToolCall(state: ToolAttemptState, toolName: string, currentSignature: string): LoopDetectionResult {
-	const result = checkRepeatedToolCall(state, toolName, currentSignature)
-	state.lastToolName = toolName
-	state.lastToolParams = currentSignature
-	return result
+    const result = checkRepeatedToolCall(state, toolName, currentSignature)
+    state.lastToolName = toolName
+    state.lastToolParams = currentSignature
+    return result
 }

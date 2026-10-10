@@ -1,691 +1,691 @@
 {
-	"name": "dline",
-	"displayName": "Dline",
-	"description": "Autonomous coding agent right in your IDE, capable of creating/editing files, running commands, using the browser, and more with your permission every step of the way.",
-	"version": "0.11.0",
-	"icon": "assets/icons/icon.png",
-	"engines": {
-		"vscode": "^1.134.0"
-	},
-	"author": {
-		"name": "Tuvokyang"
-	},
-	"license": "Apache-2.0",
-	"publisher": "tuvokyang",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/TuvokYang/Dline"
-	},
-	"homepage": "https://github.com/TuvokYang/Dline",
-	"categories": [
-		"AI",
-		"Chat",
-		"Programming Languages",
-		"Education",
-		"Snippets",
-		"Testing"
-	],
-	"keywords": [
-		"dline",
-		"dev",
-		"mcp",
-		"openrouter",
-		"coding",
-		"agent",
-		"autonomous",
-		"chatgpt",
-		"sonnet",
-		"ai",
-		"llama"
-	],
-	"activationEvents": [
-		"onLanguage",
-		"onUri",
-		"onStartupFinished",
-		"workspaceContains:evals.env"
-	],
-	"imports": {
-		"@/*": "./src/*",
-		"@api/*": "./src/core/api/*",
-		"@core/*": "./src/core/*",
-		"@generated/*": "./src/generated/*",
-		"@hosts/*": "./src/hosts/*",
-		"@integrations/*": "./src/integrations/*",
-		"@packages/*": "./src/packages/*",
-		"@services/*": "./src/services/*",
-		"@shared/*": "./src/shared/*",
-		"@utils/*": "./src/utils/*"
-	},
-	"main": "./dist/extension.js",
-	"contributes": {
-		"icons": {
-			"dline-icon": {
-				"description": "dline",
-				"default": {
-					"fontPath": "assets/icons/dline-icon.woff",
-					"fontCharacter": "\\e900"
-				}
-			}
-		},
-		"walkthroughs": [
-			{
-				"id": "DlineWalkthrough",
-				"title": "Meet Dline, your new coding partner",
-				"description": "Dline codes like a developer because it thinks like one. Here are 5 ways to put it to work:",
-				"steps": [
-					{
-						"id": "welcome",
-						"title": "Start with a Goal, Not Just a Prompt",
-						"description": "Tell Dline what you want to achieve. It plans, asks, and then codes, like a true partner.",
-						"media": {
-							"markdown": "walkthrough/step1.md"
-						}
-					},
-					{
-						"id": "learn",
-						"title": "Let Dline Learn Your Codebase",
-						"description": "Point Dline to your project. It builds understanding to make smart, context-aware changes.",
-						"media": {
-							"markdown": "walkthrough/step2.md"
-						}
-					},
-					{
-						"id": "advanced-features",
-						"title": "Always Use the Best AI Models",
-						"description": "Dline empowers you with State-of-the-Art AI, connecting to top models (Anthropic, Gemini, OpenAI & more).",
-						"media": {
-							"markdown": "walkthrough/step3.md"
-						}
-					},
-					{
-						"id": "mcp",
-						"title": "Extend with Powerful Tools (MCP)",
-						"description": "Connect to databases, APIs, or discover new capabilities in the MCP Marketplace.",
-						"media": {
-							"markdown": "walkthrough/step4.md"
-						}
-					},
-					{
-						"id": "getting-started",
-						"title": "You're Always in Control",
-						"description": "Review Dline's plans and diffs. Approve changes before they happen. No surprises.",
-						"media": {
-							"markdown": "walkthrough/step5.md"
-						},
-						"content": {
-							"path": "walkthrough/step5.md"
-						}
-					}
-				]
-			}
-		],
-		"viewsContainers": {
-			"activitybar": [
-				{
-					"id": "dline-ActivityBar",
-					"title": "Dline",
-					"icon": "assets/icons/icon.svg"
-				}
-			]
-		},
-		"views": {
-			"dline-ActivityBar": [
-				{
-					"type": "webview",
-					"id": "dline.SidebarProvider",
-					"name": "",
-					"icon": "assets/icons/icon.svg"
-				}
-			]
-		},
-		"commands": [
-			{
-				"command": "dline.plusButtonClicked",
-				"title": "New Task",
-				"icon": "$(add)"
-			},
-			{
-				"command": "dline.mcpButtonClicked",
-				"title": "MCP Servers",
-				"icon": "$(server)"
-			},
-			{
-				"command": "dline.historyButtonClicked",
-				"title": "History",
-				"icon": "$(history)"
-			},
-			{
-				"command": "dline.accountButtonClicked",
-				"title": "Account",
-				"icon": "$(account)"
-			},
-			{
-				"command": "dline.settingsButtonClicked",
-				"title": "Settings",
-				"icon": "$(settings-gear)"
-			},
-			{
-				"command": "dline.dev.createTestTasks",
-				"title": "Create Test Tasks",
-				"category": "Dline",
-				"when": "dline.isDevMode"
-			},
-			{
-				"command": "dline.dev.expireMcpOAuthTokens",
-				"title": "Expire MCP OAuth Tokens (for testing)",
-				"category": "Dline",
-				"when": "dline.isDevMode"
-			},
-			{
-				"command": "dline.addToChat",
-				"title": "Add to Dline",
-				"category": "Dline"
-			},
-			{
-				"command": "dline.addTerminalOutputToChat",
-				"title": "Add to Dline",
-				"category": "Dline"
-			},
-			{
-				"command": "dline.focusChatInput",
-				"title": "Jump to Chat Input",
-				"category": "Dline"
-			},
-			{
-				"command": "dline.generateGitCommitMessage",
-				"title": "Generate Commit Message with Dline",
-				"category": "Dline",
-				"icon": "$(dline-icon)"
-			},
-			{
-				"command": "dline.abortGitCommitMessage",
-				"title": "Generate Commit Message with Dline - Stop",
-				"category": "Dline",
-				"icon": "$(debug-stop)"
-			},
-			{
-				"command": "dline.explainCode",
-				"title": "Explain with Dline",
-				"category": "Dline"
-			},
-			{
-				"command": "dline.improveCode",
-				"title": "Improve with Dline",
-				"category": "Dline"
-			},
-			{
-				"command": "dline.jupyterGenerateCell",
-				"title": "Generate Jupyter Cell with Dline",
-				"category": "Dline",
-				"icon": "$(sparkle)"
-			},
-			{
-				"command": "dline.jupyterExplainCell",
-				"title": "Explain Jupyter Cell with Dline",
-				"category": "Dline",
-				"icon": "$(question)"
-			},
-			{
-				"command": "dline.jupyterImproveCell",
-				"title": "Improve Jupyter Cell with Dline",
-				"category": "Dline",
-				"icon": "$(lightbulb)"
-			},
-			{
-				"command": "dline.openWalkthrough",
-				"title": "Open Walkthrough",
-				"category": "Dline"
-			},
-			{
-				"command": "dline.reconstructTaskHistory",
-				"title": "Reconstruct Task History",
-				"category": "Dline"
-			},
-			{
-				"command": "dline.recoverUiMessages",
-				"title": "Recover UI Messages from API History",
-				"category": "Dline"
-			},
-			{
-				"command": "dline.reviewComment.reply",
-				"title": "Reply",
-				"category": "Dline",
-				"enablement": "!commentIsEmpty"
-			},
-			{
-				"command": "dline.reviewComment.addToChat",
-				"title": "Add to Dline Chat",
-				"category": "Dline",
-				"icon": "$(link-external)"
-			}
-		],
-		"keybindings": [
-			{
-				"command": "editor.action.submitComment",
-				"key": "enter",
-				"when": "commentEditorFocused && commentController == dline-ai-review && !commentIsEmpty"
-			},
-			{
-				"command": "dline.addToChat",
-				"key": "cmd+'",
-				"mac": "cmd+'",
-				"win": "ctrl+'",
-				"linux": "ctrl+'",
-				"when": "editorHasSelection"
-			},
-			{
-				"command": "dline.generateGitCommitMessage",
-				"key": "cmd+g",
-				"mac": "cmd+g",
-				"win": "ctrl+g",
-				"linux": "ctrl+g",
-				"when": "config.git.enabled && scmProvider == git"
-			},
-			{
-				"command": "dline.focusChatInput",
-				"key": "cmd+'",
-				"mac": "cmd+'",
-				"win": "ctrl+'",
-				"linux": "ctrl+'",
-				"when": "!editorHasSelection"
-			}
-		],
-		"menus": {
-			"view/title": [
-				{
-					"command": "dline.plusButtonClicked",
-					"group": "navigation@1",
-					"when": "view == dline.SidebarProvider"
-				},
-				{
-					"command": "dline.mcpButtonClicked",
-					"group": "navigation@2",
-					"when": "view == dline.SidebarProvider"
-				},
-				{
-					"command": "dline.historyButtonClicked",
-					"group": "navigation@3",
-					"when": "view == dline.SidebarProvider"
-				},
-				{
-					"command": "dline.accountButtonClicked",
-					"group": "navigation@5",
-					"when": "view == dline.SidebarProvider"
-				},
-				{
-					"command": "dline.settingsButtonClicked",
-					"group": "navigation@6",
-					"when": "view == dline.SidebarProvider"
-				}
-			],
-			"editor/context": [
-				{
-					"command": "dline.addToChat",
-					"group": "navigation",
-					"when": "editorHasSelection"
-				}
-			],
-			"terminal/context": [
-				{
-					"command": "dline.addTerminalOutputToChat",
-					"group": "navigation"
-				}
-			],
-			"scm/title": [
-				{
-					"command": "dline.generateGitCommitMessage",
-					"group": "navigation",
-					"when": "config.git.enabled && scmProvider == git && !dline.isGeneratingCommit"
-				},
-				{
-					"command": "dline.abortGitCommitMessage",
-					"group": "navigation",
-					"when": "config.git.enabled && scmProvider == git && dline.isGeneratingCommit"
-				}
-			],
-			"notebook/toolbar": [
-				{
-					"command": "dline.jupyterGenerateCell",
-					"group": "navigation/add@1",
-					"when": "notebookType == 'jupyter-notebook'"
-				}
-			],
-			"notebook/cell/title": [
-				{
-					"command": "dline.jupyterExplainCell",
-					"group": "inline@1",
-					"when": "notebookType == 'jupyter-notebook'"
-				},
-				{
-					"command": "dline.jupyterImproveCell",
-					"group": "inline@2",
-					"when": "notebookType == 'jupyter-notebook'"
-				}
-			],
-			"commandPalette": [
-				{
-					"command": "dline.generateGitCommitMessage",
-					"when": "config.git.enabled && !dline.isGeneratingCommit"
-				},
-				{
-					"command": "dline.abortGitCommitMessage",
-					"when": "config.git.enabled && dline.isGeneratingCommit"
-				},
-				{
-					"command": "dline.reviewComment.reply",
-					"when": "false"
-				}
-			],
-			"comments/commentThread/context": [
-				{
-					"command": "dline.reviewComment.reply",
-					"group": "inline",
-					"when": "commentController == dline-ai-review"
-				}
-			],
-			"comments/commentThread/title": [
-				{
-					"command": "dline.reviewComment.addToChat",
-					"group": "inline",
-					"when": "commentController == dline-ai-review"
-				}
-			]
-		},
-		"configuration": {
-			"title": "Dline",
-			"properties": {}
-		}
-	},
-	"scripts": {
-		"vscode:prepublish": "npm run package",
-		"build:dev": "node esbuild.mjs",
-		"compile": "npm run check-types && npm run lint && node esbuild.mjs",
-		"compile-standalone": "npm run check-types && npm run lint && node esbuild.mjs --standalone",
-		"test:install": "bash scripts/test-install.sh",
-		"postcompile-standalone": "node scripts/package-standalone.mjs",
-		"dev": "npm run protos && npm run watch",
-		"watch": "npx npm-run-all -p watch:*",
-		"watch:esbuild": "node esbuild.mjs --watch",
-		"watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-		"package": "npm run check-types && npm run build:webview && npm run lint && node esbuild.mjs --production",
-		"vsix": "node scripts/package-vsix.mjs",
-		"vsix:dev": "node scripts/package-dev.mjs",
-		"protos": "node scripts/build-proto.mjs",
-		"protos-python": "node scripts/build-python-proto.mjs",
-		"download-ripgrep": "node scripts/download-ripgrep.mjs",
-		"postprotos": "biome format src/shared/proto src/core/controller src/hosts/ webview-ui/src/services src/generated --write --no-errors-on-unmatched",
-		"clean:build": "rimraf dist dist-standalone webview-ui/build src/generated out/",
-		"clean:deps": "rimraf node_modules webview-ui/node_modules",
-		"clean:all": "npm run clean:build && npm run clean:deps",
-		"compile-tests": "node ./scripts/build-tests.js",
-		"watch-tests": "tsc -p . -w --outDir out --noEmit false",
-		"test:run": "vitest run",
-		"test:smoke": "vitest run --config vitest.smoke.config.ts",
-		"check-types": "npm run protos && npx tsc --noEmit && npx tsc --noEmit -p webview-ui/tsconfig.app.json",
-		"lint": "biome lint --no-errors-on-unmatched --files-ignore-unknown=true --diagnostic-level=error && npm run lint:proto",
-		"lint:proto": "node scripts/proto-lint.mjs",
-		"format": "biome format --changed --no-errors-on-unmatched --files-ignore-unknown=true --diagnostic-level=error",
-		"format:fix": "biome check --changed --no-errors-on-unmatched --files-ignore-unknown=true --write",
-		"fix:all": "biome check --no-errors-on-unmatched --files-ignore-unknown=true --write --diagnostic-level=error --unsafe",
-		"ci:check-all": "npx npm-run-all -p check-types lint format",
-		"ci:build": "npm run protos && npm run build:webview && node esbuild.mjs && npm run compile-tests",
-		"pretest": "npm run protos",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"vitest:ui:server": "node scripts/vitest-ui/server.mjs",
-		"vitest:ui": "node scripts/vitest-ui/cli.mjs",
-		"vitest:ui:status": "node scripts/vitest-ui/cli.mjs status",
-		"vitest:ui:errors": "node scripts/vitest-ui/cli.mjs errors --filter fail",
-		"vitest:ui:mcp": "node scripts/vitest-ui/mcp-server.mjs",
-		"test:snapshot": "cross-env UPDATE_NEW_PROMPT_SNAPSHOTS=true UPDATE_SNAPSHOTS=true vitest run src/core/prompts/system-prompt/__tests__/profile-matrix-snapshot.test.ts src/core/prompts/system-prompt/__tests__/command-profile-snapshot.test.ts src/core/task/focus-chain/__tests__/prompts-snapshot.test.ts",
-		"test:integration": "vscode-test",
-		"test:unit": "vitest run --config vitest.config.ts",
-		"test:coverage": "vscode-test --coverage",
-		"test:sca-server": "npx tsx watch scripts/test-standalone-core-api-server.ts",
-		"test:tp-orchestrator": "npx tsx scripts/testing-platform-orchestrator.ts",
-		"e2e:lock:status": "node scripts/with-dist-lock.mjs --status",
-		"e2e:prepare": "node src/test/e2e/utils/build.mjs",
-		"e2e:bundle": "node scripts/build-proto.mjs && npm run build:webview && node esbuild.mjs",
-		"pree2e": "node scripts/with-dist-lock.mjs --exclusive -- npm run e2e:bundle",
-		"e2e": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.config.ts",
-		"pree2e:smoke": "npm run pree2e",
-		"e2e:smoke": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.work.config.ts --project=\"work smoke\"",
-		"pree2e:work": "npm run pree2e",
-		"e2e:work": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.work.config.ts",
-		"pree2e:functional": "npm run pree2e",
-		"e2e:functional": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.functional.config.ts",
-		"pree2e:dev": "npm run pree2e",
-		"e2e:dev": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.dev.config.ts",
-		"e2e:pressure": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.pressure.config.ts",
-		"pree2e:demo": "npm run pree2e",
-		"e2e:demo": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.demo.config.ts",
-		"demo:media": "node scripts/demo-media.mjs",
-		"icons": "node scripts/generate-brand-icons.mjs",
-		"test:e2e:build": "node scripts/with-dist-lock.mjs --exclusive -- vsce package --no-dependencies --allow-package-secrets sendgrid --out dist/e2e.vsix",
-		"test:e2e": "npm run test:e2e:build && npm run e2e:prepare && node scripts/with-dist-lock.mjs --shared -- playwright test",
-		"test:e2e:optimal": "npm run test:e2e:build && npm run e2e:prepare && node scripts/with-dist-lock.mjs --shared -- playwright test",
-		"test:e2e:work": "npm run e2e:prepare && npm run e2e:work",
-		"test:e2e:functional": "npm run e2e:prepare && npm run e2e:functional",
-		"test:e2e:pressure": "npm run test:e2e:build && npm run e2e:prepare && node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.pressure.config.ts",
-		"test:e2e:ui": "npx tsx scripts/interactive-playwright.ts",
-		"install:all": "npm install && cd webview-ui && npm install",
-		"dev:webview": "cd webview-ui && npm run dev",
-		"build:webview": "cd webview-ui && npm run build",
-		"test:webview": "cd webview-ui && npm run test",
-		"publish:marketplace": "node scripts/publish-marketplace.mjs",
-		"publish:marketplace:prerelease": "node scripts/publish-marketplace.mjs --pre-release",
-		"publish:marketplace:insiders": "node ./scripts/publish-insiders.mjs",
-		"prepare": "npx husky",
-		"docs": "cd docs && npm run dev",
-		"docs:check": "cd docs && npm run check",
-		"docs:verify": "cd docs && npm run verify",
-		"report-issue": "node scripts/report-issue.js",
-		"storybook": "cd webview-ui && npm run storybook",
-		"eval:smoke:run": "npx tsx evals/smoke-tests/run-smoke-tests.ts"
-	},
-	"lint-staged": {
-		"src/shared/storage/state-keys.ts": [
-			"node scripts/generate-state-proto.mjs",
-			"git add proto/dline/state.proto"
-		],
-		"*": [
-			"biome check --write --staged --no-errors-on-unmatched --files-ignore-unknown=true"
-		]
-	},
-	"devDependencies": {
-		"@biomejs/biome": "^2.3.14",
-		"@bufbuild/buf": "^1.54.0",
-		"@microsoft/tui-test": "0.0.1",
-		"@playwright/test": "^1.62.0",
-		"@types/better-sqlite3": "^7.6.13",
-		"@types/chai": "^5.0.1",
-		"@types/clone-deep": "^4.0.4",
-		"@types/diff": "^5.2.1",
-		"@types/get-folder-size": "^3.0.4",
-		"@types/js-yaml": "^4.0.9",
-		"@types/mocha": "^10.0.7",
-		"@types/node": "24.13.3",
-		"@types/pdf-parse": "^1.1.4",
-		"@types/picomatch": "^4.0.2",
-		"@types/proxyquire": "^1.3.31",
-		"@types/shell-quote": "^1.7.5",
-		"@types/should": "^11.2.0",
-		"@types/sinon": "^21.0.0",
-		"@types/turndown": "^5.0.5",
-		"@types/vscode": "^1.84.0",
-		"@vitest/coverage-v8": "^4.1.10",
-		"@vitest/ui": "^4.1.10",
-		"@vscode/test-cli": "^0.0.12",
-		"@vscode/test-electron": "^3.1.0",
-		"@vscode/vsce": "^3.9.2",
-		"c8": "^10.1.3",
-		"chai": "^4.3.10",
-		"chalk": "5.6.2",
-		"cross-env": "^10.1.0",
-		"dotenv": "^17.2.3",
-		"esbuild": "^0.25.0",
-		"husky": "^9.1.7",
-		"jsdom": "^30.0.1",
-		"lint-staged": "^16.1.0",
-		"minimatch": "^3.0.3",
-		"npm-run-all": "^4.1.5",
-		"nyc": "^17.1.0",
-		"playwright": "^1.62.0",
-		"prebuild-install": "^7.1.3",
-		"protoc": "^36.0.0",
-		"protoc-gen-ts": "^0.8.7",
-		"proxyquire": "^2.1.3",
-		"rimraf": "^6.0.1",
-		"sharp": "^0.35.3",
-		"should": "^13.2.3",
-		"sinon": "^21.0.3",
-		"svg2ttf": "^6.1.0",
-		"tree-kill": "^1.2.2",
-		"ts-node": "^10.9.2",
-		"ts-proto": "^2.6.1",
-		"tsconfig-paths": "^4.2.0",
-		"ttf2woff": "^3.0.0",
-		"typescript": "7.0.2",
-		"vite-plugin-checker": "^0.14.4",
-		"vitest": "^4.1.10"
-	},
-	"dependencies": {
-		"@anthropic-ai/sdk": "^0.126.0",
-		"@anthropic-ai/vertex-sdk": "^0.19.9",
-		"@aws-sdk/client-bedrock-runtime": "^3.922.0",
-		"@aws-sdk/credential-providers": "^3.922.0",
-		"@azure/identity": "^4.13.0",
-		"@bufbuild/protobuf": "^2.2.5",
-		"@google/genai": "^1.30.0",
-		"@grpc/grpc-js": "^1.9.15",
-		"@grpc/reflection": "^1.0.4",
-		"@mistralai/mistralai": "^1.5.0",
-		"@modelcontextprotocol/sdk": "^1.25.1",
-		"@opentelemetry/api": "^1.9.0",
-		"@opentelemetry/core": "^2.1.0",
-		"@opentelemetry/exporter-logs-otlp-grpc": "^0.56.0",
-		"@opentelemetry/exporter-logs-otlp-http": "^0.56.0",
-		"@opentelemetry/exporter-logs-otlp-proto": "^0.56.0",
-		"@opentelemetry/exporter-metrics-otlp-grpc": "^0.56.0",
-		"@opentelemetry/exporter-metrics-otlp-http": "^0.56.0",
-		"@opentelemetry/exporter-metrics-otlp-proto": "^0.56.0",
-		"@opentelemetry/exporter-prometheus": "^0.56.0",
-		"@opentelemetry/exporter-trace-otlp-http": "^0.56.0",
-		"@opentelemetry/instrumentation": "^0.205.0",
-		"@opentelemetry/instrumentation-http": "^0.205.0",
-		"@opentelemetry/resources": "^1.30.1",
-		"@opentelemetry/sdk-logs": "^0.56.0",
-		"@opentelemetry/sdk-metrics": "^1.30.1",
-		"@opentelemetry/sdk-node": "^0.56.0",
-		"@opentelemetry/sdk-trace-base": "^2.1.0",
-		"@opentelemetry/sdk-trace-node": "^1.30.1",
-		"@opentelemetry/semantic-conventions": "^1.37.0",
-		"@sap-ai-sdk/ai-api": "^2.7.0",
-		"@sap-ai-sdk/orchestration": "^2.7.0",
-		"@sap-cloud-sdk/connectivity": "^4.6.0",
-		"@streamparser/json": "^0.0.22",
-		"@tailwindcss/vite": "^4.1.14",
-		"@types/uuid": "^10.0.0",
-		"@vscode/codicons": "^0.0.36",
-		"archiver": "^7.0.1",
-		"aws4fetch": "^1.0.20",
-		"axios": "1.15.2",
-		"better-sqlite3": "^12.4.1",
-		"cheerio": "^1.0.0",
-		"chokidar": "^4.0.1",
-		"chrome-launcher": "^1.1.2",
-		"clone-deep": "^4.0.1",
-		"default-shell": "^2.2.0",
-		"diff": "^5.2.0",
-		"exceljs": "^4.4.0",
-		"execa": "^9.5.2",
-		"fast-deep-equal": "^3.1.3",
-		"fzf": "^0.5.2",
-		"get-folder-size": "^5.0.0",
-		"globby": "^14.0.2",
-		"grpc-health-check": "^2.0.2",
-		"iconv-lite": "^0.6.3",
-		"ignore": "^7.0.3",
-		"image-size": "^2.0.2",
-		"isbinaryfile": "^5.0.2",
-		"jschardet": "^3.1.4",
-		"json5": "^2.2.3",
-		"mammoth": "^1.11.0",
-		"nanoid": "^5.1.6",
-		"nice-grpc": "^2.1.12",
-		"node-fetch": "^3.3.2",
-		"node-machine-id": "^1.1.12",
-		"ollama": "^0.5.13",
-		"open": "^10.1.2",
-		"open-graph-scraper": "^6.9.0",
-		"openai": "^7.15.0",
-		"os-name": "^6.0.0",
-		"p-mutex": "^1.0.0",
-		"p-timeout": "^6.1.4",
-		"p-wait-for": "^5.0.2",
-		"pdf-parse": "^1.1.1",
-		"picomatch": "^4.0.3",
-		"posthog-node": "^5.8.0",
-		"puppeteer-chromium-resolver": "^23.0.0",
-		"puppeteer-core": "^23.4.0",
-		"reconnecting-eventsource": "^1.6.4",
-		"serialize-error": "^11.0.3",
-		"shell-quote": "^1.8.3",
-		"simple-git": "^3.27.0",
-		"strip-ansi": "^7.1.2",
-		"tailwindcss": "^4.1.14",
-		"tree-sitter-wasms": "^0.1.11",
-		"ts-morph": "^25.0.1",
-		"turndown": "^7.2.0",
-		"ulid": "^2.4.0",
-		"undici": "^7.16.0",
-		"uuid": "^11.1.0",
-		"vscode-uri": "^3.1.0",
-		"web-tree-sitter": "^0.22.6",
-		"zod": "^3.24.2"
-	},
-	"overrides": {
-		"tar-fs": ">=3.1.1",
-		"tar": "^7.5.2",
-		"vite": "^7.1.11",
-		"js-yaml": "^4.1.1",
-		"serialize-javascript": ">=7.0.3",
-		"protobufjs": "7.5.5",
-		"mocha": {
-			"diff": ">=8.0.3"
-		}
-	},
-	"c8": {
-		"reporter": [
-			"lcov",
-			"html"
-		],
-		"exclude": [
-			"**/testing-platform/**",
-			"**/webview-ui/**",
-			"**/.vscode-test/**",
-			"**/node_modules/**",
-			"node_modules",
-			"**/dist-standalone/src/**",
-			"**/dist-standalone/vsce-extension/https:/**",
-			"**/dist-standalone/vsce-extension/**",
-			"**/dist-standalone/https:/**",
-			"**/dist-standalone/LIB/src/**",
-			"**/dist-standalone/pdfjs-dist/**",
-			"**/*.d.ts",
-			"**/*.{test,spec}.{js,jsx,ts,tsx,mjs,cjs}",
-			"**/__tests__/**",
-			"**/test/**",
-			"**/tests/**",
-			"**/.nyc_output/**",
-			"**/tests-results/**",
-			"src/test/**",
-			"**/src/xml/**",
-			"**/standalone/**",
-			"**/src/generated/**",
-			"dist"
-		],
-		"all": true,
-		"exclude-after-remap": true
-	}
+    "name": "dline",
+    "displayName": "Dline",
+    "description": "Autonomous coding agent right in your IDE, capable of creating/editing files, running commands, using the browser, and more with your permission every step of the way.",
+    "version": "0.11.0",
+    "icon": "assets/icons/icon.png",
+    "engines": {
+        "vscode": "^1.134.0"
+    },
+    "author": {
+        "name": "Tuvokyang"
+    },
+    "license": "Apache-2.0",
+    "publisher": "tuvokyang",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/TuvokYang/Dline"
+    },
+    "homepage": "https://github.com/TuvokYang/Dline",
+    "categories": [
+        "AI",
+        "Chat",
+        "Programming Languages",
+        "Education",
+        "Snippets",
+        "Testing"
+    ],
+    "keywords": [
+        "dline",
+        "dev",
+        "mcp",
+        "openrouter",
+        "coding",
+        "agent",
+        "autonomous",
+        "chatgpt",
+        "sonnet",
+        "ai",
+        "llama"
+    ],
+    "activationEvents": [
+        "onLanguage",
+        "onUri",
+        "onStartupFinished",
+        "workspaceContains:evals.env"
+    ],
+    "imports": {
+        "@/*": "./src/*",
+        "@api/*": "./src/core/api/*",
+        "@core/*": "./src/core/*",
+        "@generated/*": "./src/generated/*",
+        "@hosts/*": "./src/hosts/*",
+        "@integrations/*": "./src/integrations/*",
+        "@packages/*": "./src/packages/*",
+        "@services/*": "./src/services/*",
+        "@shared/*": "./src/shared/*",
+        "@utils/*": "./src/utils/*"
+    },
+    "main": "./dist/extension.js",
+    "contributes": {
+        "icons": {
+            "dline-icon": {
+                "description": "dline",
+                "default": {
+                    "fontPath": "assets/icons/dline-icon.woff",
+                    "fontCharacter": "\\e900"
+                }
+            }
+        },
+        "walkthroughs": [
+            {
+                "id": "DlineWalkthrough",
+                "title": "Meet Dline, your new coding partner",
+                "description": "Dline codes like a developer because it thinks like one. Here are 5 ways to put it to work:",
+                "steps": [
+                    {
+                        "id": "welcome",
+                        "title": "Start with a Goal, Not Just a Prompt",
+                        "description": "Tell Dline what you want to achieve. It plans, asks, and then codes, like a true partner.",
+                        "media": {
+                            "markdown": "walkthrough/step1.md"
+                        }
+                    },
+                    {
+                        "id": "learn",
+                        "title": "Let Dline Learn Your Codebase",
+                        "description": "Point Dline to your project. It builds understanding to make smart, context-aware changes.",
+                        "media": {
+                            "markdown": "walkthrough/step2.md"
+                        }
+                    },
+                    {
+                        "id": "advanced-features",
+                        "title": "Always Use the Best AI Models",
+                        "description": "Dline empowers you with State-of-the-Art AI, connecting to top models (Anthropic, Gemini, OpenAI & more).",
+                        "media": {
+                            "markdown": "walkthrough/step3.md"
+                        }
+                    },
+                    {
+                        "id": "mcp",
+                        "title": "Extend with Powerful Tools (MCP)",
+                        "description": "Connect to databases, APIs, or discover new capabilities in the MCP Marketplace.",
+                        "media": {
+                            "markdown": "walkthrough/step4.md"
+                        }
+                    },
+                    {
+                        "id": "getting-started",
+                        "title": "You're Always in Control",
+                        "description": "Review Dline's plans and diffs. Approve changes before they happen. No surprises.",
+                        "media": {
+                            "markdown": "walkthrough/step5.md"
+                        },
+                        "content": {
+                            "path": "walkthrough/step5.md"
+                        }
+                    }
+                ]
+            }
+        ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "dline-ActivityBar",
+                    "title": "Dline",
+                    "icon": "assets/icons/icon.svg"
+                }
+            ]
+        },
+        "views": {
+            "dline-ActivityBar": [
+                {
+                    "type": "webview",
+                    "id": "dline.SidebarProvider",
+                    "name": "",
+                    "icon": "assets/icons/icon.svg"
+                }
+            ]
+        },
+        "commands": [
+            {
+                "command": "dline.plusButtonClicked",
+                "title": "New Task",
+                "icon": "$(add)"
+            },
+            {
+                "command": "dline.mcpButtonClicked",
+                "title": "MCP Servers",
+                "icon": "$(server)"
+            },
+            {
+                "command": "dline.historyButtonClicked",
+                "title": "History",
+                "icon": "$(history)"
+            },
+            {
+                "command": "dline.accountButtonClicked",
+                "title": "Account",
+                "icon": "$(account)"
+            },
+            {
+                "command": "dline.settingsButtonClicked",
+                "title": "Settings",
+                "icon": "$(settings-gear)"
+            },
+            {
+                "command": "dline.dev.createTestTasks",
+                "title": "Create Test Tasks",
+                "category": "Dline",
+                "when": "dline.isDevMode"
+            },
+            {
+                "command": "dline.dev.expireMcpOAuthTokens",
+                "title": "Expire MCP OAuth Tokens (for testing)",
+                "category": "Dline",
+                "when": "dline.isDevMode"
+            },
+            {
+                "command": "dline.addToChat",
+                "title": "Add to Dline",
+                "category": "Dline"
+            },
+            {
+                "command": "dline.addTerminalOutputToChat",
+                "title": "Add to Dline",
+                "category": "Dline"
+            },
+            {
+                "command": "dline.focusChatInput",
+                "title": "Jump to Chat Input",
+                "category": "Dline"
+            },
+            {
+                "command": "dline.generateGitCommitMessage",
+                "title": "Generate Commit Message with Dline",
+                "category": "Dline",
+                "icon": "$(dline-icon)"
+            },
+            {
+                "command": "dline.abortGitCommitMessage",
+                "title": "Generate Commit Message with Dline - Stop",
+                "category": "Dline",
+                "icon": "$(debug-stop)"
+            },
+            {
+                "command": "dline.explainCode",
+                "title": "Explain with Dline",
+                "category": "Dline"
+            },
+            {
+                "command": "dline.improveCode",
+                "title": "Improve with Dline",
+                "category": "Dline"
+            },
+            {
+                "command": "dline.jupyterGenerateCell",
+                "title": "Generate Jupyter Cell with Dline",
+                "category": "Dline",
+                "icon": "$(sparkle)"
+            },
+            {
+                "command": "dline.jupyterExplainCell",
+                "title": "Explain Jupyter Cell with Dline",
+                "category": "Dline",
+                "icon": "$(question)"
+            },
+            {
+                "command": "dline.jupyterImproveCell",
+                "title": "Improve Jupyter Cell with Dline",
+                "category": "Dline",
+                "icon": "$(lightbulb)"
+            },
+            {
+                "command": "dline.openWalkthrough",
+                "title": "Open Walkthrough",
+                "category": "Dline"
+            },
+            {
+                "command": "dline.reconstructTaskHistory",
+                "title": "Reconstruct Task History",
+                "category": "Dline"
+            },
+            {
+                "command": "dline.recoverUiMessages",
+                "title": "Recover UI Messages from API History",
+                "category": "Dline"
+            },
+            {
+                "command": "dline.reviewComment.reply",
+                "title": "Reply",
+                "category": "Dline",
+                "enablement": "!commentIsEmpty"
+            },
+            {
+                "command": "dline.reviewComment.addToChat",
+                "title": "Add to Dline Chat",
+                "category": "Dline",
+                "icon": "$(link-external)"
+            }
+        ],
+        "keybindings": [
+            {
+                "command": "editor.action.submitComment",
+                "key": "enter",
+                "when": "commentEditorFocused && commentController == dline-ai-review && !commentIsEmpty"
+            },
+            {
+                "command": "dline.addToChat",
+                "key": "cmd+'",
+                "mac": "cmd+'",
+                "win": "ctrl+'",
+                "linux": "ctrl+'",
+                "when": "editorHasSelection"
+            },
+            {
+                "command": "dline.generateGitCommitMessage",
+                "key": "cmd+g",
+                "mac": "cmd+g",
+                "win": "ctrl+g",
+                "linux": "ctrl+g",
+                "when": "config.git.enabled && scmProvider == git"
+            },
+            {
+                "command": "dline.focusChatInput",
+                "key": "cmd+'",
+                "mac": "cmd+'",
+                "win": "ctrl+'",
+                "linux": "ctrl+'",
+                "when": "!editorHasSelection"
+            }
+        ],
+        "menus": {
+            "view/title": [
+                {
+                    "command": "dline.plusButtonClicked",
+                    "group": "navigation@1",
+                    "when": "view == dline.SidebarProvider"
+                },
+                {
+                    "command": "dline.mcpButtonClicked",
+                    "group": "navigation@2",
+                    "when": "view == dline.SidebarProvider"
+                },
+                {
+                    "command": "dline.historyButtonClicked",
+                    "group": "navigation@3",
+                    "when": "view == dline.SidebarProvider"
+                },
+                {
+                    "command": "dline.accountButtonClicked",
+                    "group": "navigation@5",
+                    "when": "view == dline.SidebarProvider"
+                },
+                {
+                    "command": "dline.settingsButtonClicked",
+                    "group": "navigation@6",
+                    "when": "view == dline.SidebarProvider"
+                }
+            ],
+            "editor/context": [
+                {
+                    "command": "dline.addToChat",
+                    "group": "navigation",
+                    "when": "editorHasSelection"
+                }
+            ],
+            "terminal/context": [
+                {
+                    "command": "dline.addTerminalOutputToChat",
+                    "group": "navigation"
+                }
+            ],
+            "scm/title": [
+                {
+                    "command": "dline.generateGitCommitMessage",
+                    "group": "navigation",
+                    "when": "config.git.enabled && scmProvider == git && !dline.isGeneratingCommit"
+                },
+                {
+                    "command": "dline.abortGitCommitMessage",
+                    "group": "navigation",
+                    "when": "config.git.enabled && scmProvider == git && dline.isGeneratingCommit"
+                }
+            ],
+            "notebook/toolbar": [
+                {
+                    "command": "dline.jupyterGenerateCell",
+                    "group": "navigation/add@1",
+                    "when": "notebookType == 'jupyter-notebook'"
+                }
+            ],
+            "notebook/cell/title": [
+                {
+                    "command": "dline.jupyterExplainCell",
+                    "group": "inline@1",
+                    "when": "notebookType == 'jupyter-notebook'"
+                },
+                {
+                    "command": "dline.jupyterImproveCell",
+                    "group": "inline@2",
+                    "when": "notebookType == 'jupyter-notebook'"
+                }
+            ],
+            "commandPalette": [
+                {
+                    "command": "dline.generateGitCommitMessage",
+                    "when": "config.git.enabled && !dline.isGeneratingCommit"
+                },
+                {
+                    "command": "dline.abortGitCommitMessage",
+                    "when": "config.git.enabled && dline.isGeneratingCommit"
+                },
+                {
+                    "command": "dline.reviewComment.reply",
+                    "when": "false"
+                }
+            ],
+            "comments/commentThread/context": [
+                {
+                    "command": "dline.reviewComment.reply",
+                    "group": "inline",
+                    "when": "commentController == dline-ai-review"
+                }
+            ],
+            "comments/commentThread/title": [
+                {
+                    "command": "dline.reviewComment.addToChat",
+                    "group": "inline",
+                    "when": "commentController == dline-ai-review"
+                }
+            ]
+        },
+        "configuration": {
+            "title": "Dline",
+            "properties": {}
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run package",
+        "build:dev": "node esbuild.mjs",
+        "compile": "npm run check-types && npm run lint && node esbuild.mjs",
+        "compile-standalone": "npm run check-types && npm run lint && node esbuild.mjs --standalone",
+        "test:install": "bash scripts/test-install.sh",
+        "postcompile-standalone": "node scripts/package-standalone.mjs",
+        "dev": "npm run protos && npm run watch",
+        "watch": "npx npm-run-all -p watch:*",
+        "watch:esbuild": "node esbuild.mjs --watch",
+        "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+        "package": "npm run check-types && npm run build:webview && npm run lint && node esbuild.mjs --production",
+        "vsix": "node scripts/package-vsix.mjs",
+        "vsix:dev": "node scripts/package-dev.mjs",
+        "protos": "node scripts/build-proto.mjs",
+        "protos-python": "node scripts/build-python-proto.mjs",
+        "download-ripgrep": "node scripts/download-ripgrep.mjs",
+        "postprotos": "biome format src/shared/proto src/core/controller src/hosts/ webview-ui/src/services src/generated --write --no-errors-on-unmatched",
+        "clean:build": "rimraf dist dist-standalone webview-ui/build src/generated out/",
+        "clean:deps": "rimraf node_modules webview-ui/node_modules",
+        "clean:all": "npm run clean:build && npm run clean:deps",
+        "compile-tests": "node ./scripts/build-tests.js",
+        "watch-tests": "tsc -p . -w --outDir out --noEmit false",
+        "test:run": "vitest run",
+        "test:smoke": "vitest run --config vitest.smoke.config.ts",
+        "check-types": "npm run protos && npx tsc --noEmit && npx tsc --noEmit -p webview-ui/tsconfig.app.json",
+        "lint": "biome lint --no-errors-on-unmatched --files-ignore-unknown=true --diagnostic-level=error && npm run lint:proto",
+        "lint:proto": "node scripts/proto-lint.mjs",
+        "format": "biome format --changed --no-errors-on-unmatched --files-ignore-unknown=true --diagnostic-level=error",
+        "format:fix": "biome check --changed --no-errors-on-unmatched --files-ignore-unknown=true --write",
+        "fix:all": "biome check --no-errors-on-unmatched --files-ignore-unknown=true --write --diagnostic-level=error --unsafe",
+        "ci:check-all": "npx npm-run-all -p check-types lint format",
+        "ci:build": "npm run protos && npm run build:webview && node esbuild.mjs && npm run compile-tests",
+        "pretest": "npm run protos",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "vitest:ui:server": "node scripts/vitest-ui/server.mjs",
+        "vitest:ui": "node scripts/vitest-ui/cli.mjs",
+        "vitest:ui:status": "node scripts/vitest-ui/cli.mjs status",
+        "vitest:ui:errors": "node scripts/vitest-ui/cli.mjs errors --filter fail",
+        "vitest:ui:mcp": "node scripts/vitest-ui/mcp-server.mjs",
+        "test:snapshot": "cross-env UPDATE_NEW_PROMPT_SNAPSHOTS=true UPDATE_SNAPSHOTS=true vitest run src/core/prompts/system-prompt/__tests__/profile-matrix-snapshot.test.ts src/core/prompts/system-prompt/__tests__/command-profile-snapshot.test.ts src/core/task/focus-chain/__tests__/prompts-snapshot.test.ts",
+        "test:integration": "vscode-test",
+        "test:unit": "vitest run --config vitest.config.ts",
+        "test:coverage": "vscode-test --coverage",
+        "test:sca-server": "npx tsx watch scripts/test-standalone-core-api-server.ts",
+        "test:tp-orchestrator": "npx tsx scripts/testing-platform-orchestrator.ts",
+        "e2e:lock:status": "node scripts/with-dist-lock.mjs --status",
+        "e2e:prepare": "node src/test/e2e/utils/build.mjs",
+        "e2e:bundle": "node scripts/build-proto.mjs && npm run build:webview && node esbuild.mjs",
+        "pree2e": "node scripts/with-dist-lock.mjs --exclusive -- npm run e2e:bundle",
+        "e2e": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.config.ts",
+        "pree2e:smoke": "npm run pree2e",
+        "e2e:smoke": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.work.config.ts --project=\"work smoke\"",
+        "pree2e:work": "npm run pree2e",
+        "e2e:work": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.work.config.ts",
+        "pree2e:functional": "npm run pree2e",
+        "e2e:functional": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.functional.config.ts",
+        "pree2e:dev": "npm run pree2e",
+        "e2e:dev": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.dev.config.ts",
+        "e2e:pressure": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.pressure.config.ts",
+        "pree2e:demo": "npm run pree2e",
+        "e2e:demo": "node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.demo.config.ts",
+        "demo:media": "node scripts/demo-media.mjs",
+        "icons": "node scripts/generate-brand-icons.mjs",
+        "test:e2e:build": "node scripts/with-dist-lock.mjs --exclusive -- vsce package --no-dependencies --allow-package-secrets sendgrid --out dist/e2e.vsix",
+        "test:e2e": "npm run test:e2e:build && npm run e2e:prepare && node scripts/with-dist-lock.mjs --shared -- playwright test",
+        "test:e2e:optimal": "npm run test:e2e:build && npm run e2e:prepare && node scripts/with-dist-lock.mjs --shared -- playwright test",
+        "test:e2e:work": "npm run e2e:prepare && npm run e2e:work",
+        "test:e2e:functional": "npm run e2e:prepare && npm run e2e:functional",
+        "test:e2e:pressure": "npm run test:e2e:build && npm run e2e:prepare && node scripts/with-dist-lock.mjs --shared -- playwright test -c playwright.pressure.config.ts",
+        "test:e2e:ui": "npx tsx scripts/interactive-playwright.ts",
+        "install:all": "npm install && cd webview-ui && npm install",
+        "dev:webview": "cd webview-ui && npm run dev",
+        "build:webview": "cd webview-ui && npm run build",
+        "test:webview": "cd webview-ui && npm run test",
+        "publish:marketplace": "node scripts/publish-marketplace.mjs",
+        "publish:marketplace:prerelease": "node scripts/publish-marketplace.mjs --pre-release",
+        "publish:marketplace:insiders": "node ./scripts/publish-insiders.mjs",
+        "prepare": "npx husky",
+        "docs": "cd docs && npm run dev",
+        "docs:check": "cd docs && npm run check",
+        "docs:verify": "cd docs && npm run verify",
+        "report-issue": "node scripts/report-issue.js",
+        "storybook": "cd webview-ui && npm run storybook",
+        "eval:smoke:run": "npx tsx evals/smoke-tests/run-smoke-tests.ts"
+    },
+    "lint-staged": {
+        "src/shared/storage/state-keys.ts": [
+            "node scripts/generate-state-proto.mjs",
+            "git add proto/dline/state.proto"
+        ],
+        "*": [
+            "biome check --write --staged --no-errors-on-unmatched --files-ignore-unknown=true"
+        ]
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^2.3.14",
+        "@bufbuild/buf": "^1.54.0",
+        "@microsoft/tui-test": "0.0.1",
+        "@playwright/test": "^1.62.0",
+        "@types/better-sqlite3": "^7.6.13",
+        "@types/chai": "^5.0.1",
+        "@types/clone-deep": "^4.0.4",
+        "@types/diff": "^5.2.1",
+        "@types/get-folder-size": "^3.0.4",
+        "@types/js-yaml": "^4.0.9",
+        "@types/mocha": "^10.0.7",
+        "@types/node": "24.13.3",
+        "@types/pdf-parse": "^1.1.4",
+        "@types/picomatch": "^4.0.2",
+        "@types/proxyquire": "^1.3.31",
+        "@types/shell-quote": "^1.7.5",
+        "@types/should": "^11.2.0",
+        "@types/sinon": "^21.0.0",
+        "@types/turndown": "^5.0.5",
+        "@types/vscode": "^1.84.0",
+        "@vitest/coverage-v8": "^4.1.10",
+        "@vitest/ui": "^4.1.10",
+        "@vscode/test-cli": "^0.0.12",
+        "@vscode/test-electron": "^3.1.0",
+        "@vscode/vsce": "^3.9.2",
+        "c8": "^10.1.3",
+        "chai": "^4.3.10",
+        "chalk": "5.6.2",
+        "cross-env": "^10.1.0",
+        "dotenv": "^17.2.3",
+        "esbuild": "^0.25.0",
+        "husky": "^9.1.7",
+        "jsdom": "^30.0.1",
+        "lint-staged": "^16.1.0",
+        "minimatch": "^3.0.3",
+        "npm-run-all": "^4.1.5",
+        "nyc": "^17.1.0",
+        "playwright": "^1.62.0",
+        "prebuild-install": "^7.1.3",
+        "protoc": "^36.0.0",
+        "protoc-gen-ts": "^0.8.7",
+        "proxyquire": "^2.1.3",
+        "rimraf": "^6.0.1",
+        "sharp": "^0.35.3",
+        "should": "^13.2.3",
+        "sinon": "^21.0.3",
+        "svg2ttf": "^6.1.0",
+        "tree-kill": "^1.2.2",
+        "ts-node": "^10.9.2",
+        "ts-proto": "^2.6.1",
+        "tsconfig-paths": "^4.2.0",
+        "ttf2woff": "^3.0.0",
+        "typescript": "7.0.2",
+        "vite-plugin-checker": "^0.14.4",
+        "vitest": "^4.1.10"
+    },
+    "dependencies": {
+        "@anthropic-ai/sdk": "^0.126.0",
+        "@anthropic-ai/vertex-sdk": "^0.19.9",
+        "@aws-sdk/client-bedrock-runtime": "^3.922.0",
+        "@aws-sdk/credential-providers": "^3.922.0",
+        "@azure/identity": "^4.13.0",
+        "@bufbuild/protobuf": "^2.2.5",
+        "@google/genai": "^1.30.0",
+        "@grpc/grpc-js": "^1.9.15",
+        "@grpc/reflection": "^1.0.4",
+        "@mistralai/mistralai": "^1.5.0",
+        "@modelcontextprotocol/sdk": "^1.25.1",
+        "@opentelemetry/api": "^1.9.0",
+        "@opentelemetry/core": "^2.1.0",
+        "@opentelemetry/exporter-logs-otlp-grpc": "^0.56.0",
+        "@opentelemetry/exporter-logs-otlp-http": "^0.56.0",
+        "@opentelemetry/exporter-logs-otlp-proto": "^0.56.0",
+        "@opentelemetry/exporter-metrics-otlp-grpc": "^0.56.0",
+        "@opentelemetry/exporter-metrics-otlp-http": "^0.56.0",
+        "@opentelemetry/exporter-metrics-otlp-proto": "^0.56.0",
+        "@opentelemetry/exporter-prometheus": "^0.56.0",
+        "@opentelemetry/exporter-trace-otlp-http": "^0.56.0",
+        "@opentelemetry/instrumentation": "^0.205.0",
+        "@opentelemetry/instrumentation-http": "^0.205.0",
+        "@opentelemetry/resources": "^1.30.1",
+        "@opentelemetry/sdk-logs": "^0.56.0",
+        "@opentelemetry/sdk-metrics": "^1.30.1",
+        "@opentelemetry/sdk-node": "^0.56.0",
+        "@opentelemetry/sdk-trace-base": "^2.1.0",
+        "@opentelemetry/sdk-trace-node": "^1.30.1",
+        "@opentelemetry/semantic-conventions": "^1.37.0",
+        "@sap-ai-sdk/ai-api": "^2.7.0",
+        "@sap-ai-sdk/orchestration": "^2.7.0",
+        "@sap-cloud-sdk/connectivity": "^4.6.0",
+        "@streamparser/json": "^0.0.22",
+        "@tailwindcss/vite": "^4.1.14",
+        "@types/uuid": "^10.0.0",
+        "@vscode/codicons": "^0.0.36",
+        "archiver": "^7.0.1",
+        "aws4fetch": "^1.0.20",
+        "axios": "1.15.2",
+        "better-sqlite3": "^12.4.1",
+        "cheerio": "^1.0.0",
+        "chokidar": "^4.0.1",
+        "chrome-launcher": "^1.1.2",
+        "clone-deep": "^4.0.1",
+        "default-shell": "^2.2.0",
+        "diff": "^5.2.0",
+        "exceljs": "^4.4.0",
+        "execa": "^9.5.2",
+        "fast-deep-equal": "^3.1.3",
+        "fzf": "^0.5.2",
+        "get-folder-size": "^5.0.0",
+        "globby": "^14.0.2",
+        "grpc-health-check": "^2.0.2",
+        "iconv-lite": "^0.6.3",
+        "ignore": "^7.0.3",
+        "image-size": "^2.0.2",
+        "isbinaryfile": "^5.0.2",
+        "jschardet": "^3.1.4",
+        "json5": "^2.2.3",
+        "mammoth": "^1.11.0",
+        "nanoid": "^5.1.6",
+        "nice-grpc": "^2.1.12",
+        "node-fetch": "^3.3.2",
+        "node-machine-id": "^1.1.12",
+        "ollama": "^0.5.13",
+        "open": "^10.1.2",
+        "open-graph-scraper": "^6.9.0",
+        "openai": "^7.15.0",
+        "os-name": "^6.0.0",
+        "p-mutex": "^1.0.0",
+        "p-timeout": "^6.1.4",
+        "p-wait-for": "^5.0.2",
+        "pdf-parse": "^1.1.1",
+        "picomatch": "^4.0.3",
+        "posthog-node": "^5.8.0",
+        "puppeteer-chromium-resolver": "^23.0.0",
+        "puppeteer-core": "^23.4.0",
+        "reconnecting-eventsource": "^1.6.4",
+        "serialize-error": "^11.0.3",
+        "shell-quote": "^1.8.3",
+        "simple-git": "^3.27.0",
+        "strip-ansi": "^7.1.2",
+        "tailwindcss": "^4.1.14",
+        "tree-sitter-wasms": "^0.1.11",
+        "ts-morph": "^25.0.1",
+        "turndown": "^7.2.0",
+        "ulid": "^2.4.0",
+        "undici": "^7.16.0",
+        "uuid": "^11.1.0",
+        "vscode-uri": "^3.1.0",
+        "web-tree-sitter": "^0.22.6",
+        "zod": "^3.24.2"
+    },
+    "overrides": {
+        "tar-fs": ">=3.1.1",
+        "tar": "^7.5.2",
+        "vite": "^7.1.11",
+        "js-yaml": "^4.1.1",
+        "serialize-javascript": ">=7.0.3",
+        "protobufjs": "7.5.5",
+        "mocha": {
+            "diff": ">=8.0.3"
+        }
+    },
+    "c8": {
+        "reporter": [
+            "lcov",
+            "html"
+        ],
+        "exclude": [
+            "**/testing-platform/**",
+            "**/webview-ui/**",
+            "**/.vscode-test/**",
+            "**/node_modules/**",
+            "node_modules",
+            "**/dist-standalone/src/**",
+            "**/dist-standalone/vsce-extension/https:/**",
+            "**/dist-standalone/vsce-extension/**",
+            "**/dist-standalone/https:/**",
+            "**/dist-standalone/LIB/src/**",
+            "**/dist-standalone/pdfjs-dist/**",
+            "**/*.d.ts",
+            "**/*.{test,spec}.{js,jsx,ts,tsx,mjs,cjs}",
+            "**/__tests__/**",
+            "**/test/**",
+            "**/tests/**",
+            "**/.nyc_output/**",
+            "**/tests-results/**",
+            "src/test/**",
+            "**/src/xml/**",
+            "**/standalone/**",
+            "**/src/generated/**",
+            "dist"
+        ],
+        "all": true,
+        "exclude-after-remap": true
+    }
 }

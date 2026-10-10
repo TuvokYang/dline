@@ -8,17 +8,17 @@ import type { MentionInputNode } from "@shared/input-semantics/document"
 import type { FileContextTracker } from "@/core/context/context-tracking/FileContextTracker"
 import type { UrlContentFetcher } from "@/services/browser/UrlContentFetcher"
 import type {
-	SemanticCommandExpanderPort,
-	SemanticCommandExpansion,
-	SemanticMentionResolverPort,
+    SemanticCommandExpanderPort,
+    SemanticCommandExpansion,
+    SemanticMentionResolverPort,
 } from "./SemanticInputAdmissionService"
 
 export interface MentionResolutionContext {
-	readonly cwd: string
-	readonly urlContentFetcher: UrlContentFetcher
-	readonly fileContextTracker?: FileContextTracker
-	readonly workspaceManager?: WorkspaceRootManager
-	readonly pathAccessPolicy?: MentionPathAccessPolicy
+    readonly cwd: string
+    readonly urlContentFetcher: UrlContentFetcher
+    readonly fileContextTracker?: FileContextTracker
+    readonly workspaceManager?: WorkspaceRootManager
+    readonly pathAccessPolicy?: MentionPathAccessPolicy
 }
 
 /**
@@ -28,31 +28,31 @@ export interface MentionResolutionContext {
  * never discover a second mention that the user did not confirm.
  */
 export class TaskMentionResolver implements SemanticMentionResolverPort {
-	constructor(private readonly context: () => MentionResolutionContext) {}
+    constructor(private readonly context: () => MentionResolutionContext) {}
 
-	async resolve(node: MentionInputNode): Promise<string> {
-		const context = this.context()
-		return parseMentions(
-			node.sourceText,
-			context.cwd,
-			context.urlContentFetcher,
-			context.fileContextTracker,
-			context.workspaceManager,
-			context.pathAccessPolicy,
-		)
-	}
+    async resolve(node: MentionInputNode): Promise<string> {
+        const context = this.context()
+        return parseMentions(
+            node.sourceText,
+            context.cwd,
+            context.urlContentFetcher,
+            context.fileContextTracker,
+            context.workspaceManager,
+            context.pathAccessPolicy,
+        )
+    }
 }
 
 export interface CommandExpansionContext {
-	readonly localWorkflowToggles: ClineRulesToggles
-	readonly globalWorkflowToggles: ClineRulesToggles
-	/** Identity used to correlate the expansion with this task incarnation. */
-	readonly taskIncarnationId: string
-	readonly focusChainSettings?: { enabled: boolean }
-	readonly enableNativeToolCalls?: boolean
-	readonly providerInfo?: Readonly<ApiProviderInfo>
-	readonly mcpPromptFetcher?: McpPromptFetcher
-	readonly capabilityContext?: SlashCommandCapabilityContext
+    readonly localWorkflowToggles: ClineRulesToggles
+    readonly globalWorkflowToggles: ClineRulesToggles
+    /** Identity used to correlate the expansion with this task incarnation. */
+    readonly taskIncarnationId: string
+    readonly focusChainSettings?: { enabled: boolean }
+    readonly enableNativeToolCalls?: boolean
+    readonly providerInfo?: Readonly<ApiProviderInfo>
+    readonly mcpPromptFetcher?: McpPromptFetcher
+    readonly capabilityContext?: SlashCommandCapabilityContext
 }
 
 /**
@@ -64,22 +64,22 @@ export interface CommandExpansionContext {
  * authorization while the request was still sent as ordinary prose.
  */
 export class TaskCommandExpander implements SemanticCommandExpanderPort {
-	constructor(private readonly context: () => CommandExpansionContext) {}
+    constructor(private readonly context: () => CommandExpansionContext) {}
 
-	async expand(invocation: SemanticCommandInvocation): Promise<SemanticCommandExpansion> {
-		const context = this.context()
-		const parsed = await parseSlashCommands(
-			invocation.sourceText,
-			context.localWorkflowToggles,
-			context.globalWorkflowToggles,
-			context.taskIncarnationId,
-			context.focusChainSettings,
-			context.enableNativeToolCalls,
-			context.providerInfo,
-			context.mcpPromptFetcher,
-			context.capabilityContext,
-			{ trustedUserText: true },
-		)
-		return { text: parsed.processedText, explicitInstructions: parsed.explicitInstructions }
-	}
+    async expand(invocation: SemanticCommandInvocation): Promise<SemanticCommandExpansion> {
+        const context = this.context()
+        const parsed = await parseSlashCommands(
+            invocation.sourceText,
+            context.localWorkflowToggles,
+            context.globalWorkflowToggles,
+            context.taskIncarnationId,
+            context.focusChainSettings,
+            context.enableNativeToolCalls,
+            context.providerInfo,
+            context.mcpPromptFetcher,
+            context.capabilityContext,
+            { trustedUserText: true },
+        )
+        return { text: parsed.processedText, explicitInstructions: parsed.explicitInstructions }
+    }
 }

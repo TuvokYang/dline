@@ -2,11 +2,11 @@ import styled from "styled-components"
 import { CODE_BLOCK_BG_COLOR } from "./CodeBlock"
 
 interface PopupModalContainerProps {
-	$menuPosition: number
-	$arrowPosition: number
-	$bottomOffset?: number
-	$height?: string
-	$maxHeight?: string
+    $menuPosition: number
+    $arrowPosition: number
+    $bottomOffset?: number
+    $height?: string
+    $maxHeight?: string
 }
 
 /**

@@ -12,16 +12,16 @@ import { Controller } from ".."
  * @returns Promise resolving to OpenGraphData
  */
 export async function fetchOpenGraphData(_controller: Controller, request: StringRequest): Promise<OpenGraphData> {
-	try {
-		const url = request.value || ""
-		// Fetch open graph data using the existing utility
-		const ogData = await fetchOGData(url)
+    try {
+        const url = request.value || ""
+        // Fetch open graph data using the existing utility
+        const ogData = await fetchOGData(url)
 
-		// Convert domain model to proto model
-		return convertDomainOpenGraphDataToProto(ogData)
-	} catch (error) {
-		Logger.error(`Error fetching Open Graph data: ${request.value}`, error)
-		// Return empty OpenGraphData object
-		return OpenGraphData.create({})
-	}
+        // Convert domain model to proto model
+        return convertDomainOpenGraphDataToProto(ogData)
+    } catch (error) {
+        Logger.error(`Error fetching Open Graph data: ${request.value}`, error)
+        // Return empty OpenGraphData object
+        return OpenGraphData.create({})
+    }
 }

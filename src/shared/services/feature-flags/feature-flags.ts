@@ -13,16 +13,16 @@ import type { FeatureFlagPayload } from "@/services/feature-flags/providers/IFea
  * changed casually.
  */
 export enum ExperimentalFeatureFlag {
-	WEBTOOLS = "webtools",
-	WORKTREES = "worktree-exp",
-	// Use the websocket mode for OpenAI native Responses API format
-	OPENAI_RESPONSES_WEBSOCKET_MODE = "openai-responses-websocket-mode",
+    WEBTOOLS = "webtools",
+    WORKTREES = "worktree-exp",
+    // Use the websocket mode for OpenAI native Responses API format
+    OPENAI_RESPONSES_WEBSOCKET_MODE = "openai-responses-websocket-mode",
 }
 
 export const ExperimentalFeatureFlagDefaultValue: Partial<Record<ExperimentalFeatureFlag, FeatureFlagPayload>> = {
-	[ExperimentalFeatureFlag.WEBTOOLS]: false,
-	[ExperimentalFeatureFlag.WORKTREES]: false,
-	[ExperimentalFeatureFlag.OPENAI_RESPONSES_WEBSOCKET_MODE]: false,
+    [ExperimentalFeatureFlag.WEBTOOLS]: false,
+    [ExperimentalFeatureFlag.WORKTREES]: false,
+    [ExperimentalFeatureFlag.OPENAI_RESPONSES_WEBSOCKET_MODE]: false,
 }
 
 export const EXPERIMENTAL_FEATURE_FLAGS = Object.values(ExperimentalFeatureFlag)

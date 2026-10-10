@@ -15,31 +15,31 @@ const ASSUMED_CONTEXT_WINDOW = 128_000
 const UNKNOWN_MAX_TOKENS = -1
 
 export class HicapModelSource extends ModelListingSource {
-	readonly providerId = "hicap"
-	readonly providerName = "Hicap"
-	override readonly reconciliation: ProviderModelReconciliationMode = "replace"
-	protected override readonly defaultBaseUrl = "https://api.hicap.ai/v2/openai"
+    readonly providerId = "hicap"
+    readonly providerName = "Hicap"
+    override readonly reconciliation: ProviderModelReconciliationMode = "replace"
+    protected override readonly defaultBaseUrl = "https://api.hicap.ai/v2/openai"
 
-	protected override buildHeaders(context: ProviderRemoteContext): Record<string, string> {
-		return context.apiKey ? { "api-key": context.apiKey } : {}
-	}
+    protected override buildHeaders(context: ProviderRemoteContext): Record<string, string> {
+        return context.apiKey ? { "api-key": context.apiKey } : {}
+    }
 
-	protected override readDescription(): string {
-		return ""
-	}
+    protected override readDescription(): string {
+        return ""
+    }
 
-	protected override readCapabilities(): ModelCapabilities {
-		return {
-			maxTokens: UNKNOWN_MAX_TOKENS,
-			contextWindow: ASSUMED_CONTEXT_WINDOW,
-			supportsImages: true,
-			supportsPromptCache: true,
-		}
-	}
+    protected override readCapabilities(): ModelCapabilities {
+        return {
+            maxTokens: UNKNOWN_MAX_TOKENS,
+            contextWindow: ASSUMED_CONTEXT_WINDOW,
+            supportsImages: true,
+            supportsPromptCache: true,
+        }
+    }
 
-	protected override readPricing(): ModelPricing {
-		return { inputPrice: 0, outputPrice: 0, cacheWritesPrice: 0, cacheReadsPrice: 0 }
-	}
+    protected override readPricing(): ModelPricing {
+        return { inputPrice: 0, outputPrice: 0, cacheWritesPrice: 0, cacheReadsPrice: 0 }
+    }
 }
 
 export const hicapModelSource = new HicapModelSource()

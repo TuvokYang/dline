@@ -27,7 +27,7 @@ const TAIL_CHUNK_BYTES = 64 * 1024
 
 /** Check whether file content is a JSON array (starts with '[' after whitespace). */
 function isJsonArray(content: string): boolean {
-	return content.replace(TRIM_START_REGEX, "").startsWith("[")
+    return content.replace(TRIM_START_REGEX, "").startsWith("[")
 }
 
 /**
@@ -37,7 +37,7 @@ function isJsonArray(content: string): boolean {
  * otherwise fail the array check by a single character.
  */
 function stripByteOrderMark(content: string): string {
-	return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content
+    return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content
 }
 
 /**
@@ -50,29 +50,29 @@ function stripByteOrderMark(content: string): string {
  * @returns Parsed entries (empty array if file does not exist)
  */
 export async function readJsonl<T>(filePath: string): Promise<T[]> {
-	if (!(await fileExistsAtPath(filePath))) {
-		return []
-	}
+    if (!(await fileExistsAtPath(filePath))) {
+        return []
+    }
 
-	const content = await fs.readFile(filePath, "utf8")
+    const content = await fs.readFile(filePath, "utf8")
 
-	// Empty file
-	if (!content.trim()) {
-		return []
-	}
+    // Empty file
+    if (!content.trim()) {
+        return []
+    }
 
-	// Legacy JSON array — parse directly, do NOT overwrite the original file
-	if (isJsonArray(content)) {
-		try {
-			const parsed = JSON.parse(content)
-			return Array.isArray(parsed) ? (parsed as T[]) : [parsed as T]
-		} catch {
-			return []
-		}
-	}
+    // Legacy JSON array — parse directly, do NOT overwrite the original file
+    if (isJsonArray(content)) {
+        try {
+            const parsed = JSON.parse(content)
+            return Array.isArray(parsed) ? (parsed as T[]) : [parsed as T]
+        } catch {
+            return []
+        }
+    }
 
-	// JSONL: one JSON object per line
-	return parseJsonlContent<T>(content)
+    // JSONL: one JSON object per line
+    return parseJsonlContent<T>(content)
 }
 
 /**
@@ -83,11 +83,11 @@ export async function readJsonl<T>(filePath: string): Promise<T[]> {
  * @param entries Entry or entries to append
  */
 export async function appendJsonl<T>(filePath: string, entries: T | T[]): Promise<void> {
-	const items = Array.isArray(entries) ? entries : [entries]
-	if (items.length === 0) return
+    const items = Array.isArray(entries) ? entries : [entries]
+    if (items.length === 0) return
 
-	const lines = `${items.map((item) => JSON.stringify(item)).join("\n")}\n`
-	await fs.appendFile(filePath, lines, "utf8")
+    const lines = `${items.map((item) => JSON.stringify(item)).join("\n")}\n`
+    await fs.appendFile(filePath, lines, "utf8")
 }
 
 /**
@@ -102,93 +102,93 @@ export async function appendJsonl<T>(filePath: string, entries: T | T[]): Promis
  * a file whose whole point is being too large to rewrite.
  */
 export async function canAppendJsonl(filePath: string): Promise<boolean> {
-	if (!(await fileExistsAtPath(filePath))) return true
+    if (!(await fileExistsAtPath(filePath))) return true
 
-	let handle: FileHandle | undefined
-	try {
-		handle = await fs.open(filePath, "r")
-		const { size } = await handle.stat()
-		if (size === 0) return true
+    let handle: FileHandle | undefined
+    try {
+        handle = await fs.open(filePath, "r")
+        const { size } = await handle.stat()
+        if (size === 0) return true
 
-		// The reader recognizes a legacy array after leading whitespace and a
-		// BOM, so the same prefix has to be examined here. Judging from the very
-		// first byte alone would classify `\n  [...]` as JSONL and concatenate a
-		// line after the closing bracket, leaving a document that no longer
-		// parses and a history that reads back as empty.
-		const prefixLength = Math.min(size, LEGACY_ARRAY_PROBE_BYTES)
-		const prefix = Buffer.alloc(prefixLength)
-		await handle.read(prefix, 0, prefixLength, 0)
-		if (isJsonArray(stripByteOrderMark(prefix.toString("utf8")))) return false
+        // The reader recognizes a legacy array after leading whitespace and a
+        // BOM, so the same prefix has to be examined here. Judging from the very
+        // first byte alone would classify `\n  [...]` as JSONL and concatenate a
+        // line after the closing bracket, leaving a document that no longer
+        // parses and a history that reads back as empty.
+        const prefixLength = Math.min(size, LEGACY_ARRAY_PROBE_BYTES)
+        const prefix = Buffer.alloc(prefixLength)
+        await handle.read(prefix, 0, prefixLength, 0)
+        if (isJsonArray(stripByteOrderMark(prefix.toString("utf8")))) return false
 
-		const tail = Buffer.alloc(1)
-		await handle.read(tail, 0, 1, size - 1)
-		return tail.toString("utf8") === "\n"
-	} catch {
-		// An unreadable file is never assumed appendable: rewriting is the
-		// recoverable choice, concatenating onto unknown bytes is not.
-		return false
-	} finally {
-		await handle?.close()
-	}
+        const tail = Buffer.alloc(1)
+        await handle.read(tail, 0, 1, size - 1)
+        return tail.toString("utf8") === "\n"
+    } catch {
+        // An unreadable file is never assumed appendable: rewriting is the
+        // recoverable choice, concatenating onto unknown bytes is not.
+        return false
+    } finally {
+        await handle?.close()
+    }
 }
 
 /** Keep the first N JSONL records by scanning only the removed tail. */
 export async function truncateJsonlTail(filePath: string, keepLineCount: number, expectedLineCount: number): Promise<void> {
-	if (!Number.isInteger(keepLineCount) || !Number.isInteger(expectedLineCount)) {
-		throw new Error("JSONL tail truncation requires integer line counts")
-	}
-	if (keepLineCount < 0 || expectedLineCount < keepLineCount) {
-		throw new Error(`Invalid JSONL tail truncation boundary: keep=${keepLineCount}, expected=${expectedLineCount}`)
-	}
-	if (keepLineCount === expectedLineCount) return
+    if (!Number.isInteger(keepLineCount) || !Number.isInteger(expectedLineCount)) {
+        throw new Error("JSONL tail truncation requires integer line counts")
+    }
+    if (keepLineCount < 0 || expectedLineCount < keepLineCount) {
+        throw new Error(`Invalid JSONL tail truncation boundary: keep=${keepLineCount}, expected=${expectedLineCount}`)
+    }
+    if (keepLineCount === expectedLineCount) return
 
-	const handle = await fs.open(filePath, "r+")
-	try {
-		if (keepLineCount === 0) {
-			await handle.truncate(0)
-			return
-		}
-		const { size } = await handle.stat()
-		if (size === 0) throw new Error("JSONL tail truncation expected persisted records in an empty file")
+    const handle = await fs.open(filePath, "r+")
+    try {
+        if (keepLineCount === 0) {
+            await handle.truncate(0)
+            return
+        }
+        const { size } = await handle.stat()
+        if (size === 0) throw new Error("JSONL tail truncation expected persisted records in an empty file")
 
-		const lastByte = Buffer.allocUnsafe(1)
-		await handle.read(lastByte, 0, 1, size - 1)
-		const removedLineCount = expectedLineCount - keepLineCount
-		const boundaryNewlineOrdinal = removedLineCount + (lastByte[0] === 0x0a ? 1 : 0)
-		const chunk = Buffer.allocUnsafe(64 * 1024)
-		let position = size
-		let seenNewlines = 0
-		while (position > 0) {
-			const length = Math.min(chunk.length, position)
-			position -= length
-			const { bytesRead } = await handle.read(chunk, 0, length, position)
-			for (let index = bytesRead - 1; index >= 0; index--) {
-				if (chunk[index] !== 0x0a) continue
-				seenNewlines += 1
-				if (seenNewlines === boundaryNewlineOrdinal) {
-					await handle.truncate(position + index + 1)
-					return
-				}
-			}
-		}
-		throw new Error(`JSONL tail truncation could not locate boundary: keep=${keepLineCount}, expected=${expectedLineCount}`)
-	} finally {
-		await handle.close()
-	}
+        const lastByte = Buffer.allocUnsafe(1)
+        await handle.read(lastByte, 0, 1, size - 1)
+        const removedLineCount = expectedLineCount - keepLineCount
+        const boundaryNewlineOrdinal = removedLineCount + (lastByte[0] === 0x0a ? 1 : 0)
+        const chunk = Buffer.allocUnsafe(64 * 1024)
+        let position = size
+        let seenNewlines = 0
+        while (position > 0) {
+            const length = Math.min(chunk.length, position)
+            position -= length
+            const { bytesRead } = await handle.read(chunk, 0, length, position)
+            for (let index = bytesRead - 1; index >= 0; index--) {
+                if (chunk[index] !== 0x0a) continue
+                seenNewlines += 1
+                if (seenNewlines === boundaryNewlineOrdinal) {
+                    await handle.truncate(position + index + 1)
+                    return
+                }
+            }
+        }
+        throw new Error(`JSONL tail truncation could not locate boundary: keep=${keepLineCount}, expected=${expectedLineCount}`)
+    } finally {
+        await handle.close()
+    }
 }
 
 /** One final JSONL line and the byte offset where it starts. */
 interface JsonlTailLine {
-	readonly offset: number
-	readonly text: string
+    readonly offset: number
+    readonly text: string
 }
 
 interface JsonlTail {
-	readonly size: number
-	/** Whether the file ends with a newline, so another line can follow directly. */
-	readonly terminated: boolean
-	/** Up to the requested number of final lines, in file order. */
-	readonly lines: readonly JsonlTailLine[]
+    readonly size: number
+    /** Whether the file ends with a newline, so another line can follow directly. */
+    readonly terminated: boolean
+    /** Up to the requested number of final lines, in file order. */
+    readonly lines: readonly JsonlTailLine[]
 }
 
 /**
@@ -198,79 +198,79 @@ interface JsonlTail {
  * caller tell a short file apart from a matching one.
  */
 async function readJsonlTail(handle: FileHandle, lineCount: number): Promise<JsonlTail> {
-	const { size } = await handle.stat()
-	if (size === 0) return { size, terminated: true, lines: [] }
-	const lastByte = Buffer.alloc(1)
-	await handle.read(lastByte, 0, 1, size - 1)
-	const terminated = lastByte[0] === NEWLINE
-	if (lineCount === 0) return { size, terminated, lines: [] }
+    const { size } = await handle.stat()
+    if (size === 0) return { size, terminated: true, lines: [] }
+    const lastByte = Buffer.alloc(1)
+    await handle.read(lastByte, 0, 1, size - 1)
+    const terminated = lastByte[0] === NEWLINE
+    if (lineCount === 0) return { size, terminated, lines: [] }
 
-	// The newline ending the line just before the requested ones. A final
-	// newline terminates the last line rather than starting another one.
-	const boundaryOrdinal = lineCount + (terminated ? 1 : 0)
-	const chunks: Buffer[] = []
-	let position = size
-	let seenNewlines = 0
-	let start = 0
-	scan: while (position > 0) {
-		const length = Math.min(TAIL_CHUNK_BYTES, position)
-		position -= length
-		const chunk = Buffer.allocUnsafe(length)
-		const { bytesRead } = await handle.read(chunk, 0, length, position)
-		// Every offset below is derived from `position`, so a short read would
-		// point a later truncation at the wrong byte.
-		if (bytesRead !== length) throw new Error("JSONL tail read returned fewer bytes than the file holds")
-		chunks.unshift(chunk)
-		for (let index = length - 1; index >= 0; index--) {
-			if (chunk[index] !== NEWLINE) continue
-			seenNewlines += 1
-			if (seenNewlines === boundaryOrdinal) {
-				start = position + index + 1
-				break scan
-			}
-		}
-	}
+    // The newline ending the line just before the requested ones. A final
+    // newline terminates the last line rather than starting another one.
+    const boundaryOrdinal = lineCount + (terminated ? 1 : 0)
+    const chunks: Buffer[] = []
+    let position = size
+    let seenNewlines = 0
+    let start = 0
+    scan: while (position > 0) {
+        const length = Math.min(TAIL_CHUNK_BYTES, position)
+        position -= length
+        const chunk = Buffer.allocUnsafe(length)
+        const { bytesRead } = await handle.read(chunk, 0, length, position)
+        // Every offset below is derived from `position`, so a short read would
+        // point a later truncation at the wrong byte.
+        if (bytesRead !== length) throw new Error("JSONL tail read returned fewer bytes than the file holds")
+        chunks.unshift(chunk)
+        for (let index = length - 1; index >= 0; index--) {
+            if (chunk[index] !== NEWLINE) continue
+            seenNewlines += 1
+            if (seenNewlines === boundaryOrdinal) {
+                start = position + index + 1
+                break scan
+            }
+        }
+    }
 
-	// Split on bytes rather than on decoded text so every offset stays a byte
-	// offset that truncation can use directly.
-	const region = Buffer.concat(chunks).subarray(start - position)
-	const lines: JsonlTailLine[] = []
-	let lineStart = 0
-	for (let index = 0; index < region.length; index++) {
-		if (region[index] !== NEWLINE) continue
-		lines.push({ offset: start + lineStart, text: region.toString("utf8", lineStart, index) })
-		lineStart = index + 1
-	}
-	if (lineStart < region.length) lines.push({ offset: start + lineStart, text: region.toString("utf8", lineStart) })
-	return { size, terminated, lines }
+    // Split on bytes rather than on decoded text so every offset stays a byte
+    // offset that truncation can use directly.
+    const region = Buffer.concat(chunks).subarray(start - position)
+    const lines: JsonlTailLine[] = []
+    let lineStart = 0
+    for (let index = 0; index < region.length; index++) {
+        if (region[index] !== NEWLINE) continue
+        lines.push({ offset: start + lineStart, text: region.toString("utf8", lineStart, index) })
+        lineStart = index + 1
+    }
+    if (lineStart < region.length) lines.push({ offset: start + lineStart, text: region.toString("utf8", lineStart) })
+    return { size, terminated, lines }
 }
 
 function lineTimestamp(text: string): number | undefined {
-	try {
-		const value: unknown = JSON.parse(text)
-		if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
-		const ts = (value as { ts?: unknown }).ts
-		return typeof ts === "number" ? ts : undefined
-	} catch {
-		return undefined
-	}
+    try {
+        const value: unknown = JSON.parse(text)
+        if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+        const ts = (value as { ts?: unknown }).ts
+        return typeof ts === "number" ? ts : undefined
+    } catch {
+        return undefined
+    }
 }
 
 function endsWithTimestamps(tail: JsonlTail, expected: readonly number[]): boolean {
-	if (expected.length === 0) return tail.size === 0
-	if (tail.lines.length !== expected.length) return false
-	return tail.lines.every((line, index) => lineTimestamp(line.text) === expected[index])
+    if (expected.length === 0) return tail.size === 0
+    if (tail.lines.length !== expected.length) return false
+    return tail.lines.every((line, index) => lineTimestamp(line.text) === expected[index])
 }
 
 export interface JsonlTailReplacement<T> {
-	/**
-	 * Timestamps the final lines must carry, in order. An empty list asserts
-	 * an empty file.
-	 */
-	readonly expectedTailTimestamps: readonly number[]
-	/** Final lines replaced by `entries`; zero appends after the last line. */
-	readonly replacedLineCount: number
-	readonly entries: readonly T[]
+    /**
+     * Timestamps the final lines must carry, in order. An empty list asserts
+     * an empty file.
+     */
+    readonly expectedTailTimestamps: readonly number[]
+    /** Final lines replaced by `entries`; zero appends after the last line. */
+    readonly replacedLineCount: number
+    readonly entries: readonly T[]
 }
 
 /**
@@ -288,33 +288,33 @@ export interface JsonlTailReplacement<T> {
  * The caller must hold the file lock.
  */
 export async function replaceJsonlTail<T>(filePath: string, replacement: JsonlTailReplacement<T>): Promise<boolean> {
-	const { expectedTailTimestamps, replacedLineCount, entries } = replacement
-	if (!Number.isInteger(replacedLineCount) || replacedLineCount < 0 || replacedLineCount > expectedTailTimestamps.length) {
-		throw new Error(
-			`Invalid JSONL tail replacement: replaced=${replacedLineCount}, verified=${expectedTailTimestamps.length}`,
-		)
-	}
+    const { expectedTailTimestamps, replacedLineCount, entries } = replacement
+    if (!Number.isInteger(replacedLineCount) || replacedLineCount < 0 || replacedLineCount > expectedTailTimestamps.length) {
+        throw new Error(
+            `Invalid JSONL tail replacement: replaced=${replacedLineCount}, verified=${expectedTailTimestamps.length}`,
+        )
+    }
 
-	let tail: JsonlTail = { size: 0, terminated: true, lines: [] }
-	if (await fileExistsAtPath(filePath)) {
-		const handle = await fs.open(filePath, "r")
-		try {
-			tail = await readJsonlTail(handle, expectedTailTimestamps.length)
-		} finally {
-			await handle.close()
-		}
-	}
-	if (!endsWithTimestamps(tail, expectedTailTimestamps)) return false
+    let tail: JsonlTail = { size: 0, terminated: true, lines: [] }
+    if (await fileExistsAtPath(filePath)) {
+        const handle = await fs.open(filePath, "r")
+        try {
+            tail = await readJsonlTail(handle, expectedTailTimestamps.length)
+        } finally {
+            await handle.close()
+        }
+    }
+    if (!endsWithTimestamps(tail, expectedTailTimestamps)) return false
 
-	if (replacedLineCount === 0) {
-		// An unterminated final line would absorb the first appended record.
-		if (!tail.terminated) return false
-		await appendJsonl(filePath, [...entries])
-		return true
-	}
-	await fs.truncate(filePath, tail.lines[tail.lines.length - replacedLineCount].offset)
-	await appendJsonl(filePath, [...entries])
-	return true
+    if (replacedLineCount === 0) {
+        // An unterminated final line would absorb the first appended record.
+        if (!tail.terminated) return false
+        await appendJsonl(filePath, [...entries])
+        return true
+    }
+    await fs.truncate(filePath, tail.lines[tail.lines.length - replacedLineCount].offset)
+    await appendJsonl(filePath, [...entries])
+    return true
 }
 
 /**
@@ -327,9 +327,9 @@ export async function replaceJsonlTail<T>(filePath: string, replacement: JsonlTa
  * @param entries Full array to write
  */
 export async function writeJsonl<T>(filePath: string, entries: T[]): Promise<void> {
-	const lines = entries.map((item) => JSON.stringify(item)).join("\n")
-	const content = lines ? `${lines}\n` : ""
-	await writeFileAtomic(filePath, content)
+    const lines = entries.map((item) => JSON.stringify(item)).join("\n")
+    const content = lines ? `${lines}\n` : ""
+    await writeFileAtomic(filePath, content)
 }
 
 /**
@@ -340,16 +340,16 @@ export async function writeJsonl<T>(filePath: string, entries: T[]): Promise<voi
  * @returns Parsed entries
  */
 function parseJsonlContent<T>(content: string): T[] {
-	const results: T[] = []
-	const lines = content.split("\n")
-	for (const line of lines) {
-		const trimmed = line.trim()
-		if (!trimmed) continue
-		try {
-			results.push(JSON.parse(trimmed) as T)
-		} catch {
-			// Skip malformed lines silently — preserves as much data as possible
-		}
-	}
-	return results
+    const results: T[] = []
+    const lines = content.split("\n")
+    for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        try {
+            results.push(JSON.parse(trimmed) as T)
+        } catch {
+            // Skip malformed lines silently — preserves as much data as possible
+        }
+    }
+    return results
 }

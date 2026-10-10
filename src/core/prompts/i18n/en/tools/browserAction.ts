@@ -1,11 +1,11 @@
 // English prompts — key-value pairs only, no code logic.
 const prompts: Record<string, string> = {
-	description: `Request to interact with a Puppeteer-controlled browser. Every action, except \`close\`, will be responded to with a screenshot of the browser's current state, along with any new console logs. You may only perform one browser action per message, and wait for the user's response including a screenshot and logs to determine the next action.
+    description: `Request to interact with a Puppeteer-controlled browser. Every action, except \`close\`, will be responded to with a screenshot of the browser's current state, along with any new console logs. You may only perform one browser action per message, and wait for the user's response including a screenshot and logs to determine the next action.
 - The sequence of actions **must always start with** launching the browser at a URL, and **must always end with** closing the browser. If you need to visit a new URL that is not possible to navigate to from the current webpage, you must first close the browser, then launch again at the new URL.
 - While the browser is active, only the \`browser_action\` tool can be used. No other tools should be called during this time. You may proceed to use other tools only after closing the browser. For example if you run into an error and need to fix a file, you must close the browser, then use other tools to make the necessary changes, then re-launch the browser to verify the result.
 - The browser window has a resolution of **@BROWSER_VIEWPORT_WIDTH@x@BROWSER_VIEWPORT_HEIGHT@** pixels. When performing any click actions, ensure the coordinates are within this resolution range.
 - Before clicking on any elements such as icons, links, or buttons, you must consult the provided screenshot of the page to determine the coordinates of the element. The click should be targeted at the **center of the element**, not on its edges.`,
-	actionInstruction: `The action to perform. The available actions are: 
+    actionInstruction: `The action to perform. The available actions are:
 	* launch: Launch a new Puppeteer-controlled browser instance at the specified URL. This **must always be the first action**. 
 		- Use with the \`url\` parameter to provide the URL. 
 		- Ensure the URL is valid and includes the appropriate protocol (e.g. http://localhost:3000/page, file:///path/to/file.html, etc.) 
@@ -18,8 +18,8 @@ const prompts: Record<string, string> = {
 	* scroll_up: Scroll up the page by one page height. 
 	* close: Close the Puppeteer-controlled browser instance. This **must always be the final browser action**. 
 	    - Example: \`<action>close</action>\``,
-	actionUsage: "Action to perform (e.g., launch, click, type, scroll_down, scroll_up, close)",
-	standardActionInstruction: `The action to perform. The available actions are:
+    actionUsage: "Action to perform (e.g., launch, click, type, scroll_down, scroll_up, close)",
+    standardActionInstruction: `The action to perform. The available actions are:
 	* launch: Launch a new Puppeteer-controlled browser instance at the specified URL. This **must always be the first action**. 
 		- Use with the \`url\` parameter to provide the URL. 
 		- Ensure the URL is valid and includes the appropriate protocol (e.g. http://localhost:3000/page, file:///path/to/file.html, etc.) 
@@ -32,18 +32,18 @@ const prompts: Record<string, string> = {
 	* scroll_up: Scroll up the page by one page height. 
 	* close: Close the Puppeteer-controlled browser instance. This **must always be the final browser action**. 
 	    - Example: 'scroll_up'`,
-	urlInstruction: `Use this for providing the URL for the \`launch\` action. 
+    urlInstruction: `Use this for providing the URL for the \`launch\` action.
 	* Example: <url>https://example.com</url>`,
-	urlUsage: "URL to launch the browser at (optional)",
-	standardUrlInstruction: "Use this for providing the URL for the `launch` action.",
-	coordinateInstruction: `The X and Y coordinates for the \`click\` action. Coordinates should be within the **@BROWSER_VIEWPORT_WIDTH@x@BROWSER_VIEWPORT_HEIGHT@** resolution. 
+    urlUsage: "URL to launch the browser at (optional)",
+    standardUrlInstruction: "Use this for providing the URL for the `launch` action.",
+    coordinateInstruction: `The X and Y coordinates for the \`click\` action. Coordinates should be within the **@BROWSER_VIEWPORT_WIDTH@x@BROWSER_VIEWPORT_HEIGHT@** resolution.
 	* Example: <coordinate>450,300</coordinate>`,
-	coordinateUsage: "x,y coordinates (optional)",
-	standardCoordinateInstruction:
-		"x,y coordinates - The X and Y coordinates for the `click` action. Coordinates should be within the **@BROWSER_VIEWPORT_WIDTH@x@BROWSER_VIEWPORT_HEIGHT@** resolution. Example: '450,300'",
-	textInstruction: `Use this for providing the text for the \`type\` action. 
+    coordinateUsage: "x,y coordinates (optional)",
+    standardCoordinateInstruction:
+        "x,y coordinates - The X and Y coordinates for the `click` action. Coordinates should be within the **@BROWSER_VIEWPORT_WIDTH@x@BROWSER_VIEWPORT_HEIGHT@** resolution. Example: '450,300'",
+    textInstruction: `Use this for providing the text for the \`type\` action.
 	* Example: <text>Hello, world!</text>`,
-	textUsage: "Text to type (optional)",
-	standardTextInstruction: "Use this for providing the text for the `type` action. Example: 'Hello, world!'",
+    textUsage: "Text to type (optional)",
+    standardTextInstruction: "Use this for providing the text for the `type` action. Example: 'Hello, world!'",
 }
 export default prompts

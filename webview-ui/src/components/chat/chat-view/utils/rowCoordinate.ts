@@ -13,8 +13,8 @@ export const ROW_INDEX_BASE = 1_000_000
  * needed to recognise it again after the loaded window moves.
  */
 export interface RowCoordinate {
-	firstItemIndex: number
-	identities: string[]
+    firstItemIndex: number
+    identities: string[]
 }
 
 /**
@@ -26,7 +26,7 @@ export interface RowCoordinate {
  * only the first and last message would report a regrouped row as unchanged.
  */
 export function rowIdentity(row: UiMessage | UiMessage[]): string {
-	return Array.isArray(row) ? row.map((message) => message.ts).join(",") : String(row.ts)
+    return Array.isArray(row) ? row.map((message) => message.ts).join(",") : String(row.ts)
 }
 
 /**
@@ -59,35 +59,35 @@ const AMBIGUOUS = -1
  * @returns Rows inserted ahead of the known rows, or null when unrecognisable.
  */
 export function leadingRowShift(previous: readonly string[], next: readonly string[]): number | null {
-	if (previous.length === 0 || next.length === 0) return null
+    if (previous.length === 0 || next.length === 0) return null
 
-	const positions = new Map<string, number>()
-	for (const [index, identity] of next.entries()) {
-		// A duplicate identity cannot locate anything. Marking it rather than
-		// keeping the first occurrence stops an ambiguous match from being
-		// counted as agreement.
-		if (positions.has(identity)) positions.set(identity, AMBIGUOUS)
-		else positions.set(identity, index)
-	}
+    const positions = new Map<string, number>()
+    for (const [index, identity] of next.entries()) {
+        // A duplicate identity cannot locate anything. Marking it rather than
+        // keeping the first occurrence stops an ambiguous match from being
+        // counted as agreement.
+        if (positions.has(identity)) positions.set(identity, AMBIGUOUS)
+        else positions.set(identity, index)
+    }
 
-	const shiftCounts = new Map<number, number>()
-	for (const [previousIndex, identity] of previous.entries()) {
-		const nextIndex = positions.get(identity)
-		if (nextIndex === undefined || nextIndex === AMBIGUOUS) continue
-		const shift = nextIndex - previousIndex
-		shiftCounts.set(shift, (shiftCounts.get(shift) ?? 0) + 1)
-	}
+    const shiftCounts = new Map<number, number>()
+    for (const [previousIndex, identity] of previous.entries()) {
+        const nextIndex = positions.get(identity)
+        if (nextIndex === undefined || nextIndex === AMBIGUOUS) continue
+        const shift = nextIndex - previousIndex
+        shiftCounts.set(shift, (shiftCounts.get(shift) ?? 0) + 1)
+    }
 
-	let bestShift: number | null = null
-	let bestCount = 0
-	for (const [shift, count] of shiftCounts) {
-		if (count > bestCount) {
-			bestShift = shift
-			bestCount = count
-		}
-	}
+    let bestShift: number | null = null
+    let bestCount = 0
+    for (const [shift, count] of shiftCounts) {
+        if (count > bestCount) {
+            bestShift = shift
+            bestCount = count
+        }
+    }
 
-	return bestCount >= MIN_AGREEING_ROWS ? bestShift : null
+    return bestCount >= MIN_AGREEING_ROWS ? bestShift : null
 }
 
 /**
@@ -103,8 +103,8 @@ export function leadingRowShift(previous: readonly string[], next: readonly stri
  * @returns Coordinate describing the rows now on screen.
  */
 export function advanceRowCoordinate(previous: RowCoordinate, rows: readonly (UiMessage | UiMessage[])[]): RowCoordinate {
-	const identities = rows.map(rowIdentity)
-	const shift = leadingRowShift(previous.identities, identities)
-	const firstItemIndex = shift === null ? previous.firstItemIndex : previous.firstItemIndex - shift
-	return { firstItemIndex, identities }
+    const identities = rows.map(rowIdentity)
+    const shift = leadingRowShift(previous.identities, identities)
+    const firstItemIndex = shift === null ? previous.firstItemIndex : previous.firstItemIndex - shift
+    return { firstItemIndex, identities }
 }

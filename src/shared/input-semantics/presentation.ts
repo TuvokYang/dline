@@ -8,22 +8,22 @@ import type { SemanticInputDocument, SemanticInputNode } from "./document"
  * compares against `rawText`.
  */
 export function presentationTextOfNode(node: SemanticInputNode): string {
-	switch (node.kind) {
-		case "text":
-			return node.text
-		case "slash_command":
-		case "mention":
-			return node.sourceText
-		case "image":
-			return `[image:${node.resourceId}]`
-		case "file":
-			return `[file:${node.resourceId}]`
-	}
+    switch (node.kind) {
+        case "text":
+            return node.text
+        case "slash_command":
+        case "mention":
+            return node.sourceText
+        case "image":
+            return `[image:${node.resourceId}]`
+        case "file":
+            return `[file:${node.resourceId}]`
+    }
 }
 
 /** Stable text projection of the whole document, in node order. */
 export function presentationTextOf(document: SemanticInputDocument): string {
-	return document.nodes.map(presentationTextOfNode).join("")
+    return document.nodes.map(presentationTextOfNode).join("")
 }
 
 /**
@@ -33,5 +33,5 @@ export function presentationTextOf(document: SemanticInputDocument): string {
  * but it must never resolve the disagreement by re-reading `rawText`.
  */
 export function documentMatchesPresentation(document: SemanticInputDocument): boolean {
-	return document.rawText === presentationTextOf(document)
+    return document.rawText === presentationTextOf(document)
 }

@@ -21,23 +21,23 @@ export type AnthropicMessagesRequestBody = MessageCreateParamsStreaming & Record
 export type AnthropicForcedToolChoice = "model_declared" | "never"
 
 export interface AnthropicMessagesRequestInput {
-	/** Model identifier sent to the API, including any tier suffix. */
-	model: string
-	modelInfo: ModelInfo
-	systemPrompt: string
-	/** Blocks that lead the system array, such as a client attribution block. They never carry a cache breakpoint. */
-	systemPrefix?: readonly TextBlockParam[]
-	/** Messages already prepared by {@link prepareAnthropicMessages}. */
-	messages: MessageParam[]
-	reasoning: AnthropicReasoning
-	tools?: readonly AnthropicTool[]
-	options?: ApiRequestOptions
-	forcedToolChoice: AnthropicForcedToolChoice
+    /** Model identifier sent to the API, including any tier suffix. */
+    model: string
+    modelInfo: ModelInfo
+    systemPrompt: string
+    /** Blocks that lead the system array, such as a client attribution block. They never carry a cache breakpoint. */
+    systemPrefix?: readonly TextBlockParam[]
+    /** Messages already prepared by {@link prepareAnthropicMessages}. */
+    messages: MessageParam[]
+    reasoning: AnthropicReasoning
+    tools?: readonly AnthropicTool[]
+    options?: ApiRequestOptions
+    forcedToolChoice: AnthropicForcedToolChoice
 }
 
 /** Whether the model accepts prompt-cache breakpoints, which also shapes message conversion. */
 export function anthropicPromptCacheOn(modelInfo: ModelInfo): boolean {
-	return modelInfo.capabilities?.supportsPromptCache === true
+    return modelInfo.capabilities?.supportsPromptCache === true
 }
 
 /**
@@ -46,56 +46,56 @@ export function anthropicPromptCacheOn(modelInfo: ModelInfo): boolean {
  * Stored hosted calls are replayed only for hosted tools this same request declares.
  */
 export function prepareAnthropicMessages(
-	messages: ClineStorageMessage[],
-	modelInfo: ModelInfo,
-	options?: ApiRequestOptions,
+    messages: ClineStorageMessage[],
+    modelInfo: ModelInfo,
+    options?: ApiRequestOptions,
 ): MessageParam[] {
-	return sanitizeAnthropicMessages(messages, anthropicPromptCacheOn(modelInfo), {
-		replayHostedTools: declaredAnthropicHostedToolNames(options?.serverTools),
-	})
+    return sanitizeAnthropicMessages(messages, anthropicPromptCacheOn(modelInfo), {
+        replayHostedTools: declaredAnthropicHostedToolNames(options?.serverTools),
+    })
 }
 
 /** Build the single streaming Messages API request body shared by every Anthropic Messages provider. */
 export function buildAnthropicMessagesRequest(input: AnthropicMessagesRequestInput): AnthropicMessagesRequestBody {
-	const { reasoning } = input
-	const promptCacheOn = anthropicPromptCacheOn(input.modelInfo)
-	const requestTools = mergeAnthropicServerTools(input.tools, input.options?.serverTools)
-	const toolChoice = resolveToolChoice(input)
+    const { reasoning } = input
+    const promptCacheOn = anthropicPromptCacheOn(input.modelInfo)
+    const requestTools = mergeAnthropicServerTools(input.tools, input.options?.serverTools)
+    const toolChoice = resolveToolChoice(input)
 
-	const body: AnthropicMessagesRequestBody = {
-		model: input.model,
-		max_tokens: resolveMaxOutputTokens(input.modelInfo, input.options),
-		// "Thinking isn't compatible with temperature, top_p, or top_k modifications as well as forced tool use."
-		// (https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking)
-		// Adaptive Claude models do not support temperature.
-		temperature: reasoning.adaptive || reasoning.enabled ? undefined : 0,
-		// The prefix leads the system array, matching real client traffic. The cache breakpoint stays on the
-		// system prompt, so a new task reuses the cached prefix. Tools are not given their own breakpoint:
-		// breakpoints apply tools > system > messages, and a tools-only breakpoint misses the minimum cacheable size.
-		system: [
-			...(input.systemPrefix ?? []),
-			{
-				type: "text",
-				text: input.systemPrompt,
-				...(promptCacheOn ? { cache_control: { type: "ephemeral" as const } } : {}),
-			},
-		],
-		messages: input.messages,
-		stream: true,
-		...(reasoning.thinking ? { thinking: reasoning.thinking } : {}),
-		...(requestTools ? { tools: requestTools } : {}),
-		...(toolChoice ? { tool_choice: toolChoice } : {}),
-	}
-	if (reasoning.outputConfig) {
-		body.output_config = reasoning.outputConfig
-	}
-	return body
+    const body: AnthropicMessagesRequestBody = {
+        model: input.model,
+        max_tokens: resolveMaxOutputTokens(input.modelInfo, input.options),
+        // "Thinking isn't compatible with temperature, top_p, or top_k modifications as well as forced tool use."
+        // (https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#important-considerations-when-using-extended-thinking)
+        // Adaptive Claude models do not support temperature.
+        temperature: reasoning.adaptive || reasoning.enabled ? undefined : 0,
+        // The prefix leads the system array, matching real client traffic. The cache breakpoint stays on the
+        // system prompt, so a new task reuses the cached prefix. Tools are not given their own breakpoint:
+        // breakpoints apply tools > system > messages, and a tools-only breakpoint misses the minimum cacheable size.
+        system: [
+            ...(input.systemPrefix ?? []),
+            {
+                type: "text",
+                text: input.systemPrompt,
+                ...(promptCacheOn ? { cache_control: { type: "ephemeral" as const } } : {}),
+            },
+        ],
+        messages: input.messages,
+        stream: true,
+        ...(reasoning.thinking ? { thinking: reasoning.thinking } : {}),
+        ...(requestTools ? { tools: requestTools } : {}),
+        ...(toolChoice ? { tool_choice: toolChoice } : {}),
+    }
+    if (reasoning.outputConfig) {
+        body.output_config = reasoning.outputConfig
+    }
+    return body
 }
 
 function resolveMaxOutputTokens(modelInfo: ModelInfo, options?: ApiRequestOptions): number {
-	return options?.generation?.purpose === "compaction"
-		? options.generation.maxOutputTokens
-		: modelInfo.capabilities?.maxTokens || DEFAULT_MAX_OUTPUT_TOKENS
+    return options?.generation?.purpose === "compaction"
+        ? options.generation.maxOutputTokens
+        : modelInfo.capabilities?.maxTokens || DEFAULT_MAX_OUTPUT_TOKENS
 }
 
 /**
@@ -107,10 +107,10 @@ function resolveMaxOutputTokens(modelInfo: ModelInfo, options?: ApiRequestOption
  * decides this. Manual extended thinking cannot be combined with a forced choice, which leaves the API default.
  */
 function resolveToolChoice(input: AnthropicMessagesRequestInput): MessageCreateParamsStreaming["tool_choice"] {
-	if (!input.tools?.length) return undefined
-	const hostedServerToolsOn = (input.options?.serverTools?.length ?? 0) > 0
-	const forcingAllowed =
-		input.forcedToolChoice === "model_declared" && input.modelInfo.capabilities?.supportsForcedToolUse !== false
-	if (hostedServerToolsOn || !forcingAllowed) return { type: "auto" }
-	return input.reasoning.enabled ? undefined : { type: "any" }
+    if (!input.tools?.length) return undefined
+    const hostedServerToolsOn = (input.options?.serverTools?.length ?? 0) > 0
+    const forcingAllowed =
+        input.forcedToolChoice === "model_declared" && input.modelInfo.capabilities?.supportsForcedToolUse !== false
+    if (hostedServerToolsOn || !forcingAllowed) return { type: "auto" }
+    return input.reasoning.enabled ? undefined : { type: "any" }
 }

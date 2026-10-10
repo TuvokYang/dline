@@ -24,14 +24,14 @@ import type { Controller } from "../index"
  *   .catch(error => Logger.error("Failed to execute quick win:", error))
  */
 export async function executeQuickWin(controller: Controller, request: ExecuteQuickWinRequest): Promise<Empty> {
-	try {
-		const { command, title } = request
-		// The command and title are user content; only their shape reaches the log channel.
-		Logger.log(`Received executeQuickWin: commandChars=${command.length} titleChars=${title.length}`)
-		await controller.initTask(title)
-		return Empty.create({})
-	} catch (error) {
-		Logger.error("Failed to execute quick win:", error)
-		throw error
-	}
+    try {
+        const { command, title } = request
+        // The command and title are user content; only their shape reaches the log channel.
+        Logger.log(`Received executeQuickWin: commandChars=${command.length} titleChars=${title.length}`)
+        await controller.initTask(title)
+        return Empty.create({})
+    } catch (error) {
+        Logger.error("Failed to execute quick win:", error)
+        throw error
+    }
 }

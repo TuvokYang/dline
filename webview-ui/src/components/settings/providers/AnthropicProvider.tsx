@@ -2,11 +2,11 @@ import type { ModelCapabilities, ModelPricing, ServerTool } from "@shared/proto/
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import { AnthropicProviderConfig } from "@shared/proto/dline/provider/anthropic"
 import {
-	buildEffectiveModelInfo,
-	mergeCapabilities,
-	mergePricing,
-	selectContextTier,
-	updateSelectedContextWindow,
+    buildEffectiveModelInfo,
+    mergeCapabilities,
+    mergePricing,
+    selectContextTier,
+    updateSelectedContextWindow,
 } from "@shared/providers/effective-model-info"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { VSCodeCheckbox } from "@vscode/webview-ui-toolkit/react"
@@ -34,10 +34,10 @@ const StyledCheckbox = styled(VSCodeCheckbox)`
  * Props for the AnthropicProvider component
  */
 interface AnthropicProviderProps {
-	showModelOptions: boolean
-	isPopup?: boolean
-	profile: ApiProfile
-	onUpdate: (updates: Partial<ApiProfile>) => void
+    showModelOptions: boolean
+    isPopup?: boolean
+    profile: ApiProfile
+    onUpdate: (updates: Partial<ApiProfile>) => void
 }
 
 /**
@@ -45,239 +45,239 @@ interface AnthropicProviderProps {
  * All data sourced from ApiProfile.anthropic (the proto oneof field) â€? * typed as AnthropicProviderConfig | undefined, no unsafe casts.
  */
 export const AnthropicProvider = ({ showModelOptions, isPopup, profile, onUpdate }: AnthropicProviderProps) => {
-	const customModelFieldId = useId()
-	const { remoteConfigSettings } = useExtensionState()
-	const rc: Partial<Record<string, string | number | boolean>> =
-		(remoteConfigSettings as Record<string, string | number | boolean>) ?? {}
+    const customModelFieldId = useId()
+    const { remoteConfigSettings } = useExtensionState()
+    const rc: Partial<Record<string, string | number | boolean>> =
+        (remoteConfigSettings as Record<string, string | number | boolean>) ?? {}
 
-	const {
-		models: anthropicModels,
-		defaultModelId: anthropicDefaultModelId,
-		options: anthropicModelOptions,
-		optionOrigins,
-		refreshRemoteModels,
-	} = useProviderModelOptions({
-		providerId: "anthropic",
-		profileId: profile.id,
-		baseUrl: profile.baseUrl,
-		apiKey: profile.apiKey,
-		selectedModelId: resolveProfileModelId(profile),
-	})
+    const {
+        models: anthropicModels,
+        defaultModelId: anthropicDefaultModelId,
+        options: anthropicModelOptions,
+        optionOrigins,
+        refreshRemoteModels,
+    } = useProviderModelOptions({
+        providerId: "anthropic",
+        profileId: profile.id,
+        baseUrl: profile.baseUrl,
+        apiKey: profile.apiKey,
+        selectedModelId: resolveProfileModelId(profile),
+    })
 
-	const pc = profile.anthropic ?? AnthropicProviderConfig.create()
-	const modelId = resolveProfileModelId(profile, { defaultModelId: anthropicDefaultModelId })
-	// The user owns this switch. Deriving it from catalog membership would flip
-	// it on for any id that only the provider's listing returned, and the
-	// resulting custom-model metadata would then mask the catalog's own
-	// capabilities, including its hosted server tools.
-	const customModelEnabled = pc.customModelEnabled === true
-	const registryModel = anthropicModels[modelId] ?? (profile.modelInfo?.id === modelId ? profile.modelInfo : { id: modelId })
-	const contextWindowTiersEnabled = customModelEnabled || Boolean(registryModel.capabilities?.contextWindowTiers?.length)
-	// The 1M long-context option is enabled by default; only an explicit false disables it.
-	const enableLongContext = pc.enableLongContext !== false
-	const modelInfo = buildEffectiveModelInfo(modelId, registryModel, {
-		capabilities: pc.capabilities,
-		pricing: pc.pricing,
-		enableLongContext,
-		pricingTiersEnabled: pc.pricingTiersEnabled,
-		preferContextWindowTier: true,
-		contextWindowTiersEnabled,
-	})
-	const selectedContextTier = selectContextTier(modelInfo.capabilities, enableLongContext)
-	const contextWindowValue = selectedContextTier?.contextWindow ?? modelInfo.capabilities?.contextWindow
+    const pc = profile.anthropic ?? AnthropicProviderConfig.create()
+    const modelId = resolveProfileModelId(profile, { defaultModelId: anthropicDefaultModelId })
+    // The user owns this switch. Deriving it from catalog membership would flip
+    // it on for any id that only the provider's listing returned, and the
+    // resulting custom-model metadata would then mask the catalog's own
+    // capabilities, including its hosted server tools.
+    const customModelEnabled = pc.customModelEnabled === true
+    const registryModel = anthropicModels[modelId] ?? (profile.modelInfo?.id === modelId ? profile.modelInfo : { id: modelId })
+    const contextWindowTiersEnabled = customModelEnabled || Boolean(registryModel.capabilities?.contextWindowTiers?.length)
+    // The 1M long-context option is enabled by default; only an explicit false disables it.
+    const enableLongContext = pc.enableLongContext !== false
+    const modelInfo = buildEffectiveModelInfo(modelId, registryModel, {
+        capabilities: pc.capabilities,
+        pricing: pc.pricing,
+        enableLongContext,
+        pricingTiersEnabled: pc.pricingTiersEnabled,
+        preferContextWindowTier: true,
+        contextWindowTiersEnabled,
+    })
+    const selectedContextTier = selectContextTier(modelInfo.capabilities, enableLongContext)
+    const contextWindowValue = selectedContextTier?.contextWindow ?? modelInfo.capabilities?.contextWindow
 
-	const thinking = modelInfo.capabilities?.thinking
-	const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
-	const isAdaptiveThinkingModel = thinkingSupported && thinking?.mode === "effort"
-	const budgetThinkingSupported = thinkingSupported && thinking?.mode === "budget"
-	const thinkingDisableSupported = thinking?.canDisable !== false
+    const thinking = modelInfo.capabilities?.thinking
+    const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
+    const isAdaptiveThinkingModel = thinkingSupported && thinking?.mode === "effort"
+    const budgetThinkingSupported = thinkingSupported && thinking?.mode === "budget"
+    const thinkingDisableSupported = thinking?.canDisable !== false
 
-	// --- Handlers ---
-	/** Commits a model id from the merged picker without touching the custom-model switch. */
-	const handleModelChange = (newModelId: string) => {
-		onUpdate({ modelId: newModelId, modelInfo: anthropicModels[newModelId] })
-	}
+    // --- Handlers ---
+    /** Commits a model id from the merged picker without touching the custom-model switch. */
+    const handleModelChange = (newModelId: string) => {
+        onUpdate({ modelId: newModelId, modelInfo: anthropicModels[newModelId] })
+    }
 
-	/**
-	 * Turning the switch on replaces the picker with a free-form id field.
-	 * The id is kept so toggling back and forth does not discard the selection.
-	 */
-	const handleToggleCustomModel = (enabled: boolean) => {
-		onUpdate({ anthropic: { ...pc, customModelEnabled: enabled } })
-	}
+    /**
+     * Turning the switch on replaces the picker with a free-form id field.
+     * The id is kept so toggling back and forth does not discard the selection.
+     */
+    const handleToggleCustomModel = (enabled: boolean) => {
+        onUpdate({ anthropic: { ...pc, customModelEnabled: enabled } })
+    }
 
-	// Update provider capabilities without writing profile.modelInfo.
-	const handleCapabilitiesUpdate = (updates: Partial<ModelCapabilities>) => {
-		onUpdate({
-			anthropic: {
-				...pc,
-				capabilities: mergeCapabilities(pc.capabilities, updates),
-			},
-		})
-	}
+    // Update provider capabilities without writing profile.modelInfo.
+    const handleCapabilitiesUpdate = (updates: Partial<ModelCapabilities>) => {
+        onUpdate({
+            anthropic: {
+                ...pc,
+                capabilities: mergeCapabilities(pc.capabilities, updates),
+            },
+        })
+    }
 
-	// Update provider pricing without writing profile.modelInfo.
-	const handleContextWindowUpdate = (contextWindow: number) => {
-		onUpdate({
-			anthropic: {
-				...pc,
-				capabilities: updateSelectedContextWindow(
-					registryModel.capabilities,
-					pc.capabilities,
-					enableLongContext,
-					contextWindow,
-					contextWindowTiersEnabled,
-				),
-			},
-		})
-	}
+    // Update provider pricing without writing profile.modelInfo.
+    const handleContextWindowUpdate = (contextWindow: number) => {
+        onUpdate({
+            anthropic: {
+                ...pc,
+                capabilities: updateSelectedContextWindow(
+                    registryModel.capabilities,
+                    pc.capabilities,
+                    enableLongContext,
+                    contextWindow,
+                    contextWindowTiersEnabled,
+                ),
+            },
+        })
+    }
 
-	const handlePricingUpdate = (updates: Partial<ModelPricing>) => {
-		onUpdate({
-			anthropic: {
-				...pc,
-				pricing: mergePricing(pc.pricing, updates),
-				...(updates.tiers === undefined ? {} : { pricingTiersEnabled: true }),
-			},
-		})
-	}
+    const handlePricingUpdate = (updates: Partial<ModelPricing>) => {
+        onUpdate({
+            anthropic: {
+                ...pc,
+                pricing: mergePricing(pc.pricing, updates),
+                ...(updates.tiers === undefined ? {} : { pricingTiersEnabled: true }),
+            },
+        })
+    }
 
-	// Record the hosted tools this profile turns off. The model's own declaration
-	// stays in the registry so the switch can never erase a real capability.
-	const handleDisabledServerToolsUpdate = (disabledServerTools: ServerTool[]) => {
-		onUpdate({ anthropic: { ...pc, disabledServerTools } })
-	}
+    // Record the hosted tools this profile turns off. The model's own declaration
+    // stays in the registry so the switch can never erase a real capability.
+    const handleDisabledServerToolsUpdate = (disabledServerTools: ServerTool[]) => {
+        onUpdate({ anthropic: { ...pc, disabledServerTools } })
+    }
 
-	return (
-		<div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-			<ApiKeyField
-				initialValue={profile.apiKey}
-				onChange={(value) => onUpdate({ apiKey: value })}
-				providerName="Anthropic"
-				signupUrl="https://console.anthropic.com/settings/keys"
-			/>
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <ApiKeyField
+                initialValue={profile.apiKey}
+                onChange={(value) => onUpdate({ apiKey: value })}
+                providerName="Anthropic"
+                signupUrl="https://console.anthropic.com/settings/keys"
+            />
 
-			<RemotelyConfiguredInputWrapper hidden={rc.anthropicBaseUrl === undefined}>
-				<BaseUrlField
-					disabled={!!rc.anthropicBaseUrl}
-					initialValue={profile.baseUrl || ""}
-					label="Use custom base URL"
-					onChange={(value) => onUpdate({ baseUrl: value || undefined })}
-					placeholder="Default: https://api.anthropic.com"
-					showLockIcon={!!rc.anthropicBaseUrl}
-				/>
-			</RemotelyConfiguredInputWrapper>
+            <RemotelyConfiguredInputWrapper hidden={rc.anthropicBaseUrl === undefined}>
+                <BaseUrlField
+                    disabled={!!rc.anthropicBaseUrl}
+                    initialValue={profile.baseUrl || ""}
+                    label="Use custom base URL"
+                    onChange={(value) => onUpdate({ baseUrl: value || undefined })}
+                    placeholder="Default: https://api.anthropic.com"
+                    showLockIcon={!!rc.anthropicBaseUrl}
+                />
+            </RemotelyConfiguredInputWrapper>
 
-			{showModelOptions && (
-				<>
-					<StyledCheckbox
-						checked={customModelEnabled}
-						onChange={(event: Event | React.FormEvent<HTMLElement>) =>
-							handleToggleCustomModel((event.target as HTMLInputElement | null)?.checked === true)
-						}>
-						Use custom model ID
-					</StyledCheckbox>
+            {showModelOptions && (
+                <>
+                    <StyledCheckbox
+                        checked={customModelEnabled}
+                        onChange={(event: Event | React.FormEvent<HTMLElement>) =>
+                            handleToggleCustomModel((event.target as HTMLInputElement | null)?.checked === true)
+                        }>
+                        Use custom model ID
+                    </StyledCheckbox>
 
-					{customModelEnabled ? (
-						<ProfileField htmlFor={customModelFieldId} label="Model ID">
-							<DebouncedTextField
-								className="w-full"
-								id={customModelFieldId}
-								initialValue={profile.modelId ?? ""}
-								onChange={handleModelChange}
-								placeholder="Enter Model ID..."
-							/>
-						</ProfileField>
-					) : (
-						<ModelAutocomplete
-							label="Model"
-							models={anthropicModelOptions}
-							onChange={handleModelChange}
-							onOpen={refreshRemoteModels}
-							optionOrigins={optionOrigins}
-							placeholder="Search or select a model..."
-							selectedModelId={modelId}
-						/>
-					)}
+                    {customModelEnabled ? (
+                        <ProfileField htmlFor={customModelFieldId} label="Model ID">
+                            <DebouncedTextField
+                                className="w-full"
+                                id={customModelFieldId}
+                                initialValue={profile.modelId ?? ""}
+                                onChange={handleModelChange}
+                                placeholder="Enter Model ID..."
+                            />
+                        </ProfileField>
+                    ) : (
+                        <ModelAutocomplete
+                            label="Model"
+                            models={anthropicModelOptions}
+                            onChange={handleModelChange}
+                            onOpen={refreshRemoteModels}
+                            optionOrigins={optionOrigins}
+                            placeholder="Search or select a model..."
+                            selectedModelId={modelId}
+                        />
+                    )}
 
-					{modelInfo.capabilities?.contextWindowTiers?.length ? (
-						<StyledCheckbox
-							checked={pc.enableLongContext !== false}
-							onChange={(event: Event | React.FormEvent<HTMLElement>) =>
-								onUpdate({
-									anthropic: {
-										...pc,
-										enableLongContext: (event.target as HTMLInputElement | null)?.checked === true,
-									},
-								})
-							}>
-							Enable Long Context
-						</StyledCheckbox>
-					) : null}
+                    {modelInfo.capabilities?.contextWindowTiers?.length ? (
+                        <StyledCheckbox
+                            checked={pc.enableLongContext !== false}
+                            onChange={(event: Event | React.FormEvent<HTMLElement>) =>
+                                onUpdate({
+                                    anthropic: {
+                                        ...pc,
+                                        enableLongContext: (event.target as HTMLInputElement | null)?.checked === true,
+                                    },
+                                })
+                            }>
+                            Enable Long Context
+                        </StyledCheckbox>
+                    ) : null}
 
-					{(isAdaptiveThinkingModel || budgetThinkingSupported) && (
-						<ThinkingControl
-							defaultEffort={thinking?.defaultEffort}
-							defaultEnabled={thinking?.defaultEnabled}
-							disableSupported={thinkingDisableSupported}
-							displayDescription={ANTHROPIC_THINKING_DISPLAY_DESCRIPTION}
-							displayLabel="Thinking Display"
-							displayOptions={ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS}
-							effortDescription={
-								thinkingDisableSupported
-									? "Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
-									: "Adaptive thinking is always enabled for this model. Higher effort increases response detail and token usage."
-							}
-							effortLabel="Adaptive Thinking"
-							effortOptions={thinking?.effortLevels ?? []}
-							maxBudget={thinking?.maxBudget}
-							minBudget={thinking?.minBudget}
-							mode={isAdaptiveThinkingModel ? "effort-only" : "budget-only"}
-							onReasoningConfigUpdate={(reasoning) => {
-								onUpdate({ anthropic: { ...pc, reasoning } })
-							}}
-							reasoningConfig={pc.reasoning}
-							showModeSelector={false}
-						/>
-					)}
+                    {(isAdaptiveThinkingModel || budgetThinkingSupported) && (
+                        <ThinkingControl
+                            defaultEffort={thinking?.defaultEffort}
+                            defaultEnabled={thinking?.defaultEnabled}
+                            disableSupported={thinkingDisableSupported}
+                            displayDescription={ANTHROPIC_THINKING_DISPLAY_DESCRIPTION}
+                            displayLabel="Thinking Display"
+                            displayOptions={ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS}
+                            effortDescription={
+                                thinkingDisableSupported
+                                    ? "Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
+                                    : "Adaptive thinking is always enabled for this model. Higher effort increases response detail and token usage."
+                            }
+                            effortLabel="Adaptive Thinking"
+                            effortOptions={thinking?.effortLevels ?? []}
+                            maxBudget={thinking?.maxBudget}
+                            minBudget={thinking?.minBudget}
+                            mode={isAdaptiveThinkingModel ? "effort-only" : "budget-only"}
+                            onReasoningConfigUpdate={(reasoning) => {
+                                onUpdate({ anthropic: { ...pc, reasoning } })
+                            }}
+                            reasoningConfig={pc.reasoning}
+                            showModeSelector={false}
+                        />
+                    )}
 
-					<ModelConfiguration
-						capabilities={pc.capabilities}
-						contextWindowValue={contextWindowValue}
-						defaults={registryModel}
-						disabledServerTools={pc.disabledServerTools}
-						fields={{
-							capabilities: [
-								"maxTokens",
-								"contextWindow",
-								...(contextWindowTiersEnabled ? (["contextWindowTiers"] as const) : []),
-								"supportsImages",
-								"hostedWebSearch",
-								"hostedWebFetch",
-								"supportsBrowserAction",
-								"supportsPromptCache",
-								"supportsTools",
-							],
-							pricing: ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice", "pricingTiers"],
-						}}
-						onCapabilitiesUpdate={handleCapabilitiesUpdate}
-						onContextWindowUpdate={handleContextWindowUpdate}
-						onDisabledServerToolsUpdate={handleDisabledServerToolsUpdate}
-						onPricingUpdate={handlePricingUpdate}
-						pricing={pc.pricing}
-						pricingTiersEnabled={pc.pricingTiersEnabled === true}
-						// Official models show registry tiers editable; custom models can add their own tiers.
-						tiersEditable={true}
-					/>
+                    <ModelConfiguration
+                        capabilities={pc.capabilities}
+                        contextWindowValue={contextWindowValue}
+                        defaults={registryModel}
+                        disabledServerTools={pc.disabledServerTools}
+                        fields={{
+                            capabilities: [
+                                "maxTokens",
+                                "contextWindow",
+                                ...(contextWindowTiersEnabled ? (["contextWindowTiers"] as const) : []),
+                                "supportsImages",
+                                "hostedWebSearch",
+                                "hostedWebFetch",
+                                "supportsBrowserAction",
+                                "supportsPromptCache",
+                                "supportsTools",
+                            ],
+                            pricing: ["inputPrice", "outputPrice", "cacheWritesPrice", "cacheReadsPrice", "pricingTiers"],
+                        }}
+                        onCapabilitiesUpdate={handleCapabilitiesUpdate}
+                        onContextWindowUpdate={handleContextWindowUpdate}
+                        onDisabledServerToolsUpdate={handleDisabledServerToolsUpdate}
+                        onPricingUpdate={handlePricingUpdate}
+                        pricing={pc.pricing}
+                        pricingTiersEnabled={pc.pricingTiersEnabled === true}
+                        // Official models show registry tiers editable; custom models can add their own tiers.
+                        tiersEditable={true}
+                    />
 
-					<ClaudeCodeIdentitySection
-						config={pc.claudeCodeIdentity}
-						onChange={(claudeCodeIdentity) => onUpdate({ anthropic: { ...pc, claudeCodeIdentity } })}
-					/>
+                    <ClaudeCodeIdentitySection
+                        config={pc.claudeCodeIdentity}
+                        onChange={(claudeCodeIdentity) => onUpdate({ anthropic: { ...pc, claudeCodeIdentity } })}
+                    />
 
-					<ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
-				</>
-			)}
-		</div>
-	)
+                    <ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
+                </>
+            )}
+        </div>
+    )
 }

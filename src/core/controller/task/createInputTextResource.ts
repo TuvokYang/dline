@@ -17,36 +17,36 @@ const DEFAULT_EXTENSION = "txt"
  * written somewhere without an owner.
  */
 export async function createInputTextResource(
-	controller: Controller,
-	request: CreateInputTextResourceRequest,
+    controller: Controller,
+    request: CreateInputTextResourceRequest,
 ): Promise<CreateInputTextResourceResponse> {
-	const taskId = controller.task?.taskId
-	if (!taskId) {
-		return CreateInputTextResourceResponse.create({ created: false, result: "missing_task" })
-	}
-	if (!exceedsInlineTextBudget(request.text)) {
-		return CreateInputTextResourceResponse.create({ created: false, result: "within_inline_budget" })
-	}
+    const taskId = controller.task?.taskId
+    if (!taskId) {
+        return CreateInputTextResourceResponse.create({ created: false, result: "missing_task" })
+    }
+    if (!exceedsInlineTextBudget(request.text)) {
+        return CreateInputTextResourceResponse.create({ created: false, result: "within_inline_budget" })
+    }
 
-	try {
-		const resource = await new TaskInputResourceStore(taskId).storeText(request.text, safeExtension(request.extension))
-		return CreateInputTextResourceResponse.create({
-			created: true,
-			result: "created",
-			resourceId: resource.resourceId,
-			absolutePath: resource.absolutePath,
-			displayName: resource.displayName,
-			lineCount: resource.lineCount,
-			byteSize: resource.byteSize,
-			contentHash: resource.contentHash,
-		})
-	} catch (error) {
-		Logger.error("Failed to store an oversized composer paste as a task input resource", error as Error)
-		return CreateInputTextResourceResponse.create({ created: false, result: "write_failed" })
-	}
+    try {
+        const resource = await new TaskInputResourceStore(taskId).storeText(request.text, safeExtension(request.extension))
+        return CreateInputTextResourceResponse.create({
+            created: true,
+            result: "created",
+            resourceId: resource.resourceId,
+            absolutePath: resource.absolutePath,
+            displayName: resource.displayName,
+            lineCount: resource.lineCount,
+            byteSize: resource.byteSize,
+            contentHash: resource.contentHash,
+        })
+    } catch (error) {
+        Logger.error("Failed to store an oversized composer paste as a task input resource", error as Error)
+        return CreateInputTextResourceResponse.create({ created: false, result: "write_failed" })
+    }
 }
 
 /** Keep the caller's language hint only when it is a plain extension. */
 function safeExtension(extension: string | undefined): string {
-	return extension && SAFE_EXTENSION_PATTERN.test(extension) ? extension : DEFAULT_EXTENSION
+    return extension && SAFE_EXTENSION_PATTERN.test(extension) ? extension : DEFAULT_EXTENSION
 }

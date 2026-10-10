@@ -11,13 +11,13 @@ import { openUiMessageRows, UI_MESSAGE_READER } from "./openUiMessageRows"
  * database is not created, so reading never leaves files behind.
  */
 export async function readUiMessages(instanceRoot: string): Promise<UiMessage[]> {
-	if (await instanceDatabaseExists(new InstanceLayout(instanceRoot), InstanceDatabase.Messages)) {
-		const rows = await openUiMessageRows(instanceRoot, UI_MESSAGE_READER)
-		try {
-			if ((await rows.count()) > 0) return (await rows.query()).records.map((record) => record.message)
-		} finally {
-			await rows.close()
-		}
-	}
-	return (await readLegacyUiMessages(instanceRoot))?.messages ?? []
+    if (await instanceDatabaseExists(new InstanceLayout(instanceRoot), InstanceDatabase.Messages)) {
+        const rows = await openUiMessageRows(instanceRoot, UI_MESSAGE_READER)
+        try {
+            if ((await rows.count()) > 0) return (await rows.query()).records.map((record) => record.message)
+        } finally {
+            await rows.close()
+        }
+    }
+    return (await readLegacyUiMessages(instanceRoot))?.messages ?? []
 }

@@ -11,7 +11,7 @@ let lockManagerInstance: SqliteLockManager | undefined
  * @returns The SqliteLockManager instance, or undefined if not initialized
  */
 export function getLockManager(): SqliteLockManager | undefined {
-	return lockManagerInstance
+    return lockManagerInstance
 }
 
 /**
@@ -20,5 +20,5 @@ export function getLockManager(): SqliteLockManager | undefined {
  * @param lockManager - The SqliteLockManager instance to set
  */
 export function setLockManager(lockManager: SqliteLockManager): void {
-	lockManagerInstance = lockManager
+    lockManagerInstance = lockManager
 }

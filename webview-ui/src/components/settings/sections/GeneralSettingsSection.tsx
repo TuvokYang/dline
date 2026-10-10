@@ -3,7 +3,7 @@ import PreferredLanguageSetting from "../PreferredLanguageSetting"
 import Section from "../Section"
 
 interface GeneralSettingsSectionProps {
-	renderSectionHeader: (tabId: string) => JSX.Element | null
+    renderSectionHeader: (tabId: string) => JSX.Element | null
 }
 
 /**
@@ -14,15 +14,15 @@ interface GeneralSettingsSectionProps {
  * switch away from the export made the export's failure message confusing.
  */
 const GeneralSettingsSection = ({ renderSectionHeader }: GeneralSettingsSectionProps) => {
-	return (
-		<div>
-			{renderSectionHeader("general")}
-			<Section>
-				<PreferredLanguageSetting />
-				<ChatInputSendShortcutSetting />
-			</Section>
-		</div>
-	)
+    return (
+        <div>
+            {renderSectionHeader("general")}
+            <Section>
+                <PreferredLanguageSetting />
+                <ChatInputSendShortcutSetting />
+            </Section>
+        </div>
+    )
 }
 
 export default GeneralSettingsSection

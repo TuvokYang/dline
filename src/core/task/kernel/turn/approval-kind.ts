@@ -1,19 +1,19 @@
 import { KERNEL_CONVERSATIONAL_TOOL_IDS, KernelToolId } from "./tool-identities"
 
 export interface AutoApprovalSettingsLike {
-	actions: {
-		readFiles?: boolean
-		readFilesExternally?: boolean
-		editFiles?: boolean
-		editFilesExternally?: boolean
-		executeSafeCommands?: boolean
-		executeAllCommands?: boolean
-		useBrowser?: boolean
-		useWeb?: boolean
-		useMcp?: boolean
-		generateImages?: boolean
-		focusChain?: boolean
-	}
+    actions: {
+        readFiles?: boolean
+        readFilesExternally?: boolean
+        editFiles?: boolean
+        editFilesExternally?: boolean
+        executeSafeCommands?: boolean
+        executeAllCommands?: boolean
+        useBrowser?: boolean
+        useWeb?: boolean
+        useMcp?: boolean
+        generateImages?: boolean
+        focusChain?: boolean
+    }
 }
 
 /**
@@ -25,20 +25,20 @@ export interface AutoApprovalSettingsLike {
  * because their blast radius differs.
  */
 export type PermissionScope =
-	| "read_workspace"
-	| "read_external"
-	| "edit_workspace"
-	| "edit_external"
-	| "command_safe"
-	| "command_all"
-	| "terminate_command"
-	| "browser"
-	| "web"
-	| "mcp"
-	| "generate_image"
-	| "focus_chain"
-	| "subagent"
-	| "conversational"
+    | "read_workspace"
+    | "read_external"
+    | "edit_workspace"
+    | "edit_external"
+    | "command_safe"
+    | "command_all"
+    | "terminate_command"
+    | "browser"
+    | "web"
+    | "mcp"
+    | "generate_image"
+    | "focus_chain"
+    | "subagent"
+    | "conversational"
 
 /**
  * Upper bound of automation allowed for a scope.
@@ -49,29 +49,29 @@ export type PermissionScope =
  * writes outside the workspace" expressible.
  */
 export type ApprovalCeiling =
-	/** A human decides every time. No toggle and no approver may satisfy it. */
-	| "manual_only"
-	/** An AI approver may decide it even with the user's toggle off. */
-	| "ai_approvable"
-	/** The user's auto-approval toggle decides it. */
-	| "auto"
+    /** A human decides every time. No toggle and no approver may satisfy it. */
+    | "manual_only"
+    /** An AI approver may decide it even with the user's toggle off. */
+    | "ai_approvable"
+    /** The user's auto-approval toggle decides it. */
+    | "auto"
 
 /** How a block must be approved before it may execute. */
 export type ApprovalKind =
-	/** No approval stage; the block proceeds directly to execution. */
-	| "none"
-	/** Approved by policy; may resolve concurrently with other blocks. */
-	| "automatic"
-	/** Routed to the AI approver, which either approves or escalates. */
-	| "ai_approver"
-	/** Presented to the user in the single serial approval slot. */
-	| "manual"
+    /** No approval stage; the block proceeds directly to execution. */
+    | "none"
+    /** Approved by policy; may resolve concurrently with other blocks. */
+    | "automatic"
+    /** Routed to the AI approver, which either approves or escalates. */
+    | "ai_approver"
+    /** Presented to the user in the single serial approval slot. */
+    | "manual"
 
 /** Resolved approval decision for one block. */
 export interface ApprovalDecision {
-	kind: ApprovalKind
-	scope: PermissionScope
-	ceiling: ApprovalCeiling
+    kind: ApprovalKind
+    scope: PermissionScope
+    ceiling: ApprovalCeiling
 }
 
 /**
@@ -81,12 +81,12 @@ export interface ApprovalDecision {
  * that requires workspace knowledge the kernel deliberately does not have.
  */
 export interface PermissionScopeContext {
-	/** True when the call's target lies outside every workspace root. */
-	isExternalPath?: boolean
-	/** True when the command matched the safe-command classifier. */
-	isSafeCommand?: boolean
-	/** Optional tool-local gate applied in addition to its permission-scope toggle. */
-	isToolAutoApproveEnabled?: boolean
+    /** True when the call's target lies outside every workspace root. */
+    isExternalPath?: boolean
+    /** True when the command matched the safe-command classifier. */
+    isSafeCommand?: boolean
+    /** Optional tool-local gate applied in addition to its permission-scope toggle. */
+    isToolAutoApproveEnabled?: boolean
 }
 
 /** Scopes whose ceiling the user may configure. */
@@ -103,7 +103,7 @@ export type ConfigurableCeilings = Partial<Record<PermissionScope, ApprovalCeili
  * approve-or-feedback interaction before the successor task starts.
  */
 function ownsItsInteraction(tool: KernelToolId): boolean {
-	return tool === KernelToolId.STATUS_UPDATE || tool === KernelToolId.NEW_TASK || KERNEL_CONVERSATIONAL_TOOL_IDS.has(tool)
+    return tool === KernelToolId.STATUS_UPDATE || tool === KernelToolId.NEW_TASK || KERNEL_CONVERSATIONAL_TOOL_IDS.has(tool)
 }
 
 /**
@@ -118,7 +118,7 @@ function ownsItsInteraction(tool: KernelToolId): boolean {
  * scope it resolves to has a fixed ceiling rather than a configurable one.
  */
 function withdrawsAnApprovedEffect(tool: KernelToolId): boolean {
-	return tool === KernelToolId.KILL_COMMAND
+    return tool === KernelToolId.KILL_COMMAND
 }
 
 /**
@@ -132,20 +132,20 @@ function withdrawsAnApprovedEffect(tool: KernelToolId): boolean {
  * reach it by being configured, not by default.
  */
 const DEFAULT_CEILINGS: Record<PermissionScope, ApprovalCeiling> = {
-	read_workspace: "auto",
-	read_external: "auto",
-	edit_workspace: "auto",
-	edit_external: "auto",
-	command_safe: "auto",
-	command_all: "auto",
-	terminate_command: "auto",
-	browser: "auto",
-	web: "auto",
-	mcp: "auto",
-	generate_image: "auto",
-	focus_chain: "auto",
-	subagent: "auto",
-	conversational: "auto",
+    read_workspace: "auto",
+    read_external: "auto",
+    edit_workspace: "auto",
+    edit_external: "auto",
+    command_safe: "auto",
+    command_all: "auto",
+    terminate_command: "auto",
+    browser: "auto",
+    web: "auto",
+    mcp: "auto",
+    generate_image: "auto",
+    focus_chain: "auto",
+    subagent: "auto",
+    conversational: "auto",
 }
 
 /**
@@ -173,15 +173,15 @@ const FIXED_CEILING_SCOPES: ReadonlySet<PermissionScope> = new Set<PermissionSco
  * unreachable for it.
  */
 const READ_TOOLS: ReadonlySet<KernelToolId> = new Set([
-	KernelToolId.FILE_READ,
-	KernelToolId.SEARCH,
-	KernelToolId.LIST_FILES,
-	KernelToolId.LIST_CODE_DEF,
-	KernelToolId.FIND_REFERENCES,
-	KernelToolId.LOAD_SKILL,
-	KernelToolId.LOAD_WORKFLOW,
-	KernelToolId.SUMMARIZE_TASK,
-	KernelToolId.GENERATE_EXPLANATION,
+    KernelToolId.FILE_READ,
+    KernelToolId.SEARCH,
+    KernelToolId.LIST_FILES,
+    KernelToolId.LIST_CODE_DEF,
+    KernelToolId.FIND_REFERENCES,
+    KernelToolId.LOAD_SKILL,
+    KernelToolId.LOAD_WORKFLOW,
+    KernelToolId.SUMMARIZE_TASK,
+    KernelToolId.GENERATE_EXPLANATION,
 ])
 
 /**
@@ -193,31 +193,31 @@ const READ_TOOLS: ReadonlySet<KernelToolId> = new Set([
  * declares, exactly as it does for a single-file edit.
  */
 const EDIT_TOOLS: ReadonlySet<KernelToolId> = new Set([
-	KernelToolId.FILE_NEW,
-	KernelToolId.FILE_EDIT,
-	KernelToolId.NEW_RULE,
-	KernelToolId.APPLY_PATCH,
-	KernelToolId.REPLACE_TEXT,
-	KernelToolId.RENAME,
+    KernelToolId.FILE_NEW,
+    KernelToolId.FILE_EDIT,
+    KernelToolId.NEW_RULE,
+    KernelToolId.APPLY_PATCH,
+    KernelToolId.REPLACE_TEXT,
+    KernelToolId.RENAME,
 ])
 
 /** Direct scope assignments for tools whose scope needs no runtime context. */
 const DIRECT_SCOPES: Partial<Record<KernelToolId, PermissionScope>> = {
-	[KernelToolId.BROWSER]: "browser",
-	[KernelToolId.WEB_FETCH]: "web",
-	[KernelToolId.WEB_SEARCH]: "web",
-	[KernelToolId.REPORT_BUG]: "web",
-	[KernelToolId.MCP_USE]: "mcp",
-	[KernelToolId.MCP_ACCESS]: "mcp",
-	[KernelToolId.MCP_DOCS]: "mcp",
-	[KernelToolId.LOAD_MCP]: "mcp",
-	[KernelToolId.KILL_COMMAND]: "terminate_command",
-	[KernelToolId.GENERATE_IMAGE]: "generate_image",
-	[KernelToolId.TODO]: "focus_chain",
-	[KernelToolId.CHANGE_TODO_LIST]: "focus_chain",
-	[KernelToolId.SPAWN_TASK]: "subagent",
-	[KernelToolId.USE_SUBAGENT]: "subagent",
-	[KernelToolId.USE_SUBAGENTS]: "subagent",
+    [KernelToolId.BROWSER]: "browser",
+    [KernelToolId.WEB_FETCH]: "web",
+    [KernelToolId.WEB_SEARCH]: "web",
+    [KernelToolId.REPORT_BUG]: "web",
+    [KernelToolId.MCP_USE]: "mcp",
+    [KernelToolId.MCP_ACCESS]: "mcp",
+    [KernelToolId.MCP_DOCS]: "mcp",
+    [KernelToolId.LOAD_MCP]: "mcp",
+    [KernelToolId.KILL_COMMAND]: "terminate_command",
+    [KernelToolId.GENERATE_IMAGE]: "generate_image",
+    [KernelToolId.TODO]: "focus_chain",
+    [KernelToolId.CHANGE_TODO_LIST]: "focus_chain",
+    [KernelToolId.SPAWN_TASK]: "subagent",
+    [KernelToolId.USE_SUBAGENT]: "subagent",
+    [KernelToolId.USE_SUBAGENTS]: "subagent",
 }
 
 /**
@@ -228,19 +228,19 @@ const DIRECT_SCOPES: Partial<Record<KernelToolId, PermissionScope>> = {
  * @returns The scope whose ceiling and toggle govern this call.
  */
 export function resolvePermissionScope(toolName: string, context: PermissionScopeContext = {}): PermissionScope {
-	const tool = toolName as KernelToolId
+    const tool = toolName as KernelToolId
 
-	if (READ_TOOLS.has(tool)) {
-		return context.isExternalPath ? "read_external" : "read_workspace"
-	}
-	if (EDIT_TOOLS.has(tool)) {
-		return context.isExternalPath ? "edit_external" : "edit_workspace"
-	}
-	if (tool === KernelToolId.BASH) {
-		return context.isSafeCommand ? "command_safe" : "command_all"
-	}
+    if (READ_TOOLS.has(tool)) {
+        return context.isExternalPath ? "read_external" : "read_workspace"
+    }
+    if (EDIT_TOOLS.has(tool)) {
+        return context.isExternalPath ? "edit_external" : "edit_workspace"
+    }
+    if (tool === KernelToolId.BASH) {
+        return context.isSafeCommand ? "command_safe" : "command_all"
+    }
 
-	return DIRECT_SCOPES[tool] ?? "conversational"
+    return DIRECT_SCOPES[tool] ?? "conversational"
 }
 
 /**
@@ -251,10 +251,10 @@ export function resolvePermissionScope(toolName: string, context: PermissionScop
  * @returns The configured ceiling, otherwise the declared default.
  */
 export function resolveApprovalCeiling(scope: PermissionScope, configured: ConfigurableCeilings = {}): ApprovalCeiling {
-	if (FIXED_CEILING_SCOPES.has(scope)) {
-		return DEFAULT_CEILINGS[scope]
-	}
-	return configured[scope] ?? DEFAULT_CEILINGS[scope]
+    if (FIXED_CEILING_SCOPES.has(scope)) {
+        return DEFAULT_CEILINGS[scope]
+    }
+    return configured[scope] ?? DEFAULT_CEILINGS[scope]
 }
 
 /**
@@ -265,63 +265,63 @@ export function resolveApprovalCeiling(scope: PermissionScope, configured: Confi
  * not auto-approvable by toggle.
  */
 function isScopeToggledOn(scope: PermissionScope, settings: AutoApprovalSettingsLike): boolean {
-	const actions = settings.actions
-	switch (scope) {
-		case "read_workspace":
-			return actions.readFiles === true
-		case "read_external":
-			return actions.readFilesExternally === true
-		case "subagent":
-			// The existing runtime governs use_subagent(s) with the read-file
-			// toggles. Giving the scope its own name makes a future dedicated
-			// setting possible without silently changing today's policy to
-			// "never automatic" in the meantime.
-			return actions.readFiles === true
-		case "edit_workspace":
-			return actions.editFiles === true
-		case "edit_external":
-			return actions.editFilesExternally === true
-		case "command_safe":
-			return actions.executeSafeCommands === true || actions.executeAllCommands === true
-		case "command_all":
-			return actions.executeAllCommands === true
-		case "browser":
-			return actions.useBrowser === true
-		case "web":
-			return actions.useWeb === true
-		case "mcp":
-			return actions.useMcp === true
-		case "generate_image":
-			return actions.generateImages === true
-		case "focus_chain":
-			return actions.focusChain === true
-		default:
-			return false
-	}
+    const actions = settings.actions
+    switch (scope) {
+        case "read_workspace":
+            return actions.readFiles === true
+        case "read_external":
+            return actions.readFilesExternally === true
+        case "subagent":
+            // The existing runtime governs use_subagent(s) with the read-file
+            // toggles. Giving the scope its own name makes a future dedicated
+            // setting possible without silently changing today's policy to
+            // "never automatic" in the meantime.
+            return actions.readFiles === true
+        case "edit_workspace":
+            return actions.editFiles === true
+        case "edit_external":
+            return actions.editFilesExternally === true
+        case "command_safe":
+            return actions.executeSafeCommands === true || actions.executeAllCommands === true
+        case "command_all":
+            return actions.executeAllCommands === true
+        case "browser":
+            return actions.useBrowser === true
+        case "web":
+            return actions.useWeb === true
+        case "mcp":
+            return actions.useMcp === true
+        case "generate_image":
+            return actions.generateImages === true
+        case "focus_chain":
+            return actions.focusChain === true
+        default:
+            return false
+    }
 }
 
 /** Inputs to one approval decision. */
 export interface ApprovalKindInput {
-	toolName: string
-	settings: AutoApprovalSettingsLike
-	ceilings?: ConfigurableCeilings
-	context?: PermissionScopeContext
-	/** The enclosing tool approval may satisfy this nested call when the ceiling permits it. */
-	inheritsApproval?: boolean
-	/**
-	 * Blanket approval switches held outside `AutoApprovalSettings`.
-	 *
-	 * `AutoApprovalSettings.enabled` is a legacy field that is always true; the
-	 * switches that actually grant broad approval are separate global settings.
-	 * They are inputs here so the ceiling can be shown to outrank them, which is
-	 * the claim that makes a ceiling different from another toggle.
-	 */
-	blanket?: {
-		/** Global "approve everything" switch. */
-		yoloMode?: boolean
-		/** Global "approve all tools" switch. */
-		approveAll?: boolean
-	}
+    toolName: string
+    settings: AutoApprovalSettingsLike
+    ceilings?: ConfigurableCeilings
+    context?: PermissionScopeContext
+    /** The enclosing tool approval may satisfy this nested call when the ceiling permits it. */
+    inheritsApproval?: boolean
+    /**
+     * Blanket approval switches held outside `AutoApprovalSettings`.
+     *
+     * `AutoApprovalSettings.enabled` is a legacy field that is always true; the
+     * switches that actually grant broad approval are separate global settings.
+     * They are inputs here so the ceiling can be shown to outrank them, which is
+     * the claim that makes a ceiling different from another toggle.
+     */
+    blanket?: {
+        /** Global "approve everything" switch. */
+        yoloMode?: boolean
+        /** Global "approve all tools" switch. */
+        approveAll?: boolean
+    }
 }
 
 /**
@@ -345,27 +345,27 @@ export interface ApprovalKindInput {
  * @returns The approval decision under the supplied permission state.
  */
 export function resolveApprovalKind(input: ApprovalKindInput): ApprovalDecision {
-	const tool = input.toolName as KernelToolId
-	const scope = resolvePermissionScope(input.toolName, input.context)
-	const ceiling = resolveApprovalCeiling(scope, input.ceilings)
+    const tool = input.toolName as KernelToolId
+    const scope = resolvePermissionScope(input.toolName, input.context)
+    const ceiling = resolveApprovalCeiling(scope, input.ceilings)
 
-	if (ceiling === "manual_only") {
-		return { kind: "manual", scope, ceiling }
-	}
-	if (input.inheritsApproval === true) {
-		return { kind: "none", scope, ceiling }
-	}
-	if (ownsItsInteraction(tool) || withdrawsAnApprovedEffect(tool)) {
-		return { kind: "none", scope, ceiling }
-	}
+    if (ceiling === "manual_only") {
+        return { kind: "manual", scope, ceiling }
+    }
+    if (input.inheritsApproval === true) {
+        return { kind: "none", scope, ceiling }
+    }
+    if (ownsItsInteraction(tool) || withdrawsAnApprovedEffect(tool)) {
+        return { kind: "none", scope, ceiling }
+    }
 
-	const blanketGrants = input.blanket?.yoloMode === true || input.blanket?.approveAll === true
-	const scopedToggleGrants = input.context?.isToolAutoApproveEnabled !== false && isScopeToggledOn(scope, input.settings)
-	if (blanketGrants || scopedToggleGrants) {
-		return { kind: "automatic", scope, ceiling }
-	}
-	if (ceiling === "ai_approvable") {
-		return { kind: "ai_approver", scope, ceiling }
-	}
-	return { kind: "manual", scope, ceiling }
+    const blanketGrants = input.blanket?.yoloMode === true || input.blanket?.approveAll === true
+    const scopedToggleGrants = input.context?.isToolAutoApproveEnabled !== false && isScopeToggledOn(scope, input.settings)
+    if (blanketGrants || scopedToggleGrants) {
+        return { kind: "automatic", scope, ceiling }
+    }
+    if (ceiling === "ai_approvable") {
+        return { kind: "ai_approver", scope, ceiling }
+    }
+    return { kind: "manual", scope, ceiling }
 }

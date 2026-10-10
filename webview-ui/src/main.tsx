@@ -9,9 +9,9 @@ import { installGlobalWebviewErrorReporting } from "./services/webviewErrorRepor
 installGlobalWebviewErrorReporting()
 
 createRoot(document.getElementById("root")!).render(
-	<StrictMode>
-		<RootErrorBoundary>
-			<App />
-		</RootErrorBoundary>
-	</StrictMode>,
+    <StrictMode>
+        <RootErrorBoundary>
+            <App />
+        </RootErrorBoundary>
+    </StrictMode>,
 )

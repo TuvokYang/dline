@@ -9,16 +9,16 @@ import type { UiAsk, UiMessage } from "@shared/ExtensionMessage"
  * cancelled, interrupted - behind the one-line summary.
  */
 export function createCanonicalAskRow(type: UiAsk, text: string | undefined, ts: number, interactionId?: string): UiMessage {
-	const commandPresentation = type === "command" ? { commandStatus: "pending" as const, exitCode: undefined } : {}
-	const interactionIdentity = interactionId ? { interactionId } : {}
-	return {
-		ts,
-		type: "ask",
-		say: undefined,
-		ask: type,
-		text,
-		partial: false,
-		...interactionIdentity,
-		...commandPresentation,
-	}
+    const commandPresentation = type === "command" ? { commandStatus: "pending" as const, exitCode: undefined } : {}
+    const interactionIdentity = interactionId ? { interactionId } : {}
+    return {
+        ts,
+        type: "ask",
+        say: undefined,
+        ask: type,
+        text,
+        partial: false,
+        ...interactionIdentity,
+        ...commandPresentation,
+    }
 }

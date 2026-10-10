@@ -3,36 +3,36 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 export type BottomFollowIntent = "follow" | "none"
 
 export interface MergeMessageWindowInput {
-	existing: UiMessage[]
-	incoming: UiMessage[]
-	existingStartIndex: number
-	incomingStartIndex: number
+    existing: UiMessage[]
+    incoming: UiMessage[]
+    existingStartIndex: number
+    incomingStartIndex: number
 }
 
 export interface MergeMessageWindowResult {
-	messages: UiMessage[]
-	firstItemIndex: number
-	merged: boolean
+    messages: UiMessage[]
+    firstItemIndex: number
+    merged: boolean
 }
 
 export interface BottomFollowInput {
-	disableAutoScroll: boolean
-	absoluteBottomLoaded: boolean
-	lastMessageTsChanged: boolean
-	lastMessageContentChanged: boolean
+    disableAutoScroll: boolean
+    absoluteBottomLoaded: boolean
+    lastMessageTsChanged: boolean
+    lastMessageContentChanged: boolean
 }
 
 export interface RestoreBottomInput {
-	wasHidden: boolean
-	isVisible: boolean
-	disableAutoScroll: boolean
-	wasAtBottom: boolean
+    wasHidden: boolean
+    isVisible: boolean
+    disableAutoScroll: boolean
+    wasAtBottom: boolean
 }
 
 interface IndexedMessage {
-	index: number
-	message: UiMessage
-	order: number
+    index: number
+    message: UiMessage
+    order: number
 }
 
 /**
@@ -42,54 +42,54 @@ interface IndexedMessage {
  * @returns A merged contiguous message window and its first absolute index.
  */
 export function mergeMessageWindow(input: MergeMessageWindowInput): MergeMessageWindowResult {
-	const { existing, incoming, existingStartIndex, incomingStartIndex } = input
+    const { existing, incoming, existingStartIndex, incomingStartIndex } = input
 
-	if (incoming.length === 0) {
-		return {
-			messages: existing,
-			firstItemIndex: existingStartIndex,
-			merged: false,
-		}
-	}
+    if (incoming.length === 0) {
+        return {
+            messages: existing,
+            firstItemIndex: existingStartIndex,
+            merged: false,
+        }
+    }
 
-	if (existing.length === 0) {
-		return {
-			messages: incoming,
-			firstItemIndex: incomingStartIndex,
-			merged: true,
-		}
-	}
+    if (existing.length === 0) {
+        return {
+            messages: incoming,
+            firstItemIndex: incomingStartIndex,
+            merged: true,
+        }
+    }
 
-	const existingEnd = existingStartIndex + existing.length
-	const incomingEnd = incomingStartIndex + incoming.length
-	const windowsTouch = incomingStartIndex <= existingEnd && incomingEnd >= existingStartIndex
+    const existingEnd = existingStartIndex + existing.length
+    const incomingEnd = incomingStartIndex + incoming.length
+    const windowsTouch = incomingStartIndex <= existingEnd && incomingEnd >= existingStartIndex
 
-	if (!windowsTouch) {
-		return {
-			messages: existing,
-			firstItemIndex: existingStartIndex,
-			merged: false,
-		}
-	}
+    if (!windowsTouch) {
+        return {
+            messages: existing,
+            firstItemIndex: existingStartIndex,
+            merged: false,
+        }
+    }
 
-	const indexedMessages = buildIndexedMessages(existing, existingStartIndex, incoming, incomingStartIndex)
-	const mergedMessages = dedupeMessages(indexedMessages)
-	const firstItemIndex = mergedMessages.at(0)?.index ?? existingStartIndex
-	const messages = mergedMessages.map((item) => item.message)
+    const indexedMessages = buildIndexedMessages(existing, existingStartIndex, incoming, incomingStartIndex)
+    const mergedMessages = dedupeMessages(indexedMessages)
+    const firstItemIndex = mergedMessages.at(0)?.index ?? existingStartIndex
+    const messages = mergedMessages.map((item) => item.message)
 
-	if (firstItemIndex === existingStartIndex && areMessageWindowsEqual(existing, messages)) {
-		return {
-			messages: existing,
-			firstItemIndex: existingStartIndex,
-			merged: false,
-		}
-	}
+    if (firstItemIndex === existingStartIndex && areMessageWindowsEqual(existing, messages)) {
+        return {
+            messages: existing,
+            firstItemIndex: existingStartIndex,
+            merged: false,
+        }
+    }
 
-	return {
-		messages,
-		firstItemIndex,
-		merged: true,
-	}
+    return {
+        messages,
+        firstItemIndex,
+        merged: true,
+    }
 }
 
 /**
@@ -100,11 +100,11 @@ export function mergeMessageWindow(input: MergeMessageWindowInput): MergeMessage
  * @returns True when both windows contain identical message data.
  */
 function areMessageWindowsEqual(left: UiMessage[], right: UiMessage[]): boolean {
-	if (left.length !== right.length) {
-		return false
-	}
+    if (left.length !== right.length) {
+        return false
+    }
 
-	return left.every((message, index) => JSON.stringify(message) === JSON.stringify(right[index]))
+    return left.every((message, index) => JSON.stringify(message) === JSON.stringify(right[index]))
 }
 
 /**
@@ -115,20 +115,20 @@ function areMessageWindowsEqual(left: UiMessage[], right: UiMessage[]): boolean 
  * @returns Stable row key for virtual-list DOM identity.
  */
 export function buildMessageRowKey(row: UiMessage | UiMessage[], fallbackIndex: number): string {
-	if (Array.isArray(row)) {
-		const firstTs = row.at(0)?.ts
-		const lastTs = row.at(-1)?.ts
-		if (firstTs != null && lastTs != null) {
-			return `group:${firstTs}-${lastTs}:${row.length}`
-		}
-		return `group:fallback-${fallbackIndex}:${row.length}`
-	}
+    if (Array.isArray(row)) {
+        const firstTs = row.at(0)?.ts
+        const lastTs = row.at(-1)?.ts
+        if (firstTs != null && lastTs != null) {
+            return `group:${firstTs}-${lastTs}:${row.length}`
+        }
+        return `group:fallback-${fallbackIndex}:${row.length}`
+    }
 
-	if (row.ts != null) {
-		return `message:${row.ts}`
-	}
+    if (row.ts != null) {
+        return `message:${row.ts}`
+    }
 
-	return `message:fallback-${fallbackIndex}`
+    return `message:fallback-${fallbackIndex}`
 }
 
 /**
@@ -138,19 +138,19 @@ export function buildMessageRowKey(row: UiMessage | UiMessage[], fallbackIndex: 
  * @returns Follow intent when the bottom should be restored after layout.
  */
 export function getBottomFollowIntent(input: BottomFollowInput): BottomFollowIntent {
-	if (input.disableAutoScroll) {
-		return "none"
-	}
+    if (input.disableAutoScroll) {
+        return "none"
+    }
 
-	if (!input.absoluteBottomLoaded) {
-		return "none"
-	}
+    if (!input.absoluteBottomLoaded) {
+        return "none"
+    }
 
-	if (input.lastMessageTsChanged || input.lastMessageContentChanged) {
-		return "follow"
-	}
+    if (input.lastMessageTsChanged || input.lastMessageContentChanged) {
+        return "follow"
+    }
 
-	return "none"
+    return "none"
 }
 
 /**
@@ -160,7 +160,7 @@ export function getBottomFollowIntent(input: BottomFollowInput): BottomFollowInt
  * @returns True when the view should scroll to the bottom after restore.
  */
 export function shouldRestoreBottom(input: RestoreBottomInput): boolean {
-	return input.wasHidden && input.isVisible && !input.disableAutoScroll && input.wasAtBottom
+    return input.wasHidden && input.isVisible && !input.disableAutoScroll && input.wasAtBottom
 }
 
 /**
@@ -173,25 +173,25 @@ export function shouldRestoreBottom(input: RestoreBottomInput): boolean {
  * @returns Indexed messages in replacement order.
  */
 function buildIndexedMessages(
-	existing: UiMessage[],
-	existingStartIndex: number,
-	incoming: UiMessage[],
-	incomingStartIndex: number,
+    existing: UiMessage[],
+    existingStartIndex: number,
+    incoming: UiMessage[],
+    incomingStartIndex: number,
 ): IndexedMessage[] {
-	const indexedMessages: IndexedMessage[] = []
-	let order = 0
+    const indexedMessages: IndexedMessage[] = []
+    let order = 0
 
-	for (const [offset, message] of existing.entries()) {
-		indexedMessages.push({ index: existingStartIndex + offset, message, order })
-		order += 1
-	}
+    for (const [offset, message] of existing.entries()) {
+        indexedMessages.push({ index: existingStartIndex + offset, message, order })
+        order += 1
+    }
 
-	for (const [offset, message] of incoming.entries()) {
-		indexedMessages.push({ index: incomingStartIndex + offset, message, order })
-		order += 1
-	}
+    for (const [offset, message] of incoming.entries()) {
+        indexedMessages.push({ index: incomingStartIndex + offset, message, order })
+        order += 1
+    }
 
-	return indexedMessages
+    return indexedMessages
 }
 
 /**
@@ -201,18 +201,18 @@ function buildIndexedMessages(
  * @returns Sorted and deduplicated indexed messages.
  */
 function dedupeMessages(indexedMessages: IndexedMessage[]): IndexedMessage[] {
-	const byIndex = new Map<number, IndexedMessage>()
-	for (const item of indexedMessages) {
-		byIndex.set(item.index, item)
-	}
+    const byIndex = new Map<number, IndexedMessage>()
+    for (const item of indexedMessages) {
+        byIndex.set(item.index, item)
+    }
 
-	const byTs = new Map<number, IndexedMessage>()
-	for (const item of byIndex.values()) {
-		const existing = byTs.get(item.message.ts)
-		if (!existing || item.order > existing.order) {
-			byTs.set(item.message.ts, item)
-		}
-	}
+    const byTs = new Map<number, IndexedMessage>()
+    for (const item of byIndex.values()) {
+        const existing = byTs.get(item.message.ts)
+        if (!existing || item.order > existing.order) {
+            byTs.set(item.message.ts, item)
+        }
+    }
 
-	return Array.from(byTs.values()).sort((left, right) => left.index - right.index)
+    return Array.from(byTs.values()).sort((left, right) => left.index - right.index)
 }

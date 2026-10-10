@@ -4,25 +4,25 @@ import type { Controller } from "../.."
 import { updateSettings } from "../updateSettings"
 
 function createController() {
-	const setGlobalState = vi.fn()
-	const flushPendingState = vi.fn().mockResolvedValue(undefined)
-	const postStateToWebview = vi.fn().mockResolvedValue(undefined)
-	const configureGlobalComponents = vi.fn().mockResolvedValue({ components: [], durationMs: 0 })
-	const controller = {
-		configureGlobalComponents,
-		stateManager: { flushPendingState, setGlobalState },
-		postStateToWebview,
-	} as unknown as Controller
+    const setGlobalState = vi.fn()
+    const flushPendingState = vi.fn().mockResolvedValue(undefined)
+    const postStateToWebview = vi.fn().mockResolvedValue(undefined)
+    const configureGlobalComponents = vi.fn().mockResolvedValue({ components: [], durationMs: 0 })
+    const controller = {
+        configureGlobalComponents,
+        stateManager: { flushPendingState, setGlobalState },
+        postStateToWebview,
+    } as unknown as Controller
 
-	return { controller, setGlobalState }
+    return { controller, setGlobalState }
 }
 
 describe("updateSettings MCP feature", () => {
-	it("persists the MCP feature gate", async () => {
-		const { controller, setGlobalState } = createController()
+    it("persists the MCP feature gate", async () => {
+        const { controller, setGlobalState } = createController()
 
-		await updateSettings(controller, UpdateSettingsRequest.create({ mcpEnabled: false }))
+        await updateSettings(controller, UpdateSettingsRequest.create({ mcpEnabled: false }))
 
-		expect(setGlobalState).toHaveBeenCalledWith("mcpEnabled", false)
-	})
+        expect(setGlobalState).toHaveBeenCalledWith("mcpEnabled", false)
+    })
 })

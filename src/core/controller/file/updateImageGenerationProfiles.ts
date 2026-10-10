@@ -4,10 +4,10 @@ import type { Controller } from ".."
 import { updateImageGenerationProfileCatalog } from "./imageGenerationProfiles"
 
 export async function updateImageGenerationProfiles(
-	controller: Controller,
-	request: UpdateImageGenerationProfilesRequest,
+    controller: Controller,
+    request: UpdateImageGenerationProfilesRequest,
 ): Promise<Empty> {
-	await updateImageGenerationProfileCatalog(request)
-	await controller.postStateToWebview?.()
-	return Empty.create({})
+    await updateImageGenerationProfileCatalog(request)
+    await controller.postStateToWebview?.()
+    return Empty.create({})
 }

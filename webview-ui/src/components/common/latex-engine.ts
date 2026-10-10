@@ -57,14 +57,14 @@ const EX_PX = 8
  * that behaviour so callers get a real rejection and can show the raw source.
  */
 export class LatexRenderError extends Error {
-	constructor(message: string, options?: { cause?: unknown }) {
-		super(message, options)
-		this.name = "LatexRenderError"
-	}
+    constructor(message: string, options?: { cause?: unknown }) {
+        super(message, options)
+        this.name = "LatexRenderError"
+    }
 }
 
 interface MathDocumentLike {
-	convertPromise(math: string, options?: Record<string, unknown>): Promise<unknown>
+    convertPromise(math: string, options?: Record<string, unknown>): Promise<unknown>
 }
 
 let cachedDocument: MathDocumentLike | undefined
@@ -76,22 +76,22 @@ let cachedDocument: MathDocumentLike | undefined
  * once per webview session and reused by every formula block.
  */
 function getMathDocument(): MathDocumentLike {
-	if (!cachedDocument) {
-		RegisterHTMLHandler(browserAdaptor())
-		cachedDocument = mathjax.document("", {
-			InputJax: new TeX({
-				packages: LOADED_TEX_PACKAGES,
-				// Turn MathJax's silent `merror` substitution into a real failure.
-				formatError: (_jax: unknown, error: { message?: string }) => {
-					throw new LatexRenderError(error?.message ?? "Invalid TeX source", { cause: error })
-				},
-			}),
-			// SVG output keeps glyphs as vector paths, so no web fonts are shipped and
-			// the webview CSP font-src rules stay irrelevant to formula rendering.
-			OutputJax: new SVG({ fontCache: "local" }),
-		}) as unknown as MathDocumentLike
-	}
-	return cachedDocument
+    if (!cachedDocument) {
+        RegisterHTMLHandler(browserAdaptor())
+        cachedDocument = mathjax.document("", {
+            InputJax: new TeX({
+                packages: LOADED_TEX_PACKAGES,
+                // Turn MathJax's silent `merror` substitution into a real failure.
+                formatError: (_jax: unknown, error: { message?: string }) => {
+                    throw new LatexRenderError(error?.message ?? "Invalid TeX source", { cause: error })
+                },
+            }),
+            // SVG output keeps glyphs as vector paths, so no web fonts are shipped and
+            // the webview CSP font-src rules stay irrelevant to formula rendering.
+            OutputJax: new SVG({ fontCache: "local" }),
+        }) as unknown as MathDocumentLike
+    }
+    return cachedDocument
 }
 
 /**
@@ -104,22 +104,22 @@ function getMathDocument(): MathDocumentLike {
  *   failure.
  */
 export async function renderLatexToNode(code: string, containerWidth?: number): Promise<Node> {
-	try {
-		const node = await getMathDocument().convertPromise(SANDBOX_PREFIX + code, {
-			display: true,
-			em: EM_PX,
-			ex: EX_PX,
-			containerWidth: containerWidth && containerWidth > 0 ? containerWidth : FALLBACK_CONTAINER_WIDTH_PX,
-		})
-		return node as Node
-	} catch (error) {
-		// A failed conversion can abort inside the sandbox group, leaving the
-		// input jax with an unbalanced group and a half-applied macro table. The
-		// next formula would then fail with "Missing \begingroup" or silently
-		// inherit definitions, so the engine is rebuilt instead of reused.
-		cachedDocument = undefined
-		throw error instanceof LatexRenderError
-			? error
-			: new LatexRenderError(error instanceof Error ? error.message : "Invalid TeX source", { cause: error })
-	}
+    try {
+        const node = await getMathDocument().convertPromise(SANDBOX_PREFIX + code, {
+            display: true,
+            em: EM_PX,
+            ex: EX_PX,
+            containerWidth: containerWidth && containerWidth > 0 ? containerWidth : FALLBACK_CONTAINER_WIDTH_PX,
+        })
+        return node as Node
+    } catch (error) {
+        // A failed conversion can abort inside the sandbox group, leaving the
+        // input jax with an unbalanced group and a half-applied macro table. The
+        // next formula would then fail with "Missing \begingroup" or silently
+        // inherit definitions, so the engine is rebuilt instead of reused.
+        cachedDocument = undefined
+        throw error instanceof LatexRenderError
+            ? error
+            : new LatexRenderError(error instanceof Error ? error.message : "Invalid TeX source", { cause: error })
+    }
 }

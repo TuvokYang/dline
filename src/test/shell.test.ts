@@ -5,268 +5,268 @@ import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import * as vscode from "vscode"
 
 vi.mock("os", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("os")>()
-	return {
-		...actual,
-		userInfo: vi.fn(() => ({ username: "test", uid: 1, gid: 1, shell: null, homedir: "/home/test" })),
-	}
+    const actual = await importOriginal<typeof import("os")>()
+    return {
+        ...actual,
+        userInfo: vi.fn(() => ({ username: "test", uid: 1, gid: 1, shell: null, homedir: "/home/test" })),
+    }
 })
 
 describe("Shell Detection Tests", () => {
-	let originalPlatform: string
-	let originalEnv: NodeJS.ProcessEnv
-	let originalGetConfig: typeof vscode.workspace.getConfiguration
+    let originalPlatform: string
+    let originalEnv: NodeJS.ProcessEnv
+    let originalGetConfig: typeof vscode.workspace.getConfiguration
 
-	const mockUserInfo = (shell: string | null) => {
-		vi.mocked(os.userInfo).mockReturnValue({
-			username: "test",
-			uid: 1,
-			gid: 1,
-			shell,
-			homedir: "/home/test",
-		})
-	}
+    const mockUserInfo = (shell: string | null) => {
+        vi.mocked(os.userInfo).mockReturnValue({
+            username: "test",
+            uid: 1,
+            gid: 1,
+            shell,
+            homedir: "/home/test",
+        })
+    }
 
-	// Helper to mock VS Code configuration
-	function mockVsCodeConfig(platformKey: string, defaultProfileName: string | null, profiles: Record<string, any>) {
-		vscode.workspace.getConfiguration = () =>
-			({
-				get: (key: string) => {
-					if (key === `defaultProfile.${platformKey}`) {
-						return defaultProfileName
-					}
-					if (key === `profiles.${platformKey}`) {
-						return profiles
-					}
-					return undefined
-				},
-			}) as any
-	}
+    // Helper to mock VS Code configuration
+    function mockVsCodeConfig(platformKey: string, defaultProfileName: string | null, profiles: Record<string, any>) {
+        vscode.workspace.getConfiguration = () =>
+            ({
+                get: (key: string) => {
+                    if (key === `defaultProfile.${platformKey}`) {
+                        return defaultProfileName
+                    }
+                    if (key === `profiles.${platformKey}`) {
+                        return profiles
+                    }
+                    return undefined
+                },
+            }) as any
+    }
 
-	beforeEach(() => {
-		// Store original references
-		originalPlatform = process.platform
-		originalEnv = { ...process.env }
-		originalGetConfig = vscode.workspace.getConfiguration
+    beforeEach(() => {
+        // Store original references
+        originalPlatform = process.platform
+        originalEnv = { ...process.env }
+        originalGetConfig = vscode.workspace.getConfiguration
 
-		// Clear environment variables for a clean test
-		delete process.env.SHELL
-		delete process.env.COMSPEC
+        // Clear environment variables for a clean test
+        delete process.env.SHELL
+        delete process.env.COMSPEC
 
-		// Reset userInfo mock to default
-		mockUserInfo(null)
-	})
+        // Reset userInfo mock to default
+        mockUserInfo(null)
+    })
 
-	afterEach(() => {
-		// Restore everything
-		Object.defineProperty(process, "platform", { value: originalPlatform })
-		process.env = originalEnv
-		vscode.workspace.getConfiguration = originalGetConfig
-	})
+    afterEach(() => {
+        // Restore everything
+        Object.defineProperty(process, "platform", { value: originalPlatform })
+        process.env = originalEnv
+        vscode.workspace.getConfiguration = originalGetConfig
+    })
 
-	it("maps Default to the fixed shell profile for each supported platform", () => {
-		expect(resolveTerminalProfileId("default", "win32")).to.equal("powershell")
-		expect(resolveTerminalProfileId("default", "linux")).to.equal("bash")
-		expect(resolveTerminalProfileId("default", "darwin")).to.equal("zsh")
-	})
+    it("maps Default to the fixed shell profile for each supported platform", () => {
+        expect(resolveTerminalProfileId("default", "win32")).to.equal("powershell")
+        expect(resolveTerminalProfileId("default", "linux")).to.equal("bash")
+        expect(resolveTerminalProfileId("default", "darwin")).to.equal("zsh")
+    })
 
-	// --------------------------------------------------------------------------
-	// Windows Shell Detection
-	// --------------------------------------------------------------------------
-	describe("Windows Shell Detection", () => {
-		beforeEach(() => {
-			Object.defineProperty(process, "platform", { value: "win32" })
-		})
+    // --------------------------------------------------------------------------
+    // Windows Shell Detection
+    // --------------------------------------------------------------------------
+    describe("Windows Shell Detection", () => {
+        beforeEach(() => {
+            Object.defineProperty(process, "platform", { value: "win32" })
+        })
 
-		it("uses explicit PowerShell 7 path from VS Code config (profile path)", () => {
-			mockVsCodeConfig("windows", "PowerShell", {
-				PowerShell: { path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe" },
-			})
-			expect(getShell()).to.equal("C:\\Program Files\\PowerShell\\7\\pwsh.exe")
-		})
+        it("uses explicit PowerShell 7 path from VS Code config (profile path)", () => {
+            mockVsCodeConfig("windows", "PowerShell", {
+                PowerShell: { path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe" },
+            })
+            expect(getShell()).to.equal("C:\\Program Files\\PowerShell\\7\\pwsh.exe")
+        })
 
-		it("uses PowerShell 7 path if source is 'PowerShell' but no explicit path", () => {
-			mockVsCodeConfig("windows", "PowerShell", {
-				PowerShell: { source: "PowerShell" },
-			})
-			expect(getShell()).to.equal("C:\\Program Files\\PowerShell\\7\\pwsh.exe")
-		})
+        it("uses PowerShell 7 path if source is 'PowerShell' but no explicit path", () => {
+            mockVsCodeConfig("windows", "PowerShell", {
+                PowerShell: { source: "PowerShell" },
+            })
+            expect(getShell()).to.equal("C:\\Program Files\\PowerShell\\7\\pwsh.exe")
+        })
 
-		it("falls back to legacy PowerShell if profile includes 'powershell' but no path/source", () => {
-			mockVsCodeConfig("windows", "PowerShell", {
-				PowerShell: {},
-			})
-			expect(getShell()).to.equal("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
-		})
+        it("falls back to legacy PowerShell if profile includes 'powershell' but no path/source", () => {
+            mockVsCodeConfig("windows", "PowerShell", {
+                PowerShell: {},
+            })
+            expect(getShell()).to.equal("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
+        })
 
-		it("handles undefined shell profile gracefully", () => {
-			mockVsCodeConfig("windows", "NonExistentProfile", {})
-			expect(getShell()).to.equal("C:\\Windows\\System32\\cmd.exe")
-		})
+        it("handles undefined shell profile gracefully", () => {
+            mockVsCodeConfig("windows", "NonExistentProfile", {})
+            expect(getShell()).to.equal("C:\\Windows\\System32\\cmd.exe")
+        })
 
-		it("uses WSL bash when profile indicates WSL source", () => {
-			mockVsCodeConfig("windows", "WSL", {
-				WSL: { source: "WSL" },
-			})
-			expect(getShell()).to.equal("C:\\Windows\\System32\\wsl.exe")
-		})
+        it("uses WSL bash when profile indicates WSL source", () => {
+            mockVsCodeConfig("windows", "WSL", {
+                WSL: { source: "WSL" },
+            })
+            expect(getShell()).to.equal("C:\\Windows\\System32\\wsl.exe")
+        })
 
-		it("uses WSL bash when profile name includes 'wsl'", () => {
-			mockVsCodeConfig("windows", "Ubuntu WSL", {
-				"Ubuntu WSL": {},
-			})
-			expect(getShell()).to.equal("C:\\Windows\\System32\\wsl.exe")
-		})
+        it("uses WSL bash when profile name includes 'wsl'", () => {
+            mockVsCodeConfig("windows", "Ubuntu WSL", {
+                "Ubuntu WSL": {},
+            })
+            expect(getShell()).to.equal("C:\\Windows\\System32\\wsl.exe")
+        })
 
-		it("defaults to cmd.exe if no special profile is matched", () => {
-			mockVsCodeConfig("windows", "CommandPrompt", {
-				CommandPrompt: {},
-			})
-			expect(getShell()).to.equal("C:\\Windows\\System32\\cmd.exe")
-		})
+        it("defaults to cmd.exe if no special profile is matched", () => {
+            mockVsCodeConfig("windows", "CommandPrompt", {
+                CommandPrompt: {},
+            })
+            expect(getShell()).to.equal("C:\\Windows\\System32\\cmd.exe")
+        })
 
-		it("respects userInfo() if no VS Code config is available", () => {
-			vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
-			mockUserInfo("C:\\Custom\\PowerShell.exe")
+        it("respects userInfo() if no VS Code config is available", () => {
+            vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
+            mockUserInfo("C:\\Custom\\PowerShell.exe")
 
-			expect(getShell()).to.equal("C:\\Custom\\PowerShell.exe")
-		})
+            expect(getShell()).to.equal("C:\\Custom\\PowerShell.exe")
+        })
 
-		it("respects an odd COMSPEC if no userInfo shell is available", () => {
-			vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
-			process.env.COMSPEC = "D:\\CustomCmd\\cmd.exe"
+        it("respects an odd COMSPEC if no userInfo shell is available", () => {
+            vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
+            process.env.COMSPEC = "D:\\CustomCmd\\cmd.exe"
 
-			expect(getShell()).to.equal("D:\\CustomCmd\\cmd.exe")
-		})
+            expect(getShell()).to.equal("D:\\CustomCmd\\cmd.exe")
+        })
 
-		it("maps the synthetic default profile to Windows PowerShell", () => {
-			expect(resolveTerminalProfileId("default")).to.equal("powershell")
-			expect(getShellForProfile("default")).to.equal("powershell")
-			expect(getShellForProfile("powershell")).to.equal("powershell")
-		})
-	})
+        it("maps the synthetic default profile to Windows PowerShell", () => {
+            expect(resolveTerminalProfileId("default")).to.equal("powershell")
+            expect(getShellForProfile("default")).to.equal("powershell")
+            expect(getShellForProfile("powershell")).to.equal("powershell")
+        })
+    })
 
-	// --------------------------------------------------------------------------
-	// macOS Shell Detection
-	// --------------------------------------------------------------------------
-	describe("macOS Shell Detection", () => {
-		beforeEach(() => {
-			Object.defineProperty(process, "platform", { value: "darwin" })
-		})
+    // --------------------------------------------------------------------------
+    // macOS Shell Detection
+    // --------------------------------------------------------------------------
+    describe("macOS Shell Detection", () => {
+        beforeEach(() => {
+            Object.defineProperty(process, "platform", { value: "darwin" })
+        })
 
-		it("uses VS Code profile path if available", () => {
-			mockVsCodeConfig("osx", "MyCustomShell", {
-				MyCustomShell: { path: "/usr/local/bin/fish" },
-			})
-			expect(getShell()).to.equal("/usr/local/bin/fish")
-		})
+        it("uses VS Code profile path if available", () => {
+            mockVsCodeConfig("osx", "MyCustomShell", {
+                MyCustomShell: { path: "/usr/local/bin/fish" },
+            })
+            expect(getShell()).to.equal("/usr/local/bin/fish")
+        })
 
-		it("falls back to userInfo().shell if no VS Code config is available", () => {
-			vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
-			mockUserInfo("/opt/homebrew/bin/zsh")
+        it("falls back to userInfo().shell if no VS Code config is available", () => {
+            vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
+            mockUserInfo("/opt/homebrew/bin/zsh")
 
-			expect(getShell()).to.equal("/opt/homebrew/bin/zsh")
-		})
+            expect(getShell()).to.equal("/opt/homebrew/bin/zsh")
+        })
 
-		it("falls back to SHELL env var if no userInfo shell is found", () => {
-			vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
-			process.env.SHELL = "/usr/local/bin/zsh"
+        it("falls back to SHELL env var if no userInfo shell is found", () => {
+            vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
+            process.env.SHELL = "/usr/local/bin/zsh"
 
-			expect(getShell()).to.equal("/usr/local/bin/zsh")
-		})
+            expect(getShell()).to.equal("/usr/local/bin/zsh")
+        })
 
-		it("falls back to /bin/zsh if no config, userInfo, or env variable is set", () => {
-			vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
-			// userInfo => null, SHELL => undefined
-			expect(getShell()).to.equal("/bin/zsh")
-		})
-	})
+        it("falls back to /bin/zsh if no config, userInfo, or env variable is set", () => {
+            vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
+            // userInfo => null, SHELL => undefined
+            expect(getShell()).to.equal("/bin/zsh")
+        })
+    })
 
-	// --------------------------------------------------------------------------
-	// Linux Shell Detection
-	// --------------------------------------------------------------------------
-	describe("Linux Shell Detection", () => {
-		beforeEach(() => {
-			Object.defineProperty(process, "platform", { value: "linux" })
-		})
+    // --------------------------------------------------------------------------
+    // Linux Shell Detection
+    // --------------------------------------------------------------------------
+    describe("Linux Shell Detection", () => {
+        beforeEach(() => {
+            Object.defineProperty(process, "platform", { value: "linux" })
+        })
 
-		it("uses VS Code profile path if available", () => {
-			mockVsCodeConfig("linux", "CustomProfile", {
-				CustomProfile: { path: "/usr/bin/fish" },
-			})
-			expect(getShell()).to.equal("/usr/bin/fish")
-		})
+        it("uses VS Code profile path if available", () => {
+            mockVsCodeConfig("linux", "CustomProfile", {
+                CustomProfile: { path: "/usr/bin/fish" },
+            })
+            expect(getShell()).to.equal("/usr/bin/fish")
+        })
 
-		it("falls back to userInfo().shell if no VS Code config is available", () => {
-			vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
-			mockUserInfo("/usr/bin/zsh")
+        it("falls back to userInfo().shell if no VS Code config is available", () => {
+            vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
+            mockUserInfo("/usr/bin/zsh")
 
-			expect(getShell()).to.equal("/usr/bin/zsh")
-		})
+            expect(getShell()).to.equal("/usr/bin/zsh")
+        })
 
-		it("falls back to SHELL env var if no userInfo shell is found", () => {
-			vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
-			process.env.SHELL = "/usr/bin/fish"
+        it("falls back to SHELL env var if no userInfo shell is found", () => {
+            vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
+            process.env.SHELL = "/usr/bin/fish"
 
-			expect(getShell()).to.equal("/usr/bin/fish")
-		})
+            expect(getShell()).to.equal("/usr/bin/fish")
+        })
 
-		it("falls back to /bin/bash if nothing is set", () => {
-			vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
-			// userInfo => null, SHELL => undefined
-			expect(getShell()).to.equal("/bin/bash")
-		})
+        it("falls back to /bin/bash if nothing is set", () => {
+            vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
+            // userInfo => null, SHELL => undefined
+            expect(getShell()).to.equal("/bin/bash")
+        })
 
-		it("maps a known VS Code default shell to its concrete profile", () => {
-			mockVsCodeConfig("linux", "bash", { bash: { path: "/bin/bash" } })
-			expect(resolveTerminalProfileId("default")).to.equal("bash")
-		})
-	})
+        it("maps a known VS Code default shell to its concrete profile", () => {
+            mockVsCodeConfig("linux", "bash", { bash: { path: "/bin/bash" } })
+            expect(resolveTerminalProfileId("default")).to.equal("bash")
+        })
+    })
 
-	// --------------------------------------------------------------------------
-	// Unknown Platform & Error Handling
-	// --------------------------------------------------------------------------
-	describe("Unknown Platform / Error Handling", () => {
-		it("falls back to /bin/sh for unknown platforms", () => {
-			Object.defineProperty(process, "platform", { value: "sunos" })
-			vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
+    // --------------------------------------------------------------------------
+    // Unknown Platform & Error Handling
+    // --------------------------------------------------------------------------
+    describe("Unknown Platform / Error Handling", () => {
+        it("falls back to /bin/sh for unknown platforms", () => {
+            Object.defineProperty(process, "platform", { value: "sunos" })
+            vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
 
-			expect(getShell()).to.equal("/bin/sh")
-		})
+            expect(getShell()).to.equal("/bin/sh")
+        })
 
-		it("handles VS Code config errors gracefully, falling back to userInfo shell if present", () => {
-			Object.defineProperty(process, "platform", { value: "linux" })
-			vscode.workspace.getConfiguration = () => {
-				throw new Error("Configuration error")
-			}
-			mockUserInfo("/bin/bash")
+        it("handles VS Code config errors gracefully, falling back to userInfo shell if present", () => {
+            Object.defineProperty(process, "platform", { value: "linux" })
+            vscode.workspace.getConfiguration = () => {
+                throw new Error("Configuration error")
+            }
+            mockUserInfo("/bin/bash")
 
-			expect(getShell()).to.equal("/bin/bash")
-		})
+            expect(getShell()).to.equal("/bin/bash")
+        })
 
-		it("handles userInfo errors gracefully, falling back to environment variable if present", () => {
-			Object.defineProperty(process, "platform", { value: "darwin" })
-			vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
-			vi.mocked(os.userInfo).mockImplementation(() => {
-				throw new Error("userInfo error")
-			})
-			process.env.SHELL = "/bin/zsh"
+        it("handles userInfo errors gracefully, falling back to environment variable if present", () => {
+            Object.defineProperty(process, "platform", { value: "darwin" })
+            vscode.workspace.getConfiguration = () => ({ get: () => undefined }) as any
+            vi.mocked(os.userInfo).mockImplementation(() => {
+                throw new Error("userInfo error")
+            })
+            process.env.SHELL = "/bin/zsh"
 
-			expect(getShell()).to.equal("/bin/zsh")
-		})
+            expect(getShell()).to.equal("/bin/zsh")
+        })
 
-		it("falls back fully to default shell paths if everything fails", () => {
-			Object.defineProperty(process, "platform", { value: "linux" })
-			vscode.workspace.getConfiguration = () => {
-				throw new Error("Configuration error")
-			}
-			vi.mocked(os.userInfo).mockImplementation(() => {
-				throw new Error("userInfo error")
-			})
-			// No SHELL in env
-			delete process.env.SHELL
+        it("falls back fully to default shell paths if everything fails", () => {
+            Object.defineProperty(process, "platform", { value: "linux" })
+            vscode.workspace.getConfiguration = () => {
+                throw new Error("Configuration error")
+            }
+            vi.mocked(os.userInfo).mockImplementation(() => {
+                throw new Error("userInfo error")
+            })
+            // No SHELL in env
+            delete process.env.SHELL
 
-			expect(getShell()).to.equal("/bin/bash")
-		})
-	})
+            expect(getShell()).to.equal("/bin/bash")
+        })
+    })
 })

@@ -5,67 +5,67 @@ import { describe, expect, it } from "vitest"
 const ROOT = path.resolve(__dirname, "../../../../..")
 const project = new Project({ tsConfigFilePath: path.join(ROOT, "tsconfig.json"), skipAddingFilesFromTsConfig: true })
 project.addSourceFilesAtPaths([
-	path.join(ROOT, "src/core/task/**/*.ts"),
-	path.join(ROOT, "src/core/controller/task/explainChanges.ts"),
+    path.join(ROOT, "src/core/task/**/*.ts"),
+    path.join(ROOT, "src/core/controller/task/explainChanges.ts"),
 ])
 
 const productionFiles = project
-	.getSourceFiles()
-	.filter((source) => !source.getFilePath().includes("/__tests__/") && !source.getBaseName().endsWith(".test.ts"))
+    .getSourceFiles()
+    .filter((source) => !source.getFilePath().includes("/__tests__/") && !source.getBaseName().endsWith(".test.ts"))
 
 function relative(sourcePath: string): string {
-	return path.relative(ROOT, sourcePath).replaceAll("\\", "/")
+    return path.relative(ROOT, sourcePath).replaceAll("\\", "/")
 }
 
 function calledFiles(method: string, expressionFilter?: (text: string) => boolean): string[] {
-	const files = new Set<string>()
-	for (const source of productionFiles) {
-		for (const call of source.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-			const expression = (call as CallExpression).getExpression()
-			if (!expression.isKind(SyntaxKind.PropertyAccessExpression) || expression.getName() !== method) continue
-			if (expressionFilter && !expressionFilter(expression.getExpression().getText())) continue
-			files.add(relative(source.getFilePath()))
-		}
-	}
-	return [...files].sort()
+    const files = new Set<string>()
+    for (const source of productionFiles) {
+        for (const call of source.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+            const expression = (call as CallExpression).getExpression()
+            if (!expression.isKind(SyntaxKind.PropertyAccessExpression) || expression.getName() !== method) continue
+            if (expressionFilter && !expressionFilter(expression.getExpression().getText())) continue
+            files.add(relative(source.getFilePath()))
+        }
+    }
+    return [...files].sort()
 }
 
 function taskStateAbortFiles(): string[] {
-	const files = new Set<string>()
-	for (const source of productionFiles) {
-		for (const access of source.getDescendantsOfKind(SyntaxKind.PropertyAccessExpression)) {
-			if (access.getName() !== "abort") continue
-			if (!/(?:^|\.)taskState$/.test(access.getExpression().getText())) continue
-			files.add(relative(source.getFilePath()))
-		}
-	}
-	return [...files].sort()
+    const files = new Set<string>()
+    for (const source of productionFiles) {
+        for (const access of source.getDescendantsOfKind(SyntaxKind.PropertyAccessExpression)) {
+            if (access.getName() !== "abort") continue
+            if (!/(?:^|\.)taskState$/.test(access.getExpression().getText())) continue
+            files.add(relative(source.getFilePath()))
+        }
+    }
+    return [...files].sort()
 }
 
 describe("TASK-103 legacy authority migration inventory", () => {
-	it("freezes legacy machine and restore write-call files for TASK-107", () => {
-		expect({
-			transitionRequired: calledFiles("transitionRequired"),
-			buildTurn: calledFiles("buildTurn"),
-			advance: calledFiles("advance"),
-			rejectActiveBlock: calledFiles("rejectActiveBlock"),
-			completeActiveBlock: calledFiles("completeActiveBlock"),
-			restoreTurnFromSnapshot: calledFiles("restoreTurnFromSnapshot"),
-			syncRetainedMachines: calledFiles("syncRetainedMachines"),
-			taskRuntimeRestore: calledFiles("restore", (text) => text.endsWith("taskRuntime")),
-		}).toEqual({
-			transitionRequired: [],
-			buildTurn: [],
-			advance: [],
-			rejectActiveBlock: [],
-			completeActiveBlock: [],
-			restoreTurnFromSnapshot: [],
-			syncRetainedMachines: [],
-			taskRuntimeRestore: [],
-		})
-	})
+    it("freezes legacy machine and restore write-call files for TASK-107", () => {
+        expect({
+            transitionRequired: calledFiles("transitionRequired"),
+            buildTurn: calledFiles("buildTurn"),
+            advance: calledFiles("advance"),
+            rejectActiveBlock: calledFiles("rejectActiveBlock"),
+            completeActiveBlock: calledFiles("completeActiveBlock"),
+            restoreTurnFromSnapshot: calledFiles("restoreTurnFromSnapshot"),
+            syncRetainedMachines: calledFiles("syncRetainedMachines"),
+            taskRuntimeRestore: calledFiles("restore", (text) => text.endsWith("taskRuntime")),
+        }).toEqual({
+            transitionRequired: [],
+            buildTurn: [],
+            advance: [],
+            rejectActiveBlock: [],
+            completeActiveBlock: [],
+            restoreTurnFromSnapshot: [],
+            syncRetainedMachines: [],
+            taskRuntimeRestore: [],
+        })
+    })
 
-	it("freezes every production taskState.abort consumer file for TASK-107", () => {
-		expect(taskStateAbortFiles()).toEqual([])
-	})
+    it("freezes every production taskState.abort consumer file for TASK-107", () => {
+        expect(taskStateAbortFiles()).toEqual([])
+    })
 })

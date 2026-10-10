@@ -11,29 +11,29 @@ import { Controller } from ".."
  * @returns BooleanResponse indicating whether the file exists
  */
 export async function ifFileExistsRelativePath(_controller: Controller, request: StringRequest): Promise<BooleanResponse> {
-	const workspacePath = await getWorkspacePath()
+    const workspacePath = await getWorkspacePath()
 
-	if (!workspacePath) {
-		// If no workspace is open, return false
-		return BooleanResponse.create({ value: false })
-	}
+    if (!workspacePath) {
+        // If no workspace is open, return false
+        return BooleanResponse.create({ value: false })
+    }
 
-	if (!request.value) {
-		// If no path provided, return false
-		return BooleanResponse.create({ value: false })
-	}
+    if (!request.value) {
+        // If no path provided, return false
+        return BooleanResponse.create({ value: false })
+    }
 
-	// Resolve the relative path to absolute path
-	const resolvedPath = workspaceResolver.resolveWorkspacePath(
-		workspacePath,
-		request.value,
-		"Controller.ifFileExistsRelativePath",
-	)
-	const absolutePath = typeof resolvedPath === "string" ? resolvedPath : resolvedPath.absolutePath
-	// Check if the file exists
-	try {
-		return BooleanResponse.create({ value: fs.statSync(absolutePath).isFile() })
-	} catch {
-		return BooleanResponse.create({ value: false })
-	}
+    // Resolve the relative path to absolute path
+    const resolvedPath = workspaceResolver.resolveWorkspacePath(
+        workspacePath,
+        request.value,
+        "Controller.ifFileExistsRelativePath",
+    )
+    const absolutePath = typeof resolvedPath === "string" ? resolvedPath : resolvedPath.absolutePath
+    // Check if the file exists
+    try {
+        return BooleanResponse.create({ value: fs.statSync(absolutePath).isFile() })
+    } catch {
+        return BooleanResponse.create({ value: false })
+    }
 }

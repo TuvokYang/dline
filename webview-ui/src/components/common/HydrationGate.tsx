@@ -13,8 +13,8 @@ import { useEffect, useState } from "react"
 const SLOW_HYDRATION_THRESHOLD_MS = 5000
 
 interface HydrationPendingProps {
-	/** Overridable so tests do not have to wait out the real threshold. */
-	slowThresholdMs?: number
+    /** Overridable so tests do not have to wait out the real threshold. */
+    slowThresholdMs?: number
 }
 
 /**
@@ -25,30 +25,30 @@ interface HydrationPendingProps {
  * from here, and claiming failure prematurely would be its own defect.
  */
 export const HydrationPending = ({ slowThresholdMs = SLOW_HYDRATION_THRESHOLD_MS }: HydrationPendingProps) => {
-	const [isSlow, setIsSlow] = useState(false)
+    const [isSlow, setIsSlow] = useState(false)
 
-	useEffect(() => {
-		const timer = setTimeout(() => setIsSlow(true), slowThresholdMs)
-		return () => clearTimeout(timer)
-	}, [slowThresholdMs])
+    useEffect(() => {
+        const timer = setTimeout(() => setIsSlow(true), slowThresholdMs)
+        return () => clearTimeout(timer)
+    }, [slowThresholdMs])
 
-	return (
-		<div
-			className="flex h-screen w-full flex-col items-center justify-center gap-2 p-4 text-center"
-			data-testid="hydration-pending">
-			<div className="text-[var(--vscode-descriptionForeground)]">Loading Dline…</div>
-			{isSlow && (
-				<div className="text-sm text-[var(--vscode-descriptionForeground)]" data-testid="hydration-pending-slow">
-					Still waiting for the extension to send its state. This is taking longer than usual.
-				</div>
-			)}
-		</div>
-	)
+    return (
+        <div
+            className="flex h-screen w-full flex-col items-center justify-center gap-2 p-4 text-center"
+            data-testid="hydration-pending">
+            <div className="text-[var(--vscode-descriptionForeground)]">Loading Dline…</div>
+            {isSlow && (
+                <div className="text-sm text-[var(--vscode-descriptionForeground)]" data-testid="hydration-pending-slow">
+                    Still waiting for the extension to send its state. This is taking longer than usual.
+                </div>
+            )}
+        </div>
+    )
 }
 
 interface HydrationFailedProps {
-	reason: string
-	onRetry: () => void
+    reason: string
+    onRetry: () => void
 }
 
 /**
@@ -59,19 +59,19 @@ interface HydrationFailedProps {
  * console message was the only trace this failure previously left.
  */
 export const HydrationFailed = ({ reason, onRetry }: HydrationFailedProps) => (
-	<div
-		className="flex h-screen w-full flex-col items-center justify-center gap-3 p-4 text-center"
-		data-testid="hydration-failed">
-		<div className="text-[var(--vscode-errorForeground)]">Dline could not load its state.</div>
-		<div className="text-sm text-[var(--vscode-descriptionForeground)]" data-testid="hydration-failed-reason">
-			{reason}
-		</div>
-		<button
-			className="cursor-pointer rounded border border-[var(--vscode-button-border)] bg-[var(--vscode-button-background)] px-3 py-1 text-[var(--vscode-button-foreground)]"
-			data-testid="hydration-retry"
-			onClick={onRetry}
-			type="button">
-			Retry
-		</button>
-	</div>
+    <div
+        className="flex h-screen w-full flex-col items-center justify-center gap-3 p-4 text-center"
+        data-testid="hydration-failed">
+        <div className="text-[var(--vscode-errorForeground)]">Dline could not load its state.</div>
+        <div className="text-sm text-[var(--vscode-descriptionForeground)]" data-testid="hydration-failed-reason">
+            {reason}
+        </div>
+        <button
+            className="cursor-pointer rounded border border-[var(--vscode-button-border)] bg-[var(--vscode-button-background)] px-3 py-1 text-[var(--vscode-button-foreground)]"
+            data-testid="hydration-retry"
+            onClick={onRetry}
+            type="button">
+            Retry
+        </button>
+    </div>
 )

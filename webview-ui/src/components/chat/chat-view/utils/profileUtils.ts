@@ -11,16 +11,16 @@ import type { Mode } from "@shared/storage/types"
  * @returns The profile currently selected for the mode, or undefined.
  */
 export function resolveActiveProfile(
-	profiles: ApiProfile[],
-	apiConfiguration: ApiConfiguration | undefined,
-	mode: Mode,
+    profiles: ApiProfile[],
+    apiConfiguration: ApiConfiguration | undefined,
+    mode: Mode,
 ): ApiProfile | undefined {
-	const profileName = mode === "plan" ? apiConfiguration?.planModeProfile : apiConfiguration?.actModeProfile
-	const namedProfile = profileName ? profiles.find((profile) => profile.name === profileName) : undefined
+    const profileName = mode === "plan" ? apiConfiguration?.planModeProfile : apiConfiguration?.actModeProfile
+    const namedProfile = profileName ? profiles.find((profile) => profile.name === profileName) : undefined
 
-	return namedProfile ?? profiles.find((profile) => profile.enabled && profile.usedFor?.includes(mode)) ?? profiles[0]
+    return namedProfile ?? profiles.find((profile) => profile.enabled && profile.usedFor?.includes(mode)) ?? profiles[0]
 }
 
 export function resolveTaskCurrency(apiCurrency: string | undefined, profileCurrency: string | undefined): string {
-	return (apiCurrency?.trim() || profileCurrency?.trim() || "USD").toUpperCase()
+    return (apiCurrency?.trim() || profileCurrency?.trim() || "USD").toUpperCase()
 }

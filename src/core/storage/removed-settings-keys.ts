@@ -13,23 +13,23 @@ import type { SettingsRepository } from "./settings/SettingsRepository"
  * profile default.
  */
 export const REMOVED_SETTINGS_KEYS: readonly string[] = [
-	"planModeReasoningEffort",
-	"actModeReasoningEffort",
-	"planModeOpenRouterModelId",
-	"planModeOpenRouterModelInfo",
-	"actModeOpenRouterModelId",
-	"actModeOpenRouterModelInfo",
-	"planModeOcaModelId",
-	"planModeOcaModelInfo",
-	"planModeOcaReasoningEffort",
-	"actModeOcaModelId",
-	"actModeOcaModelInfo",
-	"actModeOcaReasoningEffort",
+    "planModeReasoningEffort",
+    "actModeReasoningEffort",
+    "planModeOpenRouterModelId",
+    "planModeOpenRouterModelInfo",
+    "actModeOpenRouterModelId",
+    "actModeOpenRouterModelInfo",
+    "planModeOcaModelId",
+    "planModeOcaModelInfo",
+    "planModeOcaReasoningEffort",
+    "actModeOcaModelId",
+    "actModeOcaModelInfo",
+    "actModeOcaReasoningEffort",
 ]
 
 /** Return the removed keys still present in a settings document, in declaration order. */
 export function findRemovedSettingsKeys(values: Readonly<Record<string, unknown>>): string[] {
-	return REMOVED_SETTINGS_KEYS.filter((key) => Object.hasOwn(values, key))
+    return REMOVED_SETTINGS_KEYS.filter((key) => Object.hasOwn(values, key))
 }
 
 /**
@@ -41,15 +41,15 @@ export function findRemovedSettingsKeys(values: Readonly<Record<string, unknown>
  * window cannot reinstate or lose unrelated values.
  */
 export async function cleanupRemovedSettings(repository: SettingsRepository): Promise<readonly string[]> {
-	if (findRemovedSettingsKeys(repository.readSnapshot().values).length === 0) return []
+    if (findRemovedSettingsKeys(repository.readSnapshot().values).length === 0) return []
 
-	let removed: string[] = []
-	await repository.mutateResolved((values) => {
-		removed = findRemovedSettingsKeys(values)
-		return Object.fromEntries(removed.map((key) => [key, undefined])) as Partial<Settings>
-	})
-	if (removed.length > 0) {
-		Logger.info(`[SettingsCleanup] Removed ${removed.length} legacy keys: ${removed.join(", ")}`)
-	}
-	return removed
+    let removed: string[] = []
+    await repository.mutateResolved((values) => {
+        removed = findRemovedSettingsKeys(values)
+        return Object.fromEntries(removed.map((key) => [key, undefined])) as Partial<Settings>
+    })
+    if (removed.length > 0) {
+        Logger.info(`[SettingsCleanup] Removed ${removed.length} legacy keys: ${removed.join(", ")}`)
+    }
+    return removed
 }

@@ -1,7 +1,7 @@
 // English deep-planning 5-step variant prompts — key-value pairs.
 
 const prompts: Record<string, string> = {
-	powershellCommands: `# Discover project structure and file types
+    powershellCommands: `# Discover project structure and file types
 Get-ChildItem -Recurse -Include "*.py","*.js","*.ts","*.java","*.cpp","*.go" | Select-Object -First 30 | Select-Object FullName
 
 # Find all class and function definitions
@@ -16,7 +16,7 @@ Get-ChildItem -Recurse -Include "requirements*.txt","package.json","Cargo.toml",
 # Identify technical debt and TODOs
 Get-ChildItem -Recurse -Include "*.py","*.js","*.ts","*.java","*.cpp","*.go" | Select-String -Pattern "TODO|FIXME|XXX|HACK|NOTE"`,
 
-	bashCommands: `# Discover project structure and file types
+    bashCommands: `# Discover project structure and file types
 find . -type f -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.java" -o -name "*.cpp" -o -name "*.go" | head -30 | cat
 
 # Find all class and function definitions
@@ -31,12 +31,12 @@ find . -name "requirements*.txt" -o -name "package.json" -o -name "Cargo.toml" -
 # Identify technical debt and TODOs
 grep -r "TODO\\|FIXME\\|XXX\\|HACK\\|NOTE" --include="*.py" --include="*.js" --include="*.ts" --include="*.java" --include="*.cpp" --include="*.go" . | cat`,
 
-	focusChainNote:
-		"You should track these five steps in your task_progress parameter, and update it only when steps are completed.",
-	focusChainTaskProgressLine: "A task_progress list of steps that will need to be completed during the implementation",
-	focusChainTaskNote: "The task must include a <task_progress> list that breaks down the implementation into trackable steps.",
+    focusChainNote:
+        "You should track these five steps in your task_progress parameter, and update it only when steps are completed.",
+    focusChainTaskProgressLine: "A task_progress list of steps that will need to be completed during the implementation",
+    focusChainTaskNote: "The task must include a <task_progress> list that breaks down the implementation into trackable steps.",
 
-	focusChainTaskProgress: `**Task Progress Format:**
+    focusChainTaskProgress: `**Task Progress Format:**
 You absolutely MUST include the task_progress contents in context when creating the new task. When providing it, do not wrap it in XML tags- instead provide it like this:
 
 task_progress Items:
@@ -49,7 +49,7 @@ task_progress Items:
 You also MUST include the path to the markdown file you have created in your new task prompt. You should do this as follows:
   Refer to @path/to/file/markdown.md for a complete breakdown of the task requirements and steps. You should periodically read this file again.`,
 
-	nativeToolDef: `**new_task Tool Definition:**
+    nativeToolDef: `**new_task Tool Definition:**
 
 When you are ready to create the implementation task, you must call the new_task tool with the following structure:
 
@@ -64,7 +64,7 @@ The context parameter should include all five sections as described above.
 
 `,
 
-	xmlToolDef: `**new_task Tool Definition:**
+    xmlToolDef: `**new_task Tool Definition:**
 
 When you are ready to create the implementation task, you must call the new_task tool with the following structure:
 
@@ -76,7 +76,7 @@ The context parameter should include all five sections as described above.
 
 `,
 
-	main: `<explicit_instructions type="deep-planning">
+    main: `<explicit_instructions type="deep-planning">
 Your task is to create a comprehensive implementation plan before writing any code. This process has five distinct steps that must be completed in order:
 1. Silent Read Investigation
 2. Silent Terminal Investigation

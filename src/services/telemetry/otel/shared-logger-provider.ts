@@ -31,8 +31,8 @@ let sharedResource: Resource | undefined
  * the resource when the provider is constructed.
  */
 export function configureSharedTelemetryResource(options: { sessionId?: string } = {}): void {
-	if (provider) return
-	sharedResource = createTelemetryResource(options)
+    if (provider) return
+    sharedResource = createTelemetryResource(options)
 }
 
 /**
@@ -44,13 +44,13 @@ export function configureSharedTelemetryResource(options: { sessionId?: string }
  * scope — a second collector, for instance — is left connected.
  */
 export function attachScopedProcessors(
-	scopeName: string,
-	ownerId: string,
-	processors: readonly LogRecordProcessor[],
+    scopeName: string,
+    ownerId: string,
+    processors: readonly LogRecordProcessor[],
 ): LoggerProvider {
-	const target = ensureProvider()
-	router?.setRoute(scopeName, ownerId, processors)
-	return target
+    const target = ensureProvider()
+    router?.setRoute(scopeName, ownerId, processors)
+    return target
 }
 
 /**
@@ -67,40 +67,40 @@ export function attachScopedProcessors(
  * safe precisely because nothing is listening at that point.
  */
 export function detachScope(scopeName: string, ownerId: string): void {
-	router?.clearRoute(scopeName, ownerId)
-	if (router && router.scopeCount === 0) {
-		const released = provider
-		provider = undefined
-		router = undefined
-		sharedResource = undefined
-		// No routes remain, so shutdown cannot affect another subsystem. The
-		// detached owner closes its own processors separately.
-		void released?.shutdown().catch(() => undefined)
-	}
+    router?.clearRoute(scopeName, ownerId)
+    if (router && router.scopeCount === 0) {
+        const released = provider
+        provider = undefined
+        router = undefined
+        sharedResource = undefined
+        // No routes remain, so shutdown cannot affect another subsystem. The
+        // detached owner closes its own processors separately.
+        void released?.shutdown().catch(() => undefined)
+    }
 }
 
 export function getSharedLoggerProvider(): LoggerProvider | undefined {
-	return provider
+    return provider
 }
 
 /** Test seam: drops state without touching a provider owned by another test. */
 export function resetSharedLoggerProviderForTesting(): void {
-	provider = undefined
-	router = undefined
-	sharedResource = undefined
+    provider = undefined
+    router = undefined
+    sharedResource = undefined
 }
 
 function ensureProvider(): LoggerProvider {
-	if (provider) return provider
+    if (provider) return provider
 
-	const created = new LoggerProvider({ resource: sharedResource ?? createTelemetryResource() })
-	const scopeRouter = new ScopeRouterProcessor()
-	// The router is the provider's only processor: everything else hangs off
-	// it, which is what keeps scope isolation from depending on registration
-	// order at each call site.
-	created.addLogRecordProcessor(scopeRouter)
+    const created = new LoggerProvider({ resource: sharedResource ?? createTelemetryResource() })
+    const scopeRouter = new ScopeRouterProcessor()
+    // The router is the provider's only processor: everything else hangs off
+    // it, which is what keeps scope isolation from depending on registration
+    // order at each call site.
+    created.addLogRecordProcessor(scopeRouter)
 
-	provider = created
-	router = scopeRouter
-	return created
+    provider = created
+    router = scopeRouter
+    return created
 }

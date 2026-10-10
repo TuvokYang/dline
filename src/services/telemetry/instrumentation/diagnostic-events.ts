@@ -17,16 +17,16 @@
 
 /** Subsystem a diagnostic belongs to. Becomes the first segment of the event name. */
 export enum DiagnosticDomain {
-	Terminal = "terminal",
-	Checkpoint = "checkpoint",
-	Hook = "hook",
-	Settings = "settings",
-	Task = "task",
-	Profile = "profile",
-	Capability = "capability",
-	Storage = "storage",
-	Workspace = "workspace",
-	Provider = "provider",
+    Terminal = "terminal",
+    Checkpoint = "checkpoint",
+    Hook = "hook",
+    Settings = "settings",
+    Task = "task",
+    Profile = "profile",
+    Capability = "capability",
+    Storage = "storage",
+    Workspace = "workspace",
+    Provider = "provider",
 }
 
 /**
@@ -36,29 +36,29 @@ export enum DiagnosticDomain {
  * kind stays meaningful after the surrounding implementation is refactored.
  */
 export const DIAGNOSTIC_KINDS = {
-	[DiagnosticDomain.Terminal]: [
-		"warm_pool_miss",
-		"shell_integration_unavailable",
-		"process_terminated",
-		"reuse_rejected",
-		// Distinct from `warm_pool_miss`: a miss is one command that found the
-		// pool empty, while this is the refill itself failing, which is why the
-		// pool was empty in the first place.
-		"prewarm_failed",
-	],
-	[DiagnosticDomain.Checkpoint]: ["baseline_rebuilt", "paths_unstageable", "nested_repository_skipped", "add_failed"],
-	[DiagnosticDomain.Hook]: ["discovery_cache_miss", "discovery_cache_invalidated", "execution_skipped"],
-	[DiagnosticDomain.Settings]: ["reconcile_conflict", "listener_failure", "broadcast_skipped"],
-	[DiagnosticDomain.Task]: ["history_truncated", "context_window_exceeded", "stream_retry", "resume_interrupted"],
-	[DiagnosticDomain.Profile]: ["catalog_repaired", "resolution_fallback"],
-	[DiagnosticDomain.Capability]: ["refresh_failure", "source_unavailable"],
-	// `baseline_diverged` is a buffered store finding that the durable
-	// collection no longer ends the way it last wrote it, which forces the
-	// full read-and-merge commit that the in-memory baseline exists to avoid.
-	[DiagnosticDomain.Storage]: ["lock_contended", "stale_lock_broken", "write_retry", "baseline_diverged"],
-	[DiagnosticDomain.Workspace]: ["root_unresolved", "watcher_restarted"],
-	// A provider-hosted call the provider postponed to the next request, and how that postponement ended.
-	[DiagnosticDomain.Provider]: ["hosted_tool_deferred", "hosted_tool_deferral_resolved"],
+    [DiagnosticDomain.Terminal]: [
+        "warm_pool_miss",
+        "shell_integration_unavailable",
+        "process_terminated",
+        "reuse_rejected",
+        // Distinct from `warm_pool_miss`: a miss is one command that found the
+        // pool empty, while this is the refill itself failing, which is why the
+        // pool was empty in the first place.
+        "prewarm_failed",
+    ],
+    [DiagnosticDomain.Checkpoint]: ["baseline_rebuilt", "paths_unstageable", "nested_repository_skipped", "add_failed"],
+    [DiagnosticDomain.Hook]: ["discovery_cache_miss", "discovery_cache_invalidated", "execution_skipped"],
+    [DiagnosticDomain.Settings]: ["reconcile_conflict", "listener_failure", "broadcast_skipped"],
+    [DiagnosticDomain.Task]: ["history_truncated", "context_window_exceeded", "stream_retry", "resume_interrupted"],
+    [DiagnosticDomain.Profile]: ["catalog_repaired", "resolution_fallback"],
+    [DiagnosticDomain.Capability]: ["refresh_failure", "source_unavailable"],
+    // `baseline_diverged` is a buffered store finding that the durable
+    // collection no longer ends the way it last wrote it, which forces the
+    // full read-and-merge commit that the in-memory baseline exists to avoid.
+    [DiagnosticDomain.Storage]: ["lock_contended", "stale_lock_broken", "write_retry", "baseline_diverged"],
+    [DiagnosticDomain.Workspace]: ["root_unresolved", "watcher_restarted"],
+    // A provider-hosted call the provider postponed to the next request, and how that postponement ended.
+    [DiagnosticDomain.Provider]: ["hosted_tool_deferred", "hosted_tool_deferral_resolved"],
 } as const satisfies Record<DiagnosticDomain, readonly string[]>
 
 /** Diagnostic kinds valid for `D`. */
@@ -72,14 +72,14 @@ export type DiagnosticKind<D extends DiagnosticDomain> = (typeof DIAGNOSTIC_KIND
  * one that degraded are the same fact with different consequences.
  */
 export enum DiagnosticOutcome {
-	/** Handled without user-visible effect. */
-	Recovered = "recovered",
-	/** Continued on a slower or reduced path. */
-	Degraded = "degraded",
-	/** The operation did not complete. */
-	Failed = "failed",
-	/** Neutral observation with no success or failure meaning. */
-	Observed = "observed",
+    /** Handled without user-visible effect. */
+    Recovered = "recovered",
+    /** Continued on a slower or reduced path. */
+    Degraded = "degraded",
+    /** The operation did not complete. */
+    Failed = "failed",
+    /** Neutral observation with no success or failure meaning. */
+    Observed = "observed",
 }
 
 /**
@@ -89,15 +89,15 @@ export enum DiagnosticOutcome {
  * performance events, which share the same leading domain segment.
  */
 export function diagnosticEventName<D extends DiagnosticDomain>(domain: D, kind: DiagnosticKind<D>): string {
-	return `diagnostic.${domain}.${kind}`
+    return `diagnostic.${domain}.${kind}`
 }
 
 /** Whether `kind` is declared for `domain`. Used by parity tests and guards. */
 export function isKnownDiagnosticKind(domain: DiagnosticDomain, kind: string): boolean {
-	return (DIAGNOSTIC_KINDS[domain] as readonly string[]).includes(kind)
+    return (DIAGNOSTIC_KINDS[domain] as readonly string[]).includes(kind)
 }
 
 /** Every declared domain, in declaration order. */
 export function diagnosticDomains(): readonly DiagnosticDomain[] {
-	return Object.keys(DIAGNOSTIC_KINDS) as DiagnosticDomain[]
+    return Object.keys(DIAGNOSTIC_KINDS) as DiagnosticDomain[]
 }

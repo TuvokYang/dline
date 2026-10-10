@@ -17,15 +17,15 @@ const CLINE_PROVIDER_ID = "cline"
  * that is the only correct source for it.
  */
 export async function refreshClineModels(_controller: Controller): Promise<Record<string, ModelInfo>> {
-	const models = await discoverProviderModels(CLINE_PROVIDER_ID, undefined, { persist: true })
-	if (Object.keys(models).length > 0) {
-		return models
-	}
+    const models = await discoverProviderModels(CLINE_PROVIDER_ID, undefined, { persist: true })
+    if (Object.keys(models).length > 0) {
+        return models
+    }
 
-	// Discovery already logged the failure; fall back to whatever the last
-	// successful refresh left behind so the picker is not emptied by one
-	// unreachable request.
-	return (await readClineModelsFromCache()) ?? {}
+    // Discovery already logged the failure; fall back to whatever the last
+    // successful refresh left behind so the picker is not emptied by one
+    // unreachable request.
+    return (await readClineModelsFromCache()) ?? {}
 }
 
 /**
@@ -36,16 +36,16 @@ export async function refreshClineModels(_controller: Controller): Promise<Recor
  * available on machines that have not refreshed since upgrading.
  */
 export async function readClineModelsFromCache(): Promise<Record<string, ModelInfo> | undefined> {
-	try {
-		const filePath = path.join(await ensureCacheDirectoryExists(), GlobalFileNames.clineModels)
-		if (!(await fileExistsAtPath(filePath))) {
-			return undefined
-		}
+    try {
+        const filePath = path.join(await ensureCacheDirectoryExists(), GlobalFileNames.clineModels)
+        if (!(await fileExistsAtPath(filePath))) {
+            return undefined
+        }
 
-		const fileContents = await fs.readFile(filePath, "utf8")
-		return JSON.parse(fileContents)
-	} catch (error) {
-		Logger.error("Error reading cached Cline models:", error)
-		return undefined
-	}
+        const fileContents = await fs.readFile(filePath, "utf8")
+        return JSON.parse(fileContents)
+    } catch (error) {
+        Logger.error("Error reading cached Cline models:", error)
+        return undefined
+    }
 }

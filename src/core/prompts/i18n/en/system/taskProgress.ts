@@ -1,7 +1,7 @@
 // English task progress prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	generic: `UPDATING TASK PROGRESS
+    generic: `UPDATING TASK PROGRESS
 
 Use the task_progress parameter only when creating or updating TODO items. Follow exactly one lifecycle mode below. Omit the parameter when no TODO item is being created or updated; blank, whitespace-only, heading-only, or empty-checkbox values do not update the stored list.
 
@@ -65,7 +65,7 @@ The following is INVALID while the current checklist still has unchecked items b
 - [ ] Add signup page
 </task_progress>`,
 
-	standardFused: `# TODO LIST MANAGEMENT
+    standardFused: `# TODO LIST MANAGEMENT
 
 The TODO list is the runtime-owned execution record for multi-step work. It keeps the agreed milestones, completed work, and current step visible in \`environment_details\`. Treat the stored list as the source of truth for checklist state. Use \`task_progress\` only to initialize the list or report actual status changes; omit it when nothing changed. Do not use it to rewrite the plan—structural changes go through \`change_todo_list\` and user approval.
 
@@ -141,7 +141,7 @@ Provide the exact completed items followed by one exact current item:
 
 Do not add, remove, reorder, rename, rephrase, or regroup checklist items through \`task_progress\`. If the plan structure needs to change, stop using \`task_progress\` and request user authorization with \`change_todo_list\`. Continue to follow the stored list until the replacement is approved.`,
 
-	paramInstruction: `Omit task_progress when no TODO item is being created or updated. When provided, include at least one non-empty checklist item. During an existing checklist, send exact newly completed items and at most one exact current item; the current item may be sent by itself. Do not repeat the full checklist or change its structure. Use a full checklist only for initial creation or after all current items are complete and a new phase begins.`,
+    paramInstruction: `Omit task_progress when no TODO item is being created or updated. When provided, include at least one non-empty checklist item. During an existing checklist, send exact newly completed items and at most one exact current item; the current item may be sent by itself. Do not repeat the full checklist or change its structure. Use a full checklist only for initial creation or after all current items are complete and a new phase begins.`,
 }
 
 export default prompts

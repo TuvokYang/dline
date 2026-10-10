@@ -7,6 +7,6 @@ export { STANDARD_DEEP_PLANNING_VARIANT } from "./standard"
 
 /** Complete provider-independent deep-planning variant set. */
 export const DEEP_PLANNING_VARIANTS: readonly DeepPlanningVariantDescriptor[] = Object.freeze([
-	STANDARD_DEEP_PLANNING_VARIANT,
-	LITE_DEEP_PLANNING_VARIANT,
+    STANDARD_DEEP_PLANNING_VARIANT,
+    LITE_DEEP_PLANNING_VARIANT,
 ])

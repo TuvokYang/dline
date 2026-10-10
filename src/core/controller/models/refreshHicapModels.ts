@@ -13,9 +13,9 @@ const HICAP_PROVIDER_ID = "hicap"
  * @returns Response containing the Hicap models
  */
 export async function refreshHicapModels(
-	_controller: Controller,
-	_request: EmptyRequest,
+    _controller: Controller,
+    _request: EmptyRequest,
 ): Promise<OpenRouterCompatibleModelInfo> {
-	const models = await discoverProviderModels(HICAP_PROVIDER_ID, undefined, { persist: true })
-	return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
+    const models = await discoverProviderModels(HICAP_PROVIDER_ID, undefined, { persist: true })
+    return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
 }

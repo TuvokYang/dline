@@ -3,14 +3,14 @@ import type { ProviderRequestRecord, ProviderRequestReportPort } from "../execut
 
 /** The part of the checkpoint owner that opens a task's baseline restore point. */
 export interface InitialCheckpointPort {
-	beginInitialCheckpoint?(): Promise<void>
+    beginInitialCheckpoint?(): Promise<void>
 }
 
 export interface InitialCheckpointRequestReporterOptions {
-	/** Absent for a surface without workspace history. */
-	readonly checkpoints: InitialCheckpointPort | undefined
-	/** Whether the task already sent a request; read before this request opens its own row. */
-	readonly hasRequested: () => boolean
+    /** Absent for a surface without workspace history. */
+    readonly checkpoints: InitialCheckpointPort | undefined
+    /** Whether the task already sent a request; read before this request opens its own row. */
+    readonly hasRequested: () => boolean
 }
 
 /**
@@ -22,22 +22,22 @@ export interface InitialCheckpointRequestReporterOptions {
  * overlaps the request, and every tool that may write waits for it before it runs.
  */
 export class InitialCheckpointRequestReporter implements ProviderRequestReportPort {
-	constructor(
-		private readonly report: ProviderRequestReportPort,
-		private readonly options: InitialCheckpointRequestReporterOptions,
-	) {}
+    constructor(
+        private readonly report: ProviderRequestReportPort,
+        private readonly options: InitialCheckpointRequestReporterOptions,
+    ) {}
 
-	async begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord> {
-		if (!this.options.hasRequested()) await this.openBaseline()
-		return this.report.begin(input)
-	}
+    async begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord> {
+        if (!this.options.hasRequested()) await this.openBaseline()
+        return this.report.begin(input)
+    }
 
-	/** A baseline that cannot be opened only costs the restore point, never the request. */
-	private async openBaseline(): Promise<void> {
-		try {
-			await this.options.checkpoints?.beginInitialCheckpoint?.()
-		} catch (error) {
-			Logger.error("Failed to open the baseline checkpoint before the first request", error)
-		}
-	}
+    /** A baseline that cannot be opened only costs the restore point, never the request. */
+    private async openBaseline(): Promise<void> {
+        try {
+            await this.options.checkpoints?.beginInitialCheckpoint?.()
+        } catch (error) {
+            Logger.error("Failed to open the baseline checkpoint before the first request", error)
+        }
+    }
 }

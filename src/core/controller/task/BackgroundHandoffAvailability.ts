@@ -10,21 +10,21 @@ import type { TaskViewAction } from "@shared/ExtensionMessage"
  * headless reviewer, or an automated approver — supply the same fact.
  */
 export interface BackgroundHandoffAvailabilityPort {
-	/** Activity identity that can be moved to the background right now, if any. */
-	readyActivityId(): string | undefined
-	/** Whether a move was already requested and is still settling. */
-	isRequested(activityId: string): boolean
+    /** Activity identity that can be moved to the background right now, if any. */
+    readyActivityId(): string | undefined
+    /** Whether a move was already requested and is still settling. */
+    isRequested(activityId: string): boolean
 }
 
 /** Command executor facts that decide whether a foreground command can move. */
 export interface CommandHandoffSource {
-	getReadyBackgroundHandoffActivityId(): string | undefined
-	isBackgroundHandoffRequested(activityId: string): boolean
+    getReadyBackgroundHandoffActivityId(): string | undefined
+    isBackgroundHandoffRequested(activityId: string): boolean
 }
 
 /** Activity store facts that decide whether a foreground subagent can move. */
 export interface SubagentHandoffSource {
-	getReadyBackgroundHandoffActivityId(kind: "subagent"): string | undefined
+    getReadyBackgroundHandoffActivityId(kind: "subagent"): string | undefined
 }
 
 /**
@@ -35,29 +35,29 @@ export interface SubagentHandoffSource {
  * subagent removes it from the ready set, so no separate request latch is needed.
  */
 export function composeBackgroundHandoffAvailability(
-	commands: CommandHandoffSource,
-	activities: SubagentHandoffSource,
+    commands: CommandHandoffSource,
+    activities: SubagentHandoffSource,
 ): BackgroundHandoffAvailabilityPort {
-	return {
-		readyActivityId: () =>
-			commands.getReadyBackgroundHandoffActivityId() ?? activities.getReadyBackgroundHandoffActivityId("subagent"),
-		isRequested: (activityId) => commands.isBackgroundHandoffRequested(activityId),
-	}
+    return {
+        readyActivityId: () =>
+            commands.getReadyBackgroundHandoffActivityId() ?? activities.getReadyBackgroundHandoffActivityId("subagent"),
+        isRequested: (activityId) => commands.isBackgroundHandoffRequested(activityId),
+    }
 }
 
 /** Project the optional background handoff affordance into footer actions. */
 export function projectBackgroundHandoffAction(
-	availability: BackgroundHandoffAvailabilityPort | undefined,
+    availability: BackgroundHandoffAvailabilityPort | undefined,
 ): TaskViewAction | undefined {
-	const activityId = availability?.readyActivityId()
-	if (!activityId) return undefined
-	return {
-		type: "continue_in_background",
-		label: "Continue in Background",
-		appearance: "secondary",
-		enabled: !availability?.isRequested(activityId),
-		payloadPolicy: "none",
-		dispatchTarget: "task",
-		activityId,
-	}
+    const activityId = availability?.readyActivityId()
+    if (!activityId) return undefined
+    return {
+        type: "continue_in_background",
+        label: "Continue in Background",
+        appearance: "secondary",
+        enabled: !availability?.isRequested(activityId),
+        payloadPolicy: "none",
+        dispatchTarget: "task",
+        activityId,
+    }
 }

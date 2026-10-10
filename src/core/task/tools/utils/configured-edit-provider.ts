@@ -9,15 +9,15 @@ import type { TaskConfig } from "../types/TaskConfig"
  * provider used by later foreground edits.
  */
 export function withConfiguredEditProvider(config: TaskConfig): TaskConfig {
-	if (config.services.stateManager?.getGlobalSettingsKey?.("backgroundEditEnabled") !== true) {
-		return config
-	}
+    if (config.services.stateManager?.getGlobalSettingsKey?.("backgroundEditEnabled") !== true) {
+        return config
+    }
 
-	return {
-		...config,
-		services: {
-			...config.services,
-			diffViewProvider: new FileEditProvider(),
-		},
-	}
+    return {
+        ...config,
+        services: {
+            ...config.services,
+            diffViewProvider: new FileEditProvider(),
+        },
+    }
 }

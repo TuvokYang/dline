@@ -11,114 +11,114 @@ import { MessagesArea } from "./MessagesArea"
 
 const TASK: UiMessage = { ts: 1, type: "say", say: "task", text: "Scroll regression fixture" }
 const INITIAL_MESSAGES: UiMessage[] = Array.from({ length: 80 }, (_, index) => ({
-	ts: index + 2,
-	type: "say",
-	say: "text",
-	text: `SCROLL_ROW_${index}\n\n${"A stable paragraph for real row measurement.\n\n".repeat(4)}`,
+    ts: index + 2,
+    type: "say",
+    say: "text",
+    text: `SCROLL_ROW_${index}\n\n${"A stable paragraph for real row measurement.\n\n".repeat(4)}`,
 }))
 const HANDLERS: MessageHandlers = {
-	handleSendMessage: async () => {},
-	handleTaskCloseButtonClick: async () => {},
-	startNewTask: async () => {},
+    handleSendMessage: async () => {},
+    handleTaskCloseButtonClick: async () => {},
+    startNewTask: async () => {},
 }
 const selectOption = async () => {}
 
 /** Real chat rendering and scroll logic; only the message transport is controlled. */
 function ScrollFixture() {
-	const base = useExtensionState()
-	const [messages, setMessages] = useState(INITIAL_MESSAGES)
-	const [firstItemIndex, setFirstItemIndex] = useState(0)
-	const [height, setHeight] = useState(480)
-	const chatState = useChatState(messages, "scroll-regression-fixture")
-	const scroll = useScrollBehavior(messages, messages, messages, chatState.expandedRows, chatState.setExpandedRows)
-	const context = useMemo(
-		() => ({
-			...base,
-			taskViewState: {
-				taskId: "scroll-regression-fixture",
-				taskInstanceId: "story-opening",
-				phase: "idle" as const,
-				stateRevision: 0,
-				input: { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false },
-				footer: { actions: [] },
-			},
-			clineMessages: messages,
-			setClineMessages: setMessages,
-			firstItemIndex,
-			setFirstItemIndex,
-			totalMessageCount: messages.length,
-		}),
-		[base, firstItemIndex, messages],
-	)
+    const base = useExtensionState()
+    const [messages, setMessages] = useState(INITIAL_MESSAGES)
+    const [firstItemIndex, setFirstItemIndex] = useState(0)
+    const [height, setHeight] = useState(480)
+    const chatState = useChatState(messages, "scroll-regression-fixture")
+    const scroll = useScrollBehavior(messages, messages, messages, chatState.expandedRows, chatState.setExpandedRows)
+    const context = useMemo(
+        () => ({
+            ...base,
+            taskViewState: {
+                taskId: "scroll-regression-fixture",
+                taskInstanceId: "story-opening",
+                phase: "idle" as const,
+                stateRevision: 0,
+                input: { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false },
+                footer: { actions: [] },
+            },
+            clineMessages: messages,
+            setClineMessages: setMessages,
+            firstItemIndex,
+            setFirstItemIndex,
+            totalMessageCount: messages.length,
+        }),
+        [base, firstItemIndex, messages],
+    )
 
-	useEffect(() => {
-		const original = TaskServiceClient.fetchMessage
-		TaskServiceClient.fetchMessage = async ({ referenceIndex, count, taskId, taskInstanceId }) => {
-			const startIndex = referenceIndex < 0 ? Math.max(0, messages.length - count) : referenceIndex
-			return {
-				messages: messages.slice(startIndex, startIndex + count).map(convertClineMessageToProto),
-				startIndex,
-				totalCount: messages.length,
-				taskId,
-				taskInstanceId,
-			}
-		}
-		return () => {
-			TaskServiceClient.fetchMessage = original
-		}
-	}, [messages])
+    useEffect(() => {
+        const original = TaskServiceClient.fetchMessage
+        TaskServiceClient.fetchMessage = async ({ referenceIndex, count, taskId, taskInstanceId }) => {
+            const startIndex = referenceIndex < 0 ? Math.max(0, messages.length - count) : referenceIndex
+            return {
+                messages: messages.slice(startIndex, startIndex + count).map(convertClineMessageToProto),
+                startIndex,
+                totalCount: messages.length,
+                taskId,
+                taskInstanceId,
+            }
+        }
+        return () => {
+            TaskServiceClient.fetchMessage = original
+        }
+    }, [messages])
 
-	const appendCompletion = (text: string) => {
-		setMessages((prev) => [...prev, { ts: (prev.at(-1)?.ts ?? 1) + 1, type: "say", say: "completion_result", text }])
-	}
-	const updateTail = () => {
-		setMessages((prev) =>
-			prev.map((message, index) =>
-				index === prev.length - 1 ? { ...message, text: `${message.text}\n\nSCROLL_UPDATED_TAIL` } : message,
-			),
-		)
-	}
+    const appendCompletion = (text: string) => {
+        setMessages((prev) => [...prev, { ts: (prev.at(-1)?.ts ?? 1) + 1, type: "say", say: "completion_result", text }])
+    }
+    const updateTail = () => {
+        setMessages((prev) =>
+            prev.map((message, index) =>
+                index === prev.length - 1 ? { ...message, text: `${message.text}\n\nSCROLL_UPDATED_TAIL` } : message,
+            ),
+        )
+    }
 
-	return (
-		<ExtensionStateContext.Provider value={context}>
-			<div style={{ width: 500 }}>
-				<div style={{ display: "flex", gap: 8 }}>
-					<button onClick={() => setMessages((prev) => prev.map((message) => ({ ...message })))} type="button">
-						Refresh messages
-					</button>
-					<button onClick={() => setHeight((prev) => (prev === 480 ? 280 : 480))} type="button">
-						Resize viewport
-					</button>
-					<button onClick={() => appendCompletion("SCROLL_COMPLETION_CARD")} type="button">
-						Append completion
-					</button>
-					<button onClick={updateTail} type="button">
-						Update tail
-					</button>
-					<button onClick={() => appendCompletion("Long tool content\n\n".repeat(100))} type="button">
-						Append long card
-					</button>
-				</div>
-				<div data-testid="scroll-fixture" style={{ height }}>
-					<MessagesArea
-						chatState={chatState}
-						groupedMessages={messages}
-						messageHandlers={HANDLERS}
-						modifiedMessages={messages}
-						onFollowupOptionSelect={selectOption}
-						scrollBehavior={scroll}
-						task={TASK}
-					/>
-				</div>
-			</div>
-		</ExtensionStateContext.Provider>
-	)
+    return (
+        <ExtensionStateContext.Provider value={context}>
+            <div style={{ width: 500 }}>
+                <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => setMessages((prev) => prev.map((message) => ({ ...message })))} type="button">
+                        Refresh messages
+                    </button>
+                    <button onClick={() => setHeight((prev) => (prev === 480 ? 280 : 480))} type="button">
+                        Resize viewport
+                    </button>
+                    <button onClick={() => appendCompletion("SCROLL_COMPLETION_CARD")} type="button">
+                        Append completion
+                    </button>
+                    <button onClick={updateTail} type="button">
+                        Update tail
+                    </button>
+                    <button onClick={() => appendCompletion("Long tool content\n\n".repeat(100))} type="button">
+                        Append long card
+                    </button>
+                </div>
+                <div data-testid="scroll-fixture" style={{ height }}>
+                    <MessagesArea
+                        chatState={chatState}
+                        groupedMessages={messages}
+                        messageHandlers={HANDLERS}
+                        modifiedMessages={messages}
+                        onFollowupOptionSelect={selectOption}
+                        scrollBehavior={scroll}
+                        task={TASK}
+                    />
+                </div>
+            </div>
+        </ExtensionStateContext.Provider>
+    )
 }
 
 const meta: Meta<typeof ScrollFixture> = {
-	title: "Regression/Message Scrolling",
-	component: ScrollFixture,
-	parameters: { layout: "fullscreen" },
+    title: "Regression/Message Scrolling",
+    component: ScrollFixture,
+    parameters: { layout: "fullscreen" },
 }
 export default meta
 type Story = StoryObj<typeof ScrollFixture>

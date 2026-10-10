@@ -29,7 +29,7 @@ import type { Controller } from ".."
 
 /** Directory holding every exported bundle, alongside the telemetry journals. */
 function diagnosticsDirectory(): string {
-	return path.join(getDlineDataDir(), "diagnostics")
+    return path.join(getDlineDataDir(), "diagnostics")
 }
 
 /**
@@ -39,56 +39,56 @@ function diagnosticsDirectory(): string {
  * flattened to dashes.
  */
 function bundleFileName(now: Date): string {
-	const stamp = now.toISOString().replaceAll(/[:.]/g, "-")
-	return `dline-diagnostics-${stamp}.zip`
+    const stamp = now.toISOString().replaceAll(/[:.]/g, "-")
+    return `dline-diagnostics-${stamp}.zip`
 }
 
 function describeFailure(error: unknown): string {
-	if (error instanceof Error) return error.message
-	return String(error)
+    if (error instanceof Error) return error.message
+    return String(error)
 }
 
 export async function exportRuntimeTelemetryBundle(
-	controller: Controller,
-	request: ExportRuntimeTelemetryBundleRequest,
+    controller: Controller,
+    request: ExportRuntimeTelemetryBundleRequest,
 ): Promise<ExportRuntimeTelemetryBundleResponse> {
-	const source = getDiagnosticSource()
-	if (!source) {
-		// Distinct from an empty bundle: telemetry never started, so there is
-		// nothing to export and no file should be created.
-		return ExportRuntimeTelemetryBundleResponse.create({
-			error: "Runtime telemetry is not running. Enable error and usage reporting, then retry.",
-		})
-	}
+    const source = getDiagnosticSource()
+    if (!source) {
+        // Distinct from an empty bundle: telemetry never started, so there is
+        // nothing to export and no file should be created.
+        return ExportRuntimeTelemetryBundleResponse.create({
+            error: "Runtime telemetry is not running. Enable error and usage reporting, then retry.",
+        })
+    }
 
-	if (request.includeRawArtifacts) {
-		Logger.warn(
-			"[exportRuntimeTelemetryBundle] Raw artifacts requested but no confirmation flow exists; exporting without them",
-		)
-	}
+    if (request.includeRawArtifacts) {
+        Logger.warn(
+            "[exportRuntimeTelemetryBundle] Raw artifacts requested but no confirmation flow exists; exporting without them",
+        )
+    }
 
-	try {
-		const directory = diagnosticsDirectory()
-		await mkdir(directory, { recursive: true })
+    try {
+        const directory = diagnosticsDirectory()
+        await mkdir(directory, { recursive: true })
 
-		const { archive } = await exportDiagnosticBundle(source, {
-			destinationPath: path.join(directory, bundleFileName(new Date())),
-			extensionVersion: controller.context.extension?.packageJSON?.version ?? "unknown",
-			hostVersion: process.versions.node,
-		})
+        const { archive } = await exportDiagnosticBundle(source, {
+            destinationPath: path.join(directory, bundleFileName(new Date())),
+            extensionVersion: controller.context.extension?.packageJSON?.version ?? "unknown",
+            hostVersion: process.versions.node,
+        })
 
-		// Report the size from disk rather than from the builder: the caller
-		// needs to know what was actually written, and a zero-byte file is the
-		// symptom this number exists to surface.
-		const written = await stat(archive.path)
-		return ExportRuntimeTelemetryBundleResponse.create({
-			path: archive.path,
-			sizeBytes: written.size,
-		})
-	} catch (error) {
-		Logger.error("[exportRuntimeTelemetryBundle] Export failed:", error)
-		return ExportRuntimeTelemetryBundleResponse.create({
-			error: describeFailure(error),
-		})
-	}
+        // Report the size from disk rather than from the builder: the caller
+        // needs to know what was actually written, and a zero-byte file is the
+        // symptom this number exists to surface.
+        const written = await stat(archive.path)
+        return ExportRuntimeTelemetryBundleResponse.create({
+            path: archive.path,
+            sizeBytes: written.size,
+        })
+    } catch (error) {
+        Logger.error("[exportRuntimeTelemetryBundle] Export failed:", error)
+        return ExportRuntimeTelemetryBundleResponse.create({
+            error: describeFailure(error),
+        })
+    }
 }

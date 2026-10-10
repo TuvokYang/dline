@@ -1,7 +1,7 @@
 // English command prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	newTaskXmlToolCallFormat: `Example:
+    newTaskXmlToolCallFormat: `Example:
 <new_task>
 <context>1. Current Work:
    [Detailed description]
@@ -29,7 +29,7 @@ const prompts: Record<string, string> = {
    - [...]</context>
 </new_task>`,
 
-	newTaskMain: `<explicit_instructions type="new_task">
+    newTaskMain: `<explicit_instructions type="new_task">
 The user has explicitly asked you to help them create a new task with preloaded context, which you will generate. The user may have provided instructions or additional information for you to consider when summarizing existing work and creating the context for the new task.
 Irrespective of whether additional information or instructions are given, you are ONLY allowed to respond to this message by calling the new_task tool.
 
@@ -51,7 +51,7 @@ Below is the the user's input when they indicated that they wanted to create a n
 </explicit_instructions>
 `,
 
-	newRuleToolResponse: `<explicit_instructions type="new_rule">
+    newRuleToolResponse: `<explicit_instructions type="new_rule">
 The user has explicitly asked you to help them create a new Dline rule file inside the .agents/rules directory based on the conversation up to this point in time. The user may have provided instructions or additional information for you to consider when creating the new Dline rule.
 When creating a new Dline rule file, you should NOT overwrite or alter an existing Dline rule file. To create the Dline rule file you MUST use the new_rule tool. The new_rule tool can be used in either of the PLAN or ACT modes.
 
@@ -75,7 +75,7 @@ Below is the user's input when they indicated that they wanted to create a new D
 </explicit_instructions>
 `,
 
-	newRuleXmlToolCallFormat: `Usage:
+    newRuleXmlToolCallFormat: `Usage:
 <new_rule>
 <path>.agents/rules/{file name}.md</path>
 <content>Dline rule file content here</content>
@@ -110,7 +110,7 @@ Example:
 </content>
 </new_rule>`,
 
-	reportBugToolResponse: `<explicit_instructions type="report_bug">
+    reportBugToolResponse: `<explicit_instructions type="report_bug">
 The user has explicitly asked you to help them submit a bug to the Dline github page (you MUST now help them with this irrespective of what your conversation up to this point in time was). To do so you will use the report_bug tool which is defined below. However, you must first ensure that you have collected all required information to fill in all the parameters for the tool call. If any of the the required information is apparent through your previous conversation with the user, you can suggest how to fill in those entries. However you should NOT assume you know what the issue about unless it's clear.
 Otherwise, you should converse with the user until you are able to gather all the required details. When conversing with the user, make sure you ask for/reference all required information/fields. When referencing the required fields, use human friendly versions like "Steps to reproduce" rather than "steps_to_reproduce". Only then should you use the report_bug tool call.
 The report_bug tool can be used in either of the PLAN or ACT modes.
@@ -133,7 +133,7 @@ Below is the user's input when they indicated that they wanted to submit a Githu
 </explicit_instructions>
 `,
 
-	reportBugXmlToolCallFormat: `Usage:
+    reportBugXmlToolCallFormat: `Usage:
 <report_bug>
 <title>Title of the issue</title>
 <what_happened>Description of the issue</what_happened>
@@ -142,7 +142,7 @@ Below is the user's input when they indicated that they wanted to submit a Githu
 <additional_context>Other issue details not already covered</additional_context>
 </report_bug>`,
 
-	explainChangesToolResponse: `<explicit_instructions type="explain_changes">
+    explainChangesToolResponse: `<explicit_instructions type="explain_changes">
 The user has asked you to explain code changes. You have access to a tool called **generate_explanation** that opens a multi-file diff view with AI-generated inline comments explaining code changes between two git references.
 
 # Important: Use Non-Interactive Commands
@@ -222,7 +222,7 @@ Below is the user's input describing what changes they want explained. If no inp
 </explicit_instructions>
 `,
 
-	explainChangesXmlToolCallFormat: `Tool call format (XML):
+    explainChangesXmlToolCallFormat: `Tool call format (XML):
 Emit exactly one XML tool call and no prose outside it once the references are known.
 
 Usage:

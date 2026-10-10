@@ -10,48 +10,48 @@ import type { ClineContent } from "@shared/messages/content"
  * @returns Extracted user prompt text, or empty string if no user input found
  */
 export function extractUserPromptFromContent(userContent: ClineContent[]): string {
-	const extractedTexts: string[] = []
+    const extractedTexts: string[] = []
 
-	for (const block of userContent) {
-		if (block.type === "image") {
-			// Preserve images as placeholders
-			extractedTexts.push("[IMAGE]")
-			continue
-		}
+    for (const block of userContent) {
+        if (block.type === "image") {
+            // Preserve images as placeholders
+            extractedTexts.push("[IMAGE]")
+            continue
+        }
 
-		if (block.type !== "text") {
-			continue
-		}
+        if (block.type !== "text") {
+            continue
+        }
 
-		const text = block.text
+        const text = block.text
 
-		// Check if this block contains system-generated content that should be excluded
-		const isSystemContent = SYSTEM_CONTENT_MARKERS.some((marker) => text.includes(marker))
-		if (isSystemContent) {
-			continue
-		}
+        // Check if this block contains system-generated content that should be excluded
+        const isSystemContent = SYSTEM_CONTENT_MARKERS.some((marker) => text.includes(marker))
+        if (isSystemContent) {
+            continue
+        }
 
-		// Check if block contains user content tags (case-insensitive)
-		const textLower = text.toLowerCase()
-		const hasUserTag = USER_CONTENT_TAGS.some((tag) => textLower.includes(tag.toLowerCase()))
+        // Check if block contains user content tags (case-insensitive)
+        const textLower = text.toLowerCase()
+        const hasUserTag = USER_CONTENT_TAGS.some((tag) => textLower.includes(tag.toLowerCase()))
 
-		if (hasUserTag) {
-			// Extract content from within known user content tags
-			const extracted = extractFromUserContentTags(text, USER_CONTENT_TAGS)
-			if (extracted) {
-				extractedTexts.push(extracted)
-			}
-		} else {
-			// This might be plain user text without tags - include it
-			// but only if it's not empty after trimming
-			const trimmed = text.trim()
-			if (trimmed) {
-				extractedTexts.push(trimmed)
-			}
-		}
-	}
+        if (hasUserTag) {
+            // Extract content from within known user content tags
+            const extracted = extractFromUserContentTags(text, USER_CONTENT_TAGS)
+            if (extracted) {
+                extractedTexts.push(extracted)
+            }
+        } else {
+            // This might be plain user text without tags - include it
+            // but only if it's not empty after trimming
+            const trimmed = text.trim()
+            if (trimmed) {
+                extractedTexts.push(trimmed)
+            }
+        }
+    }
 
-	return extractedTexts.join("\n\n").trim()
+    return extractedTexts.join("\n\n").trim()
 }
 
 /**
@@ -63,22 +63,22 @@ export function extractUserPromptFromContent(userContent: ClineContent[]): strin
  * @returns Extracted content or empty string
  */
 function extractFromUserContentTags(text: string, tags: readonly string[]): string {
-	const results: string[] = []
+    const results: string[] = []
 
-	for (const tag of tags) {
-		// Create regex to match opening and closing tags (case-insensitive)
-		// e.g., <task>content</task>, <TASK>content</TASK>, or <Task>content</Task>
-		const tagName = tag.replace(/[<>]/g, "")
-		const regex = new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "gi")
+    for (const tag of tags) {
+        // Create regex to match opening and closing tags (case-insensitive)
+        // e.g., <task>content</task>, <TASK>content</TASK>, or <Task>content</Task>
+        const tagName = tag.replace(/[<>]/g, "")
+        const regex = new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "gi")
 
-		let match: RegExpExecArray | null
-		while ((match = regex.exec(text)) !== null) {
-			const content = match[1].trim()
-			if (content) {
-				results.push(content)
-			}
-		}
-	}
+        let match: RegExpExecArray | null
+        while ((match = regex.exec(text)) !== null) {
+            const content = match[1].trim()
+            if (content) {
+                results.push(content)
+            }
+        }
+    }
 
-	return results.join("\n\n")
+    return results.join("\n\n")
 }

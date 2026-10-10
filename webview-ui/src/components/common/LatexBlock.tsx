@@ -3,8 +3,8 @@ import { WithCopyButton } from "./CopyButton"
 import { renderLatexToNode } from "./latex-engine"
 
 interface LatexBlockProps {
-	/** Raw TeX source taken verbatim from the fenced code block. */
-	code: string
+    /** Raw TeX source taken verbatim from the fenced code block. */
+    code: string
 }
 
 /**
@@ -25,65 +25,65 @@ type RenderOutcome = { source: string; failed: boolean }
  * retrieve the raw source.
  */
 const LatexBlock = memo(({ code }: LatexBlockProps) => {
-	const containerRef = useRef<HTMLDivElement>(null)
-	const [outcome, setOutcome] = useState<RenderOutcome | undefined>(undefined)
+    const containerRef = useRef<HTMLDivElement>(null)
+    const [outcome, setOutcome] = useState<RenderOutcome | undefined>(undefined)
 
-	useEffect(() => {
-		const container = containerRef.current
-		if (!container) {
-			return
-		}
+    useEffect(() => {
+        const container = containerRef.current
+        if (!container) {
+            return
+        }
 
-		let cancelled = false
-		// Drop the previous formula immediately so a stale SVG is never shown
-		// alongside the new source or its copy button.
-		container.replaceChildren()
-		setOutcome(undefined)
+        let cancelled = false
+        // Drop the previous formula immediately so a stale SVG is never shown
+        // alongside the new source or its copy button.
+        container.replaceChildren()
+        setOutcome(undefined)
 
-		const render = async () => {
-			try {
-				const node = await renderLatexToNode(code, container.clientWidth)
-				if (cancelled) {
-					return
-				}
-				container.replaceChildren(node)
-				setOutcome({ source: code, failed: false })
-			} catch (error) {
-				if (cancelled) {
-					return
-				}
-				console.debug("Failed to typeset LaTeX block:", error)
-				container.replaceChildren()
-				setOutcome({ source: code, failed: true })
-			}
-		}
+        const render = async () => {
+            try {
+                const node = await renderLatexToNode(code, container.clientWidth)
+                if (cancelled) {
+                    return
+                }
+                container.replaceChildren(node)
+                setOutcome({ source: code, failed: false })
+            } catch (error) {
+                if (cancelled) {
+                    return
+                }
+                console.debug("Failed to typeset LaTeX block:", error)
+                container.replaceChildren()
+                setOutcome({ source: code, failed: true })
+            }
+        }
 
-		void render()
+        void render()
 
-		return () => {
-			cancelled = true
-		}
-	}, [code])
+        return () => {
+            cancelled = true
+        }
+    }, [code])
 
-	const failed = outcome?.source === code && outcome.failed
+    const failed = outcome?.source === code && outcome.failed
 
-	return (
-		<WithCopyButton ariaLabel="Copy LaTeX source" position="top-right" textToCopy={code}>
-			{failed ? (
-				<pre className="latex-block-error" data-testid="latex-block-error">
-					{code}
-				</pre>
-			) : null}
-			<div
-				aria-label={code}
-				className="latex-block"
-				data-testid="latex-block"
-				hidden={failed}
-				ref={containerRef}
-				role="math"
-			/>
-		</WithCopyButton>
-	)
+    return (
+        <WithCopyButton ariaLabel="Copy LaTeX source" position="top-right" textToCopy={code}>
+            {failed ? (
+                <pre className="latex-block-error" data-testid="latex-block-error">
+                    {code}
+                </pre>
+            ) : null}
+            <div
+                aria-label={code}
+                className="latex-block"
+                data-testid="latex-block"
+                hidden={failed}
+                ref={containerRef}
+                role="math"
+            />
+        </WithCopyButton>
+    )
 })
 
 LatexBlock.displayName = "LatexBlock"

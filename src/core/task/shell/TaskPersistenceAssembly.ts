@@ -6,12 +6,12 @@ import type { TaskPersistencePorts } from "./TaskExecutorAssembly"
 export const KERNEL_COMMIT_WRITER = "kernel-commit"
 
 export interface TaskPersistenceAssembly {
-	readonly ports: Omit<TaskPersistencePorts, "taskView">
-	readonly payloads: TaskPayloadStore
-	/** Required for file-backed production assemblies; omitted by explicit in-memory test assemblies. */
-	readonly backgroundDeliveries?: BackgroundDeliveryLedger
-	/** Closes `journal.db`; idempotent. Absent for in-memory assemblies that own no files. */
-	readonly close?: () => Promise<void>
+    readonly ports: Omit<TaskPersistencePorts, "taskView">
+    readonly payloads: TaskPayloadStore
+    /** Required for file-backed production assemblies; omitted by explicit in-memory test assemblies. */
+    readonly backgroundDeliveries?: BackgroundDeliveryLedger
+    /** Closes `journal.db`; idempotent. Absent for in-memory assemblies that own no files. */
+    readonly close?: () => Promise<void>
 }
 
 /**
@@ -21,22 +21,22 @@ export interface TaskPersistenceAssembly {
  * so the database and its `-wal`/`-shm` files are released.
  */
 export async function openTaskPersistence(taskId: string): Promise<TaskPersistenceAssembly> {
-	const layout = await ensureInstanceLayout({ taskId })
-	const storage = openInstanceStorage(layout.root)
-	try {
-		const stores = await openTaskJournalStores(await storage.openDatabase(InstanceDatabase.Journal, KERNEL_COMMIT_WRITER))
-		return {
-			ports: {
-				vault: new FileTaskStateVault(layout.stateFile),
-				publications: stores.publications,
-				journal: stores.journal,
-			},
-			payloads: stores.payloads,
-			backgroundDeliveries: stores.backgroundDeliveries,
-			close: () => storage.close(),
-		}
-	} catch (error) {
-		await storage.close()
-		throw error
-	}
+    const layout = await ensureInstanceLayout({ taskId })
+    const storage = openInstanceStorage(layout.root)
+    try {
+        const stores = await openTaskJournalStores(await storage.openDatabase(InstanceDatabase.Journal, KERNEL_COMMIT_WRITER))
+        return {
+            ports: {
+                vault: new FileTaskStateVault(layout.stateFile),
+                publications: stores.publications,
+                journal: stores.journal,
+            },
+            payloads: stores.payloads,
+            backgroundDeliveries: stores.backgroundDeliveries,
+            close: () => storage.close(),
+        }
+    } catch (error) {
+        await storage.close()
+        throw error
+    }
 }

@@ -4,5 +4,5 @@ import { type OpenActiveTaskSessionOptions, openActiveTaskSession } from "../ses
 export type TaskInstance = ActiveTaskSession
 
 export function createTask(options: OpenActiveTaskSessionOptions): Promise<TaskInstance> {
-	return openActiveTaskSession(options)
+    return openActiveTaskSession(options)
 }

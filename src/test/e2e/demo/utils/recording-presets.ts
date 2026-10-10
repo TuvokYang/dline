@@ -7,10 +7,10 @@
 
 /** Documentation flows that stay inside the Dline sidebar: a 4:3 frame sized for the docs column. */
 export const SIDEBAR_RECORDING = {
-	crop: "sidebar",
-	fps: 12,
-	outputWidth: 560,
-	camera: { aspectRatio: 4 / 3, minWidth: 560, spotlight: true },
+    crop: "sidebar",
+    fps: 12,
+    outputWidth: 560,
+    camera: { aspectRatio: 4 / 3, minWidth: 560, spotlight: true },
 } as const
 
 /**
@@ -19,10 +19,10 @@ export const SIDEBAR_RECORDING = {
  * panel stays in one continuous shot.
  */
 export const WINDOW_RECORDING = {
-	crop: "full",
-	fps: 10,
-	outputWidth: 1_200,
-	camera: { aspectRatio: 16 / 9, minWidth: 1_200, spotlight: true },
+    crop: "full",
+    fps: 10,
+    outputWidth: 1_200,
+    camera: { aspectRatio: 16 / 9, minWidth: 1_200, spotlight: true },
 } as const
 
 /** Multi-step flows move the camera often; a short settle keeps them inside the 20 s GIF budget. */

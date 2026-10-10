@@ -8,14 +8,14 @@ const LITE_ACT_PLAN_YOLO_QUESTION_GUIDANCE = getPrompt("variants.lite", "actVsPl
 const LITE_ACT_PLAN_YOLO_REPLACEMENT = getPrompt("variants.lite", "actVsPlanYoloReplacement")
 
 export function createStandardActVsPlan(): string {
-	return STANDARD_ACT_VS_PLAN
+    return STANDARD_ACT_VS_PLAN
 }
 
 export function createLiteActVsPlan(config: SystemSectionContentConfig): string {
-	return config.yoloModeEnabled
-		? LITE_ACT_VS_PLAN.replace(LITE_ACT_PLAN_YOLO_ASK_TOOL, "").replace(
-				LITE_ACT_PLAN_YOLO_QUESTION_GUIDANCE,
-				LITE_ACT_PLAN_YOLO_REPLACEMENT,
-			)
-		: LITE_ACT_VS_PLAN
+    return config.yoloModeEnabled
+        ? LITE_ACT_VS_PLAN.replace(LITE_ACT_PLAN_YOLO_ASK_TOOL, "").replace(
+              LITE_ACT_PLAN_YOLO_QUESTION_GUIDANCE,
+              LITE_ACT_PLAN_YOLO_REPLACEMENT,
+          )
+        : LITE_ACT_VS_PLAN
 }

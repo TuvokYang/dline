@@ -8,8 +8,8 @@
  * those consumers. A headless assembly that needs none of them omits the port.
  */
 export interface ProviderRequestReportPort {
-	/** Open a record before the stream starts, so the request is visible while it runs. */
-	begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord>
+    /** Open a record before the stream starts, so the request is visible while it runs. */
+    begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord>
 }
 
 /**
@@ -24,13 +24,13 @@ export type ProviderRequestOutcome = "completed" | "cancelled" | "failed"
 
 /** One automatic replay of a request that failed before its first chunk. */
 export interface ProviderRetryNotice {
-	/** One-based retry attempt within the request's retry budget. */
-	readonly attempt: number
-	readonly maxAttempts: number
-	/** How long the request waits before it is sent again. */
-	readonly delayMs: number
-	/** Serialized provider error, for display only; it never enters the conversation. */
-	readonly errorMessage: string
+    /** One-based retry attempt within the request's retry budget. */
+    readonly attempt: number
+    readonly maxAttempts: number
+    /** How long the request waits before it is sent again. */
+    readonly delayMs: number
+    /** Serialized provider error, for display only; it never enters the conversation. */
+    readonly errorMessage: string
 }
 
 /**
@@ -42,32 +42,32 @@ export interface ProviderRetryNotice {
  * it has reported nothing; providers such as Anthropic report the input first.
  */
 export interface ProviderReceivingEstimate {
-	readonly receivingTokens: number
-	readonly authoritativeContextTokens: number
+    readonly receivingTokens: number
+    readonly authoritativeContextTokens: number
 }
 
 export interface ProviderRequestRecord {
-	/**
-	 * The request failed before its first chunk and is sent again after the notice's delay.
-	 *
-	 * Optional because an assembly that renders nothing has no retry progress to show.
-	 */
-	retrying?(notice: ProviderRetryNotice): Promise<void>
-	/** A replayed request produced its first chunk, so the retry is over. */
-	recovered?(): Promise<void>
-	/**
-	 * The response grew while it streams.
-	 *
-	 * Optional because an assembly that shows no context occupancy has nothing to update.
-	 */
-	receiving?(estimate: ProviderReceivingEstimate): Promise<void>
-	/**
-	 * Settle the record with what the request actually consumed.
-	 *
-	 * Called once the stream ends, cancellation and failure included, so a
-	 * request never stays open as a permanently running row.
-	 */
-	settle(input: { readonly usage?: Readonly<Record<string, number>>; readonly outcome: ProviderRequestOutcome }): Promise<void>
+    /**
+     * The request failed before its first chunk and is sent again after the notice's delay.
+     *
+     * Optional because an assembly that renders nothing has no retry progress to show.
+     */
+    retrying?(notice: ProviderRetryNotice): Promise<void>
+    /** A replayed request produced its first chunk, so the retry is over. */
+    recovered?(): Promise<void>
+    /**
+     * The response grew while it streams.
+     *
+     * Optional because an assembly that shows no context occupancy has nothing to update.
+     */
+    receiving?(estimate: ProviderReceivingEstimate): Promise<void>
+    /**
+     * Settle the record with what the request actually consumed.
+     *
+     * Called once the stream ends, cancellation and failure included, so a
+     * request never stays open as a permanently running row.
+     */
+    settle(input: { readonly usage?: Readonly<Record<string, number>>; readonly outcome: ProviderRequestOutcome }): Promise<void>
 }
 
 /**
@@ -78,24 +78,24 @@ export interface ProviderRequestRecord {
  * double counted if summed, so the latest total replaces the previous one.
  */
 export function mergeProviderUsage(
-	accumulated: Readonly<Record<string, number>> | undefined,
-	next: Readonly<Record<string, number>>,
+    accumulated: Readonly<Record<string, number>> | undefined,
+    next: Readonly<Record<string, number>>,
 ): Readonly<Record<string, number>> {
-	if (!accumulated) return { ...next }
-	const merged: Record<string, number> = { ...accumulated }
-	for (const [key, value] of Object.entries(next)) {
-		if (!Number.isFinite(value)) continue
-		const previous = merged[key]
-		merged[key] = TOTAL_USAGE_KEYS.has(key) || previous === undefined ? value : previous + value
-	}
-	return merged
+    if (!accumulated) return { ...next }
+    const merged: Record<string, number> = { ...accumulated }
+    for (const [key, value] of Object.entries(next)) {
+        if (!Number.isFinite(value)) continue
+        const previous = merged[key]
+        merged[key] = TOTAL_USAGE_KEYS.has(key) || previous === undefined ? value : previous + value
+    }
+    return merged
 }
 
 /** Usage fields a provider reports as a running total for the whole request. */
 const TOTAL_USAGE_KEYS: ReadonlySet<string> = new Set([
-	"totalCost",
-	"cacheUsageReported",
-	"thoughtsUsageReported",
-	"costUsageReported",
-	"serverToolUsageReported",
+    "totalCost",
+    "cacheUsageReported",
+    "thoughtsUsageReported",
+    "costUsageReported",
+    "serverToolUsageReported",
 ])

@@ -13,10 +13,10 @@ export const CHAT_INPUT_PADDING_Y_PX = 9
  * until a row height is known the ratio is applied to rows alone.
  */
 export function chatInputMaxRows(rowHeight?: number): number {
-	const scaledRows = CHAT_INPUT_MIN_ROWS * CHAT_INPUT_MAX_HEIGHT_RATIO
-	if (!rowHeight || rowHeight <= 0) {
-		return scaledRows
-	}
-	const verticalPadding = 2 * CHAT_INPUT_PADDING_Y_PX
-	return scaledRows + ((CHAT_INPUT_MAX_HEIGHT_RATIO - 1) * verticalPadding) / rowHeight
+    const scaledRows = CHAT_INPUT_MIN_ROWS * CHAT_INPUT_MAX_HEIGHT_RATIO
+    if (!rowHeight || rowHeight <= 0) {
+        return scaledRows
+    }
+    const verticalPadding = 2 * CHAT_INPUT_PADDING_Y_PX
+    return scaledRows + ((CHAT_INPUT_MAX_HEIGHT_RATIO - 1) * verticalPadding) / rowHeight
 }

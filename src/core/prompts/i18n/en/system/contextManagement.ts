@@ -1,7 +1,7 @@
 // English context management prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	summarizeMain: `<explicit_instructions type="summarize_task">
+    summarizeMain: `<explicit_instructions type="summarize_task">
 @COMPACTION_WINDOW_BUDGET@The current conversation is rapidly running out of context. Now, your urgent task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
 This summary should capture the technical details, code patterns, and architectural decisions needed to continue development work without losing context, while staying concise enough to fit the budget.
 
@@ -109,54 +109,54 @@ Here's an example of how your output should be structured. When you invoke summa
 </explicit_instructions>
 `,
 
-	summarizeFocusChainParam: `Updating task progress:
+    summarizeFocusChainParam: `Updating task progress:
 There is an optional task_progress parameter. If a checklist exists, report the exact completed items that represent the current progress, followed by the subsequent items that still need to be completed, preserving their order from the existing checklist. Use \`- [x]\` for completed items and \`- [ ]\` for the remaining items. The first \`- [ ]\` item identifies the current work after continuation; later \`- [ ]\` items preserve the remaining execution order. Do not include the checklist title or section headings. If no task_progress list was included in the previous context, do not create a new one.`,
 
-	summarizeFocusChainUsage: `<task_progress>ordered completed and remaining checklist items</task_progress>`,
+    summarizeFocusChainUsage: `<task_progress>ordered completed and remaining checklist items</task_progress>`,
 
-	summarizeFocusChainExample: `<task_progress>
+    summarizeFocusChainExample: `<task_progress>
 - [x] Trace refresh-token failure
 - [x] Correct refresh retry state
 - [ ] Verify expired-session recovery
 - [ ] Verify explicit logout behavior
 </task_progress>`,
 
-	summarizeDecisionWithFocus:
-		"You must invoke summarize_task as this explicit instruction specifies whether you are in PLAN or ACT mode, regardless of whether prior work or every task_progress item appears complete. Do not call attempt_completion or any other tool. Treat the latest user-authored input as authoritative context that must be preserved in the summary and subsequent continuation.",
+    summarizeDecisionWithFocus:
+        "You must invoke summarize_task as this explicit instruction specifies whether you are in PLAN or ACT mode, regardless of whether prior work or every task_progress item appears complete. Do not call attempt_completion or any other tool. Treat the latest user-authored input as authoritative context that must be preserved in the summary and subsequent continuation.",
 
-	summarizeDecisionWithoutFocus:
-		"You must invoke summarize_task as this explicit instruction specifies whether you are in PLAN or ACT mode, even if prior work appears complete. Do not call attempt_completion or any other tool. Treat the latest user-authored input as authoritative context that must be preserved in the summary and subsequent continuation.",
+    summarizeDecisionWithoutFocus:
+        "You must invoke summarize_task as this explicit instruction specifies whether you are in PLAN or ACT mode, even if prior work appears complete. Do not call attempt_completion or any other tool. Treat the latest user-authored input as authoritative context that must be preserved in the summary and subsequent continuation.",
 
-	previousCompactionSummaryNotice:
-		"This is the task compaction summary written by the previous compaction. It stands in for the earlier conversation and is not a user message.",
+    previousCompactionSummaryNotice:
+        "This is the task compaction summary written by the previous compaction. It stands in for the earlier conversation and is not a user message.",
 
-	compactionRetryReminderHeading: "# Retry Reminder",
+    compactionRetryReminderHeading: "# Retry Reminder",
 
-	compactionRetryReminderEmptyResponse:
-		"Your previous reply to this instruction was empty, so no summary was received. Invoke summarize_task now exactly as the explicit instruction example shows, with the XML closed.",
+    compactionRetryReminderEmptyResponse:
+        "Your previous reply to this instruction was empty, so no summary was received. Invoke summarize_task now exactly as the explicit instruction example shows, with the XML closed.",
 
-	compactionRetryReminderMissingBlock:
-		"Your previous reply did not invoke summarize_task, so it was discarded. Invoke summarize_task exactly as the explicit instruction example shows, with the XML closed, and write nothing else.",
+    compactionRetryReminderMissingBlock:
+        "Your previous reply did not invoke summarize_task, so it was discarded. Invoke summarize_task exactly as the explicit instruction example shows, with the XML closed, and write nothing else.",
 
-	compactionRetryReminderForeignToolCall:
-		"Your previous reply used function or tool calling, so it was discarded. summarize_task is not in your tool list. Invoke summarize_task by writing the XML exactly as the explicit instruction example shows, with the XML closed.",
+    compactionRetryReminderForeignToolCall:
+        "Your previous reply used function or tool calling, so it was discarded. summarize_task is not in your tool list. Invoke summarize_task by writing the XML exactly as the explicit instruction example shows, with the XML closed.",
 
-	compactionRetryReminderMissingContext:
-		"Your previous <summarize_task> block had no <context> element, so it was discarded. Put the complete summary inside <context>...</context> within the <summarize_task> block.",
+    compactionRetryReminderMissingContext:
+        "Your previous <summarize_task> block had no <context> element, so it was discarded. Put the complete summary inside <context>...</context> within the <summarize_task> block.",
 
-	compactionRetryReminderEmptyContext:
-		"Your previous <context> element was empty, so it was discarded. Write the complete summary inside <context>...</context>.",
+    compactionRetryReminderEmptyContext:
+        "Your previous <context> element was empty, so it was discarded. Write the complete summary inside <context>...</context>.",
 
-	compactionRetryReminderUnclosedContext:
-		"Your previous reply ended before </context> was written, so the whole summary was discarded. Write a more concise summary and close it with </context></summarize_task> well before the hard limit.",
+    compactionRetryReminderUnclosedContext:
+        "Your previous reply ended before </context> was written, so the whole summary was discarded. Write a more concise summary and close it with </context></summarize_task> well before the hard limit.",
 
-	compactionRetryReminderUnclosedBlock:
-		"Your previous reply wrote </context> but never wrote </summarize_task>, so the whole summary was discarded. Close the block with </context></summarize_task> and end your reply there.",
+    compactionRetryReminderUnclosedBlock:
+        "Your previous reply wrote </context> but never wrote </summarize_task>, so the whole summary was discarded. Close the block with </context></summarize_task> and end your reply there.",
 
-	compactionRetryReminderOutputLimit:
-		"Your previous reply reached the output limit before the <summarize_task> block was closed, so the whole summary was discarded. Keep reasoning brief, write a noticeably shorter summary, and reserve room to close it with </context></summarize_task>.",
+    compactionRetryReminderOutputLimit:
+        "Your previous reply reached the output limit before the <summarize_task> block was closed, so the whole summary was discarded. Keep reasoning brief, write a noticeably shorter summary, and reserve room to close it with </context></summarize_task>.",
 
-	raceConditionToolError: `This tool call was not approved by the user and was triggered by a race condition during mode switching. The client has already executed this tool call, but the result is indeterminate (it may have succeeded, failed, or been cancelled). Please verify the workspace state before continuing.`,
+    raceConditionToolError: `This tool call was not approved by the user and was triggered by a race condition during mode switching. The client has already executed this tool call, but the result is indeterminate (it may have succeeded, failed, or been cancelled). Please verify the workspace state before continuing.`,
 }
 
 export default prompts

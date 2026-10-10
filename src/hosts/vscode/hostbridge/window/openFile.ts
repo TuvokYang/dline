@@ -2,6 +2,6 @@ import * as vscode from "vscode"
 import { OpenFileRequest, OpenFileResponse } from "@/shared/proto/dline/host/window"
 
 export async function openFile(request: OpenFileRequest): Promise<OpenFileResponse> {
-	await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(request.filePath))
-	return OpenFileResponse.create({})
+    await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(request.filePath))
+    return OpenFileResponse.create({})
 }

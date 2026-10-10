@@ -4,1009 +4,1009 @@ import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/com
 import { describe, it } from "vitest"
 import { OutputLimitExceededError } from "../../stream/OutputLimitExceededError"
 import {
-	convertOpenAIToolsToAnthropicTools,
-	handleAnthropicMessagesApiStreamResponse,
-	mergeAnthropicServerTools,
+    convertOpenAIToolsToAnthropicTools,
+    handleAnthropicMessagesApiStreamResponse,
+    mergeAnthropicServerTools,
 } from "../messages_api_support"
 
 const createAsyncIterable = (events: any[]) =>
-	({
-		async *[Symbol.asyncIterator]() {
-			for (const event of events) {
-				yield event
-			}
-		},
-	}) as any
+    ({
+        async *[Symbol.asyncIterator]() {
+            for (const event of events) {
+                yield event
+            }
+        },
+    }) as any
 
 /** The stored replay pair a terminal hosted event carries: the native call followed by its native result. */
 function hostedReplay(call: Record<string, unknown>, result: Record<string, unknown>) {
-	return { type: "hosted_tool", protocol: "anthropic_messages", blocks: [call, result] }
+    return { type: "hosted_tool", protocol: "anthropic_messages", blocks: [call, result] }
 }
 
 async function collectChunks(events: any[], startedServerToolCallIds?: Set<string>) {
-	const chunks: any[] = []
-	for await (const chunk of handleAnthropicMessagesApiStreamResponse(createAsyncIterable(events), {
-		startedServerToolCallIds,
-	})) {
-		chunks.push(chunk)
-	}
-	return chunks
+    const chunks: any[] = []
+    for await (const chunk of handleAnthropicMessagesApiStreamResponse(createAsyncIterable(events), {
+        startedServerToolCallIds,
+    })) {
+        chunks.push(chunk)
+    }
+    return chunks
 }
 
 describe("messages_api_support", () => {
-	describe("convertOpenAIToolsToAnthropicTools", () => {
-		it("returns undefined when tools are missing", () => {
-			expect(convertOpenAIToolsToAnthropicTools(undefined)).to.equal(undefined)
-			expect(convertOpenAIToolsToAnthropicTools([])).to.equal(undefined)
-		})
+    describe("convertOpenAIToolsToAnthropicTools", () => {
+        it("returns undefined when tools are missing", () => {
+            expect(convertOpenAIToolsToAnthropicTools(undefined)).to.equal(undefined)
+            expect(convertOpenAIToolsToAnthropicTools([])).to.equal(undefined)
+        })
 
-		it("converts function tools and defaults schema type to object", () => {
-			const tools: OpenAITool[] = [
-				{
-					type: "function",
-					function: {
-						name: "read_file",
-						description: "Read a file from disk",
-						parameters: {
-							properties: {
-								path: { type: "string" },
-							},
-							required: ["path"],
-						},
-					},
-				},
-			]
+        it("converts function tools and defaults schema type to object", () => {
+            const tools: OpenAITool[] = [
+                {
+                    type: "function",
+                    function: {
+                        name: "read_file",
+                        description: "Read a file from disk",
+                        parameters: {
+                            properties: {
+                                path: { type: "string" },
+                            },
+                            required: ["path"],
+                        },
+                    },
+                },
+            ]
 
-			const converted = convertOpenAIToolsToAnthropicTools(tools)
+            const converted = convertOpenAIToolsToAnthropicTools(tools)
 
-			expect(converted).to.deep.equal([
-				{
-					name: "read_file",
-					description: "Read a file from disk",
-					input_schema: {
-						type: "object",
-						properties: {
-							path: { type: "string" },
-						},
-						required: ["path"],
-					},
-				},
-			])
-		})
+            expect(converted).to.deep.equal([
+                {
+                    name: "read_file",
+                    description: "Read a file from disk",
+                    input_schema: {
+                        type: "object",
+                        properties: {
+                            path: { type: "string" },
+                        },
+                        required: ["path"],
+                    },
+                },
+            ])
+        })
 
-		it("filters out invalid tools", () => {
-			const tools = [
-				{
-					type: "other",
-					function: {
-						name: "ignored",
-					},
-				},
-				{
-					type: "function",
-					function: {
-						name: "",
-					},
-				},
-				{
-					type: "function",
-					function: {
-						name: "valid_tool",
-						parameters: { type: "object", properties: {} },
-					},
-				},
-			] as any as OpenAITool[]
+        it("filters out invalid tools", () => {
+            const tools = [
+                {
+                    type: "other",
+                    function: {
+                        name: "ignored",
+                    },
+                },
+                {
+                    type: "function",
+                    function: {
+                        name: "",
+                    },
+                },
+                {
+                    type: "function",
+                    function: {
+                        name: "valid_tool",
+                        parameters: { type: "object", properties: {} },
+                    },
+                },
+            ] as any as OpenAITool[]
 
-			const converted = convertOpenAIToolsToAnthropicTools(tools)
+            const converted = convertOpenAIToolsToAnthropicTools(tools)
 
-			expect(converted).to.have.length(1)
-			expect(converted?.[0]).to.deep.include({ name: "valid_tool" })
-		})
+            expect(converted).to.have.length(1)
+            expect(converted?.[0]).to.deep.include({ name: "valid_tool" })
+        })
 
-		it("replaces a local web_search function with one hosted Anthropic declaration", () => {
-			const converted = convertOpenAIToolsToAnthropicTools(
-				[
-					{
-						type: "function",
-						function: { name: "web_search", description: "Local search", parameters: { type: "object" } },
-					},
-					{
-						type: "function",
-						function: { name: "read_file", description: "Read", parameters: { type: "object" } },
-					},
-				],
-				[ServerTool.WEB_SEARCH],
-			)
+        it("replaces a local web_search function with one hosted Anthropic declaration", () => {
+            const converted = convertOpenAIToolsToAnthropicTools(
+                [
+                    {
+                        type: "function",
+                        function: { name: "web_search", description: "Local search", parameters: { type: "object" } },
+                    },
+                    {
+                        type: "function",
+                        function: { name: "read_file", description: "Read", parameters: { type: "object" } },
+                    },
+                ],
+                [ServerTool.WEB_SEARCH],
+            )
 
-			expect(converted).to.deep.equal([
-				{ name: "read_file", description: "Read", input_schema: { type: "object" } },
-				{ type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
-			])
-		})
+            expect(converted).to.deep.equal([
+                { name: "read_file", description: "Read", input_schema: { type: "object" } },
+                { type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
+            ])
+        })
 
-		it("replaces a local web_fetch function with one hosted Anthropic declaration", () => {
-			const converted = convertOpenAIToolsToAnthropicTools(
-				[
-					{
-						type: "function",
-						function: { name: "web_fetch", description: "Local fetch", parameters: { type: "object" } },
-					},
-					{
-						type: "function",
-						function: { name: "read_file", description: "Read", parameters: { type: "object" } },
-					},
-				],
-				[ServerTool.WEB_FETCH],
-			)
+        it("replaces a local web_fetch function with one hosted Anthropic declaration", () => {
+            const converted = convertOpenAIToolsToAnthropicTools(
+                [
+                    {
+                        type: "function",
+                        function: { name: "web_fetch", description: "Local fetch", parameters: { type: "object" } },
+                    },
+                    {
+                        type: "function",
+                        function: { name: "read_file", description: "Read", parameters: { type: "object" } },
+                    },
+                ],
+                [ServerTool.WEB_FETCH],
+            )
 
-			expect(converted).to.deep.equal([
-				{ name: "read_file", description: "Read", input_schema: { type: "object" } },
-				{ type: "web_fetch_20260318", name: "web_fetch", allowed_callers: ["direct"] },
-			])
-		})
+            expect(converted).to.deep.equal([
+                { name: "read_file", description: "Read", input_schema: { type: "object" } },
+                { type: "web_fetch_20260318", name: "web_fetch", allowed_callers: ["direct"] },
+            ])
+        })
 
-		it("keeps the local web_fetch function while only search is hosted", () => {
-			const converted = convertOpenAIToolsToAnthropicTools(
-				[
-					{
-						type: "function",
-						function: { name: "web_fetch", description: "Local fetch", parameters: { type: "object" } },
-					},
-				],
-				[ServerTool.WEB_SEARCH],
-			)
+        it("keeps the local web_fetch function while only search is hosted", () => {
+            const converted = convertOpenAIToolsToAnthropicTools(
+                [
+                    {
+                        type: "function",
+                        function: { name: "web_fetch", description: "Local fetch", parameters: { type: "object" } },
+                    },
+                ],
+                [ServerTool.WEB_SEARCH],
+            )
 
-			expect(converted).to.deep.equal([
-				{ name: "web_fetch", description: "Local fetch", input_schema: { type: "object" } },
-				{ type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
-			])
-		})
+            expect(converted).to.deep.equal([
+                { name: "web_fetch", description: "Local fetch", input_schema: { type: "object" } },
+                { type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
+            ])
+        })
 
-		it("keeps an Anthropic local web_search tool unless hosted search was selected", () => {
-			const localTool = {
-				name: "web_search",
-				description: "Local search",
-				input_schema: { type: "object" as const, properties: {} },
-			}
+        it("keeps an Anthropic local web_search tool unless hosted search was selected", () => {
+            const localTool = {
+                name: "web_search",
+                description: "Local search",
+                input_schema: { type: "object" as const, properties: {} },
+            }
 
-			expect(mergeAnthropicServerTools([localTool])).to.deep.equal([localTool])
-		})
+            expect(mergeAnthropicServerTools([localTool])).to.deep.equal([localTool])
+        })
 
-		it("declares hosted web search on its own, depending on no other server tool", () => {
-			// The provider runs this search itself. Pairing it with a sandbox would
-			// subject every search to the sandbox's own per-turn execution budget.
-			expect(mergeAnthropicServerTools(undefined, [ServerTool.WEB_SEARCH])).to.deep.equal([
-				{ type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
-			])
-		})
+        it("declares hosted web search on its own, depending on no other server tool", () => {
+            // The provider runs this search itself. Pairing it with a sandbox would
+            // subject every search to the sandbox's own per-turn execution budget.
+            expect(mergeAnthropicServerTools(undefined, [ServerTool.WEB_SEARCH])).to.deep.equal([
+                { type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
+            ])
+        })
 
-		it("declares the sandbox beside web search without linking them", () => {
-			// Absence of allowed_callers is the contract under test: it keeps searches
-			// out of the sandbox and off its per-turn execution budget.
-			expect(mergeAnthropicServerTools(undefined, [ServerTool.WEB_SEARCH, ServerTool.CODE_EXECUTION])).to.deep.equal([
-				{ type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
-				{ type: "code_execution_20260120", name: "code_execution", allowed_callers: ["direct"] },
-			])
-		})
+        it("declares the sandbox beside web search without linking them", () => {
+            // Absence of allowed_callers is the contract under test: it keeps searches
+            // out of the sandbox and off its per-turn execution budget.
+            expect(mergeAnthropicServerTools(undefined, [ServerTool.WEB_SEARCH, ServerTool.CODE_EXECUTION])).to.deep.equal([
+                { type: "web_search_20260318", name: "web_search", allowed_callers: ["direct"] },
+                { type: "code_execution_20260120", name: "code_execution", allowed_callers: ["direct"] },
+            ])
+        })
 
-		it("declares the sandbox alone when hosted search was not selected", () => {
-			expect(mergeAnthropicServerTools(undefined, [ServerTool.CODE_EXECUTION])).to.deep.equal([
-				{ type: "code_execution_20260120", name: "code_execution", allowed_callers: ["direct"] },
-			])
-		})
-	})
+        it("declares the sandbox alone when hosted search was not selected", () => {
+            expect(mergeAnthropicServerTools(undefined, [ServerTool.CODE_EXECUTION])).to.deep.equal([
+                { type: "code_execution_20260120", name: "code_execution", allowed_callers: ["direct"] },
+            ])
+        })
+    })
 
-	describe("handleAnthropicMessagesApiStreamResponse", () => {
-		it("maps usage, reasoning, and text events into ApiStream chunks", async () => {
-			const chunks = await collectChunks([
-				{
-					type: "message_start",
-					message: {
-						usage: {
-							input_tokens: 10,
-							output_tokens: 2,
-							cache_creation_input_tokens: 4,
-							cache_read_input_tokens: 3,
-						},
-					},
-				},
-				{
-					type: "content_block_start",
-					content_block: {
-						type: "thinking",
-						thinking: "first thought",
-						signature: "sig-start",
-					},
-					index: 0,
-				},
-				{
-					type: "content_block_delta",
-					delta: {
-						type: "thinking_delta",
-						thinking: " then more",
-					},
-				},
-				{
-					type: "content_block_delta",
-					delta: {
-						type: "signature_delta",
-						signature: "sig-final",
-					},
-				},
-				{
-					type: "content_block_start",
-					content_block: {
-						type: "text",
-						text: "Hello",
-					},
-					index: 0,
-				},
-				{
-					type: "content_block_start",
-					content_block: {
-						type: "text",
-						text: "World",
-					},
-					index: 1,
-				},
-				{
-					type: "message_delta",
-					usage: {
-						output_tokens: 9,
-					},
-				},
-			])
+    describe("handleAnthropicMessagesApiStreamResponse", () => {
+        it("maps usage, reasoning, and text events into ApiStream chunks", async () => {
+            const chunks = await collectChunks([
+                {
+                    type: "message_start",
+                    message: {
+                        usage: {
+                            input_tokens: 10,
+                            output_tokens: 2,
+                            cache_creation_input_tokens: 4,
+                            cache_read_input_tokens: 3,
+                        },
+                    },
+                },
+                {
+                    type: "content_block_start",
+                    content_block: {
+                        type: "thinking",
+                        thinking: "first thought",
+                        signature: "sig-start",
+                    },
+                    index: 0,
+                },
+                {
+                    type: "content_block_delta",
+                    delta: {
+                        type: "thinking_delta",
+                        thinking: " then more",
+                    },
+                },
+                {
+                    type: "content_block_delta",
+                    delta: {
+                        type: "signature_delta",
+                        signature: "sig-final",
+                    },
+                },
+                {
+                    type: "content_block_start",
+                    content_block: {
+                        type: "text",
+                        text: "Hello",
+                    },
+                    index: 0,
+                },
+                {
+                    type: "content_block_start",
+                    content_block: {
+                        type: "text",
+                        text: "World",
+                    },
+                    index: 1,
+                },
+                {
+                    type: "message_delta",
+                    usage: {
+                        output_tokens: 9,
+                    },
+                },
+            ])
 
-			expect(chunks).to.deep.equal([
-				{
-					type: "usage",
-					inputTokens: 10,
-					outputTokens: 2,
-					cacheWriteTokens: 4,
-					cacheReadTokens: 3,
-				},
-				{
-					type: "reasoning",
-					reasoning: "first thought",
-					signature: "sig-start",
-				},
-				{
-					type: "reasoning",
-					reasoning: " then more",
-				},
-				{
-					type: "reasoning",
-					reasoning: "",
-					signature: "sig-final",
-				},
-				{
-					type: "text",
-					text: "Hello",
-				},
-				{
-					type: "text",
-					text: "\n",
-				},
-				{
-					type: "text",
-					text: "World",
-				},
-				{
-					type: "usage",
-					inputTokens: 0,
-					outputTokens: 9,
-				},
-			])
-		})
+            expect(chunks).to.deep.equal([
+                {
+                    type: "usage",
+                    inputTokens: 10,
+                    outputTokens: 2,
+                    cacheWriteTokens: 4,
+                    cacheReadTokens: 3,
+                },
+                {
+                    type: "reasoning",
+                    reasoning: "first thought",
+                    signature: "sig-start",
+                },
+                {
+                    type: "reasoning",
+                    reasoning: " then more",
+                },
+                {
+                    type: "reasoning",
+                    reasoning: "",
+                    signature: "sig-final",
+                },
+                {
+                    type: "text",
+                    text: "Hello",
+                },
+                {
+                    type: "text",
+                    text: "\n",
+                },
+                {
+                    type: "text",
+                    text: "World",
+                },
+                {
+                    type: "usage",
+                    inputTokens: 0,
+                    outputTokens: 9,
+                },
+            ])
+        })
 
-		it("reports the thinking share of output tokens without changing the billed output total", async () => {
-			const chunks = await collectChunks([
-				{
-					type: "message_delta",
-					usage: {
-						output_tokens: 13_654,
-						output_tokens_details: { thinking_tokens: 13_600 },
-					},
-				},
-				{
-					type: "message_delta",
-					usage: {
-						output_tokens: 40,
-						output_tokens_details: null,
-					},
-				},
-			])
+        it("reports the thinking share of output tokens without changing the billed output total", async () => {
+            const chunks = await collectChunks([
+                {
+                    type: "message_delta",
+                    usage: {
+                        output_tokens: 13_654,
+                        output_tokens_details: { thinking_tokens: 13_600 },
+                    },
+                },
+                {
+                    type: "message_delta",
+                    usage: {
+                        output_tokens: 40,
+                        output_tokens_details: null,
+                    },
+                },
+            ])
 
-			expect(chunks).to.deep.equal([
-				{ type: "usage", inputTokens: 0, outputTokens: 13_654, thoughtsTokenCount: 13_600 },
-				{ type: "usage", inputTokens: 0, outputTokens: 40 },
-			])
-		})
+            expect(chunks).to.deep.equal([
+                { type: "usage", inputTokens: 0, outputTokens: 13_654, thoughtsTokenCount: 13_600 },
+                { type: "usage", inputTokens: 0, outputTokens: 40 },
+            ])
+        })
 
-		it("emits tool call chunks and resets tool state on block stop", async () => {
-			const chunks = await collectChunks([
-				{
-					type: "content_block_start",
-					content_block: {
-						type: "tool_use",
-						id: "tool_1",
-						name: "read_file",
-					},
-					index: 0,
-				},
-				{
-					type: "content_block_delta",
-					delta: {
-						type: "input_json_delta",
-						partial_json: '{"path":',
-					},
-				},
-				{
-					type: "content_block_stop",
-				},
-				{
-					type: "content_block_delta",
-					delta: {
-						type: "input_json_delta",
-						partial_json: '"ignored-after-stop"}',
-					},
-				},
-			])
+        it("emits tool call chunks and resets tool state on block stop", async () => {
+            const chunks = await collectChunks([
+                {
+                    type: "content_block_start",
+                    content_block: {
+                        type: "tool_use",
+                        id: "tool_1",
+                        name: "read_file",
+                    },
+                    index: 0,
+                },
+                {
+                    type: "content_block_delta",
+                    delta: {
+                        type: "input_json_delta",
+                        partial_json: '{"path":',
+                    },
+                },
+                {
+                    type: "content_block_stop",
+                },
+                {
+                    type: "content_block_delta",
+                    delta: {
+                        type: "input_json_delta",
+                        partial_json: '"ignored-after-stop"}',
+                    },
+                },
+            ])
 
-			expect(chunks).to.have.length(2)
-			expect(chunks[0]).to.deep.equal({
-				type: "tool_calls",
-				function_id: "tool_1",
-				tool_call: {
-					function: {
-						name: "read_file",
-						arguments: '{"path":',
-					},
-				},
-			})
-			// The block stop closes the call without adding to its arguments.
-			expect(chunks[1]).to.deep.equal({
-				type: "tool_calls",
-				function_id: "tool_1",
-				phase: "completed",
-				argumentsMode: "delta",
-				tool_call: {
-					function: {
-						name: "read_file",
-						arguments: "",
-					},
-				},
-			})
-		})
+            expect(chunks).to.have.length(2)
+            expect(chunks[0]).to.deep.equal({
+                type: "tool_calls",
+                function_id: "tool_1",
+                tool_call: {
+                    function: {
+                        name: "read_file",
+                        arguments: '{"path":',
+                    },
+                },
+            })
+            // The block stop closes the call without adding to its arguments.
+            expect(chunks[1]).to.deep.equal({
+                type: "tool_calls",
+                function_id: "tool_1",
+                phase: "completed",
+                argumentsMode: "delta",
+                tool_call: {
+                    function: {
+                        name: "read_file",
+                        arguments: "",
+                    },
+                },
+            })
+        })
 
-		it("emits hosted web search lifecycle and usage without local tool_calls", async () => {
-			const result = [
-				{
-					type: "web_search_result",
-					url: "https://example.com/result",
-					title: "Result",
-					page_age: null,
-					encrypted_content: "encrypted",
-				},
-			]
-			const chunks = await collectChunks([
-				{
-					type: "message_start",
-					message: {
-						usage: {
-							input_tokens: 10,
-							output_tokens: 0,
-							server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
-						},
-					},
-				},
-				{
-					type: "content_block_start",
-					index: 0,
-					content_block: {
-						type: "server_tool_use",
-						id: "srv_web_1",
-						name: "web_search",
-						input: {},
-						caller: { type: "direct" },
-					},
-				},
-				{
-					type: "content_block_delta",
-					index: 0,
-					delta: {
-						type: "input_json_delta",
-						partial_json: '{"query":"Dline"}',
-					},
-				},
-				{
-					type: "content_block_stop",
-					index: 0,
-				},
-				{
-					type: "content_block_start",
-					index: 1,
-					content_block: {
-						type: "web_search_tool_result",
-						tool_use_id: "srv_web_1",
-						content: result,
-						caller: { type: "direct" },
-					},
-				},
-			])
+        it("emits hosted web search lifecycle and usage without local tool_calls", async () => {
+            const result = [
+                {
+                    type: "web_search_result",
+                    url: "https://example.com/result",
+                    title: "Result",
+                    page_age: null,
+                    encrypted_content: "encrypted",
+                },
+            ]
+            const chunks = await collectChunks([
+                {
+                    type: "message_start",
+                    message: {
+                        usage: {
+                            input_tokens: 10,
+                            output_tokens: 0,
+                            server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 },
+                        },
+                    },
+                },
+                {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                        type: "server_tool_use",
+                        id: "srv_web_1",
+                        name: "web_search",
+                        input: {},
+                        caller: { type: "direct" },
+                    },
+                },
+                {
+                    type: "content_block_delta",
+                    index: 0,
+                    delta: {
+                        type: "input_json_delta",
+                        partial_json: '{"query":"Dline"}',
+                    },
+                },
+                {
+                    type: "content_block_stop",
+                    index: 0,
+                },
+                {
+                    type: "content_block_start",
+                    index: 1,
+                    content_block: {
+                        type: "web_search_tool_result",
+                        tool_use_id: "srv_web_1",
+                        content: result,
+                        caller: { type: "direct" },
+                    },
+                },
+            ])
 
-			expect(chunks).to.deep.equal([
-				{
-					type: "usage",
-					inputTokens: 10,
-					outputTokens: 0,
-					cacheWriteTokens: undefined,
-					cacheReadTokens: undefined,
-					serverToolUsage: { webSearchRequests: 1, webFetchRequests: 0 },
-				},
-				{
-					type: "server_tool",
-					function_id: "srv_web_1",
-					tool: ServerTool.WEB_SEARCH,
-					phase: "started",
-					input: {},
-				},
-				{
-					type: "server_tool",
-					function_id: "srv_web_1",
-					tool: ServerTool.WEB_SEARCH,
-					phase: "searching",
-					input: { query: "Dline" },
-				},
-				{
-					type: "server_tool",
-					function_id: "srv_web_1",
-					tool: ServerTool.WEB_SEARCH,
-					phase: "completed",
-					result,
-					replay: hostedReplay(
-						{
-							type: "server_tool_use",
-							id: "srv_web_1",
-							name: "web_search",
-							input: { query: "Dline" },
-							caller: { type: "direct" },
-						},
-						{ type: "web_search_tool_result", tool_use_id: "srv_web_1", content: result, caller: { type: "direct" } },
-					),
-				},
-			])
-			expect(chunks.some((chunk) => chunk.type === "tool_calls")).to.equal(false)
-		})
+            expect(chunks).to.deep.equal([
+                {
+                    type: "usage",
+                    inputTokens: 10,
+                    outputTokens: 0,
+                    cacheWriteTokens: undefined,
+                    cacheReadTokens: undefined,
+                    serverToolUsage: { webSearchRequests: 1, webFetchRequests: 0 },
+                },
+                {
+                    type: "server_tool",
+                    function_id: "srv_web_1",
+                    tool: ServerTool.WEB_SEARCH,
+                    phase: "started",
+                    input: {},
+                },
+                {
+                    type: "server_tool",
+                    function_id: "srv_web_1",
+                    tool: ServerTool.WEB_SEARCH,
+                    phase: "searching",
+                    input: { query: "Dline" },
+                },
+                {
+                    type: "server_tool",
+                    function_id: "srv_web_1",
+                    tool: ServerTool.WEB_SEARCH,
+                    phase: "completed",
+                    result,
+                    replay: hostedReplay(
+                        {
+                            type: "server_tool_use",
+                            id: "srv_web_1",
+                            name: "web_search",
+                            input: { query: "Dline" },
+                            caller: { type: "direct" },
+                        },
+                        { type: "web_search_tool_result", tool_use_id: "srv_web_1", content: result, caller: { type: "direct" } },
+                    ),
+                },
+            ])
+            expect(chunks.some((chunk) => chunk.type === "tool_calls")).to.equal(false)
+        })
 
-		it("maps Anthropic hosted web search errors to a failed server_tool event", async () => {
-			const error = { type: "web_search_tool_result_error", error_code: "too_many_requests" }
-			const chunks = await collectChunks([
-				{
-					type: "content_block_start",
-					index: 0,
-					content_block: {
-						type: "server_tool_use",
-						id: "srv_web_error",
-						name: "web_search",
-						input: {},
-						caller: { type: "direct" },
-					},
-				},
-				{
-					type: "content_block_start",
-					index: 1,
-					content_block: {
-						type: "web_search_tool_result",
-						tool_use_id: "srv_web_error",
-						content: error,
-						caller: { type: "direct" },
-					},
-				},
-			])
+        it("maps Anthropic hosted web search errors to a failed server_tool event", async () => {
+            const error = { type: "web_search_tool_result_error", error_code: "too_many_requests" }
+            const chunks = await collectChunks([
+                {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                        type: "server_tool_use",
+                        id: "srv_web_error",
+                        name: "web_search",
+                        input: {},
+                        caller: { type: "direct" },
+                    },
+                },
+                {
+                    type: "content_block_start",
+                    index: 1,
+                    content_block: {
+                        type: "web_search_tool_result",
+                        tool_use_id: "srv_web_error",
+                        content: error,
+                        caller: { type: "direct" },
+                    },
+                },
+            ])
 
-			expect(chunks).to.deep.equal([
-				{
-					type: "server_tool",
-					function_id: "srv_web_error",
-					tool: ServerTool.WEB_SEARCH,
-					phase: "started",
-					input: {},
-				},
-				{
-					type: "server_tool",
-					function_id: "srv_web_error",
-					tool: ServerTool.WEB_SEARCH,
-					phase: "failed",
-					error,
-					replay: hostedReplay(
-						{
-							type: "server_tool_use",
-							id: "srv_web_error",
-							name: "web_search",
-							input: {},
-							caller: { type: "direct" },
-						},
-						{
-							type: "web_search_tool_result",
-							tool_use_id: "srv_web_error",
-							content: error,
-							caller: { type: "direct" },
-						},
-					),
-				},
-			])
-		})
+            expect(chunks).to.deep.equal([
+                {
+                    type: "server_tool",
+                    function_id: "srv_web_error",
+                    tool: ServerTool.WEB_SEARCH,
+                    phase: "started",
+                    input: {},
+                },
+                {
+                    type: "server_tool",
+                    function_id: "srv_web_error",
+                    tool: ServerTool.WEB_SEARCH,
+                    phase: "failed",
+                    error,
+                    replay: hostedReplay(
+                        {
+                            type: "server_tool_use",
+                            id: "srv_web_error",
+                            name: "web_search",
+                            input: {},
+                            caller: { type: "direct" },
+                        },
+                        {
+                            type: "web_search_tool_result",
+                            tool_use_id: "srv_web_error",
+                            content: error,
+                            caller: { type: "direct" },
+                        },
+                    ),
+                },
+            ])
+        })
 
-		it("ignores an orphan Anthropic hosted web search result", async () => {
-			const chunks = await collectChunks([
-				{
-					type: "content_block_start",
-					index: 0,
-					content_block: {
-						type: "web_search_tool_result",
-						tool_use_id: "srv_web_orphan",
-						content: [],
-						caller: { type: "direct" },
-					},
-				},
-			])
+        it("ignores an orphan Anthropic hosted web search result", async () => {
+            const chunks = await collectChunks([
+                {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                        type: "web_search_tool_result",
+                        tool_use_id: "srv_web_orphan",
+                        content: [],
+                        caller: { type: "direct" },
+                    },
+                },
+            ])
 
-			expect(chunks).to.deep.equal([])
-		})
+            expect(chunks).to.deep.equal([])
+        })
 
-		it("matches a hosted result against a call started in a previous Messages response", async () => {
-			const startedServerToolCallIds = new Set<string>()
-			const started = await collectChunks(
-				[
-					{
-						type: "content_block_start",
-						index: 0,
-						content_block: {
-							type: "server_tool_use",
-							id: "srv_web_cross_response",
-							name: "web_search",
-							input: { query: "Dline" },
-							caller: { type: "direct" },
-						},
-					},
-				],
-				startedServerToolCallIds,
-			)
-			const completed = await collectChunks(
-				[
-					{
-						type: "content_block_start",
-						index: 0,
-						content_block: {
-							type: "web_search_tool_result",
-							tool_use_id: "srv_web_cross_response",
-							content: [],
-							caller: { type: "direct" },
-						},
-					},
-				],
-				startedServerToolCallIds,
-			)
+        it("matches a hosted result against a call started in a previous Messages response", async () => {
+            const startedServerToolCallIds = new Set<string>()
+            const started = await collectChunks(
+                [
+                    {
+                        type: "content_block_start",
+                        index: 0,
+                        content_block: {
+                            type: "server_tool_use",
+                            id: "srv_web_cross_response",
+                            name: "web_search",
+                            input: { query: "Dline" },
+                            caller: { type: "direct" },
+                        },
+                    },
+                ],
+                startedServerToolCallIds,
+            )
+            const completed = await collectChunks(
+                [
+                    {
+                        type: "content_block_start",
+                        index: 0,
+                        content_block: {
+                            type: "web_search_tool_result",
+                            tool_use_id: "srv_web_cross_response",
+                            content: [],
+                            caller: { type: "direct" },
+                        },
+                    },
+                ],
+                startedServerToolCallIds,
+            )
 
-			expect(started.map((chunk) => chunk.phase)).to.deep.equal(["started"])
-			expect(completed).to.deep.equal([
-				{
-					type: "server_tool",
-					function_id: "srv_web_cross_response",
-					tool: ServerTool.WEB_SEARCH,
-					phase: "completed",
-					result: [],
-				},
-			])
-			expect(startedServerToolCallIds.size).to.equal(0)
-		})
+            expect(started.map((chunk) => chunk.phase)).to.deep.equal(["started"])
+            expect(completed).to.deep.equal([
+                {
+                    type: "server_tool",
+                    function_id: "srv_web_cross_response",
+                    tool: ServerTool.WEB_SEARCH,
+                    phase: "completed",
+                    result: [],
+                },
+            ])
+            expect(startedServerToolCallIds.size).to.equal(0)
+        })
 
-		it("replays a hosted call paired across Messages responses when the stream state is shared", async () => {
-			const state = {
-				startedServerToolCallIds: new Set<string>(),
-				serverToolUseBlocks: new Map<string, Record<string, unknown>>(),
-			}
-			const collectWithState = async (events: any[]) => {
-				const chunks: any[] = []
-				for await (const chunk of handleAnthropicMessagesApiStreamResponse(createAsyncIterable(events), state)) {
-					chunks.push(chunk)
-				}
-				return chunks
-			}
-			const call = {
-				type: "server_tool_use",
-				id: "srv_fetch_paused",
-				name: "web_fetch",
-				input: { url: "https://example.com/paused" },
-				caller: { type: "direct" },
-			}
-			const resultBlock = {
-				type: "web_fetch_tool_result",
-				tool_use_id: "srv_fetch_paused",
-				content: { type: "web_fetch_result", url: "https://example.com/paused", content: { type: "document" } },
-				caller: { type: "direct" },
-			}
+        it("replays a hosted call paired across Messages responses when the stream state is shared", async () => {
+            const state = {
+                startedServerToolCallIds: new Set<string>(),
+                serverToolUseBlocks: new Map<string, Record<string, unknown>>(),
+            }
+            const collectWithState = async (events: any[]) => {
+                const chunks: any[] = []
+                for await (const chunk of handleAnthropicMessagesApiStreamResponse(createAsyncIterable(events), state)) {
+                    chunks.push(chunk)
+                }
+                return chunks
+            }
+            const call = {
+                type: "server_tool_use",
+                id: "srv_fetch_paused",
+                name: "web_fetch",
+                input: { url: "https://example.com/paused" },
+                caller: { type: "direct" },
+            }
+            const resultBlock = {
+                type: "web_fetch_tool_result",
+                tool_use_id: "srv_fetch_paused",
+                content: { type: "web_fetch_result", url: "https://example.com/paused", content: { type: "document" } },
+                caller: { type: "direct" },
+            }
 
-			await collectWithState([{ type: "content_block_start", index: 0, content_block: call }])
-			const completed = await collectWithState([{ type: "content_block_start", index: 0, content_block: resultBlock }])
+            await collectWithState([{ type: "content_block_start", index: 0, content_block: call }])
+            const completed = await collectWithState([{ type: "content_block_start", index: 0, content_block: resultBlock }])
 
-			expect(completed).to.have.length(1)
-			expect(completed[0].replay).to.deep.equal(hostedReplay(call, resultBlock))
-			expect(state.serverToolUseBlocks.size).to.equal(0)
-		})
+            expect(completed).to.have.length(1)
+            expect(completed[0].replay).to.deep.equal(hostedReplay(call, resultBlock))
+            expect(state.serverToolUseBlocks.size).to.equal(0)
+        })
 
-		it("emits a hosted web fetch lifecycle and fetch usage without local tool_calls", async () => {
-			const result = {
-				type: "web_fetch_result",
-				url: "https://example.com/page",
-				content: {
-					type: "document",
-					source: { type: "text", media_type: "text/plain", data: "page body" },
-					title: "Page",
-				},
-				retrieved_at: "2026-09-24T00:00:00Z",
-			}
-			const chunks = await collectChunks([
-				{
-					type: "content_block_start",
-					index: 0,
-					content_block: {
-						type: "server_tool_use",
-						id: "srv_fetch_1",
-						name: "web_fetch",
-						input: {},
-						caller: { type: "direct" },
-					},
-				},
-				{
-					type: "content_block_delta",
-					index: 0,
-					delta: { type: "input_json_delta", partial_json: '{"url":"https://example.com/page"}' },
-				},
-				{ type: "content_block_stop", index: 0 },
-				{
-					type: "content_block_start",
-					index: 1,
-					content_block: {
-						type: "web_fetch_tool_result",
-						tool_use_id: "srv_fetch_1",
-						content: result,
-						caller: { type: "direct" },
-					},
-				},
-				{
-					type: "message_delta",
-					delta: { stop_reason: "end_turn", stop_sequence: null },
-					usage: { output_tokens: 5, server_tool_use: { web_search_requests: 0, web_fetch_requests: 1 } },
-				},
-			])
+        it("emits a hosted web fetch lifecycle and fetch usage without local tool_calls", async () => {
+            const result = {
+                type: "web_fetch_result",
+                url: "https://example.com/page",
+                content: {
+                    type: "document",
+                    source: { type: "text", media_type: "text/plain", data: "page body" },
+                    title: "Page",
+                },
+                retrieved_at: "2026-09-24T00:00:00Z",
+            }
+            const chunks = await collectChunks([
+                {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                        type: "server_tool_use",
+                        id: "srv_fetch_1",
+                        name: "web_fetch",
+                        input: {},
+                        caller: { type: "direct" },
+                    },
+                },
+                {
+                    type: "content_block_delta",
+                    index: 0,
+                    delta: { type: "input_json_delta", partial_json: '{"url":"https://example.com/page"}' },
+                },
+                { type: "content_block_stop", index: 0 },
+                {
+                    type: "content_block_start",
+                    index: 1,
+                    content_block: {
+                        type: "web_fetch_tool_result",
+                        tool_use_id: "srv_fetch_1",
+                        content: result,
+                        caller: { type: "direct" },
+                    },
+                },
+                {
+                    type: "message_delta",
+                    delta: { stop_reason: "end_turn", stop_sequence: null },
+                    usage: { output_tokens: 5, server_tool_use: { web_search_requests: 0, web_fetch_requests: 1 } },
+                },
+            ])
 
-			expect(chunks).to.deep.equal([
-				{ type: "server_tool", function_id: "srv_fetch_1", tool: ServerTool.WEB_FETCH, phase: "started", input: {} },
-				{
-					type: "server_tool",
-					function_id: "srv_fetch_1",
-					tool: ServerTool.WEB_FETCH,
-					phase: "in_progress",
-					input: { url: "https://example.com/page" },
-				},
-				{
-					type: "server_tool",
-					function_id: "srv_fetch_1",
-					tool: ServerTool.WEB_FETCH,
-					phase: "completed",
-					result,
-					replay: hostedReplay(
-						{
-							type: "server_tool_use",
-							id: "srv_fetch_1",
-							name: "web_fetch",
-							input: { url: "https://example.com/page" },
-							caller: { type: "direct" },
-						},
-						{
-							type: "web_fetch_tool_result",
-							tool_use_id: "srv_fetch_1",
-							content: result,
-							caller: { type: "direct" },
-						},
-					),
-				},
-				{
-					type: "usage",
-					inputTokens: 0,
-					outputTokens: 5,
-					serverToolUsage: { webSearchRequests: 0, webFetchRequests: 1 },
-					stopReason: "end_turn",
-				},
-			])
-			expect(chunks.some((chunk) => chunk.type === "tool_calls")).to.equal(false)
-		})
+            expect(chunks).to.deep.equal([
+                { type: "server_tool", function_id: "srv_fetch_1", tool: ServerTool.WEB_FETCH, phase: "started", input: {} },
+                {
+                    type: "server_tool",
+                    function_id: "srv_fetch_1",
+                    tool: ServerTool.WEB_FETCH,
+                    phase: "in_progress",
+                    input: { url: "https://example.com/page" },
+                },
+                {
+                    type: "server_tool",
+                    function_id: "srv_fetch_1",
+                    tool: ServerTool.WEB_FETCH,
+                    phase: "completed",
+                    result,
+                    replay: hostedReplay(
+                        {
+                            type: "server_tool_use",
+                            id: "srv_fetch_1",
+                            name: "web_fetch",
+                            input: { url: "https://example.com/page" },
+                            caller: { type: "direct" },
+                        },
+                        {
+                            type: "web_fetch_tool_result",
+                            tool_use_id: "srv_fetch_1",
+                            content: result,
+                            caller: { type: "direct" },
+                        },
+                    ),
+                },
+                {
+                    type: "usage",
+                    inputTokens: 0,
+                    outputTokens: 5,
+                    serverToolUsage: { webSearchRequests: 0, webFetchRequests: 1 },
+                    stopReason: "end_turn",
+                },
+            ])
+            expect(chunks.some((chunk) => chunk.type === "tool_calls")).to.equal(false)
+        })
 
-		it("maps a hosted web fetch error code to a failed server_tool event", async () => {
-			const error = { type: "web_fetch_tool_result_error", error_code: "url_not_in_prior_context" }
-			const chunks = await collectChunks([
-				{
-					type: "content_block_start",
-					index: 0,
-					content_block: {
-						type: "server_tool_use",
-						id: "srv_fetch_error",
-						name: "web_fetch",
-						input: { url: "https://unseen.example.com" },
-						caller: { type: "direct" },
-					},
-				},
-				{
-					type: "content_block_start",
-					index: 1,
-					content_block: {
-						type: "web_fetch_tool_result",
-						tool_use_id: "srv_fetch_error",
-						content: error,
-						caller: { type: "direct" },
-					},
-				},
-			])
+        it("maps a hosted web fetch error code to a failed server_tool event", async () => {
+            const error = { type: "web_fetch_tool_result_error", error_code: "url_not_in_prior_context" }
+            const chunks = await collectChunks([
+                {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                        type: "server_tool_use",
+                        id: "srv_fetch_error",
+                        name: "web_fetch",
+                        input: { url: "https://unseen.example.com" },
+                        caller: { type: "direct" },
+                    },
+                },
+                {
+                    type: "content_block_start",
+                    index: 1,
+                    content_block: {
+                        type: "web_fetch_tool_result",
+                        tool_use_id: "srv_fetch_error",
+                        content: error,
+                        caller: { type: "direct" },
+                    },
+                },
+            ])
 
-			expect(chunks).to.deep.equal([
-				{
-					type: "server_tool",
-					function_id: "srv_fetch_error",
-					tool: ServerTool.WEB_FETCH,
-					phase: "started",
-					input: { url: "https://unseen.example.com" },
-				},
-				{
-					type: "server_tool",
-					function_id: "srv_fetch_error",
-					tool: ServerTool.WEB_FETCH,
-					phase: "failed",
-					error,
-					replay: hostedReplay(
-						{
-							type: "server_tool_use",
-							id: "srv_fetch_error",
-							name: "web_fetch",
-							input: { url: "https://unseen.example.com" },
-							caller: { type: "direct" },
-						},
-						{
-							type: "web_fetch_tool_result",
-							tool_use_id: "srv_fetch_error",
-							content: error,
-							caller: { type: "direct" },
-						},
-					),
-				},
-			])
-		})
+            expect(chunks).to.deep.equal([
+                {
+                    type: "server_tool",
+                    function_id: "srv_fetch_error",
+                    tool: ServerTool.WEB_FETCH,
+                    phase: "started",
+                    input: { url: "https://unseen.example.com" },
+                },
+                {
+                    type: "server_tool",
+                    function_id: "srv_fetch_error",
+                    tool: ServerTool.WEB_FETCH,
+                    phase: "failed",
+                    error,
+                    replay: hostedReplay(
+                        {
+                            type: "server_tool_use",
+                            id: "srv_fetch_error",
+                            name: "web_fetch",
+                            input: { url: "https://unseen.example.com" },
+                            caller: { type: "direct" },
+                        },
+                        {
+                            type: "web_fetch_tool_result",
+                            tool_use_id: "srv_fetch_error",
+                            content: error,
+                            caller: { type: "direct" },
+                        },
+                    ),
+                },
+            ])
+        })
 
-		it("ignores an orphan hosted web fetch result", async () => {
-			const chunks = await collectChunks([
-				{
-					type: "content_block_start",
-					index: 0,
-					content_block: {
-						type: "web_fetch_tool_result",
-						tool_use_id: "srv_fetch_orphan",
-						content: { type: "web_fetch_tool_result_error", error_code: "unavailable" },
-						caller: { type: "direct" },
-					},
-				},
-			])
+        it("ignores an orphan hosted web fetch result", async () => {
+            const chunks = await collectChunks([
+                {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                        type: "web_fetch_tool_result",
+                        tool_use_id: "srv_fetch_orphan",
+                        content: { type: "web_fetch_tool_result_error", error_code: "unavailable" },
+                        caller: { type: "direct" },
+                    },
+                },
+            ])
 
-			expect(chunks).to.deep.equal([])
-		})
+            expect(chunks).to.deep.equal([])
+        })
 
-		it("emits a hosted code execution lifecycle from its own result block", async () => {
-			const result = {
-				type: "code_execution_result",
-				stdout: "filtered",
-				stderr: "",
-				return_code: 0,
-				content: [],
-			}
-			const chunks = await collectChunks([
-				{
-					type: "content_block_start",
-					index: 0,
-					content_block: {
-						type: "server_tool_use",
-						id: "srv_exec_1",
-						name: "code_execution",
-						input: {},
-						caller: { type: "direct" },
-					},
-				},
-				{
-					type: "content_block_delta",
-					index: 0,
-					delta: { type: "input_json_delta", partial_json: '{"code":"print(1)"}' },
-				},
-				{ type: "content_block_stop", index: 0 },
-				{
-					type: "content_block_start",
-					index: 1,
-					content_block: {
-						type: "code_execution_tool_result",
-						tool_use_id: "srv_exec_1",
-						content: result,
-					},
-				},
-			])
+        it("emits a hosted code execution lifecycle from its own result block", async () => {
+            const result = {
+                type: "code_execution_result",
+                stdout: "filtered",
+                stderr: "",
+                return_code: 0,
+                content: [],
+            }
+            const chunks = await collectChunks([
+                {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                        type: "server_tool_use",
+                        id: "srv_exec_1",
+                        name: "code_execution",
+                        input: {},
+                        caller: { type: "direct" },
+                    },
+                },
+                {
+                    type: "content_block_delta",
+                    index: 0,
+                    delta: { type: "input_json_delta", partial_json: '{"code":"print(1)"}' },
+                },
+                { type: "content_block_stop", index: 0 },
+                {
+                    type: "content_block_start",
+                    index: 1,
+                    content_block: {
+                        type: "code_execution_tool_result",
+                        tool_use_id: "srv_exec_1",
+                        content: result,
+                    },
+                },
+            ])
 
-			expect(chunks).to.deep.equal([
-				{
-					type: "server_tool",
-					function_id: "srv_exec_1",
-					tool: ServerTool.CODE_EXECUTION,
-					phase: "started",
-					input: {},
-				},
-				{
-					type: "server_tool",
-					function_id: "srv_exec_1",
-					tool: ServerTool.CODE_EXECUTION,
-					phase: "in_progress",
-					input: { code: "print(1)" },
-				},
-				{
-					type: "server_tool",
-					function_id: "srv_exec_1",
-					tool: ServerTool.CODE_EXECUTION,
-					phase: "completed",
-					result,
-				},
-			])
-		})
+            expect(chunks).to.deep.equal([
+                {
+                    type: "server_tool",
+                    function_id: "srv_exec_1",
+                    tool: ServerTool.CODE_EXECUTION,
+                    phase: "started",
+                    input: {},
+                },
+                {
+                    type: "server_tool",
+                    function_id: "srv_exec_1",
+                    tool: ServerTool.CODE_EXECUTION,
+                    phase: "in_progress",
+                    input: { code: "print(1)" },
+                },
+                {
+                    type: "server_tool",
+                    function_id: "srv_exec_1",
+                    tool: ServerTool.CODE_EXECUTION,
+                    phase: "completed",
+                    result,
+                },
+            ])
+        })
 
-		it.each([
-			["bash_code_execution", "bash_code_execution_tool_result"],
-			["text_editor_code_execution", "text_editor_code_execution_tool_result"],
-		])("completes a %s call from its own result block", async (toolName, resultType) => {
-			// Each sandbox surface closes with its own result block type. Missing one
-			// strands the call until the response ends and reports a false failure.
-			const chunks = await collectChunks([
-				{
-					type: "content_block_start",
-					index: 0,
-					content_block: {
-						type: "server_tool_use",
-						id: "srv_exec_surface",
-						name: toolName,
-						input: {},
-						caller: { type: "direct" },
-					},
-				},
-				{
-					type: "content_block_start",
-					index: 1,
-					content_block: {
-						type: resultType,
-						tool_use_id: "srv_exec_surface",
-						content: { type: "code_execution_result", stdout: "ok", stderr: "", return_code: 0, content: [] },
-					},
-				},
-			])
+        it.each([
+            ["bash_code_execution", "bash_code_execution_tool_result"],
+            ["text_editor_code_execution", "text_editor_code_execution_tool_result"],
+        ])("completes a %s call from its own result block", async (toolName, resultType) => {
+            // Each sandbox surface closes with its own result block type. Missing one
+            // strands the call until the response ends and reports a false failure.
+            const chunks = await collectChunks([
+                {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                        type: "server_tool_use",
+                        id: "srv_exec_surface",
+                        name: toolName,
+                        input: {},
+                        caller: { type: "direct" },
+                    },
+                },
+                {
+                    type: "content_block_start",
+                    index: 1,
+                    content_block: {
+                        type: resultType,
+                        tool_use_id: "srv_exec_surface",
+                        content: { type: "code_execution_result", stdout: "ok", stderr: "", return_code: 0, content: [] },
+                    },
+                },
+            ])
 
-			expect(chunks.map((chunk) => chunk.phase)).to.deep.equal(["started", "completed"])
-			expect(chunks.every((chunk) => chunk.tool === ServerTool.CODE_EXECUTION)).to.equal(true)
-		})
+            expect(chunks.map((chunk) => chunk.phase)).to.deep.equal(["started", "completed"])
+            expect(chunks.every((chunk) => chunk.tool === ServerTool.CODE_EXECUTION)).to.equal(true)
+        })
 
-		it("maps a hosted code execution error to a failed server_tool event", async () => {
-			const error = { type: "code_execution_tool_result_error", error_code: "execution_time_exceeded" }
-			const chunks = await collectChunks([
-				{
-					type: "content_block_start",
-					index: 0,
-					content_block: {
-						type: "server_tool_use",
-						id: "srv_exec_error",
-						name: "code_execution",
-						input: {},
-						caller: { type: "direct" },
-					},
-				},
-				{
-					type: "content_block_start",
-					index: 1,
-					content_block: {
-						type: "code_execution_tool_result",
-						tool_use_id: "srv_exec_error",
-						content: error,
-					},
-				},
-			])
+        it("maps a hosted code execution error to a failed server_tool event", async () => {
+            const error = { type: "code_execution_tool_result_error", error_code: "execution_time_exceeded" }
+            const chunks = await collectChunks([
+                {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                        type: "server_tool_use",
+                        id: "srv_exec_error",
+                        name: "code_execution",
+                        input: {},
+                        caller: { type: "direct" },
+                    },
+                },
+                {
+                    type: "content_block_start",
+                    index: 1,
+                    content_block: {
+                        type: "code_execution_tool_result",
+                        tool_use_id: "srv_exec_error",
+                        content: error,
+                    },
+                },
+            ])
 
-			expect(chunks).to.deep.equal([
-				{
-					type: "server_tool",
-					function_id: "srv_exec_error",
-					tool: ServerTool.CODE_EXECUTION,
-					phase: "started",
-					input: {},
-				},
-				{
-					type: "server_tool",
-					function_id: "srv_exec_error",
-					tool: ServerTool.CODE_EXECUTION,
-					phase: "failed",
-					error,
-				},
-			])
-		})
+            expect(chunks).to.deep.equal([
+                {
+                    type: "server_tool",
+                    function_id: "srv_exec_error",
+                    tool: ServerTool.CODE_EXECUTION,
+                    phase: "started",
+                    input: {},
+                },
+                {
+                    type: "server_tool",
+                    function_id: "srv_exec_error",
+                    tool: ServerTool.CODE_EXECUTION,
+                    phase: "failed",
+                    error,
+                },
+            ])
+        })
 
-		it("does not open a lifecycle for a search the sandbox issued, whose result block is excluded", async () => {
-			const chunks = await collectChunks([
-				{
-					type: "content_block_start",
-					index: 0,
-					content_block: {
-						type: "server_tool_use",
-						id: "srv_exec_parent",
-						name: "code_execution",
-						input: {},
-						caller: { type: "direct" },
-					},
-				},
-				{
-					type: "content_block_start",
-					index: 1,
-					content_block: {
-						type: "server_tool_use",
-						id: "srv_web_nested",
-						name: "web_search",
-						input: { query: "Dline" },
-						caller: { type: "code_execution_20260120", tool_id: "srv_exec_parent" },
-					},
-				},
-				{
-					type: "content_block_start",
-					index: 2,
-					content_block: {
-						type: "code_execution_tool_result",
-						tool_use_id: "srv_exec_parent",
-						content: {
-							type: "code_execution_result",
-							stdout: "filtered",
-							stderr: "",
-							return_code: 0,
-							content: [],
-						},
-					},
-				},
-			])
+        it("does not open a lifecycle for a search the sandbox issued, whose result block is excluded", async () => {
+            const chunks = await collectChunks([
+                {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                        type: "server_tool_use",
+                        id: "srv_exec_parent",
+                        name: "code_execution",
+                        input: {},
+                        caller: { type: "direct" },
+                    },
+                },
+                {
+                    type: "content_block_start",
+                    index: 1,
+                    content_block: {
+                        type: "server_tool_use",
+                        id: "srv_web_nested",
+                        name: "web_search",
+                        input: { query: "Dline" },
+                        caller: { type: "code_execution_20260120", tool_id: "srv_exec_parent" },
+                    },
+                },
+                {
+                    type: "content_block_start",
+                    index: 2,
+                    content_block: {
+                        type: "code_execution_tool_result",
+                        tool_use_id: "srv_exec_parent",
+                        content: {
+                            type: "code_execution_result",
+                            stdout: "filtered",
+                            stderr: "",
+                            return_code: 0,
+                            content: [],
+                        },
+                    },
+                },
+            ])
 
-			// The nested search never reports a result block of its own, so opening a
-			// lifecycle for it would leave the UI showing work that never completes.
-			expect(chunks.some((chunk) => chunk.function_id === "srv_web_nested")).to.equal(false)
-			expect(chunks.map((chunk) => chunk.phase)).to.deep.equal(["started", "completed"])
-			expect(chunks.every((chunk) => chunk.tool === ServerTool.CODE_EXECUTION)).to.equal(true)
-		})
+            // The nested search never reports a result block of its own, so opening a
+            // lifecycle for it would leave the UI showing work that never completes.
+            expect(chunks.some((chunk) => chunk.function_id === "srv_web_nested")).to.equal(false)
+            expect(chunks.map((chunk) => chunk.phase)).to.deep.equal(["started", "completed"])
+            expect(chunks.every((chunk) => chunk.tool === ServerTool.CODE_EXECUTION)).to.equal(true)
+        })
 
-		it("throws a typed output-limit error when Anthropic stops at max_tokens", async () => {
-			let caught: unknown
-			try {
-				await collectChunks([
-					{
-						type: "message_delta",
-						delta: { stop_reason: "max_tokens", stop_sequence: null },
-						usage: { output_tokens: 30_000 },
-					},
-					{ type: "message_stop" },
-				])
-			} catch (error) {
-				caught = error
-			}
+        it("throws a typed output-limit error when Anthropic stops at max_tokens", async () => {
+            let caught: unknown
+            try {
+                await collectChunks([
+                    {
+                        type: "message_delta",
+                        delta: { stop_reason: "max_tokens", stop_sequence: null },
+                        usage: { output_tokens: 30_000 },
+                    },
+                    { type: "message_stop" },
+                ])
+            } catch (error) {
+                caught = error
+            }
 
-			expect(caught).to.be.instanceOf(OutputLimitExceededError)
-			expect(caught).to.deep.include({
-				code: "output_limit_exceeded",
-				protocol: "anthropic_messages",
-				reason: "max_tokens",
-			})
-		})
-	})
+            expect(caught).to.be.instanceOf(OutputLimitExceededError)
+            expect(caught).to.deep.include({
+                code: "output_limit_exceeded",
+                protocol: "anthropic_messages",
+                reason: "max_tokens",
+            })
+        })
+    })
 })

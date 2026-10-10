@@ -10,7 +10,7 @@ import { Controller } from ".."
  * but they are stored and gated independently.
  */
 export async function updateTelemetrySetting(controller: Controller, request: TelemetrySettingRequest): Promise<Empty> {
-	await controller.updateUsageReportingSetting(convertProtoTelemetrySettingToDomain(request.usageSetting))
-	await controller.updateErrorReportingSetting(convertProtoTelemetrySettingToDomain(request.errorSetting))
-	return Empty.create()
+    await controller.updateUsageReportingSetting(convertProtoTelemetrySettingToDomain(request.usageSetting))
+    await controller.updateErrorReportingSetting(convertProtoTelemetrySettingToDomain(request.errorSetting))
+    return Empty.create()
 }

@@ -23,8 +23,8 @@ const INLINE_TOKEN = /\*\*([^*`[\]]+)\*\*|`([^`]+)`|\[([^*`[\]]+)\]\(([^)\s]+)\)
 const UNSUPPORTED_INLINE = /[*`]|\]\(|~~|<[A-Za-z/!]|&#?[A-Za-z0-9]+;/
 
 interface PendingItem {
-	text: string
-	readonly location: string
+    text: string
+    readonly location: string
 }
 
 /**
@@ -41,104 +41,104 @@ interface PendingItem {
  *   a malformed document fails the build instead of shipping a broken dialog.
  */
 export function parseWhatsNew(markdown: string, source: string): WhatsNewRelease {
-	const lines = withoutComments(markdown.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n")).split("\n")
-	const headingIndex = lines.findIndex((line) => LEVEL_TWO_HEADING.test(line))
-	if (headingIndex === -1) {
-		throw new Error(`${source}: no release heading such as "## 1.2.3" was found.`)
-	}
-	const version = RELEASE_HEADING.exec(lines[headingIndex])?.[1]
-	if (version === undefined) {
-		throw new Error(
-			`${source}:${headingIndex + 1}: the first "##" heading must be a bare release version such as "## 1.2.3", got "${lines[headingIndex].trim()}".`,
-		)
-	}
-	const items = readListItems(lines, headingIndex + 1, source)
-	if (items.length === 0) {
-		throw new Error(`${source}:${headingIndex + 1}: release ${version} has no "- " list items.`)
-	}
-	return { version, items: items.map((item) => parseInline(item.text, item.location)) }
+    const lines = withoutComments(markdown.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n")).split("\n")
+    const headingIndex = lines.findIndex((line) => LEVEL_TWO_HEADING.test(line))
+    if (headingIndex === -1) {
+        throw new Error(`${source}: no release heading such as "## 1.2.3" was found.`)
+    }
+    const version = RELEASE_HEADING.exec(lines[headingIndex])?.[1]
+    if (version === undefined) {
+        throw new Error(
+            `${source}:${headingIndex + 1}: the first "##" heading must be a bare release version such as "## 1.2.3", got "${lines[headingIndex].trim()}".`,
+        )
+    }
+    const items = readListItems(lines, headingIndex + 1, source)
+    if (items.length === 0) {
+        throw new Error(`${source}:${headingIndex + 1}: release ${version} has no "- " list items.`)
+    }
+    return { version, items: items.map((item) => parseInline(item.text, item.location)) }
 }
 
 /** Serve {@link parseWhatsNew} of `sourcePath` as {@link WHATS_NEW_MODULE_ID}. */
 export function whatsNewPlugin(sourcePath: string = WHATS_NEW_SOURCE): Plugin {
-	return {
-		name: "dline-whats-new",
-		resolveId(id) {
-			return id === WHATS_NEW_MODULE_ID ? RESOLVED_MODULE_ID : null
-		},
-		load(id) {
-			if (id !== RESOLVED_MODULE_ID) return null
-			this.addWatchFile(sourcePath)
-			const release = parseWhatsNew(readFileSync(sourcePath, "utf8"), sourcePath)
-			return `export default ${JSON.stringify(release)}`
-		},
-	}
+    return {
+        name: "dline-whats-new",
+        resolveId(id) {
+            return id === WHATS_NEW_MODULE_ID ? RESOLVED_MODULE_ID : null
+        },
+        load(id) {
+            if (id !== RESOLVED_MODULE_ID) return null
+            this.addWatchFile(sourcePath)
+            const release = parseWhatsNew(readFileSync(sourcePath, "utf8"), sourcePath)
+            return `export default ${JSON.stringify(release)}`
+        },
+    }
 }
 
 /** Blank out HTML comments while keeping their line breaks, so error line numbers stay accurate. */
 function withoutComments(markdown: string): string {
-	return markdown.replace(HTML_COMMENT, (comment) => comment.replace(/[^\n]/g, ""))
+    return markdown.replace(HTML_COMMENT, (comment) => comment.replace(/[^\n]/g, ""))
 }
 
 function readListItems(lines: readonly string[], firstLine: number, source: string): PendingItem[] {
-	const items: PendingItem[] = []
-	for (let index = firstLine; index < lines.length; index++) {
-		const line = lines[index]
-		const location = `${source}:${index + 1}`
-		if (SECTION_HEADING.test(line)) break
-		if (line.trim() === "") continue
+    const items: PendingItem[] = []
+    for (let index = firstLine; index < lines.length; index++) {
+        const line = lines[index]
+        const location = `${source}:${index + 1}`
+        if (SECTION_HEADING.test(line)) break
+        if (line.trim() === "") continue
 
-		const item = LIST_ITEM.exec(line)
-		if (item) {
-			items.push({ text: item[1].trim(), location })
-			continue
-		}
-		const continuation = CONTINUATION.exec(line)
-		const previous = items.at(-1)
-		if (continuation && previous) {
-			if (NESTED_LIST.test(continuation[1])) {
-				throw new Error(`${location}: nested lists are not supported.`)
-			}
-			previous.text = `${previous.text} ${continuation[1].trim()}`
-			continue
-		}
-		throw new Error(`${location}: expected a "- " list item or an indented continuation line, got "${line.trim()}".`)
-	}
-	return items
+        const item = LIST_ITEM.exec(line)
+        if (item) {
+            items.push({ text: item[1].trim(), location })
+            continue
+        }
+        const continuation = CONTINUATION.exec(line)
+        const previous = items.at(-1)
+        if (continuation && previous) {
+            if (NESTED_LIST.test(continuation[1])) {
+                throw new Error(`${location}: nested lists are not supported.`)
+            }
+            previous.text = `${previous.text} ${continuation[1].trim()}`
+            continue
+        }
+        throw new Error(`${location}: expected a "- " list item or an indented continuation line, got "${line.trim()}".`)
+    }
+    return items
 }
 
 function parseInline(text: string, location: string): WhatsNewInline[] {
-	const runs: WhatsNewInline[] = []
-	const pushText = (value: string) => {
-		if (value === "") return
-		if (UNSUPPORTED_INLINE.test(value)) {
-			throw new Error(
-				`${location}: unsupported inline Markdown in "${value.trim()}"; only **bold**, \`code\`, and [text](https://...) links are allowed.`,
-			)
-		}
-		runs.push({ kind: "text", text: value })
-	}
+    const runs: WhatsNewInline[] = []
+    const pushText = (value: string) => {
+        if (value === "") return
+        if (UNSUPPORTED_INLINE.test(value)) {
+            throw new Error(
+                `${location}: unsupported inline Markdown in "${value.trim()}"; only **bold**, \`code\`, and [text](https://...) links are allowed.`,
+            )
+        }
+        runs.push({ kind: "text", text: value })
+    }
 
-	let cursor = 0
-	for (const match of text.matchAll(INLINE_TOKEN)) {
-		const start = match.index ?? cursor
-		pushText(text.slice(cursor, start))
-		const [, strong, code, linkText, href] = match
-		if (strong !== undefined) {
-			runs.push({ kind: "strong", text: strong })
-		} else if (code !== undefined) {
-			runs.push({ kind: "code", text: code })
-		} else {
-			if (text[start - 1] === "!") {
-				throw new Error(`${location}: image "${linkText}" is not supported; use a plain link.`)
-			}
-			if (!href.startsWith("https://")) {
-				throw new Error(`${location}: link "${linkText}" must use an absolute https:// URL, got "${href}".`)
-			}
-			runs.push({ kind: "link", text: linkText, href })
-		}
-		cursor = start + match[0].length
-	}
-	pushText(text.slice(cursor))
-	return runs
+    let cursor = 0
+    for (const match of text.matchAll(INLINE_TOKEN)) {
+        const start = match.index ?? cursor
+        pushText(text.slice(cursor, start))
+        const [, strong, code, linkText, href] = match
+        if (strong !== undefined) {
+            runs.push({ kind: "strong", text: strong })
+        } else if (code !== undefined) {
+            runs.push({ kind: "code", text: code })
+        } else {
+            if (text[start - 1] === "!") {
+                throw new Error(`${location}: image "${linkText}" is not supported; use a plain link.`)
+            }
+            if (!href.startsWith("https://")) {
+                throw new Error(`${location}: link "${linkText}" must use an absolute https:// URL, got "${href}".`)
+            }
+            runs.push({ kind: "link", text: linkText, href })
+        }
+        cursor = start + match[0].length
+    }
+    pushText(text.slice(cursor))
+    return runs
 }

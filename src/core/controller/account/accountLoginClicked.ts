@@ -11,5 +11,5 @@ import { Controller } from "../index"
  * @returns The login URL as a string.
  */
 export async function accountLoginClicked(_controller: Controller, _: EmptyRequest): Promise<String> {
-	return await AuthService.getInstance().createAuthRequest()
+    return await AuthService.getInstance().createAuthRequest()
 }

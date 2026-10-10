@@ -22,14 +22,14 @@ const CONVERSATION_READER = "conversation-reader"
  * the extension's storage and telemetry graph.
  */
 export async function readJournalConversation(layout: InstanceLayout): Promise<ClineStorageMessage[] | undefined> {
-	if (!(await instanceDatabaseExists(layout, InstanceDatabase.Journal))) return undefined
-	const storage = openInstanceStorage(layout.root)
-	try {
-		const stores = await openTaskJournalStores(await storage.openDatabase(InstanceDatabase.Journal, CONVERSATION_READER))
-		if (stores.journal.watermark().seq === 0) return undefined
-		const view = new JournalConversationView(stores.journal, new ProviderJournalMessageMaterializer(stores.payloads))
-		return await view.messages()
-	} finally {
-		await storage.close()
-	}
+    if (!(await instanceDatabaseExists(layout, InstanceDatabase.Journal))) return undefined
+    const storage = openInstanceStorage(layout.root)
+    try {
+        const stores = await openTaskJournalStores(await storage.openDatabase(InstanceDatabase.Journal, CONVERSATION_READER))
+        if (stores.journal.watermark().seq === 0) return undefined
+        const view = new JournalConversationView(stores.journal, new ProviderJournalMessageMaterializer(stores.payloads))
+        return await view.messages()
+    } finally {
+        await storage.close()
+    }
 }

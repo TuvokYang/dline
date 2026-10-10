@@ -5,20 +5,20 @@ import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { createInitialTaskState, hydrate } from "../kernel"
 import {
-	type DurableTaskSnapshot,
-	FileTaskStateVault,
-	InMemoryStateVault,
-	InMemoryTaskPayloadStore,
-	type StateVault,
+    type DurableTaskSnapshot,
+    FileTaskStateVault,
+    InMemoryStateVault,
+    InMemoryTaskPayloadStore,
+    type StateVault,
 } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import {
-	importSnapshotQueue,
-	SnapshotQueueChangedError,
-	SnapshotQueueCleanupPendingError,
-	SnapshotQueueFile,
-	type SnapshotQueueSource,
+    importSnapshotQueue,
+    SnapshotQueueChangedError,
+    SnapshotQueueCleanupPendingError,
+    SnapshotQueueFile,
+    type SnapshotQueueSource,
 } from "./SnapshotQueueImport"
 
 const temporaryDirectories: string[] = []
@@ -26,315 +26,315 @@ const temporaryDirectories: string[] = []
 const EMPTY_JOURNAL = { seq: 0 }
 
 async function temporaryDirectory(): Promise<string> {
-	const directory = await mkdtemp(path.join(os.tmpdir(), "dline-snapshot-queue-"))
-	temporaryDirectories.push(directory)
-	return directory
+    const directory = await mkdtemp(path.join(os.tmpdir(), "dline-snapshot-queue-"))
+    temporaryDirectories.push(directory)
+    return directory
 }
 
 function semanticInput(): SemanticInputDocument {
-	return {
-		schemaVersion: 1,
-		parserVersion: "test-parser-v1",
-		catalogRevision: "test-catalog-v1",
-		documentId: "document-1",
-		rawText: "expanded input",
-		nodes: [{ kind: "text", text: "expanded input" }],
-		resources: [],
-	}
+    return {
+        schemaVersion: 1,
+        parserVersion: "test-parser-v1",
+        catalogRevision: "test-catalog-v1",
+        documentId: "document-1",
+        rawText: "expanded input",
+        nodes: [{ kind: "text", text: "expanded input" }],
+        resources: [],
+    }
 }
 
 async function payloadsOf(vault: InMemoryStateVault, payloads: InMemoryTaskPayloadStore): Promise<UserInputEnvelope[]> {
-	const snapshot = await vault.load("task-1")
-	if (!snapshot) throw new Error("expected migrated snapshot")
-	return Promise.all(
-		snapshot.state.intake.queued.map(async (entry) =>
-			decodeTaskPayload<UserInputEnvelope>(await payloads.read(entry.payloadRef)),
-		),
-	)
+    const snapshot = await vault.load("task-1")
+    if (!snapshot) throw new Error("expected migrated snapshot")
+    return Promise.all(
+        snapshot.state.intake.queued.map(async (entry) =>
+            decodeTaskPayload<UserInputEnvelope>(await payloads.read(entry.payloadRef)),
+        ),
+    )
 }
 
 class ControlledSource implements SnapshotQueueSource {
-	readonly removeInputQueue = vi.fn(async (_expectedFingerprint: string) => undefined)
+    readonly removeInputQueue = vi.fn(async (_expectedFingerprint: string) => undefined)
 
-	constructor(public current: { readonly fingerprint: string; readonly entries: readonly unknown[] } | undefined) {}
+    constructor(public current: { readonly fingerprint: string; readonly entries: readonly unknown[] } | undefined) {}
 
-	async read() {
-		return this.current
-	}
+    async read() {
+        return this.current
+    }
 }
 
 class FailingVault implements StateVault {
-	readonly save = vi.fn(async (_snapshot: DurableTaskSnapshot) => {
-		throw new Error("state save failed")
-	})
+    readonly save = vi.fn(async (_snapshot: DurableTaskSnapshot) => {
+        throw new Error("state save failed")
+    })
 
-	async load(): Promise<DurableTaskSnapshot | undefined> {
-		return undefined
-	}
+    async load(): Promise<DurableTaskSnapshot | undefined> {
+        return undefined
+    }
 }
 
 describe("snapshot queue import", () => {
-	afterEach(async () => {
-		vi.restoreAllMocks()
-		await Promise.all(
-			temporaryDirectories.splice(0).map(async (directory) => {
-				const { rm } = await import("node:fs/promises")
-				await rm(directory, { recursive: true, force: true })
-			}),
-		)
-	})
+    afterEach(async () => {
+        vi.restoreAllMocks()
+        await Promise.all(
+            temporaryDirectories.splice(0).map(async (directory) => {
+                const { rm } = await import("node:fs/promises")
+                await rm(directory, { recursive: true, force: true })
+            }),
+        )
+    })
 
-	it("imports a real snapshot once, preserves user order and payload metadata, clears editing, and skips delivering entries", async () => {
-		const directory = await temporaryDirectory()
-		const snapshotPath = path.join(directory, "snapshot.json")
-		await writeFile(
-			snapshotPath,
-			JSON.stringify({
-				interaction: { interactionId: "keep-me" },
-				inputQueue: [
-					{
-						id: "moved-first",
-						text: "first after reorder",
-						images: ["image-a"],
-						files: ["file-a"],
-						activeQuote: "quoted",
-						semanticInput: semanticInput(),
-						mode: "steering",
-						editing: true,
-						sequence: 0,
-					},
-					{
-						id: "moved-second",
-						text: "second after reorder",
-						images: [],
-						files: [],
-						mode: "queued",
-						sequence: 1,
-					},
-					{
-						id: "possibly-sent",
-						text: "must not be sent twice",
-						images: [],
-						files: [],
-						mode: "queued",
-						delivering: true,
-						sequence: 2,
-					},
-				],
-			}),
-		)
-		const vault = new InMemoryStateVault()
-		const payloads = new InMemoryTaskPayloadStore()
+    it("imports a real snapshot once, preserves user order and payload metadata, clears editing, and skips delivering entries", async () => {
+        const directory = await temporaryDirectory()
+        const snapshotPath = path.join(directory, "snapshot.json")
+        await writeFile(
+            snapshotPath,
+            JSON.stringify({
+                interaction: { interactionId: "keep-me" },
+                inputQueue: [
+                    {
+                        id: "moved-first",
+                        text: "first after reorder",
+                        images: ["image-a"],
+                        files: ["file-a"],
+                        activeQuote: "quoted",
+                        semanticInput: semanticInput(),
+                        mode: "steering",
+                        editing: true,
+                        sequence: 0,
+                    },
+                    {
+                        id: "moved-second",
+                        text: "second after reorder",
+                        images: [],
+                        files: [],
+                        mode: "queued",
+                        sequence: 1,
+                    },
+                    {
+                        id: "possibly-sent",
+                        text: "must not be sent twice",
+                        images: [],
+                        files: [],
+                        mode: "queued",
+                        delivering: true,
+                        sequence: 2,
+                    },
+                ],
+            }),
+        )
+        const vault = new InMemoryStateVault()
+        const payloads = new InMemoryTaskPayloadStore()
 
-		await expect(
-			importSnapshotQueue({
-				taskId: "task-1",
-				source: new SnapshotQueueFile(snapshotPath),
-				vault,
-				payloads,
-				journalTail: EMPTY_JOURNAL,
-			}),
-		).resolves.toMatchObject({ kind: "imported", importedEntries: 2, skippedDeliveringEntries: 1 })
+        await expect(
+            importSnapshotQueue({
+                taskId: "task-1",
+                source: new SnapshotQueueFile(snapshotPath),
+                vault,
+                payloads,
+                journalTail: EMPTY_JOURNAL,
+            }),
+        ).resolves.toMatchObject({ kind: "imported", importedEntries: 2, skippedDeliveringEntries: 1 })
 
-		const stored = await vault.load("task-1")
-		expect(stored?.state.intake.queued).toEqual([
-			{
-				entryId: "moved-first",
-				payloadRef: expect.stringMatching(/^sha256:/),
-				source: "user",
-				mode: "steering",
-				sequence: 0,
-				queue: { editing: false },
-				state: "accepted",
-			},
-			{
-				entryId: "moved-second",
-				payloadRef: expect.stringMatching(/^sha256:/),
-				source: "user",
-				mode: "queued",
-				sequence: 1,
-				queue: { editing: false },
-				state: "accepted",
-			},
-		])
-		expect(stored?.state.snapshotQueueImport).toMatchObject({ importedEntryCount: 2, skippedDeliveringCount: 1 })
-		expect(await payloadsOf(vault, payloads)).toEqual([
-			{
-				kind: "user_input",
-				text: "first after reorder",
-				images: ["image-a"],
-				files: ["file-a"],
-				activeQuote: "quoted",
-				semanticInput: semanticInput(),
-			},
-			{ kind: "user_input", text: "second after reorder", images: [], files: [] },
-		])
-		expect(JSON.parse(await readFile(snapshotPath, "utf8"))).toEqual({
-			interaction: { interactionId: "keep-me" },
-		})
-	})
+        const stored = await vault.load("task-1")
+        expect(stored?.state.intake.queued).toEqual([
+            {
+                entryId: "moved-first",
+                payloadRef: expect.stringMatching(/^sha256:/),
+                source: "user",
+                mode: "steering",
+                sequence: 0,
+                queue: { editing: false },
+                state: "accepted",
+            },
+            {
+                entryId: "moved-second",
+                payloadRef: expect.stringMatching(/^sha256:/),
+                source: "user",
+                mode: "queued",
+                sequence: 1,
+                queue: { editing: false },
+                state: "accepted",
+            },
+        ])
+        expect(stored?.state.snapshotQueueImport).toMatchObject({ importedEntryCount: 2, skippedDeliveringCount: 1 })
+        expect(await payloadsOf(vault, payloads)).toEqual([
+            {
+                kind: "user_input",
+                text: "first after reorder",
+                images: ["image-a"],
+                files: ["file-a"],
+                activeQuote: "quoted",
+                semanticInput: semanticInput(),
+            },
+            { kind: "user_input", text: "second after reorder", images: [], files: [] },
+        ])
+        expect(JSON.parse(await readFile(snapshotPath, "utf8"))).toEqual({
+            interaction: { interactionId: "keep-me" },
+        })
+    })
 
-	it("survives a real state-file reload and kernel hydrate with the migration marker and order intact", async () => {
-		const directory = await temporaryDirectory()
-		const vault = new FileTaskStateVault(path.join(directory, "state.json"))
-		const payloads = new InMemoryTaskPayloadStore()
-		const source = new ControlledSource({
-			fingerprint: "sha256:reload-source",
-			entries: [
-				{
-					id: "second-before-reorder",
-					text: "now first",
-					images: [],
-					files: [],
-					mode: "steering",
-					editing: true,
-					sequence: 0,
-				},
-				{ id: "first-before-reorder", text: "now second", images: [], files: [], mode: "queued", sequence: 1 },
-			],
-		})
+    it("survives a real state-file reload and kernel hydrate with the migration marker and order intact", async () => {
+        const directory = await temporaryDirectory()
+        const vault = new FileTaskStateVault(path.join(directory, "state.json"))
+        const payloads = new InMemoryTaskPayloadStore()
+        const source = new ControlledSource({
+            fingerprint: "sha256:reload-source",
+            entries: [
+                {
+                    id: "second-before-reorder",
+                    text: "now first",
+                    images: [],
+                    files: [],
+                    mode: "steering",
+                    editing: true,
+                    sequence: 0,
+                },
+                { id: "first-before-reorder", text: "now second", images: [], files: [], mode: "queued", sequence: 1 },
+            ],
+        })
 
-		await importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL })
+        await importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL })
 
-		const reloaded = await new FileTaskStateVault(path.join(directory, "state.json")).load("task-1")
-		if (!reloaded) throw new Error("expected reloaded canonical state")
-		const restored = hydrate({
-			taskId: "task-1",
-			snapshot: reloaded.state,
-			journalTail: { seq: 0 },
-			openReason: "resume",
-		})
-		expect(restored.state.snapshotQueueImport).toMatchObject({
-			sourceFingerprint: "sha256:reload-source",
-			importedEntryCount: 2,
-		})
-		expect(restored.state.intake.queued.map((entry) => [entry.entryId, entry.sequence, entry.queue?.editing])).toEqual([
-			["second-before-reorder", 0, false],
-			["first-before-reorder", 1, false],
-		])
-	})
+        const reloaded = await new FileTaskStateVault(path.join(directory, "state.json")).load("task-1")
+        if (!reloaded) throw new Error("expected reloaded canonical state")
+        const restored = hydrate({
+            taskId: "task-1",
+            snapshot: reloaded.state,
+            journalTail: { seq: 0 },
+            openReason: "resume",
+        })
+        expect(restored.state.snapshotQueueImport).toMatchObject({
+            sourceFingerprint: "sha256:reload-source",
+            importedEntryCount: 2,
+        })
+        expect(restored.state.intake.queued.map((entry) => [entry.entryId, entry.sequence, entry.queue?.editing])).toEqual([
+            ["second-before-reorder", 0, false],
+            ["first-before-reorder", 1, false],
+        ])
+    })
 
-	it("positions a state it creates at the journal tail, so the imported conversation counts as read", async () => {
-		const vault = new InMemoryStateVault()
-		const source = new ControlledSource({
-			fingerprint: "sha256:source-tail",
-			entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
-		})
+    it("positions a state it creates at the journal tail, so the imported conversation counts as read", async () => {
+        const vault = new InMemoryStateVault()
+        const source = new ControlledSource({
+            fingerprint: "sha256:source-tail",
+            entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
+        })
 
-		await importSnapshotQueue({
-			taskId: "task-1",
-			source,
-			vault,
-			payloads: new InMemoryTaskPayloadStore(),
-			journalTail: { seq: 4 },
-		})
+        await importSnapshotQueue({
+            taskId: "task-1",
+            source,
+            vault,
+            payloads: new InMemoryTaskPayloadStore(),
+            journalTail: { seq: 4 },
+        })
 
-		const migrated = await vault.load("task-1")
-		if (!migrated) throw new Error("expected migrated canonical state")
-		expect(migrated.state.journalWatermark).toEqual({ seq: 4 })
-		const restored = hydrate({ taskId: "task-1", snapshot: migrated.state, journalTail: { seq: 4 }, openReason: "resume" })
-		expect(restored.form).toBe("interrupted")
-		expect(restored.state.journalWatermark).toEqual({ seq: 4 })
-		expect(restored.state.dialog.primary?.kind).toBe("resume")
-		expect(restored.state.intake.queued.map((entry) => [entry.entryId, entry.state])).toEqual([["queued-1", "accepted"]])
-	})
+        const migrated = await vault.load("task-1")
+        if (!migrated) throw new Error("expected migrated canonical state")
+        expect(migrated.state.journalWatermark).toEqual({ seq: 4 })
+        const restored = hydrate({ taskId: "task-1", snapshot: migrated.state, journalTail: { seq: 4 }, openReason: "resume" })
+        expect(restored.form).toBe("interrupted")
+        expect(restored.state.journalWatermark).toEqual({ seq: 4 })
+        expect(restored.state.dialog.primary?.kind).toBe("resume")
+        expect(restored.state.intake.queued.map((entry) => [entry.entryId, entry.state])).toEqual([["queued-1", "accepted"]])
+    })
 
-	it("saves canonical state before cleanup and retries only cleanup after a failed source rewrite", async () => {
-		const source = new ControlledSource({
-			fingerprint: "sha256:source-a",
-			entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
-		})
-		source.removeInputQueue.mockRejectedValueOnce(new Error("source rewrite failed"))
-		const vault = new InMemoryStateVault()
-		const save = vi.spyOn(vault, "save")
-		const payloads = new InMemoryTaskPayloadStore()
-		const put = vi.spyOn(payloads, "put")
+    it("saves canonical state before cleanup and retries only cleanup after a failed source rewrite", async () => {
+        const source = new ControlledSource({
+            fingerprint: "sha256:source-a",
+            entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
+        })
+        source.removeInputQueue.mockRejectedValueOnce(new Error("source rewrite failed"))
+        const vault = new InMemoryStateVault()
+        const save = vi.spyOn(vault, "save")
+        const payloads = new InMemoryTaskPayloadStore()
+        const put = vi.spyOn(payloads, "put")
 
-		await expect(
-			importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
-		).rejects.toBeInstanceOf(SnapshotQueueCleanupPendingError)
-		expect((await vault.load("task-1"))?.state.intake.queued).toHaveLength(1)
-		expect(save).toHaveBeenCalledOnce()
-		expect(put).toHaveBeenCalledOnce()
+        await expect(
+            importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
+        ).rejects.toBeInstanceOf(SnapshotQueueCleanupPendingError)
+        expect((await vault.load("task-1"))?.state.intake.queued).toHaveLength(1)
+        expect(save).toHaveBeenCalledOnce()
+        expect(put).toHaveBeenCalledOnce()
 
-		await expect(
-			importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
-		).resolves.toMatchObject({
-			kind: "cleaned",
-			importedEntries: 1,
-		})
-		expect(save).toHaveBeenCalledOnce()
-		expect(put).toHaveBeenCalledOnce()
-		expect(source.removeInputQueue).toHaveBeenCalledTimes(2)
-	})
+        await expect(
+            importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
+        ).resolves.toMatchObject({
+            kind: "cleaned",
+            importedEntries: 1,
+        })
+        expect(save).toHaveBeenCalledOnce()
+        expect(put).toHaveBeenCalledOnce()
+        expect(source.removeInputQueue).toHaveBeenCalledTimes(2)
+    })
 
-	it("fails closed when snapshot.json changes after state.json was saved", async () => {
-		const source = new ControlledSource({
-			fingerprint: "sha256:source-a",
-			entries: [{ id: "queued-1", text: "A", images: [], files: [], mode: "queued", sequence: 0 }],
-		})
-		source.removeInputQueue.mockRejectedValueOnce(new Error("source rewrite failed"))
-		const vault = new InMemoryStateVault()
-		const payloads = new InMemoryTaskPayloadStore()
-		await expect(
-			importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
-		).rejects.toBeInstanceOf(SnapshotQueueCleanupPendingError)
+    it("fails closed when snapshot.json changes after state.json was saved", async () => {
+        const source = new ControlledSource({
+            fingerprint: "sha256:source-a",
+            entries: [{ id: "queued-1", text: "A", images: [], files: [], mode: "queued", sequence: 0 }],
+        })
+        source.removeInputQueue.mockRejectedValueOnce(new Error("source rewrite failed"))
+        const vault = new InMemoryStateVault()
+        const payloads = new InMemoryTaskPayloadStore()
+        await expect(
+            importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
+        ).rejects.toBeInstanceOf(SnapshotQueueCleanupPendingError)
 
-		source.current = {
-			fingerprint: "sha256:source-b",
-			entries: [{ id: "queued-1", text: "B", images: [], files: [], mode: "queued", sequence: 0 }],
-		}
-		await expect(
-			importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
-		).rejects.toBeInstanceOf(SnapshotQueueChangedError)
-		expect((await payloadsOf(vault, payloads))[0]?.text).toBe("A")
-		expect(source.removeInputQueue).toHaveBeenCalledOnce()
-	})
+        source.current = {
+            fingerprint: "sha256:source-b",
+            entries: [{ id: "queued-1", text: "B", images: [], files: [], mode: "queued", sequence: 0 }],
+        }
+        await expect(
+            importSnapshotQueue({ taskId: "task-1", source, vault, payloads, journalTail: EMPTY_JOURNAL }),
+        ).rejects.toBeInstanceOf(SnapshotQueueChangedError)
+        expect((await payloadsOf(vault, payloads))[0]?.text).toBe("A")
+        expect(source.removeInputQueue).toHaveBeenCalledOnce()
+    })
 
-	it("does not clear snapshot.json when state.json cannot be saved", async () => {
-		const source = new ControlledSource({
-			fingerprint: "sha256:source-a",
-			entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
-		})
-		const vault = new FailingVault()
+    it("does not clear snapshot.json when state.json cannot be saved", async () => {
+        const source = new ControlledSource({
+            fingerprint: "sha256:source-a",
+            entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
+        })
+        const vault = new FailingVault()
 
-		await expect(
-			importSnapshotQueue({
-				taskId: "task-1",
-				source,
-				vault,
-				payloads: new InMemoryTaskPayloadStore(),
-				journalTail: EMPTY_JOURNAL,
-			}),
-		).rejects.toThrow("state save failed")
-		expect(source.removeInputQueue).not.toHaveBeenCalled()
-	})
+        await expect(
+            importSnapshotQueue({
+                taskId: "task-1",
+                source,
+                vault,
+                payloads: new InMemoryTaskPayloadStore(),
+                journalTail: EMPTY_JOURNAL,
+            }),
+        ).rejects.toThrow("state save failed")
+        expect(source.removeInputQueue).not.toHaveBeenCalled()
+    })
 
-	it("preserves an existing state.json and its outbox while appending the imported queue", async () => {
-		const vault = new InMemoryStateVault()
-		const original = createInitialTaskState("task-1")
-		await vault.save({
-			state: { ...original, revision: 7, intake: { ...original.intake, background: [] } },
-			outbox: [{ type: "provider.start", commandId: "command-1", originRevision: 7, generation: 0, draftRef: "draft:1" }],
-		})
-		const source = new ControlledSource({
-			fingerprint: "sha256:source-a",
-			entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
-		})
+    it("preserves an existing state.json and its outbox while appending the imported queue", async () => {
+        const vault = new InMemoryStateVault()
+        const original = createInitialTaskState("task-1")
+        await vault.save({
+            state: { ...original, revision: 7, intake: { ...original.intake, background: [] } },
+            outbox: [{ type: "provider.start", commandId: "command-1", originRevision: 7, generation: 0, draftRef: "draft:1" }],
+        })
+        const source = new ControlledSource({
+            fingerprint: "sha256:source-a",
+            entries: [{ id: "queued-1", text: "retained", images: [], files: [], mode: "queued", sequence: 0 }],
+        })
 
-		await importSnapshotQueue({
-			taskId: "task-1",
-			source,
-			vault,
-			payloads: new InMemoryTaskPayloadStore(),
-			journalTail: EMPTY_JOURNAL,
-		})
+        await importSnapshotQueue({
+            taskId: "task-1",
+            source,
+            vault,
+            payloads: new InMemoryTaskPayloadStore(),
+            journalTail: EMPTY_JOURNAL,
+        })
 
-		const migrated = await vault.load("task-1")
-		expect(migrated?.state.revision).toBe(7)
-		expect(migrated?.state.intake.queued.map((entry) => entry.entryId)).toEqual(["queued-1"])
-		expect(migrated?.outbox).toEqual([
-			{ type: "provider.start", commandId: "command-1", originRevision: 7, generation: 0, draftRef: "draft:1" },
-		])
-	})
+        const migrated = await vault.load("task-1")
+        expect(migrated?.state.revision).toBe(7)
+        expect(migrated?.state.intake.queued.map((entry) => entry.entryId)).toEqual(["queued-1"])
+        expect(migrated?.outbox).toEqual([
+            { type: "provider.start", commandId: "command-1", originRevision: 7, generation: 0, draftRef: "draft:1" },
+        ])
+    })
 })

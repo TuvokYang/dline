@@ -9,14 +9,14 @@ import type { TaskInput } from "../shell/TaskShell"
 
 /** One answered dialog that no receiver was waiting for. */
 export interface UnownedDialogResolution {
-	readonly interactionId: string
-	/** The kernel's dialog kind, which says what the continuation is resuming from. */
-	readonly kind: string
-	readonly outcome: InteractionOutcome
-	/** A consumed retained batch may only continue as its original tool result. */
-	readonly queuedInput?: QueuedInputResponse
-	/** Fences async preparation and resumption against a newer session generation. */
-	readonly isCurrent?: () => boolean
+    readonly interactionId: string
+    /** The kernel's dialog kind, which says what the continuation is resuming from. */
+    readonly kind: string
+    readonly outcome: InteractionOutcome
+    /** A consumed retained batch may only continue as its original tool result. */
+    readonly queuedInput?: QueuedInputResponse
+    /** Fences async preparation and resumption against a newer session generation. */
+    readonly isCurrent?: () => boolean
 }
 
 /**
@@ -43,38 +43,38 @@ export type UnownedDialogOutcome = "continued" | "declined" | "failed"
  * while an automated reviewer or approver resumes without any draft at all.
  */
 export interface UnownedDialogContinuationPort {
-	/**
-	 * Whether this continuation will act on the answer.
-	 *
-	 * Asked before the interaction is retired, because retiring is what frees
-	 * the dialog slot for the round the continuation is about to open. Deciding
-	 * afterwards would leave the answered dialog in place while that round
-	 * starts, which reorders the task's own events around it.
-	 */
-	accepts(resolution: UnownedDialogResolution): boolean
+    /**
+     * Whether this continuation will act on the answer.
+     *
+     * Asked before the interaction is retired, because retiring is what frees
+     * the dialog slot for the round the continuation is about to open. Deciding
+     * afterwards would leave the answered dialog in place while that round
+     * starts, which reorders the task's own events around it.
+     */
+    accepts(resolution: UnownedDialogResolution): boolean
 
-	/** Make the answer durable before its owner releases the dialog slot. */
-	prepare?(resolution: UnownedDialogResolution): Promise<boolean>
-	continue(resolution: UnownedDialogResolution): Promise<UnownedDialogOutcome>
+    /** Make the answer durable before its owner releases the dialog slot. */
+    prepare?(resolution: UnownedDialogResolution): Promise<boolean>
+    continue(resolution: UnownedDialogResolution): Promise<UnownedDialogOutcome>
 }
 
 /** The submission path a continuation uses to put the task back to work. */
 export interface TaskResumptionPort {
-	materialize(input: {
-		readonly text?: string
-		/** Trusted internal projection sent to the provider while `text` remains the visible user row. */
-		readonly admittedText?: string
-		readonly images?: readonly string[]
-		readonly files?: readonly string[]
-		readonly context?: string
-		readonly semanticInput?: SemanticInputDocument
-	}): Promise<TaskInput>
-	/**
-	 * Resolves `rejected` when the runtime refuses the input, for example after a
-	 * phase change or with intake at capacity. That refusal is an expected answer,
-	 * not a thrown failure, so callers must inspect it.
-	 */
-	submit(input: TaskInput): Promise<EventSubmissionResult>
+    materialize(input: {
+        readonly text?: string
+        /** Trusted internal projection sent to the provider while `text` remains the visible user row. */
+        readonly admittedText?: string
+        readonly images?: readonly string[]
+        readonly files?: readonly string[]
+        readonly context?: string
+        readonly semanticInput?: SemanticInputDocument
+    }): Promise<TaskInput>
+    /**
+     * Resolves `rejected` when the runtime refuses the input, for example after a
+     * phase change or with intake at capacity. That refusal is an expected answer,
+     * not a thrown failure, so callers must inspect it.
+     */
+    submit(input: TaskInput): Promise<EventSubmissionResult>
 }
 
 /**
@@ -85,9 +85,9 @@ export interface TaskResumptionPort {
  * start a new countdown beside the failure they just acted on.
  */
 export interface ManualRetryTakeoverPort {
-	takeOver(): void
-	/** The Retry never opened a request, so the next one keeps its automatic sequence. */
-	releaseTakeover(): void
+    takeOver(): void
+    /** The Retry never opened a request, so the next one keeps its automatic sequence. */
+    releaseTakeover(): void
 }
 
 /**
@@ -120,61 +120,61 @@ const TASK_ENDING_ACTIONS: ReadonlySet<InteractionOutcome["actionId"]> = new Set
  * keeps recovery on the automatic execution path instead of a parallel one.
  */
 export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
-	constructor(
-		private readonly resumption: TaskResumptionPort,
-		private readonly resetMistakes?: () => void,
-		private readonly providerRetry?: ManualRetryTakeoverPort,
-	) {}
+    constructor(
+        private readonly resumption: TaskResumptionPort,
+        private readonly resetMistakes?: () => void,
+        private readonly providerRetry?: ManualRetryTakeoverPort,
+    ) {}
 
-	accepts(resolution: UnownedDialogResolution): boolean {
-		return !resolution.queuedInput && !TASK_ENDING_ACTIONS.has(resolution.outcome.actionId)
-	}
+    accepts(resolution: UnownedDialogResolution): boolean {
+        return !resolution.queuedInput && !TASK_ENDING_ACTIONS.has(resolution.outcome.actionId)
+    }
 
-	async continue(resolution: UnownedDialogResolution): Promise<UnownedDialogOutcome> {
-		if (!this.accepts(resolution)) return "declined"
-		const draft = resolution.outcome.draft
-		// An empty draft still resumes: the conversation the task already owns is
-		// what the next round is composed from, so the submission only has to
-		// exist, not to carry text.
-		//
-		// Provenance travels as submission context rather than user text. The
-		// model has to be told the session was restored, but the chat row must
-		// keep showing only what the user typed.
-		const context = createResumeSubmissionContext(resolution.kind)
-		const processAnyway = resolution.kind === "mistake_limit" && resolution.outcome.actionId === "process_anyway"
-		const manualRetry = resolution.kind === "error_retry" && resolution.outcome.actionId === "retry"
-		try {
-			const input = await this.resumption.materialize({
-				text: draft?.text,
-				...(processAnyway ? { admittedText: formatResponse.tooManyMistakes(draft?.text) } : {}),
-				images: draft?.images,
-				files: draft?.files,
-				...(context === undefined ? {} : { context }),
-				...(draft?.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
-			})
-			if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
-			if (processAnyway) this.resetMistakes?.()
-			if (manualRetry) this.providerRetry?.takeOver()
-			const submitted = await this.resumption.submit(input)
-			if (submitted.kind === "rejected") {
-				// No round starts from a refused input, so the dialog must stay
-				// answerable and the next request keeps its automatic retries.
-				if (manualRetry) this.providerRetry?.releaseTakeover()
-				Logger.warn(`Runtime refused to resume unowned interaction ${resolution.interactionId}`)
-				return "failed"
-			}
-			return "continued"
-		} catch (error) {
-			if (manualRetry) this.providerRetry?.releaseTakeover()
-			// Reported rather than thrown: the caller has to know the answer was
-			// not acted on so it can leave the interaction answerable, and the
-			// user already gave an answer that must not surface as a crash.
-			Logger.error(
-				`Failed to resume unowned interaction ${resolution.interactionId}: ${
-					error instanceof Error ? error.message : error
-				}`,
-			)
-			return "failed"
-		}
-	}
+    async continue(resolution: UnownedDialogResolution): Promise<UnownedDialogOutcome> {
+        if (!this.accepts(resolution)) return "declined"
+        const draft = resolution.outcome.draft
+        // An empty draft still resumes: the conversation the task already owns is
+        // what the next round is composed from, so the submission only has to
+        // exist, not to carry text.
+        //
+        // Provenance travels as submission context rather than user text. The
+        // model has to be told the session was restored, but the chat row must
+        // keep showing only what the user typed.
+        const context = createResumeSubmissionContext(resolution.kind)
+        const processAnyway = resolution.kind === "mistake_limit" && resolution.outcome.actionId === "process_anyway"
+        const manualRetry = resolution.kind === "error_retry" && resolution.outcome.actionId === "retry"
+        try {
+            const input = await this.resumption.materialize({
+                text: draft?.text,
+                ...(processAnyway ? { admittedText: formatResponse.tooManyMistakes(draft?.text) } : {}),
+                images: draft?.images,
+                files: draft?.files,
+                ...(context === undefined ? {} : { context }),
+                ...(draft?.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
+            })
+            if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
+            if (processAnyway) this.resetMistakes?.()
+            if (manualRetry) this.providerRetry?.takeOver()
+            const submitted = await this.resumption.submit(input)
+            if (submitted.kind === "rejected") {
+                // No round starts from a refused input, so the dialog must stay
+                // answerable and the next request keeps its automatic retries.
+                if (manualRetry) this.providerRetry?.releaseTakeover()
+                Logger.warn(`Runtime refused to resume unowned interaction ${resolution.interactionId}`)
+                return "failed"
+            }
+            return "continued"
+        } catch (error) {
+            if (manualRetry) this.providerRetry?.releaseTakeover()
+            // Reported rather than thrown: the caller has to know the answer was
+            // not acted on so it can leave the interaction answerable, and the
+            // user already gave an answer that must not surface as a crash.
+            Logger.error(
+                `Failed to resume unowned interaction ${resolution.interactionId}: ${
+                    error instanceof Error ? error.message : error
+                }`,
+            )
+            return "failed"
+        }
+    }
 }

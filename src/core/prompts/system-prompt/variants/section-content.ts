@@ -22,34 +22,34 @@ const SHARED_TASK_PROGRESS = getPrompt("taskProgress", "standardFused")
 const LITE_AGENT_ROLE = getPrompt("variants.lite", "agentRole")
 
 export function createStandardSystemSections(config: SystemSectionContentConfig): SystemSectionSet {
-	return createStandardSectionSet({
-		"agent-role": STANDARD_AGENT_ROLE,
-		"user-authority": SHARED_USER_AUTHORITY,
-		objective: createStandardObjective(config),
-		"act-vs-plan": createStandardActVsPlan(),
-		"user-communication": SHARED_USER_COMMUNICATION,
-		"tool-use": createStandardToolUse(config),
-		"task-progress": config.focusChainEnabled ? SHARED_TASK_PROGRESS : "",
-		capabilities: STANDARD_CAPABILITIES,
-		execution: STANDARD_EXECUTION,
-		"system-info": SHARED_SYSTEM_INFO,
-		feedback: SHARED_FEEDBACK,
-		"user-instructions": config.userInstructionsEnabled ? SHARED_USER_INSTRUCTIONS : "",
-	})
+    return createStandardSectionSet({
+        "agent-role": STANDARD_AGENT_ROLE,
+        "user-authority": SHARED_USER_AUTHORITY,
+        objective: createStandardObjective(config),
+        "act-vs-plan": createStandardActVsPlan(),
+        "user-communication": SHARED_USER_COMMUNICATION,
+        "tool-use": createStandardToolUse(config),
+        "task-progress": config.focusChainEnabled ? SHARED_TASK_PROGRESS : "",
+        capabilities: STANDARD_CAPABILITIES,
+        execution: STANDARD_EXECUTION,
+        "system-info": SHARED_SYSTEM_INFO,
+        feedback: SHARED_FEEDBACK,
+        "user-instructions": config.userInstructionsEnabled ? SHARED_USER_INSTRUCTIONS : "",
+    })
 }
 
 export function createLiteSystemSections(config: SystemSectionContentConfig): SystemSectionSet {
-	return createLiteSectionSet({
-		"agent-role": LITE_AGENT_ROLE,
-		"user-authority": SHARED_USER_AUTHORITY,
-		objective: createLiteObjective(),
-		"act-vs-plan": createLiteActVsPlan(config),
-		"user-communication": SHARED_USER_COMMUNICATION,
-		"tool-use": createLiteToolUse(config),
-		capabilities: LITE_CAPABILITIES,
-		execution: LITE_EXECUTION,
-		"system-info": SHARED_SYSTEM_INFO,
-		feedback: SHARED_FEEDBACK,
-		"user-instructions": config.userInstructionsEnabled ? SHARED_USER_INSTRUCTIONS : "",
-	})
+    return createLiteSectionSet({
+        "agent-role": LITE_AGENT_ROLE,
+        "user-authority": SHARED_USER_AUTHORITY,
+        objective: createLiteObjective(),
+        "act-vs-plan": createLiteActVsPlan(config),
+        "user-communication": SHARED_USER_COMMUNICATION,
+        "tool-use": createLiteToolUse(config),
+        capabilities: LITE_CAPABILITIES,
+        execution: LITE_EXECUTION,
+        "system-info": SHARED_SYSTEM_INFO,
+        feedback: SHARED_FEEDBACK,
+        "user-instructions": config.userInstructionsEnabled ? SHARED_USER_INSTRUCTIONS : "",
+    })
 }

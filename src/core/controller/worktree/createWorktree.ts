@@ -12,54 +12,54 @@ import { Controller } from ".."
  * @returns WorktreeResult with success status and created worktree info
  */
 export async function createWorktree(_controller: Controller, request: CreateWorktreeRequest): Promise<WorktreeResult> {
-	const cwd = await getWorkspacePath()
-	if (!cwd) {
-		return WorktreeResult.create({
-			success: false,
-			message: "No workspace folder open",
-		})
-	}
+    const cwd = await getWorkspacePath()
+    if (!cwd) {
+        return WorktreeResult.create({
+            success: false,
+            message: "No workspace folder open",
+        })
+    }
 
-	try {
-		const result = await createWorktreeUtil(cwd, request.path, {
-			branch: request.branch,
-			baseBranch: request.baseBranch,
-			createNewBranch: request.createNewBranch,
-		})
+    try {
+        const result = await createWorktreeUtil(cwd, request.path, {
+            branch: request.branch,
+            baseBranch: request.baseBranch,
+            createNewBranch: request.createNewBranch,
+        })
 
-		// Track worktree creation with count of total worktrees
-		if (result.success) {
-			try {
-				const { worktrees } = await listWorktrees(cwd)
-				telemetryService.captureWorktreeCreated(true, worktrees.length)
-			} catch {
-				telemetryService.captureWorktreeCreated(true)
-			}
-		} else {
-			telemetryService.captureWorktreeCreated(false)
-		}
+        // Track worktree creation with count of total worktrees
+        if (result.success) {
+            try {
+                const { worktrees } = await listWorktrees(cwd)
+                telemetryService.captureWorktreeCreated(true, worktrees.length)
+            } catch {
+                telemetryService.captureWorktreeCreated(true)
+            }
+        } else {
+            telemetryService.captureWorktreeCreated(false)
+        }
 
-		return WorktreeResult.create({
-			success: result.success,
-			message: result.message,
-			worktree: result.worktree
-				? {
-						path: result.worktree.path,
-						branch: result.worktree.branch,
-						commitHash: result.worktree.commitHash,
-						isCurrent: result.worktree.isCurrent,
-						isBare: result.worktree.isBare,
-						isDetached: result.worktree.isDetached,
-						isLocked: result.worktree.isLocked,
-						lockReason: result.worktree.lockReason,
-					}
-				: undefined,
-		})
-	} catch (error) {
-		Logger.error(`Error creating worktree: ${JSON.stringify(error)}`)
-		return WorktreeResult.create({
-			success: false,
-			message: error instanceof Error ? error.message : String(error),
-		})
-	}
+        return WorktreeResult.create({
+            success: result.success,
+            message: result.message,
+            worktree: result.worktree
+                ? {
+                      path: result.worktree.path,
+                      branch: result.worktree.branch,
+                      commitHash: result.worktree.commitHash,
+                      isCurrent: result.worktree.isCurrent,
+                      isBare: result.worktree.isBare,
+                      isDetached: result.worktree.isDetached,
+                      isLocked: result.worktree.isLocked,
+                      lockReason: result.worktree.lockReason,
+                  }
+                : undefined,
+        })
+    } catch (error) {
+        Logger.error(`Error creating worktree: ${JSON.stringify(error)}`)
+        return WorktreeResult.create({
+            success: false,
+            message: error instanceof Error ? error.message : String(error),
+        })
+    }
 }

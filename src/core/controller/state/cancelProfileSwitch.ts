@@ -4,8 +4,8 @@ import { toProfileSwitchResponse } from "./requestProfileSwitch"
 
 /** Cancel the active Profile confirmation without adopting target settings. */
 export async function cancelProfileSwitch(
-	controller: Controller,
-	request: ProfileSwitchOperationRequest,
+    controller: Controller,
+    request: ProfileSwitchOperationRequest,
 ): Promise<ProfileSwitchResponse> {
-	return toProfileSwitchResponse(await controller.cancelProfileSwitch(request.operationId))
+    return toProfileSwitchResponse(await controller.cancelProfileSwitch(request.operationId))
 }

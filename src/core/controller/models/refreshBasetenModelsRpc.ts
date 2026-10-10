@@ -11,9 +11,9 @@ import { refreshBasetenModels } from "./refreshBasetenModels"
  * @returns Response containing Baseten models (protobuf types)
  */
 export async function refreshBasetenModelsRpc(
-	controller: Controller,
-	_request: EmptyRequest,
+    controller: Controller,
+    _request: EmptyRequest,
 ): Promise<OpenRouterCompatibleModelInfo> {
-	const models = await refreshBasetenModels(controller)
-	return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
+    const models = await refreshBasetenModels(controller)
+    return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
 }

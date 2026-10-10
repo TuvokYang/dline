@@ -9,6 +9,6 @@ import { Controller } from ".."
  * rejection reason has already been shown to the user.
  */
 export async function stageAttachment(_controller: Controller, request: StageAttachmentRequest): Promise<ProtoString> {
-	const stagedPath = await stageAttachmentBytes(request.fileName, request.data)
-	return ProtoString.create({ value: stagedPath ?? "" })
+    const stagedPath = await stageAttachmentBytes(request.fileName, request.data)
+    return ProtoString.create({ value: stagedPath ?? "" })
 }

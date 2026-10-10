@@ -13,8 +13,8 @@ import { getDlineCheckpointsDir } from "@/core/storage/disk"
  * @returns Absolute path to the checkpoint directory for this workspace
  */
 async function resolveCheckpointDir(cwdHash: string): Promise<string> {
-	const baseDir = await getDlineCheckpointsDir()
-	return path.join(baseDir, cwdHash)
+    const baseDir = await getDlineCheckpointsDir()
+    return path.join(baseDir, cwdHash)
 }
 
 /**
@@ -27,14 +27,14 @@ async function resolveCheckpointDir(cwdHash: string): Promise<string> {
  * @returns Promise<FolderLockWithRetryResult> with acquisition status and any conflicting lock info
  */
 export async function tryAcquireCheckpointLockWithRetry(cwdHash: string, taskId: string): Promise<FolderLockWithRetryResult> {
-	const lockTarget = await resolveCheckpointDir(cwdHash)
-	const options: FolderLockOptions = {
-		lockTarget,
-		heldBy: taskId,
-	}
+    const lockTarget = await resolveCheckpointDir(cwdHash)
+    const options: FolderLockOptions = {
+        lockTarget,
+        heldBy: taskId,
+    }
 
-	const result = await tryAcquireFolderLockWithRetry(options)
-	return { acquired: result.acquired, skipped: result.skipped, conflictingLock: result.conflictingLock }
+    const result = await tryAcquireFolderLockWithRetry(options)
+    return { acquired: result.acquired, skipped: result.skipped, conflictingLock: result.conflictingLock }
 }
 
 /**
@@ -45,6 +45,6 @@ export async function tryAcquireCheckpointLockWithRetry(cwdHash: string, taskId:
  * @param cwdHash - The hash of the working directory
  */
 export async function releaseCheckpointLock(cwdHash: string, taskId: string): Promise<void> {
-	const lockTarget = await resolveCheckpointDir(cwdHash)
-	await releaseFolderLock(taskId, lockTarget)
+    const lockTarget = await resolveCheckpointDir(cwdHash)
+    await releaseFolderLock(taskId, lockTarget)
 }

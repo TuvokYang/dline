@@ -12,114 +12,114 @@ import { splitToolResultContent } from "./tool-result-content"
 const GEMINI_DUMMY_THOUGHT_SIGNATURE = "skip_thought_signature_validator"
 
 function geminiInlineImage(block: ClineImageContentBlock): Part {
-	if (block.source.type !== "base64") {
-		throw new Error("Unsupported image source type")
-	}
-	return { inlineData: { data: block.source.data, mimeType: block.source.media_type } }
+    if (block.source.type !== "base64") {
+        throw new Error("Unsupported image source type")
+    }
+    return { inlineData: { data: block.source.data, mimeType: block.source.media_type } }
 }
 
 export function convertAnthropicContentToGemini(content: string | ClineStorageMessage["content"]): Part[] {
-	if (typeof content === "string") {
-		return [{ text: content }]
-	}
-	return content
-		.flatMap((block): Part | Part[] | undefined => {
-			switch (block.type) {
-				case "text":
-					return { text: block.text, thoughtSignature: block.signature }
-				case "image":
-					return geminiInlineImage(block)
-				case "tool_use":
-					return {
-						functionCall: {
-							name: block.name,
-							args: block.input as Record<string, unknown>,
-						},
-						// Thought signature is required, so provide a dummy one if not present
-						thoughtSignature: block.signature || GEMINI_DUMMY_THOUGHT_SIGNATURE,
-					}
-				case "tool_result": {
-					// The function response carries text; its images follow as inline parts so they reach
-					// the model as images rather than as base64 inside the response JSON.
-					const { text, images } = splitToolResultContent(block.content)
-					return [
-						{ functionResponse: { name: block.function_id, response: { result: text } } },
-						...images.map(geminiInlineImage),
-					]
-				}
-				case "thinking":
-					return {
-						text: block.thinking,
-						thought: true,
-						thoughtSignature: block.signature || GEMINI_DUMMY_THOUGHT_SIGNATURE,
-					}
-				default:
-					return undefined
-			}
-		})
-		.filter((part): part is Part => part !== undefined) // Filter out unsupported blocks
+    if (typeof content === "string") {
+        return [{ text: content }]
+    }
+    return content
+        .flatMap((block): Part | Part[] | undefined => {
+            switch (block.type) {
+                case "text":
+                    return { text: block.text, thoughtSignature: block.signature }
+                case "image":
+                    return geminiInlineImage(block)
+                case "tool_use":
+                    return {
+                        functionCall: {
+                            name: block.name,
+                            args: block.input as Record<string, unknown>,
+                        },
+                        // Thought signature is required, so provide a dummy one if not present
+                        thoughtSignature: block.signature || GEMINI_DUMMY_THOUGHT_SIGNATURE,
+                    }
+                case "tool_result": {
+                    // The function response carries text; its images follow as inline parts so they reach
+                    // the model as images rather than as base64 inside the response JSON.
+                    const { text, images } = splitToolResultContent(block.content)
+                    return [
+                        { functionResponse: { name: block.function_id, response: { result: text } } },
+                        ...images.map(geminiInlineImage),
+                    ]
+                }
+                case "thinking":
+                    return {
+                        text: block.thinking,
+                        thought: true,
+                        thoughtSignature: block.signature || GEMINI_DUMMY_THOUGHT_SIGNATURE,
+                    }
+                default:
+                    return undefined
+            }
+        })
+        .filter((part): part is Part => part !== undefined) // Filter out unsupported blocks
 }
 
 export function convertAnthropicMessageToGemini(message: ClineStorageMessage): Content {
-	return {
-		role: message.role === "assistant" ? "model" : "user",
-		parts: convertAnthropicContentToGemini(message.content),
-	}
+    return {
+        role: message.role === "assistant" ? "model" : "user",
+        parts: convertAnthropicContentToGemini(message.content),
+    }
 }
 
 /*
 It looks like gemini likes to double escape certain characters when writing file contents: https://discuss.ai.google.dev/t/function-call-string-property-is-double-escaped/37867
 */
 export function unescapeGeminiContent(content: string) {
-	return content.replace(/\\n/g, "\n").replace(/\\'/g, "'").replace(/\\"/g, '"').replace(/\\r/g, "\r").replace(/\\t/g, "\t")
+    return content.replace(/\\n/g, "\n").replace(/\\'/g, "'").replace(/\\"/g, '"').replace(/\\r/g, "\r").replace(/\\t/g, "\t")
 }
 
 export function convertGeminiResponseToAnthropic(response: GenerateContentResponse): Anthropic.Messages.Message {
-	const content: Anthropic.Messages.ContentBlock[] = []
+    const content: Anthropic.Messages.ContentBlock[] = []
 
-	const text = response.text
-	if (text) {
-		content.push({ type: "text", text, citations: null })
-	}
+    const text = response.text
+    if (text) {
+        content.push({ type: "text", text, citations: null })
+    }
 
-	let stop_reason: Anthropic.Messages.Message["stop_reason"] = null
-	const finishReason = response.candidates?.[0]?.finishReason
-	if (finishReason) {
-		switch (finishReason) {
-			case "STOP":
-				stop_reason = "end_turn"
-				break
-			case "MAX_TOKENS":
-				stop_reason = "max_tokens"
-				break
-			case "SAFETY":
-			case "RECITATION":
-			case "OTHER":
-				stop_reason = "stop_sequence"
-				break
-		}
-	}
+    let stop_reason: Anthropic.Messages.Message["stop_reason"] = null
+    const finishReason = response.candidates?.[0]?.finishReason
+    if (finishReason) {
+        switch (finishReason) {
+            case "STOP":
+                stop_reason = "end_turn"
+                break
+            case "MAX_TOKENS":
+                stop_reason = "max_tokens"
+                break
+            case "SAFETY":
+            case "RECITATION":
+            case "OTHER":
+                stop_reason = "stop_sequence"
+                break
+        }
+    }
 
-	return {
-		id: `msg_${Date.now()}`,
-		type: "message",
-		role: "assistant",
-		container: null,
-		content,
-		model: "",
-		stop_details: null,
-		stop_reason,
-		stop_sequence: null, // Gemini doesn't provide this information
-		usage: {
-			input_tokens: response.usageMetadata?.promptTokenCount ?? 0,
-			output_tokens: response.usageMetadata?.candidatesTokenCount ?? 0,
-			cache_creation: null,
-			cache_creation_input_tokens: null,
-			cache_read_input_tokens: null,
-			inference_geo: null,
-			output_tokens_details: null,
-			server_tool_use: null,
-			service_tier: null,
-		},
-	}
+    return {
+        id: `msg_${Date.now()}`,
+        type: "message",
+        role: "assistant",
+        container: null,
+        content,
+        model: "",
+        stop_details: null,
+        stop_reason,
+        stop_sequence: null, // Gemini doesn't provide this information
+        usage: {
+            input_tokens: response.usageMetadata?.promptTokenCount ?? 0,
+            output_tokens: response.usageMetadata?.candidatesTokenCount ?? 0,
+            cache_creation: null,
+            cache_creation_input_tokens: null,
+            cache_read_input_tokens: null,
+            inference_geo: null,
+            output_tokens_details: null,
+            server_tool_use: null,
+            service_tier: null,
+        },
+    }
 }

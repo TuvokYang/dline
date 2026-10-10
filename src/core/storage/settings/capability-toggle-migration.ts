@@ -26,14 +26,14 @@ export const CAPABILITY_KEY_NORMALIZATION_GENERATION = 1
  * `false` preferences into the scope chain.
  */
 export const LEGACY_LOCAL_TOGGLE_KEYS: ReadonlyArray<readonly [key: string, kind: CapabilityKind]> = [
-	["localClineRulesToggles", "rules"],
-	["localCursorRulesToggles", "cursorRules"],
-	["localWindsurfRulesToggles", "windsurfRules"],
-	["localAgentsRulesToggles", "agentsRules"],
-	["localSkillsToggles", "skills"],
-	["localSubagentsToggles", "subagents"],
-	["workflowToggles", "workflows"],
-	["mcpServersToggles", "mcp"],
+    ["localClineRulesToggles", "rules"],
+    ["localCursorRulesToggles", "cursorRules"],
+    ["localWindsurfRulesToggles", "windsurfRules"],
+    ["localAgentsRulesToggles", "agentsRules"],
+    ["localSkillsToggles", "skills"],
+    ["localSubagentsToggles", "subagents"],
+    ["workflowToggles", "workflows"],
+    ["mcpServersToggles", "mcp"],
 ]
 
 /**
@@ -48,13 +48,13 @@ export const LEGACY_WORKSPACE_STATE_KEYS: readonly string[] = LEGACY_LOCAL_TOGGL
 
 /** Minimal view of the state manager this migration needs. */
 export interface LegacyToggleSource {
-	getLegacyWorkspaceToggleMap(key: string): Record<string, boolean> | undefined
+    getLegacyWorkspaceToggleMap(key: string): Record<string, boolean> | undefined
 }
 
 /** One capability kind's normalized overrides, ready to merge into the workspace scope. */
 export interface LegacyToggleMigration {
-	readonly kind: CapabilityKind
-	readonly overrides: ClineRulesToggles
+    readonly kind: CapabilityKind
+    readonly overrides: ClineRulesToggles
 }
 
 /**
@@ -70,34 +70,34 @@ export interface LegacyToggleMigration {
  * to make toggles reappear as enabled after an update.
  */
 export function planLegacyToggleMigration(source: LegacyToggleSource): LegacyToggleMigration[] {
-	const migrations: LegacyToggleMigration[] = []
+    const migrations: LegacyToggleMigration[] = []
 
-	for (const [key, kind] of LEGACY_LOCAL_TOGGLE_KEYS) {
-		const legacy = source.getLegacyWorkspaceToggleMap(key)
-		if (!legacy) continue
+    for (const [key, kind] of LEGACY_LOCAL_TOGGLE_KEYS) {
+        const legacy = source.getLegacyWorkspaceToggleMap(key)
+        if (!legacy) continue
 
-		const overrides: ClineRulesToggles = {}
-		for (const [resourcePath, enabled] of Object.entries(legacy)) {
-			if (enabled !== false) continue
-			const id = capabilityResourceId(resourcePath)
-			if (id === "") continue
-			overrides[id] = false
-		}
+        const overrides: ClineRulesToggles = {}
+        for (const [resourcePath, enabled] of Object.entries(legacy)) {
+            if (enabled !== false) continue
+            const id = capabilityResourceId(resourcePath)
+            if (id === "") continue
+            overrides[id] = false
+        }
 
-		if (Object.keys(overrides).length > 0) {
-			migrations.push({ kind, overrides })
-		}
-	}
+        if (Object.keys(overrides).length > 0) {
+            migrations.push({ kind, overrides })
+        }
+    }
 
-	if (migrations.length > 0) {
-		Logger.debug(
-			`[CapabilityToggleMigration] Planned ${migrations.length} kinds: ${migrations
-				.map((migration) => `${migration.kind}=${Object.keys(migration.overrides).length}`)
-				.join(" ")}`,
-		)
-	}
+    if (migrations.length > 0) {
+        Logger.debug(
+            `[CapabilityToggleMigration] Planned ${migrations.length} kinds: ${migrations
+                .map((migration) => `${migration.kind}=${Object.keys(migration.overrides).length}`)
+                .join(" ")}`,
+        )
+    }
 
-	return migrations
+    return migrations
 }
 
 /**
@@ -107,8 +107,8 @@ export function planLegacyToggleMigration(source: LegacyToggleSource): LegacyTog
  * scope chain, so it wins over the legacy value.
  */
 export function mergeMigratedOverrides(
-	current: Readonly<ClineRulesToggles> | undefined,
-	migrated: Readonly<ClineRulesToggles>,
+    current: Readonly<ClineRulesToggles> | undefined,
+    migrated: Readonly<ClineRulesToggles>,
 ): ClineRulesToggles {
-	return { ...migrated, ...(current ?? {}) }
+    return { ...migrated, ...(current ?? {}) }
 }

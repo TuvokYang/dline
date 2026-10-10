@@ -16,7 +16,7 @@ const OPENAI_MAX_TOTAL_FILE_BYTES = 50 * MEGABYTE
 
 /** Decoded bytes whose base64 encoding fits in `encodedBytes`. */
 function decodedBytesFitting(encodedBytes: number): number {
-	return Math.floor((encodedBytes * 3) / 4)
+    return Math.floor((encodedBytes * 3) / 4)
 }
 
 /**
@@ -26,17 +26,17 @@ function decodedBytesFitting(encodedBytes: number): number {
  * keeps PDFs away from non-Claude models served through Anthropic-compatible endpoints.
  */
 export function anthropicMessagesDocumentLimits(info: ModelInfo): DocumentInputLimits | undefined {
-	if (info.capabilities?.supportsImages !== true) return undefined
-	const contextWindow = info.capabilities.contextWindow ?? 0
-	return {
-		maxTotalBytes: decodedBytesFitting(ANTHROPIC_MAX_REQUEST_BYTES - ANTHROPIC_NON_DOCUMENT_HEADROOM_BYTES),
-		maxTotalPages:
-			contextWindow >= ANTHROPIC_LARGE_CONTEXT_TOKENS ? ANTHROPIC_MAX_PAGES : ANTHROPIC_MAX_PAGES_UNDER_LARGE_CONTEXT,
-	}
+    if (info.capabilities?.supportsImages !== true) return undefined
+    const contextWindow = info.capabilities.contextWindow ?? 0
+    return {
+        maxTotalBytes: decodedBytesFitting(ANTHROPIC_MAX_REQUEST_BYTES - ANTHROPIC_NON_DOCUMENT_HEADROOM_BYTES),
+        maxTotalPages:
+            contextWindow >= ANTHROPIC_LARGE_CONTEXT_TOKENS ? ANTHROPIC_MAX_PAGES : ANTHROPIC_MAX_PAGES_UNDER_LARGE_CONTEXT,
+    }
 }
 
 /** Native PDF capacity of an OpenAI Responses request; PDF page images require a vision-capable model. */
 export function openAiResponsesDocumentLimits(info: ModelInfo): DocumentInputLimits | undefined {
-	if (info.capabilities?.supportsImages !== true) return undefined
-	return { maxTotalBytes: OPENAI_MAX_TOTAL_FILE_BYTES }
+    if (info.capabilities?.supportsImages !== true) return undefined
+    return { maxTotalBytes: OPENAI_MAX_TOTAL_FILE_BYTES }
 }

@@ -23,54 +23,54 @@ import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import type { TaskCallbacks, TaskServices } from "../tools/types/TaskConfig"
 
 export interface TaskSessionCheckpointPort {
-	capture(input: { readonly messageTs: number; readonly workspaceRef?: string }): Promise<void>
-	restore(input: {
-		readonly messageTs: number
-		readonly mode: CheckpointRestoreMode
-		/** Restore to this journal position instead of a checkpoint captured at `messageTs`. */
-		readonly journalTarget?: { readonly seq: number }
-		readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
-	}): Promise<{ readonly result: CheckpointRestoreResult; readonly fence?: CheckpointRestoreFence }>
+    capture(input: { readonly messageTs: number; readonly workspaceRef?: string }): Promise<void>
+    restore(input: {
+        readonly messageTs: number
+        readonly mode: CheckpointRestoreMode
+        /** Restore to this journal position instead of a checkpoint captured at `messageTs`. */
+        readonly journalTarget?: { readonly seq: number }
+        readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
+    }): Promise<{ readonly result: CheckpointRestoreResult; readonly fence?: CheckpointRestoreFence }>
 }
 
 export interface TaskSessionHostContext {
-	readonly taskId: string
-	readonly taskIncarnationId: string
-	readonly cwd: string
-	readonly settings: TaskStateManager
-	readonly messages: MessageStateHandler
-	readonly activities: TaskActivityStore
-	readonly api: TaskApiHandlerOwner
-	readonly prompt: TaskPromptLifecycle
-	readonly promptCache: PromptCacheHealthTracker
-	readonly toolState: DefaultToolHandlerState
-	readonly interactions: TaskInteractionOwner
-	/** The session's chat-row id sequence; a row the host adds draws from it so it cannot land on another row's id. */
-	readonly nextPresentationId: PresentationIdSequence
-	readonly readState: () => Readonly<TaskState>
-	readonly checkpoints: TaskSessionCheckpointPort
-	/** Rewinds this task's journal conversation, for a restore from a summary card. */
-	readonly conversationRewind?: ConversationRewindPort
+    readonly taskId: string
+    readonly taskIncarnationId: string
+    readonly cwd: string
+    readonly settings: TaskStateManager
+    readonly messages: MessageStateHandler
+    readonly activities: TaskActivityStore
+    readonly api: TaskApiHandlerOwner
+    readonly prompt: TaskPromptLifecycle
+    readonly promptCache: PromptCacheHealthTracker
+    readonly toolState: DefaultToolHandlerState
+    readonly interactions: TaskInteractionOwner
+    /** The session's chat-row id sequence; a row the host adds draws from it so it cannot land on another row's id. */
+    readonly nextPresentationId: PresentationIdSequence
+    readonly readState: () => Readonly<TaskState>
+    readonly checkpoints: TaskSessionCheckpointPort
+    /** Rewinds this task's journal conversation, for a restore from a summary card. */
+    readonly conversationRewind?: ConversationRewindPort
 }
 
 export interface TaskSessionHostResources {
-	readonly services: TaskServices
-	readonly callbacks: TaskCallbacks
-	readonly focusChain?: FocusChainInstructionPort
-	readonly browser: BrowserSession
-	readonly commands: CommandExecutor
-	/** Terminal registry behind `commands`; the environment lists its active terminals. */
-	readonly terminals?: ITerminalManager
-	readonly checkpoints?: ICheckpointManager
-	readonly surface: ToolDomainSurface
-	readonly peerTaskSpawner: PeerTaskSpawnPort
-	readonly providerRequestRounds?: ProviderRequestRoundPort
-	readonly apiRateSnapshot?: () => ApiRateSnapshot
-	readonly queryRateMetrics?: (query: TaskRateMetricsQuery) => Promise<TaskRateMetricsQueryResult>
-	readonly releases?: readonly { release(): Promise<void> }[]
+    readonly services: TaskServices
+    readonly callbacks: TaskCallbacks
+    readonly focusChain?: FocusChainInstructionPort
+    readonly browser: BrowserSession
+    readonly commands: CommandExecutor
+    /** Terminal registry behind `commands`; the environment lists its active terminals. */
+    readonly terminals?: ITerminalManager
+    readonly checkpoints?: ICheckpointManager
+    readonly surface: ToolDomainSurface
+    readonly peerTaskSpawner: PeerTaskSpawnPort
+    readonly providerRequestRounds?: ProviderRequestRoundPort
+    readonly apiRateSnapshot?: () => ApiRateSnapshot
+    readonly queryRateMetrics?: (query: TaskRateMetricsQuery) => Promise<TaskRateMetricsQueryResult>
+    readonly releases?: readonly { release(): Promise<void> }[]
 }
 
 /** Builds host-owned resources only after canonical task owners exist. */
 export interface TaskSessionHostFactory {
-	create(context: TaskSessionHostContext): Promise<TaskSessionHostResources>
+    create(context: TaskSessionHostContext): Promise<TaskSessionHostResources>
 }

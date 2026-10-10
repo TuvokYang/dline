@@ -8,15 +8,15 @@ import type { ClineContent } from "@/shared/messages"
  * @throws Error when both managed and fallback contexts are empty.
  */
 export function ensureApiMessages<T>(managedMessages: T[], fallbackMessages: T[]): T[] {
-	if (managedMessages.length > 0) {
-		return managedMessages
-	}
+    if (managedMessages.length > 0) {
+        return managedMessages
+    }
 
-	if (fallbackMessages.length > 0) {
-		return fallbackMessages
-	}
+    if (fallbackMessages.length > 0) {
+        return fallbackMessages
+    }
 
-	throw new Error("Refusing to send an empty API conversation")
+    throw new Error("Refusing to send an empty API conversation")
 }
 
 /**
@@ -28,11 +28,11 @@ export function ensureApiMessages<T>(managedMessages: T[], fallbackMessages: T[]
  * @throws Error when the content is empty or whitespace-only.
  */
 export function ensureUserContent(userContent: ClineContent[], reason: string): ClineContent[] {
-	if (userContent.some((block) => getContentText(block).trim().length > 0)) {
-		return userContent
-	}
+    if (userContent.some((block) => getContentText(block).trim().length > 0)) {
+        return userContent
+    }
 
-	throw new Error(`Refusing to send empty user content for ${reason}`)
+    throw new Error(`Refusing to send empty user content for ${reason}`)
 }
 
 /**
@@ -42,27 +42,27 @@ export function ensureUserContent(userContent: ClineContent[], reason: string): 
  * @returns Textual content used for non-empty validation.
  */
 function getContentText(block: ClineContent): string {
-	if (block.type === "text") {
-		return block.text
-	}
+    if (block.type === "text") {
+        return block.text
+    }
 
-	if (block.type === "agents_instructions") {
-		return block.content
-	}
+    if (block.type === "agents_instructions") {
+        return block.content
+    }
 
-	if (block.type === "attached_document") {
-		return block.fallback_text
-	}
+    if (block.type === "attached_document") {
+        return block.fallback_text
+    }
 
-	if (block.type === "tool_result") {
-		if (typeof block.content === "string") {
-			return block.content
-		}
+    if (block.type === "tool_result") {
+        if (typeof block.content === "string") {
+            return block.content
+        }
 
-		if (Array.isArray(block.content)) {
-			return block.content.map((contentBlock) => (contentBlock.type === "text" ? contentBlock.text : "")).join("\n")
-		}
-	}
+        if (Array.isArray(block.content)) {
+            return block.content.map((contentBlock) => (contentBlock.type === "text" ? contentBlock.text : "")).join("\n")
+        }
+    }
 
-	return ""
+    return ""
 }

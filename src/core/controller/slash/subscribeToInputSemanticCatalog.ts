@@ -17,44 +17,44 @@ const subs = new Map<Controller, Set<StreamingResponseHandler<WireCatalog>>>()
  * against an empty set while waiting for the first capability change.
  */
 export async function subscribeToInputSemanticCatalog(
-	controller: Controller,
-	_request: EmptyRequest,
-	responseStream: StreamingResponseHandler<WireCatalog>,
-	requestId?: string,
+    controller: Controller,
+    _request: EmptyRequest,
+    responseStream: StreamingResponseHandler<WireCatalog>,
+    requestId?: string,
 ): Promise<void> {
-	let set = subs.get(controller)
-	if (!set) {
-		set = new Set()
-		subs.set(controller, set)
-	}
-	set.add(responseStream)
+    let set = subs.get(controller)
+    if (!set) {
+        set = new Set()
+        subs.set(controller, set)
+    }
+    set.add(responseStream)
 
-	const cleanup = () => {
-		const current = subs.get(controller)
-		if (current) {
-			current.delete(responseStream)
-			if (current.size === 0) subs.delete(controller)
-		}
-	}
+    const cleanup = () => {
+        const current = subs.get(controller)
+        if (current) {
+            current.delete(responseStream)
+            if (current.size === 0) subs.delete(controller)
+        }
+    }
 
-	if (requestId) {
-		getRequestRegistry().registerRequest(requestId, cleanup, { type: "inputSemanticCatalog_subscription" }, responseStream)
-	}
+    if (requestId) {
+        getRequestRegistry().registerRequest(requestId, cleanup, { type: "inputSemanticCatalog_subscription" }, responseStream)
+    }
 
-	const { catalog, changed } = await refreshInputSemanticCatalog(controller)
-	// A revision that moved during this refresh belongs to every subscriber; an
-	// unchanged catalog only needs to reach the stream that just attached.
-	if (changed) {
-		await sendInputSemanticCatalogEvent(controller, catalog)
-		return
-	}
+    const { catalog, changed } = await refreshInputSemanticCatalog(controller)
+    // A revision that moved during this refresh belongs to every subscriber; an
+    // unchanged catalog only needs to reach the stream that just attached.
+    if (changed) {
+        await sendInputSemanticCatalogEvent(controller, catalog)
+        return
+    }
 
-	try {
-		await responseStream(toProtoInputSemanticCatalog(catalog), false)
-	} catch (error) {
-		Logger.error("Error sending initial input semantic catalog:", error)
-		cleanup()
-	}
+    try {
+        await responseStream(toProtoInputSemanticCatalog(catalog), false)
+    } catch (error) {
+        Logger.error("Error sending initial input semantic catalog:", error)
+        cleanup()
+    }
 }
 
 /**
@@ -64,25 +64,25 @@ export async function subscribeToInputSemanticCatalog(
  * projection while nothing about the available nodes moved.
  */
 export async function publishInputSemanticCatalog(controller: Controller): Promise<InputSemanticCatalog> {
-	const { catalog, changed } = await refreshInputSemanticCatalog(controller)
-	if (changed) await sendInputSemanticCatalogEvent(controller, catalog)
-	return catalog
+    const { catalog, changed } = await refreshInputSemanticCatalog(controller)
+    if (changed) await sendInputSemanticCatalogEvent(controller, catalog)
+    return catalog
 }
 
 /** Send a catalog revision to a specific controller's subscribers. */
 export async function sendInputSemanticCatalogEvent(controller: Controller, catalog: InputSemanticCatalog): Promise<void> {
-	const set = subs.get(controller)
-	if (!set || set.size === 0) return
+    const set = subs.get(controller)
+    if (!set || set.size === 0) return
 
-	const wire = toProtoInputSemanticCatalog(catalog)
-	await Promise.all(
-		Array.from(set).map(async (responseStream) => {
-			try {
-				await responseStream(wire, false)
-			} catch (error) {
-				Logger.error("Error sending input semantic catalog event:", error)
-				set.delete(responseStream)
-			}
-		}),
-	)
+    const wire = toProtoInputSemanticCatalog(catalog)
+    await Promise.all(
+        Array.from(set).map(async (responseStream) => {
+            try {
+                await responseStream(wire, false)
+            } catch (error) {
+                Logger.error("Error sending input semantic catalog event:", error)
+                set.delete(responseStream)
+            }
+        }),
+    )
 }

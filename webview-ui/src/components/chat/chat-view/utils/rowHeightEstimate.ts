@@ -46,33 +46,33 @@ const FENCE_PATTERN = /^[ \t]{0,3}(`{3,}|~{3,})/
  * @returns Estimated row height in pixels, or undefined to use the default.
  */
 export function estimateMessageHeight(message: UiMessage): number | undefined {
-	const text = message.text
-	if (!text || !text.includes("```")) return undefined
+    const text = message.text
+    if (!text || !text.includes("```")) return undefined
 
-	let codeLines = 0
-	let fence: string | null = null
-	for (const line of text.split("\n")) {
-		if (fence === null) {
-			const opening = FENCE_PATTERN.exec(line)
-			if (opening) fence = opening[1]
-			continue
-		}
-		// A closing fence must be at least as long as the one that opened it,
-		// which is what allows a block to contain shorter backtick runs.
-		const closing = FENCE_PATTERN.exec(line)
-		if (closing && closing[1].length >= fence.length) {
-			fence = null
-			continue
-		}
-		codeLines += 1
-	}
+    let codeLines = 0
+    let fence: string | null = null
+    for (const line of text.split("\n")) {
+        if (fence === null) {
+            const opening = FENCE_PATTERN.exec(line)
+            if (opening) fence = opening[1]
+            continue
+        }
+        // A closing fence must be at least as long as the one that opened it,
+        // which is what allows a block to contain shorter backtick runs.
+        const closing = FENCE_PATTERN.exec(line)
+        if (closing && closing[1].length >= fence.length) {
+            fence = null
+            continue
+        }
+        codeLines += 1
+    }
 
-	// An unterminated fence means the message is still streaming in; its final
-	// height is not knowable yet, so the count so far is all there is to go on.
-	if (codeLines === 0) return undefined
+    // An unterminated fence means the message is still streaming in; its final
+    // height is not knowable yet, so the count so far is all there is to go on.
+    if (codeLines === 0) return undefined
 
-	const estimate = ROW_CHROME + CODE_BLOCK_CHROME + codeLines * CODE_LINE_HEIGHT
-	return estimate >= WORTH_ESTIMATING ? estimate : undefined
+    const estimate = ROW_CHROME + CODE_BLOCK_CHROME + codeLines * CODE_LINE_HEIGHT
+    return estimate >= WORTH_ESTIMATING ? estimate : undefined
 }
 
 /**
@@ -85,15 +85,15 @@ export function estimateMessageHeight(message: UiMessage): number | undefined {
  * @returns Estimated height in pixels, or undefined to use the default.
  */
 export function estimateRowHeight(row: UiMessage | UiMessage[]): number | undefined {
-	if (!Array.isArray(row)) return estimateMessageHeight(row)
+    if (!Array.isArray(row)) return estimateMessageHeight(row)
 
-	let total = 0
-	let claimed = false
-	for (const message of row) {
-		const estimate = estimateMessageHeight(message)
-		if (estimate === undefined) continue
-		total += estimate
-		claimed = true
-	}
-	return claimed ? total : undefined
+    let total = 0
+    let claimed = false
+    for (const message of row) {
+        const estimate = estimateMessageHeight(message)
+        if (estimate === undefined) continue
+        total += estimate
+        claimed = true
+    }
+    return claimed ? total : undefined
 }

@@ -2,6 +2,6 @@ import * as vscode from "vscode"
 import { OpenTerminalRequest, OpenTerminalResponse } from "@/shared/proto/dline/host"
 
 export async function openTerminalPanel(_: OpenTerminalRequest): Promise<OpenTerminalResponse> {
-	vscode.commands.executeCommand("workbench.action.terminal.focus")
-	return {}
+    vscode.commands.executeCommand("workbench.action.terminal.focus")
+    return {}
 }

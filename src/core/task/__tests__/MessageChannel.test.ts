@@ -6,377 +6,377 @@ import type { MessageStateHandler } from "../message-state"
 import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 
 function createMessageChannel(
-	options: {
-		pushMessage?: (message: UiMessage) => void | Promise<void>
-		syncState?: () => Promise<void>
-		durableCommit?: (message: UiMessage) => Promise<UiMessage>
-	} = {},
+    options: {
+        pushMessage?: (message: UiMessage) => void | Promise<void>
+        syncState?: () => Promise<void>
+        durableCommit?: (message: UiMessage) => Promise<UiMessage>
+    } = {},
 ) {
-	const clineMessages: UiMessage[] = []
-	const taskState: DefaultToolHandlerState & MessageChannelState = new DefaultToolHandlerState()
+    const clineMessages: UiMessage[] = []
+    const taskState: DefaultToolHandlerState & MessageChannelState = new DefaultToolHandlerState()
 
-	let lastTs = 0
-	const flushUiMessages = vi.fn(async () => {})
-	const flushMessageUpdate = vi.fn(async () => {})
-	const channel = new MessageChannel({
-		pushMessage: options.pushMessage ?? (() => {}),
-		syncState: options.syncState ?? (async () => {}),
-		messageStateHandler: {
-			get clineMessages() {
-				return clineMessages
-			},
-			addToClineMessages: async (message: UiMessage) => {
-				clineMessages.push(message)
-			},
-			updateClineMessage: async (index: number, updates: Partial<UiMessage>) => {
-				Object.assign(clineMessages[index], updates)
-			},
-			flushUiMessages,
-			flushMessageUpdate,
-			upsertClineMessageInMemory: async (message: UiMessage) => {
-				const index = clineMessages.findIndex((candidate) => candidate.ts === message.ts)
-				if (index >= 0) {
-					clineMessages[index] = message
-				} else {
-					clineMessages.push(message)
-				}
-				return message
-			},
-			finalizeClineMessage: async (message: UiMessage) => {
-				const index = clineMessages.findIndex((candidate) => candidate.ts === message.ts)
-				if (index >= 0) {
-					clineMessages[index] = message
-				} else {
-					clineMessages.push(message)
-				}
-				return message
-			},
-			beginDurableClineMessage: (message: UiMessage) => {
-				const index = clineMessages.findIndex((candidate) => candidate.ts === message.ts)
-				if (index >= 0) clineMessages[index] = message
-				else clineMessages.push(message)
-				return {
-					message,
-					persistence: options.durableCommit?.(message) ?? Promise.resolve(message),
-				}
-			},
-		} as unknown as MessageStateHandler,
-		taskState,
-		getProviderInfo: () => ({ providerId: "test", modelId: "test-model", mode: "act" }),
-		genTs: () => ++lastTs,
-	})
+    let lastTs = 0
+    const flushUiMessages = vi.fn(async () => {})
+    const flushMessageUpdate = vi.fn(async () => {})
+    const channel = new MessageChannel({
+        pushMessage: options.pushMessage ?? (() => {}),
+        syncState: options.syncState ?? (async () => {}),
+        messageStateHandler: {
+            get clineMessages() {
+                return clineMessages
+            },
+            addToClineMessages: async (message: UiMessage) => {
+                clineMessages.push(message)
+            },
+            updateClineMessage: async (index: number, updates: Partial<UiMessage>) => {
+                Object.assign(clineMessages[index], updates)
+            },
+            flushUiMessages,
+            flushMessageUpdate,
+            upsertClineMessageInMemory: async (message: UiMessage) => {
+                const index = clineMessages.findIndex((candidate) => candidate.ts === message.ts)
+                if (index >= 0) {
+                    clineMessages[index] = message
+                } else {
+                    clineMessages.push(message)
+                }
+                return message
+            },
+            finalizeClineMessage: async (message: UiMessage) => {
+                const index = clineMessages.findIndex((candidate) => candidate.ts === message.ts)
+                if (index >= 0) {
+                    clineMessages[index] = message
+                } else {
+                    clineMessages.push(message)
+                }
+                return message
+            },
+            beginDurableClineMessage: (message: UiMessage) => {
+                const index = clineMessages.findIndex((candidate) => candidate.ts === message.ts)
+                if (index >= 0) clineMessages[index] = message
+                else clineMessages.push(message)
+                return {
+                    message,
+                    persistence: options.durableCommit?.(message) ?? Promise.resolve(message),
+                }
+            },
+        } as unknown as MessageStateHandler,
+        taskState,
+        getProviderInfo: () => ({ providerId: "test", modelId: "test-model", mode: "act" }),
+        genTs: () => ++lastTs,
+    })
 
-	return { channel, clineMessages, taskState, flushUiMessages, flushMessageUpdate }
+    return { channel, clineMessages, taskState, flushUiMessages, flushMessageUpdate }
 }
 
 async function flushMicrotasks(iterations = 5) {
-	for (let i = 0; i < iterations; i++) {
-		await Promise.resolve()
-	}
+    for (let i = 0; i < iterations; i++) {
+        await Promise.resolve()
+    }
 }
 
 describe("MessageChannel.say", () => {
-	it("allows lifecycle state snapshots while the task is aborted", async () => {
-		const { channel, clineMessages, taskState } = createMessageChannel()
-		taskState.cancelOperations("test_task_aborted")
+    it("allows lifecycle state snapshots while the task is aborted", async () => {
+        const { channel, clineMessages, taskState } = createMessageChannel()
+        taskState.cancelOperations("test_task_aborted")
 
-		await channel.say("state_snapshot", JSON.stringify({ phase: "cancelling", apiIndex: 1, timestamp: Date.now() }))
+        await channel.say("state_snapshot", JSON.stringify({ phase: "cancelling", apiIndex: 1, timestamp: Date.now() }))
 
-		assert.equal(clineMessages.length, 1)
-		assert.equal(clineMessages[0].say, "state_snapshot")
-	})
+        assert.equal(clineMessages.length, 1)
+        assert.equal(clineMessages[0].say, "state_snapshot")
+    })
 
-	it("rejects regular visible messages while the task is aborted", async () => {
-		const { channel, taskState } = createMessageChannel()
-		taskState.cancelOperations("test_task_aborted")
+    it("rejects regular visible messages while the task is aborted", async () => {
+        const { channel, taskState } = createMessageChannel()
+        taskState.cancelOperations("test_task_aborted")
 
-		await assert.rejects(channel.say("text", "should not continue after abort"), /Dline instance aborted/)
-	})
+        await assert.rejects(channel.say("text", "should not continue after abort"), /Dline instance aborted/)
+    })
 })
 
 describe("MessageChannel.presentAsk", () => {
-	it("finalizes a transient presentation row before exposing it as a durable ask", async () => {
-		const { channel, clineMessages, flushMessageUpdate } = createMessageChannel()
-		clineMessages.push({ ts: 100, type: "say", say: "tool", text: "partial summary", partial: true })
+    it("finalizes a transient presentation row before exposing it as a durable ask", async () => {
+        const { channel, clineMessages, flushMessageUpdate } = createMessageChannel()
+        clineMessages.push({ ts: 100, type: "say", say: "tool", text: "partial summary", partial: true })
 
-		await expect(channel.presentAsk("condense", "review summary", 100, "condense-1")).resolves.toBe(100)
+        await expect(channel.presentAsk("condense", "review summary", 100, "condense-1")).resolves.toBe(100)
 
-		expect(clineMessages).toHaveLength(1)
-		expect(clineMessages[0]).toMatchObject({
-			ts: 100,
-			type: "ask",
-			ask: "condense",
-			text: "review summary",
-			partial: false,
-			interactionId: "condense-1",
-		})
-		expect(flushMessageUpdate).not.toHaveBeenCalled()
-	})
+        expect(clineMessages).toHaveLength(1)
+        expect(clineMessages[0]).toMatchObject({
+            ts: 100,
+            type: "ask",
+            ask: "condense",
+            text: "review summary",
+            partial: false,
+            interactionId: "condense-1",
+        })
+        expect(flushMessageUpdate).not.toHaveBeenCalled()
+    })
 
-	it("registers a synthesized history ask before a slow durable commit completes", async () => {
-		let releaseCommit!: (message: UiMessage) => void
-		const commitGate = new Promise<UiMessage>((resolve) => {
-			releaseCommit = resolve
-		})
-		const durableCommit = vi.fn(async () => await commitGate)
-		const pushMessage = vi.fn(async () => {})
-		const { channel, clineMessages } = createMessageChannel({ durableCommit, pushMessage })
+    it("registers a synthesized history ask before a slow durable commit completes", async () => {
+        let releaseCommit!: (message: UiMessage) => void
+        const commitGate = new Promise<UiMessage>((resolve) => {
+            releaseCommit = resolve
+        })
+        const durableCommit = vi.fn(async () => await commitGate)
+        const pushMessage = vi.fn(async () => {})
+        const { channel, clineMessages } = createMessageChannel({ durableCommit, pushMessage })
 
-		const registered = channel.beginSynthesizedHistoryAsk("resume_task", "", undefined, "resume-1")
+        const registered = channel.beginSynthesizedHistoryAsk("resume_task", "", undefined, "resume-1")
 
-		expect(durableCommit).toHaveBeenCalledOnce()
-		expect(clineMessages).toEqual([
-			expect.objectContaining({
-				ts: registered.askTs,
-				type: "ask",
-				ask: "resume_task",
-				interactionId: "resume-1",
-				partial: false,
-			}),
-		])
-		expect(pushMessage).not.toHaveBeenCalled()
+        expect(durableCommit).toHaveBeenCalledOnce()
+        expect(clineMessages).toEqual([
+            expect.objectContaining({
+                ts: registered.askTs,
+                type: "ask",
+                ask: "resume_task",
+                interactionId: "resume-1",
+                partial: false,
+            }),
+        ])
+        expect(pushMessage).not.toHaveBeenCalled()
 
-		releaseCommit(clineMessages[0])
-		await registered.persistence
-		expect(pushMessage).toHaveBeenCalledWith(clineMessages[0])
-	})
+        releaseCommit(clineMessages[0])
+        await registered.persistence
+        expect(pushMessage).toHaveBeenCalledWith(clineMessages[0])
+    })
 
-	it("waits for realtime ask delivery before exposing the awaiting interaction", async () => {
-		let releaseDelivery: (() => void) | undefined
-		const delivery = new Promise<void>((resolve) => {
-			releaseDelivery = resolve
-		})
-		const pushMessage = vi.fn(async () => delivery)
-		const { channel } = createMessageChannel({ pushMessage })
-		let settled = false
+    it("waits for realtime ask delivery before exposing the awaiting interaction", async () => {
+        let releaseDelivery: (() => void) | undefined
+        const delivery = new Promise<void>((resolve) => {
+            releaseDelivery = resolve
+        })
+        const pushMessage = vi.fn(async () => delivery)
+        const { channel } = createMessageChannel({ pushMessage })
+        let settled = false
 
-		const presentation = channel.presentAsk("qna_respond", '{"response":"ready"}', 100, "qna-1")
-		void presentation.then(() => {
-			settled = true
-		})
-		await flushMicrotasks()
+        const presentation = channel.presentAsk("qna_respond", '{"response":"ready"}', 100, "qna-1")
+        void presentation.then(() => {
+            settled = true
+        })
+        await flushMicrotasks()
 
-		expect(pushMessage).toHaveBeenCalledOnce()
-		expect(settled).toBe(false)
+        expect(pushMessage).toHaveBeenCalledOnce()
+        expect(settled).toBe(false)
 
-		releaseDelivery?.()
-		await expect(presentation).resolves.toBe(100)
-	})
+        releaseDelivery?.()
+        await expect(presentation).resolves.toBe(100)
+    })
 
-	it("delivers a completion say before upgrading the same row to its ask anchor", async () => {
-		let releaseCompletionSay: (() => void) | undefined
-		const completionSayDelivery = new Promise<void>((resolve) => {
-			releaseCompletionSay = resolve
-		})
-		const delivered: string[] = []
-		const pushMessage = vi.fn(async (message: UiMessage) => {
-			const identity = `${message.type}:${message.ask ?? message.say}`
-			if (message.type === "say" && message.say === "completion_result") {
-				await completionSayDelivery
-			}
-			delivered.push(identity)
-		})
-		const { channel, clineMessages, flushMessageUpdate } = createMessageChannel({ pushMessage })
+    it("delivers a completion say before upgrading the same row to its ask anchor", async () => {
+        let releaseCompletionSay: (() => void) | undefined
+        const completionSayDelivery = new Promise<void>((resolve) => {
+            releaseCompletionSay = resolve
+        })
+        const delivered: string[] = []
+        const pushMessage = vi.fn(async (message: UiMessage) => {
+            const identity = `${message.type}:${message.ask ?? message.say}`
+            if (message.type === "say" && message.say === "completion_result") {
+                await completionSayDelivery
+            }
+            delivered.push(identity)
+        })
+        const { channel, clineMessages, flushMessageUpdate } = createMessageChannel({ pushMessage })
 
-		const completionFlow = (async () => {
-			await channel.say("completion_result", "done", undefined, undefined, false, 100)
-			await channel.presentAsk("completion_result", "done", 100, "completion-1")
-		})()
-		await flushMicrotasks()
+        const completionFlow = (async () => {
+            await channel.say("completion_result", "done", undefined, undefined, false, 100)
+            await channel.presentAsk("completion_result", "done", 100, "completion-1")
+        })()
+        await flushMicrotasks()
 
-		expect(pushMessage).toHaveBeenCalledOnce()
-		releaseCompletionSay?.()
-		await completionFlow
+        expect(pushMessage).toHaveBeenCalledOnce()
+        releaseCompletionSay?.()
+        await completionFlow
 
-		expect(delivered).toEqual(["say:completion_result", "ask:completion_result"])
-		expect(clineMessages).toHaveLength(1)
-		expect(clineMessages[0]).toMatchObject({
-			ts: 100,
-			type: "ask",
-			ask: "completion_result",
-			interactionId: "completion-1",
-		})
-		assert.equal(clineMessages[0].say, undefined)
-		assert.deepEqual(flushMessageUpdate.mock.calls, [[0]])
-	})
+        expect(delivered).toEqual(["say:completion_result", "ask:completion_result"])
+        expect(clineMessages).toHaveLength(1)
+        expect(clineMessages[0]).toMatchObject({
+            ts: 100,
+            type: "ask",
+            ask: "completion_result",
+            interactionId: "completion-1",
+        })
+        assert.equal(clineMessages[0].say, undefined)
+        assert.deepEqual(flushMessageUpdate.mock.calls, [[0]])
+    })
 
-	it("resets a reused command message from a terminal state to pending", async () => {
-		const { channel, clineMessages } = createMessageChannel()
-		await channel.say("command", "echo ready")
-		const commandMessage = clineMessages[0]
-		assert.ok(commandMessage)
-		commandMessage.commandStatus = "completed"
-		commandMessage.exitCode = 0
+    it("resets a reused command message from a terminal state to pending", async () => {
+        const { channel, clineMessages } = createMessageChannel()
+        await channel.say("command", "echo ready")
+        const commandMessage = clineMessages[0]
+        assert.ok(commandMessage)
+        commandMessage.commandStatus = "completed"
+        commandMessage.exitCode = 0
 
-		await channel.presentAsk("command", "echo ready.REQ_APP", commandMessage.ts)
+        await channel.presentAsk("command", "echo ready.REQ_APP", commandMessage.ts)
 
-		assert.equal(clineMessages.length, 1)
-		assert.equal(clineMessages[0].type, "ask")
-		assert.equal(clineMessages[0].ask, "command")
-		assert.equal(clineMessages[0].text, "echo ready.REQ_APP")
-		assert.equal(clineMessages[0].partial, false)
-		assert.equal(clineMessages[0].commandStatus, "pending")
-		assert.equal(clineMessages[0].exitCode, undefined)
-	})
+        assert.equal(clineMessages.length, 1)
+        assert.equal(clineMessages[0].type, "ask")
+        assert.equal(clineMessages[0].ask, "command")
+        assert.equal(clineMessages[0].text, "echo ready.REQ_APP")
+        assert.equal(clineMessages[0].partial, false)
+        assert.equal(clineMessages[0].commandStatus, "pending")
+        assert.equal(clineMessages[0].exitCode, undefined)
+    })
 
-	it("keeps a rejected tool ask as a persisted timeline presentation", async () => {
-		const { channel, clineMessages } = createMessageChannel()
-		const presentation = JSON.stringify({ tool: "editedExistingFile", path: "src/example.ts" })
+    it("keeps a rejected tool ask as a persisted timeline presentation", async () => {
+        const { channel, clineMessages } = createMessageChannel()
+        const presentation = JSON.stringify({ tool: "editedExistingFile", path: "src/example.ts" })
 
-		const messageTs = await channel.presentAsk("tool", presentation)
-		channel.resolve("noButtonClicked", "not now")
+        const messageTs = await channel.presentAsk("tool", presentation)
+        channel.resolve("noButtonClicked", "not now")
 
-		assert.equal(clineMessages.length, 1)
-		assert.deepEqual(clineMessages[0], {
-			ts: messageTs,
-			type: "ask",
-			say: undefined,
-			ask: "tool",
-			text: presentation,
-			partial: false,
-		})
-	})
+        assert.equal(clineMessages.length, 1)
+        assert.deepEqual(clineMessages[0], {
+            ts: messageTs,
+            type: "ask",
+            say: undefined,
+            ask: "tool",
+            text: presentation,
+            partial: false,
+        })
+    })
 
-	it("sets pending for a new command ask without assigning command status to other asks", async () => {
-		const { channel, clineMessages } = createMessageChannel()
+    it("sets pending for a new command ask without assigning command status to other asks", async () => {
+        const { channel, clineMessages } = createMessageChannel()
 
-		await channel.presentAsk("command", "echo ready.REQ_APP")
-		await channel.presentAsk("qna_respond", '{"response":"ready"}')
+        await channel.presentAsk("command", "echo ready.REQ_APP")
+        await channel.presentAsk("qna_respond", '{"response":"ready"}')
 
-		assert.equal(clineMessages[0].commandStatus, "pending")
-		assert.equal(clineMessages[1].commandStatus, undefined)
-	})
+        assert.equal(clineMessages[0].commandStatus, "pending")
+        assert.equal(clineMessages[1].commandStatus, undefined)
+    })
 })
 
 describe("MessageChannel.presentSay", () => {
-	it("upserts one durable user feedback row by interaction identity", async () => {
-		const { channel, clineMessages, flushMessageUpdate, flushUiMessages } = createMessageChannel()
+    it("upserts one durable user feedback row by interaction identity", async () => {
+        const { channel, clineMessages, flushMessageUpdate, flushUiMessages } = createMessageChannel()
 
-		const firstTs = await channel.presentSay("user_feedback", "continue after cancel", ["image"], ["file"], "resume-1")
-		const retryTs = await channel.presentSay("user_feedback", "continue after cancel", ["image"], ["file"], "resume-1")
+        const firstTs = await channel.presentSay("user_feedback", "continue after cancel", ["image"], ["file"], "resume-1")
+        const retryTs = await channel.presentSay("user_feedback", "continue after cancel", ["image"], ["file"], "resume-1")
 
-		assert.equal(retryTs, firstTs)
-		assert.equal(clineMessages.length, 1)
-		assert.deepEqual(clineMessages[0], {
-			ts: firstTs,
-			type: "say",
-			say: "user_feedback",
-			text: "continue after cancel",
-			images: ["image"],
-			files: ["file"],
-			partial: false,
-			interactionId: "resume-1",
-			modelInfo: { providerId: "test", modelId: "test-model", mode: "act" },
-		})
-		assert.equal(flushUiMessages.mock.calls.length, 1)
-		assert.deepEqual(flushMessageUpdate.mock.calls, [[0]])
-	})
+        assert.equal(retryTs, firstTs)
+        assert.equal(clineMessages.length, 1)
+        assert.deepEqual(clineMessages[0], {
+            ts: firstTs,
+            type: "say",
+            say: "user_feedback",
+            text: "continue after cancel",
+            images: ["image"],
+            files: ["file"],
+            partial: false,
+            interactionId: "resume-1",
+            modelInfo: { providerId: "test", modelId: "test-model", mode: "act" },
+        })
+        assert.equal(flushUiMessages.mock.calls.length, 1)
+        assert.deepEqual(flushMessageUpdate.mock.calls, [[0]])
+    })
 })
 
 describe("MessageChannel.ask", () => {
-	it("uses the canonical ignored-promise diagnostic for a partial ask", async () => {
-		const { channel, clineMessages } = createMessageChannel()
+    it("uses the canonical ignored-promise diagnostic for a partial ask", async () => {
+        const { channel, clineMessages } = createMessageChannel()
 
-		await assert.rejects(channel.ask("qna_respond", '{"response":"partial"}', true), {
-			message: "Current ask promise was ignored",
-		})
+        await assert.rejects(channel.ask("qna_respond", '{"response":"partial"}', true), {
+            message: "Current ask promise was ignored",
+        })
 
-		assert.equal(clineMessages.length, 1)
-		assert.equal(clineMessages[0].partial, true)
-	})
+        assert.equal(clineMessages.length, 1)
+        assert.equal(clineMessages[0].partial, true)
+    })
 
-	it("does not treat state_snapshot messages as superseding a pending ask", async () => {
-		const clock = vi.useFakeTimers()
-		const { channel } = createMessageChannel()
+    it("does not treat state_snapshot messages as superseding a pending ask", async () => {
+        const clock = vi.useFakeTimers()
+        const { channel } = createMessageChannel()
 
-		try {
-			const askPromise = channel.ask("resume_task")
-			let settled = false
-			void askPromise.then(
-				() => {
-					settled = true
-				},
-				() => {
-					settled = true
-				},
-			)
+        try {
+            const askPromise = channel.ask("resume_task")
+            let settled = false
+            void askPromise.then(
+                () => {
+                    settled = true
+                },
+                () => {
+                    settled = true
+                },
+            )
 
-			await flushMicrotasks()
-			await channel.say("state_snapshot", JSON.stringify({ phase: "streaming", apiIndex: -1, timestamp: Date.now() }))
-			await clock.advanceTimersByTimeAsync(200)
+            await flushMicrotasks()
+            await channel.say("state_snapshot", JSON.stringify({ phase: "streaming", apiIndex: -1, timestamp: Date.now() }))
+            await clock.advanceTimersByTimeAsync(200)
 
-			assert.equal(settled, false)
+            assert.equal(settled, false)
 
-			channel.resolve("yesButtonClicked")
-			await clock.advanceTimersByTimeAsync(100)
+            channel.resolve("yesButtonClicked")
+            await clock.advanceTimersByTimeAsync(100)
 
-			const result = await askPromise
-			assert.equal(result.response, "yesButtonClicked")
-		} finally {
-			clock.useRealTimers()
-		}
-	})
+            const result = await askPromise
+            assert.equal(result.response, "yesButtonClicked")
+        } finally {
+            clock.useRealTimers()
+        }
+    })
 
-	it("allows user_feedback created by the current ask response before the ask settles", async () => {
-		const clock = vi.useFakeTimers()
-		const { channel, clineMessages } = createMessageChannel()
+    it("allows user_feedback created by the current ask response before the ask settles", async () => {
+        const clock = vi.useFakeTimers()
+        const { channel, clineMessages } = createMessageChannel()
 
-		try {
-			const askPromise = channel.ask("qna_respond")
+        try {
+            const askPromise = channel.ask("qna_respond")
 
-			await flushMicrotasks()
-			channel.resolve("messageResponse", "My lord response")
-			await channel.say("user_feedback", "My lord response")
-			await clock.advanceTimersByTimeAsync(100)
+            await flushMicrotasks()
+            channel.resolve("messageResponse", "My lord response")
+            await channel.say("user_feedback", "My lord response")
+            await clock.advanceTimersByTimeAsync(100)
 
-			const result = await askPromise
-			assert.equal(result.response, "messageResponse")
-			assert.equal(result.text, "My lord response")
-			assert.equal(clineMessages.at(-1)?.say, "user_feedback")
-		} finally {
-			clock.useRealTimers()
-		}
-	})
+            const result = await askPromise
+            assert.equal(result.response, "messageResponse")
+            assert.equal(result.text, "My lord response")
+            assert.equal(clineMessages.at(-1)?.say, "user_feedback")
+        } finally {
+            clock.useRealTimers()
+        }
+    })
 
-	it("allows checkpoint side effects created by the current ask response before the ask settles", async () => {
-		const clock = vi.useFakeTimers()
-		const { channel, clineMessages } = createMessageChannel()
+    it("allows checkpoint side effects created by the current ask response before the ask settles", async () => {
+        const clock = vi.useFakeTimers()
+        const { channel, clineMessages } = createMessageChannel()
 
-		try {
-			const askPromise = channel.ask("qna_respond")
+        try {
+            const askPromise = channel.ask("qna_respond")
 
-			await flushMicrotasks()
-			channel.resolve("messageResponse", "My lord response")
-			await channel.say("user_feedback", "My lord response")
-			await channel.say("checkpoint_created")
-			await clock.advanceTimersByTimeAsync(100)
+            await flushMicrotasks()
+            channel.resolve("messageResponse", "My lord response")
+            await channel.say("user_feedback", "My lord response")
+            await channel.say("checkpoint_created")
+            await clock.advanceTimersByTimeAsync(100)
 
-			const result = await askPromise
-			assert.equal(result.response, "messageResponse")
-			assert.equal(result.text, "My lord response")
-			assert.equal(clineMessages.at(-1)?.say, "checkpoint_created")
-		} finally {
-			clock.useRealTimers()
-		}
-	})
+            const result = await askPromise
+            assert.equal(result.response, "messageResponse")
+            assert.equal(result.text, "My lord response")
+            assert.equal(clineMessages.at(-1)?.say, "checkpoint_created")
+        } finally {
+            clock.useRealTimers()
+        }
+    })
 
-	it("still treats non-internal messages as superseding a pending ask", async () => {
-		const clock = vi.useFakeTimers()
-		const { channel } = createMessageChannel()
+    it("still treats non-internal messages as superseding a pending ask", async () => {
+        const clock = vi.useFakeTimers()
+        const { channel } = createMessageChannel()
 
-		try {
-			const askPromise = channel.ask("resume_task")
-			const rejection = assert.rejects(askPromise, { message: "Current ask promise was ignored" })
+        try {
+            const askPromise = channel.ask("resume_task")
+            const rejection = assert.rejects(askPromise, { message: "Current ask promise was ignored" })
 
-			await flushMicrotasks()
-			await channel.say("text", "new visible message")
-			await clock.advanceTimersByTimeAsync(100)
+            await flushMicrotasks()
+            await channel.say("text", "new visible message")
+            await clock.advanceTimersByTimeAsync(100)
 
-			await rejection
-		} finally {
-			clock.useRealTimers()
-		}
-	})
+            await rejection
+        } finally {
+            clock.useRealTimers()
+        }
+    })
 })
 
 /**
@@ -388,84 +388,84 @@ describe("MessageChannel.ask", () => {
  * entered the conversation as a reply to a question they never saw.
  */
 describe("MessageChannel.resolve without a waiting ask", () => {
-	it("refuses a response when no ask is waiting", () => {
-		const { channel, taskState } = createMessageChannel()
+    it("refuses a response when no ask is waiting", () => {
+        const { channel, taskState } = createMessageChannel()
 
-		assert.equal(channel.resolve("messageResponse", "typed while the task was working"), false)
-		assert.equal(taskState.askResponse, undefined)
-		assert.equal(taskState.askResponseText, undefined)
-	})
+        assert.equal(channel.resolve("messageResponse", "typed while the task was working"), false)
+        assert.equal(taskState.askResponse, undefined)
+        assert.equal(taskState.askResponseText, undefined)
+    })
 
-	it("does not let a refused response answer the next unrelated ask", async () => {
-		const clock = vi.useFakeTimers()
-		const { channel } = createMessageChannel()
+    it("does not let a refused response answer the next unrelated ask", async () => {
+        const clock = vi.useFakeTimers()
+        const { channel } = createMessageChannel()
 
-		try {
-			// Arrives while the task is working, with nothing waiting for it.
-			assert.equal(channel.resolve("messageResponse", "ghost response"), false)
+        try {
+            // Arrives while the task is working, with nothing waiting for it.
+            assert.equal(channel.resolve("messageResponse", "ghost response"), false)
 
-			// A later, unrelated question must not find that value sitting there.
-			const askPromise = channel.ask("qna_respond")
-			let settled = false
-			void askPromise.then(
-				() => {
-					settled = true
-				},
-				() => {
-					settled = true
-				},
-			)
-			await flushMicrotasks()
-			await clock.advanceTimersByTimeAsync(300)
+            // A later, unrelated question must not find that value sitting there.
+            const askPromise = channel.ask("qna_respond")
+            let settled = false
+            void askPromise.then(
+                () => {
+                    settled = true
+                },
+                () => {
+                    settled = true
+                },
+            )
+            await flushMicrotasks()
+            await clock.advanceTimersByTimeAsync(300)
 
-			assert.equal(settled, false)
+            assert.equal(settled, false)
 
-			// The real answer still resolves it normally.
-			assert.equal(channel.resolve("messageResponse", "real answer"), true)
-			await clock.advanceTimersByTimeAsync(100)
+            // The real answer still resolves it normally.
+            assert.equal(channel.resolve("messageResponse", "real answer"), true)
+            await clock.advanceTimersByTimeAsync(100)
 
-			const result = await askPromise
-			assert.equal(result.text, "real answer")
-		} finally {
-			clock.useRealTimers()
-		}
-	})
+            const result = await askPromise
+            assert.equal(result.text, "real answer")
+        } finally {
+            clock.useRealTimers()
+        }
+    })
 
-	it("stops accepting responses once the ask has settled", async () => {
-		const clock = vi.useFakeTimers()
-		const { channel } = createMessageChannel()
+    it("stops accepting responses once the ask has settled", async () => {
+        const clock = vi.useFakeTimers()
+        const { channel } = createMessageChannel()
 
-		try {
-			const askPromise = channel.ask("qna_respond")
-			await flushMicrotasks()
-			assert.equal(channel.resolve("messageResponse", "answer"), true)
-			await clock.advanceTimersByTimeAsync(100)
-			await askPromise
+        try {
+            const askPromise = channel.ask("qna_respond")
+            await flushMicrotasks()
+            assert.equal(channel.resolve("messageResponse", "answer"), true)
+            await clock.advanceTimersByTimeAsync(100)
+            await askPromise
 
-			assert.equal(channel.resolve("messageResponse", "too late"), false)
-		} finally {
-			clock.useRealTimers()
-		}
-	})
+            assert.equal(channel.resolve("messageResponse", "too late"), false)
+        } finally {
+            clock.useRealTimers()
+        }
+    })
 
-	// An abandoned ask must not leave the channel accepting responses for a
-	// question that is no longer being asked.
-	it("stops accepting responses after a superseded ask is abandoned", async () => {
-		const clock = vi.useFakeTimers()
-		const { channel } = createMessageChannel()
+    // An abandoned ask must not leave the channel accepting responses for a
+    // question that is no longer being asked.
+    it("stops accepting responses after a superseded ask is abandoned", async () => {
+        const clock = vi.useFakeTimers()
+        const { channel } = createMessageChannel()
 
-		try {
-			const askPromise = channel.ask("resume_task")
-			const rejection = assert.rejects(askPromise, { message: "Current ask promise was ignored" })
+        try {
+            const askPromise = channel.ask("resume_task")
+            const rejection = assert.rejects(askPromise, { message: "Current ask promise was ignored" })
 
-			await flushMicrotasks()
-			await channel.say("text", "new visible message")
-			await clock.advanceTimersByTimeAsync(100)
-			await rejection
+            await flushMicrotasks()
+            await channel.say("text", "new visible message")
+            await clock.advanceTimersByTimeAsync(100)
+            await rejection
 
-			assert.equal(channel.resolve("messageResponse", "orphaned"), false)
-		} finally {
-			clock.useRealTimers()
-		}
-	})
+            assert.equal(channel.resolve("messageResponse", "orphaned"), false)
+        } finally {
+            clock.useRealTimers()
+        }
+    })
 })

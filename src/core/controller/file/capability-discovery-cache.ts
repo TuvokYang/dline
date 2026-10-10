@@ -34,24 +34,24 @@ import type { Controller } from "../index"
 
 /** Capability kinds whose local discovery result is mirrored into workspace state. */
 const DISCOVERY_STATE_KEYS: Readonly<Partial<Record<CapabilityKind, LocalStateKey>>> = {
-	rules: "discoveredRulesToggles",
-	workflows: "discoveredWorkflowToggles",
-	skills: "discoveredSkillsToggles",
-	subagents: "discoveredSubagentsToggles",
-	cursorRules: "discoveredCursorRulesToggles",
-	windsurfRules: "discoveredWindsurfRulesToggles",
-	agentsRules: "discoveredAgentsRulesToggles",
+    rules: "discoveredRulesToggles",
+    workflows: "discoveredWorkflowToggles",
+    skills: "discoveredSkillsToggles",
+    subagents: "discoveredSubagentsToggles",
+    cursorRules: "discoveredCursorRulesToggles",
+    windsurfRules: "discoveredWindsurfRulesToggles",
+    agentsRules: "discoveredAgentsRulesToggles",
 }
 
 const discoveredTogglesByController = new WeakMap<Controller, Map<CapabilityKind, ClineRulesToggles>>()
 
 function cacheFor(controller: Controller): Map<CapabilityKind, ClineRulesToggles> {
-	let byKind = discoveredTogglesByController.get(controller)
-	if (!byKind) {
-		byKind = new Map()
-		discoveredTogglesByController.set(controller, byKind)
-	}
-	return byKind
+    let byKind = discoveredTogglesByController.get(controller)
+    if (!byKind) {
+        byKind = new Map()
+        discoveredTogglesByController.set(controller, byKind)
+    }
+    return byKind
 }
 
 /**
@@ -62,50 +62,50 @@ function cacheFor(controller: Controller): Map<CapabilityKind, ClineRulesToggles
  * made the panel flicker.
  */
 export function rememberDiscoveredToggles(
-	controller: Controller,
-	kind: CapabilityKind,
-	discovered: Readonly<ClineRulesToggles>,
-	complete: boolean,
+    controller: Controller,
+    kind: CapabilityKind,
+    discovered: Readonly<ClineRulesToggles>,
+    complete: boolean,
 ): void {
-	if (!complete) {
-		Logger.debug(`[CapabilityDiscovery] Ignoring incomplete ${kind} scan; keeping the previous result`)
-		return
-	}
+    if (!complete) {
+        Logger.debug(`[CapabilityDiscovery] Ignoring incomplete ${kind} scan; keeping the previous result`)
+        return
+    }
 
-	const snapshot = { ...discovered }
-	cacheFor(controller).set(kind, snapshot)
-	void persistDiscoveredToggles(controller, kind, snapshot)
+    const snapshot = { ...discovered }
+    cacheFor(controller).set(kind, snapshot)
+    void persistDiscoveredToggles(controller, kind, snapshot)
 }
 
 /** Read the last trustworthy scan result for one capability kind. */
 export function readDiscoveredToggles(controller: Controller, kind: CapabilityKind): ClineRulesToggles {
-	const cached = discoveredTogglesByController.get(controller)?.get(kind)
-	if (cached) return cached
+    const cached = discoveredTogglesByController.get(controller)?.get(kind)
+    if (cached) return cached
 
-	// Nothing scanned yet in this session. Fall back to the mirror so a restart
-	// shows the previous set instead of an empty panel.
-	return readPersistedDiscoveredToggles(controller.stateManager, kind)
+    // Nothing scanned yet in this session. Fall back to the mirror so a restart
+    // shows the previous set instead of an empty panel.
+    return readPersistedDiscoveredToggles(controller.stateManager, kind)
 }
 
 function readPersistedDiscoveredToggles(stateManager: StateManager, kind: CapabilityKind): ClineRulesToggles {
-	const key = DISCOVERY_STATE_KEYS[kind]
-	if (!key) return {}
-	return stateManager.getWorkspaceStateKey(key) ?? {}
+    const key = DISCOVERY_STATE_KEYS[kind]
+    if (!key) return {}
+    return stateManager.getWorkspaceStateKey(key) ?? {}
 }
 
 async function persistDiscoveredToggles(
-	controller: Controller,
-	kind: CapabilityKind,
-	discovered: ClineRulesToggles,
+    controller: Controller,
+    kind: CapabilityKind,
+    discovered: ClineRulesToggles,
 ): Promise<void> {
-	const key = DISCOVERY_STATE_KEYS[kind]
-	if (!key) return
+    const key = DISCOVERY_STATE_KEYS[kind]
+    if (!key) return
 
-	try {
-		await controller.stateManager.setWorkspaceState(key, discovered)
-	} catch (error) {
-		// The mirror only speeds up the next startup; losing it degrades to the
-		// pre-scan empty panel rather than breaking the current session.
-		Logger.warn(`[CapabilityDiscovery] Failed to persist the ${kind} discovery snapshot`, error)
-	}
+    try {
+        await controller.stateManager.setWorkspaceState(key, discovered)
+    } catch (error) {
+        // The mirror only speeds up the next startup; losing it degrades to the
+        // pre-scan empty panel rather than breaking the current session.
+        Logger.warn(`[CapabilityDiscovery] Failed to persist the ${kind} discovery snapshot`, error)
+    }
 }

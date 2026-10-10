@@ -18,47 +18,47 @@ const GROUP_LENGTH = 4
 const DEFAULT_TTL_MS = 5 * 60 * 1000
 
 export enum PairingRejection {
-	/** No code is active, or the supplied value does not match the active one. */
-	Unknown = "unknown",
-	/** The active code passed its expiry. */
-	Expired = "expired",
-	/** The active code was already exchanged for a pairing. */
-	AlreadyRedeemed = "already_redeemed",
+    /** No code is active, or the supplied value does not match the active one. */
+    Unknown = "unknown",
+    /** The active code passed its expiry. */
+    Expired = "expired",
+    /** The active code was already exchanged for a pairing. */
+    AlreadyRedeemed = "already_redeemed",
 }
 
 export interface IssuedPairingCode {
-	readonly code: string
-	readonly issuedAt: number
-	readonly expiresAt: number
+    readonly code: string
+    readonly issuedAt: number
+    readonly expiresAt: number
 }
 
 export interface PairingStatus {
-	/** Whether a code is waiting to be redeemed. Never the code itself. */
-	readonly hasPendingCode: boolean
-	/** When the pending code stops being accepted. */
-	readonly expiresAt?: number
-	/** When a collector successfully paired, if one did. */
-	readonly pairedAt?: number
+    /** Whether a code is waiting to be redeemed. Never the code itself. */
+    readonly hasPendingCode: boolean
+    /** When the pending code stops being accepted. */
+    readonly expiresAt?: number
+    /** When a collector successfully paired, if one did. */
+    readonly pairedAt?: number
 }
 
 export interface PairingAuthorizationOptions {
-	readonly ttlMs?: number
-	/** Wall clock, injectable so expiry can be tested without waiting. */
-	readonly now?: () => number
+    readonly ttlMs?: number
+    /** Wall clock, injectable so expiry can be tested without waiting. */
+    readonly now?: () => number
 }
 
 interface PendingCode {
-	readonly value: string
-	readonly expiresAt: number
-	redeemed: boolean
+    readonly value: string
+    readonly expiresAt: number
+    redeemed: boolean
 }
 
 function generateGroup(): string {
-	let group = ""
-	for (let index = 0; index < GROUP_LENGTH; index++) {
-		group += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]
-	}
-	return group
+    let group = ""
+    for (let index = 0; index < GROUP_LENGTH; index++) {
+        group += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]
+    }
+    return group
 }
 
 /**
@@ -69,66 +69,66 @@ function generateGroup(): string {
  * that door.
  */
 function matches(expected: string, supplied: string): boolean {
-	const expectedBytes = Buffer.from(expected, "utf8")
-	const suppliedBytes = Buffer.from(supplied, "utf8")
-	if (expectedBytes.length !== suppliedBytes.length) return false
-	return timingSafeEqual(expectedBytes, suppliedBytes)
+    const expectedBytes = Buffer.from(expected, "utf8")
+    const suppliedBytes = Buffer.from(supplied, "utf8")
+    if (expectedBytes.length !== suppliedBytes.length) return false
+    return timingSafeEqual(expectedBytes, suppliedBytes)
 }
 
 function normalize(code: string): string {
-	return code.trim().toUpperCase()
+    return code.trim().toUpperCase()
 }
 
 export class PairingAuthorization {
-	private readonly ttlMs: number
-	private readonly now: () => number
+    private readonly ttlMs: number
+    private readonly now: () => number
 
-	private pending: PendingCode | undefined
-	private pairedAt: number | undefined
+    private pending: PendingCode | undefined
+    private pairedAt: number | undefined
 
-	constructor(options: PairingAuthorizationOptions = {}) {
-		this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
-		this.now = options.now ?? (() => Date.now())
-	}
+    constructor(options: PairingAuthorizationOptions = {}) {
+        this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS
+        this.now = options.now ?? (() => Date.now())
+    }
 
-	get status(): PairingStatus {
-		const pending = this.pending
-		return {
-			hasPendingCode: pending !== undefined && !pending.redeemed && pending.expiresAt > this.now(),
-			expiresAt: pending?.expiresAt,
-			pairedAt: this.pairedAt,
-		}
-	}
+    get status(): PairingStatus {
+        const pending = this.pending
+        return {
+            hasPendingCode: pending !== undefined && !pending.redeemed && pending.expiresAt > this.now(),
+            expiresAt: pending?.expiresAt,
+            pairedAt: this.pairedAt,
+        }
+    }
 
-	/**
-	 * Produce a fresh code, invalidating any earlier one.
-	 *
-	 * Replacing rather than accumulating means a user who clicks twice cannot
-	 * accidentally leave an older code usable.
-	 */
-	issue(): IssuedPairingCode {
-		const issuedAt = this.now()
-		const value = `${generateGroup()}-${generateGroup()}`
-		this.pending = { value, expiresAt: issuedAt + this.ttlMs, redeemed: false }
-		return { code: value, issuedAt, expiresAt: this.pending.expiresAt }
-	}
+    /**
+     * Produce a fresh code, invalidating any earlier one.
+     *
+     * Replacing rather than accumulating means a user who clicks twice cannot
+     * accidentally leave an older code usable.
+     */
+    issue(): IssuedPairingCode {
+        const issuedAt = this.now()
+        const value = `${generateGroup()}-${generateGroup()}`
+        this.pending = { value, expiresAt: issuedAt + this.ttlMs, redeemed: false }
+        return { code: value, issuedAt, expiresAt: this.pending.expiresAt }
+    }
 
-	/** Exchange a code for a pairing. Returns the rejection reason, if any. */
-	redeem(code: string): PairingRejection | undefined {
-		const pending = this.pending
-		if (!pending) return PairingRejection.Unknown
-		if (!matches(pending.value, normalize(code))) return PairingRejection.Unknown
-		if (pending.redeemed) return PairingRejection.AlreadyRedeemed
-		if (pending.expiresAt <= this.now()) return PairingRejection.Expired
+    /** Exchange a code for a pairing. Returns the rejection reason, if any. */
+    redeem(code: string): PairingRejection | undefined {
+        const pending = this.pending
+        if (!pending) return PairingRejection.Unknown
+        if (!matches(pending.value, normalize(code))) return PairingRejection.Unknown
+        if (pending.redeemed) return PairingRejection.AlreadyRedeemed
+        if (pending.expiresAt <= this.now()) return PairingRejection.Expired
 
-		pending.redeemed = true
-		this.pairedAt = this.now()
-		return undefined
-	}
+        pending.redeemed = true
+        this.pairedAt = this.now()
+        return undefined
+    }
 
-	/** Drop the pairing and any pending code. */
-	revoke(): void {
-		this.pending = undefined
-		this.pairedAt = undefined
-	}
+    /** Drop the pairing and any pending code. */
+    revoke(): void {
+        this.pending = undefined
+        this.pairedAt = undefined
+    }
 }

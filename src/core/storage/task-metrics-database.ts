@@ -26,24 +26,24 @@ const pendingMoves = new Map<string, Promise<string>>()
  * @param location an explicit database path, used as is (tests and tools).
  */
 export async function resolveTaskMetricsDatabase(taskId: string, location?: string, readOnly = false): Promise<string> {
-	if (location) return location
-	if (readOnly) {
-		const existing = await findExistingTaskMetricsDatabase(taskId)
-		if (!existing) throw new Error(`Task ${taskId} has no metrics database`)
-		return existing
-	}
-	const layout = await ensureInstanceLayout({ taskId })
-	const target = layout.database(InstanceDatabase.Metrics)
-	const key = moveKey(target)
-	let pending = pendingMoves.get(key)
-	if (!pending) {
-		pending = new FileLock().withLock(target, () => moveLegacyDatabase(layout, taskId, target))
-		pendingMoves.set(key, pending)
-		// Every attempt re-checks under the lock, so another process's move is observed too.
-		const forget = () => pendingMoves.delete(key)
-		void pending.then(forget, forget)
-	}
-	return pending
+    if (location) return location
+    if (readOnly) {
+        const existing = await findExistingTaskMetricsDatabase(taskId)
+        if (!existing) throw new Error(`Task ${taskId} has no metrics database`)
+        return existing
+    }
+    const layout = await ensureInstanceLayout({ taskId })
+    const target = layout.database(InstanceDatabase.Metrics)
+    const key = moveKey(target)
+    let pending = pendingMoves.get(key)
+    if (!pending) {
+        pending = new FileLock().withLock(target, () => moveLegacyDatabase(layout, taskId, target))
+        pendingMoves.set(key, pending)
+        // Every attempt re-checks under the lock, so another process's move is observed too.
+        const forget = () => pendingMoves.delete(key)
+        void pending.then(forget, forget)
+    }
+    return pending
 }
 
 /**
@@ -55,77 +55,77 @@ export async function resolveTaskMetricsDatabase(taskId: string, location?: stri
  * read. A task that never recorded metrics has none, and the view shows none.
  */
 export async function findExistingTaskMetricsDatabase(taskId: string): Promise<string | undefined> {
-	const layout = await resolveInstanceLayout({ taskId })
-	const target = layout.database(InstanceDatabase.Metrics)
-	await pendingMoves.get(moveKey(target))?.catch(() => undefined)
-	await FileLock.waitUntilUnlocked(target)
-	const legacy = legacyDatabase(layout, taskId)
-	if (await exists(target)) {
-		if (!(await exists(legacy)) && (await hasLegacySideFiles(legacy))) {
-			throw new Error(`Task ${taskId} metrics move is incomplete; the next run of the task recovers it`)
-		}
-		return target
-	}
-	return (await exists(legacy)) ? legacy : undefined
+    const layout = await resolveInstanceLayout({ taskId })
+    const target = layout.database(InstanceDatabase.Metrics)
+    await pendingMoves.get(moveKey(target))?.catch(() => undefined)
+    await FileLock.waitUntilUnlocked(target)
+    const legacy = legacyDatabase(layout, taskId)
+    if (await exists(target)) {
+        if (!(await exists(legacy)) && (await hasLegacySideFiles(legacy))) {
+            throw new Error(`Task ${taskId} metrics move is incomplete; the next run of the task recovers it`)
+        }
+        return target
+    }
+    return (await exists(legacy)) ? legacy : undefined
 }
 
 function legacyDatabase(layout: InstanceLayout, taskId: string): string {
-	return path.join(layout.root, GlobalFileNames.legacyTaskDatabase(taskId))
+    return path.join(layout.root, GlobalFileNames.legacyTaskDatabase(taskId))
 }
 
 function moveKey(target: string): string {
-	return process.platform === "win32" ? target.toLowerCase() : target
+    return process.platform === "win32" ? target.toLowerCase() : target
 }
 
 async function moveLegacyDatabase(layout: InstanceLayout, taskId: string, target: string): Promise<string> {
-	const legacy = legacyDatabase(layout, taskId)
-	const legacyExists = await exists(legacy)
-	const targetExists = await exists(target)
-	const recovering = targetExists && !legacyExists && (await hasLegacySideFiles(legacy))
-	if ((targetExists && !recovering) || (!legacyExists && !recovering)) return target
-	const moved: Array<{ source: string; destination: string }> = []
-	try {
-		for (const suffix of ["", ...SQLITE_SIDE_FILES]) {
-			const source = `${legacy}${suffix}`
-			const destination = `${target}${suffix}`
-			if (!(await exists(source))) continue
-			if (await exists(destination)) throw new Error("Task metrics destination already exists")
-			await rename(source, destination)
-			moved.push({ source, destination })
-		}
-		return target
-	} catch (error) {
-		// A sidecar failure must not leave the database split between two names.
-		const rollbackErrors: unknown[] = []
-		for (const { source, destination } of moved.reverse()) {
-			try {
-				await rename(destination, source)
-			} catch (rollbackError) {
-				rollbackErrors.push(rollbackError)
-			}
-		}
-		if (rollbackErrors.length > 0) {
-			throw new AggregateError([error, ...rollbackErrors], `Task metrics move could not be restored for ${taskId}`)
-		}
-		if (recovering) throw new Error("Task metrics move could not be recovered", { cause: error })
-		Logger.warn(`[Task ${taskId}] Metrics database rename deferred; keeping the existing container`, error)
-		return legacy
-	}
+    const legacy = legacyDatabase(layout, taskId)
+    const legacyExists = await exists(legacy)
+    const targetExists = await exists(target)
+    const recovering = targetExists && !legacyExists && (await hasLegacySideFiles(legacy))
+    if ((targetExists && !recovering) || (!legacyExists && !recovering)) return target
+    const moved: Array<{ source: string; destination: string }> = []
+    try {
+        for (const suffix of ["", ...SQLITE_SIDE_FILES]) {
+            const source = `${legacy}${suffix}`
+            const destination = `${target}${suffix}`
+            if (!(await exists(source))) continue
+            if (await exists(destination)) throw new Error("Task metrics destination already exists")
+            await rename(source, destination)
+            moved.push({ source, destination })
+        }
+        return target
+    } catch (error) {
+        // A sidecar failure must not leave the database split between two names.
+        const rollbackErrors: unknown[] = []
+        for (const { source, destination } of moved.reverse()) {
+            try {
+                await rename(destination, source)
+            } catch (rollbackError) {
+                rollbackErrors.push(rollbackError)
+            }
+        }
+        if (rollbackErrors.length > 0) {
+            throw new AggregateError([error, ...rollbackErrors], `Task metrics move could not be restored for ${taskId}`)
+        }
+        if (recovering) throw new Error("Task metrics move could not be recovered", { cause: error })
+        Logger.warn(`[Task ${taskId}] Metrics database rename deferred; keeping the existing container`, error)
+        return legacy
+    }
 }
 
 async function hasLegacySideFiles(legacy: string): Promise<boolean> {
-	for (const suffix of SQLITE_SIDE_FILES) {
-		if (await exists(`${legacy}${suffix}`)) return true
-	}
-	return false
+    for (const suffix of SQLITE_SIDE_FILES) {
+        if (await exists(`${legacy}${suffix}`)) return true
+    }
+    return false
 }
 
 async function exists(location: string): Promise<boolean> {
-	try {
-		await access(location)
-		return true
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
-		throw error
-	}
+    try {
+        await access(location)
+        return true
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+        throw error
+    }
 }

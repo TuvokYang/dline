@@ -1,9 +1,9 @@
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import {
-	DEFAULT_AUTO_CONDENSE_MAX_CONTEXT_TOKENS,
-	DEFAULT_AUTO_CONDENSE_MAX_RESERVE_TOKENS,
-	DEFAULT_AUTO_CONDENSE_MIN_RESERVE_TOKENS,
-	DEFAULT_AUTO_CONDENSE_TRIGGER_PERCENT,
+    DEFAULT_AUTO_CONDENSE_MAX_CONTEXT_TOKENS,
+    DEFAULT_AUTO_CONDENSE_MAX_RESERVE_TOKENS,
+    DEFAULT_AUTO_CONDENSE_MIN_RESERVE_TOKENS,
+    DEFAULT_AUTO_CONDENSE_TRIGGER_PERCENT,
 } from "@shared/auto-condense"
 import { DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
@@ -22,67 +22,67 @@ import { fromProtobufModels } from "@shared/proto-conversions/models/typeConvers
 import type React from "react"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import {
-	type ModelInfo,
-	openRouterDefaultModelId,
-	openRouterDefaultModelInfo,
-	requestyDefaultModelId,
-	requestyDefaultModelInfo,
+    type ModelInfo,
+    openRouterDefaultModelId,
+    openRouterDefaultModelInfo,
+    requestyDefaultModelId,
+    requestyDefaultModelInfo,
 } from "../../../src/shared/api"
 import { Environment } from "../../../src/shared/config-types"
 import type { McpMarketplaceCatalog, McpServer, McpViewTab } from "../../../src/shared/mcp"
 import type { TaskCapabilityToggles } from "../../../src/shared/TaskCapabilityToggles"
 import { type HistoryTaskOpening, type HistoryTaskTarget, useHistoryTaskOpening } from "../hooks/useHistoryTaskOpening"
 import {
-	McpServiceClient,
-	ModelsServiceClient,
-	StateServiceClient,
-	TaskServiceClient,
-	UiServiceClient,
+    McpServiceClient,
+    ModelsServiceClient,
+    StateServiceClient,
+    TaskServiceClient,
+    UiServiceClient,
 } from "../services/grpc-client"
 import { fetchTaskMessages, getTaskViewKey } from "../services/task-messages"
 import { canAppendRealtimeMessage, isMessageWindowOverfull, reconcileMessageWindow } from "./messageWindowSync"
 
 type ExtensionStatePatch = {
-	__dlineStatePatch: true
-	stateRevision: number
+    __dlineStatePatch: true
+    stateRevision: number
 } & Partial<Omit<ExtensionState, "stateRevision">>
 
 type ExtensionStatePayload = ExtensionState | ExtensionStatePatch
 
 function isExtensionStatePatch(payload: ExtensionStatePayload): payload is ExtensionStatePatch {
-	return "__dlineStatePatch" in payload && payload.__dlineStatePatch === true
+    return "__dlineStatePatch" in payload && payload.__dlineStatePatch === true
 }
 
 /** Decide whether an incoming full state snapshot or patch may replace current Webview state. */
 export function shouldAcceptState(currentRevision: number, incomingRevision?: number): boolean {
-	if (incomingRevision === undefined) return currentRevision === 0
-	return incomingRevision > currentRevision
+    if (incomingRevision === undefined) return currentRevision === 0
+    return incomingRevision > currentRevision
 }
 
 const mergeClineMessagesByTs = (existing: UiMessage[], incoming: UiMessage[]): UiMessage[] => {
-	const merged: UiMessage[] = []
-	const indexByTs = new Map<number, number>()
-	const appendOrReplace = (message: UiMessage) => {
-		const existingIndex = indexByTs.get(message.ts)
-		if (existingIndex === undefined) {
-			indexByTs.set(message.ts, merged.length)
-			merged.push(message)
-			return
-		}
-		const current = merged[existingIndex]
-		if (current.partial !== true && message.partial === true) {
-			return
-		}
-		merged[existingIndex] = message
-	}
+    const merged: UiMessage[] = []
+    const indexByTs = new Map<number, number>()
+    const appendOrReplace = (message: UiMessage) => {
+        const existingIndex = indexByTs.get(message.ts)
+        if (existingIndex === undefined) {
+            indexByTs.set(message.ts, merged.length)
+            merged.push(message)
+            return
+        }
+        const current = merged[existingIndex]
+        if (current.partial !== true && message.partial === true) {
+            return
+        }
+        merged[existingIndex] = message
+    }
 
-	for (const message of existing) {
-		appendOrReplace(message)
-	}
-	for (const message of incoming) {
-		appendOrReplace(message)
-	}
-	return merged.sort((left, right) => left.ts - right.ts)
+    for (const message of existing) {
+        appendOrReplace(message)
+    }
+    for (const message of incoming) {
+        appendOrReplace(message)
+    }
+    return merged.sort((left, right) => left.ts - right.ts)
 }
 
 /**
@@ -100,20 +100,20 @@ const mergeClineMessagesByTs = (existing: UiMessage[], incoming: UiMessage[]): U
  * @returns Reconciled window and its absolute start index.
  */
 const applyFetchedMessageWindow = (
-	existing: UiMessage[],
-	existingStartIndex: number,
-	fetched: UiMessage[],
-	fetchedStartIndex: number,
-	total?: number,
-	localTimestampsAtFetchStart?: ReadonlySet<number>,
-	preserveOmittedPartials?: boolean,
+    existing: UiMessage[],
+    existingStartIndex: number,
+    fetched: UiMessage[],
+    fetchedStartIndex: number,
+    total?: number,
+    localTimestampsAtFetchStart?: ReadonlySet<number>,
+    preserveOmittedPartials?: boolean,
 ): { messages: UiMessage[]; startIndex: number } => {
-	const reconciled = reconcileMessageWindow(
-		{ messages: existing, startIndex: existingStartIndex },
-		{ messages: fetched, startIndex: fetchedStartIndex, total },
-		{ localTimestampsAtFetchStart, preserveOmittedPartials },
-	)
-	return { messages: reconciled.messages, startIndex: reconciled.startIndex }
+    const reconciled = reconcileMessageWindow(
+        { messages: existing, startIndex: existingStartIndex },
+        { messages: fetched, startIndex: fetchedStartIndex, total },
+        { localTimestampsAtFetchStart, preserveOmittedPartials },
+    )
+    return { messages: reconciled.messages, startIndex: reconciled.startIndex }
 }
 
 /** First step of a tail sync: merge the latest page, or only page forward from the window end. */
@@ -122,16 +122,16 @@ const TAIL_PAGE_SIZE = 200
 const TAIL_SYNC_RETRY_DELAYS_MS = [100, 300, 750] as const
 
 const hasExactInteractionAnchor = (messages: readonly UiMessage[], interaction: ActiveInteractionView): boolean =>
-	messages.some(
-		(message) =>
-			message.type === "ask" &&
-			message.ts === interaction.askMessageTs &&
-			message.interactionId === interaction.interactionId &&
-			message.ask === interaction.taskAsk,
-	)
+    messages.some(
+        (message) =>
+            message.type === "ask" &&
+            message.ts === interaction.askMessageTs &&
+            message.interactionId === interaction.interactionId &&
+            message.ask === interaction.taskAsk,
+    )
 
 const interactionFetchKey = (taskViewKey: string | undefined, interaction: ActiveInteractionView): string =>
-	`${taskViewKey ?? ""}:${interaction.stateRevision}:${interaction.interactionId}:${interaction.askMessageTs}`
+    `${taskViewKey ?? ""}:${interaction.stateRevision}:${interaction.interactionId}:${interaction.askMessageTs}`
 
 /**
  * Turns whatever a failed subscription produced into a message a user can act
@@ -140,13 +140,13 @@ const interactionFetchKey = (taskViewKey: string | undefined, interaction: Activ
  * replaces.
  */
 function describeHydrationFailure(error: unknown): string {
-	if (error instanceof Error) {
-		return error.message
-	}
-	if (typeof error === "string") {
-		return error
-	}
-	return "Unknown state subscription failure"
+    if (error instanceof Error) {
+        return error.message
+    }
+    if (typeof error === "string") {
+        return error
+    }
+    return "Unknown state subscription failure"
 }
 
 /**
@@ -162,1454 +162,1454 @@ export type HydrationStatus = { status: "pending" } | { status: "failed"; reason
 const requestHistoryTaskOpen = (id: string) => TaskServiceClient.showTaskWithId(StringRequest.create({ value: id }))
 
 export interface ExtensionStateContextType extends ExtensionState {
-	historyTaskOpening?: HistoryTaskOpening
-	openHistoryTask: (target: HistoryTaskTarget) => void
-	dismissHistoryTaskOpening: () => void
-	clineMessages: UiMessage[]
-	setClineMessages: React.Dispatch<React.SetStateAction<UiMessage[]>>
-	didHydrateState: boolean
-	/** Hydration progress, including why it failed when it did. */
-	hydration: HydrationStatus
-	/** Re-establishes the state subscription after a failure. */
-	retryHydration: () => void
-	showWelcome: boolean
-	onboardingModels: OnboardingModelGroup | undefined
-	clineModels: Record<string, ModelInfo> | null
-	openRouterModels: Record<string, ModelInfo>
-	vercelAiGatewayModels: Record<string, ModelInfo>
-	hicapModels: Record<string, ModelInfo>
-	liteLlmModels: Record<string, ModelInfo>
-	openAiModels: string[]
-	requestyModels: Record<string, ModelInfo>
-	mcpServers: McpServer[]
-	mcpMarketplaceCatalog: McpMarketplaceCatalog
-	totalTasksSize: number | null
+    historyTaskOpening?: HistoryTaskOpening
+    openHistoryTask: (target: HistoryTaskTarget) => void
+    dismissHistoryTaskOpening: () => void
+    clineMessages: UiMessage[]
+    setClineMessages: React.Dispatch<React.SetStateAction<UiMessage[]>>
+    didHydrateState: boolean
+    /** Hydration progress, including why it failed when it did. */
+    hydration: HydrationStatus
+    /** Re-establishes the state subscription after a failure. */
+    retryHydration: () => void
+    showWelcome: boolean
+    onboardingModels: OnboardingModelGroup | undefined
+    clineModels: Record<string, ModelInfo> | null
+    openRouterModels: Record<string, ModelInfo>
+    vercelAiGatewayModels: Record<string, ModelInfo>
+    hicapModels: Record<string, ModelInfo>
+    liteLlmModels: Record<string, ModelInfo>
+    openAiModels: string[]
+    requestyModels: Record<string, ModelInfo>
+    mcpServers: McpServer[]
+    mcpMarketplaceCatalog: McpMarketplaceCatalog
+    totalTasksSize: number | null
 
-	availableTerminalProfiles: TerminalProfile[]
+    availableTerminalProfiles: TerminalProfile[]
 
-	// View state
-	showMcp: boolean
-	mcpTab?: McpViewTab
-	showSettings: boolean
-	settingsTargetSection?: string
-	showHistory: boolean
-	showAccount: boolean
-	showWorktrees: boolean
-	showAnnouncement: boolean
-	expandTaskHeader: boolean
+    // View state
+    showMcp: boolean
+    mcpTab?: McpViewTab
+    showSettings: boolean
+    settingsTargetSection?: string
+    showHistory: boolean
+    showAccount: boolean
+    showWorktrees: boolean
+    showAnnouncement: boolean
+    expandTaskHeader: boolean
 
-	// Setters
-	setShowAnnouncement: (value: boolean) => void
-	setShouldShowAnnouncement: (value: boolean) => void
-	setMcpServers: (value: McpServer[]) => void
-	setRequestyModels: (value: Record<string, ModelInfo>) => void
-	setGlobalClineRulesToggles: (toggles: Record<string, boolean>) => void
-	setLocalClineRulesToggles: (toggles: Record<string, boolean>) => void
-	setLocalCursorRulesToggles: (toggles: Record<string, boolean>) => void
-	setLocalWindsurfRulesToggles: (toggles: Record<string, boolean>) => void
-	setLocalAgentsRulesToggles: (toggles: Record<string, boolean>) => void
-	setLocalWorkflowToggles: (toggles: Record<string, boolean>) => void
-	setGlobalWorkflowToggles: (toggles: Record<string, boolean>) => void
-	setGlobalSkillsToggles: (toggles: Record<string, boolean>) => void
-	setLocalSkillsToggles: (toggles: Record<string, boolean>) => void
-	setRemoteSkillsToggles: (toggles: Record<string, boolean>) => void
-	setTaskCapabilityToggles: (toggles: TaskCapabilityToggles | undefined) => void
-	setRemoteRulesToggles: (toggles: Record<string, boolean>) => void
-	setRemoteWorkflowToggles: (toggles: Record<string, boolean>) => void
-	setMcpMarketplaceCatalog: (value: McpMarketplaceCatalog) => void
-	setTotalTasksSize: (value: number | null) => void
-	setExpandTaskHeader: (value: boolean) => void
-	setShowWelcome: (value: boolean) => void
-	setOnboardingModels: (value: OnboardingModelGroup | undefined) => void
+    // Setters
+    setShowAnnouncement: (value: boolean) => void
+    setShouldShowAnnouncement: (value: boolean) => void
+    setMcpServers: (value: McpServer[]) => void
+    setRequestyModels: (value: Record<string, ModelInfo>) => void
+    setGlobalClineRulesToggles: (toggles: Record<string, boolean>) => void
+    setLocalClineRulesToggles: (toggles: Record<string, boolean>) => void
+    setLocalCursorRulesToggles: (toggles: Record<string, boolean>) => void
+    setLocalWindsurfRulesToggles: (toggles: Record<string, boolean>) => void
+    setLocalAgentsRulesToggles: (toggles: Record<string, boolean>) => void
+    setLocalWorkflowToggles: (toggles: Record<string, boolean>) => void
+    setGlobalWorkflowToggles: (toggles: Record<string, boolean>) => void
+    setGlobalSkillsToggles: (toggles: Record<string, boolean>) => void
+    setLocalSkillsToggles: (toggles: Record<string, boolean>) => void
+    setRemoteSkillsToggles: (toggles: Record<string, boolean>) => void
+    setTaskCapabilityToggles: (toggles: TaskCapabilityToggles | undefined) => void
+    setRemoteRulesToggles: (toggles: Record<string, boolean>) => void
+    setRemoteWorkflowToggles: (toggles: Record<string, boolean>) => void
+    setMcpMarketplaceCatalog: (value: McpMarketplaceCatalog) => void
+    setTotalTasksSize: (value: number | null) => void
+    setExpandTaskHeader: (value: boolean) => void
+    setShowWelcome: (value: boolean) => void
+    setOnboardingModels: (value: OnboardingModelGroup | undefined) => void
 
-	// Sliding window
-	firstItemIndex: number
-	setFirstItemIndex: React.Dispatch<React.SetStateAction<number>>
+    // Sliding window
+    firstItemIndex: number
+    setFirstItemIndex: React.Dispatch<React.SetStateAction<number>>
 
-	// Refresh functions
-	refreshClineModels: () => void
-	refreshOpenRouterModels: () => void
-	refreshVercelAiGatewayModels: () => void
-	refreshHicapModels: () => void
-	refreshLiteLlmModels: () => Promise<void>
-	setUserInfo: (userInfo?: UserInfo) => void
+    // Refresh functions
+    refreshClineModels: () => void
+    refreshOpenRouterModels: () => void
+    refreshVercelAiGatewayModels: () => void
+    refreshHicapModels: () => void
+    refreshLiteLlmModels: () => Promise<void>
+    setUserInfo: (userInfo?: UserInfo) => void
 
-	// Navigation state setters
-	setShowMcp: (value: boolean) => void
-	setMcpTab: (tab?: McpViewTab) => void
+    // Navigation state setters
+    setShowMcp: (value: boolean) => void
+    setMcpTab: (tab?: McpViewTab) => void
 
-	// Navigation functions
-	navigateToMcp: (tab?: McpViewTab) => void
-	navigateToSettings: (targetSection?: string) => void
-	navigateToHistory: () => void
-	navigateToAccount: () => void
-	navigateToWorktrees: () => void
-	navigateToChat: () => void
+    // Navigation functions
+    navigateToMcp: (tab?: McpViewTab) => void
+    navigateToSettings: (targetSection?: string) => void
+    navigateToHistory: () => void
+    navigateToAccount: () => void
+    navigateToWorktrees: () => void
+    navigateToChat: () => void
 
-	// Hide functions
-	hideSettings: () => void
-	hideHistory: () => void
-	hideAccount: () => void
-	hideWorktrees: () => void
-	hideAnnouncement: () => void
-	closeMcpView: () => void
+    // Hide functions
+    hideSettings: () => void
+    hideHistory: () => void
+    hideAccount: () => void
+    hideWorktrees: () => void
+    hideAnnouncement: () => void
+    closeMcpView: () => void
 
-	// Event callbacks
-	onRelinquishControl: (callback: () => void) => () => void
+    // Event callbacks
+    onRelinquishControl: (callback: () => void) => () => void
 }
 
 export const ExtensionStateContext = createContext<ExtensionStateContextType | undefined>(undefined)
 
 export const ExtensionStateContextProvider: React.FC<{
-	children: React.ReactNode
+    children: React.ReactNode
 }> = ({ children }) => {
-	// UI view state
-	const [showMcp, setShowMcp] = useState(false)
-	const [mcpTab, setMcpTab] = useState<McpViewTab | undefined>(undefined)
-	const [showSettings, setShowSettings] = useState(false)
-	const [settingsTargetSection, setSettingsTargetSection] = useState<string | undefined>(undefined)
-	const [showHistory, setShowHistory] = useState(false)
-	const [showAccount, setShowAccount] = useState(false)
-	const [showWorktrees, setShowWorktrees] = useState(false)
-	const [showAnnouncement, setShowAnnouncement] = useState(false)
-
-	// Helper for MCP view
-	const closeMcpView = useCallback(() => {
-		setShowMcp(false)
-		setMcpTab(undefined)
-	}, [])
-
-	// Hide functions
-	const hideSettings = useCallback(() => {
-		setShowSettings(false)
-		setSettingsTargetSection(undefined)
-	}, [])
-	const hideHistory = useCallback(() => setShowHistory(false), [])
-	const hideAccount = useCallback(() => setShowAccount(false), [])
-	const hideWorktrees = useCallback(() => setShowWorktrees(false), [])
-	const hideAnnouncement = useCallback(() => setShowAnnouncement(false), [])
-
-	// Navigation functions
-	const navigateToMcp = useCallback((tab?: McpViewTab) => {
-		setShowSettings(false)
-		setShowHistory(false)
-		setShowAccount(false)
-		setShowWorktrees(false)
-		if (tab) {
-			setMcpTab(tab)
-		}
-		setShowMcp(true)
-	}, [])
-
-	const navigateToSettings = useCallback(
-		(targetSection?: string) => {
-			setShowHistory(false)
-			closeMcpView()
-			setShowAccount(false)
-			setShowWorktrees(false)
-			setSettingsTargetSection(targetSection)
-			setShowSettings(true)
-		},
-		[closeMcpView],
-	)
-
-	const navigateToHistory = useCallback(() => {
-		setShowSettings(false)
-		closeMcpView()
-		setShowAccount(false)
-		setShowWorktrees(false)
-		setShowHistory(true)
-	}, [closeMcpView])
-
-	const navigateToAccount = useCallback(() => {
-		setShowSettings(false)
-		closeMcpView()
-		setShowHistory(false)
-		setShowWorktrees(false)
-		setShowAccount(true)
-	}, [closeMcpView])
-
-	const navigateToWorktrees = useCallback(() => {
-		setShowSettings(false)
-		closeMcpView()
-		setShowHistory(false)
-		setShowAccount(false)
-		setShowWorktrees(true)
-	}, [closeMcpView])
-
-	const navigateToChat = useCallback(() => {
-		setShowSettings(false)
-		closeMcpView()
-		setShowHistory(false)
-		setShowAccount(false)
-		setShowWorktrees(false)
-	}, [closeMcpView])
-
-	const [state, setState] = useState<ExtensionState>({
-		stateRevision: 0,
-		version: "",
-		taskHistory: [],
-		shouldShowAnnouncement: false,
-		autoApprovalSettings: DEFAULT_AUTO_APPROVAL_SETTINGS,
-		browserSettings: DEFAULT_BROWSER_SETTINGS,
-		focusChainSettings: DEFAULT_FOCUS_CHAIN_SETTINGS,
-		preferredLanguage: "English",
-		chatInputSendShortcut: DEFAULT_CHAT_INPUT_SEND_SHORTCUT,
-		mode: "act",
-		platform: DEFAULT_PLATFORM,
-		environment: Environment.production,
-		usageReportingSetting: "unset",
-		errorReportingSetting: "unset",
-		distinctId: "",
-		planActSeparateModelsSetting: true,
-		enableCheckpointsSetting: true,
-		mcpDisplayMode: DEFAULT_MCP_DISPLAY_MODE,
-		globalClineRulesToggles: {},
-		localClineRulesToggles: {},
-		localCursorRulesToggles: {},
-		localWindsurfRulesToggles: {},
-		localAgentsRulesToggles: {},
-		localWorkflowToggles: {},
-		globalWorkflowToggles: {},
-		shellIntegrationTimeout: 4000,
-		terminalReuseEnabled: true,
-		vscodeTerminalExecutionMode: "vscodeTerminal",
-		terminalOutputLineLimit: 500,
-		terminalCommandTimeoutSeconds: 1800,
-		terminalCommandHandoffSeconds: 10,
-		maxConsecutiveMistakes: 3,
-		defaultTerminalProfile: "default",
-		isNewUser: false,
-		welcomeViewCompleted: false,
-		onboardingModels: undefined,
-		mcpResponsesCollapsed: false, // Default value (expanded), will be overwritten by extension state
-		strictPlanModeEnabled: false,
-		yoloModeToggled: false,
-		customPrompt: undefined,
-		useAutoCondense: false,
-		autoCondenseTriggerPercent: DEFAULT_AUTO_CONDENSE_TRIGGER_PERCENT,
-		autoCondenseMinReserveTokens: DEFAULT_AUTO_CONDENSE_MIN_RESERVE_TOKENS,
-		autoCondenseMaxReserveTokens: DEFAULT_AUTO_CONDENSE_MAX_RESERVE_TOKENS,
-		autoCondenseMaxContextTokens: DEFAULT_AUTO_CONDENSE_MAX_CONTEXT_TOKENS,
-		subagentsEnabled: true,
-		mcpEnabled: true,
-		clineWebToolsEnabled: { user: true, featureFlag: false },
-		worktreesEnabled: { user: true, featureFlag: false },
-		favoritedModelIds: [],
-		optOutOfRemoteConfig: false,
-		remoteConfigSettings: {},
-		backgroundCommandRunning: false,
-		backgroundCommandTaskId: undefined,
-		backgroundEditEnabled: false,
-		doubleCheckCompletionEnabled: false,
-		lazyTeammateModeEnabled: false,
-		showFeatureTips: true,
-		showActiveTasksInEnvDetails: true,
-		globalSkillsToggles: {},
-		localSkillsToggles: {},
-		remoteSkillsToggles: {},
-		taskCapabilityToggles: undefined,
-
-		// NEW: Add workspace information with defaults
-		workspaceRoots: [],
-		primaryRootIndex: 0,
-		isMultiRootWorkspace: false,
-		multiRootSetting: { user: false, featureFlag: false },
-		hooksEnabled: false,
-		nativeToolCallSetting: false,
-		enableParallelToolCalling: false,
-		// Resolved from the shared policy rather than a literal, so the slider
-		// before hydration shows the same ceiling the runtime would apply.
-		maxParallelToolCalls: DEFAULT_MAX_PARALLEL_TOOL_CALLS,
-		maxParallelSubagents: DEFAULT_MAX_PARALLEL_SUBAGENTS,
-		providersVersion: 0,
-		profileCatalogRevision: 0,
-		taskLockStatus: undefined,
-	})
-	const [expandTaskHeader, setExpandTaskHeader] = useState(true)
-	const [hydration, setHydration] = useState<HydrationStatus>({ status: "pending" })
-	const didHydrateState = hydration.status === "ready"
-	// Bumping this re-runs the subscription effect, which is what a retry needs:
-	// the failed stream is torn down by the effect cleanup and replaced.
-	const [hydrationAttempt, setHydrationAttempt] = useState(0)
-	const retryHydration = useCallback(() => {
-		setHydration({ status: "pending" })
-		setHydrationAttempt((attempt) => attempt + 1)
-	}, [])
-
-	// Atomic sliding window state via React 18 auto-batching
-	const [clineMessages, setClineMessages] = useState<UiMessage[]>([])
-	const [firstItemIndex, setFirstItemIndex] = useState(0)
-	const handleHistoryTaskOpenFailure = useCallback(
-		(target: HistoryTaskTarget) => {
-			navigateToHistory()
-			window.alert(`Could not open task '${target.task || target.id}'.`)
-		},
-		[navigateToHistory],
-	)
-	const { historyTaskOpening, openHistoryTask, dismissHistoryTaskOpening } = useHistoryTaskOpening({
-		taskViewState: state.taskViewState,
-		// Hand off once the backend window is ready, not after the next paging RPC.
-		hasMessageSurface: !!state.taskTitleMessage && (state.totalMessageCount ?? 0) > 0,
-		requestOpen: requestHistoryTaskOpen,
-		navigateToChat,
-		onOpenFailed: handleHistoryTaskOpenFailure,
-	})
-	const clineMessagesRef = useRef<UiMessage[]>([])
-	// Fetch callbacks resolve after their scheduling render, so reconciliation
-	// has to read the window start from a ref rather than the captured value.
-	const firstItemIndexRef = useRef(0)
-	const totalMessageCountRef = useRef(0)
-	// A state update can announce several durable rows before their window fetch
-	// lands. Remember that the current slice covered the previous tail so a
-	// realtime partial arriving in that gap is staged instead of discarded.
-	const windowWasAtTailRef = useRef(false)
-	const bootstrapResolvedRef = useRef(false)
-	clineMessagesRef.current = clineMessages
-	firstItemIndexRef.current = firstItemIndex
-	totalMessageCountRef.current = state.totalMessageCount ?? 0
-	if (clineMessages.length > 0) bootstrapResolvedRef.current = true
-
-	const commitMessageWindow = useCallback((messages: UiMessage[], startIndex: number) => {
-		clineMessagesRef.current = messages
-		firstItemIndexRef.current = startIndex
-		windowWasAtTailRef.current = canAppendRealtimeMessage(messages.length, startIndex, totalMessageCountRef.current)
-		setClineMessages(messages)
-		setFirstItemIndex(startIndex)
-	}, [])
-
-	const prevTotalRef = useRef(0)
-	const prevMessageWindowRevisionRef = useRef(0)
-	// Owner token of the running window fetch. A fresh token per fetch lets a
-	// newer tail sync take over, and keeps a superseded one from releasing it.
-	const refetchLockRef = useRef<symbol | null>(null)
-	// A total shrink can arrive while a durable-tail fetch owns the single
-	// reconciliation slot. Remember it so releasing that slot cannot consume the
-	// lower total without removing the row that disappeared.
-	const refetchAfterUnlockRef = useRef(false)
-	// Stabilize window after cancel: delay refetch by 200ms so rapid state
-	// changes (remove partials, postState, total update) settle before
-	// triggering a Virtuoso data swap that causes layout jitter.
-	const cancelStabilizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const initialTaskViewKey = getTaskViewKey(state.taskViewState)
-	const currentTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
-	currentTaskViewKeyRef.current = initialTaskViewKey
-	const messageFetchGenerationRef = useRef(0)
-	const prevRefetchTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
-	const prevHistoryTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
-	// Separating these two is the fix for a footer that stayed permanently
-	// unusable: one records that an anchor was successfully hydrated, the other
-	// only that a recovery is currently running. Collapsing them made a failed
-	// attempt look like a completed one.
-	const lastInteractionFetchKeyRef = useRef<string | undefined>(undefined)
-	const inFlightInteractionFetchRef = useRef<string | undefined>(undefined)
-	const projectedInteraction = state.taskViewState?.activeInteraction
-	// Whether this window has loaded the chat row the interaction anchors to.
-	// `anchorVerified` only says the backend holds that row, which is enough for
-	// the footer to dispatch but not for the chat to show it; treating it as
-	// loaded skipped the recovery fetch and left an answered row off screen.
-	const projectedInteractionAnchorLoaded = projectedInteraction
-		? hasExactInteractionAnchor(clineMessages, projectedInteraction)
-		: true
-	const localTailMessage = clineMessages.at(-1)
-
-	// Reset when task is cleared, bootstrap on task switch, and reconcile gaps
-	// when a durable tail message arrives without its realtime event.
-	useEffect(() => {
-		const currentTaskViewKey = getTaskViewKey(state.taskViewState)
-		const total = state.totalMessageCount ?? 0
-		const messageWindowRevision = state.messageWindowRevision ?? 0
-		const preserveOmittedPartials =
-			state.taskViewState?.footer.actions.some((action) => action.type === "cancel" && action.enabled) === true
-		// Pages are fenced to the task opening the view shows, so a late page of a
-		// previous opening can never merge into this one.
-		const fetchCurrentMessages = (referenceIndex: number, count: number) =>
-			fetchTaskMessages(state.taskViewState, referenceIndex, count)
-
-		const fetchLatestWindow = (scheduledTaskViewKey: string | undefined, expectedInteraction?: ActiveInteractionView) => {
-			const scheduledGeneration = messageFetchGenerationRef.current
-			// The key records that this interaction's anchor is now *hydrated*,
-			// so it is written only once the committed window actually contains
-			// the anchor. Recording it here, before the request, would mark a
-			// failed recovery as done and suppress every later attempt, leaving
-			// the footer permanently unusable.
-			const expectedKey = expectedInteraction ? interactionFetchKey(scheduledTaskViewKey, expectedInteraction) : undefined
-			// Guards this fetch chain against re-entry while it is still running,
-			// without claiming the anchor was recovered.
-			const inFlightKey = expectedKey
-			if (inFlightKey) {
-				inFlightInteractionFetchRef.current = inFlightKey
-			}
-			const retryDelaysMs = [100, 300, 750] as const
-			const retryLatest = async (attempt: number, retryLatestAtStart: boolean): Promise<void> => {
-				if (attempt >= retryDelaysMs.length) return
-				await new Promise<void>((resolve) => setTimeout(resolve, retryDelaysMs[attempt]))
-				if (
-					messageFetchGenerationRef.current !== scheduledGeneration ||
-					currentTaskViewKeyRef.current !== scheduledTaskViewKey
-				) {
-					return
-				}
-				await fetchAttempt(-1, retryLatestAtStart, attempt + 1)
-			}
-			const fetchAttempt = async (
-				referenceIndex: number,
-				retryLatestAtStart: boolean,
-				bootstrapRetryAttempt = 0,
-			): Promise<void> => {
-				const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
-				try {
-					const resp = await fetchCurrentMessages(referenceIndex, 200)
-					if (
-						messageFetchGenerationRef.current !== scheduledGeneration ||
-						currentTaskViewKeyRef.current !== scheduledTaskViewKey
-					) {
-						return
-					}
-					const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
-					const responseTotal = Number(resp.totalCount ?? 0)
-					if (
-						referenceIndex === -1 &&
-						converted.length === 0 &&
-						!bootstrapResolvedRef.current &&
-						clineMessagesRef.current.length === 0 &&
-						Math.max(total, responseTotal) > 0 &&
-						bootstrapRetryAttempt < retryDelaysMs.length
-					) {
-						await retryLatest(bootstrapRetryAttempt, retryLatestAtStart)
-						return
-					}
-					if (converted.length > 0) bootstrapResolvedRef.current = true
-					const startIndex = Math.max(0, resp.startIndex)
-					const reconciled = applyFetchedMessageWindow(
-						clineMessagesRef.current,
-						firstItemIndexRef.current,
-						converted,
-						startIndex,
-						responseTotal,
-						localTimestampsAtFetchStart,
-						preserveOmittedPartials,
-					)
-					commitMessageWindow(reconciled.messages, reconciled.startIndex)
-					if (expectedInteraction) {
-						// The response may contain the anchor and still be
-						// rejected by the continuous-window contract when it does
-						// not touch the local window. Only the committed window
-						// makes the anchor consumable, so success is judged there
-						// rather than on the raw response.
-						if (hasExactInteractionAnchor(reconciled.messages, expectedInteraction)) {
-							lastInteractionFetchKeyRef.current = expectedKey
-							if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
-								inFlightInteractionFetchRef.current = undefined
-							}
-						} else if (startIndex > 0) {
-							await fetchAttempt(Math.max(0, startIndex - 200), false, bootstrapRetryAttempt)
-						} else if (retryLatestAtStart) {
-							await fetchAttempt(-1, false, bootstrapRetryAttempt)
-						} else if (bootstrapRetryAttempt < retryDelaysMs.length) {
-							// A disconnected page commits no window change, so recovery cannot
-							// depend on another render. Keep one fenced, bounded fetch chain.
-							await retryLatest(bootstrapRetryAttempt, false)
-						} else if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
-							// Every page was walked without recovering the anchor.
-							// Releasing the in-flight marker lets a later viewport
-							// change try again instead of failing permanently.
-							inFlightInteractionFetchRef.current = undefined
-						}
-					}
-				} catch {
-					if (
-						currentTaskViewKeyRef.current !== scheduledTaskViewKey ||
-						messageFetchGenerationRef.current !== scheduledGeneration
-					)
-						return
-					if (
-						referenceIndex === -1 &&
-						total > 0 &&
-						!bootstrapResolvedRef.current &&
-						clineMessagesRef.current.length === 0
-					) {
-						await retryLatest(bootstrapRetryAttempt, retryLatestAtStart)
-						return
-					}
-					// A failed request ends this chain, so the in-flight marker
-					// has to be released here too. Leaving it set would suppress
-					// every later recovery exactly like a successful hydration,
-					// which is the failure mode this split was introduced to fix.
-					if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
-						inFlightInteractionFetchRef.current = undefined
-					}
-				}
-			}
-			return fetchAttempt(-1, Boolean(expectedInteraction))
-		}
-
-		const runDeferredWindowReconciliation = () => {
-			if (!refetchAfterUnlockRef.current || refetchLockRef.current) return
-			const scheduledTaskViewKey = currentTaskViewKeyRef.current
-			const owner = Symbol("deferred-reconciliation")
-			refetchAfterUnlockRef.current = false
-			refetchLockRef.current = owner
-			void fetchLatestWindow(scheduledTaskViewKey).finally(() => {
-				if (refetchLockRef.current !== owner) return
-				refetchLockRef.current = null
-				runDeferredWindowReconciliation()
-			})
-		}
-
-		/**
-		 * Own the window until it reaches the live tail.
-		 *
-		 * Every effect run advances `prevTotalRef` to the newest total, and the
-		 * window counts as following the tail only while it still reaches that
-		 * mark. A page that was in flight while the total grew therefore lands
-		 * below it, and once the task waits for the user no further state change
-		 * arrives to fetch the rows it missed. A sync keeps the chase until the
-		 * window reaches the latest total, whichever request started it.
-		 *
-		 * A sync that gives up short of the tail lowers the mark to the window
-		 * end, so the next state change resumes the chase instead of abandoning
-		 * it. A reader that trimmed the window ends the chase and keeps the
-		 * browsing classification.
-		 */
-		const syncTailWindow = async (scheduledTaskViewKey: string | undefined, firstStep: TailSyncFirstStep) => {
-			const owner = Symbol("tail-sync")
-			const scheduledGeneration = messageFetchGenerationRef.current
-			refetchLockRef.current = owner
-			const isCurrentView = () =>
-				currentTaskViewKeyRef.current === scheduledTaskViewKey &&
-				messageFetchGenerationRef.current === scheduledGeneration
-			const ownsSync = () => refetchLockRef.current === owner && isCurrentView()
-			const windowEnd = () => firstItemIndexRef.current + clineMessagesRef.current.length
-			let firstStepPending = firstStep === "latest"
-			let followedEnd = windowEnd()
-			let readerMovedAway = false
-			let retries = 0
-			try {
-				while (ownsSync()) {
-					const knownEnd = windowEnd()
-					if (knownEnd < followedEnd) {
-						readerMovedAway = true
-						return
-					}
-					const latestTotal = totalMessageCountRef.current
-					if (!firstStepPending && knownEnd >= latestTotal) return
-					// The latest page overlaps the window, so it also repairs a missed
-					// or stale message near the tail. Only an older gap pages forward.
-					const fetchLatest = firstStepPending || latestTotal - knownEnd <= TAIL_PAGE_SIZE
-					const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
-					let progressed = false
-					try {
-						const resp = await fetchCurrentMessages(fetchLatest ? -1 : knownEnd, TAIL_PAGE_SIZE)
-						if (!ownsSync()) return
-						const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
-						const reconciled = applyFetchedMessageWindow(
-							clineMessagesRef.current,
-							firstItemIndexRef.current,
-							converted,
-							Math.max(0, resp.startIndex),
-							Number(resp.totalCount ?? 0),
-							localTimestampsAtFetchStart,
-							preserveOmittedPartials,
-						)
-						commitMessageWindow(reconciled.messages, reconciled.startIndex)
-						progressed = firstStepPending || windowEnd() > knownEnd
-						firstStepPending = false
-					} catch {
-						// A failed page is retried like one that made no progress.
-					}
-					followedEnd = windowEnd()
-					if (progressed) {
-						retries = 0
-						continue
-					}
-					if (retries >= TAIL_SYNC_RETRY_DELAYS_MS.length) return
-					await new Promise<void>((resolve) => setTimeout(resolve, TAIL_SYNC_RETRY_DELAYS_MS[retries++]))
-				}
-			} finally {
-				if (refetchLockRef.current === owner) {
-					refetchLockRef.current = null
-					if (isCurrentView() && !readerMovedAway && windowEnd() < totalMessageCountRef.current) {
-						prevTotalRef.current = Math.min(prevTotalRef.current, windowEnd())
-					}
-					runDeferredWindowReconciliation()
-				}
-			}
-		}
-
-		if (currentTaskViewKey !== prevRefetchTaskViewKeyRef.current) {
-			messageFetchGenerationRef.current++
-			currentTaskViewKeyRef.current = currentTaskViewKey
-			prevRefetchTaskViewKeyRef.current = currentTaskViewKey
-			if (cancelStabilizeTimerRef.current) {
-				clearTimeout(cancelStabilizeTimerRef.current)
-				cancelStabilizeTimerRef.current = null
-			}
-			refetchLockRef.current = null
-			refetchAfterUnlockRef.current = false
-			lastInteractionFetchKeyRef.current = undefined
-			inFlightInteractionFetchRef.current = undefined
-			bootstrapResolvedRef.current = false
-			firstItemIndexRef.current = 0
-			windowWasAtTailRef.current = false
-			setClineMessages([])
-			setFirstItemIndex(0)
-			prevTotalRef.current = total
-			prevMessageWindowRevisionRef.current = messageWindowRevision
-			if (total > 0) {
-				fetchLatestWindow(currentTaskViewKey, projectedInteraction)
-			}
-			return
-		}
-		currentTaskViewKeyRef.current = currentTaskViewKey
-		const messageWindowInvalidated = messageWindowRevision !== prevMessageWindowRevisionRef.current
-		prevMessageWindowRevisionRef.current = messageWindowRevision
-		if (messageWindowInvalidated && clineMessages.length > 0) {
-			refetchAfterUnlockRef.current = true
-			runDeferredWindowReconciliation()
-		}
-
-		if (total === 0) {
-			if (cancelStabilizeTimerRef.current) {
-				clearTimeout(cancelStabilizeTimerRef.current)
-				cancelStabilizeTimerRef.current = null
-			}
-			firstItemIndexRef.current = 0
-			windowWasAtTailRef.current = false
-			setClineMessages([])
-			setFirstItemIndex(0)
-			prevTotalRef.current = 0
-			prevMessageWindowRevisionRef.current = messageWindowRevision
-			refetchAfterUnlockRef.current = false
-			lastInteractionFetchKeyRef.current = undefined
-			inFlightInteractionFetchRef.current = undefined
-			bootstrapResolvedRef.current = false
-			return
-		}
-		if (prevTotalRef.current === 0 && total > 0 && clineMessages.length === 0) {
-			fetchLatestWindow(currentTaskViewKeyRef.current, projectedInteraction)
-			prevTotalRef.current = total
-			return
-		}
-		const knownEndIndex = firstItemIndex + clineMessages.length
-		const windowCoveredPreviousTail = knownEndIndex >= prevTotalRef.current
-		// A tail fetch still running cannot be extended, so the rows it did not
-		// ask for must be requested once it lands. Holding the previous total
-		// keeps the window counted as the live tail until then; advancing it
-		// here made the next pass believe the window had fallen behind on
-		// purpose and never fetched the newest row.
-		const tailCatchUpDeferred = knownEndIndex < total && windowCoveredPreviousTail && refetchLockRef.current
-		const durableTailMayHaveReplacedPartial =
-			total > prevTotalRef.current && knownEndIndex === total && localTailMessage?.partial === true
-		if (durableTailMayHaveReplacedPartial && !refetchLockRef.current) {
-			void syncTailWindow(currentTaskViewKeyRef.current, "latest")
-		} else if (knownEndIndex < total && windowCoveredPreviousTail && !refetchLockRef.current) {
-			void syncTailWindow(currentTaskViewKeyRef.current, "follow")
-		}
-		// Refetch when the local window can no longer be reconciled from state
-		// alone: the total shrank, or it claims more messages than exist because
-		// a restore truncated the tail and appended replacements.
-		// Delayed by 200ms via cancelStabilizeTimerRef so rapid state changes
-		// (remove partials, postState, total update) settle before triggering
-		// a Virtuoso data swap that causes layout jitter.
-		const windowContradictsTotal =
-			total < prevTotalRef.current || isMessageWindowOverfull(clineMessages.length, firstItemIndex, total)
-		if (prevTotalRef.current !== 0 && windowContradictsTotal && clineMessages.length > 0) {
-			if (refetchLockRef.current) {
-				refetchAfterUnlockRef.current = true
-			} else {
-				if (cancelStabilizeTimerRef.current) {
-					clearTimeout(cancelStabilizeTimerRef.current)
-				}
-				const scheduledTaskViewKey = currentTaskViewKeyRef.current
-				cancelStabilizeTimerRef.current = setTimeout(() => {
-					cancelStabilizeTimerRef.current = null
-					if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
-						return
-					}
-					// The latest page takes over any sync in flight, which would
-					// otherwise keep merging against a window the total contradicts.
-					void syncTailWindow(scheduledTaskViewKey, "latest")
-				}, 200)
-			}
-		}
-
-		const activeInteraction = projectedInteraction
-		// A verified anchor keeps the footer usable meanwhile, so its row is
-		// recovered once the first window has landed instead of racing it. The
-		// in-flight key below already prevents duplicate recoveries, so an
-		// unrelated tail fetch must not suppress this one.
-		const anchorRecoveryReady = activeInteraction?.anchorVerified !== true || bootstrapResolvedRef.current
-		if (activeInteraction && !projectedInteractionAnchorLoaded && anchorRecoveryReady) {
-			const expectedFetchKey = interactionFetchKey(currentTaskViewKeyRef.current, activeInteraction)
-			// Recovery is skipped only when this anchor was already hydrated or a
-			// recovery for it is still running. A previously failed attempt no
-			// longer counts, so browsing away and back can recover the footer
-			// instead of leaving it permanently disabled.
-			const alreadyHydrated = lastInteractionFetchKeyRef.current === expectedFetchKey
-			const alreadyRunning = inFlightInteractionFetchRef.current === expectedFetchKey
-			if (!alreadyHydrated && !alreadyRunning) {
-				fetchLatestWindow(currentTaskViewKeyRef.current, activeInteraction)
-			}
-		}
-
-		if (!tailCatchUpDeferred) prevTotalRef.current = total
-	}, [
-		state.taskViewState,
-		state.totalMessageCount,
-		state.messageWindowRevision,
-		state.taskViewState?.footer.actions,
-		projectedInteraction,
-		projectedInteractionAnchorLoaded,
-		clineMessages.length,
-		localTailMessage,
-		firstItemIndex,
-		commitMessageWindow,
-	])
-
-	useEffect(() => {
-		return () => {
-			messageFetchGenerationRef.current++
-			if (cancelStabilizeTimerRef.current) {
-				clearTimeout(cancelStabilizeTimerRef.current)
-				cancelStabilizeTimerRef.current = null
-			}
-		}
-	}, [])
-
-	const [showWelcome, setShowWelcome] = useState(false)
-	const [onboardingModels, setOnboardingModels] = useState<OnboardingModelGroup | undefined>(undefined)
-
-	const [clineModels, setClineModels] = useState<Record<string, ModelInfo> | null>(null)
-	const [openRouterModels, setOpenRouterModels] = useState<Record<string, ModelInfo>>({
-		[openRouterDefaultModelId]: openRouterDefaultModelInfo,
-	})
-	const [vercelAiGatewayModels, setVercelAiGatewayModels] = useState<Record<string, ModelInfo>>({})
-	const [hicapModels, setHicapModels] = useState<Record<string, ModelInfo>>({})
-	const [liteLlmModels, setLiteLlmModels] = useState<Record<string, ModelInfo>>({})
-	const [totalTasksSize, setTotalTasksSize] = useState<number | null>(null)
-	const [availableTerminalProfiles, setAvailableTerminalProfiles] = useState<TerminalProfile[]>([])
-
-	const [openAiModels, _setOpenAiModels] = useState<string[]>([])
-	const [requestyModels, setRequestyModels] = useState<Record<string, ModelInfo>>({
-		[requestyDefaultModelId]: requestyDefaultModelInfo,
-	})
-	const [mcpServers, setMcpServers] = useState<McpServer[]>([])
-	const [mcpMarketplaceCatalog, setMcpMarketplaceCatalog] = useState<McpMarketplaceCatalog>({ items: [] })
-
-	// References to store subscription cancellation functions
-	const stateSubscriptionRef = useRef<(() => void) | null>(null)
-	const stateRevisionRef = useRef(0)
-	const hydratedStateRef = useRef(false)
-
-	const mcpButtonUnsubscribeRef = useRef<(() => void) | null>(null)
-	const historyButtonClickedSubscriptionRef = useRef<(() => void) | null>(null)
-	const chatButtonUnsubscribeRef = useRef<(() => void) | null>(null)
-	const accountButtonClickedSubscriptionRef = useRef<(() => void) | null>(null)
-	const settingsButtonClickedSubscriptionRef = useRef<(() => void) | null>(null)
-	const worktreesButtonClickedSubscriptionRef = useRef<(() => void) | null>(null)
-	const partialMessageUnsubscribeRef = useRef<(() => void) | null>(null)
-	const mcpMarketplaceUnsubscribeRef = useRef<(() => void) | null>(null)
-	const openRouterModelsUnsubscribeRef = useRef<(() => void) | null>(null)
-	const liteLlmModelsUnsubscribeRef = useRef<(() => void) | null>(null)
-	const workspaceUpdatesUnsubscribeRef = useRef<(() => void) | null>(null)
-	const relinquishControlUnsubscribeRef = useRef<(() => void) | null>(null)
-
-	// Add ref for callbacks
-	const relinquishControlCallbacks = useRef<Set<() => void>>(new Set())
-
-	// Create hook function
-	const onRelinquishControl = useCallback((callback: () => void) => {
-		relinquishControlCallbacks.current.add(callback)
-		return () => {
-			relinquishControlCallbacks.current.delete(callback)
-		}
-	}, [])
-	const mcpServersSubscriptionRef = useRef<(() => void) | null>(null)
-
-	// Subscribe to state updates and UI events using the gRPC streaming API
-	useEffect(() => {
-		void hydrationAttempt
-		// Set up state subscription
-		stateSubscriptionRef.current = StateServiceClient.subscribeToState(EmptyRequest.create({}), {
-			onResponse: (response) => {
-				if (!response.stateJson) {
-					setState((prevState) => ({
-						...prevState,
-						accountUsage: protoToAccountUsage(response.accountUsage),
-					}))
-					return
-				}
-				if (response.stateJson) {
-					try {
-						const stateData = JSON.parse(response.stateJson) as ExtensionStatePayload
-						const isPatch = isExtensionStatePatch(stateData)
-						if (isPatch && !hydratedStateRef.current) {
-							return
-						}
-						if (!shouldAcceptState(stateRevisionRef.current, stateData.stateRevision)) {
-							return
-						}
-						stateRevisionRef.current = stateData.stateRevision ?? 0
-						if (!isPatch) hydratedStateRef.current = true
-						if (!isPatch || Object.hasOwn(stateData, "taskViewState")) {
-							const nextKey = getTaskViewKey(stateData.taskViewState)
-							if (nextKey !== currentTaskViewKeyRef.current) {
-								currentTaskViewKeyRef.current = nextKey
-								messageFetchGenerationRef.current++
-								commitMessageWindow([], 0)
-							}
-						}
-						setState((prevState) => {
-							const { __dlineStatePatch: _patchMarker, ...stateFields } = stateData as ExtensionStatePatch
-							// Versioning logic for autoApprovalSettings
-							const incomingVersion = stateFields.autoApprovalSettings?.version ?? 1
-							const currentVersion = prevState.autoApprovalSettings?.version ?? 1
-							const shouldUpdateAutoApproval = incomingVersion > currentVersion
-
-							const newState = {
-								...(isPatch ? prevState : {}),
-								...stateFields,
-								accountUsage: protoToAccountUsage(response.accountUsage),
-								autoApprovalSettings: shouldUpdateAutoApproval
-									? stateFields.autoApprovalSettings
-									: prevState.autoApprovalSettings,
-							} as ExtensionState
-
-							// Update welcome screen state based on API configuration if welcome view not in progress
-							if (!newState.welcomeViewCompleted && !showWelcome) {
-								setShowWelcome(true)
-								setOnboardingModels(newState.onboardingModels)
-							} else if (newState.welcomeViewCompleted) {
-								setShowWelcome(false)
-								setOnboardingModels(undefined)
-							}
-
-							setHydration({ status: "ready" })
-
-							return newState
-						})
-					} catch (error) {
-						console.error("Error parsing state JSON:", error)
-						// Only a first payload that cannot be parsed blocks the
-						// view. Once state has rendered, a later bad payload is
-						// better ignored than allowed to blank a working panel.
-						setHydration((current) =>
-							current.status === "ready" ? current : { status: "failed", reason: describeHydrationFailure(error) },
-						)
-					}
-				}
-			},
-			onError: (error) => {
-				console.error("Error in state subscription:", error)
-				// Without this the stream dies silently and the view waits for a
-				// payload that will never arrive, which is the blank panel.
-				setHydration((current) =>
-					current.status === "ready" ? current : { status: "failed", reason: describeHydrationFailure(error) },
-				)
-			},
-			onComplete: () => {
-				console.log("State subscription completed")
-				// A stream that ends before delivering state leaves nothing to
-				// render, and is as terminal as an error for a panel that never
-				// hydrated.
-				setHydration((current) =>
-					current.status === "ready"
-						? current
-						: { status: "failed", reason: "State subscription closed before any state arrived" },
-				)
-			},
-		})
-
-		// Subscribe to MCP button clicked events with webview type
-		mcpButtonUnsubscribeRef.current = UiServiceClient.subscribeToMcpButtonClicked(
-			{},
-			{
-				onResponse: () => {
-					console.debug("Received mcpButtonClicked event from gRPC stream")
-					navigateToMcp()
-				},
-				onError: (error) => {
-					console.error("Error in mcpButtonClicked subscription:", error)
-				},
-				onComplete: () => {
-					console.log("mcpButtonClicked subscription completed")
-				},
-			},
-		)
-
-		// Set up history button clicked subscription with webview type
-		historyButtonClickedSubscriptionRef.current = UiServiceClient.subscribeToHistoryButtonClicked(
-			{},
-			{
-				onResponse: () => {
-					// When history button is clicked, navigate to history view
-					console.debug("Received history button clicked event from gRPC stream")
-					navigateToHistory()
-				},
-				onError: (error) => {
-					console.error("Error in history button clicked subscription:", error)
-				},
-				onComplete: () => {
-					console.log("History button clicked subscription completed")
-				},
-			},
-		)
-
-		// Subscribe to chat button clicked events with webview type
-		chatButtonUnsubscribeRef.current = UiServiceClient.subscribeToChatButtonClicked(
-			{},
-			{
-				onResponse: () => {
-					// When chat button is clicked, navigate to chat
-					console.debug("Received chat button clicked event from gRPC stream")
-					setTimeout(() => navigateToChat(), 0)
-				},
-				onError: (error) => {
-					console.error("Error in chat button subscription:", error)
-				},
-				onComplete: () => {},
-			},
-		)
-
-		// Subscribe to MCP servers updates
-		mcpServersSubscriptionRef.current = McpServiceClient.subscribeToMcpServers(EmptyRequest.create(), {
-			onResponse: (response) => {
-				console.debug("Received MCP servers update from gRPC stream")
-				if (response.mcpServers) {
-					setMcpServers(convertProtoMcpServersToMcpServers(response.mcpServers))
-				}
-			},
-			onError: (error) => {
-				console.error("Error in MCP servers subscription:", error)
-			},
-			onComplete: () => {
-				console.log("MCP servers subscription completed")
-			},
-		})
-
-		// Set up settings button clicked subscription
-		settingsButtonClickedSubscriptionRef.current = UiServiceClient.subscribeToSettingsButtonClicked(EmptyRequest.create({}), {
-			onResponse: () => {
-				// When settings button is clicked, navigate to settings
-				navigateToSettings()
-			},
-			onError: (error) => {
-				console.error("Error in settings button clicked subscription:", error)
-			},
-			onComplete: () => {
-				console.log("Settings button clicked subscription completed")
-			},
-		})
-
-		// Set up worktrees button clicked subscription
-		worktreesButtonClickedSubscriptionRef.current = UiServiceClient.subscribeToWorktreesButtonClicked(
-			EmptyRequest.create({}),
-			{
-				onResponse: () => {
-					// When worktrees button is clicked, navigate to worktrees
-					navigateToWorktrees()
-				},
-				onError: (error) => {
-					console.error("Error in worktrees button clicked subscription:", error)
-				},
-				onComplete: () => {
-					console.log("Worktrees button clicked subscription completed")
-				},
-			},
-		)
-
-		// Subscribe to partial message events
-		partialMessageUnsubscribeRef.current = UiServiceClient.subscribeToPartialMessage(EmptyRequest.create({}), {
-			onResponse: (protoMessage) => {
-				try {
-					// Validate critical fields
-					if (!protoMessage.ts || protoMessage.ts <= 0) {
-						console.error("Invalid timestamp in partial message:", protoMessage)
-						return
-					}
-
-					const partialMessage = convertProtoToClineMessage(protoMessage)
-					const sourceKey = getTaskViewKey(protoMessage)
-					if (!sourceKey || sourceKey !== currentTaskViewKeyRef.current) return
-					setClineMessages((prev) => {
-						if (sourceKey !== currentTaskViewKeyRef.current) return prev
-						const existingIndex = prev.findIndex((msg) => msg.ts === partialMessage.ts)
-						if (existingIndex >= 0 && prev[existingIndex].partial !== true && partialMessage.partial === true) {
-							return prev
-						}
-						if (
-							existingIndex < 0 &&
-							partialMessage.partial !== true &&
-							!windowWasAtTailRef.current &&
-							!canAppendRealtimeMessage(prev.length, firstItemIndexRef.current, totalMessageCountRef.current)
-						) {
-							return prev
-						}
-						windowWasAtTailRef.current = true
-						return mergeClineMessagesByTs(prev, [partialMessage])
-					})
-				} catch (error) {
-					console.error("Failed to process partial message:", error, protoMessage)
-				}
-			},
-			onError: (error) => {
-				console.error("Error in partialMessage subscription:", error)
-			},
-			onComplete: () => {
-				console.debug("partialMessage subscription completed")
-			},
-		})
-
-		// Subscribe to MCP marketplace catalog updates
-		mcpMarketplaceUnsubscribeRef.current = McpServiceClient.subscribeToMcpMarketplaceCatalog(EmptyRequest.create({}), {
-			onResponse: (catalog) => {
-				console.debug("Received MCP marketplace catalog update from gRPC stream")
-				setMcpMarketplaceCatalog(catalog)
-			},
-			onError: (error) => {
-				console.error("Error in MCP marketplace catalog subscription:", error)
-			},
-			onComplete: () => {
-				console.log("MCP marketplace catalog subscription completed")
-			},
-		})
-
-		// Subscribe to OpenRouter models updates
-		openRouterModelsUnsubscribeRef.current = ModelsServiceClient.subscribeToOpenRouterModels(EmptyRequest.create({}), {
-			onResponse: (response: OpenRouterCompatibleModelInfo) => {
-				const models = fromProtobufModels(response.models)
-				setOpenRouterModels({
-					[openRouterDefaultModelId]: openRouterDefaultModelInfo, // in case the extension sent a model list without the default model
-					...models,
-				})
-			},
-			onError: (error) => {
-				console.error("Error in OpenRouter models subscription:", error)
-			},
-			onComplete: () => {
-				console.log("OpenRouter models subscription completed")
-			},
-		})
-
-		// Subscribe to LiteLLM models updates
-		liteLlmModelsUnsubscribeRef.current = ModelsServiceClient.subscribeToLiteLlmModels(EmptyRequest.create({}), {
-			onResponse: (response: OpenRouterCompatibleModelInfo) => {
-				const models = fromProtobufModels(response.models)
-				setLiteLlmModels(models)
-			},
-			onError: (error) => {
-				console.error("Error in LiteLLM models subscription:", error)
-			},
-			onComplete: () => {
-				console.log("LiteLLM models subscription completed")
-			},
-		})
-
-		// Initialize webview using gRPC
-		UiServiceClient.initializeWebview(EmptyRequest.create({}))
-			.then(() => {
-				console.debug("Webview initialization completed via gRPC")
-			})
-			.catch((error) => {
-				console.error("Failed to initialize webview via gRPC:", error)
-			})
-
-		// Set up account button clicked subscription
-		accountButtonClickedSubscriptionRef.current = UiServiceClient.subscribeToAccountButtonClicked(EmptyRequest.create(), {
-			onResponse: () => {
-				// When account button is clicked, navigate to account view
-				console.debug("Received account button clicked event from gRPC stream")
-				navigateToAccount()
-			},
-			onError: (error) => {
-				console.error("Error in account button clicked subscription:", error)
-			},
-			onComplete: () => {
-				console.log("Account button clicked subscription completed")
-			},
-		})
-
-		// Fetch available terminal profiles on launch
-		StateServiceClient.getAvailableTerminalProfiles(EmptyRequest.create({}))
-			.then((response) => {
-				setAvailableTerminalProfiles(response.profiles)
-			})
-			.catch((error) => {
-				console.error("Failed to fetch available terminal profiles:", error)
-			})
-
-		// Subscribe to relinquish control events
-		relinquishControlUnsubscribeRef.current = UiServiceClient.subscribeToRelinquishControl(EmptyRequest.create({}), {
-			onResponse: () => {
-				// Call all registered callbacks
-				relinquishControlCallbacks.current.forEach((callback) => {
-					callback()
-				})
-			},
-			onError: (error) => {
-				console.error("Error in relinquishControl subscription:", error)
-			},
-			onComplete: () => {},
-		})
-
-		// Clean up subscriptions when component unmounts
-		return () => {
-			if (stateSubscriptionRef.current) {
-				stateSubscriptionRef.current()
-				stateSubscriptionRef.current = null
-			}
-			if (mcpButtonUnsubscribeRef.current) {
-				mcpButtonUnsubscribeRef.current()
-				mcpButtonUnsubscribeRef.current = null
-			}
-			if (historyButtonClickedSubscriptionRef.current) {
-				historyButtonClickedSubscriptionRef.current()
-				historyButtonClickedSubscriptionRef.current = null
-			}
-			if (chatButtonUnsubscribeRef.current) {
-				chatButtonUnsubscribeRef.current()
-				chatButtonUnsubscribeRef.current = null
-			}
-			if (accountButtonClickedSubscriptionRef.current) {
-				accountButtonClickedSubscriptionRef.current()
-				accountButtonClickedSubscriptionRef.current = null
-			}
-			if (settingsButtonClickedSubscriptionRef.current) {
-				settingsButtonClickedSubscriptionRef.current()
-				settingsButtonClickedSubscriptionRef.current = null
-			}
-			if (worktreesButtonClickedSubscriptionRef.current) {
-				worktreesButtonClickedSubscriptionRef.current()
-				worktreesButtonClickedSubscriptionRef.current = null
-			}
-			if (partialMessageUnsubscribeRef.current) {
-				partialMessageUnsubscribeRef.current()
-				partialMessageUnsubscribeRef.current = null
-			}
-			if (mcpMarketplaceUnsubscribeRef.current) {
-				mcpMarketplaceUnsubscribeRef.current()
-				mcpMarketplaceUnsubscribeRef.current = null
-			}
-			if (openRouterModelsUnsubscribeRef.current) {
-				openRouterModelsUnsubscribeRef.current()
-				openRouterModelsUnsubscribeRef.current = null
-			}
-			if (liteLlmModelsUnsubscribeRef.current) {
-				liteLlmModelsUnsubscribeRef.current()
-				liteLlmModelsUnsubscribeRef.current = null
-			}
-			if (workspaceUpdatesUnsubscribeRef.current) {
-				workspaceUpdatesUnsubscribeRef.current()
-				workspaceUpdatesUnsubscribeRef.current = null
-			}
-			if (relinquishControlUnsubscribeRef.current) {
-				relinquishControlUnsubscribeRef.current()
-				relinquishControlUnsubscribeRef.current = null
-			}
-			if (mcpServersSubscriptionRef.current) {
-				mcpServersSubscriptionRef.current()
-				mcpServersSubscriptionRef.current = null
-			}
-		}
-	}, [
-		navigateToChat,
-		navigateToHistory,
-		navigateToMcp,
-		showWelcome, // When worktrees button is clicked, navigate to worktrees
-		navigateToWorktrees, // When settings button is clicked, navigate to settings
-		navigateToSettings,
-		navigateToAccount,
-		// A retry re-runs this effect, so the cleanup above tears down the
-		// failed stream before a fresh subscription replaces it.
-		hydrationAttempt,
-	])
-
-	// Safety net for task switches while HistoryView is open. The primary
-	// navigation path is the backend history-ready event; this only handles a
-	// missed event without closing HistoryView just because a task already exists.
-	useEffect(() => {
-		const currentTaskViewKey = getTaskViewKey(state.taskViewState)
-		const prevTaskViewKey = prevHistoryTaskViewKeyRef.current
-
-		if (!showHistory) {
-			prevHistoryTaskViewKeyRef.current = currentTaskViewKey
-			return
-		}
-
-		if (currentTaskViewKey && currentTaskViewKey !== prevTaskViewKey) {
-			navigateToChat()
-		}
-
-		prevHistoryTaskViewKeyRef.current = currentTaskViewKey
-	}, [state.taskViewState, showHistory, navigateToChat])
-
-	const refreshOpenRouterModels = useCallback(() => {
-		ModelsServiceClient.refreshOpenRouterModelsRpc(EmptyRequest.create({}))
-			.then((response: OpenRouterCompatibleModelInfo) => {
-				const models = fromProtobufModels(response.models)
-				setOpenRouterModels({
-					[openRouterDefaultModelId]: openRouterDefaultModelInfo, // in case the extension sent a model list without the default model
-					...models,
-				})
-			})
-			.catch((error: Error) => console.error("Failed to refresh OpenRouter models:", error))
-	}, [])
-
-	const refreshHicapModels = useCallback(() => {
-		ModelsServiceClient.refreshHicapModels(EmptyRequest.create({}))
-			.then((response: OpenRouterCompatibleModelInfo) => {
-				setHicapModels(fromProtobufModels(response.models))
-			})
-			.catch((error: Error) => console.error("Failed to refresh Hicap models:", error))
-	}, [])
-
-	const refreshLiteLlmModels = useCallback(() => {
-		return ModelsServiceClient.refreshLiteLlmModelsRpc(EmptyRequest.create({}))
-			.then((response: OpenRouterCompatibleModelInfo) => {
-				const models = fromProtobufModels(response.models)
-				setLiteLlmModels(models)
-			})
-			.catch((error: Error) => console.error("Failed to refresh LiteLLM models:", error))
-	}, [])
-
-	const refreshVercelAiGatewayModels = useCallback(() => {
-		ModelsServiceClient.refreshVercelAiGatewayModelsRpc(EmptyRequest.create({}))
-			.then((response: OpenRouterCompatibleModelInfo) => {
-				const models = fromProtobufModels(response.models)
-				setVercelAiGatewayModels(models)
-			})
-			.catch((error: Error) => console.error("Failed to refresh Vercel AI Gateway models:", error))
-	}, [])
-
-	// Guard to prevent repeated refresh when models are empty
-	const modelRefreshAttempted = useRef(false)
-
-	// Auto-refresh model lists on API key availability
-	useEffect(() => {
-		if (modelRefreshAttempted.current) return
-		const needsOpenRouter = !openRouterModels || Object.keys(openRouterModels).length <= 1
-		const needsVercel = !vercelAiGatewayModels || Object.keys(vercelAiGatewayModels).length === 0
-		if (!needsOpenRouter && !needsVercel) return
-		modelRefreshAttempted.current = true
-		if (needsOpenRouter) {
-			refreshOpenRouterModels()
-		}
-		if (needsVercel) {
-			refreshVercelAiGatewayModels()
-		}
-		if (state.apiConfiguration?.planModeProfile) {
-			refreshLiteLlmModels()
-		}
-	}, [
-		refreshOpenRouterModels,
-		refreshVercelAiGatewayModels,
-		state?.apiConfiguration?.planModeProfile,
-		refreshLiteLlmModels,
-		openRouterModels,
-		vercelAiGatewayModels,
-	])
-
-	// Refresh Cline models function
-	const refreshClineModels = useCallback(() => {
-		ModelsServiceClient.refreshClineModelsRpc(EmptyRequest.create({}))
-			.then((response: OpenRouterCompatibleModelInfo) => {
-				const models = fromProtobufModels(response.models)
-				setClineModels((prev) => (Object.keys(models).length > 0 ? models : (prev ?? null)))
-			})
-			.catch((error: Error) => console.error("Failed to refresh Cline models:", error))
-	}, [])
-
-	// Auto-refresh Cline models when provider is cline
-	useEffect(() => {
-		const hasClineProvider =
-			state.apiConfiguration?.actModeProfile === "cline" || state.apiConfiguration?.planModeProfile === "cline"
-		if (hasClineProvider && clineModels === null) {
-			refreshClineModels()
-		}
-	}, [state.apiConfiguration?.actModeProfile, state.apiConfiguration?.planModeProfile, clineModels, refreshClineModels])
-
-	const capabilityStateSetters = useMemo<
-		Pick<ExtensionStateContextType, Extract<keyof ExtensionStateContextType, `set${string}Toggles`>>
-	>(
-		() => ({
-			setGlobalClineRulesToggles: (toggles) =>
-				setState((prevState) => ({ ...prevState, globalClineRulesToggles: toggles })),
-			setLocalClineRulesToggles: (toggles) => setState((prevState) => ({ ...prevState, localClineRulesToggles: toggles })),
-			setLocalCursorRulesToggles: (toggles) =>
-				setState((prevState) => ({ ...prevState, localCursorRulesToggles: toggles })),
-			setLocalWindsurfRulesToggles: (toggles) =>
-				setState((prevState) => ({ ...prevState, localWindsurfRulesToggles: toggles })),
-			setLocalAgentsRulesToggles: (toggles) =>
-				setState((prevState) => ({ ...prevState, localAgentsRulesToggles: toggles })),
-			setLocalWorkflowToggles: (toggles) => setState((prevState) => ({ ...prevState, localWorkflowToggles: toggles })),
-			setGlobalWorkflowToggles: (toggles) => setState((prevState) => ({ ...prevState, globalWorkflowToggles: toggles })),
-			setGlobalSkillsToggles: (toggles) => setState((prevState) => ({ ...prevState, globalSkillsToggles: toggles })),
-			setLocalSkillsToggles: (toggles) => setState((prevState) => ({ ...prevState, localSkillsToggles: toggles })),
-			setRemoteSkillsToggles: (toggles) => setState((prevState) => ({ ...prevState, remoteSkillsToggles: toggles })),
-			setTaskCapabilityToggles: (toggles) => setState((prevState) => ({ ...prevState, taskCapabilityToggles: toggles })),
-			setRemoteRulesToggles: (toggles) => setState((prevState) => ({ ...prevState, remoteRulesToggles: toggles })),
-			setRemoteWorkflowToggles: (toggles) => setState((prevState) => ({ ...prevState, remoteWorkflowToggles: toggles })),
-		}),
-		[],
-	)
-
-	const setShouldShowAnnouncement = useCallback((value: boolean) => {
-		setState((prevState) => ({ ...prevState, shouldShowAnnouncement: value }))
-	}, [])
-
-	const setUserInfo = useCallback((userInfo?: UserInfo) => {
-		setState((prevState) => ({ ...prevState, userInfo }))
-	}, [])
-
-	// The provider sits above the whole webview tree, so an unmemoized value
-	// would republish on every render and force each consumer to re-render.
-	const contextValue = useMemo<ExtensionStateContextType>(
-		() => ({
-			...state,
-			historyTaskOpening,
-			openHistoryTask,
-			dismissHistoryTaskOpening,
-			clineMessages,
-			didHydrateState,
-			hydration,
-			retryHydration,
-			showWelcome,
-			onboardingModels,
-			clineModels,
-			openRouterModels,
-			vercelAiGatewayModels,
-			hicapModels,
-			liteLlmModels,
-			openAiModels,
-			requestyModels,
-			mcpServers,
-			mcpMarketplaceCatalog,
-			totalTasksSize,
-			availableTerminalProfiles,
-			showMcp,
-			mcpTab,
-			showSettings,
-			settingsTargetSection,
-			showHistory,
-			showAccount,
-			showWorktrees,
-			showAnnouncement,
-			firstItemIndex,
-			setFirstItemIndex,
-			globalClineRulesToggles: state.globalClineRulesToggles || {},
-			localClineRulesToggles: state.localClineRulesToggles || {},
-			localCursorRulesToggles: state.localCursorRulesToggles || {},
-			localWindsurfRulesToggles: state.localWindsurfRulesToggles || {},
-			localAgentsRulesToggles: state.localAgentsRulesToggles || {},
-			localWorkflowToggles: state.localWorkflowToggles || {},
-			globalWorkflowToggles: state.globalWorkflowToggles || {},
-			remoteRulesToggles: state.remoteRulesToggles || {},
-			remoteWorkflowToggles: state.remoteWorkflowToggles || {},
-			enableCheckpointsSetting: state.enableCheckpointsSetting,
-			currentFocusChainChecklist: state.currentFocusChainChecklist,
-			focusChainHistory: state.focusChainHistory,
-
-			// Navigation functions
-			navigateToMcp,
-			navigateToSettings,
-			navigateToHistory,
-			navigateToAccount,
-			navigateToWorktrees,
-			navigateToChat,
-
-			// Hide functions
-			hideSettings,
-			hideHistory,
-			hideAccount,
-			hideWorktrees,
-			hideAnnouncement,
-			setShowAnnouncement,
-			setShowWelcome,
-			setOnboardingModels,
-			setShouldShowAnnouncement,
-			setMcpServers,
-			setRequestyModels,
-			setMcpMarketplaceCatalog,
-			setShowMcp,
-			closeMcpView,
-			...capabilityStateSetters,
-			setMcpTab,
-			setTotalTasksSize,
-			refreshClineModels,
-			refreshOpenRouterModels,
-			refreshVercelAiGatewayModels,
-			refreshHicapModels,
-			refreshLiteLlmModels,
-			onRelinquishControl,
-			setUserInfo,
-			expandTaskHeader,
-			setExpandTaskHeader,
-			setClineMessages,
-		}),
-		[
-			state,
-			historyTaskOpening,
-			openHistoryTask,
-			dismissHistoryTaskOpening,
-			clineMessages,
-			didHydrateState,
-			hydration,
-			retryHydration,
-			showWelcome,
-			onboardingModels,
-			clineModels,
-			openRouterModels,
-			vercelAiGatewayModels,
-			hicapModels,
-			liteLlmModels,
-			openAiModels,
-			requestyModels,
-			mcpServers,
-			mcpMarketplaceCatalog,
-			totalTasksSize,
-			availableTerminalProfiles,
-			showMcp,
-			mcpTab,
-			showSettings,
-			settingsTargetSection,
-			showHistory,
-			showAccount,
-			showWorktrees,
-			showAnnouncement,
-			firstItemIndex,
-			navigateToMcp,
-			navigateToSettings,
-			navigateToHistory,
-			navigateToAccount,
-			navigateToWorktrees,
-			navigateToChat,
-			hideSettings,
-			hideHistory,
-			hideAccount,
-			hideWorktrees,
-			hideAnnouncement,
-			setShouldShowAnnouncement,
-			closeMcpView,
-			capabilityStateSetters,
-			refreshClineModels,
-			refreshOpenRouterModels,
-			refreshVercelAiGatewayModels,
-			refreshHicapModels,
-			refreshLiteLlmModels,
-			onRelinquishControl,
-			setUserInfo,
-			expandTaskHeader,
-		],
-	)
-
-	return <ExtensionStateContext.Provider value={contextValue}>{children}</ExtensionStateContext.Provider>
+    // UI view state
+    const [showMcp, setShowMcp] = useState(false)
+    const [mcpTab, setMcpTab] = useState<McpViewTab | undefined>(undefined)
+    const [showSettings, setShowSettings] = useState(false)
+    const [settingsTargetSection, setSettingsTargetSection] = useState<string | undefined>(undefined)
+    const [showHistory, setShowHistory] = useState(false)
+    const [showAccount, setShowAccount] = useState(false)
+    const [showWorktrees, setShowWorktrees] = useState(false)
+    const [showAnnouncement, setShowAnnouncement] = useState(false)
+
+    // Helper for MCP view
+    const closeMcpView = useCallback(() => {
+        setShowMcp(false)
+        setMcpTab(undefined)
+    }, [])
+
+    // Hide functions
+    const hideSettings = useCallback(() => {
+        setShowSettings(false)
+        setSettingsTargetSection(undefined)
+    }, [])
+    const hideHistory = useCallback(() => setShowHistory(false), [])
+    const hideAccount = useCallback(() => setShowAccount(false), [])
+    const hideWorktrees = useCallback(() => setShowWorktrees(false), [])
+    const hideAnnouncement = useCallback(() => setShowAnnouncement(false), [])
+
+    // Navigation functions
+    const navigateToMcp = useCallback((tab?: McpViewTab) => {
+        setShowSettings(false)
+        setShowHistory(false)
+        setShowAccount(false)
+        setShowWorktrees(false)
+        if (tab) {
+            setMcpTab(tab)
+        }
+        setShowMcp(true)
+    }, [])
+
+    const navigateToSettings = useCallback(
+        (targetSection?: string) => {
+            setShowHistory(false)
+            closeMcpView()
+            setShowAccount(false)
+            setShowWorktrees(false)
+            setSettingsTargetSection(targetSection)
+            setShowSettings(true)
+        },
+        [closeMcpView],
+    )
+
+    const navigateToHistory = useCallback(() => {
+        setShowSettings(false)
+        closeMcpView()
+        setShowAccount(false)
+        setShowWorktrees(false)
+        setShowHistory(true)
+    }, [closeMcpView])
+
+    const navigateToAccount = useCallback(() => {
+        setShowSettings(false)
+        closeMcpView()
+        setShowHistory(false)
+        setShowWorktrees(false)
+        setShowAccount(true)
+    }, [closeMcpView])
+
+    const navigateToWorktrees = useCallback(() => {
+        setShowSettings(false)
+        closeMcpView()
+        setShowHistory(false)
+        setShowAccount(false)
+        setShowWorktrees(true)
+    }, [closeMcpView])
+
+    const navigateToChat = useCallback(() => {
+        setShowSettings(false)
+        closeMcpView()
+        setShowHistory(false)
+        setShowAccount(false)
+        setShowWorktrees(false)
+    }, [closeMcpView])
+
+    const [state, setState] = useState<ExtensionState>({
+        stateRevision: 0,
+        version: "",
+        taskHistory: [],
+        shouldShowAnnouncement: false,
+        autoApprovalSettings: DEFAULT_AUTO_APPROVAL_SETTINGS,
+        browserSettings: DEFAULT_BROWSER_SETTINGS,
+        focusChainSettings: DEFAULT_FOCUS_CHAIN_SETTINGS,
+        preferredLanguage: "English",
+        chatInputSendShortcut: DEFAULT_CHAT_INPUT_SEND_SHORTCUT,
+        mode: "act",
+        platform: DEFAULT_PLATFORM,
+        environment: Environment.production,
+        usageReportingSetting: "unset",
+        errorReportingSetting: "unset",
+        distinctId: "",
+        planActSeparateModelsSetting: true,
+        enableCheckpointsSetting: true,
+        mcpDisplayMode: DEFAULT_MCP_DISPLAY_MODE,
+        globalClineRulesToggles: {},
+        localClineRulesToggles: {},
+        localCursorRulesToggles: {},
+        localWindsurfRulesToggles: {},
+        localAgentsRulesToggles: {},
+        localWorkflowToggles: {},
+        globalWorkflowToggles: {},
+        shellIntegrationTimeout: 4000,
+        terminalReuseEnabled: true,
+        vscodeTerminalExecutionMode: "vscodeTerminal",
+        terminalOutputLineLimit: 500,
+        terminalCommandTimeoutSeconds: 1800,
+        terminalCommandHandoffSeconds: 10,
+        maxConsecutiveMistakes: 3,
+        defaultTerminalProfile: "default",
+        isNewUser: false,
+        welcomeViewCompleted: false,
+        onboardingModels: undefined,
+        mcpResponsesCollapsed: false, // Default value (expanded), will be overwritten by extension state
+        strictPlanModeEnabled: false,
+        yoloModeToggled: false,
+        customPrompt: undefined,
+        useAutoCondense: false,
+        autoCondenseTriggerPercent: DEFAULT_AUTO_CONDENSE_TRIGGER_PERCENT,
+        autoCondenseMinReserveTokens: DEFAULT_AUTO_CONDENSE_MIN_RESERVE_TOKENS,
+        autoCondenseMaxReserveTokens: DEFAULT_AUTO_CONDENSE_MAX_RESERVE_TOKENS,
+        autoCondenseMaxContextTokens: DEFAULT_AUTO_CONDENSE_MAX_CONTEXT_TOKENS,
+        subagentsEnabled: true,
+        mcpEnabled: true,
+        clineWebToolsEnabled: { user: true, featureFlag: false },
+        worktreesEnabled: { user: true, featureFlag: false },
+        favoritedModelIds: [],
+        optOutOfRemoteConfig: false,
+        remoteConfigSettings: {},
+        backgroundCommandRunning: false,
+        backgroundCommandTaskId: undefined,
+        backgroundEditEnabled: false,
+        doubleCheckCompletionEnabled: false,
+        lazyTeammateModeEnabled: false,
+        showFeatureTips: true,
+        showActiveTasksInEnvDetails: true,
+        globalSkillsToggles: {},
+        localSkillsToggles: {},
+        remoteSkillsToggles: {},
+        taskCapabilityToggles: undefined,
+
+        // NEW: Add workspace information with defaults
+        workspaceRoots: [],
+        primaryRootIndex: 0,
+        isMultiRootWorkspace: false,
+        multiRootSetting: { user: false, featureFlag: false },
+        hooksEnabled: false,
+        nativeToolCallSetting: false,
+        enableParallelToolCalling: false,
+        // Resolved from the shared policy rather than a literal, so the slider
+        // before hydration shows the same ceiling the runtime would apply.
+        maxParallelToolCalls: DEFAULT_MAX_PARALLEL_TOOL_CALLS,
+        maxParallelSubagents: DEFAULT_MAX_PARALLEL_SUBAGENTS,
+        providersVersion: 0,
+        profileCatalogRevision: 0,
+        taskLockStatus: undefined,
+    })
+    const [expandTaskHeader, setExpandTaskHeader] = useState(true)
+    const [hydration, setHydration] = useState<HydrationStatus>({ status: "pending" })
+    const didHydrateState = hydration.status === "ready"
+    // Bumping this re-runs the subscription effect, which is what a retry needs:
+    // the failed stream is torn down by the effect cleanup and replaced.
+    const [hydrationAttempt, setHydrationAttempt] = useState(0)
+    const retryHydration = useCallback(() => {
+        setHydration({ status: "pending" })
+        setHydrationAttempt((attempt) => attempt + 1)
+    }, [])
+
+    // Atomic sliding window state via React 18 auto-batching
+    const [clineMessages, setClineMessages] = useState<UiMessage[]>([])
+    const [firstItemIndex, setFirstItemIndex] = useState(0)
+    const handleHistoryTaskOpenFailure = useCallback(
+        (target: HistoryTaskTarget) => {
+            navigateToHistory()
+            window.alert(`Could not open task '${target.task || target.id}'.`)
+        },
+        [navigateToHistory],
+    )
+    const { historyTaskOpening, openHistoryTask, dismissHistoryTaskOpening } = useHistoryTaskOpening({
+        taskViewState: state.taskViewState,
+        // Hand off once the backend window is ready, not after the next paging RPC.
+        hasMessageSurface: !!state.taskTitleMessage && (state.totalMessageCount ?? 0) > 0,
+        requestOpen: requestHistoryTaskOpen,
+        navigateToChat,
+        onOpenFailed: handleHistoryTaskOpenFailure,
+    })
+    const clineMessagesRef = useRef<UiMessage[]>([])
+    // Fetch callbacks resolve after their scheduling render, so reconciliation
+    // has to read the window start from a ref rather than the captured value.
+    const firstItemIndexRef = useRef(0)
+    const totalMessageCountRef = useRef(0)
+    // A state update can announce several durable rows before their window fetch
+    // lands. Remember that the current slice covered the previous tail so a
+    // realtime partial arriving in that gap is staged instead of discarded.
+    const windowWasAtTailRef = useRef(false)
+    const bootstrapResolvedRef = useRef(false)
+    clineMessagesRef.current = clineMessages
+    firstItemIndexRef.current = firstItemIndex
+    totalMessageCountRef.current = state.totalMessageCount ?? 0
+    if (clineMessages.length > 0) bootstrapResolvedRef.current = true
+
+    const commitMessageWindow = useCallback((messages: UiMessage[], startIndex: number) => {
+        clineMessagesRef.current = messages
+        firstItemIndexRef.current = startIndex
+        windowWasAtTailRef.current = canAppendRealtimeMessage(messages.length, startIndex, totalMessageCountRef.current)
+        setClineMessages(messages)
+        setFirstItemIndex(startIndex)
+    }, [])
+
+    const prevTotalRef = useRef(0)
+    const prevMessageWindowRevisionRef = useRef(0)
+    // Owner token of the running window fetch. A fresh token per fetch lets a
+    // newer tail sync take over, and keeps a superseded one from releasing it.
+    const refetchLockRef = useRef<symbol | null>(null)
+    // A total shrink can arrive while a durable-tail fetch owns the single
+    // reconciliation slot. Remember it so releasing that slot cannot consume the
+    // lower total without removing the row that disappeared.
+    const refetchAfterUnlockRef = useRef(false)
+    // Stabilize window after cancel: delay refetch by 200ms so rapid state
+    // changes (remove partials, postState, total update) settle before
+    // triggering a Virtuoso data swap that causes layout jitter.
+    const cancelStabilizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const initialTaskViewKey = getTaskViewKey(state.taskViewState)
+    const currentTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
+    currentTaskViewKeyRef.current = initialTaskViewKey
+    const messageFetchGenerationRef = useRef(0)
+    const prevRefetchTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
+    const prevHistoryTaskViewKeyRef = useRef<string | undefined>(initialTaskViewKey)
+    // Separating these two is the fix for a footer that stayed permanently
+    // unusable: one records that an anchor was successfully hydrated, the other
+    // only that a recovery is currently running. Collapsing them made a failed
+    // attempt look like a completed one.
+    const lastInteractionFetchKeyRef = useRef<string | undefined>(undefined)
+    const inFlightInteractionFetchRef = useRef<string | undefined>(undefined)
+    const projectedInteraction = state.taskViewState?.activeInteraction
+    // Whether this window has loaded the chat row the interaction anchors to.
+    // `anchorVerified` only says the backend holds that row, which is enough for
+    // the footer to dispatch but not for the chat to show it; treating it as
+    // loaded skipped the recovery fetch and left an answered row off screen.
+    const projectedInteractionAnchorLoaded = projectedInteraction
+        ? hasExactInteractionAnchor(clineMessages, projectedInteraction)
+        : true
+    const localTailMessage = clineMessages.at(-1)
+
+    // Reset when task is cleared, bootstrap on task switch, and reconcile gaps
+    // when a durable tail message arrives without its realtime event.
+    useEffect(() => {
+        const currentTaskViewKey = getTaskViewKey(state.taskViewState)
+        const total = state.totalMessageCount ?? 0
+        const messageWindowRevision = state.messageWindowRevision ?? 0
+        const preserveOmittedPartials =
+            state.taskViewState?.footer.actions.some((action) => action.type === "cancel" && action.enabled) === true
+        // Pages are fenced to the task opening the view shows, so a late page of a
+        // previous opening can never merge into this one.
+        const fetchCurrentMessages = (referenceIndex: number, count: number) =>
+            fetchTaskMessages(state.taskViewState, referenceIndex, count)
+
+        const fetchLatestWindow = (scheduledTaskViewKey: string | undefined, expectedInteraction?: ActiveInteractionView) => {
+            const scheduledGeneration = messageFetchGenerationRef.current
+            // The key records that this interaction's anchor is now *hydrated*,
+            // so it is written only once the committed window actually contains
+            // the anchor. Recording it here, before the request, would mark a
+            // failed recovery as done and suppress every later attempt, leaving
+            // the footer permanently unusable.
+            const expectedKey = expectedInteraction ? interactionFetchKey(scheduledTaskViewKey, expectedInteraction) : undefined
+            // Guards this fetch chain against re-entry while it is still running,
+            // without claiming the anchor was recovered.
+            const inFlightKey = expectedKey
+            if (inFlightKey) {
+                inFlightInteractionFetchRef.current = inFlightKey
+            }
+            const retryDelaysMs = [100, 300, 750] as const
+            const retryLatest = async (attempt: number, retryLatestAtStart: boolean): Promise<void> => {
+                if (attempt >= retryDelaysMs.length) return
+                await new Promise<void>((resolve) => setTimeout(resolve, retryDelaysMs[attempt]))
+                if (
+                    messageFetchGenerationRef.current !== scheduledGeneration ||
+                    currentTaskViewKeyRef.current !== scheduledTaskViewKey
+                ) {
+                    return
+                }
+                await fetchAttempt(-1, retryLatestAtStart, attempt + 1)
+            }
+            const fetchAttempt = async (
+                referenceIndex: number,
+                retryLatestAtStart: boolean,
+                bootstrapRetryAttempt = 0,
+            ): Promise<void> => {
+                const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
+                try {
+                    const resp = await fetchCurrentMessages(referenceIndex, 200)
+                    if (
+                        messageFetchGenerationRef.current !== scheduledGeneration ||
+                        currentTaskViewKeyRef.current !== scheduledTaskViewKey
+                    ) {
+                        return
+                    }
+                    const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
+                    const responseTotal = Number(resp.totalCount ?? 0)
+                    if (
+                        referenceIndex === -1 &&
+                        converted.length === 0 &&
+                        !bootstrapResolvedRef.current &&
+                        clineMessagesRef.current.length === 0 &&
+                        Math.max(total, responseTotal) > 0 &&
+                        bootstrapRetryAttempt < retryDelaysMs.length
+                    ) {
+                        await retryLatest(bootstrapRetryAttempt, retryLatestAtStart)
+                        return
+                    }
+                    if (converted.length > 0) bootstrapResolvedRef.current = true
+                    const startIndex = Math.max(0, resp.startIndex)
+                    const reconciled = applyFetchedMessageWindow(
+                        clineMessagesRef.current,
+                        firstItemIndexRef.current,
+                        converted,
+                        startIndex,
+                        responseTotal,
+                        localTimestampsAtFetchStart,
+                        preserveOmittedPartials,
+                    )
+                    commitMessageWindow(reconciled.messages, reconciled.startIndex)
+                    if (expectedInteraction) {
+                        // The response may contain the anchor and still be
+                        // rejected by the continuous-window contract when it does
+                        // not touch the local window. Only the committed window
+                        // makes the anchor consumable, so success is judged there
+                        // rather than on the raw response.
+                        if (hasExactInteractionAnchor(reconciled.messages, expectedInteraction)) {
+                            lastInteractionFetchKeyRef.current = expectedKey
+                            if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
+                                inFlightInteractionFetchRef.current = undefined
+                            }
+                        } else if (startIndex > 0) {
+                            await fetchAttempt(Math.max(0, startIndex - 200), false, bootstrapRetryAttempt)
+                        } else if (retryLatestAtStart) {
+                            await fetchAttempt(-1, false, bootstrapRetryAttempt)
+                        } else if (bootstrapRetryAttempt < retryDelaysMs.length) {
+                            // A disconnected page commits no window change, so recovery cannot
+                            // depend on another render. Keep one fenced, bounded fetch chain.
+                            await retryLatest(bootstrapRetryAttempt, false)
+                        } else if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
+                            // Every page was walked without recovering the anchor.
+                            // Releasing the in-flight marker lets a later viewport
+                            // change try again instead of failing permanently.
+                            inFlightInteractionFetchRef.current = undefined
+                        }
+                    }
+                } catch {
+                    if (
+                        currentTaskViewKeyRef.current !== scheduledTaskViewKey ||
+                        messageFetchGenerationRef.current !== scheduledGeneration
+                    )
+                        return
+                    if (
+                        referenceIndex === -1 &&
+                        total > 0 &&
+                        !bootstrapResolvedRef.current &&
+                        clineMessagesRef.current.length === 0
+                    ) {
+                        await retryLatest(bootstrapRetryAttempt, retryLatestAtStart)
+                        return
+                    }
+                    // A failed request ends this chain, so the in-flight marker
+                    // has to be released here too. Leaving it set would suppress
+                    // every later recovery exactly like a successful hydration,
+                    // which is the failure mode this split was introduced to fix.
+                    if (inFlightKey && inFlightInteractionFetchRef.current === inFlightKey) {
+                        inFlightInteractionFetchRef.current = undefined
+                    }
+                }
+            }
+            return fetchAttempt(-1, Boolean(expectedInteraction))
+        }
+
+        const runDeferredWindowReconciliation = () => {
+            if (!refetchAfterUnlockRef.current || refetchLockRef.current) return
+            const scheduledTaskViewKey = currentTaskViewKeyRef.current
+            const owner = Symbol("deferred-reconciliation")
+            refetchAfterUnlockRef.current = false
+            refetchLockRef.current = owner
+            void fetchLatestWindow(scheduledTaskViewKey).finally(() => {
+                if (refetchLockRef.current !== owner) return
+                refetchLockRef.current = null
+                runDeferredWindowReconciliation()
+            })
+        }
+
+        /**
+         * Own the window until it reaches the live tail.
+         *
+         * Every effect run advances `prevTotalRef` to the newest total, and the
+         * window counts as following the tail only while it still reaches that
+         * mark. A page that was in flight while the total grew therefore lands
+         * below it, and once the task waits for the user no further state change
+         * arrives to fetch the rows it missed. A sync keeps the chase until the
+         * window reaches the latest total, whichever request started it.
+         *
+         * A sync that gives up short of the tail lowers the mark to the window
+         * end, so the next state change resumes the chase instead of abandoning
+         * it. A reader that trimmed the window ends the chase and keeps the
+         * browsing classification.
+         */
+        const syncTailWindow = async (scheduledTaskViewKey: string | undefined, firstStep: TailSyncFirstStep) => {
+            const owner = Symbol("tail-sync")
+            const scheduledGeneration = messageFetchGenerationRef.current
+            refetchLockRef.current = owner
+            const isCurrentView = () =>
+                currentTaskViewKeyRef.current === scheduledTaskViewKey &&
+                messageFetchGenerationRef.current === scheduledGeneration
+            const ownsSync = () => refetchLockRef.current === owner && isCurrentView()
+            const windowEnd = () => firstItemIndexRef.current + clineMessagesRef.current.length
+            let firstStepPending = firstStep === "latest"
+            let followedEnd = windowEnd()
+            let readerMovedAway = false
+            let retries = 0
+            try {
+                while (ownsSync()) {
+                    const knownEnd = windowEnd()
+                    if (knownEnd < followedEnd) {
+                        readerMovedAway = true
+                        return
+                    }
+                    const latestTotal = totalMessageCountRef.current
+                    if (!firstStepPending && knownEnd >= latestTotal) return
+                    // The latest page overlaps the window, so it also repairs a missed
+                    // or stale message near the tail. Only an older gap pages forward.
+                    const fetchLatest = firstStepPending || latestTotal - knownEnd <= TAIL_PAGE_SIZE
+                    const localTimestampsAtFetchStart = new Set(clineMessagesRef.current.map((message) => message.ts))
+                    let progressed = false
+                    try {
+                        const resp = await fetchCurrentMessages(fetchLatest ? -1 : knownEnd, TAIL_PAGE_SIZE)
+                        if (!ownsSync()) return
+                        const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
+                        const reconciled = applyFetchedMessageWindow(
+                            clineMessagesRef.current,
+                            firstItemIndexRef.current,
+                            converted,
+                            Math.max(0, resp.startIndex),
+                            Number(resp.totalCount ?? 0),
+                            localTimestampsAtFetchStart,
+                            preserveOmittedPartials,
+                        )
+                        commitMessageWindow(reconciled.messages, reconciled.startIndex)
+                        progressed = firstStepPending || windowEnd() > knownEnd
+                        firstStepPending = false
+                    } catch {
+                        // A failed page is retried like one that made no progress.
+                    }
+                    followedEnd = windowEnd()
+                    if (progressed) {
+                        retries = 0
+                        continue
+                    }
+                    if (retries >= TAIL_SYNC_RETRY_DELAYS_MS.length) return
+                    await new Promise<void>((resolve) => setTimeout(resolve, TAIL_SYNC_RETRY_DELAYS_MS[retries++]))
+                }
+            } finally {
+                if (refetchLockRef.current === owner) {
+                    refetchLockRef.current = null
+                    if (isCurrentView() && !readerMovedAway && windowEnd() < totalMessageCountRef.current) {
+                        prevTotalRef.current = Math.min(prevTotalRef.current, windowEnd())
+                    }
+                    runDeferredWindowReconciliation()
+                }
+            }
+        }
+
+        if (currentTaskViewKey !== prevRefetchTaskViewKeyRef.current) {
+            messageFetchGenerationRef.current++
+            currentTaskViewKeyRef.current = currentTaskViewKey
+            prevRefetchTaskViewKeyRef.current = currentTaskViewKey
+            if (cancelStabilizeTimerRef.current) {
+                clearTimeout(cancelStabilizeTimerRef.current)
+                cancelStabilizeTimerRef.current = null
+            }
+            refetchLockRef.current = null
+            refetchAfterUnlockRef.current = false
+            lastInteractionFetchKeyRef.current = undefined
+            inFlightInteractionFetchRef.current = undefined
+            bootstrapResolvedRef.current = false
+            firstItemIndexRef.current = 0
+            windowWasAtTailRef.current = false
+            setClineMessages([])
+            setFirstItemIndex(0)
+            prevTotalRef.current = total
+            prevMessageWindowRevisionRef.current = messageWindowRevision
+            if (total > 0) {
+                fetchLatestWindow(currentTaskViewKey, projectedInteraction)
+            }
+            return
+        }
+        currentTaskViewKeyRef.current = currentTaskViewKey
+        const messageWindowInvalidated = messageWindowRevision !== prevMessageWindowRevisionRef.current
+        prevMessageWindowRevisionRef.current = messageWindowRevision
+        if (messageWindowInvalidated && clineMessages.length > 0) {
+            refetchAfterUnlockRef.current = true
+            runDeferredWindowReconciliation()
+        }
+
+        if (total === 0) {
+            if (cancelStabilizeTimerRef.current) {
+                clearTimeout(cancelStabilizeTimerRef.current)
+                cancelStabilizeTimerRef.current = null
+            }
+            firstItemIndexRef.current = 0
+            windowWasAtTailRef.current = false
+            setClineMessages([])
+            setFirstItemIndex(0)
+            prevTotalRef.current = 0
+            prevMessageWindowRevisionRef.current = messageWindowRevision
+            refetchAfterUnlockRef.current = false
+            lastInteractionFetchKeyRef.current = undefined
+            inFlightInteractionFetchRef.current = undefined
+            bootstrapResolvedRef.current = false
+            return
+        }
+        if (prevTotalRef.current === 0 && total > 0 && clineMessages.length === 0) {
+            fetchLatestWindow(currentTaskViewKeyRef.current, projectedInteraction)
+            prevTotalRef.current = total
+            return
+        }
+        const knownEndIndex = firstItemIndex + clineMessages.length
+        const windowCoveredPreviousTail = knownEndIndex >= prevTotalRef.current
+        // A tail fetch still running cannot be extended, so the rows it did not
+        // ask for must be requested once it lands. Holding the previous total
+        // keeps the window counted as the live tail until then; advancing it
+        // here made the next pass believe the window had fallen behind on
+        // purpose and never fetched the newest row.
+        const tailCatchUpDeferred = knownEndIndex < total && windowCoveredPreviousTail && refetchLockRef.current
+        const durableTailMayHaveReplacedPartial =
+            total > prevTotalRef.current && knownEndIndex === total && localTailMessage?.partial === true
+        if (durableTailMayHaveReplacedPartial && !refetchLockRef.current) {
+            void syncTailWindow(currentTaskViewKeyRef.current, "latest")
+        } else if (knownEndIndex < total && windowCoveredPreviousTail && !refetchLockRef.current) {
+            void syncTailWindow(currentTaskViewKeyRef.current, "follow")
+        }
+        // Refetch when the local window can no longer be reconciled from state
+        // alone: the total shrank, or it claims more messages than exist because
+        // a restore truncated the tail and appended replacements.
+        // Delayed by 200ms via cancelStabilizeTimerRef so rapid state changes
+        // (remove partials, postState, total update) settle before triggering
+        // a Virtuoso data swap that causes layout jitter.
+        const windowContradictsTotal =
+            total < prevTotalRef.current || isMessageWindowOverfull(clineMessages.length, firstItemIndex, total)
+        if (prevTotalRef.current !== 0 && windowContradictsTotal && clineMessages.length > 0) {
+            if (refetchLockRef.current) {
+                refetchAfterUnlockRef.current = true
+            } else {
+                if (cancelStabilizeTimerRef.current) {
+                    clearTimeout(cancelStabilizeTimerRef.current)
+                }
+                const scheduledTaskViewKey = currentTaskViewKeyRef.current
+                cancelStabilizeTimerRef.current = setTimeout(() => {
+                    cancelStabilizeTimerRef.current = null
+                    if (currentTaskViewKeyRef.current !== scheduledTaskViewKey) {
+                        return
+                    }
+                    // The latest page takes over any sync in flight, which would
+                    // otherwise keep merging against a window the total contradicts.
+                    void syncTailWindow(scheduledTaskViewKey, "latest")
+                }, 200)
+            }
+        }
+
+        const activeInteraction = projectedInteraction
+        // A verified anchor keeps the footer usable meanwhile, so its row is
+        // recovered once the first window has landed instead of racing it. The
+        // in-flight key below already prevents duplicate recoveries, so an
+        // unrelated tail fetch must not suppress this one.
+        const anchorRecoveryReady = activeInteraction?.anchorVerified !== true || bootstrapResolvedRef.current
+        if (activeInteraction && !projectedInteractionAnchorLoaded && anchorRecoveryReady) {
+            const expectedFetchKey = interactionFetchKey(currentTaskViewKeyRef.current, activeInteraction)
+            // Recovery is skipped only when this anchor was already hydrated or a
+            // recovery for it is still running. A previously failed attempt no
+            // longer counts, so browsing away and back can recover the footer
+            // instead of leaving it permanently disabled.
+            const alreadyHydrated = lastInteractionFetchKeyRef.current === expectedFetchKey
+            const alreadyRunning = inFlightInteractionFetchRef.current === expectedFetchKey
+            if (!alreadyHydrated && !alreadyRunning) {
+                fetchLatestWindow(currentTaskViewKeyRef.current, activeInteraction)
+            }
+        }
+
+        if (!tailCatchUpDeferred) prevTotalRef.current = total
+    }, [
+        state.taskViewState,
+        state.totalMessageCount,
+        state.messageWindowRevision,
+        state.taskViewState?.footer.actions,
+        projectedInteraction,
+        projectedInteractionAnchorLoaded,
+        clineMessages.length,
+        localTailMessage,
+        firstItemIndex,
+        commitMessageWindow,
+    ])
+
+    useEffect(() => {
+        return () => {
+            messageFetchGenerationRef.current++
+            if (cancelStabilizeTimerRef.current) {
+                clearTimeout(cancelStabilizeTimerRef.current)
+                cancelStabilizeTimerRef.current = null
+            }
+        }
+    }, [])
+
+    const [showWelcome, setShowWelcome] = useState(false)
+    const [onboardingModels, setOnboardingModels] = useState<OnboardingModelGroup | undefined>(undefined)
+
+    const [clineModels, setClineModels] = useState<Record<string, ModelInfo> | null>(null)
+    const [openRouterModels, setOpenRouterModels] = useState<Record<string, ModelInfo>>({
+        [openRouterDefaultModelId]: openRouterDefaultModelInfo,
+    })
+    const [vercelAiGatewayModels, setVercelAiGatewayModels] = useState<Record<string, ModelInfo>>({})
+    const [hicapModels, setHicapModels] = useState<Record<string, ModelInfo>>({})
+    const [liteLlmModels, setLiteLlmModels] = useState<Record<string, ModelInfo>>({})
+    const [totalTasksSize, setTotalTasksSize] = useState<number | null>(null)
+    const [availableTerminalProfiles, setAvailableTerminalProfiles] = useState<TerminalProfile[]>([])
+
+    const [openAiModels, _setOpenAiModels] = useState<string[]>([])
+    const [requestyModels, setRequestyModels] = useState<Record<string, ModelInfo>>({
+        [requestyDefaultModelId]: requestyDefaultModelInfo,
+    })
+    const [mcpServers, setMcpServers] = useState<McpServer[]>([])
+    const [mcpMarketplaceCatalog, setMcpMarketplaceCatalog] = useState<McpMarketplaceCatalog>({ items: [] })
+
+    // References to store subscription cancellation functions
+    const stateSubscriptionRef = useRef<(() => void) | null>(null)
+    const stateRevisionRef = useRef(0)
+    const hydratedStateRef = useRef(false)
+
+    const mcpButtonUnsubscribeRef = useRef<(() => void) | null>(null)
+    const historyButtonClickedSubscriptionRef = useRef<(() => void) | null>(null)
+    const chatButtonUnsubscribeRef = useRef<(() => void) | null>(null)
+    const accountButtonClickedSubscriptionRef = useRef<(() => void) | null>(null)
+    const settingsButtonClickedSubscriptionRef = useRef<(() => void) | null>(null)
+    const worktreesButtonClickedSubscriptionRef = useRef<(() => void) | null>(null)
+    const partialMessageUnsubscribeRef = useRef<(() => void) | null>(null)
+    const mcpMarketplaceUnsubscribeRef = useRef<(() => void) | null>(null)
+    const openRouterModelsUnsubscribeRef = useRef<(() => void) | null>(null)
+    const liteLlmModelsUnsubscribeRef = useRef<(() => void) | null>(null)
+    const workspaceUpdatesUnsubscribeRef = useRef<(() => void) | null>(null)
+    const relinquishControlUnsubscribeRef = useRef<(() => void) | null>(null)
+
+    // Add ref for callbacks
+    const relinquishControlCallbacks = useRef<Set<() => void>>(new Set())
+
+    // Create hook function
+    const onRelinquishControl = useCallback((callback: () => void) => {
+        relinquishControlCallbacks.current.add(callback)
+        return () => {
+            relinquishControlCallbacks.current.delete(callback)
+        }
+    }, [])
+    const mcpServersSubscriptionRef = useRef<(() => void) | null>(null)
+
+    // Subscribe to state updates and UI events using the gRPC streaming API
+    useEffect(() => {
+        void hydrationAttempt
+        // Set up state subscription
+        stateSubscriptionRef.current = StateServiceClient.subscribeToState(EmptyRequest.create({}), {
+            onResponse: (response) => {
+                if (!response.stateJson) {
+                    setState((prevState) => ({
+                        ...prevState,
+                        accountUsage: protoToAccountUsage(response.accountUsage),
+                    }))
+                    return
+                }
+                if (response.stateJson) {
+                    try {
+                        const stateData = JSON.parse(response.stateJson) as ExtensionStatePayload
+                        const isPatch = isExtensionStatePatch(stateData)
+                        if (isPatch && !hydratedStateRef.current) {
+                            return
+                        }
+                        if (!shouldAcceptState(stateRevisionRef.current, stateData.stateRevision)) {
+                            return
+                        }
+                        stateRevisionRef.current = stateData.stateRevision ?? 0
+                        if (!isPatch) hydratedStateRef.current = true
+                        if (!isPatch || Object.hasOwn(stateData, "taskViewState")) {
+                            const nextKey = getTaskViewKey(stateData.taskViewState)
+                            if (nextKey !== currentTaskViewKeyRef.current) {
+                                currentTaskViewKeyRef.current = nextKey
+                                messageFetchGenerationRef.current++
+                                commitMessageWindow([], 0)
+                            }
+                        }
+                        setState((prevState) => {
+                            const { __dlineStatePatch: _patchMarker, ...stateFields } = stateData as ExtensionStatePatch
+                            // Versioning logic for autoApprovalSettings
+                            const incomingVersion = stateFields.autoApprovalSettings?.version ?? 1
+                            const currentVersion = prevState.autoApprovalSettings?.version ?? 1
+                            const shouldUpdateAutoApproval = incomingVersion > currentVersion
+
+                            const newState = {
+                                ...(isPatch ? prevState : {}),
+                                ...stateFields,
+                                accountUsage: protoToAccountUsage(response.accountUsage),
+                                autoApprovalSettings: shouldUpdateAutoApproval
+                                    ? stateFields.autoApprovalSettings
+                                    : prevState.autoApprovalSettings,
+                            } as ExtensionState
+
+                            // Update welcome screen state based on API configuration if welcome view not in progress
+                            if (!newState.welcomeViewCompleted && !showWelcome) {
+                                setShowWelcome(true)
+                                setOnboardingModels(newState.onboardingModels)
+                            } else if (newState.welcomeViewCompleted) {
+                                setShowWelcome(false)
+                                setOnboardingModels(undefined)
+                            }
+
+                            setHydration({ status: "ready" })
+
+                            return newState
+                        })
+                    } catch (error) {
+                        console.error("Error parsing state JSON:", error)
+                        // Only a first payload that cannot be parsed blocks the
+                        // view. Once state has rendered, a later bad payload is
+                        // better ignored than allowed to blank a working panel.
+                        setHydration((current) =>
+                            current.status === "ready" ? current : { status: "failed", reason: describeHydrationFailure(error) },
+                        )
+                    }
+                }
+            },
+            onError: (error) => {
+                console.error("Error in state subscription:", error)
+                // Without this the stream dies silently and the view waits for a
+                // payload that will never arrive, which is the blank panel.
+                setHydration((current) =>
+                    current.status === "ready" ? current : { status: "failed", reason: describeHydrationFailure(error) },
+                )
+            },
+            onComplete: () => {
+                console.log("State subscription completed")
+                // A stream that ends before delivering state leaves nothing to
+                // render, and is as terminal as an error for a panel that never
+                // hydrated.
+                setHydration((current) =>
+                    current.status === "ready"
+                        ? current
+                        : { status: "failed", reason: "State subscription closed before any state arrived" },
+                )
+            },
+        })
+
+        // Subscribe to MCP button clicked events with webview type
+        mcpButtonUnsubscribeRef.current = UiServiceClient.subscribeToMcpButtonClicked(
+            {},
+            {
+                onResponse: () => {
+                    console.debug("Received mcpButtonClicked event from gRPC stream")
+                    navigateToMcp()
+                },
+                onError: (error) => {
+                    console.error("Error in mcpButtonClicked subscription:", error)
+                },
+                onComplete: () => {
+                    console.log("mcpButtonClicked subscription completed")
+                },
+            },
+        )
+
+        // Set up history button clicked subscription with webview type
+        historyButtonClickedSubscriptionRef.current = UiServiceClient.subscribeToHistoryButtonClicked(
+            {},
+            {
+                onResponse: () => {
+                    // When history button is clicked, navigate to history view
+                    console.debug("Received history button clicked event from gRPC stream")
+                    navigateToHistory()
+                },
+                onError: (error) => {
+                    console.error("Error in history button clicked subscription:", error)
+                },
+                onComplete: () => {
+                    console.log("History button clicked subscription completed")
+                },
+            },
+        )
+
+        // Subscribe to chat button clicked events with webview type
+        chatButtonUnsubscribeRef.current = UiServiceClient.subscribeToChatButtonClicked(
+            {},
+            {
+                onResponse: () => {
+                    // When chat button is clicked, navigate to chat
+                    console.debug("Received chat button clicked event from gRPC stream")
+                    setTimeout(() => navigateToChat(), 0)
+                },
+                onError: (error) => {
+                    console.error("Error in chat button subscription:", error)
+                },
+                onComplete: () => {},
+            },
+        )
+
+        // Subscribe to MCP servers updates
+        mcpServersSubscriptionRef.current = McpServiceClient.subscribeToMcpServers(EmptyRequest.create(), {
+            onResponse: (response) => {
+                console.debug("Received MCP servers update from gRPC stream")
+                if (response.mcpServers) {
+                    setMcpServers(convertProtoMcpServersToMcpServers(response.mcpServers))
+                }
+            },
+            onError: (error) => {
+                console.error("Error in MCP servers subscription:", error)
+            },
+            onComplete: () => {
+                console.log("MCP servers subscription completed")
+            },
+        })
+
+        // Set up settings button clicked subscription
+        settingsButtonClickedSubscriptionRef.current = UiServiceClient.subscribeToSettingsButtonClicked(EmptyRequest.create({}), {
+            onResponse: () => {
+                // When settings button is clicked, navigate to settings
+                navigateToSettings()
+            },
+            onError: (error) => {
+                console.error("Error in settings button clicked subscription:", error)
+            },
+            onComplete: () => {
+                console.log("Settings button clicked subscription completed")
+            },
+        })
+
+        // Set up worktrees button clicked subscription
+        worktreesButtonClickedSubscriptionRef.current = UiServiceClient.subscribeToWorktreesButtonClicked(
+            EmptyRequest.create({}),
+            {
+                onResponse: () => {
+                    // When worktrees button is clicked, navigate to worktrees
+                    navigateToWorktrees()
+                },
+                onError: (error) => {
+                    console.error("Error in worktrees button clicked subscription:", error)
+                },
+                onComplete: () => {
+                    console.log("Worktrees button clicked subscription completed")
+                },
+            },
+        )
+
+        // Subscribe to partial message events
+        partialMessageUnsubscribeRef.current = UiServiceClient.subscribeToPartialMessage(EmptyRequest.create({}), {
+            onResponse: (protoMessage) => {
+                try {
+                    // Validate critical fields
+                    if (!protoMessage.ts || protoMessage.ts <= 0) {
+                        console.error("Invalid timestamp in partial message:", protoMessage)
+                        return
+                    }
+
+                    const partialMessage = convertProtoToClineMessage(protoMessage)
+                    const sourceKey = getTaskViewKey(protoMessage)
+                    if (!sourceKey || sourceKey !== currentTaskViewKeyRef.current) return
+                    setClineMessages((prev) => {
+                        if (sourceKey !== currentTaskViewKeyRef.current) return prev
+                        const existingIndex = prev.findIndex((msg) => msg.ts === partialMessage.ts)
+                        if (existingIndex >= 0 && prev[existingIndex].partial !== true && partialMessage.partial === true) {
+                            return prev
+                        }
+                        if (
+                            existingIndex < 0 &&
+                            partialMessage.partial !== true &&
+                            !windowWasAtTailRef.current &&
+                            !canAppendRealtimeMessage(prev.length, firstItemIndexRef.current, totalMessageCountRef.current)
+                        ) {
+                            return prev
+                        }
+                        windowWasAtTailRef.current = true
+                        return mergeClineMessagesByTs(prev, [partialMessage])
+                    })
+                } catch (error) {
+                    console.error("Failed to process partial message:", error, protoMessage)
+                }
+            },
+            onError: (error) => {
+                console.error("Error in partialMessage subscription:", error)
+            },
+            onComplete: () => {
+                console.debug("partialMessage subscription completed")
+            },
+        })
+
+        // Subscribe to MCP marketplace catalog updates
+        mcpMarketplaceUnsubscribeRef.current = McpServiceClient.subscribeToMcpMarketplaceCatalog(EmptyRequest.create({}), {
+            onResponse: (catalog) => {
+                console.debug("Received MCP marketplace catalog update from gRPC stream")
+                setMcpMarketplaceCatalog(catalog)
+            },
+            onError: (error) => {
+                console.error("Error in MCP marketplace catalog subscription:", error)
+            },
+            onComplete: () => {
+                console.log("MCP marketplace catalog subscription completed")
+            },
+        })
+
+        // Subscribe to OpenRouter models updates
+        openRouterModelsUnsubscribeRef.current = ModelsServiceClient.subscribeToOpenRouterModels(EmptyRequest.create({}), {
+            onResponse: (response: OpenRouterCompatibleModelInfo) => {
+                const models = fromProtobufModels(response.models)
+                setOpenRouterModels({
+                    [openRouterDefaultModelId]: openRouterDefaultModelInfo, // in case the extension sent a model list without the default model
+                    ...models,
+                })
+            },
+            onError: (error) => {
+                console.error("Error in OpenRouter models subscription:", error)
+            },
+            onComplete: () => {
+                console.log("OpenRouter models subscription completed")
+            },
+        })
+
+        // Subscribe to LiteLLM models updates
+        liteLlmModelsUnsubscribeRef.current = ModelsServiceClient.subscribeToLiteLlmModels(EmptyRequest.create({}), {
+            onResponse: (response: OpenRouterCompatibleModelInfo) => {
+                const models = fromProtobufModels(response.models)
+                setLiteLlmModels(models)
+            },
+            onError: (error) => {
+                console.error("Error in LiteLLM models subscription:", error)
+            },
+            onComplete: () => {
+                console.log("LiteLLM models subscription completed")
+            },
+        })
+
+        // Initialize webview using gRPC
+        UiServiceClient.initializeWebview(EmptyRequest.create({}))
+            .then(() => {
+                console.debug("Webview initialization completed via gRPC")
+            })
+            .catch((error) => {
+                console.error("Failed to initialize webview via gRPC:", error)
+            })
+
+        // Set up account button clicked subscription
+        accountButtonClickedSubscriptionRef.current = UiServiceClient.subscribeToAccountButtonClicked(EmptyRequest.create(), {
+            onResponse: () => {
+                // When account button is clicked, navigate to account view
+                console.debug("Received account button clicked event from gRPC stream")
+                navigateToAccount()
+            },
+            onError: (error) => {
+                console.error("Error in account button clicked subscription:", error)
+            },
+            onComplete: () => {
+                console.log("Account button clicked subscription completed")
+            },
+        })
+
+        // Fetch available terminal profiles on launch
+        StateServiceClient.getAvailableTerminalProfiles(EmptyRequest.create({}))
+            .then((response) => {
+                setAvailableTerminalProfiles(response.profiles)
+            })
+            .catch((error) => {
+                console.error("Failed to fetch available terminal profiles:", error)
+            })
+
+        // Subscribe to relinquish control events
+        relinquishControlUnsubscribeRef.current = UiServiceClient.subscribeToRelinquishControl(EmptyRequest.create({}), {
+            onResponse: () => {
+                // Call all registered callbacks
+                relinquishControlCallbacks.current.forEach((callback) => {
+                    callback()
+                })
+            },
+            onError: (error) => {
+                console.error("Error in relinquishControl subscription:", error)
+            },
+            onComplete: () => {},
+        })
+
+        // Clean up subscriptions when component unmounts
+        return () => {
+            if (stateSubscriptionRef.current) {
+                stateSubscriptionRef.current()
+                stateSubscriptionRef.current = null
+            }
+            if (mcpButtonUnsubscribeRef.current) {
+                mcpButtonUnsubscribeRef.current()
+                mcpButtonUnsubscribeRef.current = null
+            }
+            if (historyButtonClickedSubscriptionRef.current) {
+                historyButtonClickedSubscriptionRef.current()
+                historyButtonClickedSubscriptionRef.current = null
+            }
+            if (chatButtonUnsubscribeRef.current) {
+                chatButtonUnsubscribeRef.current()
+                chatButtonUnsubscribeRef.current = null
+            }
+            if (accountButtonClickedSubscriptionRef.current) {
+                accountButtonClickedSubscriptionRef.current()
+                accountButtonClickedSubscriptionRef.current = null
+            }
+            if (settingsButtonClickedSubscriptionRef.current) {
+                settingsButtonClickedSubscriptionRef.current()
+                settingsButtonClickedSubscriptionRef.current = null
+            }
+            if (worktreesButtonClickedSubscriptionRef.current) {
+                worktreesButtonClickedSubscriptionRef.current()
+                worktreesButtonClickedSubscriptionRef.current = null
+            }
+            if (partialMessageUnsubscribeRef.current) {
+                partialMessageUnsubscribeRef.current()
+                partialMessageUnsubscribeRef.current = null
+            }
+            if (mcpMarketplaceUnsubscribeRef.current) {
+                mcpMarketplaceUnsubscribeRef.current()
+                mcpMarketplaceUnsubscribeRef.current = null
+            }
+            if (openRouterModelsUnsubscribeRef.current) {
+                openRouterModelsUnsubscribeRef.current()
+                openRouterModelsUnsubscribeRef.current = null
+            }
+            if (liteLlmModelsUnsubscribeRef.current) {
+                liteLlmModelsUnsubscribeRef.current()
+                liteLlmModelsUnsubscribeRef.current = null
+            }
+            if (workspaceUpdatesUnsubscribeRef.current) {
+                workspaceUpdatesUnsubscribeRef.current()
+                workspaceUpdatesUnsubscribeRef.current = null
+            }
+            if (relinquishControlUnsubscribeRef.current) {
+                relinquishControlUnsubscribeRef.current()
+                relinquishControlUnsubscribeRef.current = null
+            }
+            if (mcpServersSubscriptionRef.current) {
+                mcpServersSubscriptionRef.current()
+                mcpServersSubscriptionRef.current = null
+            }
+        }
+    }, [
+        navigateToChat,
+        navigateToHistory,
+        navigateToMcp,
+        showWelcome, // When worktrees button is clicked, navigate to worktrees
+        navigateToWorktrees, // When settings button is clicked, navigate to settings
+        navigateToSettings,
+        navigateToAccount,
+        // A retry re-runs this effect, so the cleanup above tears down the
+        // failed stream before a fresh subscription replaces it.
+        hydrationAttempt,
+    ])
+
+    // Safety net for task switches while HistoryView is open. The primary
+    // navigation path is the backend history-ready event; this only handles a
+    // missed event without closing HistoryView just because a task already exists.
+    useEffect(() => {
+        const currentTaskViewKey = getTaskViewKey(state.taskViewState)
+        const prevTaskViewKey = prevHistoryTaskViewKeyRef.current
+
+        if (!showHistory) {
+            prevHistoryTaskViewKeyRef.current = currentTaskViewKey
+            return
+        }
+
+        if (currentTaskViewKey && currentTaskViewKey !== prevTaskViewKey) {
+            navigateToChat()
+        }
+
+        prevHistoryTaskViewKeyRef.current = currentTaskViewKey
+    }, [state.taskViewState, showHistory, navigateToChat])
+
+    const refreshOpenRouterModels = useCallback(() => {
+        ModelsServiceClient.refreshOpenRouterModelsRpc(EmptyRequest.create({}))
+            .then((response: OpenRouterCompatibleModelInfo) => {
+                const models = fromProtobufModels(response.models)
+                setOpenRouterModels({
+                    [openRouterDefaultModelId]: openRouterDefaultModelInfo, // in case the extension sent a model list without the default model
+                    ...models,
+                })
+            })
+            .catch((error: Error) => console.error("Failed to refresh OpenRouter models:", error))
+    }, [])
+
+    const refreshHicapModels = useCallback(() => {
+        ModelsServiceClient.refreshHicapModels(EmptyRequest.create({}))
+            .then((response: OpenRouterCompatibleModelInfo) => {
+                setHicapModels(fromProtobufModels(response.models))
+            })
+            .catch((error: Error) => console.error("Failed to refresh Hicap models:", error))
+    }, [])
+
+    const refreshLiteLlmModels = useCallback(() => {
+        return ModelsServiceClient.refreshLiteLlmModelsRpc(EmptyRequest.create({}))
+            .then((response: OpenRouterCompatibleModelInfo) => {
+                const models = fromProtobufModels(response.models)
+                setLiteLlmModels(models)
+            })
+            .catch((error: Error) => console.error("Failed to refresh LiteLLM models:", error))
+    }, [])
+
+    const refreshVercelAiGatewayModels = useCallback(() => {
+        ModelsServiceClient.refreshVercelAiGatewayModelsRpc(EmptyRequest.create({}))
+            .then((response: OpenRouterCompatibleModelInfo) => {
+                const models = fromProtobufModels(response.models)
+                setVercelAiGatewayModels(models)
+            })
+            .catch((error: Error) => console.error("Failed to refresh Vercel AI Gateway models:", error))
+    }, [])
+
+    // Guard to prevent repeated refresh when models are empty
+    const modelRefreshAttempted = useRef(false)
+
+    // Auto-refresh model lists on API key availability
+    useEffect(() => {
+        if (modelRefreshAttempted.current) return
+        const needsOpenRouter = !openRouterModels || Object.keys(openRouterModels).length <= 1
+        const needsVercel = !vercelAiGatewayModels || Object.keys(vercelAiGatewayModels).length === 0
+        if (!needsOpenRouter && !needsVercel) return
+        modelRefreshAttempted.current = true
+        if (needsOpenRouter) {
+            refreshOpenRouterModels()
+        }
+        if (needsVercel) {
+            refreshVercelAiGatewayModels()
+        }
+        if (state.apiConfiguration?.planModeProfile) {
+            refreshLiteLlmModels()
+        }
+    }, [
+        refreshOpenRouterModels,
+        refreshVercelAiGatewayModels,
+        state?.apiConfiguration?.planModeProfile,
+        refreshLiteLlmModels,
+        openRouterModels,
+        vercelAiGatewayModels,
+    ])
+
+    // Refresh Cline models function
+    const refreshClineModels = useCallback(() => {
+        ModelsServiceClient.refreshClineModelsRpc(EmptyRequest.create({}))
+            .then((response: OpenRouterCompatibleModelInfo) => {
+                const models = fromProtobufModels(response.models)
+                setClineModels((prev) => (Object.keys(models).length > 0 ? models : (prev ?? null)))
+            })
+            .catch((error: Error) => console.error("Failed to refresh Cline models:", error))
+    }, [])
+
+    // Auto-refresh Cline models when provider is cline
+    useEffect(() => {
+        const hasClineProvider =
+            state.apiConfiguration?.actModeProfile === "cline" || state.apiConfiguration?.planModeProfile === "cline"
+        if (hasClineProvider && clineModels === null) {
+            refreshClineModels()
+        }
+    }, [state.apiConfiguration?.actModeProfile, state.apiConfiguration?.planModeProfile, clineModels, refreshClineModels])
+
+    const capabilityStateSetters = useMemo<
+        Pick<ExtensionStateContextType, Extract<keyof ExtensionStateContextType, `set${string}Toggles`>>
+    >(
+        () => ({
+            setGlobalClineRulesToggles: (toggles) =>
+                setState((prevState) => ({ ...prevState, globalClineRulesToggles: toggles })),
+            setLocalClineRulesToggles: (toggles) => setState((prevState) => ({ ...prevState, localClineRulesToggles: toggles })),
+            setLocalCursorRulesToggles: (toggles) =>
+                setState((prevState) => ({ ...prevState, localCursorRulesToggles: toggles })),
+            setLocalWindsurfRulesToggles: (toggles) =>
+                setState((prevState) => ({ ...prevState, localWindsurfRulesToggles: toggles })),
+            setLocalAgentsRulesToggles: (toggles) =>
+                setState((prevState) => ({ ...prevState, localAgentsRulesToggles: toggles })),
+            setLocalWorkflowToggles: (toggles) => setState((prevState) => ({ ...prevState, localWorkflowToggles: toggles })),
+            setGlobalWorkflowToggles: (toggles) => setState((prevState) => ({ ...prevState, globalWorkflowToggles: toggles })),
+            setGlobalSkillsToggles: (toggles) => setState((prevState) => ({ ...prevState, globalSkillsToggles: toggles })),
+            setLocalSkillsToggles: (toggles) => setState((prevState) => ({ ...prevState, localSkillsToggles: toggles })),
+            setRemoteSkillsToggles: (toggles) => setState((prevState) => ({ ...prevState, remoteSkillsToggles: toggles })),
+            setTaskCapabilityToggles: (toggles) => setState((prevState) => ({ ...prevState, taskCapabilityToggles: toggles })),
+            setRemoteRulesToggles: (toggles) => setState((prevState) => ({ ...prevState, remoteRulesToggles: toggles })),
+            setRemoteWorkflowToggles: (toggles) => setState((prevState) => ({ ...prevState, remoteWorkflowToggles: toggles })),
+        }),
+        [],
+    )
+
+    const setShouldShowAnnouncement = useCallback((value: boolean) => {
+        setState((prevState) => ({ ...prevState, shouldShowAnnouncement: value }))
+    }, [])
+
+    const setUserInfo = useCallback((userInfo?: UserInfo) => {
+        setState((prevState) => ({ ...prevState, userInfo }))
+    }, [])
+
+    // The provider sits above the whole webview tree, so an unmemoized value
+    // would republish on every render and force each consumer to re-render.
+    const contextValue = useMemo<ExtensionStateContextType>(
+        () => ({
+            ...state,
+            historyTaskOpening,
+            openHistoryTask,
+            dismissHistoryTaskOpening,
+            clineMessages,
+            didHydrateState,
+            hydration,
+            retryHydration,
+            showWelcome,
+            onboardingModels,
+            clineModels,
+            openRouterModels,
+            vercelAiGatewayModels,
+            hicapModels,
+            liteLlmModels,
+            openAiModels,
+            requestyModels,
+            mcpServers,
+            mcpMarketplaceCatalog,
+            totalTasksSize,
+            availableTerminalProfiles,
+            showMcp,
+            mcpTab,
+            showSettings,
+            settingsTargetSection,
+            showHistory,
+            showAccount,
+            showWorktrees,
+            showAnnouncement,
+            firstItemIndex,
+            setFirstItemIndex,
+            globalClineRulesToggles: state.globalClineRulesToggles || {},
+            localClineRulesToggles: state.localClineRulesToggles || {},
+            localCursorRulesToggles: state.localCursorRulesToggles || {},
+            localWindsurfRulesToggles: state.localWindsurfRulesToggles || {},
+            localAgentsRulesToggles: state.localAgentsRulesToggles || {},
+            localWorkflowToggles: state.localWorkflowToggles || {},
+            globalWorkflowToggles: state.globalWorkflowToggles || {},
+            remoteRulesToggles: state.remoteRulesToggles || {},
+            remoteWorkflowToggles: state.remoteWorkflowToggles || {},
+            enableCheckpointsSetting: state.enableCheckpointsSetting,
+            currentFocusChainChecklist: state.currentFocusChainChecklist,
+            focusChainHistory: state.focusChainHistory,
+
+            // Navigation functions
+            navigateToMcp,
+            navigateToSettings,
+            navigateToHistory,
+            navigateToAccount,
+            navigateToWorktrees,
+            navigateToChat,
+
+            // Hide functions
+            hideSettings,
+            hideHistory,
+            hideAccount,
+            hideWorktrees,
+            hideAnnouncement,
+            setShowAnnouncement,
+            setShowWelcome,
+            setOnboardingModels,
+            setShouldShowAnnouncement,
+            setMcpServers,
+            setRequestyModels,
+            setMcpMarketplaceCatalog,
+            setShowMcp,
+            closeMcpView,
+            ...capabilityStateSetters,
+            setMcpTab,
+            setTotalTasksSize,
+            refreshClineModels,
+            refreshOpenRouterModels,
+            refreshVercelAiGatewayModels,
+            refreshHicapModels,
+            refreshLiteLlmModels,
+            onRelinquishControl,
+            setUserInfo,
+            expandTaskHeader,
+            setExpandTaskHeader,
+            setClineMessages,
+        }),
+        [
+            state,
+            historyTaskOpening,
+            openHistoryTask,
+            dismissHistoryTaskOpening,
+            clineMessages,
+            didHydrateState,
+            hydration,
+            retryHydration,
+            showWelcome,
+            onboardingModels,
+            clineModels,
+            openRouterModels,
+            vercelAiGatewayModels,
+            hicapModels,
+            liteLlmModels,
+            openAiModels,
+            requestyModels,
+            mcpServers,
+            mcpMarketplaceCatalog,
+            totalTasksSize,
+            availableTerminalProfiles,
+            showMcp,
+            mcpTab,
+            showSettings,
+            settingsTargetSection,
+            showHistory,
+            showAccount,
+            showWorktrees,
+            showAnnouncement,
+            firstItemIndex,
+            navigateToMcp,
+            navigateToSettings,
+            navigateToHistory,
+            navigateToAccount,
+            navigateToWorktrees,
+            navigateToChat,
+            hideSettings,
+            hideHistory,
+            hideAccount,
+            hideWorktrees,
+            hideAnnouncement,
+            setShouldShowAnnouncement,
+            closeMcpView,
+            capabilityStateSetters,
+            refreshClineModels,
+            refreshOpenRouterModels,
+            refreshVercelAiGatewayModels,
+            refreshHicapModels,
+            refreshLiteLlmModels,
+            onRelinquishControl,
+            setUserInfo,
+            expandTaskHeader,
+        ],
+    )
+
+    return <ExtensionStateContext.Provider value={contextValue}>{children}</ExtensionStateContext.Provider>
 }
 
 export const useExtensionState = () => {
-	const context = useContext(ExtensionStateContext)
-	if (context === undefined) {
-		throw new Error("useExtensionState must be used within an ExtensionStateContextProvider")
-	}
-	return context
+    const context = useContext(ExtensionStateContext)
+    if (context === undefined) {
+        throw new Error("useExtensionState must be used within an ExtensionStateContextProvider")
+    }
+    return context
 }

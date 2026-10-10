@@ -17,33 +17,33 @@ import { getTaskTimestamp } from "./utils"
  * Result of a backfill operation for a single task.
  */
 export interface BackfillTaskResult {
-	taskId: string
-	success: boolean
-	filesQueued: string[]
-	error?: string
+    taskId: string
+    success: boolean
+    filesQueued: string[]
+    error?: string
 }
 
 /**
  * Result of a full backfill operation.
  */
 export interface BackfillResult {
-	totalTasks: number
-	successCount: number
-	failCount: number
-	skippedCount: number
-	results: BackfillTaskResult[]
+    totalTasks: number
+    successCount: number
+    failCount: number
+    skippedCount: number
+    results: BackfillTaskResult[]
 }
 
 /**
  * Options for backfill operations.
  */
 export interface BackfillOptions {
-	/** Only backfill tasks newer than this timestamp */
-	sinceTimestamp?: number
-	/** Only backfill these specific task IDs */
-	taskIds?: string[]
-	/** Callback for progress updates */
-	onProgress?: (current: number, total: number, taskId: string) => void
+    /** Only backfill tasks newer than this timestamp */
+    sinceTimestamp?: number
+    /** Only backfill these specific task IDs */
+    taskIds?: string[]
+    /** Callback for progress updates */
+    onProgress?: (current: number, total: number, taskId: string) => void
 }
 
 /**
@@ -52,16 +52,16 @@ export interface BackfillOptions {
  * Task IDs are creation timestamps, so the bounds compare as timestamps would.
  */
 async function listTaskIds(before?: string, after?: string): Promise<string[]> {
-	try {
-		const history = await StateManager.get().taskHistory.getDeduplicated()
-		return history
-			.map((item) => item.id)
-			.filter((id) => typeof id === "string")
-			.filter((id) => (!before || id < before) && (!after || id > after))
-	} catch (error) {
-		Logger.error("[backfill] Failed to list task history:", error)
-		return []
-	}
+    try {
+        const history = await StateManager.get().taskHistory.getDeduplicated()
+        return history
+            .map((item) => item.id)
+            .filter((id) => typeof id === "string")
+            .filter((id) => (!before || id < before) && (!after || id > after))
+    } catch (error) {
+        Logger.error("[backfill] Failed to list task history:", error)
+        return []
+    }
 }
 
 /**
@@ -70,40 +70,40 @@ async function listTaskIds(before?: string, after?: string): Promise<string[]> {
  * @param taskId Task identifier
  */
 export async function backfillTask(taskId: string): Promise<BackfillTaskResult> {
-	const result: BackfillTaskResult = {
-		taskId,
-		success: false,
-		filesQueued: [],
-	}
+    const result: BackfillTaskResult = {
+        taskId,
+        success: false,
+        filesQueued: [],
+    }
 
-	try {
-		const queue = syncWorker().getSyncQueue()
-		if (!queue) {
-			result.error = "S3 storage not configured"
-			return result
-		}
-		const existingItem = queue.getItem(taskId, GlobalFileNames.apiConversationHistory)
-		if (existingItem?.status === "synced") {
-			// Already synced, skip
-			return result
-		}
-		try {
-			const data = await readTaskConversation(taskId)
-			queue.enqueue(taskId, GlobalFileNames.apiConversationHistory, JSON.stringify(data))
-			result.filesQueued.push(taskId)
-		} catch (err) {
-			if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-				Logger.error(`Failed to queue ${taskId}:`, err)
-			}
-			// Skip missing files silently
-		}
+    try {
+        const queue = syncWorker().getSyncQueue()
+        if (!queue) {
+            result.error = "S3 storage not configured"
+            return result
+        }
+        const existingItem = queue.getItem(taskId, GlobalFileNames.apiConversationHistory)
+        if (existingItem?.status === "synced") {
+            // Already synced, skip
+            return result
+        }
+        try {
+            const data = await readTaskConversation(taskId)
+            queue.enqueue(taskId, GlobalFileNames.apiConversationHistory, JSON.stringify(data))
+            result.filesQueued.push(taskId)
+        } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+                Logger.error(`Failed to queue ${taskId}:`, err)
+            }
+            // Skip missing files silently
+        }
 
-		result.success = result.filesQueued.length > 0
-	} catch (err) {
-		result.error = err instanceof Error ? err.message : String(err)
-	}
+        result.success = result.filesQueued.length > 0
+    } catch (err) {
+        result.error = err instanceof Error ? err.message : String(err)
+    }
 
-	return result
+    return result
 }
 
 /**
@@ -112,59 +112,59 @@ export async function backfillTask(taskId: string): Promise<BackfillTaskResult> 
  * @param options Backfill options
  */
 export async function backfillTasks(options: BackfillOptions = {}): Promise<BackfillResult | undefined> {
-	const currentTime = Date.now() // Don't backfill tasks created during this operation as they are synced live
-	const { sinceTimestamp, taskIds: specificTaskIds, onProgress } = options
+    const currentTime = Date.now() // Don't backfill tasks created during this operation as they are synced live
+    const { sinceTimestamp, taskIds: specificTaskIds, onProgress } = options
 
-	if (!syncWorker().getSyncQueue()) {
-		return undefined
-	}
+    if (!syncWorker().getSyncQueue()) {
+        return undefined
+    }
 
-	// Get list of tasks to process
-	let taskIds: string[]
-	if (specificTaskIds && specificTaskIds.length > 0) {
-		taskIds = specificTaskIds
-	} else {
-		taskIds = await listTaskIds(currentTime.toString(), sinceTimestamp?.toString())
-	}
+    // Get list of tasks to process
+    let taskIds: string[]
+    if (specificTaskIds && specificTaskIds.length > 0) {
+        taskIds = specificTaskIds
+    } else {
+        taskIds = await listTaskIds(currentTime.toString(), sinceTimestamp?.toString())
+    }
 
-	const result: BackfillResult = {
-		totalTasks: taskIds.length,
-		successCount: 0,
-		failCount: 0,
-		skippedCount: 0,
-		results: [],
-	}
+    const result: BackfillResult = {
+        totalTasks: taskIds.length,
+        successCount: 0,
+        failCount: 0,
+        skippedCount: 0,
+        results: [],
+    }
 
-	for (let i = 0; i < taskIds.length; i++) {
-		const taskId = taskIds[i]
+    for (let i = 0; i < taskIds.length; i++) {
+        const taskId = taskIds[i]
 
-		// Check timestamp filter using taskId (which is Date.now().toString())
-		if (sinceTimestamp) {
-			const taskTimestamp = getTaskTimestamp(taskId)
+        // Check timestamp filter using taskId (which is Date.now().toString())
+        if (sinceTimestamp) {
+            const taskTimestamp = getTaskTimestamp(taskId)
 
-			if (taskTimestamp && taskTimestamp < sinceTimestamp) {
-				result.skippedCount++
-				continue
-			}
-		}
+            if (taskTimestamp && taskTimestamp < sinceTimestamp) {
+                result.skippedCount++
+                continue
+            }
+        }
 
-		// Report progress
-		if (onProgress) {
-			onProgress(i + 1, taskIds.length, taskId)
-		}
+        // Report progress
+        if (onProgress) {
+            onProgress(i + 1, taskIds.length, taskId)
+        }
 
-		// Backfill the task
-		const taskResult = await backfillTask(taskId)
-		result.results.push(taskResult)
+        // Backfill the task
+        const taskResult = await backfillTask(taskId)
+        result.results.push(taskResult)
 
-		if (taskResult.success) {
-			result.successCount++
-		} else if (taskResult.error) {
-			result.failCount++
-		} else {
-			result.skippedCount++
-		}
-	}
+        if (taskResult.success) {
+            result.successCount++
+        } else if (taskResult.error) {
+            result.failCount++
+        } else {
+            result.skippedCount++
+        }
+    }
 
-	return result
+    return result
 }

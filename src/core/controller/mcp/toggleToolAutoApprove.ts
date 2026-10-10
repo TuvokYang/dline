@@ -11,15 +11,15 @@ import type { Controller } from "../index"
  * @returns Updated list of MCP servers
  */
 export async function toggleToolAutoApprove(controller: Controller, request: ToggleToolAutoApproveRequest): Promise<McpServers> {
-	try {
-		// Call the RPC variant that returns the servers directly
-		await controller.mcpHub?.toggleToolAutoApproveRPC(request.serverName, request.toolNames, request.autoApprove)
-		const mcpServers = await controller.getLatestMcpServersForOwner()
+    try {
+        // Call the RPC variant that returns the servers directly
+        await controller.mcpHub?.toggleToolAutoApproveRPC(request.serverName, request.toolNames, request.autoApprove)
+        const mcpServers = await controller.getLatestMcpServersForOwner()
 
-		// Convert application types to proto types
-		return McpServers.create({ mcpServers: convertMcpServersToProtoMcpServers(mcpServers) })
-	} catch (error) {
-		Logger.error(`Failed to toggle tool auto-approve for ${request.serverName}:`, error)
-		throw error
-	}
+        // Convert application types to proto types
+        return McpServers.create({ mcpServers: convertMcpServersToProtoMcpServers(mcpServers) })
+    } catch (error) {
+        Logger.error(`Failed to toggle tool auto-approve for ${request.serverName}:`, error)
+        throw error
+    }
 }

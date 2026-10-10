@@ -5,7 +5,7 @@ export const STANDARD_TOOL_USE_PREFIX = `TOOL USE
 You have access to a set of tools that are executed upon the user's approval.`
 
 export const STANDARD_PARALLEL_TOOL_USE =
-	" You may use multiple tools in a single response when the operations are independent (e.g., reading several files, searching in parallel). For dependent operations where one result informs the next, use tools sequentially."
+    " You may use multiple tools in a single response when the operations are independent (e.g., reading several files, searching in parallel). For dependent operations where one result informs the next, use tools sequentially."
 
 export const STANDARD_TOOL_USE_SUFFIX = ` You will receive the results of all tool uses in the user's response.
 

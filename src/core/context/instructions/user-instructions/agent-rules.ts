@@ -1,11 +1,11 @@
 import {
-	ActivatedConditionalRule,
-	getRemoteRulesTotalContentWithMetadata,
-	getRuleFilesTotalContentWithMetadata,
-	RULE_SOURCE_PREFIX,
-	RuleLoadResultWithInstructions,
-	scanRuleToggles,
-	synchronizeRuleToggles,
+    ActivatedConditionalRule,
+    getRemoteRulesTotalContentWithMetadata,
+    getRuleFilesTotalContentWithMetadata,
+    RULE_SOURCE_PREFIX,
+    RuleLoadResultWithInstructions,
+    scanRuleToggles,
+    synchronizeRuleToggles,
 } from "@core/context/instructions/user-instructions/rule-helpers"
 import { formatResponse } from "@core/prompts/responses"
 import { ensureRulesDirectoryExists, GlobalFileNames } from "@core/storage/disk"
@@ -21,160 +21,160 @@ import { parseYamlFrontmatter } from "./frontmatter"
 import { evaluateRuleConditionals, type RuleEvaluationContext } from "./rule-conditionals"
 
 export const getGlobalClineRules = async (
-	globalClineRulesFilePath: string,
-	toggles: ClineRulesToggles,
-	opts?: { evaluationContext?: RuleEvaluationContext; remoteToggles?: ClineRulesToggles },
+    globalClineRulesFilePath: string,
+    toggles: ClineRulesToggles,
+    opts?: { evaluationContext?: RuleEvaluationContext; remoteToggles?: ClineRulesToggles },
 ): Promise<RuleLoadResultWithInstructions> => {
-	let combinedContent = ""
-	const activatedConditionalRules: ActivatedConditionalRule[] = []
+    let combinedContent = ""
+    const activatedConditionalRules: ActivatedConditionalRule[] = []
 
-	// 1. Get file-based rules
-	if (await fileExistsAtPath(globalClineRulesFilePath)) {
-		if (await isDirectory(globalClineRulesFilePath)) {
-			try {
-				const rulesFilePaths = await readDirectory(globalClineRulesFilePath)
-				// Note: ruleNamePrefix explicitly set to "global" for clarity (matches the default)
-				const rulesFilesTotal = await getRuleFilesTotalContentWithMetadata(
-					rulesFilePaths,
-					globalClineRulesFilePath,
-					toggles,
-					{
-						evaluationContext: opts?.evaluationContext,
-						ruleNamePrefix: "global",
-					},
-				)
-				if (rulesFilesTotal.content) {
-					combinedContent = rulesFilesTotal.content
-					activatedConditionalRules.push(...rulesFilesTotal.activatedConditionalRules)
-				}
-			} catch {
-				Logger.error(`Failed to read .clinerules directory at ${globalClineRulesFilePath}`)
-			}
-		} else {
-			Logger.error(`${globalClineRulesFilePath} is not a directory`)
-		}
-	}
+    // 1. Get file-based rules
+    if (await fileExistsAtPath(globalClineRulesFilePath)) {
+        if (await isDirectory(globalClineRulesFilePath)) {
+            try {
+                const rulesFilePaths = await readDirectory(globalClineRulesFilePath)
+                // Note: ruleNamePrefix explicitly set to "global" for clarity (matches the default)
+                const rulesFilesTotal = await getRuleFilesTotalContentWithMetadata(
+                    rulesFilePaths,
+                    globalClineRulesFilePath,
+                    toggles,
+                    {
+                        evaluationContext: opts?.evaluationContext,
+                        ruleNamePrefix: "global",
+                    },
+                )
+                if (rulesFilesTotal.content) {
+                    combinedContent = rulesFilesTotal.content
+                    activatedConditionalRules.push(...rulesFilesTotal.activatedConditionalRules)
+                }
+            } catch {
+                Logger.error(`Failed to read .clinerules directory at ${globalClineRulesFilePath}`)
+            }
+        } else {
+            Logger.error(`${globalClineRulesFilePath} is not a directory`)
+        }
+    }
 
-	// 2. Append remote config rules
-	const stateManager = StateManager.get()
-	const remoteConfigSettings = stateManager.getRemoteConfigSettings()
-	const remoteRules = remoteConfigSettings.remoteGlobalRules || []
-	const remoteToggles = opts?.remoteToggles ?? stateManager.getGlobalStateKey("remoteRulesToggles") ?? {}
-	const remoteResult = getRemoteRulesTotalContentWithMetadata(remoteRules, remoteToggles, {
-		evaluationContext: opts?.evaluationContext,
-	})
-	if (remoteResult.content) {
-		if (combinedContent) combinedContent += "\n\n"
-		combinedContent += remoteResult.content
-		activatedConditionalRules.push(...remoteResult.activatedConditionalRules)
-	}
+    // 2. Append remote config rules
+    const stateManager = StateManager.get()
+    const remoteConfigSettings = stateManager.getRemoteConfigSettings()
+    const remoteRules = remoteConfigSettings.remoteGlobalRules || []
+    const remoteToggles = opts?.remoteToggles ?? stateManager.getGlobalStateKey("remoteRulesToggles") ?? {}
+    const remoteResult = getRemoteRulesTotalContentWithMetadata(remoteRules, remoteToggles, {
+        evaluationContext: opts?.evaluationContext,
+    })
+    if (remoteResult.content) {
+        if (combinedContent) combinedContent += "\n\n"
+        combinedContent += remoteResult.content
+        activatedConditionalRules.push(...remoteResult.activatedConditionalRules)
+    }
 
-	// 3. Return formatted instructions
-	if (!combinedContent) {
-		return { instructions: undefined, activatedConditionalRules: [] }
-	}
+    // 3. Return formatted instructions
+    if (!combinedContent) {
+        return { instructions: undefined, activatedConditionalRules: [] }
+    }
 
-	return {
-		instructions: formatResponse.clineRulesGlobalDirectoryInstructions(globalClineRulesFilePath, combinedContent),
-		activatedConditionalRules,
-	}
+    return {
+        instructions: formatResponse.clineRulesGlobalDirectoryInstructions(globalClineRulesFilePath, combinedContent),
+        activatedConditionalRules,
+    }
 }
 
 export const getLocalClineRules = async (
-	cwd: string,
-	toggles: ClineRulesToggles,
-	workspaceName: string,
-	opts?: { evaluationContext?: RuleEvaluationContext },
+    cwd: string,
+    toggles: ClineRulesToggles,
+    workspaceName: string,
+    opts?: { evaluationContext?: RuleEvaluationContext },
 ): Promise<RuleLoadResultWithInstructions> => {
-	const clineRulesFilePath = path.resolve(cwd, GlobalFileNames.agentsRulesDir)
+    const clineRulesFilePath = path.resolve(cwd, GlobalFileNames.agentsRulesDir)
 
-	let instructions: string | undefined
-	const activatedConditionalRules: ActivatedConditionalRule[] = []
+    let instructions: string | undefined
+    const activatedConditionalRules: ActivatedConditionalRule[] = []
 
-	if (await fileExistsAtPath(clineRulesFilePath)) {
-		if (await isDirectory(clineRulesFilePath)) {
-			try {
-				// .agents/rules/ only contains rule files — no subdirectories to exclude
-				const rulesFilePaths = await readDirectory(clineRulesFilePath)
+    if (await fileExistsAtPath(clineRulesFilePath)) {
+        if (await isDirectory(clineRulesFilePath)) {
+            try {
+                // .agents/rules/ only contains rule files — no subdirectories to exclude
+                const rulesFilePaths = await readDirectory(clineRulesFilePath)
 
-				const rulesFilesTotal = await getRuleFilesTotalContentWithMetadata(rulesFilePaths, cwd, toggles, {
-					evaluationContext: opts?.evaluationContext,
-					ruleNamePrefix: "workspace",
-				})
-				if (rulesFilesTotal.content) {
-					instructions = formatResponse.clineRulesLocalDirectoryInstructions(workspaceName, rulesFilesTotal.content)
-					activatedConditionalRules.push(...rulesFilesTotal.activatedConditionalRules)
-				}
-			} catch {
-				Logger.error(`Failed to read .agents/rules directory at ${clineRulesFilePath}`)
-			}
-		} else {
-			try {
-				if (clineRulesFilePath in toggles && toggles[clineRulesFilePath] !== false) {
-					const raw = (await fs.readFile(clineRulesFilePath, "utf8")).trim()
-					if (raw) {
-						// Keep single-file rules behavior consistent with directory/remote rules:
-						// - Parse YAML frontmatter (fail-open on parse errors)
-						// - Evaluate conditionals against the request's evaluation context
-						const parsed = parseYamlFrontmatter(raw)
-						if (parsed.hadFrontmatter && parsed.parseError) {
-							// Fail-open: preserve the raw contents so the LLM can still see the author's intent.
-							instructions = formatResponse.clineRulesLocalFileInstructions(workspaceName, raw)
-						} else {
-							const { passed, matchedConditions } = evaluateRuleConditionals(
-								parsed.data,
-								opts?.evaluationContext ?? {},
-							)
-							if (passed) {
-								instructions = formatResponse.clineRulesLocalFileInstructions(workspaceName, parsed.body.trim())
-								if (parsed.hadFrontmatter && Object.keys(matchedConditions).length > 0) {
-									activatedConditionalRules.push({
-										name: `${RULE_SOURCE_PREFIX.workspace}:${GlobalFileNames.agentsRulesDir}`,
-										matchedConditions,
-									})
-								}
-							}
-						}
-					}
-				}
-			} catch {
-				Logger.error(`Failed to read .agents/rules file at ${clineRulesFilePath}`)
-			}
-		}
-	}
+                const rulesFilesTotal = await getRuleFilesTotalContentWithMetadata(rulesFilePaths, cwd, toggles, {
+                    evaluationContext: opts?.evaluationContext,
+                    ruleNamePrefix: "workspace",
+                })
+                if (rulesFilesTotal.content) {
+                    instructions = formatResponse.clineRulesLocalDirectoryInstructions(workspaceName, rulesFilesTotal.content)
+                    activatedConditionalRules.push(...rulesFilesTotal.activatedConditionalRules)
+                }
+            } catch {
+                Logger.error(`Failed to read .agents/rules directory at ${clineRulesFilePath}`)
+            }
+        } else {
+            try {
+                if (clineRulesFilePath in toggles && toggles[clineRulesFilePath] !== false) {
+                    const raw = (await fs.readFile(clineRulesFilePath, "utf8")).trim()
+                    if (raw) {
+                        // Keep single-file rules behavior consistent with directory/remote rules:
+                        // - Parse YAML frontmatter (fail-open on parse errors)
+                        // - Evaluate conditionals against the request's evaluation context
+                        const parsed = parseYamlFrontmatter(raw)
+                        if (parsed.hadFrontmatter && parsed.parseError) {
+                            // Fail-open: preserve the raw contents so the LLM can still see the author's intent.
+                            instructions = formatResponse.clineRulesLocalFileInstructions(workspaceName, raw)
+                        } else {
+                            const { passed, matchedConditions } = evaluateRuleConditionals(
+                                parsed.data,
+                                opts?.evaluationContext ?? {},
+                            )
+                            if (passed) {
+                                instructions = formatResponse.clineRulesLocalFileInstructions(workspaceName, parsed.body.trim())
+                                if (parsed.hadFrontmatter && Object.keys(matchedConditions).length > 0) {
+                                    activatedConditionalRules.push({
+                                        name: `${RULE_SOURCE_PREFIX.workspace}:${GlobalFileNames.agentsRulesDir}`,
+                                        matchedConditions,
+                                    })
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch {
+                Logger.error(`Failed to read .agents/rules file at ${clineRulesFilePath}`)
+            }
+        }
+    }
 
-	return { instructions, activatedConditionalRules }
+    return { instructions, activatedConditionalRules }
 }
 
 export async function refreshClineRulesToggles(
-	controller: Controller,
-	workingDirectory: string,
+    controller: Controller,
+    workingDirectory: string,
 ): Promise<{
-	globalToggles: ClineRulesToggles
-	localToggles: ClineRulesToggles
-	discoveredLocalToggles: ClineRulesToggles
-	localScanComplete: boolean
+    globalToggles: ClineRulesToggles
+    localToggles: ClineRulesToggles
+    discoveredLocalToggles: ClineRulesToggles
+    localScanComplete: boolean
 }> {
-	// Discovery is read-only: scan the rule directories and resolve the effective
-	// state against the stored preferences in memory. Persisting a preference is
-	// reserved for explicit user toggles, so this stays off the storage write path
-	// and never contends for the cross-process settings lock.
-	const globalClineRulesFilePath = await ensureRulesDirectoryExists()
-	const discoveredGlobalToggles = await synchronizeRuleToggles(globalClineRulesFilePath, {})
-	const updatedGlobalToggles = resolveCapabilityToggles(controller.stateManager, "rules", discoveredGlobalToggles)
+    // Discovery is read-only: scan the rule directories and resolve the effective
+    // state against the stored preferences in memory. Persisting a preference is
+    // reserved for explicit user toggles, so this stays off the storage write path
+    // and never contends for the cross-process settings lock.
+    const globalClineRulesFilePath = await ensureRulesDirectoryExists()
+    const discoveredGlobalToggles = await synchronizeRuleToggles(globalClineRulesFilePath, {})
+    const updatedGlobalToggles = resolveCapabilityToggles(controller.stateManager, "rules", discoveredGlobalToggles)
 
-	// Local toggles
-	const localClineRulesFilePath = path.resolve(workingDirectory, GlobalFileNames.agentsRulesDir)
-	// .agents/rules/ only contains rule files — no subdirectories to exclude
-	const localScan = await scanRuleToggles(localClineRulesFilePath, {})
-	const updatedLocalToggles = resolveCapabilityToggles(controller.stateManager, "rules", localScan.toggles)
+    // Local toggles
+    const localClineRulesFilePath = path.resolve(workingDirectory, GlobalFileNames.agentsRulesDir)
+    // .agents/rules/ only contains rule files — no subdirectories to exclude
+    const localScan = await scanRuleToggles(localClineRulesFilePath, {})
+    const updatedLocalToggles = resolveCapabilityToggles(controller.stateManager, "rules", localScan.toggles)
 
-	return {
-		globalToggles: updatedGlobalToggles,
-		localToggles: updatedLocalToggles,
-		// The raw scan is what the state push needs: it says which rules exist,
-		// while the resolved map already folds in the user's overrides.
-		discoveredLocalToggles: localScan.toggles,
-		localScanComplete: localScan.complete,
-	}
+    return {
+        globalToggles: updatedGlobalToggles,
+        localToggles: updatedLocalToggles,
+        // The raw scan is what the state push needs: it says which rules exist,
+        // while the resolved map already folds in the user's overrides.
+        discoveredLocalToggles: localScan.toggles,
+        localScanComplete: localScan.complete,
+    }
 }

@@ -12,29 +12,29 @@ import { Controller } from ".."
  * @returns BranchList containing local and remote branches
  */
 export async function getAvailableBranches(_controller: Controller, _request: EmptyRequest): Promise<BranchList> {
-	const cwd = await getWorkspacePath()
-	if (!cwd) {
-		return BranchList.create({
-			localBranches: [],
-			remoteBranches: [],
-			currentBranch: "",
-		})
-	}
+    const cwd = await getWorkspacePath()
+    if (!cwd) {
+        return BranchList.create({
+            localBranches: [],
+            remoteBranches: [],
+            currentBranch: "",
+        })
+    }
 
-	try {
-		const result = await getAvailableBranchesUtil(cwd)
+    try {
+        const result = await getAvailableBranchesUtil(cwd)
 
-		return BranchList.create({
-			localBranches: result.localBranches,
-			remoteBranches: result.remoteBranches,
-			currentBranch: result.currentBranch,
-		})
-	} catch (error) {
-		Logger.error(`Error getting available branches: ${JSON.stringify(error)}`)
-		return BranchList.create({
-			localBranches: [],
-			remoteBranches: [],
-			currentBranch: "",
-		})
-	}
+        return BranchList.create({
+            localBranches: result.localBranches,
+            remoteBranches: result.remoteBranches,
+            currentBranch: result.currentBranch,
+        })
+    } catch (error) {
+        Logger.error(`Error getting available branches: ${JSON.stringify(error)}`)
+        return BranchList.create({
+            localBranches: [],
+            remoteBranches: [],
+            currentBranch: "",
+        })
+    }
 }

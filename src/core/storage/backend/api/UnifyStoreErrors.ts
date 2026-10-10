@@ -5,8 +5,8 @@
  * never mistaken for a shorter history.
  */
 export class UnifyStoreCorruptionError extends Error {
-	constructor(message: string, options?: ErrorOptions) {
-		super(message, options)
-		this.name = "UnifyStoreCorruptionError"
-	}
+    constructor(message: string, options?: ErrorOptions) {
+        super(message, options)
+        this.name = "UnifyStoreCorruptionError"
+    }
 }

@@ -4,10 +4,10 @@ import type { Controller } from ".."
 import { projectImageGenerationProfilesForUi, readImageGenerationProfiles } from "./imageGenerationProfiles"
 
 export async function getImageGenerationProfiles(
-	_controller: Controller,
-	_request: EmptyRequest,
+    _controller: Controller,
+    _request: EmptyRequest,
 ): Promise<ImageGenerationProfilesResponse> {
-	return ImageGenerationProfilesResponse.create({
-		profiles: projectImageGenerationProfilesForUi(readImageGenerationProfiles()),
-	})
+    return ImageGenerationProfilesResponse.create({
+        profiles: projectImageGenerationProfilesForUi(readImageGenerationProfiles()),
+    })
 }

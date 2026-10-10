@@ -21,30 +21,30 @@ const FALLBACK_SERVICE_NAME = "dline"
 const UNKNOWN_VERSION = "unknown"
 
 export interface TelemetryResourceOptions {
-	/**
-	 * Overrides the reported service name.
-	 *
-	 * Only callers with an established external contract should set this; the
-	 * default keeps every producer under one identity.
-	 */
-	readonly serviceName?: string
-	/**
-	 * Identifies one extension host run.
-	 *
-	 * This belongs on the resource rather than on each record: it describes the
-	 * producer, not the event, and repeating it per record would inflate every
-	 * payload with a constant.
-	 */
-	readonly sessionId?: string
+    /**
+     * Overrides the reported service name.
+     *
+     * Only callers with an established external contract should set this; the
+     * default keeps every producer under one identity.
+     */
+    readonly serviceName?: string
+    /**
+     * Identifies one extension host run.
+     *
+     * This belongs on the resource rather than on each record: it describes the
+     * producer, not the event, and repeating it per record would inflate every
+     * payload with a constant.
+     */
+    readonly sessionId?: string
 }
 
 export function createTelemetryResource(options: TelemetryResourceOptions = {}): Resource {
-	const attributes: Record<string, string | number> = {
-		[ATTR_SERVICE_NAME]: options.serviceName || ExtensionRegistryInfo.name || FALLBACK_SERVICE_NAME,
-		[ATTR_SERVICE_VERSION]: ExtensionRegistryInfo.version || UNKNOWN_VERSION,
-		[ATTR_SERVICE_INSTANCE_ID]: options.sessionId ?? getProcessTelemetrySessionId(),
-		"process.pid": process.pid,
-	}
+    const attributes: Record<string, string | number> = {
+        [ATTR_SERVICE_NAME]: options.serviceName || ExtensionRegistryInfo.name || FALLBACK_SERVICE_NAME,
+        [ATTR_SERVICE_VERSION]: ExtensionRegistryInfo.version || UNKNOWN_VERSION,
+        [ATTR_SERVICE_INSTANCE_ID]: options.sessionId ?? getProcessTelemetrySessionId(),
+        "process.pid": process.pid,
+    }
 
-	return new Resource(attributes)
+    return new Resource(attributes)
 }

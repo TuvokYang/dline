@@ -50,17 +50,17 @@ Mention regex:
 
 */
 export const mentionRegex = new RegExp(
-	`@(` +
-		`[\\w-]+:/[^\\s]*?` + // Workspace-prefixed file paths: @workspace:name/path
-		`|[\\w-]+:"\\/[^"]*?"` + // Workspace-prefixed quoted file paths
-		`|/[^\\s]*?` + // Simple file paths (can't contain)
-		`|"\\/[^"]*?"` + // Quoted file paths which can contain spaces
-		`|(?:\\w+:\\/\\/)[^\\s]+?` + // URLs
-		`|[a-f0-9]{7,40}\\b` + // Git commit hashes
-		`|problems\\b` + // Exact word 'problems'
-		`|terminal\\b` + // Exact word 'terminal'
-		`|git-changes\\b` + // Exact word 'git-changes'
-		`)` +
-		`(?=[.,;:!?()]*(?=[\\s\\r\\n]|$))`, // Lookahead for trailing punctuation (multiple allowed)
+    `@(` +
+        `[\\w-]+:/[^\\s]*?` + // Workspace-prefixed file paths: @workspace:name/path
+        `|[\\w-]+:"\\/[^"]*?"` + // Workspace-prefixed quoted file paths
+        `|/[^\\s]*?` + // Simple file paths (can't contain)
+        `|"\\/[^"]*?"` + // Quoted file paths which can contain spaces
+        `|(?:\\w+:\\/\\/)[^\\s]+?` + // URLs
+        `|[a-f0-9]{7,40}\\b` + // Git commit hashes
+        `|problems\\b` + // Exact word 'problems'
+        `|terminal\\b` + // Exact word 'terminal'
+        `|git-changes\\b` + // Exact word 'git-changes'
+        `)` +
+        `(?=[.,;:!?()]*(?=[\\s\\r\\n]|$))`, // Lookahead for trailing punctuation (multiple allowed)
 )
 export const mentionRegexGlobal = new RegExp(mentionRegex.source, "g")

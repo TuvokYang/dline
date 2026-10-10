@@ -6,18 +6,18 @@ import { JsonlUnifyStoreBackend } from "../../jsonl/JsonlDatabase"
 import { runUnifyStoreConformance } from "./unify-store-conformance"
 
 describe("JsonlUnifyStore conformance", () => {
-	let root: string
+    let root: string
 
-	beforeAll(async () => {
-		root = await mkdtemp(path.join(os.tmpdir(), "dline-jsonl-unify-store-"))
-	})
+    beforeAll(async () => {
+        root = await mkdtemp(path.join(os.tmpdir(), "dline-jsonl-unify-store-"))
+    })
 
-	afterAll(async () => {
-		await rm(root, { recursive: true, force: true })
-	})
+    afterAll(async () => {
+        await rm(root, { recursive: true, force: true })
+    })
 
-	runUnifyStoreConformance({
-		backend: new JsonlUnifyStoreBackend(),
-		location: (testName) => path.join(root, testName),
-	})
+    runUnifyStoreConformance({
+        backend: new JsonlUnifyStoreBackend(),
+        location: (testName) => path.join(root, testName),
+    })
 })

@@ -23,6 +23,6 @@ export const MAX_AUTO_RETRY_ATTEMPTS = AUTO_RETRY_DELAYS_MS.length
  * @returns Delay duration in milliseconds.
  */
 export function getRetryDelay(attempt: number): number {
-	const scheduleIndex = Math.min(Math.max(Math.trunc(attempt), 1), AUTO_RETRY_DELAYS_MS.length) - 1
-	return AUTO_RETRY_DELAYS_MS[scheduleIndex]
+    const scheduleIndex = Math.min(Math.max(Math.trunc(attempt), 1), AUTO_RETRY_DELAYS_MS.length) - 1
+    return AUTO_RETRY_DELAYS_MS[scheduleIndex]
 }

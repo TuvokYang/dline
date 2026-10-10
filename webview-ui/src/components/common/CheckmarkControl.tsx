@@ -13,326 +13,326 @@ import { cn } from "@/lib/utils"
 import { CheckpointsServiceClient } from "@/services/grpc-client"
 
 export interface CompactionRestoreReference {
-	operationId: string
-	prePassCheckpointId: string
-	expectedHeadCheckpointId: string
-	expectedChainRevision: number
+    operationId: string
+    prePassCheckpointId: string
+    expectedHeadCheckpointId: string
+    expectedChainRevision: number
 }
 
 interface CheckmarkControlProps {
-	messageTs?: number
-	isCheckpointCheckedOut?: boolean
-	compactionRestore?: CompactionRestoreReference
-	hasWorkspaceCheckpoint?: boolean
-	workspaceCheckpointCoverage?: { available: number; total: number }
+    messageTs?: number
+    isCheckpointCheckedOut?: boolean
+    compactionRestore?: CompactionRestoreReference
+    hasWorkspaceCheckpoint?: boolean
+    workspaceCheckpointCoverage?: { available: number; total: number }
 }
 
 export const CheckmarkControl = ({
-	messageTs,
-	isCheckpointCheckedOut,
-	compactionRestore,
-	hasWorkspaceCheckpoint = true,
-	workspaceCheckpointCoverage,
+    messageTs,
+    isCheckpointCheckedOut,
+    compactionRestore,
+    hasWorkspaceCheckpoint = true,
+    workspaceCheckpointCoverage,
 }: CheckmarkControlProps) => {
-	const [compareDisabled, setCompareDisabled] = useState(false)
-	const [restoreTaskDisabled, setRestoreTaskDisabled] = useState(false)
-	const [restoreWorkspaceDisabled, setRestoreWorkspaceDisabled] = useState(false)
-	const [restoreBothDisabled, setRestoreBothDisabled] = useState(false)
-	const [showRestoreConfirm, setShowRestoreConfirm] = useState(false)
-	const [showMoreOptions, setShowMoreOptions] = useState(false)
-	const { onRelinquishControl } = useExtensionState()
-	const workspaceCheckpointAvailable = !compactionRestore && hasWorkspaceCheckpoint
-	const partialCoverage =
-		workspaceCheckpointCoverage !== undefined &&
-		workspaceCheckpointCoverage.total > 1 &&
-		workspaceCheckpointCoverage.available < workspaceCheckpointCoverage.total
-	const checkpointLabel = compactionRestore
-		? "Compaction checkpoint"
-		: partialCoverage
-			? `Checkpoint (${workspaceCheckpointCoverage.available}/${workspaceCheckpointCoverage.total} workspaces${isCheckpointCheckedOut ? ", restored" : ""})`
-			: isCheckpointCheckedOut
-				? "Checkpoint (restored)"
-				: "Checkpoint"
+    const [compareDisabled, setCompareDisabled] = useState(false)
+    const [restoreTaskDisabled, setRestoreTaskDisabled] = useState(false)
+    const [restoreWorkspaceDisabled, setRestoreWorkspaceDisabled] = useState(false)
+    const [restoreBothDisabled, setRestoreBothDisabled] = useState(false)
+    const [showRestoreConfirm, setShowRestoreConfirm] = useState(false)
+    const [showMoreOptions, setShowMoreOptions] = useState(false)
+    const { onRelinquishControl } = useExtensionState()
+    const workspaceCheckpointAvailable = !compactionRestore && hasWorkspaceCheckpoint
+    const partialCoverage =
+        workspaceCheckpointCoverage !== undefined &&
+        workspaceCheckpointCoverage.total > 1 &&
+        workspaceCheckpointCoverage.available < workspaceCheckpointCoverage.total
+    const checkpointLabel = compactionRestore
+        ? "Compaction checkpoint"
+        : partialCoverage
+          ? `Checkpoint (${workspaceCheckpointCoverage.available}/${workspaceCheckpointCoverage.total} workspaces${isCheckpointCheckedOut ? ", restored" : ""})`
+          : isCheckpointCheckedOut
+            ? "Checkpoint (restored)"
+            : "Checkpoint"
 
-	// Clear "Restore Files" button when checkpoint is no longer checked out
-	useEffect(() => {
-		if (!isCheckpointCheckedOut && restoreWorkspaceDisabled) {
-			setRestoreWorkspaceDisabled(false)
-		}
-	}, [isCheckpointCheckedOut, restoreWorkspaceDisabled])
+    // Clear "Restore Files" button when checkpoint is no longer checked out
+    useEffect(() => {
+        if (!isCheckpointCheckedOut && restoreWorkspaceDisabled) {
+            setRestoreWorkspaceDisabled(false)
+        }
+    }, [isCheckpointCheckedOut, restoreWorkspaceDisabled])
 
-	const { refs, floatingStyles, update, placement } = useFloating({
-		placement: "bottom-end",
-		middleware: [
-			offset({
-				mainAxis: 8,
-				crossAxis: 10,
-			}),
-			flip(),
-			shift(),
-		],
-	})
+    const { refs, floatingStyles, update, placement } = useFloating({
+        placement: "bottom-end",
+        middleware: [
+            offset({
+                mainAxis: 8,
+                crossAxis: 10,
+            }),
+            flip(),
+            shift(),
+        ],
+    })
 
-	useEffect(() => {
-		const handleScroll = () => {
-			update()
-		}
-		window.addEventListener("scroll", handleScroll, true)
-		return () => window.removeEventListener("scroll", handleScroll, true)
-	}, [update])
+    useEffect(() => {
+        const handleScroll = () => {
+            update()
+        }
+        window.addEventListener("scroll", handleScroll, true)
+        return () => window.removeEventListener("scroll", handleScroll, true)
+    }, [update])
 
-	useEffect(() => {
-		if (showRestoreConfirm) {
-			update()
-		}
-	}, [showRestoreConfirm, update])
+    useEffect(() => {
+        if (showRestoreConfirm) {
+            update()
+        }
+    }, [showRestoreConfirm, update])
 
-	useEffect(() => {
-		if (!showRestoreConfirm) return
+    useEffect(() => {
+        if (!showRestoreConfirm) return
 
-		const handlePointerDown = (event: PointerEvent) => {
-			const target = event.target as Node | null
-			const reference = refs.reference.current
-			if (
-				target &&
-				((reference instanceof Node && reference.contains(target)) || refs.floating.current?.contains(target))
-			) {
-				return
-			}
-			setShowRestoreConfirm(false)
-			setShowMoreOptions(false)
-		}
-		const handleKeyDown = (event: KeyboardEvent) => {
-			if (event.key !== "Escape") return
-			setShowRestoreConfirm(false)
-			setShowMoreOptions(false)
-		}
+        const handlePointerDown = (event: PointerEvent) => {
+            const target = event.target as Node | null
+            const reference = refs.reference.current
+            if (
+                target &&
+                ((reference instanceof Node && reference.contains(target)) || refs.floating.current?.contains(target))
+            ) {
+                return
+            }
+            setShowRestoreConfirm(false)
+            setShowMoreOptions(false)
+        }
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== "Escape") return
+            setShowRestoreConfirm(false)
+            setShowMoreOptions(false)
+        }
 
-		document.addEventListener("pointerdown", handlePointerDown)
-		document.addEventListener("keydown", handleKeyDown)
-		return () => {
-			document.removeEventListener("pointerdown", handlePointerDown)
-			document.removeEventListener("keydown", handleKeyDown)
-		}
-	}, [refs.floating, refs.reference, showRestoreConfirm])
+        document.addEventListener("pointerdown", handlePointerDown)
+        document.addEventListener("keydown", handleKeyDown)
+        return () => {
+            document.removeEventListener("pointerdown", handlePointerDown)
+            document.removeEventListener("keydown", handleKeyDown)
+        }
+    }, [refs.floating, refs.reference, showRestoreConfirm])
 
-	// Use the onRelinquishControl hook instead of message event
-	useEffect(() => {
-		return onRelinquishControl(() => {
-			setCompareDisabled(false)
-			setRestoreTaskDisabled(false)
-			setRestoreWorkspaceDisabled(false)
-			setRestoreBothDisabled(false)
-			setShowRestoreConfirm(false)
-			setShowMoreOptions(false)
-		})
-	}, [onRelinquishControl])
+    // Use the onRelinquishControl hook instead of message event
+    useEffect(() => {
+        return onRelinquishControl(() => {
+            setCompareDisabled(false)
+            setRestoreTaskDisabled(false)
+            setRestoreWorkspaceDisabled(false)
+            setRestoreBothDisabled(false)
+            setShowRestoreConfirm(false)
+            setShowMoreOptions(false)
+        })
+    }, [onRelinquishControl])
 
-	const handleRestoreTask = async () => {
-		setRestoreTaskDisabled(true)
-		try {
-			const restoreType: ClineCheckpointRestore = "task"
-			await CheckpointsServiceClient.checkpointRestore(
-				CheckpointRestoreRequest.create({
-					number: messageTs,
-					restoreType,
-					...(compactionRestore
-						? {
-								compactionOperationId: compactionRestore.operationId,
-								compactionCheckpointId: compactionRestore.prePassCheckpointId,
-								compactionExpectedHeadCheckpointId: compactionRestore.expectedHeadCheckpointId,
-								compactionExpectedChainRevision: compactionRestore.expectedChainRevision,
-							}
-						: {}),
-				}),
-			)
-		} catch (err) {
-			console.error("Checkpoint restore task error:", err)
-		} finally {
-			setRestoreTaskDisabled(false)
-			setShowRestoreConfirm(false)
-			setShowMoreOptions(false)
-		}
-	}
+    const handleRestoreTask = async () => {
+        setRestoreTaskDisabled(true)
+        try {
+            const restoreType: ClineCheckpointRestore = "task"
+            await CheckpointsServiceClient.checkpointRestore(
+                CheckpointRestoreRequest.create({
+                    number: messageTs,
+                    restoreType,
+                    ...(compactionRestore
+                        ? {
+                              compactionOperationId: compactionRestore.operationId,
+                              compactionCheckpointId: compactionRestore.prePassCheckpointId,
+                              compactionExpectedHeadCheckpointId: compactionRestore.expectedHeadCheckpointId,
+                              compactionExpectedChainRevision: compactionRestore.expectedChainRevision,
+                          }
+                        : {}),
+                }),
+            )
+        } catch (err) {
+            console.error("Checkpoint restore task error:", err)
+        } finally {
+            setRestoreTaskDisabled(false)
+            setShowRestoreConfirm(false)
+            setShowMoreOptions(false)
+        }
+    }
 
-	const handleRestoreWorkspace = async () => {
-		setRestoreWorkspaceDisabled(true)
-		try {
-			const restoreType: ClineCheckpointRestore = "workspace"
-			await CheckpointsServiceClient.checkpointRestore(
-				CheckpointRestoreRequest.create({
-					number: messageTs,
-					restoreType,
-				}),
-			)
-		} catch (err) {
-			console.error("Checkpoint restore workspace error:", err)
-		} finally {
-			setRestoreWorkspaceDisabled(false)
-			setShowRestoreConfirm(false)
-			setShowMoreOptions(false)
-		}
-	}
+    const handleRestoreWorkspace = async () => {
+        setRestoreWorkspaceDisabled(true)
+        try {
+            const restoreType: ClineCheckpointRestore = "workspace"
+            await CheckpointsServiceClient.checkpointRestore(
+                CheckpointRestoreRequest.create({
+                    number: messageTs,
+                    restoreType,
+                }),
+            )
+        } catch (err) {
+            console.error("Checkpoint restore workspace error:", err)
+        } finally {
+            setRestoreWorkspaceDisabled(false)
+            setShowRestoreConfirm(false)
+            setShowMoreOptions(false)
+        }
+    }
 
-	const handleRestoreBoth = async () => {
-		setRestoreBothDisabled(true)
-		try {
-			const restoreType: ClineCheckpointRestore = "taskAndWorkspace"
-			await CheckpointsServiceClient.checkpointRestore(
-				CheckpointRestoreRequest.create({
-					number: messageTs,
-					restoreType,
-				}),
-			)
-		} catch (err) {
-			console.error("Checkpoint restore both error:", err)
-		} finally {
-			setRestoreBothDisabled(false)
-			setShowRestoreConfirm(false)
-			setShowMoreOptions(false)
-		}
-	}
+    const handleRestoreBoth = async () => {
+        setRestoreBothDisabled(true)
+        try {
+            const restoreType: ClineCheckpointRestore = "taskAndWorkspace"
+            await CheckpointsServiceClient.checkpointRestore(
+                CheckpointRestoreRequest.create({
+                    number: messageTs,
+                    restoreType,
+                }),
+            )
+        } catch (err) {
+            console.error("Checkpoint restore both error:", err)
+        } finally {
+            setRestoreBothDisabled(false)
+            setShowRestoreConfirm(false)
+            setShowMoreOptions(false)
+        }
+    }
 
-	return (
-		<Container $isCheckedOut={isCheckpointCheckedOut} $isMenuOpen={showRestoreConfirm}>
-			<BookmarkIcon
-				className={cn("text-xs text-description shrink-0 size-2", {
-					"text-link": isCheckpointCheckedOut,
-				})}
-			/>
-			<DottedLine $isCheckedOut={isCheckpointCheckedOut} className="hover-show-inverse" />
-			<div className="hover-content">
-				<span
-					className={cn("text-[9px] text-description shrink-0", {
-						"text-link": isCheckpointCheckedOut,
-					})}>
-					{checkpointLabel}
-				</span>
-				<DottedLine $isCheckedOut={isCheckpointCheckedOut} />
-				<ButtonGroup>
-					{workspaceCheckpointAvailable && (
-						<>
-							<CustomButton
-								$isCheckedOut={isCheckpointCheckedOut}
-								disabled={compareDisabled}
-								onClick={async () => {
-									setCompareDisabled(true)
-									try {
-										await CheckpointsServiceClient.checkpointDiff(
-											Int64Request.create({
-												value: messageTs,
-											}),
-										)
-									} catch (err) {
-										console.error("CheckpointDiff error:", err)
-									} finally {
-										setCompareDisabled(false)
-									}
-								}}
-								style={{ cursor: compareDisabled ? "wait" : "pointer" }}>
-								Compare
-							</CustomButton>
-							<DottedLine $isCheckedOut={isCheckpointCheckedOut} $small />
-						</>
-					)}
-					<div ref={refs.setReference} style={{ position: "relative", marginTop: -2 }}>
-						<CustomButton
-							$isActive={showRestoreConfirm}
-							$isCheckedOut={isCheckpointCheckedOut}
-							onClick={() => setShowRestoreConfirm((visible) => !visible)}>
-							Restore
-						</CustomButton>
-						{showRestoreConfirm &&
-							createPortal(
-								<RestoreConfirmTooltip data-placement={placement} ref={refs.setFloating} style={floatingStyles}>
-									{compactionRestore || !workspaceCheckpointAvailable ? (
-										<RestoreOption>
-											<Button
-												disabled={restoreTaskDisabled}
-												onClick={handleRestoreTask}
-												style={{ cursor: restoreTaskDisabled ? "wait" : "pointer" }}>
-												Restore Task Only
-											</Button>
-											<p>
-												{compactionRestore
-													? "Restore the conversation to the checkpoint before this Pass. Workspace files are unchanged."
-													: "Restore the conversation to this checkpoint. Workspace files are unchanged."}
-											</p>
-										</RestoreOption>
-									) : (
-										<div>
-											<PrimaryRestoreOption>
-												<Button
-													disabled={restoreBothDisabled}
-													onClick={handleRestoreBoth}
-													style={{ cursor: restoreBothDisabled ? "wait" : "pointer" }}>
-													Restore Files & Task
-												</Button>
-												<p>Revert files and clear messages after this point</p>
-											</PrimaryRestoreOption>
+    return (
+        <Container $isCheckedOut={isCheckpointCheckedOut} $isMenuOpen={showRestoreConfirm}>
+            <BookmarkIcon
+                className={cn("text-xs text-description shrink-0 size-2", {
+                    "text-link": isCheckpointCheckedOut,
+                })}
+            />
+            <DottedLine $isCheckedOut={isCheckpointCheckedOut} className="hover-show-inverse" />
+            <div className="hover-content">
+                <span
+                    className={cn("text-[9px] text-description shrink-0", {
+                        "text-link": isCheckpointCheckedOut,
+                    })}>
+                    {checkpointLabel}
+                </span>
+                <DottedLine $isCheckedOut={isCheckpointCheckedOut} />
+                <ButtonGroup>
+                    {workspaceCheckpointAvailable && (
+                        <>
+                            <CustomButton
+                                $isCheckedOut={isCheckpointCheckedOut}
+                                disabled={compareDisabled}
+                                onClick={async () => {
+                                    setCompareDisabled(true)
+                                    try {
+                                        await CheckpointsServiceClient.checkpointDiff(
+                                            Int64Request.create({
+                                                value: messageTs,
+                                            }),
+                                        )
+                                    } catch (err) {
+                                        console.error("CheckpointDiff error:", err)
+                                    } finally {
+                                        setCompareDisabled(false)
+                                    }
+                                }}
+                                style={{ cursor: compareDisabled ? "wait" : "pointer" }}>
+                                Compare
+                            </CustomButton>
+                            <DottedLine $isCheckedOut={isCheckpointCheckedOut} $small />
+                        </>
+                    )}
+                    <div ref={refs.setReference} style={{ position: "relative", marginTop: -2 }}>
+                        <CustomButton
+                            $isActive={showRestoreConfirm}
+                            $isCheckedOut={isCheckpointCheckedOut}
+                            onClick={() => setShowRestoreConfirm((visible) => !visible)}>
+                            Restore
+                        </CustomButton>
+                        {showRestoreConfirm &&
+                            createPortal(
+                                <RestoreConfirmTooltip data-placement={placement} ref={refs.setFloating} style={floatingStyles}>
+                                    {compactionRestore || !workspaceCheckpointAvailable ? (
+                                        <RestoreOption>
+                                            <Button
+                                                disabled={restoreTaskDisabled}
+                                                onClick={handleRestoreTask}
+                                                style={{ cursor: restoreTaskDisabled ? "wait" : "pointer" }}>
+                                                Restore Task Only
+                                            </Button>
+                                            <p>
+                                                {compactionRestore
+                                                    ? "Restore the conversation to the checkpoint before this Pass. Workspace files are unchanged."
+                                                    : "Restore the conversation to this checkpoint. Workspace files are unchanged."}
+                                            </p>
+                                        </RestoreOption>
+                                    ) : (
+                                        <div>
+                                            <PrimaryRestoreOption>
+                                                <Button
+                                                    disabled={restoreBothDisabled}
+                                                    onClick={handleRestoreBoth}
+                                                    style={{ cursor: restoreBothDisabled ? "wait" : "pointer" }}>
+                                                    Restore Files & Task
+                                                </Button>
+                                                <p>Revert files and clear messages after this point</p>
+                                            </PrimaryRestoreOption>
 
-											<MoreOptionsToggle onClick={() => setShowMoreOptions(!showMoreOptions)}>
-												More options
-												<i
-													aria-hidden="true"
-													className={`codicon codicon-chevron-${showMoreOptions ? "up" : "down"}`}
-													style={{ marginLeft: "4px", fontSize: "10px" }}
-												/>
-											</MoreOptionsToggle>
+                                            <MoreOptionsToggle onClick={() => setShowMoreOptions(!showMoreOptions)}>
+                                                More options
+                                                <i
+                                                    aria-hidden="true"
+                                                    className={`codicon codicon-chevron-${showMoreOptions ? "up" : "down"}`}
+                                                    style={{ marginLeft: "4px", fontSize: "10px" }}
+                                                />
+                                            </MoreOptionsToggle>
 
-											{showMoreOptions && (
-												<AdditionalOptions>
-													<RestoreOption>
-														<Button
-															disabled={restoreWorkspaceDisabled || isCheckpointCheckedOut}
-															onClick={handleRestoreWorkspace}
-															style={{
-																cursor: isCheckpointCheckedOut
-																	? "not-allowed"
-																	: restoreWorkspaceDisabled
-																		? "wait"
-																		: "pointer",
-															}}
-															variant="secondary">
-															<i
-																aria-hidden="true"
-																className="codicon codicon-file-symlink-directory"
-																style={{ marginRight: "6px" }}
-															/>
-															Restore Files Only
-														</Button>
-														<p>Revert files to this checkpoint</p>
-													</RestoreOption>
-													<RestoreOption>
-														<Button
-															disabled={restoreTaskDisabled}
-															onClick={handleRestoreTask}
-															style={{
-																cursor: restoreTaskDisabled ? "wait" : "pointer",
-															}}
-															variant="secondary">
-															<i
-																aria-hidden="true"
-																className="codicon codicon-comment-discussion"
-																style={{ marginRight: "6px" }}
-															/>
-															Restore Task Only
-														</Button>
-														<p>Clear messages after this point</p>
-													</RestoreOption>
-												</AdditionalOptions>
-											)}
-										</div>
-									)}
-								</RestoreConfirmTooltip>,
-								document.body,
-							)}
-					</div>
-					<DottedLine $isCheckedOut={isCheckpointCheckedOut} $small />
-				</ButtonGroup>
-			</div>
-		</Container>
-	)
+                                            {showMoreOptions && (
+                                                <AdditionalOptions>
+                                                    <RestoreOption>
+                                                        <Button
+                                                            disabled={restoreWorkspaceDisabled || isCheckpointCheckedOut}
+                                                            onClick={handleRestoreWorkspace}
+                                                            style={{
+                                                                cursor: isCheckpointCheckedOut
+                                                                    ? "not-allowed"
+                                                                    : restoreWorkspaceDisabled
+                                                                      ? "wait"
+                                                                      : "pointer",
+                                                            }}
+                                                            variant="secondary">
+                                                            <i
+                                                                aria-hidden="true"
+                                                                className="codicon codicon-file-symlink-directory"
+                                                                style={{ marginRight: "6px" }}
+                                                            />
+                                                            Restore Files Only
+                                                        </Button>
+                                                        <p>Revert files to this checkpoint</p>
+                                                    </RestoreOption>
+                                                    <RestoreOption>
+                                                        <Button
+                                                            disabled={restoreTaskDisabled}
+                                                            onClick={handleRestoreTask}
+                                                            style={{
+                                                                cursor: restoreTaskDisabled ? "wait" : "pointer",
+                                                            }}
+                                                            variant="secondary">
+                                                            <i
+                                                                aria-hidden="true"
+                                                                className="codicon codicon-comment-discussion"
+                                                                style={{ marginRight: "6px" }}
+                                                            />
+                                                            Restore Task Only
+                                                        </Button>
+                                                        <p>Clear messages after this point</p>
+                                                    </RestoreOption>
+                                                </AdditionalOptions>
+                                            )}
+                                        </div>
+                                    )}
+                                </RestoreConfirmTooltip>,
+                                document.body,
+                            )}
+                    </div>
+                    <DottedLine $isCheckedOut={isCheckpointCheckedOut} $small />
+                </ButtonGroup>
+            </div>
+        </Container>
+    )
 }
 
 const Container = styled.div<{ $isMenuOpen?: boolean; $isCheckedOut?: boolean }>`
@@ -402,18 +402,18 @@ const ButtonGroup = styled.div`
 
 const CustomButton = styled.button<{ disabled?: boolean; $isActive?: boolean; $isCheckedOut?: boolean }>`
 	background: ${(props) =>
-		props.$isActive || props.disabled
-			? props.$isCheckedOut
-				? "var(--vscode-textLink-foreground)"
-				: "var(--vscode-descriptionForeground)"
-			: "transparent"};
+        props.$isActive || props.disabled
+            ? props.$isCheckedOut
+                ? "var(--vscode-textLink-foreground)"
+                : "var(--vscode-descriptionForeground)"
+            : "transparent"};
 	border: none;
 	color: ${(props) =>
-		props.$isActive || props.disabled
-			? "var(--vscode-editor-background)"
-			: props.$isCheckedOut
-				? "var(--vscode-textLink-foreground)"
-				: "var(--vscode-descriptionForeground)"};
+        props.$isActive || props.disabled
+            ? "var(--vscode-editor-background)"
+            : props.$isCheckedOut
+              ? "var(--vscode-textLink-foreground)"
+              : "var(--vscode-descriptionForeground)"};
 	padding: 2px 6px;
 	font-size: 9px;
 	cursor: pointer;
@@ -428,9 +428,9 @@ const CustomButton = styled.button<{ disabled?: boolean; $isActive?: boolean; $i
 		bottom: 0;
 		border-radius: 1px;
 		background-image: ${(props) =>
-			props.$isActive || props.disabled
-				? "none"
-				: `linear-gradient(to right, ${props.$isCheckedOut ? "var(--vscode-textLink-foreground)" : "var(--vscode-descriptionForeground)"} 50%, transparent 50%),
+            props.$isActive || props.disabled
+                ? "none"
+                : `linear-gradient(to right, ${props.$isCheckedOut ? "var(--vscode-textLink-foreground)" : "var(--vscode-descriptionForeground)"} 50%, transparent 50%),
             linear-gradient(to bottom, ${props.$isCheckedOut ? "var(--vscode-textLink-foreground)" : "var(--vscode-descriptionForeground)"} 50%, transparent 50%),
             linear-gradient(to right, ${props.$isCheckedOut ? "var(--vscode-textLink-foreground)" : "var(--vscode-descriptionForeground)"} 50%, transparent 50%),
             linear-gradient(to bottom, ${props.$isCheckedOut ? "var(--vscode-textLink-foreground)" : "var(--vscode-descriptionForeground)"} 50%, transparent 50%)`};
@@ -445,7 +445,7 @@ const CustomButton = styled.button<{ disabled?: boolean; $isActive?: boolean; $i
 
 	&:hover:not(:disabled) {
 		background: ${(props) =>
-			props.$isCheckedOut ? "var(--vscode-textLink-foreground)" : "var(--vscode-descriptionForeground)"};
+            props.$isCheckedOut ? "var(--vscode-textLink-foreground)" : "var(--vscode-descriptionForeground)"};
 		color: var(--vscode-editor-background);
 		&::before {
 			display: none;

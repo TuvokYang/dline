@@ -9,6 +9,6 @@ import { Controller } from ".."
  * @returns The total size as an Int64 value
  */
 export async function getTotalTasksSize(_controller: Controller, _request: EmptyRequest): Promise<Int64> {
-	const totalSize = await calculateTotalTasksSize()
-	return { value: totalSize || 0 }
+    const totalSize = await calculateTotalTasksSize()
+    return { value: totalSize || 0 }
 }

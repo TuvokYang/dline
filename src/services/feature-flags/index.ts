@@ -1,7 +1,7 @@
 export {
-	type FeatureFlagsProviderConfig,
-	FeatureFlagsProviderFactory,
-	type FeatureFlagsProviderType,
+    type FeatureFlagsProviderConfig,
+    FeatureFlagsProviderFactory,
+    type FeatureFlagsProviderType,
 } from "./FeatureFlagsProviderFactory"
 export { FeatureFlagsService } from "./FeatureFlagsService"
 export type { FeatureFlagsSettings, IFeatureFlagsProvider } from "./providers/IFeatureFlagsProvider"
@@ -18,28 +18,28 @@ let _featureFlagsServiceInstance: FeatureFlagsService | null = null
  * @returns FeatureFlagsService instance
  */
 export function getFeatureFlagsService(): FeatureFlagsService {
-	if (!_featureFlagsServiceInstance) {
-		const provider = FeatureFlagsProviderFactory.createProvider(FeatureFlagsProviderFactory.getDefaultConfig())
-		_featureFlagsServiceInstance = new FeatureFlagsService(provider)
-	}
-	return _featureFlagsServiceInstance
+    if (!_featureFlagsServiceInstance) {
+        const provider = FeatureFlagsProviderFactory.createProvider(FeatureFlagsProviderFactory.getDefaultConfig())
+        _featureFlagsServiceInstance = new FeatureFlagsService(provider)
+    }
+    return _featureFlagsServiceInstance
 }
 
 /**
  * Reset the feature flags service instance (useful for testing)
  */
 export function resetFeatureFlagsService(): void {
-	_featureFlagsServiceInstance = null
+    _featureFlagsServiceInstance = null
 }
 
 export const featureFlagsService = new Proxy({} as FeatureFlagsService, {
-	get(_target, prop, _receiver) {
-		const service = getFeatureFlagsService()
-		const value = Reflect.get(service, prop, service)
-		// Bind methods to the service instance to preserve `this` context
-		if (typeof value === "function") {
-			return value.bind(service)
-		}
-		return value
-	},
+    get(_target, prop, _receiver) {
+        const service = getFeatureFlagsService()
+        const value = Reflect.get(service, prop, service)
+        // Bind methods to the service instance to preserve `this` context
+        if (typeof value === "function") {
+            return value.bind(service)
+        }
+        return value
+    },
 })

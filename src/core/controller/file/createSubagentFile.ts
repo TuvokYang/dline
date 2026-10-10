@@ -38,72 +38,72 @@ Do NOT modify any files. Only read, search, list, and report.
  * @returns The updated subagent toggles
  */
 export async function createSubagentFile(controller: Controller, request: CreateSubagentRequest): Promise<SubagentToggles> {
-	const { subagentName, isGlobal } = request
+    const { subagentName, isGlobal } = request
 
-	if (!subagentName || typeof subagentName !== "string" || typeof isGlobal !== "boolean") {
-		Logger.error("createSubagentFile: Missing or invalid parameters", {
-			subagentName: typeof subagentName === "string" ? subagentName : `Invalid: ${typeof subagentName}`,
-			isGlobal: typeof isGlobal === "boolean" ? isGlobal : `Invalid: ${typeof isGlobal}`,
-		})
-		throw new Error("Missing or invalid parameters for createSubagentFile")
-	}
+    if (!subagentName || typeof subagentName !== "string" || typeof isGlobal !== "boolean") {
+        Logger.error("createSubagentFile: Missing or invalid parameters", {
+            subagentName: typeof subagentName === "string" ? subagentName : `Invalid: ${typeof subagentName}`,
+            isGlobal: typeof isGlobal === "boolean" ? isGlobal : `Invalid: ${typeof isGlobal}`,
+        })
+        throw new Error("Missing or invalid parameters for createSubagentFile")
+    }
 
-	// Validate subagent name (must be valid filename)
-	const sanitizedName = subagentName.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase()
-	if (!sanitizedName) {
-		throw new Error("Invalid subagent name")
-	}
+    // Validate subagent name (must be valid filename)
+    const sanitizedName = subagentName.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase()
+    if (!sanitizedName) {
+        throw new Error("Invalid subagent name")
+    }
 
-	let subagentDir: string
+    let subagentDir: string
 
-	if (isGlobal) {
-		const globalDir = await ensureAgentSubagentsDirectoryExists({ isGlobal: true })
-		subagentDir = globalDir
-	} else {
-		const workspacePaths = await HostProvider.workspace.getWorkspacePaths({})
-		const primaryWorkspace = workspacePaths.paths[0]
-		if (!primaryWorkspace) {
-			throw new Error("No workspace folder open")
-		}
-		const localDir = await ensureAgentSubagentsDirectoryExists({
-			isGlobal: false,
-			workspacePath: primaryWorkspace,
-		})
-		subagentDir = localDir
-	}
+    if (isGlobal) {
+        const globalDir = await ensureAgentSubagentsDirectoryExists({ isGlobal: true })
+        subagentDir = globalDir
+    } else {
+        const workspacePaths = await HostProvider.workspace.getWorkspacePaths({})
+        const primaryWorkspace = workspacePaths.paths[0]
+        if (!primaryWorkspace) {
+            throw new Error("No workspace folder open")
+        }
+        const localDir = await ensureAgentSubagentsDirectoryExists({
+            isGlobal: false,
+            workspacePath: primaryWorkspace,
+        })
+        subagentDir = localDir
+    }
 
-	const filePath = path.join(subagentDir, `${sanitizedName}.yml`)
+    const filePath = path.join(subagentDir, `${sanitizedName}.yml`)
 
-	// Check if subagent already exists
-	if (await fileExistsAtPath(filePath)) {
-		Logger.warn(`Subagent "${sanitizedName}" already exists at ${filePath}`)
-		// Return current toggles
-		const globalToggles = controller.stateManager.getGlobalSettingsKey("globalSubagentsToggles") || {}
-		const localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "subagents"))
-		return SubagentToggles.create({
-			globalSubagentsToggles: globalToggles,
-			localSubagentsToggles: localToggles,
-		})
-	}
+    // Check if subagent already exists
+    if (await fileExistsAtPath(filePath)) {
+        Logger.warn(`Subagent "${sanitizedName}" already exists at ${filePath}`)
+        // Return current toggles
+        const globalToggles = controller.stateManager.getGlobalSettingsKey("globalSubagentsToggles") || {}
+        const localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "subagents"))
+        return SubagentToggles.create({
+            globalSubagentsToggles: globalToggles,
+            localSubagentsToggles: localToggles,
+        })
+    }
 
-	// Create the YAML file from template
-	const content = SUBAGENT_TEMPLATE.replace(/\{\{SUBAGENT_NAME\}\}/g, sanitizedName)
-	await fs.writeFile(filePath, content, "utf-8")
-	if (controller.task) {
-		await controller.task.owners.prompt.flush("capability_mutation")
-	} else {
-		await controller.postStateToWebview()
-	}
+    // Create the YAML file from template
+    const content = SUBAGENT_TEMPLATE.replace(/\{\{SUBAGENT_NAME\}\}/g, sanitizedName)
+    await fs.writeFile(filePath, content, "utf-8")
+    if (controller.task) {
+        await controller.task.owners.prompt.flush("capability_mutation")
+    } else {
+        await controller.postStateToWebview()
+    }
 
-	// Open the file for editing
-	await openFile(controller, { value: filePath })
+    // Open the file for editing
+    await openFile(controller, { value: filePath })
 
-	// Return current toggles (new subagent defaults to enabled)
-	const globalToggles = controller.stateManager.getGlobalSettingsKey("globalSubagentsToggles") || {}
-	const localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "subagents"))
+    // Return current toggles (new subagent defaults to enabled)
+    const globalToggles = controller.stateManager.getGlobalSettingsKey("globalSubagentsToggles") || {}
+    const localToggles = mergeScopedToggles(readScopedToggles(controller.stateManager, "subagents"))
 
-	return SubagentToggles.create({
-		globalSubagentsToggles: globalToggles,
-		localSubagentsToggles: localToggles,
-	})
+    return SubagentToggles.create({
+        globalSubagentsToggles: globalToggles,
+        localSubagentsToggles: localToggles,
+    })
 }

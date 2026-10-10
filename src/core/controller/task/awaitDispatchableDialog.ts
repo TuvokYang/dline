@@ -6,15 +6,15 @@ const POLL_INTERVAL_MS = 25
 
 /** Minimal state source; any Task host can supply it without exposing the session. */
 export interface DialogStateSource {
-	state(): TaskState
+    state(): TaskState
 }
 
 export interface AwaitDispatchableDialogOptions {
-	readonly timeoutMs?: number
-	/** Select only a dialog that can accept the action the historical surface received. */
-	readonly actionId?: string
-	/** False once the caller no longer serves this task, e.g. it was cleared or replaced. */
-	readonly isCurrent?: () => boolean
+    readonly timeoutMs?: number
+    /** Select only a dialog that can accept the action the historical surface received. */
+    readonly actionId?: string
+    /** False once the caller no longer serves this task, e.g. it was cleared or replaced. */
+    readonly isCurrent?: () => boolean
 }
 
 /**
@@ -33,39 +33,39 @@ export interface AwaitDispatchableDialogOptions {
  * such a dialog can still turn into one that accepts the action.
  */
 export async function awaitDispatchableDialog(
-	source: DialogStateSource,
-	options: AwaitDispatchableDialogOptions = {},
+    source: DialogStateSource,
+    options: AwaitDispatchableDialogOptions = {},
 ): Promise<DialogInteraction | undefined> {
-	const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
-	for (;;) {
-		const state = source.state()
-		const dispatchable = dispatchableDialog(state, options.actionId)
-		if (dispatchable) return dispatchable
-		if (state.halt.status === "stopping" || options.isCurrent?.() === false) return undefined
-		// Hydration can still be creating the recovery dialog while the task is in
-		// its initializing phase. Returning here loses the user's edited draft and
-		// leaves the newly created Resume dialog behind after promotion.
-		if (!hasUnrevealedDialog(state) && state.flow.phase !== "initializing") return undefined
-		if (Date.now() >= deadline) return undefined
-		await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
-	}
+    const deadline = Date.now() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    for (;;) {
+        const state = source.state()
+        const dispatchable = dispatchableDialog(state, options.actionId)
+        if (dispatchable) return dispatchable
+        if (state.halt.status === "stopping" || options.isCurrent?.() === false) return undefined
+        // Hydration can still be creating the recovery dialog while the task is in
+        // its initializing phase. Returning here loses the user's edited draft and
+        // leaves the newly created Resume dialog behind after promotion.
+        if (!hasUnrevealedDialog(state) && state.flow.phase !== "initializing") return undefined
+        if (Date.now() >= deadline) return undefined
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
+    }
 }
 
 function dialogs(state: TaskState): readonly (DialogInteraction | undefined)[] {
-	return [state.dialog.primary, state.dialog.interrupted, ...Object.values(state.dialog.approvalsByBlock)]
+    return [state.dialog.primary, state.dialog.interrupted, ...Object.values(state.dialog.approvalsByBlock)]
 }
 
 function hasUnrevealedDialog(state: TaskState): boolean {
-	return dialogs(state).some((interaction) => interaction?.status === "planned" || interaction?.status === "prepared")
+    return dialogs(state).some((interaction) => interaction?.status === "planned" || interaction?.status === "prepared")
 }
 
 /** Select the dialog that can currently accept the historical response being promoted. */
 export function dispatchableDialog(state: TaskState, actionId?: string): DialogInteraction | undefined {
-	return dialogs(state).find(
-		(interaction): interaction is DialogInteraction =>
-			interaction !== undefined &&
-			interaction.status === "awaiting" &&
-			interaction.receiverGeneration !== undefined &&
-			(actionId === undefined || interaction.actionRules.some((rule) => rule.actionId === actionId)),
-	)
+    return dialogs(state).find(
+        (interaction): interaction is DialogInteraction =>
+            interaction !== undefined &&
+            interaction.status === "awaiting" &&
+            interaction.receiverGeneration !== undefined &&
+            (actionId === undefined || interaction.actionRules.some((rule) => rule.actionId === actionId)),
+    )
 }

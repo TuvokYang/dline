@@ -1,7 +1,7 @@
 // English tool use index prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	main: `TOOL USE
+    main: `TOOL USE
 
 You have access to a set of tools that are executed upon the user's approval.
 @PARALLEL_TOOL_POLICY@

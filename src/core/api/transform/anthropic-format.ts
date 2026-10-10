@@ -1,10 +1,10 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 import {
-	type AnthropicMessageConversionOptions,
-	ClineStorageMessage,
-	convertClineStorageToAnthropicMessage,
-	hostedSegmentCallId,
-	isHostedToolBlock,
+    type AnthropicMessageConversionOptions,
+    ClineStorageMessage,
+    convertClineStorageToAnthropicMessage,
+    hostedSegmentCallId,
+    isHostedToolBlock,
 } from "@/shared/messages/content"
 import { resolveDeferredHostedCalls } from "@/shared/messages/hosted-tool-deferral"
 
@@ -24,32 +24,32 @@ import { resolveDeferredHostedCalls } from "@/shared/messages/hosted-tool-deferr
  * @returns Array of Anthropic-compatible messages with cache control applied
  */
 export function sanitizeAnthropicMessages(
-	clineMessages: ClineStorageMessage[],
-	supportCache: boolean,
-	options: AnthropicMessageConversionOptions = {},
+    clineMessages: ClineStorageMessage[],
+    supportCache: boolean,
+    options: AnthropicMessageConversionOptions = {},
 ): Array<Anthropic.MessageParam> {
-	const deferral = planDeferredHostedTurns(clineMessages, options)
-	const conversionOptions =
-		deferral.omitHostedCallIds.size > 0 ? { ...options, omitHostedCallIds: deferral.omitHostedCallIds } : options
-	const converted = clineMessages.map((msg) => convertClineStorageToAnthropicMessage(msg, undefined, conversionOptions))
-	const anthropicMessages = applyToolResultOnlyFollowUps(converted, deferral.toolResultOnlyFollowUps).filter(
-		(msg) => !isEmptyAssistantMessage(msg),
-	)
-	if (!supportCache) {
-		return anthropicMessages
-	}
+    const deferral = planDeferredHostedTurns(clineMessages, options)
+    const conversionOptions =
+        deferral.omitHostedCallIds.size > 0 ? { ...options, omitHostedCallIds: deferral.omitHostedCallIds } : options
+    const converted = clineMessages.map((msg) => convertClineStorageToAnthropicMessage(msg, undefined, conversionOptions))
+    const anthropicMessages = applyToolResultOnlyFollowUps(converted, deferral.toolResultOnlyFollowUps).filter(
+        (msg) => !isEmptyAssistantMessage(msg),
+    )
+    if (!supportCache) {
+        return anthropicMessages
+    }
 
-	// The latest user message is cached for the next request, and the second to last one tells the
-	// server which prefix to read from the cache for the current request.
-	const cachedUserIndices = new Set(lastUserMessageIndices(anthropicMessages, 2))
-	return anthropicMessages.map((msg, index) => (cachedUserIndices.has(index) ? addCacheControl(msg) : msg))
+    // The latest user message is cached for the next request, and the second to last one tells the
+    // server which prefix to read from the cache for the current request.
+    const cachedUserIndices = new Set(lastUserMessageIndices(anthropicMessages, 2))
+    return anthropicMessages.map((msg, index) => (cachedUserIndices.has(index) ? addCacheControl(msg) : msg))
 }
 
 interface DeferredHostedTurnPlan {
-	/** Deferred call and result segments the request must not carry. */
-	omitHostedCallIds: ReadonlySet<string>
-	/** User message runs answering a turn with a deferred call the request carries, keyed by their first index. */
-	toolResultOnlyFollowUps: ReadonlyMap<number, readonly number[]>
+    /** Deferred call and result segments the request must not carry. */
+    omitHostedCallIds: ReadonlySet<string>
+    /** User message runs answering a turn with a deferred call the request carries, keyed by their first index. */
+    toolResultOnlyFollowUps: ReadonlyMap<number, readonly number[]>
 }
 
 /**
@@ -59,29 +59,29 @@ interface DeferredHostedTurnPlan {
  * the provider cannot pair.
  */
 function planDeferredHostedTurns(
-	messages: readonly ClineStorageMessage[],
-	options: AnthropicMessageConversionOptions,
+    messages: readonly ClineStorageMessage[],
+    options: AnthropicMessageConversionOptions,
 ): DeferredHostedTurnPlan {
-	const calls = resolveDeferredHostedCalls(messages, {
-		protocol: "anthropic_messages",
-		replayHostedTools: options.replayHostedTools,
-	})
-	const carried = new Set(calls.filter((call) => call.state !== "dropped").map((call) => call.callId))
-	const omitHostedCallIds = new Set(calls.filter((call) => call.state === "dropped").map((call) => call.callId))
-	for (const message of messages) {
-		if (message.role !== "assistant" || !Array.isArray(message.content)) continue
-		for (const block of message.content) {
-			if (!isHostedToolBlock(block) || block.segment !== "result") continue
-			const callId = hostedSegmentCallId(block)
-			if (callId !== undefined && !carried.has(callId)) omitHostedCallIds.add(callId)
-		}
-	}
-	const toolResultOnlyFollowUps = new Map<number, readonly number[]>()
-	for (const call of calls) {
-		const first = call.followUpIndices[0]
-		if (call.state !== "dropped" && first !== undefined) toolResultOnlyFollowUps.set(first, call.followUpIndices)
-	}
-	return { omitHostedCallIds, toolResultOnlyFollowUps }
+    const calls = resolveDeferredHostedCalls(messages, {
+        protocol: "anthropic_messages",
+        replayHostedTools: options.replayHostedTools,
+    })
+    const carried = new Set(calls.filter((call) => call.state !== "dropped").map((call) => call.callId))
+    const omitHostedCallIds = new Set(calls.filter((call) => call.state === "dropped").map((call) => call.callId))
+    for (const message of messages) {
+        if (message.role !== "assistant" || !Array.isArray(message.content)) continue
+        for (const block of message.content) {
+            if (!isHostedToolBlock(block) || block.segment !== "result") continue
+            const callId = hostedSegmentCallId(block)
+            if (callId !== undefined && !carried.has(callId)) omitHostedCallIds.add(callId)
+        }
+    }
+    const toolResultOnlyFollowUps = new Map<number, readonly number[]>()
+    for (const call of calls) {
+        const first = call.followUpIndices[0]
+        if (call.state !== "dropped" && first !== undefined) toolResultOnlyFollowUps.set(first, call.followUpIndices)
+    }
+    return { omitHostedCallIds, toolResultOnlyFollowUps }
 }
 
 /**
@@ -91,32 +91,32 @@ function planDeferredHostedTurns(
  * provider reads them as one turn, so they are merged before the non-result blocks fold into the last result.
  */
 function applyToolResultOnlyFollowUps(
-	messages: readonly Anthropic.MessageParam[],
-	followUps: ReadonlyMap<number, readonly number[]>,
+    messages: readonly Anthropic.MessageParam[],
+    followUps: ReadonlyMap<number, readonly number[]>,
 ): Anthropic.MessageParam[] {
-	if (followUps.size === 0) return [...messages]
-	const absorbed = new Set<number>()
-	const result: Anthropic.MessageParam[] = []
-	messages.forEach((message, index) => {
-		if (absorbed.has(index)) return
-		const run = followUps.get(index)
-		if (!run) {
-			result.push(message)
-			return
-		}
-		for (const member of run.slice(1)) absorbed.add(member)
-		result.push(foldIntoToolResults(mergeUserMessages(run.map((member) => messages[member]))))
-	})
-	return result
+    if (followUps.size === 0) return [...messages]
+    const absorbed = new Set<number>()
+    const result: Anthropic.MessageParam[] = []
+    messages.forEach((message, index) => {
+        if (absorbed.has(index)) return
+        const run = followUps.get(index)
+        if (!run) {
+            result.push(message)
+            return
+        }
+        for (const member of run.slice(1)) absorbed.add(member)
+        result.push(foldIntoToolResults(mergeUserMessages(run.map((member) => messages[member]))))
+    })
+    return result
 }
 
 function mergeUserMessages(messages: readonly Anthropic.MessageParam[]): Anthropic.MessageParam {
-	if (messages.length === 1) return messages[0]
-	const content = messages.flatMap((message): Anthropic.ContentBlockParam[] => {
-		if (typeof message.content !== "string") return message.content
-		return message.content ? [{ type: "text", text: message.content }] : []
-	})
-	return { role: "user", content }
+    if (messages.length === 1) return messages[0]
+    const content = messages.flatMap((message): Anthropic.ContentBlockParam[] => {
+        if (typeof message.content !== "string") return message.content
+        return message.content ? [{ type: "text", text: message.content }] : []
+    })
+    return { role: "user", content }
 }
 
 /**
@@ -127,42 +127,42 @@ function mergeUserMessages(messages: readonly Anthropic.MessageParam[]): Anthrop
  * into the last tool result, so the model still receives them.
  */
 function foldIntoToolResults(message: Anthropic.MessageParam): Anthropic.MessageParam {
-	if (typeof message.content === "string") return message
-	const results = message.content.filter((block): block is Anthropic.ToolResultBlockParam => block.type === "tool_result")
-	const carried = message.content.filter((block) => block.type !== "tool_result")
-	const last = results.at(-1)
-	if (!last || carried.length === 0) return message
-	const lastContent =
-		typeof last.content === "string"
-			? last.content
-				? [{ type: "text" as const, text: last.content }]
-				: []
-			: (last.content ?? [])
-	const folded: Anthropic.ToolResultBlockParam = {
-		...last,
-		content: [...lastContent, ...carried] as Anthropic.ToolResultBlockParam["content"],
-	}
-	return { ...message, content: [...results.slice(0, -1), folded] }
+    if (typeof message.content === "string") return message
+    const results = message.content.filter((block): block is Anthropic.ToolResultBlockParam => block.type === "tool_result")
+    const carried = message.content.filter((block) => block.type !== "tool_result")
+    const last = results.at(-1)
+    if (!last || carried.length === 0) return message
+    const lastContent =
+        typeof last.content === "string"
+            ? last.content
+                ? [{ type: "text" as const, text: last.content }]
+                : []
+            : (last.content ?? [])
+    const folded: Anthropic.ToolResultBlockParam = {
+        ...last,
+        content: [...lastContent, ...carried] as Anthropic.ToolResultBlockParam["content"],
+    }
+    return { ...message, content: [...results.slice(0, -1), folded] }
 }
 
 function isEmptyAssistantMessage(message: Anthropic.MessageParam): boolean {
-	return message.role === "assistant" && Array.isArray(message.content) && message.content.length === 0
+    return message.role === "assistant" && Array.isArray(message.content) && message.content.length === 0
 }
 
 function lastUserMessageIndices(messages: Anthropic.MessageParam[], count: number): number[] {
-	const indices: number[] = []
-	for (let index = messages.length - 1; index >= 0 && indices.length < count; index--) {
-		if (messages[index].role === "user") {
-			indices.push(index)
-		}
-	}
-	return indices
+    const indices: number[] = []
+    for (let index = messages.length - 1; index >= 0 && indices.length < count; index--) {
+        if (messages[index].role === "user") {
+            indices.push(index)
+        }
+    }
+    return indices
 }
 
 const isThinkingBlock = (
-	block: Anthropic.ContentBlockParam,
+    block: Anthropic.ContentBlockParam,
 ): block is Anthropic.Messages.ThinkingBlockParam | Anthropic.Messages.RedactedThinkingBlockParam => {
-	return block.type === "thinking" || block.type === "redacted_thinking"
+    return block.type === "thinking" || block.type === "redacted_thinking"
 }
 
 /**
@@ -173,35 +173,35 @@ const isThinkingBlock = (
  * @returns A new message with cache control added to the last content block
  */
 function addCacheControl(message: Anthropic.MessageParam): Anthropic.MessageParam {
-	// Convert string content to array format
-	if (typeof message.content === "string") {
-		return {
-			...message,
-			content: [
-				{
-					type: "text",
-					text: message.content,
-					cache_control: { type: "ephemeral" },
-				} satisfies Anthropic.TextBlockParam,
-			],
-		}
-	}
+    // Convert string content to array format
+    if (typeof message.content === "string") {
+        return {
+            ...message,
+            content: [
+                {
+                    type: "text",
+                    text: message.content,
+                    cache_control: { type: "ephemeral" },
+                } satisfies Anthropic.TextBlockParam,
+            ],
+        }
+    }
 
-	// Handle array content - add cache control to the last block
-	const content = [...message.content]
-	const lastIndex = content.length - 1
+    // Handle array content - add cache control to the last block
+    const content = [...message.content]
+    const lastIndex = content.length - 1
 
-	if (lastIndex >= 0) {
-		const lastBlock = content[lastIndex]
+    if (lastIndex >= 0) {
+        const lastBlock = content[lastIndex]
 
-		// Only add cache_control to block types that support it (not ThinkingBlockParam)
-		if (!isThinkingBlock(lastBlock)) {
-			content[lastIndex] = {
-				...lastBlock,
-				cache_control: { type: "ephemeral" },
-			} satisfies Anthropic.ContentBlockParam
-		}
-	}
+        // Only add cache_control to block types that support it (not ThinkingBlockParam)
+        if (!isThinkingBlock(lastBlock)) {
+            content[lastIndex] = {
+                ...lastBlock,
+                cache_control: { type: "ephemeral" },
+            } satisfies Anthropic.ContentBlockParam
+        }
+    }
 
-	return { ...message, content }
+    return { ...message, content }
 }

@@ -3,14 +3,14 @@ import type { ComposeContinuationPort } from "../executors/compose/ProductionCom
 import type { TurnContinuationReason } from "../kernel"
 
 export interface TurnContinuationRendererOptions {
-	/**
-	 * Whether the model is being given provider-native tool definitions.
-	 *
-	 * The reminder has to match how tools were offered: an XML profile needs the
-	 * usage instructions repeated, while a native profile already has the schema
-	 * and only needs to be told that no call arrived.
-	 */
-	readonly usesNativeToolCalls: () => boolean
+    /**
+     * Whether the model is being given provider-native tool definitions.
+     *
+     * The reminder has to match how tools were offered: an XML profile needs the
+     * usage instructions repeated, while a native profile already has the schema
+     * and only needs to be told that no call arrived.
+     */
+    readonly usesNativeToolCalls: () => boolean
 }
 
 /**
@@ -21,10 +21,10 @@ export interface TurnContinuationRendererOptions {
  * task and a subagent state the same contract.
  */
 export class TurnContinuationRenderer implements ComposeContinuationPort {
-	constructor(private readonly options: TurnContinuationRendererOptions) {}
+    constructor(private readonly options: TurnContinuationRendererOptions) {}
 
-	render(reason: TurnContinuationReason): string | undefined {
-		if (reason !== "no_tools_used") return undefined
-		return formatResponse.noToolsUsed(this.options.usesNativeToolCalls())
-	}
+    render(reason: TurnContinuationReason): string | undefined {
+        if (reason !== "no_tools_used") return undefined
+        return formatResponse.noToolsUsed(this.options.usesNativeToolCalls())
+    }
 }

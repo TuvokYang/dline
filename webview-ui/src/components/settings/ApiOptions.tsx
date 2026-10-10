@@ -57,11 +57,11 @@ import { XaiProvider } from "./providers/XaiProvider"
 import { ZAiProvider } from "./providers/ZAiProvider"
 
 interface ApiOptionsProps {
-	showModelOptions: boolean
-	apiErrorMessage?: string
-	modelIdErrorMessage?: string
-	isPopup?: boolean
-	currentMode: Mode
+    showModelOptions: boolean
+    apiErrorMessage?: string
+    modelIdErrorMessage?: string
+    isPopup?: boolean
+    currentMode: Mode
 }
 
 // This is necessary to ensure dropdown opens downward, important for when this is used in popup
@@ -82,201 +82,201 @@ export const DropdownContainer = styled.div<{ zIndex?: number }>`
 // biome-ignore lint: "vscode" module augmentation removed — not available in webview context
 
 const ApiOptions = ({ showModelOptions, apiErrorMessage, modelIdErrorMessage, isPopup, currentMode }: ApiOptionsProps) => {
-	// Use full context state for immediate save payload
-	const { apiConfiguration, remoteConfigSettings } = useExtensionState()
-	const { profiles, updateProfile, addProfile } = useApiProfiles()
+    // Use full context state for immediate save payload
+    const { apiConfiguration, remoteConfigSettings } = useExtensionState()
+    const { profiles, updateProfile, addProfile } = useApiProfiles()
 
-	// Find current profile for this mode
-	const currentProfile = useMemo<ApiProfile | undefined>(() => {
-		if (!apiConfiguration) return undefined
-		const profileName = currentMode === "plan" ? apiConfiguration.planModeProfile : apiConfiguration.actModeProfile
-		if (profileName) return profiles.find((p) => p.name === profileName)
-		return profiles.find((p) => p.usedFor.includes(currentMode) && p.enabled)
-	}, [profiles, apiConfiguration, currentMode])
-	// The profile owns the provider; there is no separate mode-level provider setting.
-	const selectedProvider = currentProfile?.provider ?? ""
+    // Find current profile for this mode
+    const currentProfile = useMemo<ApiProfile | undefined>(() => {
+        if (!apiConfiguration) return undefined
+        const profileName = currentMode === "plan" ? apiConfiguration.planModeProfile : apiConfiguration.actModeProfile
+        if (profileName) return profiles.find((p) => p.name === profileName)
+        return profiles.find((p) => p.usedFor.includes(currentMode) && p.enabled)
+    }, [profiles, apiConfiguration, currentMode])
+    // The profile owns the provider; there is no separate mode-level provider setting.
+    const selectedProvider = currentProfile?.provider ?? ""
 
-	const handleProfileUpdate = useCallback(
-		(updates: Partial<ApiProfile>) => {
-			if (currentProfile) {
-				updateProfile(currentProfile.id, updates)
-			}
-		},
-		[currentProfile, updateProfile],
-	)
+    const handleProfileUpdate = useCallback(
+        (updates: Partial<ApiProfile>) => {
+            if (currentProfile) {
+                updateProfile(currentProfile.id, updates)
+            }
+        },
+        [currentProfile, updateProfile],
+    )
 
-	const [_ollamaModels, setOllamaModels] = useState<string[]>([])
+    const [_ollamaModels, setOllamaModels] = useState<string[]>([])
 
-	// Poll ollama/vscode-lm models
-	const requestLocalModels = useCallback(async () => {
-		if (selectedProvider === "ollama") {
-			try {
-				const response = await ModelsServiceClient.getOllamaModels(
-					StringRequest.create({
-						value: currentProfile?.baseUrl || "",
-					}),
-				)
-				if (response?.values) {
-					setOllamaModels(response.values)
-				}
-			} catch (error) {
-				console.error("Failed to fetch Ollama models:", error)
-				setOllamaModels([])
-			}
-		}
-	}, [selectedProvider, currentProfile?.baseUrl])
-	useEffect(() => {
-		if (selectedProvider === "ollama") {
-			requestLocalModels()
-		}
-	}, [selectedProvider, requestLocalModels])
-	useInterval(requestLocalModels, selectedProvider === "ollama" ? 2000 : null)
+    // Poll ollama/vscode-lm models
+    const requestLocalModels = useCallback(async () => {
+        if (selectedProvider === "ollama") {
+            try {
+                const response = await ModelsServiceClient.getOllamaModels(
+                    StringRequest.create({
+                        value: currentProfile?.baseUrl || "",
+                    }),
+                )
+                if (response?.values) {
+                    setOllamaModels(response.values)
+                }
+            } catch (error) {
+                console.error("Failed to fetch Ollama models:", error)
+                setOllamaModels([])
+            }
+        }
+    }, [selectedProvider, currentProfile?.baseUrl])
+    useEffect(() => {
+        if (selectedProvider === "ollama") {
+            requestLocalModels()
+        }
+    }, [selectedProvider, requestLocalModels])
+    useInterval(requestLocalModels, selectedProvider === "ollama" ? 2000 : null)
 
-	// Provider search state
-	const [searchTerm, setSearchTerm] = useState("")
-	const [isDropdownVisible, setIsDropdownVisible] = useState(false)
-	const [selectedIndex, setSelectedIndex] = useState(-1)
-	const dropdownRef = useRef<HTMLDivElement>(null)
-	const itemRefs = useRef<(HTMLDivElement | null)[]>([])
-	const dropdownListRef = useRef<HTMLDivElement>(null)
+    // Provider search state
+    const [searchTerm, setSearchTerm] = useState("")
+    const [isDropdownVisible, setIsDropdownVisible] = useState(false)
+    const [selectedIndex, setSelectedIndex] = useState(-1)
+    const dropdownRef = useRef<HTMLDivElement>(null)
+    const itemRefs = useRef<(HTMLDivElement | null)[]>([])
+    const dropdownListRef = useRef<HTMLDivElement>(null)
 
-	const providerOptions = useMemo(() => {
-		let providers: readonly { value: string; label: string }[] = PROVIDER_OPTIONS
-		// Filter by platform
-		if (PLATFORM_CONFIG.type !== PlatformType.VSCODE) {
-			// Don't include VS Code LM API for non-VSCode platforms
-			providers = providers.filter((option) => option.value !== "vscode-lm")
-		}
+    const providerOptions = useMemo(() => {
+        let providers: readonly { value: string; label: string }[] = PROVIDER_OPTIONS
+        // Filter by platform
+        if (PLATFORM_CONFIG.type !== PlatformType.VSCODE) {
+            // Don't include VS Code LM API for non-VSCode platforms
+            providers = providers.filter((option) => option.value !== "vscode-lm")
+        }
 
-		// Filter by remote config if remoteConfiguredProviders is set
-		const remoteProviders: string[] = remoteConfigSettings?.remoteConfiguredProviders || []
-		if (remoteProviders.length > 0) {
-			providers = providers.filter((option) => remoteProviders.includes(option.value))
-		}
+        // Filter by remote config if remoteConfiguredProviders is set
+        const remoteProviders: string[] = remoteConfigSettings?.remoteConfiguredProviders || []
+        if (remoteProviders.length > 0) {
+            providers = providers.filter((option) => remoteProviders.includes(option.value))
+        }
 
-		return providers
-	}, [remoteConfigSettings])
+        return providers
+    }, [remoteConfigSettings])
 
-	const currentProviderLabel = useMemo(() => {
-		return providerOptions.find((option) => option.value === selectedProvider)?.label || selectedProvider
-	}, [providerOptions, selectedProvider])
+    const currentProviderLabel = useMemo(() => {
+        return providerOptions.find((option) => option.value === selectedProvider)?.label || selectedProvider
+    }, [providerOptions, selectedProvider])
 
-	// Sync search term with current provider when not searching
-	useEffect(() => {
-		if (!isDropdownVisible) {
-			setSearchTerm(currentProviderLabel)
-		}
-	}, [currentProviderLabel, isDropdownVisible])
+    // Sync search term with current provider when not searching
+    useEffect(() => {
+        if (!isDropdownVisible) {
+            setSearchTerm(currentProviderLabel)
+        }
+    }, [currentProviderLabel, isDropdownVisible])
 
-	const searchableItems = useMemo(() => {
-		return providerOptions.map((option) => ({
-			value: option.value,
-			html: option.label,
-		}))
-	}, [providerOptions])
+    const searchableItems = useMemo(() => {
+        return providerOptions.map((option) => ({
+            value: option.value,
+            html: option.label,
+        }))
+    }, [providerOptions])
 
-	const fuse = useMemo(() => {
-		return new Fuse(searchableItems, {
-			keys: ["html"],
-			threshold: 0.3,
-			shouldSort: true,
-			isCaseSensitive: false,
-			ignoreLocation: false,
-			includeMatches: true,
-			minMatchCharLength: 1,
-		})
-	}, [searchableItems])
+    const fuse = useMemo(() => {
+        return new Fuse(searchableItems, {
+            keys: ["html"],
+            threshold: 0.3,
+            shouldSort: true,
+            isCaseSensitive: false,
+            ignoreLocation: false,
+            includeMatches: true,
+            minMatchCharLength: 1,
+        })
+    }, [searchableItems])
 
-	const providerSearchResults = useMemo(() => {
-		return searchTerm && searchTerm !== currentProviderLabel ? fuse.search(searchTerm)?.map((r) => r.item) : searchableItems
-	}, [searchableItems, searchTerm, fuse, currentProviderLabel])
+    const providerSearchResults = useMemo(() => {
+        return searchTerm && searchTerm !== currentProviderLabel ? fuse.search(searchTerm)?.map((r) => r.item) : searchableItems
+    }, [searchableItems, searchTerm, fuse, currentProviderLabel])
 
-	const handleProviderChange = (newProvider: string) => {
-		if (currentProfile?.provider === newProvider) {
-			setIsDropdownVisible(false)
-			setSelectedIndex(-1)
-			return
-		}
-		if (currentProfile) {
-			updateProfile(currentProfile.id, {
-				provider: newProvider,
-				apiKey: "",
-				baseUrl: undefined,
-				modelId: "",
-				modelInfo: undefined,
-			})
-		} else {
-			const newProfile = createEmptyApiProfile()
-			newProfile.provider = newProvider
-			newProfile.usedFor = [currentMode]
-			addProfile()
-		}
-		setIsDropdownVisible(false)
-		setSelectedIndex(-1)
-	}
+    const handleProviderChange = (newProvider: string) => {
+        if (currentProfile?.provider === newProvider) {
+            setIsDropdownVisible(false)
+            setSelectedIndex(-1)
+            return
+        }
+        if (currentProfile) {
+            updateProfile(currentProfile.id, {
+                provider: newProvider,
+                apiKey: "",
+                baseUrl: undefined,
+                modelId: "",
+                modelInfo: undefined,
+            })
+        } else {
+            const newProfile = createEmptyApiProfile()
+            newProfile.provider = newProvider
+            newProfile.usedFor = [currentMode]
+            addProfile()
+        }
+        setIsDropdownVisible(false)
+        setSelectedIndex(-1)
+    }
 
-	const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-		if (!isDropdownVisible) {
-			return
-		}
+    const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+        if (!isDropdownVisible) {
+            return
+        }
 
-		switch (event.key) {
-			case "ArrowDown":
-				event.preventDefault()
-				setSelectedIndex((prev) => (prev < providerSearchResults.length - 1 ? prev + 1 : prev))
-				break
-			case "ArrowUp":
-				event.preventDefault()
-				setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev))
-				break
-			case "Enter":
-				event.preventDefault()
-				if (selectedIndex >= 0 && selectedIndex < providerSearchResults.length) {
-					handleProviderChange(providerSearchResults[selectedIndex].value)
-				}
-				break
-			case "Escape":
-				setIsDropdownVisible(false)
-				setSelectedIndex(-1)
-				setSearchTerm(currentProviderLabel)
-				break
-		}
-	}
+        switch (event.key) {
+            case "ArrowDown":
+                event.preventDefault()
+                setSelectedIndex((prev) => (prev < providerSearchResults.length - 1 ? prev + 1 : prev))
+                break
+            case "ArrowUp":
+                event.preventDefault()
+                setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev))
+                break
+            case "Enter":
+                event.preventDefault()
+                if (selectedIndex >= 0 && selectedIndex < providerSearchResults.length) {
+                    handleProviderChange(providerSearchResults[selectedIndex].value)
+                }
+                break
+            case "Escape":
+                setIsDropdownVisible(false)
+                setSelectedIndex(-1)
+                setSearchTerm(currentProviderLabel)
+                break
+        }
+    }
 
-	// Close dropdown when clicking outside
-	useEffect(() => {
-		const handleClickOutside = (event: MouseEvent) => {
-			if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-				setIsDropdownVisible(false)
-				setSearchTerm(currentProviderLabel)
-			}
-		}
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsDropdownVisible(false)
+                setSearchTerm(currentProviderLabel)
+            }
+        }
 
-		document.addEventListener("mousedown", handleClickOutside)
-		return () => {
-			document.removeEventListener("mousedown", handleClickOutside)
-		}
-	}, [currentProviderLabel])
+        document.addEventListener("mousedown", handleClickOutside)
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside)
+        }
+    }, [currentProviderLabel])
 
-	// Reset selection when search term changes
-	useEffect(() => {
-		setSelectedIndex(-1)
-		if (dropdownListRef.current) {
-			dropdownListRef.current.scrollTop = 0
-		}
-	}, [])
+    // Reset selection when search term changes
+    useEffect(() => {
+        setSelectedIndex(-1)
+        if (dropdownListRef.current) {
+            dropdownListRef.current.scrollTop = 0
+        }
+    }, [])
 
-	// Scroll selected item into view
-	useEffect(() => {
-		if (selectedIndex >= 0 && itemRefs.current[selectedIndex]) {
-			itemRefs.current[selectedIndex]?.scrollIntoView({
-				block: "nearest",
-				behavior: "smooth",
-			})
-		}
-	}, [selectedIndex])
+    // Scroll selected item into view
+    useEffect(() => {
+        if (selectedIndex >= 0 && itemRefs.current[selectedIndex]) {
+            itemRefs.current[selectedIndex]?.scrollIntoView({
+                block: "nearest",
+                behavior: "smooth",
+            })
+        }
+    }, [selectedIndex])
 
-	/*
+    /*
 	VSCodeDropdown has an open bug where dynamically rendered options don't auto select the provided value prop. You can see this for yourself by comparing  it with normal select/option elements, which work as expected.
 	https://github.com/microsoft/vscode-webview-ui-toolkit/issues/433
 
@@ -285,479 +285,479 @@ const ApiOptions = ({ showModelOptions, apiErrorMessage, modelIdErrorMessage, is
 	As a workaround, we create separate instances of the dropdown for each provider, and then conditionally render the one that matches the current provider.
 	*/
 
-	return (
-		<div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: isPopup ? -10 : 0 }}>
-			<style>
-				{`
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: isPopup ? -10 : 0 }}>
+            <style>
+                {`
 				.provider-item-highlight {
 					background-color: var(--vscode-editor-findMatchHighlightBackground);
 					color: inherit;
 				}
 				`}
-			</style>
-			<DropdownContainer className="dropdown-container">
-				{remoteConfigSettings?.remoteConfiguredProviders && remoteConfigSettings.remoteConfiguredProviders.length > 0 ? (
-					<Tooltip>
-						<TooltipTrigger>
-							<div className="flex items-center gap-2 mb-1">
-								<label htmlFor="api-provider">
-									<span style={{ fontWeight: 500 }}>API Provider</span>
-								</label>
-								<i className="codicon codicon-lock text-description text-sm" />
-							</div>
-						</TooltipTrigger>
-						<TooltipContent>Provider options are managed by your organization's remote configuration</TooltipContent>
-					</Tooltip>
-				) : (
-					<label htmlFor="api-provider">
-						<span style={{ fontWeight: 500 }}>API Provider</span>
-					</label>
-				)}
-				<ProviderDropdownWrapper ref={dropdownRef}>
-					<VSCodeTextField
-						data-testid="provider-selector-input"
-						id="api-provider"
-						onFocus={() => {
-							setIsDropdownVisible(true)
-							setSearchTerm("")
-						}}
-						onInput={(e) => {
-							setSearchTerm((e.target as HTMLInputElement)?.value || "")
-							setIsDropdownVisible(true)
-						}}
-						onKeyDown={handleKeyDown}
-						placeholder="Search and select provider..."
-						role="combobox"
-						style={{
-							width: "100%",
-							zIndex: DROPDOWN_Z_INDEX,
-							position: "relative",
-							minWidth: 130,
-						}}
-						value={searchTerm}>
-						{searchTerm && searchTerm !== currentProviderLabel && (
-							<div
-								aria-label="Clear search"
-								className="input-icon-button codicon codicon-close"
-								onClick={() => {
-									setSearchTerm("")
-									setIsDropdownVisible(true)
-								}}
-								slot="end"
-								style={{
-									display: "flex",
-									justifyContent: "center",
-									alignItems: "center",
-									height: "100%",
-								}}
-							/>
-						)}
-					</VSCodeTextField>
-					{isDropdownVisible && (
-						<ProviderDropdownList ref={dropdownListRef} role="listbox">
-							{providerSearchResults.map((item, index) => (
-								<ProviderDropdownItem
-									data-testid={`provider-option-${item.value}`}
-									isSelected={index === selectedIndex}
-									key={item.value}
-									onClick={() => handleProviderChange(item.value)}
-									onMouseEnter={() => setSelectedIndex(index)}
-									ref={(el) => {
-										itemRefs.current[index] = el
-									}}
-									role="option">
-									<span>{item.html}</span>
-								</ProviderDropdownItem>
-							))}
-						</ProviderDropdownList>
-					)}
-				</ProviderDropdownWrapper>
-			</DropdownContainer>
+            </style>
+            <DropdownContainer className="dropdown-container">
+                {remoteConfigSettings?.remoteConfiguredProviders && remoteConfigSettings.remoteConfiguredProviders.length > 0 ? (
+                    <Tooltip>
+                        <TooltipTrigger>
+                            <div className="flex items-center gap-2 mb-1">
+                                <label htmlFor="api-provider">
+                                    <span style={{ fontWeight: 500 }}>API Provider</span>
+                                </label>
+                                <i className="codicon codicon-lock text-description text-sm" />
+                            </div>
+                        </TooltipTrigger>
+                        <TooltipContent>Provider options are managed by your organization's remote configuration</TooltipContent>
+                    </Tooltip>
+                ) : (
+                    <label htmlFor="api-provider">
+                        <span style={{ fontWeight: 500 }}>API Provider</span>
+                    </label>
+                )}
+                <ProviderDropdownWrapper ref={dropdownRef}>
+                    <VSCodeTextField
+                        data-testid="provider-selector-input"
+                        id="api-provider"
+                        onFocus={() => {
+                            setIsDropdownVisible(true)
+                            setSearchTerm("")
+                        }}
+                        onInput={(e) => {
+                            setSearchTerm((e.target as HTMLInputElement)?.value || "")
+                            setIsDropdownVisible(true)
+                        }}
+                        onKeyDown={handleKeyDown}
+                        placeholder="Search and select provider..."
+                        role="combobox"
+                        style={{
+                            width: "100%",
+                            zIndex: DROPDOWN_Z_INDEX,
+                            position: "relative",
+                            minWidth: 130,
+                        }}
+                        value={searchTerm}>
+                        {searchTerm && searchTerm !== currentProviderLabel && (
+                            <div
+                                aria-label="Clear search"
+                                className="input-icon-button codicon codicon-close"
+                                onClick={() => {
+                                    setSearchTerm("")
+                                    setIsDropdownVisible(true)
+                                }}
+                                slot="end"
+                                style={{
+                                    display: "flex",
+                                    justifyContent: "center",
+                                    alignItems: "center",
+                                    height: "100%",
+                                }}
+                            />
+                        )}
+                    </VSCodeTextField>
+                    {isDropdownVisible && (
+                        <ProviderDropdownList ref={dropdownListRef} role="listbox">
+                            {providerSearchResults.map((item, index) => (
+                                <ProviderDropdownItem
+                                    data-testid={`provider-option-${item.value}`}
+                                    isSelected={index === selectedIndex}
+                                    key={item.value}
+                                    onClick={() => handleProviderChange(item.value)}
+                                    onMouseEnter={() => setSelectedIndex(index)}
+                                    ref={(el) => {
+                                        itemRefs.current[index] = el
+                                    }}
+                                    role="option">
+                                    <span>{item.html}</span>
+                                </ProviderDropdownItem>
+                            ))}
+                        </ProviderDropdownList>
+                    )}
+                </ProviderDropdownWrapper>
+            </DropdownContainer>
 
-			{currentProfile && selectedProvider === "hicap" && (
-				<HicapProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "hicap" && (
+                <HicapProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "cline" && (
-				<ClineProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "cline" && (
+                <ClineProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "asksage" && (
-				<AskSageProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "asksage" && (
+                <AskSageProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "anthropic" && (
-				<AnthropicProvider
-					isPopup={isPopup}
-					key={currentProfile.id}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "anthropic" && (
+                <AnthropicProvider
+                    isPopup={isPopup}
+                    key={currentProfile.id}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "claude-code" && (
-				<ClaudeCodeProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "claude-code" && (
+                <ClaudeCodeProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "openai-codex" && (
-				<OpenAiCodexProvider
-					isPopup={isPopup}
-					key={currentProfile.id}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "openai-codex" && (
+                <OpenAiCodexProvider
+                    isPopup={isPopup}
+                    key={currentProfile.id}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "qwen" && (
-				<QwenProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "qwen" && (
+                <QwenProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "qwen-code" && (
-				<QwenCodeProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "qwen-code" && (
+                <QwenCodeProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "doubao" && (
-				<DoubaoProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "doubao" && (
+                <DoubaoProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "mistral" && (
-				<MistralProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "mistral" && (
+                <MistralProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "openrouter" && (
-				<OpenRouterProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "openrouter" && (
+                <OpenRouterProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "deepseek" && (
-				<DeepSeekProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "deepseek" && (
+                <DeepSeekProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "together" && (
-				<TogetherProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "together" && (
+                <TogetherProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "openai" && (
-				<OpenAIProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "openai" && (
+                <OpenAIProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "vercel-ai-gateway" && (
-				<VercelAIGatewayProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "vercel-ai-gateway" && (
+                <VercelAIGatewayProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "sambanova" && (
-				<SambanovaProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "sambanova" && (
+                <SambanovaProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "bedrock" && (
-				<BedrockProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "bedrock" && (
+                <BedrockProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "vertex" && (
-				<VertexProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "vertex" && (
+                <VertexProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "gemini" && (
-				<GeminiProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "gemini" && (
+                <GeminiProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "requesty" && (
-				<RequestyProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "requesty" && (
+                <RequestyProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "fireworks" && (
-				<FireworksProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "fireworks" && (
+                <FireworksProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "vscode-lm" && <VSCodeLmProvider />}
+            {currentProfile && selectedProvider === "vscode-lm" && <VSCodeLmProvider />}
 
-			{currentProfile && selectedProvider === "groq" && (
-				<GroqProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
-			{currentProfile && selectedProvider === "baseten" && (
-				<BasetenProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
-			{currentProfile && selectedProvider === "litellm" && (
-				<LiteLlmProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "groq" && (
+                <GroqProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
+            {currentProfile && selectedProvider === "baseten" && (
+                <BasetenProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
+            {currentProfile && selectedProvider === "litellm" && (
+                <LiteLlmProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "lmstudio" && (
-				<LMStudioProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "lmstudio" && (
+                <LMStudioProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "ollama" && (
-				<OllamaProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "ollama" && (
+                <OllamaProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "moonshot" && (
-				<MoonshotProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "moonshot" && (
+                <MoonshotProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "huggingface" && (
-				<HuggingFaceProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "huggingface" && (
+                <HuggingFaceProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "nebius" && (
-				<NebiusProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "nebius" && (
+                <NebiusProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "wandb" && (
-				<WandbProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "wandb" && (
+                <WandbProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "xai" && (
-				<XaiProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "xai" && (
+                <XaiProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "cerebras" && (
-				<CerebrasProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "cerebras" && (
+                <CerebrasProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "sapaicore" && (
-				<SapAiCoreProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "sapaicore" && (
+                <SapAiCoreProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "huawei-cloud-maas" && (
-				<HuaweiCloudMaasProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "huawei-cloud-maas" && (
+                <HuaweiCloudMaasProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "dify" && (
-				<DifyProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "dify" && (
+                <DifyProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "zai" && (
-				<ZAiProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "zai" && (
+                <ZAiProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "minimax" && (
-				<MinimaxProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "minimax" && (
+                <MinimaxProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "nousResearch" && (
-				<NousResearchProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "nousResearch" && (
+                <NousResearchProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "oca" && (
-				<OcaProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "oca" && (
+                <OcaProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{currentProfile && selectedProvider === "aihubmix" && (
-				<AIhubmixProvider
-					isPopup={isPopup}
-					onUpdate={handleProfileUpdate}
-					profile={currentProfile}
-					showModelOptions={showModelOptions}
-				/>
-			)}
+            {currentProfile && selectedProvider === "aihubmix" && (
+                <AIhubmixProvider
+                    isPopup={isPopup}
+                    onUpdate={handleProfileUpdate}
+                    profile={currentProfile}
+                    showModelOptions={showModelOptions}
+                />
+            )}
 
-			{apiErrorMessage && (
-				<p
-					style={{
-						margin: "-10px 0 4px 0",
-						fontSize: 12,
-						color: "var(--vscode-errorForeground)",
-					}}>
-					{apiErrorMessage}
-				</p>
-			)}
-			{modelIdErrorMessage && (
-				<p
-					style={{
-						margin: "-10px 0 4px 0",
-						fontSize: 12,
-						color: "var(--vscode-errorForeground)",
-					}}>
-					{modelIdErrorMessage}
-				</p>
-			)}
-		</div>
-	)
+            {apiErrorMessage && (
+                <p
+                    style={{
+                        margin: "-10px 0 4px 0",
+                        fontSize: 12,
+                        color: "var(--vscode-errorForeground)",
+                    }}>
+                    {apiErrorMessage}
+                </p>
+            )}
+            {modelIdErrorMessage && (
+                <p
+                    style={{
+                        margin: "-10px 0 4px 0",
+                        fontSize: 12,
+                        color: "var(--vscode-errorForeground)",
+                    }}>
+                    {modelIdErrorMessage}
+                </p>
+            )}
+        </div>
+    )
 }
 
 export default ApiOptions

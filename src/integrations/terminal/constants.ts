@@ -106,18 +106,18 @@ export const COMPILING_MARKERS = ["compiling", "building", "bundling", "transpil
 
 /** Markers that indicate compilation is done (nullify extended timeout) */
 export const COMPILING_NULLIFIERS = [
-	"compiled",
-	"success",
-	"finish",
-	"complete",
-	"succeed",
-	"done",
-	"end",
-	"stop",
-	"exit",
-	"terminate",
-	"error",
-	"fail",
+    "compiled",
+    "success",
+    "finish",
+    "complete",
+    "succeed",
+    "done",
+    "end",
+    "stop",
+    "exit",
+    "terminate",
+    "error",
+    "fail",
 ]
 
 /**
@@ -125,8 +125,8 @@ export const COMPILING_NULLIFIERS = [
  * Matches markers anywhere in the output.
  */
 export function isCompilingOutput(data: string): boolean {
-	const lowerData = data.toLowerCase()
-	const hasMarker = COMPILING_MARKERS.some((marker) => lowerData.includes(marker.toLowerCase()))
-	const hasNullifier = COMPILING_NULLIFIERS.some((nullifier) => lowerData.includes(nullifier.toLowerCase()))
-	return hasMarker && !hasNullifier
+    const lowerData = data.toLowerCase()
+    const hasMarker = COMPILING_MARKERS.some((marker) => lowerData.includes(marker.toLowerCase()))
+    const hasNullifier = COMPILING_NULLIFIERS.some((nullifier) => lowerData.includes(nullifier.toLowerCase()))
+    return hasMarker && !hasNullifier
 }

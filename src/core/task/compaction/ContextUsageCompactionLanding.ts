@@ -6,15 +6,15 @@ import { estimateFramedRequest } from "./FramedRequestEstimate"
 
 /** Receives the occupancy of the conversation a summary left behind. */
 export interface CondensedContextUsagePort {
-	compacted(input: { readonly contextTokens: number; readonly contextWindow: number }): void
+    compacted(input: { readonly contextTokens: number; readonly contextWindow: number }): void
 }
 
 export interface ContextUsageCompactionLandingOptions {
-	/** The frame ordinary requests use, so the figure is the request the next round would send. */
-	readonly frames: ProviderRequestFramePort
-	/** The provider messages after the summary replaced the history it stands for. */
-	readonly conversation: { messages(): Promise<ClineStorageMessage[]> }
-	readonly usage: CondensedContextUsagePort
+    /** The frame ordinary requests use, so the figure is the request the next round would send. */
+    readonly frames: ProviderRequestFramePort
+    /** The provider messages after the summary replaced the history it stands for. */
+    readonly conversation: { messages(): Promise<ClineStorageMessage[]> }
+    readonly usage: CondensedContextUsagePort
 }
 
 /**
@@ -26,23 +26,23 @@ export interface ContextUsageCompactionLandingOptions {
  * landing stands, because the history has already been condensed.
  */
 export class ContextUsageCompactionLanding implements CompactionLandingPort {
-	constructor(private readonly options: ContextUsageCompactionLandingOptions) {}
+    constructor(private readonly options: ContextUsageCompactionLandingOptions) {}
 
-	async land(input: CompactionLandingInput): Promise<void> {
-		try {
-			const messages = await this.options.conversation.messages()
-			const estimate = await estimateFramedRequest(
-				this.options.frames,
-				messages,
-				input.signal ?? new AbortController().signal,
-			)
-			this.options.usage.compacted({ contextTokens: estimate.tokens, contextWindow: estimate.contextWindow })
-		} catch (error) {
-			Logger.warn(
-				`[ContextUsage] could not measure the context after compaction ${input.compactionId}: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			)
-		}
-	}
+    async land(input: CompactionLandingInput): Promise<void> {
+        try {
+            const messages = await this.options.conversation.messages()
+            const estimate = await estimateFramedRequest(
+                this.options.frames,
+                messages,
+                input.signal ?? new AbortController().signal,
+            )
+            this.options.usage.compacted({ contextTokens: estimate.tokens, contextWindow: estimate.contextWindow })
+        } catch (error) {
+            Logger.warn(
+                `[ContextUsage] could not measure the context after compaction ${input.compactionId}: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
+            )
+        }
+    }
 }

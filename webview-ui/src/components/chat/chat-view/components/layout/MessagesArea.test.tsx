@@ -6,481 +6,481 @@ import type { ChatState, MessageHandlers, ScrollBehavior } from "../../types/cha
 import { MessagesArea } from "./MessagesArea"
 
 interface VirtuosoTestProps {
-	atBottomStateChange?: (atBottom: boolean) => void
-	initialTopMostItemIndex?: number | { index: number; align: "end" | "start" | "center" }
-	rangeChanged?: (range: { startIndex: number; endIndex: number }) => void
-	scrollerRef?: (element: HTMLElement | Window | null) => void
+    atBottomStateChange?: (atBottom: boolean) => void
+    initialTopMostItemIndex?: number | { index: number; align: "end" | "start" | "center" }
+    rangeChanged?: (range: { startIndex: number; endIndex: number }) => void
+    scrollerRef?: (element: HTMLElement | Window | null) => void
 }
 
 const mocks = vi.hoisted(() => ({
-	fetchMessage: vi.fn(),
-	initialMessages: [] as UiMessage[],
-	initialFirstItemIndex: 0,
-	totalMessageCount: 0,
-	currentMessages: [] as UiMessage[],
-	currentFirstItemIndex: 0,
-	setCurrentMessages: undefined as React.Dispatch<React.SetStateAction<UiMessage[]>> | undefined,
-	virtuosoProps: undefined as VirtuosoTestProps | undefined,
-	scrollToIndex: vi.fn(),
-	/** Row wrappers the mock list renders; zero keeps the scroller detached. */
-	renderedRowCount: 0,
-	/** Timestamp of the message the first rendered row shows. */
-	firstRenderedTs: 0,
+    fetchMessage: vi.fn(),
+    initialMessages: [] as UiMessage[],
+    initialFirstItemIndex: 0,
+    totalMessageCount: 0,
+    currentMessages: [] as UiMessage[],
+    currentFirstItemIndex: 0,
+    setCurrentMessages: undefined as React.Dispatch<React.SetStateAction<UiMessage[]>> | undefined,
+    virtuosoProps: undefined as VirtuosoTestProps | undefined,
+    scrollToIndex: vi.fn(),
+    /** Row wrappers the mock list renders; zero keeps the scroller detached. */
+    renderedRowCount: 0,
+    /** Timestamp of the message the first rendered row shows. */
+    firstRenderedTs: 0,
 }))
 
 vi.mock("@/context/ExtensionStateContext", async () => {
-	const ReactModule = await import("react")
+    const ReactModule = await import("react")
 
-	return {
-		useExtensionState: () => {
-			const [clineMessages, setClineMessages] = ReactModule.useState(() => mocks.initialMessages)
-			const [firstItemIndex, setFirstItemIndex] = ReactModule.useState(mocks.initialFirstItemIndex)
+    return {
+        useExtensionState: () => {
+            const [clineMessages, setClineMessages] = ReactModule.useState(() => mocks.initialMessages)
+            const [firstItemIndex, setFirstItemIndex] = ReactModule.useState(mocks.initialFirstItemIndex)
 
-			mocks.currentMessages = clineMessages
-			mocks.currentFirstItemIndex = firstItemIndex
-			mocks.setCurrentMessages = setClineMessages
+            mocks.currentMessages = clineMessages
+            mocks.currentFirstItemIndex = firstItemIndex
+            mocks.setCurrentMessages = setClineMessages
 
-			return {
-				clineMessages,
-				setClineMessages,
-				totalMessageCount: mocks.totalMessageCount,
-				firstItemIndex,
-				setFirstItemIndex,
-				taskViewState: { taskId: "task-1", taskInstanceId: "task-instance-1" },
-			}
-		},
-	}
+            return {
+                clineMessages,
+                setClineMessages,
+                totalMessageCount: mocks.totalMessageCount,
+                firstItemIndex,
+                setFirstItemIndex,
+                taskViewState: { taskId: "task-1", taskInstanceId: "task-instance-1" },
+            }
+        },
+    }
 })
 
 vi.mock("@/services/grpc-client", () => ({
-	TaskServiceClient: {
-		fetchMessage: mocks.fetchMessage,
-	},
+    TaskServiceClient: {
+        fetchMessage: mocks.fetchMessage,
+    },
 }))
 
 vi.mock("@shared/proto-conversions/cline-message", () => ({
-	convertProtoToClineMessage: (message: UiMessage) => message,
+    convertProtoToClineMessage: (message: UiMessage) => message,
 }))
 
 vi.mock("react-virtuoso", async () => {
-	const ReactModule = await import("react")
-	const Virtuoso = ReactModule.forwardRef<unknown, VirtuosoTestProps>((props, ref) => {
-		mocks.virtuosoProps = props
-		ReactModule.useImperativeHandle(ref, () => ({
-			scrollToIndex: mocks.scrollToIndex,
-		}))
-		const { scrollerRef } = props
-		const attachScroller = ReactModule.useCallback(
-			(element: HTMLDivElement | null) => {
-				if (mocks.renderedRowCount > 0) scrollerRef?.(element)
-			},
-			[scrollerRef],
-		)
-		// Item wrappers carry the same attributes the real list renders:
-		// `data-index` is the position in `data`, `data-item-index` the public
-		// index, and the message row inside renders `data-message-ts`.
-		const rows = Array.from({ length: mocks.renderedRowCount }, (_, index) =>
-			ReactModule.createElement(
-				"div",
-				{ key: index, "data-index": index, "data-item-index": index + 1000 },
-				ReactModule.createElement("div", { "data-message-ts": mocks.firstRenderedTs + index }),
-			),
-		)
-		return ReactModule.createElement(
-			"div",
-			{ "data-testid": "virtuoso", "data-virtuoso-scroller": "true", ref: attachScroller },
-			...rows,
-		)
-	})
+    const ReactModule = await import("react")
+    const Virtuoso = ReactModule.forwardRef<unknown, VirtuosoTestProps>((props, ref) => {
+        mocks.virtuosoProps = props
+        ReactModule.useImperativeHandle(ref, () => ({
+            scrollToIndex: mocks.scrollToIndex,
+        }))
+        const { scrollerRef } = props
+        const attachScroller = ReactModule.useCallback(
+            (element: HTMLDivElement | null) => {
+                if (mocks.renderedRowCount > 0) scrollerRef?.(element)
+            },
+            [scrollerRef],
+        )
+        // Item wrappers carry the same attributes the real list renders:
+        // `data-index` is the position in `data`, `data-item-index` the public
+        // index, and the message row inside renders `data-message-ts`.
+        const rows = Array.from({ length: mocks.renderedRowCount }, (_, index) =>
+            ReactModule.createElement(
+                "div",
+                { key: index, "data-index": index, "data-item-index": index + 1000 },
+                ReactModule.createElement("div", { "data-message-ts": mocks.firstRenderedTs + index }),
+            ),
+        )
+        return ReactModule.createElement(
+            "div",
+            { "data-testid": "virtuoso", "data-virtuoso-scroller": "true", ref: attachScroller },
+            ...rows,
+        )
+    })
 
-	return { Virtuoso }
+    return { Virtuoso }
 })
 
 vi.mock("@/components/chat/task-header/StickyUserMessage", () => ({
-	StickyUserMessage: ({ isVisible }: { isVisible: boolean }) =>
-		isVisible ? <button aria-label="Sticky user message">Sticky user message</button> : null,
+    StickyUserMessage: ({ isVisible }: { isVisible: boolean }) =>
+        isVisible ? <button aria-label="Sticky user message">Sticky user message</button> : null,
 }))
 
 vi.mock("../messages/MessageRenderer", () => ({
-	createMessageRenderer: () => () => null,
+    createMessageRenderer: () => () => null,
 }))
 
 function createMessages(startIndex: number, count: number): UiMessage[] {
-	return Array.from({ length: count }, (_, offset) => {
-		const absoluteIndex = startIndex + offset
-		return {
-			ts: absoluteIndex + 1,
-			type: "say",
-			say: "text",
-			text: `message-${absoluteIndex}`,
-		} as UiMessage
-	})
+    return Array.from({ length: count }, (_, offset) => {
+        const absoluteIndex = startIndex + offset
+        return {
+            ts: absoluteIndex + 1,
+            type: "say",
+            say: "text",
+            text: `message-${absoluteIndex}`,
+        } as UiMessage
+    })
 }
 
 function createScrollBehavior(): ScrollBehavior {
-	return {
-		virtuosoRef: React.createRef(),
-		scrollContainerRef: React.createRef(),
-		disableAutoScrollRef: { current: false },
-		isAtBottomRef: { current: true },
-		absoluteBottomLoadedRef: { current: true },
-		requestProgrammaticScroll: vi.fn(),
-		cancelProgrammaticScroll: vi.fn(),
-		scrollToBottomSmooth: vi.fn(),
-		scrollToBottomAuto: vi.fn(),
-		scrollToMessage: vi.fn(),
-		toggleRowExpansion: vi.fn(),
-		handleRowHeightChange: vi.fn(),
-		showScrollToBottom: false,
-		setShowScrollToBottom: vi.fn(),
-		isAtBottom: true,
-		setIsAtBottom: vi.fn(),
-		pendingScrollToMessage: null,
-		setPendingScrollToMessage: vi.fn(),
-		scrolledPastUserMessage: null,
-		handleRangeChanged: vi.fn(),
-	}
+    return {
+        virtuosoRef: React.createRef(),
+        scrollContainerRef: React.createRef(),
+        disableAutoScrollRef: { current: false },
+        isAtBottomRef: { current: true },
+        absoluteBottomLoadedRef: { current: true },
+        requestProgrammaticScroll: vi.fn(),
+        cancelProgrammaticScroll: vi.fn(),
+        scrollToBottomSmooth: vi.fn(),
+        scrollToBottomAuto: vi.fn(),
+        scrollToMessage: vi.fn(),
+        toggleRowExpansion: vi.fn(),
+        handleRowHeightChange: vi.fn(),
+        showScrollToBottom: false,
+        setShowScrollToBottom: vi.fn(),
+        isAtBottom: true,
+        setIsAtBottom: vi.fn(),
+        pendingScrollToMessage: null,
+        setPendingScrollToMessage: vi.fn(),
+        scrolledPastUserMessage: null,
+        handleRangeChanged: vi.fn(),
+    }
 }
 
 function renderMessagesArea(scrollBehavior = createScrollBehavior()) {
-	const messages = mocks.initialMessages
-	const task = messages[0] ?? createMessages(0, 1)[0]
+    const messages = mocks.initialMessages
+    const task = messages[0] ?? createMessages(0, 1)[0]
 
-	render(
-		<MessagesArea
-			chatState={
-				{
-					expandedRows: {},
-					setActiveQuote: vi.fn(),
-					setInputValue: vi.fn(),
-				} as unknown as ChatState
-			}
-			groupedMessages={messages}
-			messageHandlers={{ handleSendMessage: vi.fn() } as unknown as MessageHandlers}
-			modifiedMessages={messages}
-			onFollowupOptionSelect={vi.fn()}
-			scrollBehavior={scrollBehavior}
-			task={task}
-		/>,
-	)
+    render(
+        <MessagesArea
+            chatState={
+                {
+                    expandedRows: {},
+                    setActiveQuote: vi.fn(),
+                    setInputValue: vi.fn(),
+                } as unknown as ChatState
+            }
+            groupedMessages={messages}
+            messageHandlers={{ handleSendMessage: vi.fn() } as unknown as MessageHandlers}
+            modifiedMessages={messages}
+            onFollowupOptionSelect={vi.fn()}
+            scrollBehavior={scrollBehavior}
+            task={task}
+        />,
+    )
 
-	return scrollBehavior
+    return scrollBehavior
 }
 
 describe("MessagesArea sliding-window integration", () => {
-	beforeEach(() => {
-		mocks.fetchMessage.mockReset()
-		mocks.scrollToIndex.mockReset()
-		mocks.virtuosoProps = undefined
-		mocks.initialMessages = createMessages(300, 400)
-		mocks.initialFirstItemIndex = 300
-		mocks.totalMessageCount = 1000
-		mocks.currentMessages = []
-		mocks.currentFirstItemIndex = 0
-		mocks.setCurrentMessages = undefined
-		mocks.renderedRowCount = 0
-		mocks.firstRenderedTs = 0
-	})
+    beforeEach(() => {
+        mocks.fetchMessage.mockReset()
+        mocks.scrollToIndex.mockReset()
+        mocks.virtuosoProps = undefined
+        mocks.initialMessages = createMessages(300, 400)
+        mocks.initialFirstItemIndex = 300
+        mocks.totalMessageCount = 1000
+        mocks.currentMessages = []
+        mocks.currentFirstItemIndex = 0
+        mocks.setCurrentMessages = undefined
+        mocks.renderedRowCount = 0
+        mocks.firstRenderedTs = 0
+    })
 
-	afterEach(() => {
-		cleanup()
-		vi.useRealTimers()
-		vi.restoreAllMocks()
-	})
+    afterEach(() => {
+        cleanup()
+        vi.useRealTimers()
+        vi.restoreAllMocks()
+    })
 
-	it("keeps the sticky overlay transparent outside the visible message", () => {
-		const scrollBehavior = createScrollBehavior()
-		scrollBehavior.scrolledPastUserMessage = createMessages(0, 1)[0]
-		renderMessagesArea(scrollBehavior)
+    it("keeps the sticky overlay transparent outside the visible message", () => {
+        const scrollBehavior = createScrollBehavior()
+        scrollBehavior.scrolledPastUserMessage = createMessages(0, 1)[0]
+        renderMessagesArea(scrollBehavior)
 
-		const stickyMessage = screen.getByRole("button", { name: "Sticky user message" })
-		expect(stickyMessage.parentElement).toHaveClass("pointer-events-none")
-	})
+        const stickyMessage = screen.getByRole("button", { name: "Sticky user message" })
+        expect(stickyMessage.parentElement).toHaveClass("pointer-events-none")
+    })
 
-	it("initializes a loaded tail at the absolute bottom without a visible retry chain", () => {
-		mocks.initialMessages = createMessages(800, 200)
-		mocks.initialFirstItemIndex = 800
-		mocks.totalMessageCount = 1000
-		const scrollBehavior = renderMessagesArea()
+    it("initializes a loaded tail at the absolute bottom without a visible retry chain", () => {
+        mocks.initialMessages = createMessages(800, 200)
+        mocks.initialFirstItemIndex = 800
+        mocks.totalMessageCount = 1000
+        const scrollBehavior = renderMessagesArea()
 
-		expect(mocks.virtuosoProps?.initialTopMostItemIndex).toEqual({ index: 199, align: "end" })
-		expect(scrollBehavior.requestProgrammaticScroll).not.toHaveBeenCalled()
-	})
+        expect(mocks.virtuosoProps?.initialTopMostItemIndex).toEqual({ index: 199, align: "end" })
+        expect(scrollBehavior.requestProgrammaticScroll).not.toHaveBeenCalled()
+    })
 
-	it("re-follows the loaded bottom when a completion say becomes an ask with the same timestamp and text", async () => {
-		const completionText = "Completion is ready"
-		mocks.initialMessages = [
-			createMessages(0, 1)[0],
-			{
-				ts: 2,
-				type: "say",
-				say: "completion_result",
-				text: completionText,
-				partial: false,
-			} as UiMessage,
-		]
-		mocks.initialFirstItemIndex = 0
-		mocks.totalMessageCount = 2
-		const scrollBehavior = renderMessagesArea()
+    it("re-follows the loaded bottom when a completion say becomes an ask with the same timestamp and text", async () => {
+        const completionText = "Completion is ready"
+        mocks.initialMessages = [
+            createMessages(0, 1)[0],
+            {
+                ts: 2,
+                type: "say",
+                say: "completion_result",
+                text: completionText,
+                partial: false,
+            } as UiMessage,
+        ]
+        mocks.initialFirstItemIndex = 0
+        mocks.totalMessageCount = 2
+        const scrollBehavior = renderMessagesArea()
 
-		act(() => {
-			mocks.setCurrentMessages?.((messages) => [
-				...messages.slice(0, -1),
-				{
-					...messages.at(-1)!,
-					type: "ask",
-					ask: "completion_result",
-					say: undefined,
-					interactionId: "completion-interaction",
-				},
-			])
-		})
+        act(() => {
+            mocks.setCurrentMessages?.((messages) => [
+                ...messages.slice(0, -1),
+                {
+                    ...messages.at(-1)!,
+                    type: "ask",
+                    ask: "completion_result",
+                    say: undefined,
+                    interactionId: "completion-interaction",
+                },
+            ])
+        })
 
-		await waitFor(() => {
-			expect(scrollBehavior.requestProgrammaticScroll).toHaveBeenCalledWith(
-				expect.objectContaining({
-					priority: "layout",
-					retryDelaysMs: [50, 200, 500],
-				}),
-			)
-		})
-	})
+        await waitFor(() => {
+            expect(scrollBehavior.requestProgrammaticScroll).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    priority: "layout",
+                    retryDelaysMs: [50, 200, 500],
+                }),
+            )
+        })
+    })
 
-	it("does not lose a boundary fetch when two ranges arrive within the old throttle window", async () => {
-		mocks.fetchMessage.mockResolvedValue({
-			messages: [],
-			startIndex: 0,
-			taskId: "task-1",
-			taskInstanceId: "task-instance-1",
-		})
-		const scrollBehavior = createScrollBehavior()
-		renderMessagesArea(scrollBehavior)
-		fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
+    it("does not lose a boundary fetch when two ranges arrive within the old throttle window", async () => {
+        mocks.fetchMessage.mockResolvedValue({
+            messages: [],
+            startIndex: 0,
+            taskId: "task-1",
+            taskInstanceId: "task-instance-1",
+        })
+        const scrollBehavior = createScrollBehavior()
+        renderMessagesArea(scrollBehavior)
+        fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
 
-		act(() => {
-			mocks.virtuosoProps?.rangeChanged({ startIndex: 150, endIndex: 250 })
-			mocks.virtuosoProps?.rangeChanged({ startIndex: 0, endIndex: 20 })
-		})
+        act(() => {
+            mocks.virtuosoProps?.rangeChanged({ startIndex: 150, endIndex: 250 })
+            mocks.virtuosoProps?.rangeChanged({ startIndex: 0, endIndex: 20 })
+        })
 
-		await waitFor(() => {
-			expect(mocks.fetchMessage).toHaveBeenCalledTimes(1)
-		})
-		expect(mocks.fetchMessage.mock.calls[0][0]).toMatchObject({ referenceIndex: 100, count: 200 })
-	})
+        await waitFor(() => {
+            expect(mocks.fetchMessage).toHaveBeenCalledTimes(1)
+        })
+        expect(mocks.fetchMessage.mock.calls[0][0]).toMatchObject({ referenceIndex: 100, count: 200 })
+    })
 
-	it("replans after a merge when the viewport remains inside the extension threshold", async () => {
-		mocks.initialMessages = createMessages(300, 250)
-		mocks.initialFirstItemIndex = 300
-		mocks.fetchMessage
-			.mockResolvedValueOnce({
-				messages: createMessages(250, 50),
-				startIndex: 250,
-				taskId: "task-1",
-				taskInstanceId: "task-instance-1",
-			})
-			.mockResolvedValueOnce({
-				messages: [],
-				startIndex: 50,
-				taskId: "task-1",
-				taskInstanceId: "task-instance-1",
-			})
-		const scrollBehavior = createScrollBehavior()
-		renderMessagesArea(scrollBehavior)
-		fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
+    it("replans after a merge when the viewport remains inside the extension threshold", async () => {
+        mocks.initialMessages = createMessages(300, 250)
+        mocks.initialFirstItemIndex = 300
+        mocks.fetchMessage
+            .mockResolvedValueOnce({
+                messages: createMessages(250, 50),
+                startIndex: 250,
+                taskId: "task-1",
+                taskInstanceId: "task-instance-1",
+            })
+            .mockResolvedValueOnce({
+                messages: [],
+                startIndex: 50,
+                taskId: "task-1",
+                taskInstanceId: "task-instance-1",
+            })
+        const scrollBehavior = createScrollBehavior()
+        renderMessagesArea(scrollBehavior)
+        fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
 
-		act(() => {
-			mocks.virtuosoProps?.rangeChanged({ startIndex: 0, endIndex: 20 })
-		})
+        act(() => {
+            mocks.virtuosoProps?.rangeChanged({ startIndex: 0, endIndex: 20 })
+        })
 
-		await waitFor(() => {
-			expect(mocks.fetchMessage).toHaveBeenCalledTimes(2)
-		})
-		expect(mocks.fetchMessage.mock.calls[0][0]).toMatchObject({ referenceIndex: 100, count: 200 })
-		expect(mocks.fetchMessage.mock.calls[1][0]).toMatchObject({ referenceIndex: 50, count: 200 })
-	})
+        await waitFor(() => {
+            expect(mocks.fetchMessage).toHaveBeenCalledTimes(2)
+        })
+        expect(mocks.fetchMessage.mock.calls[0][0]).toMatchObject({ referenceIndex: 100, count: 200 })
+        expect(mocks.fetchMessage.mock.calls[1][0]).toMatchObject({ referenceIndex: 50, count: 200 })
+    })
 
-	it("reaches a reply that arrived below the loaded window while following the bottom", async () => {
-		// The window stops one message short of the conversation, which is what a
-		// new reply looks like before it has been fetched.
-		mocks.initialMessages = createMessages(800, 200)
-		mocks.initialFirstItemIndex = 800
-		mocks.totalMessageCount = 1001
-		mocks.fetchMessage.mockResolvedValue({ messages: createMessages(1000, 1), startIndex: 1000 })
-		renderMessagesArea()
+    it("reaches a reply that arrived below the loaded window while following the bottom", async () => {
+        // The window stops one message short of the conversation, which is what a
+        // new reply looks like before it has been fetched.
+        mocks.initialMessages = createMessages(800, 200)
+        mocks.initialFirstItemIndex = 800
+        mocks.totalMessageCount = 1001
+        mocks.fetchMessage.mockResolvedValue({ messages: createMessages(1000, 1), startIndex: 1000 })
+        renderMessagesArea()
 
-		// Reported ranges are absolute row indexes and are clamped to the loaded
-		// rows, so this is "the viewport sits on the last loaded row".
-		act(() => {
-			mocks.virtuosoProps?.rangeChanged({ startIndex: Number.MAX_SAFE_INTEGER, endIndex: Number.MAX_SAFE_INTEGER })
-		})
+        // Reported ranges are absolute row indexes and are clamped to the loaded
+        // rows, so this is "the viewport sits on the last loaded row".
+        act(() => {
+            mocks.virtuosoProps?.rangeChanged({ startIndex: Number.MAX_SAFE_INTEGER, endIndex: Number.MAX_SAFE_INTEGER })
+        })
 
-		// Withholding this fetch is self-defeating: an unloaded tail is exactly
-		// what suppresses the follow intent, so the reply would stay outside both
-		// the window and the view for the rest of the task.
-		await waitFor(() => {
-			expect(mocks.fetchMessage).toHaveBeenCalledTimes(1)
-		})
-		expect(mocks.fetchMessage.mock.calls[0][0]).toMatchObject({ referenceIndex: 1000, count: 1 })
-	})
+        // Withholding this fetch is self-defeating: an unloaded tail is exactly
+        // what suppresses the follow intent, so the reply would stay outside both
+        // the window and the view for the rest of the task.
+        await waitFor(() => {
+            expect(mocks.fetchMessage).toHaveBeenCalledTimes(1)
+        })
+        expect(mocks.fetchMessage.mock.calls[0][0]).toMatchObject({ referenceIndex: 1000, count: 1 })
+    })
 
-	it("still refuses to page history while following the bottom", async () => {
-		// Same viewport, but the leading side is the one short of the edge. Paging
-		// there on every layout event would eagerly pull in the whole transcript.
-		mocks.initialMessages = createMessages(800, 200)
-		mocks.initialFirstItemIndex = 800
-		mocks.totalMessageCount = 1000
-		mocks.fetchMessage.mockResolvedValue({ messages: [], startIndex: 600 })
-		renderMessagesArea()
+    it("still refuses to page history while following the bottom", async () => {
+        // Same viewport, but the leading side is the one short of the edge. Paging
+        // there on every layout event would eagerly pull in the whole transcript.
+        mocks.initialMessages = createMessages(800, 200)
+        mocks.initialFirstItemIndex = 800
+        mocks.totalMessageCount = 1000
+        mocks.fetchMessage.mockResolvedValue({ messages: [], startIndex: 600 })
+        renderMessagesArea()
 
-		act(() => {
-			mocks.virtuosoProps?.rangeChanged({ startIndex: 800, endIndex: 820 })
-		})
+        act(() => {
+            mocks.virtuosoProps?.rangeChanged({ startIndex: 800, endIndex: 820 })
+        })
 
-		await act(async () => {
-			await Promise.resolve()
-		})
-		expect(mocks.fetchMessage).not.toHaveBeenCalled()
-	})
+        await act(async () => {
+            await Promise.resolve()
+        })
+        expect(mocks.fetchMessage).not.toHaveBeenCalled()
+    })
 
-	it("keeps the row the reader can see in place when older history merges in ahead of it", async () => {
-		// The rendered range Virtuoso reports includes overscan above the
-		// viewport. Aligning its first row to the top after the merge pushed the
-		// rows the reader was looking at out of view. The restore must target the
-		// first row that intersects the viewport, at the offset it had.
-		const viewport = { top: 100, height: 500 }
-		const rowHeight = 50
-		// Row 5 is the first one on screen and starts 20px above the viewport top.
-		const rowTop = (index: number) => viewport.top - 20 + (index - 5) * rowHeight
-		vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-			const box =
-				this.dataset.testid === "virtuoso"
-					? viewport
-					: this.dataset.itemIndex !== undefined
-						? { top: rowTop(Number(this.dataset.index)), height: rowHeight }
-						: { top: 0, height: 0 }
-			return {
-				top: box.top,
-				bottom: box.top + box.height,
-				height: box.height,
-				left: 0,
-				right: 300,
-				width: 300,
-				x: 0,
-				y: box.top,
-				toJSON: () => ({}),
-			}
-		})
-		mocks.renderedRowCount = 21
-		// The rendered band starts at the first loaded message (ts 301), so row 5 shows ts 306.
-		mocks.firstRenderedTs = 301
-		mocks.initialMessages = createMessages(300, 250)
-		mocks.initialFirstItemIndex = 300
-		mocks.fetchMessage
-			.mockResolvedValueOnce({
-				messages: createMessages(250, 50),
-				startIndex: 250,
-				taskId: "task-1",
-				taskInstanceId: "task-instance-1",
-			})
-			.mockResolvedValue({
-				messages: [],
-				startIndex: 50,
-				taskId: "task-1",
-				taskInstanceId: "task-instance-1",
-			})
-		renderMessagesArea()
-		fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
+    it("keeps the row the reader can see in place when older history merges in ahead of it", async () => {
+        // The rendered range Virtuoso reports includes overscan above the
+        // viewport. Aligning its first row to the top after the merge pushed the
+        // rows the reader was looking at out of view. The restore must target the
+        // first row that intersects the viewport, at the offset it had.
+        const viewport = { top: 100, height: 500 }
+        const rowHeight = 50
+        // Row 5 is the first one on screen and starts 20px above the viewport top.
+        const rowTop = (index: number) => viewport.top - 20 + (index - 5) * rowHeight
+        vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+            const box =
+                this.dataset.testid === "virtuoso"
+                    ? viewport
+                    : this.dataset.itemIndex !== undefined
+                      ? { top: rowTop(Number(this.dataset.index)), height: rowHeight }
+                      : { top: 0, height: 0 }
+            return {
+                top: box.top,
+                bottom: box.top + box.height,
+                height: box.height,
+                left: 0,
+                right: 300,
+                width: 300,
+                x: 0,
+                y: box.top,
+                toJSON: () => ({}),
+            }
+        })
+        mocks.renderedRowCount = 21
+        // The rendered band starts at the first loaded message (ts 301), so row 5 shows ts 306.
+        mocks.firstRenderedTs = 301
+        mocks.initialMessages = createMessages(300, 250)
+        mocks.initialFirstItemIndex = 300
+        mocks.fetchMessage
+            .mockResolvedValueOnce({
+                messages: createMessages(250, 50),
+                startIndex: 250,
+                taskId: "task-1",
+                taskInstanceId: "task-instance-1",
+            })
+            .mockResolvedValue({
+                messages: [],
+                startIndex: 50,
+                taskId: "task-1",
+                taskInstanceId: "task-instance-1",
+            })
+        renderMessagesArea()
+        fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
 
-		act(() => {
-			mocks.virtuosoProps?.rangeChanged({ startIndex: 0, endIndex: 20 })
-		})
+        act(() => {
+            mocks.virtuosoProps?.rangeChanged({ startIndex: 0, endIndex: 20 })
+        })
 
-		// The second request is planned from the merged window, so seeing it
-		// proves the first merge has been committed and rendered.
-		await waitFor(() => {
-			expect(mocks.fetchMessage).toHaveBeenCalledTimes(2)
-		})
-		// This harness passes fixed grouped rows, so the anchored row keeps its
-		// position in `data`; what matters is that it is the visible row, not
-		// the overscan row at index 0, and that its cut-off is preserved.
-		expect(mocks.scrollToIndex).toHaveBeenCalledTimes(1)
-		expect(mocks.scrollToIndex).toHaveBeenCalledWith({ index: 5, align: "start", behavior: "auto", offset: 20 })
-	})
+        // The second request is planned from the merged window, so seeing it
+        // proves the first merge has been committed and rendered.
+        await waitFor(() => {
+            expect(mocks.fetchMessage).toHaveBeenCalledTimes(2)
+        })
+        // This harness passes fixed grouped rows, so the anchored row keeps its
+        // position in `data`; what matters is that it is the visible row, not
+        // the overscan row at index 0, and that its cut-off is preserved.
+        expect(mocks.scrollToIndex).toHaveBeenCalledTimes(1)
+        expect(mocks.scrollToIndex).toHaveBeenCalledWith({ index: 5, align: "start", behavior: "auto", offset: 20 })
+    })
 
-	it("does not surrender browsing ownership to a transient at-bottom report", () => {
-		mocks.initialMessages = createMessages(800, 200)
-		mocks.initialFirstItemIndex = 800
-		mocks.totalMessageCount = 1000
-		const scrollBehavior = renderMessagesArea()
+    it("does not surrender browsing ownership to a transient at-bottom report", () => {
+        mocks.initialMessages = createMessages(800, 200)
+        mocks.initialFirstItemIndex = 800
+        mocks.totalMessageCount = 1000
+        const scrollBehavior = renderMessagesArea()
 
-		fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
-		expect(scrollBehavior.disableAutoScrollRef.current).toBe(true)
+        fireEvent.wheel(screen.getByTestId("virtuoso"), { deltaY: -100 })
+        expect(scrollBehavior.disableAutoScrollRef.current).toBe(true)
 
-		act(() => {
-			mocks.virtuosoProps?.atBottomStateChange?.(true)
-		})
+        act(() => {
+            mocks.virtuosoProps?.atBottomStateChange?.(true)
+        })
 
-		expect(scrollBehavior.disableAutoScrollRef.current).toBe(true)
-	})
+        expect(scrollBehavior.disableAutoScrollRef.current).toBe(true)
+    })
 
-	it("reports whether the loaded window reaches the end of the conversation", () => {
-		// Virtuoso only knows the rows it holds. Sitting at the bottom of a
-		// paged window is not the same as sitting at the end of the
-		// conversation, and bottom restoration has to be able to tell them
-		// apart before it moves the reader.
-		mocks.initialMessages = createMessages(800, 200)
-		mocks.initialFirstItemIndex = 800
-		mocks.totalMessageCount = 1000
-		const loadedToEnd = renderMessagesArea()
+    it("reports whether the loaded window reaches the end of the conversation", () => {
+        // Virtuoso only knows the rows it holds. Sitting at the bottom of a
+        // paged window is not the same as sitting at the end of the
+        // conversation, and bottom restoration has to be able to tell them
+        // apart before it moves the reader.
+        mocks.initialMessages = createMessages(800, 200)
+        mocks.initialFirstItemIndex = 800
+        mocks.totalMessageCount = 1000
+        const loadedToEnd = renderMessagesArea()
 
-		act(() => {
-			mocks.virtuosoProps?.atBottomStateChange?.(true)
-		})
-		expect(loadedToEnd.absoluteBottomLoadedRef.current).toBe(true)
+        act(() => {
+            mocks.virtuosoProps?.atBottomStateChange?.(true)
+        })
+        expect(loadedToEnd.absoluteBottomLoadedRef.current).toBe(true)
 
-		cleanup()
+        cleanup()
 
-		// Same rows, but the conversation continues past them.
-		mocks.initialMessages = createMessages(800, 200)
-		mocks.initialFirstItemIndex = 800
-		mocks.totalMessageCount = 2000
-		const loadedMidway = renderMessagesArea()
+        // Same rows, but the conversation continues past them.
+        mocks.initialMessages = createMessages(800, 200)
+        mocks.initialFirstItemIndex = 800
+        mocks.totalMessageCount = 2000
+        const loadedMidway = renderMessagesArea()
 
-		act(() => {
-			mocks.virtuosoProps?.atBottomStateChange?.(true)
-		})
-		expect(loadedMidway.absoluteBottomLoadedRef.current).toBe(false)
-	})
+        act(() => {
+            mocks.virtuosoProps?.atBottomStateChange?.(true)
+        })
+        expect(loadedMidway.absoluteBottomLoadedRef.current).toBe(false)
+    })
 
-	it("does not preload leading history while auto-follow is active", () => {
-		mocks.fetchMessage.mockResolvedValue({ messages: [], startIndex: 0 })
-		renderMessagesArea()
+    it("does not preload leading history while auto-follow is active", () => {
+        mocks.fetchMessage.mockResolvedValue({ messages: [], startIndex: 0 })
+        renderMessagesArea()
 
-		act(() => {
-			mocks.virtuosoProps?.rangeChanged({ startIndex: 0, endIndex: 20 })
-		})
+        act(() => {
+            mocks.virtuosoProps?.rangeChanged({ startIndex: 0, endIndex: 20 })
+        })
 
-		expect(mocks.fetchMessage).not.toHaveBeenCalled()
-	})
+        expect(mocks.fetchMessage).not.toHaveBeenCalled()
+    })
 
-	it("keeps the loaded window stable after scrolling becomes idle", () => {
-		vi.useFakeTimers()
-		mocks.initialMessages = createMessages(100, 700)
-		mocks.initialFirstItemIndex = 100
-		mocks.totalMessageCount = 2000
-		renderMessagesArea()
+    it("keeps the loaded window stable after scrolling becomes idle", () => {
+        vi.useFakeTimers()
+        mocks.initialMessages = createMessages(100, 700)
+        mocks.initialFirstItemIndex = 100
+        mocks.totalMessageCount = 2000
+        renderMessagesArea()
 
-		act(() => {
-			vi.advanceTimersByTime(16)
-			mocks.virtuosoProps?.rangeChanged({ startIndex: 400, endIndex: 450 })
-		})
+        act(() => {
+            vi.advanceTimersByTime(16)
+            mocks.virtuosoProps?.rangeChanged({ startIndex: 400, endIndex: 450 })
+        })
 
-		fireEvent.scroll(screen.getByTestId("virtuoso"))
+        fireEvent.scroll(screen.getByTestId("virtuoso"))
 
-		act(() => {
-			vi.advanceTimersByTime(1_000)
-		})
-		expect(mocks.currentFirstItemIndex).toBe(100)
-		expect(mocks.currentMessages).toHaveLength(700)
-	})
+        act(() => {
+            vi.advanceTimersByTime(1_000)
+        })
+        expect(mocks.currentFirstItemIndex).toBe(100)
+        expect(mocks.currentMessages).toHaveLength(700)
+    })
 })

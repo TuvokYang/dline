@@ -19,47 +19,47 @@ let workspace: string
 let skillFile: string
 
 beforeAll(async () => {
-	workspace = await mkdtemp(path.join(tmpdir(), "dline-skill-expander-"))
-	const skillDir = path.join(workspace, ".agents", "skills", SKILL_NAME)
-	await mkdir(skillDir, { recursive: true })
-	skillFile = path.join(skillDir, "SKILL.md")
-	await writeFile(
-		skillFile,
-		["---", `name: ${SKILL_NAME}`, "description: Verify the expander injects skill instructions.", "---", SKILL_MARKER].join(
-			"\n",
-		),
-		"utf8",
-	)
+    workspace = await mkdtemp(path.join(tmpdir(), "dline-skill-expander-"))
+    const skillDir = path.join(workspace, ".agents", "skills", SKILL_NAME)
+    await mkdir(skillDir, { recursive: true })
+    skillFile = path.join(skillDir, "SKILL.md")
+    await writeFile(
+        skillFile,
+        ["---", `name: ${SKILL_NAME}`, "description: Verify the expander injects skill instructions.", "---", SKILL_MARKER].join(
+            "\n",
+        ),
+        "utf8",
+    )
 })
 
 function expander() {
-	return new TaskCommandExpander(() => ({
-		localWorkflowToggles: {},
-		globalWorkflowToggles: {},
-		taskIncarnationId: "task-1",
-		capabilityContext: {
-			cwd: workspace,
-			capabilityToggles: createTaskCapabilityToggles({ localSkillsToggles: { [skillFile]: true } }),
-			remoteSkills: [],
-			remoteWorkflows: [],
-		},
-	}))
+    return new TaskCommandExpander(() => ({
+        localWorkflowToggles: {},
+        globalWorkflowToggles: {},
+        taskIncarnationId: "task-1",
+        capabilityContext: {
+            cwd: workspace,
+            capabilityToggles: createTaskCapabilityToggles({ localSkillsToggles: { [skillFile]: true } }),
+            remoteSkills: [],
+            remoteWorkflows: [],
+        },
+    }))
 }
 
 describe("TaskCommandExpander", () => {
-	it("injects the skill instructions for a command the document already named", async () => {
-		const expansion = await expander().expand({
-			entityId: "doc-1#0",
-			commandId: `command.skill.${SKILL_NAME}`,
-			canonicalName: SKILL_NAME,
-			namespace: "skill",
-			sourceText: `/skills:${SKILL_NAME}`,
-		})
+    it("injects the skill instructions for a command the document already named", async () => {
+        const expansion = await expander().expand({
+            entityId: "doc-1#0",
+            commandId: `command.skill.${SKILL_NAME}`,
+            canonicalName: SKILL_NAME,
+            namespace: "skill",
+            sourceText: `/skills:${SKILL_NAME}`,
+        })
 
-		expect(expansion.text).toContain(SKILL_MARKER)
-		expect(expansion.text).not.toContain(`/skills:${SKILL_NAME}`)
-		expect(expansion.explicitInstructions).toEqual([
-			{ type: "skill", source: "skill_injection", metadata: { name: SKILL_NAME } },
-		])
-	})
+        expect(expansion.text).toContain(SKILL_MARKER)
+        expect(expansion.text).not.toContain(`/skills:${SKILL_NAME}`)
+        expect(expansion.explicitInstructions).toEqual([
+            { type: "skill", source: "skill_injection", metadata: { name: SKILL_NAME } },
+        ])
+    })
 })

@@ -3,8 +3,8 @@ import type { Controller } from ".."
 import { getShellEnvironmentProfile as readProfile } from "./shellEnvironmentConfig"
 
 export async function getShellEnvironmentProfile(
-	_controller: Controller,
-	request: ShellEnvironmentProfileRequest,
+    _controller: Controller,
+    request: ShellEnvironmentProfileRequest,
 ): Promise<ShellEnvironmentProfile> {
-	return readProfile(request)
+    return readProfile(request)
 }

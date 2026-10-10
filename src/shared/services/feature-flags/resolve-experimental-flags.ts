@@ -28,7 +28,7 @@ export type EnvironmentSource = Readonly<Record<string, string | undefined>>
  * table would be a second place to forget when a flag is added.
  */
 export function environmentVariableNameFor(flag: ExperimentalFeatureFlag): string {
-	return `${ENV_PREFIX}${flag.replace(/[-_]+/g, "_").toUpperCase()}`
+    return `${ENV_PREFIX}${flag.replace(/[-_]+/g, "_").toUpperCase()}`
 }
 
 /**
@@ -37,24 +37,24 @@ export function environmentVariableNameFor(flag: ExperimentalFeatureFlag): strin
  * disable a switch that `IS_DEV` or the default would have enabled.
  */
 export function resolveExperimentalFlag(flag: ExperimentalFeatureFlag, env: EnvironmentSource): boolean {
-	const explicit = readBooleanEnv(env[environmentVariableNameFor(flag)])
-	if (explicit !== undefined) {
-		return explicit
-	}
+    const explicit = readBooleanEnv(env[environmentVariableNameFor(flag)])
+    if (explicit !== undefined) {
+        return explicit
+    }
 
-	if (envFlagEnabled(env[DEV_ENV_VAR])) {
-		return true
-	}
+    if (envFlagEnabled(env[DEV_ENV_VAR])) {
+        return true
+    }
 
-	return ExperimentalFeatureFlagDefaultValue[flag] === true
+    return ExperimentalFeatureFlagDefaultValue[flag] === true
 }
 
 export function resolveExperimentalFlags(env: EnvironmentSource): Record<ExperimentalFeatureFlag, boolean> {
-	const resolved = {} as Record<ExperimentalFeatureFlag, boolean>
-	for (const flag of EXPERIMENTAL_FEATURE_FLAGS) {
-		resolved[flag] = resolveExperimentalFlag(flag, env)
-	}
-	return resolved
+    const resolved = {} as Record<ExperimentalFeatureFlag, boolean>
+    for (const flag of EXPERIMENTAL_FEATURE_FLAGS) {
+        resolved[flag] = resolveExperimentalFlag(flag, env)
+    }
+    return resolved
 }
 
 /**
@@ -64,18 +64,18 @@ export function resolveExperimentalFlags(env: EnvironmentSource): Record<Experim
  * anything else is reported as absent.
  */
 function readBooleanEnv(rawValue: string | undefined): boolean | undefined {
-	if (rawValue === undefined) {
-		return undefined
-	}
+    if (rawValue === undefined) {
+        return undefined
+    }
 
-	if (envFlagEnabled(rawValue)) {
-		return true
-	}
+    if (envFlagEnabled(rawValue)) {
+        return true
+    }
 
-	const normalized = rawValue.trim().toLowerCase()
-	if (normalized === "false" || normalized === "0") {
-		return false
-	}
+    const normalized = rawValue.trim().toLowerCase()
+    if (normalized === "false" || normalized === "0") {
+        return false
+    }
 
-	return undefined
+    return undefined
 }

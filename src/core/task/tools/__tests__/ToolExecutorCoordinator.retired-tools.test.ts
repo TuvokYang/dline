@@ -6,11 +6,11 @@ import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 const validator = {} as never
 
 describe("ToolExecutorCoordinator retired tools", () => {
-	it("does not register condense as an executable handler", () => {
-		const coordinator = new ToolExecutorCoordinator()
+    it("does not register condense as an executable handler", () => {
+        const coordinator = new ToolExecutorCoordinator()
 
-		coordinator.registerByName(ClineDefaultTool.CONDENSE, validator)
+        coordinator.registerByName(ClineDefaultTool.CONDENSE, validator)
 
-		expect(coordinator.has(ClineDefaultTool.CONDENSE)).toBe(false)
-	})
+        expect(coordinator.has(ClineDefaultTool.CONDENSE)).toBe(false)
+    })
 })

@@ -14,18 +14,18 @@ const STOPPED_PHASES: ReadonlySet<TaskViewPhase> = new Set<TaskViewPhase>(["canc
  * reading and the reasoning is no longer watched.
  */
 function observeStreamingRow(messages: readonly UiMessage[]): { readonly reasoningTs?: number } | undefined {
-	for (let index = messages.length - 1; index >= 0; index--) {
-		const message = messages[index]
-		if (message.partial !== true) continue
-		return { reasoningTs: message.say === "reasoning" ? message.ts : undefined }
-	}
-	return undefined
+    for (let index = messages.length - 1; index >= 0; index--) {
+        const message = messages[index]
+        if (message.partial !== true) continue
+        return { reasoningTs: message.say === "reasoning" ? message.ts : undefined }
+    }
+    return undefined
 }
 
 function withoutRow(rows: Record<number, boolean>, ts: number): Record<number, boolean> {
-	if (!(ts in rows)) return rows
-	const { [ts]: _removed, ...rest } = rows
-	return rest
+    if (!(ts in rows)) return rows
+    const { [ts]: _removed, ...rest } = rows
+    return rest
 }
 
 /**
@@ -42,47 +42,47 @@ function withoutRow(rows: Record<number, boolean>, ts: number): Record<number, b
  * uses, so a click during the stop collapses the row as the user expects.
  */
 export function useStoppedReasoningExpansion(
-	messages: readonly UiMessage[],
-	phase: TaskViewPhase | undefined,
-	taskId: string | undefined,
-	setExpandedRows: Dispatch<SetStateAction<Record<number, boolean>>>,
+    messages: readonly UiMessage[],
+    phase: TaskViewPhase | undefined,
+    taskId: string | undefined,
+    setExpandedRows: Dispatch<SetStateAction<Record<number, boolean>>>,
 ): void {
-	const watchedTsRef = useRef<number>()
-	const openedTsRef = useRef<number>()
-	const taskIdRef = useRef(taskId)
+    const watchedTsRef = useRef<number>()
+    const openedTsRef = useRef<number>()
+    const taskIdRef = useRef(taskId)
 
-	// Layout, not passive: the stop commits the streamed row as settled, and a
-	// passive effect would let that collapsed row paint before it is reopened.
-	useLayoutEffect(() => {
-		if (taskIdRef.current !== taskId) {
-			// The parent clears expandedRows for a new task; only forget what was watched.
-			taskIdRef.current = taskId
-			watchedTsRef.current = undefined
-			openedTsRef.current = undefined
-		}
+    // Layout, not passive: the stop commits the streamed row as settled, and a
+    // passive effect would let that collapsed row paint before it is reopened.
+    useLayoutEffect(() => {
+        if (taskIdRef.current !== taskId) {
+            // The parent clears expandedRows for a new task; only forget what was watched.
+            taskIdRef.current = taskId
+            watchedTsRef.current = undefined
+            openedTsRef.current = undefined
+        }
 
-		if (phase !== undefined && STOPPED_PHASES.has(phase)) {
-			const watchedTs = watchedTsRef.current
-			watchedTsRef.current = undefined
-			if (watchedTs === undefined || openedTsRef.current !== undefined) return
-			openedTsRef.current = watchedTs
-			setExpandedRows((rows) => (rows[watchedTs] === undefined ? { ...rows, [watchedTs]: true } : rows))
-			return
-		}
+        if (phase !== undefined && STOPPED_PHASES.has(phase)) {
+            const watchedTs = watchedTsRef.current
+            watchedTsRef.current = undefined
+            if (watchedTs === undefined || openedTsRef.current !== undefined) return
+            openedTsRef.current = watchedTs
+            setExpandedRows((rows) => (rows[watchedTs] === undefined ? { ...rows, [watchedTs]: true } : rows))
+            return
+        }
 
-		const openedTs = openedTsRef.current
-		if (openedTs !== undefined) {
-			openedTsRef.current = undefined
-			setExpandedRows((rows) => withoutRow(rows, openedTs))
-		}
+        const openedTs = openedTsRef.current
+        if (openedTs !== undefined) {
+            openedTsRef.current = undefined
+            setExpandedRows((rows) => withoutRow(rows, openedTs))
+        }
 
-		if (phase === "completed") {
-			watchedTsRef.current = undefined
-			return
-		}
-		// Not gated on "streaming": the first round of a task streams while the
-		// task is still initializing, and it can be stopped just the same.
-		const observation = observeStreamingRow(messages)
-		if (observation) watchedTsRef.current = observation.reasoningTs
-	}, [messages, phase, setExpandedRows, taskId])
+        if (phase === "completed") {
+            watchedTsRef.current = undefined
+            return
+        }
+        // Not gated on "streaming": the first round of a task streams while the
+        // task is still initializing, and it can be stopped just the same.
+        const observation = observeStreamingRow(messages)
+        if (observation) watchedTsRef.current = observation.reasoningTs
+    }, [messages, phase, setExpandedRows, taskId])
 }

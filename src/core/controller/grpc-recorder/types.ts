@@ -5,33 +5,33 @@ export type GrpcPostRecordHook = (entry: GrpcLogEntry, controller?: any) => Prom
 export type GrpcRequestFilter = (request: GrpcRequest) => boolean
 
 export interface GrpcLogEntry {
-	requestId: string
-	service: string
-	method: string
-	isStreaming: boolean
-	request: {
-		message: any
-	}
-	response?: {
-		message?: any
-		error?: string
-		isStreaming?: boolean
-		sequenceNumber?: number
-	}
-	duration?: number
-	status: "pending" | "completed" | "error"
-	meta?: { synthetic?: boolean }
+    requestId: string
+    service: string
+    method: string
+    isStreaming: boolean
+    request: {
+        message: any
+    }
+    response?: {
+        message?: any
+        error?: string
+        isStreaming?: boolean
+        sequenceNumber?: number
+    }
+    duration?: number
+    status: "pending" | "completed" | "error"
+    meta?: { synthetic?: boolean }
 }
 
 export interface SessionStats {
-	totalRequests: number
-	pendingRequests: number
-	completedRequests: number
-	errorRequests: number
+    totalRequests: number
+    pendingRequests: number
+    completedRequests: number
+    errorRequests: number
 }
 
 export interface GrpcSessionLog {
-	startTime: string
-	stats?: SessionStats
-	entries: GrpcLogEntry[]
+    startTime: string
+    stats?: SessionStats
+    entries: GrpcLogEntry[]
 }

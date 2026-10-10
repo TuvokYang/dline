@@ -5,35 +5,35 @@ import { type SemanticHighlightSegment, segmentSentMessage } from "@/services/in
 import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSemanticCatalog"
 
 function highlightClass(withShadow: boolean): string {
-	return withShadow ? "mention-context-highlight-with-shadow" : "mention-context-highlight"
+    return withShadow ? "mention-context-highlight-with-shadow" : "mention-context-highlight"
 }
 
 /** Render one segment, keeping a mention clickable and everything else plain. */
 function renderSegment(segment: SemanticHighlightSegment, index: number, withShadow: boolean): JSX.Element | string {
-	if (!segment.active || segment.role === "text") {
-		return segment.text
-	}
-	if (segment.role === "mention") {
-		// The lexer keeps the leading `@` in the source text, while openMention
-		// addresses the target without it.
-		const target = segment.text.replace(/^@/, "")
-		return (
-			// A button rather than a span: opening a mention is an action, so it
-			// has to be reachable and activatable from the keyboard.
-			<button
-				className={`${highlightClass(withShadow)} cursor-pointer bg-transparent border-0 p-0 font-inherit`}
-				key={`mention-${index}`}
-				onClick={() => FileServiceClient.openMention(StringRequest.create({ value: target }))}
-				type="button">
-				{segment.text}
-			</button>
-		)
-	}
-	return (
-		<span className={highlightClass(withShadow)} key={`command-${index}`}>
-			{segment.text}
-		</span>
-	)
+    if (!segment.active || segment.role === "text") {
+        return segment.text
+    }
+    if (segment.role === "mention") {
+        // The lexer keeps the leading `@` in the source text, while openMention
+        // addresses the target without it.
+        const target = segment.text.replace(/^@/, "")
+        return (
+            // A button rather than a span: opening a mention is an action, so it
+            // has to be reachable and activatable from the keyboard.
+            <button
+                className={`${highlightClass(withShadow)} cursor-pointer bg-transparent border-0 p-0 font-inherit`}
+                key={`mention-${index}`}
+                onClick={() => FileServiceClient.openMention(StringRequest.create({ value: target }))}
+                type="button">
+                {segment.text}
+            </button>
+        )
+    }
+    return (
+        <span className={highlightClass(withShadow)} key={`command-${index}`}>
+            {segment.text}
+        </span>
+    )
 }
 
 /**
@@ -44,22 +44,22 @@ function renderSegment(segment: SemanticHighlightSegment, index: number, withSha
  * subscribes to the catalog it should be read against.
  */
 export function highlightTextWithCatalog(
-	text: string | undefined,
-	catalog: InputSemanticCatalog,
-	withShadow = true,
+    text: string | undefined,
+    catalog: InputSemanticCatalog,
+    withShadow = true,
 ): (string | JSX.Element)[] | string | undefined {
-	if (!text) {
-		return text
-	}
-	const segments = segmentSentMessage(text, catalog)
-	if (!segments.some((segment) => segment.active && segment.role !== "text")) {
-		return text
-	}
-	return segments.map((segment, index) => renderSegment(segment, index, withShadow))
+    if (!text) {
+        return text
+    }
+    const segments = segmentSentMessage(text, catalog)
+    if (!segments.some((segment) => segment.active && segment.role !== "text")) {
+        return text
+    }
+    return segments.map((segment, index) => renderSegment(segment, index, withShadow))
 }
 
 /** Hook form for components that render sent text without threading the catalog. */
 export function useHighlightedText(text: string | undefined, withShadow = true) {
-	const catalog = useInputSemanticCatalog()
-	return highlightTextWithCatalog(text, catalog, withShadow)
+    const catalog = useInputSemanticCatalog()
+    return highlightTextWithCatalog(text, catalog, withShadow)
 }

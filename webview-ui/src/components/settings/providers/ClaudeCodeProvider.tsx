@@ -10,10 +10,10 @@ import type { ApiProfile } from "./ProviderProfile"
 import { useProviderModels } from "./useProviderModels"
 
 interface ClaudeCodeProviderProps {
-	showModelOptions: boolean
-	isPopup?: boolean
-	profile: ApiProfile
-	onUpdate: (updates: Partial<ApiProfile>) => void
+    showModelOptions: boolean
+    isPopup?: boolean
+    profile: ApiProfile
+    onUpdate: (updates: Partial<ApiProfile>) => void
 }
 
 /**
@@ -23,69 +23,69 @@ interface ClaudeCodeProviderProps {
  * than an API key or a local CLI path.
  */
 export const ClaudeCodeProvider = ({ showModelOptions, isPopup, profile, onUpdate }: ClaudeCodeProviderProps) => {
-	const { models: claudeCodeModels, defaultModelId: claudeCodeDefaultModelId } = useProviderModels("claude-code")
+    const { models: claudeCodeModels, defaultModelId: claudeCodeDefaultModelId } = useProviderModels("claude-code")
 
-	const pc = profile.claudeCode ?? ClaudeCodeProviderConfig.create()
-	const modelId = resolveProfileModelId(profile, { defaultModelId: claudeCodeDefaultModelId })
-	const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : claudeCodeModels[modelId]
-	const modelInfo = buildEffectiveModelInfo(modelId, baseModel, { capabilities: pc.capabilities })
+    const pc = profile.claudeCode ?? ClaudeCodeProviderConfig.create()
+    const modelId = resolveProfileModelId(profile, { defaultModelId: claudeCodeDefaultModelId })
+    const baseModel = profile.modelInfo?.id === modelId ? profile.modelInfo : claudeCodeModels[modelId]
+    const modelInfo = buildEffectiveModelInfo(modelId, baseModel, { capabilities: pc.capabilities })
 
-	// The request shape follows the model's declared thinking mode: an adaptive
-	// model takes an effort level and rejects a token budget, and the reverse
-	// holds for a budget model. Reading the mode keeps this panel from offering
-	// a control whose value the request would have to discard.
-	const thinking = modelInfo?.capabilities?.thinking
-	const effortOptions = thinking?.effortLevels ?? []
-	const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
-	const adaptiveThinkingSupported = thinkingSupported && thinking?.mode === "effort"
-	const budgetThinkingSupported = thinkingSupported && thinking?.mode === "budget"
-	const thinkingDisableSupported = thinking?.canDisable !== false
+    // The request shape follows the model's declared thinking mode: an adaptive
+    // model takes an effort level and rejects a token budget, and the reverse
+    // holds for a budget model. Reading the mode keeps this panel from offering
+    // a control whose value the request would have to discard.
+    const thinking = modelInfo?.capabilities?.thinking
+    const effortOptions = thinking?.effortLevels ?? []
+    const thinkingSupported = thinking?.supported === true && modelInfo.capabilities?.supportsReasoning !== false
+    const adaptiveThinkingSupported = thinkingSupported && thinking?.mode === "effort"
+    const budgetThinkingSupported = thinkingSupported && thinking?.mode === "budget"
+    const thinkingDisableSupported = thinking?.canDisable !== false
 
-	return (
-		<div>
-			<ClaudeCodeOAuthControl profileId={profile.id} />
+    return (
+        <div>
+            <ClaudeCodeOAuthControl profileId={profile.id} />
 
-			{showModelOptions && (
-				<>
-					<ModelSelector
-						label="Model"
-						models={claudeCodeModels}
-						onChange={(e) => {
-							const v = (e.target as HTMLSelectElement).value
-							onUpdate({ modelId: v, modelInfo: claudeCodeModels[v] })
-						}}
-						selectedModelId={modelId}
-					/>
-					{/* Driven by catalog metadata rather than a model ID list, which
+            {showModelOptions && (
+                <>
+                    <ModelSelector
+                        label="Model"
+                        models={claudeCodeModels}
+                        onChange={(e) => {
+                            const v = (e.target as HTMLSelectElement).value
+                            onUpdate({ modelId: v, modelInfo: claudeCodeModels[v] })
+                        }}
+                        selectedModelId={modelId}
+                    />
+                    {/* Driven by catalog metadata rather than a model ID list, which
 					    went stale as soon as the catalog changed. Both branches
 					    offer the display choice, because it belongs to the thinking
 					    block itself rather than to one of the two modes. */}
-					{(adaptiveThinkingSupported || budgetThinkingSupported) && (
-						<ThinkingControl
-							defaultEffort={thinking?.defaultEffort}
-							defaultEnabled={thinking?.defaultEnabled}
-							disableSupported={thinkingDisableSupported}
-							displayDescription={ANTHROPIC_THINKING_DISPLAY_DESCRIPTION}
-							displayLabel="Thinking Display"
-							displayOptions={ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS}
-							effortDescription={
-								thinkingDisableSupported
-									? "Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
-									: "Adaptive thinking is always enabled for this model. Higher effort increases response detail and token usage."
-							}
-							effortLabel="Adaptive Thinking"
-							effortOptions={effortOptions}
-							maxBudget={thinking?.maxBudget}
-							minBudget={thinking?.minBudget}
-							mode={adaptiveThinkingSupported ? "effort-only" : "budget-only"}
-							onReasoningConfigUpdate={(reasoning) => onUpdate({ claudeCode: { ...pc, reasoning } })}
-							reasoningConfig={pc.reasoning}
-							showModeSelector={false}
-						/>
-					)}
-					<ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
-				</>
-			)}
-		</div>
-	)
+                    {(adaptiveThinkingSupported || budgetThinkingSupported) && (
+                        <ThinkingControl
+                            defaultEffort={thinking?.defaultEffort}
+                            defaultEnabled={thinking?.defaultEnabled}
+                            disableSupported={thinkingDisableSupported}
+                            displayDescription={ANTHROPIC_THINKING_DISPLAY_DESCRIPTION}
+                            displayLabel="Thinking Display"
+                            displayOptions={ANTHROPIC_THINKING_DISPLAY_SELECTOR_OPTIONS}
+                            effortDescription={
+                                thinkingDisableSupported
+                                    ? "Use None to disable adaptive thinking. Higher effort increases response detail and token usage."
+                                    : "Adaptive thinking is always enabled for this model. Higher effort increases response detail and token usage."
+                            }
+                            effortLabel="Adaptive Thinking"
+                            effortOptions={effortOptions}
+                            maxBudget={thinking?.maxBudget}
+                            minBudget={thinking?.minBudget}
+                            mode={adaptiveThinkingSupported ? "effort-only" : "budget-only"}
+                            onReasoningConfigUpdate={(reasoning) => onUpdate({ claudeCode: { ...pc, reasoning } })}
+                            reasoningConfig={pc.reasoning}
+                            showModeSelector={false}
+                        />
+                    )}
+                    <ModelInfoView isPopup={isPopup} modelInfo={modelInfo} selectedModelId={modelId} />
+                </>
+            )}
+        </div>
+    )
 }

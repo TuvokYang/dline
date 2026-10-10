@@ -5,15 +5,15 @@ type NavigateToTaskActivity = (activityId: string) => void
 const TaskActivityNavigationContext = createContext<NavigateToTaskActivity>(() => undefined)
 
 export function TaskActivityNavigationProvider({
-	children,
-	onNavigate,
+    children,
+    onNavigate,
 }: {
-	children: ReactNode
-	onNavigate: NavigateToTaskActivity
+    children: ReactNode
+    onNavigate: NavigateToTaskActivity
 }) {
-	return <TaskActivityNavigationContext.Provider value={onNavigate}>{children}</TaskActivityNavigationContext.Provider>
+    return <TaskActivityNavigationContext.Provider value={onNavigate}>{children}</TaskActivityNavigationContext.Provider>
 }
 
 export function useTaskActivityNavigation(): NavigateToTaskActivity {
-	return useContext(TaskActivityNavigationContext)
+    return useContext(TaskActivityNavigationContext)
 }

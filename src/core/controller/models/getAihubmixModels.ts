@@ -14,9 +14,9 @@ const AIHUBMIX_PROVIDER_ID = "aihubmix"
  * @returns Response containing the AIhubmix models
  */
 export async function getAihubmixModels(_controller: Controller, _request: EmptyRequest): Promise<OpenRouterCompatibleModelInfo> {
-	const models = await discoverProviderModels(AIHUBMIX_PROVIDER_ID, undefined, { persist: true })
-	if (Object.keys(models).length === 0) {
-		Logger.error("Invalid response from AIhubmix API")
-	}
-	return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
+    const models = await discoverProviderModels(AIHUBMIX_PROVIDER_ID, undefined, { persist: true })
+    if (Object.keys(models).length === 0) {
+        Logger.error("Invalid response from AIhubmix API")
+    }
+    return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
 }

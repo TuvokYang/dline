@@ -12,12 +12,12 @@ import { computeLineDiffStats } from "./lineDiffStats"
  * Extracts provider and model information from task config for telemetry.
  */
 export function getModelInfo(config: TaskConfig): { providerId: string; modelId: string } {
-	const apiConfig = config.services.stateManager.getApiConfiguration()
-	// Use task-level mode instead of global mode to avoid cross-task interference
-	const currentMode = config.mode
-	const providerId = resolveProvider(apiConfig, currentMode)
-	const modelId = config.api.getModel().id
-	return { providerId: providerId ?? "", modelId }
+    const apiConfig = config.services.stateManager.getApiConfiguration()
+    // Use task-level mode instead of global mode to avoid cross-task interference
+    const currentMode = config.mode
+    const providerId = resolveProvider(apiConfig, currentMode)
+    const modelId = config.api.getModel().id
+    return { providerId: providerId ?? "", modelId }
 }
 
 /**
@@ -25,29 +25,29 @@ export function getModelInfo(config: TaskConfig): { providerId: string; modelId:
  * Computes line diff stats and emits event with proper source attribution.
  */
 export function captureAccepted(args: {
-	ulid: string
-	tool: string
-	source: "agent" | "human"
-	beforeContent: string
-	afterContent: string
-	providerId: string
-	modelId: string
-	filesCreated?: number
-	filesDeleted?: number
-	filesMoved?: number
+    ulid: string
+    tool: string
+    source: "agent" | "human"
+    beforeContent: string
+    afterContent: string
+    providerId: string
+    modelId: string
+    filesCreated?: number
+    filesDeleted?: number
+    filesMoved?: number
 }): void {
-	const diffStats = computeLineDiffStats(args.beforeContent, args.afterContent)
-	telemetryService.captureAiOutputAccepted({
-		ulid: args.ulid,
-		tool: args.tool,
-		provider: args.providerId,
-		model: args.modelId,
-		source: args.source,
-		...diffStats,
-		filesCreated: args.filesCreated,
-		filesDeleted: args.filesDeleted,
-		filesMoved: args.filesMoved,
-	})
+    const diffStats = computeLineDiffStats(args.beforeContent, args.afterContent)
+    telemetryService.captureAiOutputAccepted({
+        ulid: args.ulid,
+        tool: args.tool,
+        provider: args.providerId,
+        model: args.modelId,
+        source: args.source,
+        ...diffStats,
+        filesCreated: args.filesCreated,
+        filesDeleted: args.filesDeleted,
+        filesMoved: args.filesMoved,
+    })
 }
 
 /**
@@ -55,27 +55,27 @@ export function captureAccepted(args: {
  * Computes line diff stats and emits event with proper source attribution.
  */
 export function captureRejected(args: {
-	ulid: string
-	tool: string
-	source: "agent" | "human"
-	beforeContent: string
-	afterContent: string
-	providerId: string
-	modelId: string
-	filesCreated?: number
-	filesDeleted?: number
-	filesMoved?: number
+    ulid: string
+    tool: string
+    source: "agent" | "human"
+    beforeContent: string
+    afterContent: string
+    providerId: string
+    modelId: string
+    filesCreated?: number
+    filesDeleted?: number
+    filesMoved?: number
 }): void {
-	const diffStats = computeLineDiffStats(args.beforeContent, args.afterContent)
-	telemetryService.captureAiOutputRejected({
-		ulid: args.ulid,
-		tool: args.tool,
-		provider: args.providerId,
-		model: args.modelId,
-		source: args.source,
-		...diffStats,
-		filesCreated: args.filesCreated,
-		filesDeleted: args.filesDeleted,
-		filesMoved: args.filesMoved,
-	})
+    const diffStats = computeLineDiffStats(args.beforeContent, args.afterContent)
+    telemetryService.captureAiOutputRejected({
+        ulid: args.ulid,
+        tool: args.tool,
+        provider: args.providerId,
+        model: args.modelId,
+        source: args.source,
+        ...diffStats,
+        filesCreated: args.filesCreated,
+        filesDeleted: args.filesDeleted,
+        filesMoved: args.filesMoved,
+    })
 }

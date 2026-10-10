@@ -2,11 +2,11 @@ import { randomUUID } from "node:crypto"
 import { ContextManager } from "@core/context/context-management/ContextManager"
 import { USER_CONTENT_TAGS } from "@shared/messages/constants"
 import {
-	type ClineImageContentBlock,
-	type ClineStorageMessage,
-	type ClineTextContentBlock,
-	type ClineUserToolResultContentBlock,
-	imageSourceToUrl,
+    type ClineImageContentBlock,
+    type ClineStorageMessage,
+    type ClineTextContentBlock,
+    type ClineUserToolResultContentBlock,
+    imageSourceToUrl,
 } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 import { type ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES } from "@shared/tools"
@@ -14,38 +14,38 @@ import type { JournalConversationView } from "../executors/provider/service/Jour
 import type { ConversationJournal, JournalEntry, JournalWatermark, TaskPayloadStore } from "../stores"
 import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type {
-	CompactionContinuation,
-	CompactionReplyBoundary,
-	CompactionSummaryEnvelope,
+    CompactionContinuation,
+    CompactionReplyBoundary,
+    CompactionSummaryEnvelope,
 } from "../stores/payload/TaskPayloadEnvelopes"
 import type { CompactionLandingInput, CompactionLandingPort, CompactionSpan } from "./CompactionSummaryLanding"
 
 /** What a compaction summarizes, and the journal span the summary will stand for. */
 export interface CompactionSource {
-	readonly messages: ClineStorageMessage[]
-	/**
-	 * Journal position of each message in `messages`, as `[seq, seq]`.
-	 *
-	 * A summary may stand for only the oldest turns of the span when the rest
-	 * already fits, so landing needs to know where each summarized message
-	 * lives to shrink the span to what was actually covered.
-	 */
-	readonly sourceRanges?: ReadonlyArray<readonly [number, number]>
-	/** Visible messages after the span, which the next request carries after the summary. */
-	readonly tail?: ClineStorageMessage[]
-	/** Absent when nothing past the opening request has been answered yet. */
-	readonly span?: CompactionSpan
-	/**
-	 * The user's reply the span has to end on, replayed after the summary.
-	 *
-	 * Present when that reply opens the turn still waiting on the user: the
-	 * reply belongs to the protected continuation (WS-010 §2), but its tool
-	 * result must stay paired with the call it answers, so the result is
-	 * condensed and the reply itself survives the summary verbatim.
-	 */
-	readonly continuation?: CompactionContinuation
-	/** Replies inside the span, so a summary of only its oldest turns still lands each call with its result. */
-	readonly replies?: readonly CompactionReplyBoundary[]
+    readonly messages: ClineStorageMessage[]
+    /**
+     * Journal position of each message in `messages`, as `[seq, seq]`.
+     *
+     * A summary may stand for only the oldest turns of the span when the rest
+     * already fits, so landing needs to know where each summarized message
+     * lives to shrink the span to what was actually covered.
+     */
+    readonly sourceRanges?: ReadonlyArray<readonly [number, number]>
+    /** Visible messages after the span, which the next request carries after the summary. */
+    readonly tail?: ClineStorageMessage[]
+    /** Absent when nothing past the opening request has been answered yet. */
+    readonly span?: CompactionSpan
+    /**
+     * The user's reply the span has to end on, replayed after the summary.
+     *
+     * Present when that reply opens the turn still waiting on the user: the
+     * reply belongs to the protected continuation (WS-010 §2), but its tool
+     * result must stay paired with the call it answers, so the result is
+     * condensed and the reply itself survives the summary verbatim.
+     */
+    readonly continuation?: CompactionContinuation
+    /** Replies inside the span, so a summary of only its oldest turns still lands each call with its result. */
+    readonly replies?: readonly CompactionReplyBoundary[]
 }
 
 /**
@@ -57,22 +57,22 @@ export interface CompactionSource {
  * where that conversation is stored.
  */
 export interface CompactionConversationPort {
-	read(): Promise<CompactionSource>
+    read(): Promise<CompactionSource>
 }
 
 /** Removes the oldest settled history so a request the provider refused as too long fits again. */
 export interface ContextTruncationPort {
-	/** Resolves the truncation record's position, or undefined when nothing settled can be removed. */
-	truncate(input: { readonly notice: string; readonly signal?: AbortSignal }): Promise<JournalWatermark | undefined>
+    /** Resolves the truncation record's position, or undefined when nothing settled can be removed. */
+    truncate(input: { readonly notice: string; readonly signal?: AbortSignal }): Promise<JournalWatermark | undefined>
 }
 
 interface ConversationItem {
-	readonly entry: JournalEntry
-	/** Payload kind of the entry, which is what says who wrote a user-role message. */
-	readonly kind: string
-	readonly message: ClineStorageMessage
-	/** Set on the reply a landed summary replays after itself; that reply is still the user's open input. */
-	readonly continuation?: CompactionContinuation
+    readonly entry: JournalEntry
+    /** Payload kind of the entry, which is what says who wrote a user-role message. */
+    readonly kind: string
+    readonly message: ClineStorageMessage
+    /** Set on the reply a landed summary replays after itself; that reply is still the user's open input. */
+    readonly continuation?: CompactionContinuation
 }
 
 /**
@@ -87,33 +87,33 @@ interface ConversationItem {
  * entry and is never considered user-authored input.
  */
 function repairConversationItems(items: readonly ConversationItem[]): ConversationItem[] {
-	const ranges = items.map(({ entry }) => [entry.watermark.seq, entry.watermark.seq] as const)
-	const repaired = new ContextManager().repairProviderMessagesWithRanges(
-		items.map(({ message }) => structuredClone(message)),
-		[...ranges],
-	)
-	const originalsBySeq = new Map<number, ConversationItem[]>()
-	for (const item of items) {
-		const sequence = originalsBySeq.get(item.entry.watermark.seq) ?? []
-		sequence.push(item)
-		originalsBySeq.set(item.entry.watermark.seq, sequence)
-	}
+    const ranges = items.map(({ entry }) => [entry.watermark.seq, entry.watermark.seq] as const)
+    const repaired = new ContextManager().repairProviderMessagesWithRanges(
+        items.map(({ message }) => structuredClone(message)),
+        [...ranges],
+    )
+    const originalsBySeq = new Map<number, ConversationItem[]>()
+    for (const item of items) {
+        const sequence = originalsBySeq.get(item.entry.watermark.seq) ?? []
+        sequence.push(item)
+        originalsBySeq.set(item.entry.watermark.seq, sequence)
+    }
 
-	const projected: ConversationItem[] = []
-	for (let index = 0; index < repaired.messages.length; index++) {
-		const message = repaired.messages[index]
-		const range = repaired.canonicalRanges[index]
-		if (range) {
-			const original = originalsBySeq.get(range[0])?.shift()
-			if (!original) throw new Error(`CompactionPairingRangeMissing:${range[0]}`)
-			projected.push({ ...original, message })
-			continue
-		}
-		const previous = projected.at(-1)
-		if (!previous) throw new Error("CompactionPairingRepairMissingAnchor")
-		projected.push({ entry: previous.entry, kind: "pairing_repair", message })
-	}
-	return projected
+    const projected: ConversationItem[] = []
+    for (let index = 0; index < repaired.messages.length; index++) {
+        const message = repaired.messages[index]
+        const range = repaired.canonicalRanges[index]
+        if (range) {
+            const original = originalsBySeq.get(range[0])?.shift()
+            if (!original) throw new Error(`CompactionPairingRangeMissing:${range[0]}`)
+            projected.push({ ...original, message })
+            continue
+        }
+        const previous = projected.at(-1)
+        if (!previous) throw new Error("CompactionPairingRepairMissingAnchor")
+        projected.push({ entry: previous.entry, kind: "pairing_repair", message })
+    }
+    return projected
 }
 
 /** Tool id to tool name, so a result can be told apart by the call it answers. */
@@ -129,11 +129,11 @@ type ToolNames = ReadonlyMap<string, string>
  * the task or feedback an earlier version recorded, so it counts as written too.
  */
 const USER_AUTHORED_KINDS: ReadonlySet<string> = new Set([
-	"user_input",
-	"dialog_draft",
-	"dialog_selection",
-	"task_handoff",
-	"api_history_message",
+    "user_input",
+    "dialog_draft",
+    "dialog_selection",
+    "task_handoff",
+    "api_history_message",
 ])
 
 /**
@@ -144,40 +144,40 @@ const USER_AUTHORED_KINDS: ReadonlySet<string> = new Set([
  * model a paraphrase of input it is about to read verbatim.
  */
 const REPLY_KEPT_AFTER_SUMMARY =
-	"The user replied to this call. The reply follows the summary verbatim, so it is not part of what is summarized."
+    "The user replied to this call. The reply follows the summary verbatim, so it is not part of what is summarized."
 
 function toolUseIds(message: ClineStorageMessage): string[] {
-	if (message.role !== "assistant" || !Array.isArray(message.content)) return []
-	return message.content.flatMap((block) => (block.type === "tool_use" ? [block.function_id] : []))
+    if (message.role !== "assistant" || !Array.isArray(message.content)) return []
+    return message.content.flatMap((block) => (block.type === "tool_use" ? [block.function_id] : []))
 }
 
 function toolResults(message: ClineStorageMessage): ClineUserToolResultContentBlock[] {
-	if (message.role !== "user" || !Array.isArray(message.content)) return []
-	return message.content.filter((block): block is ClineUserToolResultContentBlock => block.type === "tool_result")
+    if (message.role !== "user" || !Array.isArray(message.content)) return []
+    return message.content.filter((block): block is ClineUserToolResultContentBlock => block.type === "tool_result")
 }
 
 function toolResultIds(message: ClineStorageMessage): string[] {
-	return toolResults(message).map((block) => block.function_id)
+    return toolResults(message).map((block) => block.function_id)
 }
 
 function toolNames(messages: readonly ClineStorageMessage[]): ToolNames {
-	const names = new Map<string, string>()
-	for (const message of messages) {
-		if (message.role !== "assistant" || !Array.isArray(message.content)) continue
-		for (const block of message.content) if (block.type === "tool_use") names.set(block.function_id, block.name)
-	}
-	return names
+    const names = new Map<string, string>()
+    for (const message of messages) {
+        if (message.role !== "assistant" || !Array.isArray(message.content)) continue
+        for (const block of message.content) if (block.type === "tool_use") names.set(block.function_id, block.name)
+    }
+    return names
 }
 
 function resultParts(block: ClineUserToolResultContentBlock): Array<ClineTextContentBlock | ClineImageContentBlock> {
-	return typeof block.content === "string" ? [{ type: "text", text: block.content }] : block.content
+    return typeof block.content === "string" ? [{ type: "text", text: block.content }] : block.content
 }
 
 /** How a handler frames a file the user attached to a reply (`processFilesIntoText`). */
 const FILE_ATTACHMENT_OPENING = "<file_content "
 
 function isFileAttachment(text: string): boolean {
-	return text.trimStart().startsWith(FILE_ATTACHMENT_OPENING)
+    return text.trimStart().startsWith(FILE_ATTACHMENT_OPENING)
 }
 
 /**
@@ -188,13 +188,13 @@ function isFileAttachment(text: string): boolean {
  * Image-only and file-only replies have no tagged text to find.
  */
 function userReplies(message: ClineStorageMessage, names: ToolNames): ClineUserToolResultContentBlock[] {
-	return toolResults(message).filter((block) => {
-		const name = names.get(block.function_id)
-		if (!name || !CONVERSATIONAL_TOOL_NAMES.has(name as ClineDefaultTool)) return false
-		return resultParts(block).some(
-			(part) => part.type === "image" || hasUserContentTag(part.text) || isFileAttachment(part.text),
-		)
-	})
+    return toolResults(message).filter((block) => {
+        const name = names.get(block.function_id)
+        if (!name || !CONVERSATIONAL_TOOL_NAMES.has(name as ClineDefaultTool)) return false
+        return resultParts(block).some(
+            (part) => part.type === "image" || hasUserContentTag(part.text) || isFileAttachment(part.text),
+        )
+    })
 }
 
 /**
@@ -203,35 +203,35 @@ function userReplies(message: ClineStorageMessage, names: ToolNames): ClineUserT
  * system context are journaled as user messages too, but nobody wrote them.
  */
 function opensTurn(item: ConversationItem, names: ToolNames): boolean {
-	if (item.message.role !== "user") return false
-	if (item.continuation) return true
-	if (toolResults(item.message).length > 0) return userReplies(item.message, names).length > 0
-	return USER_AUTHORED_KINDS.has(item.kind)
+    if (item.message.role !== "user") return false
+    if (item.continuation) return true
+    if (toolResults(item.message).length > 0) return userReplies(item.message, names).length > 0
+    return USER_AUTHORED_KINDS.has(item.kind)
 }
 
 function lastAssistantIndex(messages: readonly ClineStorageMessage[]): number {
-	for (let index = messages.length - 1; index >= 0; index--) {
-		if (messages[index]?.role === "assistant") return index
-	}
-	return -1
+    for (let index = messages.length - 1; index >= 0; index--) {
+        if (messages[index]?.role === "assistant") return index
+    }
+    return -1
 }
 
 /** Index of the first assistant message within `[0, end]` whose tool call has no result within it. */
 function firstUnpairedCall(messages: readonly ClineStorageMessage[], end: number): number {
-	const answered = new Set(messages.slice(0, end + 1).flatMap(toolResultIds))
-	return messages.findIndex((message, index) => index <= end && toolUseIds(message).some((id) => !answered.has(id)))
+    const answered = new Set(messages.slice(0, end + 1).flatMap(toolResultIds))
+    return messages.findIndex((message, index) => index <= end && toolUseIds(message).some((id) => !answered.has(id)))
 }
 
 /** Index of the first message within `[0, end]` with a tool result no earlier call issued. */
 function firstOrphanResult(messages: readonly ClineStorageMessage[], end: number): number {
-	const called = new Set<string>()
-	for (let index = 0; index <= end; index++) {
-		const message = messages[index]
-		if (!message) continue
-		for (const id of toolUseIds(message)) called.add(id)
-		if (toolResultIds(message).some((id) => !called.has(id))) return index
-	}
-	return -1
+    const called = new Set<string>()
+    for (let index = 0; index <= end; index++) {
+        const message = messages[index]
+        if (!message) continue
+        for (const id of toolUseIds(message)) called.add(id)
+        if (toolResultIds(message).some((id) => !called.has(id))) return index
+    }
+    return -1
 }
 
 /**
@@ -240,13 +240,13 @@ function firstOrphanResult(messages: readonly ClineStorageMessage[], end: number
  * continuation (WS-010 §2), never summarized.
  */
 function settledEnd(messages: readonly ClineStorageMessage[], limit: number): number {
-	let end = limit
-	while (end >= 0) {
-		const cuts = [firstUnpairedCall(messages, end), firstOrphanResult(messages, end)].filter((index) => index >= 0)
-		if (cuts.length === 0) return end
-		end = Math.min(...cuts) - 1
-	}
-	return end
+    let end = limit
+    while (end >= 0) {
+        const cuts = [firstUnpairedCall(messages, end), firstOrphanResult(messages, end)].filter((index) => index >= 0)
+        if (cuts.length === 0) return end
+        end = Math.min(...cuts) - 1
+    }
+    return end
 }
 
 /**
@@ -261,19 +261,19 @@ function settledEnd(messages: readonly ClineStorageMessage[], limit: number): nu
  * settled span stays provider-projectable on its own.
  */
 function lastSettledIndex(items: readonly ConversationItem[], names: ToolNames): number {
-	const messages = items.map((item) => item.message)
-	let end = lastAssistantIndex(messages)
-	while (end >= 0) {
-		const next = items[end + 1]
-		if (!next || toolResults(next.message).length === 0 || opensTurn(next, names)) break
-		end++
-	}
-	return settledEnd(messages, end)
+    const messages = items.map((item) => item.message)
+    let end = lastAssistantIndex(messages)
+    while (end >= 0) {
+        const next = items[end + 1]
+        if (!next || toolResults(next.message).length === 0 || opensTurn(next, names)) break
+        end++
+    }
+    return settledEnd(messages, end)
 }
 
 /** Index of the first call the model is still waiting on, or -1 when the journal answers every call. */
 function firstOpenCall(messages: readonly ClineStorageMessage[]): number {
-	return firstUnpairedCall(messages, messages.length - 1)
+    return firstUnpairedCall(messages, messages.length - 1)
 }
 
 /**
@@ -284,18 +284,18 @@ function firstOpenCall(messages: readonly ClineStorageMessage[]): number {
  * which case the next call the model made after that round opened the turn.
  */
 function openTurnStart(items: readonly ConversationItem[], names: ToolNames): number {
-	const messages = items.map((item) => item.message)
-	const open = firstOpenCall(messages)
-	if (open < 0) return -1
-	for (let index = open - 1; index >= 0; index--) {
-		const item = items[index]
-		if (!item) continue
-		if (opensTurn(item, names)) return index
-		if (toolResults(item.message).length > 0) {
-			return messages.findIndex((message, next) => next > index && toolUseIds(message).length > 0)
-		}
-	}
-	return 0
+    const messages = items.map((item) => item.message)
+    const open = firstOpenCall(messages)
+    if (open < 0) return -1
+    for (let index = open - 1; index >= 0; index--) {
+        const item = items[index]
+        if (!item) continue
+        if (opensTurn(item, names)) return index
+        if (toolResults(item.message).length > 0) {
+            return messages.findIndex((message, next) => next > index && toolUseIds(message).length > 0)
+        }
+    }
+    return 0
 }
 
 /**
@@ -310,12 +310,12 @@ function openTurnStart(items: readonly ConversationItem[], names: ToolNames): nu
  * as the input of the round being composed.
  */
 function onlyRoundReply(items: readonly ConversationItem[], names: ToolNames, end: number): number {
-	const messages = items.map((item) => item.message)
-	if (messages.slice(0, end + 1).some((message) => message.role === "assistant")) return -1
-	const reply = lastAssistantIndex(messages) + 1
-	const answer = items[reply]
-	if (reply === 0 || !answer || userReplies(answer.message, names).length === 0) return -1
-	return settledEnd(messages, reply) === reply ? reply : -1
+    const messages = items.map((item) => item.message)
+    if (messages.slice(0, end + 1).some((message) => message.role === "assistant")) return -1
+    const reply = lastAssistantIndex(messages) + 1
+    const answer = items[reply]
+    if (reply === 0 || !answer || userReplies(answer.message, names).length === 0) return -1
+    return settledEnd(messages, reply) === reply ? reply : -1
 }
 
 /**
@@ -328,21 +328,21 @@ function onlyRoundReply(items: readonly ConversationItem[], names: ToolNames, en
  * and the reply itself is carried past the summary.
  */
 function settledBoundary(
-	items: readonly ConversationItem[],
-	names: ToolNames,
+    items: readonly ConversationItem[],
+    names: ToolNames,
 ): { readonly end: number; readonly reply: boolean } {
-	const messages = items.map((item) => item.message)
-	const end = lastSettledIndex(items, names)
-	const start = openTurnStart(items, names)
-	if (start < 0) {
-		const reply = onlyRoundReply(items, names, end)
-		return reply < 0 ? { end, reply: false } : { end: reply, reply: true }
-	}
-	const opening = messages[start]
-	if (start > end || !opening) return { end, reply: false }
-	if (userReplies(opening, names).length === 0) return { end: settledEnd(messages, start - 1), reply: false }
-	const replyEnd = settledEnd(messages, start)
-	return { end: replyEnd, reply: replyEnd === start }
+    const messages = items.map((item) => item.message)
+    const end = lastSettledIndex(items, names)
+    const start = openTurnStart(items, names)
+    if (start < 0) {
+        const reply = onlyRoundReply(items, names, end)
+        return reply < 0 ? { end, reply: false } : { end: reply, reply: true }
+    }
+    const opening = messages[start]
+    if (start > end || !opening) return { end, reply: false }
+    if (userReplies(opening, names).length === 0) return { end: settledEnd(messages, start - 1), reply: false }
+    const replyEnd = settledEnd(messages, start)
+    return { end: replyEnd, reply: replyEnd === start }
 }
 
 /**
@@ -355,19 +355,19 @@ function settledBoundary(
  * trailing whitespace survives.
  */
 function unwrapReply(text: string): string | undefined {
-	const lower = text.toLowerCase()
-	const opened = USER_CONTENT_TAGS.map((tag) => ({ tag, at: lower.indexOf(tag) }))
-		.filter(({ at }) => at >= 0)
-		.sort((left, right) => left.at - right.at)[0]
-	if (!opened) return undefined
-	const bodyStart = opened.at + opened.tag.length
-	const bodyEnd = lower.lastIndexOf(`</${opened.tag.slice(1)}`)
-	if (bodyEnd < bodyStart) return undefined
-	return text.slice(bodyStart, bodyEnd).replace(/^\n/, "").replace(/\n$/, "")
+    const lower = text.toLowerCase()
+    const opened = USER_CONTENT_TAGS.map((tag) => ({ tag, at: lower.indexOf(tag) }))
+        .filter(({ at }) => at >= 0)
+        .sort((left, right) => left.at - right.at)[0]
+    if (!opened) return undefined
+    const bodyStart = opened.at + opened.tag.length
+    const bodyEnd = lower.lastIndexOf(`</${opened.tag.slice(1)}`)
+    if (bodyEnd < bodyStart) return undefined
+    return text.slice(bodyStart, bodyEnd).replace(/^\n/, "").replace(/\n$/, "")
 }
 
 function hasUserContentTag(text: string): boolean {
-	return USER_CONTENT_TAGS.some((tag) => text.toLowerCase().includes(tag))
+    return USER_CONTENT_TAGS.some((tag) => text.toLowerCase().includes(tag))
 }
 
 /**
@@ -379,30 +379,30 @@ function hasUserContentTag(text: string): boolean {
  * its result.
  */
 function replyExchange(
-	items: readonly ConversationItem[],
-	replyIndex: number,
-	names: ToolNames,
+    items: readonly ConversationItem[],
+    replyIndex: number,
+    names: ToolNames,
 ): ClineStorageMessage[] | undefined {
-	const reply = items[replyIndex]
-	if (!reply) return undefined
-	const answered = new Set(userReplies(reply.message, names).map((block) => block.function_id))
-	for (let index = replyIndex - 1; index >= 0; index--) {
-		const item = items[index]
-		if (!item || !toolUseIds(item.message).some((id) => answered.has(id))) continue
-		return items.slice(index, replyIndex + 1).map(({ message }) => message)
-	}
-	return undefined
+    const reply = items[replyIndex]
+    if (!reply) return undefined
+    const answered = new Set(userReplies(reply.message, names).map((block) => block.function_id))
+    for (let index = replyIndex - 1; index >= 0; index--) {
+        const item = items[index]
+        if (!item || !toolUseIds(item.message).some((id) => answered.has(id))) continue
+        return items.slice(index, replyIndex + 1).map(({ message }) => message)
+    }
+    return undefined
 }
 
 /** Whether the model answered anything after `index`; a reply nothing answered yet is still pending. */
 function answeredAfter(items: readonly ConversationItem[], index: number): boolean {
-	return items.slice(index + 1).some((item) => item.message.role === "assistant")
+    return items.slice(index + 1).some((item) => item.message.role === "assistant")
 }
 
 /** The continuation without the call it answers, for a reply the model already went on from. */
 function withoutExchange(continuation: CompactionContinuation): CompactionContinuation {
-	const { exchange: _exchange, ...reply } = continuation
-	return reply
+    const { exchange: _exchange, ...reply } = continuation
+    return reply
 }
 
 /**
@@ -418,63 +418,63 @@ function withoutExchange(continuation: CompactionContinuation): CompactionContin
  * back with it.
  */
 function replyContinuation(items: readonly ConversationItem[], replyIndex: number, names: ToolNames): CompactionContinuation {
-	const message = items[replyIndex]?.message
-	if (!message) return { text: "" }
-	const texts: string[] = []
-	const images: string[] = []
-	for (const block of userReplies(message, names)) {
-		let unwrapped = false
-		for (const part of resultParts(block)) {
-			if (part.type === "image") {
-				if (part.source.type === "base64") images.push(imageSourceToUrl(part.source))
-				else Logger.warn("[Compaction] A reply image without inline data cannot be replayed after the summary")
-				continue
-			}
-			if (isFileAttachment(part.text)) {
-				texts.push(part.text)
-				continue
-			}
-			const body = unwrapped ? undefined : unwrapReply(part.text)
-			if (body === undefined) continue
-			unwrapped = true
-			texts.push(body)
-		}
-	}
-	const text = texts.filter((value) => value.trim().length > 0).join("\n\n")
-	const exchange = answeredAfter(items, replyIndex) ? undefined : replyExchange(items, replyIndex, names)
-	return { text, ...(images.length > 0 ? { images } : {}), ...(exchange ? { exchange } : {}) }
+    const message = items[replyIndex]?.message
+    if (!message) return { text: "" }
+    const texts: string[] = []
+    const images: string[] = []
+    for (const block of userReplies(message, names)) {
+        let unwrapped = false
+        for (const part of resultParts(block)) {
+            if (part.type === "image") {
+                if (part.source.type === "base64") images.push(imageSourceToUrl(part.source))
+                else Logger.warn("[Compaction] A reply image without inline data cannot be replayed after the summary")
+                continue
+            }
+            if (isFileAttachment(part.text)) {
+                texts.push(part.text)
+                continue
+            }
+            const body = unwrapped ? undefined : unwrapReply(part.text)
+            if (body === undefined) continue
+            unwrapped = true
+            texts.push(body)
+        }
+    }
+    const text = texts.filter((value) => value.trim().length > 0).join("\n\n")
+    const exchange = answeredAfter(items, replyIndex) ? undefined : replyExchange(items, replyIndex, names)
+    return { text, ...(images.length > 0 ? { images } : {}), ...(exchange ? { exchange } : {}) }
 }
 
 /** The same message with the reply replaced by a note, so the summary keeps the pairing but not the reply. */
 function withoutReplies(message: ClineStorageMessage, names: ToolNames): ClineStorageMessage {
-	if (!Array.isArray(message.content)) return message
-	const replied = new Set(userReplies(message, names).map((block) => block.function_id))
-	return {
-		...message,
-		content: message.content.map((block) =>
-			block.type === "tool_result" && replied.has(block.function_id)
-				? { ...block, content: REPLY_KEPT_AFTER_SUMMARY }
-				: block,
-		),
-	}
+    if (!Array.isArray(message.content)) return message
+    const replied = new Set(userReplies(message, names).map((block) => block.function_id))
+    return {
+        ...message,
+        content: message.content.map((block) =>
+            block.type === "tool_result" && replied.has(block.function_id)
+                ? { ...block, content: REPLY_KEPT_AFTER_SUMMARY }
+                : block,
+        ),
+    }
 }
 
 /** Each reply the span ending at `end` holds, located by the call it answers. */
 function replyBoundaries(items: readonly ConversationItem[], end: number, names: ToolNames): CompactionReplyBoundary[] {
-	const covered = items.slice(0, end + 1)
-	return covered.flatMap((item, index) => {
-		const answered = new Set(userReplies(item.message, names).map((block) => block.function_id))
-		if (answered.size === 0) return []
-		const call = covered.find((candidate) => toolUseIds(candidate.message).some((id) => answered.has(id)))
-		if (!call) return []
-		return [
-			{
-				callSeq: call.entry.watermark.seq,
-				replySeq: item.entry.watermark.seq,
-				continuation: replyContinuation(items, index, names),
-			},
-		]
-	})
+    const covered = items.slice(0, end + 1)
+    return covered.flatMap((item, index) => {
+        const answered = new Set(userReplies(item.message, names).map((block) => block.function_id))
+        if (answered.size === 0) return []
+        const call = covered.find((candidate) => toolUseIds(candidate.message).some((id) => answered.has(id)))
+        if (!call) return []
+        return [
+            {
+                callSeq: call.entry.watermark.seq,
+                replySeq: item.entry.watermark.seq,
+                continuation: replyContinuation(items, index, names),
+            },
+        ]
+    })
 }
 
 /**
@@ -485,24 +485,24 @@ function replyBoundaries(items: readonly ConversationItem[], end: number, names:
  * and a range cannot split a record, so the head extends past all of it.
  */
 function truncationStart(items: readonly ConversationItem[], names: ToolNames): number {
-	const opening = items.findIndex((item) => opensTurn(item, names) || item.kind === "compaction_summary")
-	if (opening < 0) return -1
-	let start = opening + 1
-	while (start < items.length && items[start]?.entry === items[opening]?.entry) start++
-	return start < items.length ? start : -1
+    const opening = items.findIndex((item) => opensTurn(item, names) || item.kind === "compaction_summary")
+    if (opening < 0) return -1
+    let start = opening + 1
+    while (start < items.length && items[start]?.entry === items[opening]?.entry) start++
+    return start < items.length ? start : -1
 }
 
 /** Whether each prefix pairs every call with its result and every result with its call. */
 function closedPrefixes(messages: readonly ClineStorageMessage[]): boolean[] {
-	const open = new Set<string>()
-	let orphaned = false
-	return messages.map((message) => {
-		for (const id of toolUseIds(message)) open.add(id)
-		for (const id of toolResultIds(message)) {
-			if (!open.delete(id)) orphaned = true
-		}
-		return !orphaned && open.size === 0
-	})
+    const open = new Set<string>()
+    let orphaned = false
+    return messages.map((message) => {
+        for (const id of toolUseIds(message)) open.add(id)
+        for (const id of toolResultIds(message)) {
+            if (!open.delete(id)) orphaned = true
+        }
+        return !orphaned && open.size === 0
+    })
 }
 
 /**
@@ -516,11 +516,11 @@ function closedPrefixes(messages: readonly ClineStorageMessage[]): boolean[] {
  * a refusal is never answered by removing nothing.
  */
 function truncationCut(items: readonly ConversationItem[], first: number, target: number, last: number): number {
-	const closed = closedPrefixes(items.map((item) => item.message))
-	const cuts = (index: number) => closed[index] === true && items[index + 1]?.entry !== items[index]?.entry
-	for (let index = Math.min(target, last); index >= first; index--) if (cuts(index)) return index
-	for (let index = target + 1; index <= last; index++) if (cuts(index)) return index
-	return -1
+    const closed = closedPrefixes(items.map((item) => item.message))
+    const cuts = (index: number) => closed[index] === true && items[index + 1]?.entry !== items[index]?.entry
+    for (let index = Math.min(target, last); index >= first; index--) if (cuts(index)) return index
+    for (let index = target + 1; index <= last; index++) if (cuts(index)) return index
+    return -1
 }
 
 /**
@@ -530,11 +530,11 @@ function truncationCut(items: readonly ConversationItem[], first: number, target
  * answered, as a reply that was never pending would.
  */
 function carriedContinuation(items: readonly ConversationItem[], end: number): CompactionContinuation | undefined {
-	const next = items[end + 1]
-	if (next?.continuation === undefined || next.entry !== items[end]?.entry) return undefined
-	let last = end + 1
-	while (items[last + 1]?.entry === next.entry) last++
-	return answeredAfter(items, last) ? withoutExchange(next.continuation) : next.continuation
+    const next = items[end + 1]
+    if (next?.continuation === undefined || next.entry !== items[end]?.entry) return undefined
+    let last = end + 1
+    while (items[last + 1]?.entry === next.entry) last++
+    return answeredAfter(items, last) ? withoutExchange(next.continuation) : next.continuation
 }
 
 /**
@@ -550,155 +550,155 @@ function carriedContinuation(items: readonly ConversationItem[], end: number): C
  * disk, so a replay can still explain what the summary stands for.
  */
 export class JournalCompactionConversation implements CompactionConversationPort, CompactionLandingPort, ContextTruncationPort {
-	constructor(
-		private readonly journal: ConversationJournal,
-		private readonly payloads: TaskPayloadStore,
-		private readonly conversation: JournalConversationView,
-	) {}
+    constructor(
+        private readonly journal: ConversationJournal,
+        private readonly payloads: TaskPayloadStore,
+        private readonly conversation: JournalConversationView,
+    ) {}
 
-	/**
-	 * The settled conversation, fixed as a span when it was read.
-	 *
-	 * The span starts at logical turn 0, opening request included: the summary
-	 * carries the task forward, so the next request reads the summary in place
-	 * of the request rather than both. A conversation the model has not answered
-	 * yet has nothing settled and offers no span.
-	 */
-	async read(): Promise<CompactionSource> {
-		const items = await this.items()
-		const all = items.map((item) => item.message)
-		const names = toolNames(all)
-		const { end, reply } = settledBoundary(items, names)
-		const first = items[0]
-		const last = items[end]
-		// Nothing condensable: the source is only read to be refused, so it stays what was settled.
-		if (end < 0 || !first || !last) return { messages: all.slice(0, lastSettledIndex(items, names) + 1) }
-		const covered = items.slice(0, end + 1)
-		const messages = covered.map((item, index) =>
-			reply && index === end ? withoutReplies(item.message, names) : item.message,
-		)
-		const sourceRanges = covered.map(({ entry }) => [entry.watermark.seq, entry.watermark.seq] as const)
-		const tail = items.slice(end + 1).map((item) => item.message)
-		const span = { from: first.entry.watermark, to: last.entry.watermark }
-		const continuation = reply ? replyContinuation(items, end, names) : carriedContinuation(items, end)
-		const replies = replyBoundaries(items, end, names)
-		return {
-			messages,
-			sourceRanges,
-			tail,
-			span,
-			...(continuation ? { continuation } : {}),
-			...(replies.length > 0 ? { replies } : {}),
-		}
-	}
+    /**
+     * The settled conversation, fixed as a span when it was read.
+     *
+     * The span starts at logical turn 0, opening request included: the summary
+     * carries the task forward, so the next request reads the summary in place
+     * of the request rather than both. A conversation the model has not answered
+     * yet has nothing settled and offers no span.
+     */
+    async read(): Promise<CompactionSource> {
+        const items = await this.items()
+        const all = items.map((item) => item.message)
+        const names = toolNames(all)
+        const { end, reply } = settledBoundary(items, names)
+        const first = items[0]
+        const last = items[end]
+        // Nothing condensable: the source is only read to be refused, so it stays what was settled.
+        if (end < 0 || !first || !last) return { messages: all.slice(0, lastSettledIndex(items, names) + 1) }
+        const covered = items.slice(0, end + 1)
+        const messages = covered.map((item, index) =>
+            reply && index === end ? withoutReplies(item.message, names) : item.message,
+        )
+        const sourceRanges = covered.map(({ entry }) => [entry.watermark.seq, entry.watermark.seq] as const)
+        const tail = items.slice(end + 1).map((item) => item.message)
+        const span = { from: first.entry.watermark, to: last.entry.watermark }
+        const continuation = reply ? replyContinuation(items, end, names) : carriedContinuation(items, end)
+        const replies = replyBoundaries(items, end, names)
+        return {
+            messages,
+            sourceRanges,
+            tail,
+            span,
+            ...(continuation ? { continuation } : {}),
+            ...(replies.length > 0 ? { replies } : {}),
+        }
+    }
 
-	/**
-	 * Replace the span with the summary, keeping everything after it.
-	 *
-	 * The span is the one the request was built from. Recomputing it here would
-	 * condense whatever reached the journal while the summary was produced,
-	 * which the summary never saw. Input after the span is not touched: the
-	 * summary takes the span's place, so the next request reads it first and
-	 * the unanswered input after it.
-	 *
-	 * Hiding the span and placing the summary is one journal record. Two
-	 * records would let a crash between them leave the span hidden with no
-	 * summary, which loses the conversation instead of shrinking it.
-	 */
-	async land(input: CompactionLandingInput): Promise<void> {
-		// Deriving the span now would take in whatever arrived while the summary
-		// was produced, so a landing without the request's span is refused.
-		const span = input.span
-		if (!span) throw new Error("CompactionSpanMissing")
-		const operationId = `compaction.supersede:${input.attempt}`
-		// A retried landing replays its own record; a fresh payload ref would
-		// otherwise conflict with it under a store that is not content-addressed.
-		if (await this.journal.findByOperation(operationId)) return
-		const replacementRef = await this.payloads.put(
-			encodeTaskPayload<CompactionSummaryEnvelope>({
-				kind: "compaction_summary",
-				compactionId: input.compactionId,
-				text: input.summary,
-				...(input.continuation ? { continuation: input.continuation } : {}),
-			}),
-		)
-		// The supersede record is the commit point: a run stopped before it
-		// leaves the conversation whole, one stopped after it has already landed.
-		if (input.signal?.aborted) throw input.signal.reason
-		await this.journal.supersedeRange({
-			operationId,
-			from: span.from,
-			to: span.to,
-			replacementRef,
-		})
-	}
+    /**
+     * Replace the span with the summary, keeping everything after it.
+     *
+     * The span is the one the request was built from. Recomputing it here would
+     * condense whatever reached the journal while the summary was produced,
+     * which the summary never saw. Input after the span is not touched: the
+     * summary takes the span's place, so the next request reads it first and
+     * the unanswered input after it.
+     *
+     * Hiding the span and placing the summary is one journal record. Two
+     * records would let a crash between them leave the span hidden with no
+     * summary, which loses the conversation instead of shrinking it.
+     */
+    async land(input: CompactionLandingInput): Promise<void> {
+        // Deriving the span now would take in whatever arrived while the summary
+        // was produced, so a landing without the request's span is refused.
+        const span = input.span
+        if (!span) throw new Error("CompactionSpanMissing")
+        const operationId = `compaction.supersede:${input.attempt}`
+        // A retried landing replays its own record; a fresh payload ref would
+        // otherwise conflict with it under a store that is not content-addressed.
+        if (await this.journal.findByOperation(operationId)) return
+        const replacementRef = await this.payloads.put(
+            encodeTaskPayload<CompactionSummaryEnvelope>({
+                kind: "compaction_summary",
+                compactionId: input.compactionId,
+                text: input.summary,
+                ...(input.continuation ? { continuation: input.continuation } : {}),
+            }),
+        )
+        // The supersede record is the commit point: a run stopped before it
+        // leaves the conversation whole, one stopped after it has already landed.
+        if (input.signal?.aborted) throw input.signal.reason
+        await this.journal.supersedeRange({
+            operationId,
+            from: span.from,
+            to: span.to,
+            replacementRef,
+        })
+    }
 
-	/**
-	 * Remove the oldest settled history after a provider refused the request as
-	 * longer than its context window, the recovery used when auto-compaction is off.
-	 *
-	 * The opening input stays verbatim. Three quarters of the settled history
-	 * after it is replaced by `notice`, so the model knows history is missing
-	 * rather than reading a conversation with an unexplained gap. Input the
-	 * user is still waiting on is never removed, and the cut moves back until
-	 * every call before it has its result.
-	 *
-	 * @returns The truncation record's position, which the resent request has
-	 * to be projected through; undefined when nothing settled can be removed.
-	 */
-	async truncate(input: { readonly notice: string; readonly signal?: AbortSignal }): Promise<JournalWatermark | undefined> {
-		const items = await this.items()
-		const names = toolNames(items.map((item) => item.message))
-		const start = truncationStart(items, names)
-		const boundary = settledBoundary(items, names)
-		// A reply the boundary ends on opens the turn still waiting on the user.
-		const settled = boundary.reply ? boundary.end - 1 : boundary.end
-		// The range has to take some of what the model said; a range of only
-		// earlier notices would answer the refusal by removing nothing.
-		const said = items.findIndex((item, index) => index >= start && item.message.role === "assistant")
-		if (start < 0 || said < 0 || settled < said) return undefined
-		const quarters = Math.floor(((settled - start + 1) * 3) / 4)
-		const cut = truncationCut(items, said, Math.max(start + quarters - 1, said), settled)
-		const first = items[start]
-		const last = items[cut]
-		if (cut < said || !first || !last) return undefined
-		const operationId = `context.truncate:${randomUUID()}`
-		const replacementRef = await this.payloads.put(
-			encodeTaskPayload<CompactionSummaryEnvelope>({
-				kind: "compaction_summary",
-				compactionId: operationId,
-				text: input.notice,
-			}),
-		)
-		if (input.signal?.aborted) return undefined
-		const { watermark } = await this.journal.supersedeRange({
-			operationId,
-			from: first.entry.watermark,
-			to: last.entry.watermark,
-			replacementRef,
-		})
-		Logger.warn(
-			`[compaction] context window exceeded; truncated ${cut - start + 1} of ${items.length} messages (seq ${first.entry.watermark.seq}-${last.entry.watermark.seq})`,
-		)
-		return watermark
-	}
+    /**
+     * Remove the oldest settled history after a provider refused the request as
+     * longer than its context window, the recovery used when auto-compaction is off.
+     *
+     * The opening input stays verbatim. Three quarters of the settled history
+     * after it is replaced by `notice`, so the model knows history is missing
+     * rather than reading a conversation with an unexplained gap. Input the
+     * user is still waiting on is never removed, and the cut moves back until
+     * every call before it has its result.
+     *
+     * @returns The truncation record's position, which the resent request has
+     * to be projected through; undefined when nothing settled can be removed.
+     */
+    async truncate(input: { readonly notice: string; readonly signal?: AbortSignal }): Promise<JournalWatermark | undefined> {
+        const items = await this.items()
+        const names = toolNames(items.map((item) => item.message))
+        const start = truncationStart(items, names)
+        const boundary = settledBoundary(items, names)
+        // A reply the boundary ends on opens the turn still waiting on the user.
+        const settled = boundary.reply ? boundary.end - 1 : boundary.end
+        // The range has to take some of what the model said; a range of only
+        // earlier notices would answer the refusal by removing nothing.
+        const said = items.findIndex((item, index) => index >= start && item.message.role === "assistant")
+        if (start < 0 || said < 0 || settled < said) return undefined
+        const quarters = Math.floor(((settled - start + 1) * 3) / 4)
+        const cut = truncationCut(items, said, Math.max(start + quarters - 1, said), settled)
+        const first = items[start]
+        const last = items[cut]
+        if (cut < said || !first || !last) return undefined
+        const operationId = `context.truncate:${randomUUID()}`
+        const replacementRef = await this.payloads.put(
+            encodeTaskPayload<CompactionSummaryEnvelope>({
+                kind: "compaction_summary",
+                compactionId: operationId,
+                text: input.notice,
+            }),
+        )
+        if (input.signal?.aborted) return undefined
+        const { watermark } = await this.journal.supersedeRange({
+            operationId,
+            from: first.entry.watermark,
+            to: last.entry.watermark,
+            replacementRef,
+        })
+        Logger.warn(
+            `[compaction] context window exceeded; truncated ${cut - start + 1} of ${items.length} messages (seq ${first.entry.watermark.seq}-${last.entry.watermark.seq})`,
+        )
+        return watermark
+    }
 
-	/**
-	 * The visible conversation, one item per provider message.
-	 *
-	 * A landed summary that carries a reply materializes as several messages
-	 * from one entry - the summary, then the replayed exchange - so all share
-	 * that entry's watermark: a later span that takes the summary takes its
-	 * reply with it, and hands the reply on.
-	 */
-	private async items(): Promise<ConversationItem[]> {
-		const items: ConversationItem[] = []
-		for (const { entry, kind, messages, continuation } of await this.conversation.entries()) {
-			const [message, ...carried] = messages
-			if (!message) continue
-			items.push({ entry, kind, message })
-			for (const reply of carried) items.push({ entry, kind, message: reply, ...(continuation ? { continuation } : {}) })
-		}
-		return repairConversationItems(items)
-	}
+    /**
+     * The visible conversation, one item per provider message.
+     *
+     * A landed summary that carries a reply materializes as several messages
+     * from one entry - the summary, then the replayed exchange - so all share
+     * that entry's watermark: a later span that takes the summary takes its
+     * reply with it, and hands the reply on.
+     */
+    private async items(): Promise<ConversationItem[]> {
+        const items: ConversationItem[] = []
+        for (const { entry, kind, messages, continuation } of await this.conversation.entries()) {
+            const [message, ...carried] = messages
+            if (!message) continue
+            items.push({ entry, kind, message })
+            for (const reply of carried) items.push({ entry, kind, message: reply, ...(continuation ? { continuation } : {}) })
+        }
+        return repairConversationItems(items)
+    }
 }

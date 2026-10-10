@@ -19,237 +19,237 @@ import { OpenRouterErrorResponse } from "./types"
 const OPENROUTER_PROVIDER_ID = "openrouter"
 
 export class OpenRouterHandler implements ApiHandler {
-	private client: OpenAI | undefined
-	lastGenerationId?: string
+    private client: OpenAI | undefined
+    lastGenerationId?: string
 
-	constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {}
 
-	private get config() {
-		return this.ctx.profile.openrouter
-	}
-	private get apiKey() {
-		return this.ctx.profile.apiKey
-	}
-	private get modelId() {
-		return resolveProfileModelId(this.ctx.profile)
-	}
-	private get modelInfo() {
-		return this.ctx.profile.modelInfo as ModelInfo | undefined
-	}
-	private get baseUrl() {
-		return this.ctx.profile.baseUrl
-	}
-	private get reasoningEffort() {
-		return this.config?.reasoning?.effort
-	}
-	private get thinkingBudgetTokens() {
-		return this.config?.reasoning?.thinkingBudget
-	}
+    private get config() {
+        return this.ctx.profile.openrouter
+    }
+    private get apiKey() {
+        return this.ctx.profile.apiKey
+    }
+    private get modelId() {
+        return resolveProfileModelId(this.ctx.profile)
+    }
+    private get modelInfo() {
+        return this.ctx.profile.modelInfo as ModelInfo | undefined
+    }
+    private get baseUrl() {
+        return this.ctx.profile.baseUrl
+    }
+    private get reasoningEffort() {
+        return this.config?.reasoning?.effort
+    }
+    private get thinkingBudgetTokens() {
+        return this.config?.reasoning?.thinkingBudget
+    }
 
-	private ensureClient(): OpenAI {
-		if (!this.client) {
-			if (!this.apiKey) {
-				throw new Error("OpenRouter API key is required")
-			}
-			try {
-				this.client = createOpenAIClient({
-					baseURL: this.baseUrl || "https://openrouter.ai/api/v1",
-					apiKey: this.apiKey,
-					defaultHeaders: {
-						"HTTP-Referer": "https://cline.bot", // Optional, for including your app on openrouter.ai rankings.
-						"X-Title": "Cline", // Optional. Shows in rankings on openrouter.ai.
-					},
-				})
-			} catch (error: any) {
-				throw new Error(`Error creating OpenRouter client: ${error.message}`)
-			}
-		}
-		return this.client
-	}
+    private ensureClient(): OpenAI {
+        if (!this.client) {
+            if (!this.apiKey) {
+                throw new Error("OpenRouter API key is required")
+            }
+            try {
+                this.client = createOpenAIClient({
+                    baseURL: this.baseUrl || "https://openrouter.ai/api/v1",
+                    apiKey: this.apiKey,
+                    defaultHeaders: {
+                        "HTTP-Referer": "https://cline.bot", // Optional, for including your app on openrouter.ai rankings.
+                        "X-Title": "Cline", // Optional. Shows in rankings on openrouter.ai.
+                    },
+                })
+            } catch (error: any) {
+                throw new Error(`Error creating OpenRouter client: ${error.message}`)
+            }
+        }
+        return this.client
+    }
 
-	@withRetry()
-	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
-		const client = this.ensureClient()
-		this.lastGenerationId = undefined
+    @withRetry()
+    async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
+        const client = this.ensureClient()
+        this.lastGenerationId = undefined
 
-		const stream = await createOpenRouterStream(
-			client,
-			systemPrompt,
-			messages,
-			this.getModel(),
-			this.reasoningEffort,
-			this.thinkingBudgetTokens,
-			this.config?.openRouterProviderSorting,
-			tools,
-			this.ctx.enableParallelToolCalling,
-			this.config?.reasoning,
-		)
+        const stream = await createOpenRouterStream(
+            client,
+            systemPrompt,
+            messages,
+            this.getModel(),
+            this.reasoningEffort,
+            this.thinkingBudgetTokens,
+            this.config?.openRouterProviderSorting,
+            tools,
+            this.ctx.enableParallelToolCalling,
+            this.config?.reasoning,
+        )
 
-		let didOutputUsage = false
-		const toolCallProcessor = new ToolCallProcessor()
+        let didOutputUsage = false
+        const toolCallProcessor = new ToolCallProcessor()
 
-		for await (const chunk of stream) {
-			// openrouter returns an error object instead of the openai sdk throwing an error
-			// Check for error field directly on chunk
-			if ("error" in chunk) {
-				const error = chunk.error as OpenRouterErrorResponse["error"]
-				Logger.error(`OpenRouter API Error: ${error?.code} - ${error?.message}`)
-				// Include metadata in the error message if available
-				const metadataStr = error.metadata ? `\nMetadata: ${JSON.stringify(error.metadata, null, 2)}` : ""
-				throw new Error(`OpenRouter API Error ${error.code}: ${error.message}${metadataStr}`)
-			}
+        for await (const chunk of stream) {
+            // openrouter returns an error object instead of the openai sdk throwing an error
+            // Check for error field directly on chunk
+            if ("error" in chunk) {
+                const error = chunk.error as OpenRouterErrorResponse["error"]
+                Logger.error(`OpenRouter API Error: ${error?.code} - ${error?.message}`)
+                // Include metadata in the error message if available
+                const metadataStr = error.metadata ? `\nMetadata: ${JSON.stringify(error.metadata, null, 2)}` : ""
+                throw new Error(`OpenRouter API Error ${error.code}: ${error.message}${metadataStr}`)
+            }
 
-			// Check for error in choices[0].finish_reason
-			// OpenRouter may return errors in a non-standard way within choices
-			const choice = chunk.choices?.[0]
-			// Use type assertion since OpenRouter uses non-standard "error" finish_reason
-			if ((choice?.finish_reason as string) === "error") {
-				// Use type assertion since OpenRouter adds non-standard error property
-				const choiceWithError = choice as any
-				if (choiceWithError.error) {
-					const error = choiceWithError.error
-					Logger.error(
-						`OpenRouter Mid-Stream Error: ${error?.code || "Unknown"} - ${error?.message || "Unknown error"}`,
-					)
-					// Format error details
-					const errorDetails = typeof error === "object" ? JSON.stringify(error, null, 2) : String(error)
-					throw new Error(`OpenRouter Mid-Stream Error: ${errorDetails}`)
-				}
-				// Fallback if error details are not available
-				throw new Error(`OpenRouter Mid-Stream Error: Stream terminated with error status but no error details provided`)
-			}
+            // Check for error in choices[0].finish_reason
+            // OpenRouter may return errors in a non-standard way within choices
+            const choice = chunk.choices?.[0]
+            // Use type assertion since OpenRouter uses non-standard "error" finish_reason
+            if ((choice?.finish_reason as string) === "error") {
+                // Use type assertion since OpenRouter adds non-standard error property
+                const choiceWithError = choice as any
+                if (choiceWithError.error) {
+                    const error = choiceWithError.error
+                    Logger.error(
+                        `OpenRouter Mid-Stream Error: ${error?.code || "Unknown"} - ${error?.message || "Unknown error"}`,
+                    )
+                    // Format error details
+                    const errorDetails = typeof error === "object" ? JSON.stringify(error, null, 2) : String(error)
+                    throw new Error(`OpenRouter Mid-Stream Error: ${errorDetails}`)
+                }
+                // Fallback if error details are not available
+                throw new Error(`OpenRouter Mid-Stream Error: Stream terminated with error status but no error details provided`)
+            }
 
-			if (!this.lastGenerationId && chunk.id) {
-				this.lastGenerationId = chunk.id
-			}
+            if (!this.lastGenerationId && chunk.id) {
+                this.lastGenerationId = chunk.id
+            }
 
-			const delta = chunk.choices?.[0]?.delta
-			if (delta?.content) {
-				yield {
-					type: "text",
-					text: delta.content,
-				}
-			}
+            const delta = chunk.choices?.[0]?.delta
+            if (delta?.content) {
+                yield {
+                    type: "text",
+                    text: delta.content,
+                }
+            }
 
-			if (delta?.tool_calls) {
-				yield* toolCallProcessor.processToolCallDeltas(delta.tool_calls)
-			}
+            if (delta?.tool_calls) {
+                yield* toolCallProcessor.processToolCallDeltas(delta.tool_calls)
+            }
 
-			// Reasoning tokens are returned separately from the content
-			// Skip reasoning content for Grok 4 models since it only displays "thinking" without providing useful information
-			if (delta && "reasoning" in delta && delta.reasoning && !shouldSkipReasoningForModel(this.modelId)) {
-				yield {
-					type: "reasoning",
-					reasoning: typeof delta.reasoning === "string" ? delta.reasoning : JSON.stringify(delta.reasoning),
-				}
-			}
+            // Reasoning tokens are returned separately from the content
+            // Skip reasoning content for Grok 4 models since it only displays "thinking" without providing useful information
+            if (delta && "reasoning" in delta && delta.reasoning && !shouldSkipReasoningForModel(this.modelId)) {
+                yield {
+                    type: "reasoning",
+                    reasoning: typeof delta.reasoning === "string" ? delta.reasoning : JSON.stringify(delta.reasoning),
+                }
+            }
 
-			// OpenRouter passes reasoning details that we can pass back unmodified in api requests to preserve reasoning traces for model
-			// See: https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
-			const reasoningDetails =
-				delta && "reasoning_details" in delta && Array.isArray(delta.reasoning_details)
-					? delta.reasoning_details
-					: undefined
-			if (reasoningDetails?.length && !shouldSkipReasoningForModel(this.modelId)) {
-				yield {
-					type: "reasoning",
-					reasoning: "",
-					details: reasoningDetails,
-				}
-			}
+            // OpenRouter passes reasoning details that we can pass back unmodified in api requests to preserve reasoning traces for model
+            // See: https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
+            const reasoningDetails =
+                delta && "reasoning_details" in delta && Array.isArray(delta.reasoning_details)
+                    ? delta.reasoning_details
+                    : undefined
+            if (reasoningDetails?.length && !shouldSkipReasoningForModel(this.modelId)) {
+                yield {
+                    type: "reasoning",
+                    reasoning: "",
+                    details: reasoningDetails,
+                }
+            }
 
-			if (!didOutputUsage && chunk.usage) {
-				const cacheWriteTokens = chunk.usage.prompt_tokens_details?.cache_write_tokens || 0
-				yield {
-					type: "usage",
-					cacheWriteTokens,
-					cacheReadTokens: chunk.usage.prompt_tokens_details?.cached_tokens || 0,
-					inputTokens:
-						(chunk.usage.prompt_tokens || 0) -
-						(chunk.usage.prompt_tokens_details?.cached_tokens || 0) -
-						(cacheWriteTokens || 0),
-					outputTokens: chunk.usage.completion_tokens || 0,
-					// @ts-expect-error-next-line
-					totalCost: (chunk.usage.cost || 0) + (chunk.usage.cost_details?.upstream_inference_cost || 0),
-				}
-				didOutputUsage = true
-			}
-		}
+            if (!didOutputUsage && chunk.usage) {
+                const cacheWriteTokens = chunk.usage.prompt_tokens_details?.cache_write_tokens || 0
+                yield {
+                    type: "usage",
+                    cacheWriteTokens,
+                    cacheReadTokens: chunk.usage.prompt_tokens_details?.cached_tokens || 0,
+                    inputTokens:
+                        (chunk.usage.prompt_tokens || 0) -
+                        (chunk.usage.prompt_tokens_details?.cached_tokens || 0) -
+                        (cacheWriteTokens || 0),
+                    outputTokens: chunk.usage.completion_tokens || 0,
+                    // @ts-expect-error-next-line
+                    totalCost: (chunk.usage.cost || 0) + (chunk.usage.cost_details?.upstream_inference_cost || 0),
+                }
+                didOutputUsage = true
+            }
+        }
 
-		// Fallback to generation endpoint if usage chunk not returned
-		if (!didOutputUsage) {
-			const apiStreamUsage = await this.getApiStreamUsage()
-			if (apiStreamUsage) {
-				yield apiStreamUsage
-			}
-		}
-	}
+        // Fallback to generation endpoint if usage chunk not returned
+        if (!didOutputUsage) {
+            const apiStreamUsage = await this.getApiStreamUsage()
+            if (apiStreamUsage) {
+                yield apiStreamUsage
+            }
+        }
+    }
 
-	async getApiStreamUsage(): Promise<ApiStreamUsageChunk | undefined> {
-		if (this.lastGenerationId) {
-			await setTimeoutPromise(500) // FIXME: necessary delay to ensure generation endpoint is ready
-			try {
-				const generationIterator = this.fetchGenerationDetails(this.lastGenerationId)
-				const generation = (await generationIterator.next()).value
-				if (!generation) {
-					return undefined
-				}
-				// Logger.log("OpenRouter generation details:", generation)
-				const cacheWriteTokens = generation?.native_tokens_cache_write || 0
-				const cacheReadTokens = generation?.native_tokens_cached || 0
-				return {
-					type: "usage",
-					cacheWriteTokens,
-					cacheReadTokens,
-					// openrouter generation endpoint fails often
-					inputTokens: Math.max(0, (generation?.native_tokens_prompt || 0) - cacheReadTokens - cacheWriteTokens),
-					outputTokens: generation?.native_tokens_completion || 0,
-					totalCost: generation?.total_cost || 0,
-				}
-			} catch (error) {
-				// ignore if fails
-				Logger.error("Error fetching OpenRouter generation details:", error)
-			}
-		}
-		return undefined
-	}
+    async getApiStreamUsage(): Promise<ApiStreamUsageChunk | undefined> {
+        if (this.lastGenerationId) {
+            await setTimeoutPromise(500) // FIXME: necessary delay to ensure generation endpoint is ready
+            try {
+                const generationIterator = this.fetchGenerationDetails(this.lastGenerationId)
+                const generation = (await generationIterator.next()).value
+                if (!generation) {
+                    return undefined
+                }
+                // Logger.log("OpenRouter generation details:", generation)
+                const cacheWriteTokens = generation?.native_tokens_cache_write || 0
+                const cacheReadTokens = generation?.native_tokens_cached || 0
+                return {
+                    type: "usage",
+                    cacheWriteTokens,
+                    cacheReadTokens,
+                    // openrouter generation endpoint fails often
+                    inputTokens: Math.max(0, (generation?.native_tokens_prompt || 0) - cacheReadTokens - cacheWriteTokens),
+                    outputTokens: generation?.native_tokens_completion || 0,
+                    totalCost: generation?.total_cost || 0,
+                }
+            } catch (error) {
+                // ignore if fails
+                Logger.error("Error fetching OpenRouter generation details:", error)
+            }
+        }
+        return undefined
+    }
 
-	@withRetry({ maxRetries: 4, baseDelay: 250, maxDelay: 1000, retryAllErrors: true })
-	async *fetchGenerationDetails(genId: string) {
-		// Logger.log("Fetching generation details for:", genId)
-		try {
-			const response = await axios.get(`https://openrouter.ai/api/v1/generation?id=${genId}`, {
-				headers: {
-					Authorization: `Bearer ${this.apiKey}`,
-				},
-				timeout: 15_000, // this request hangs sometimes
-				...getAxiosSettings(),
-			})
-			yield response.data?.data
-		} catch (error) {
-			const status =
-				typeof error === "object" && error !== null
-					? ((error as { status?: unknown }).status ?? (error as { response?: { status?: unknown } }).response?.status)
-					: undefined
-			if (status === 404) {
-				Logger.warn("OpenRouter generation details are unavailable (HTTP 404); continuing without usage fallback.")
-				return
-			}
-			Logger.error("Error fetching OpenRouter generation details:", error)
-			throw error
-		}
-	}
+    @withRetry({ maxRetries: 4, baseDelay: 250, maxDelay: 1000, retryAllErrors: true })
+    async *fetchGenerationDetails(genId: string) {
+        // Logger.log("Fetching generation details for:", genId)
+        try {
+            const response = await axios.get(`https://openrouter.ai/api/v1/generation?id=${genId}`, {
+                headers: {
+                    Authorization: `Bearer ${this.apiKey}`,
+                },
+                timeout: 15_000, // this request hangs sometimes
+                ...getAxiosSettings(),
+            })
+            yield response.data?.data
+        } catch (error) {
+            const status =
+                typeof error === "object" && error !== null
+                    ? ((error as { status?: unknown }).status ?? (error as { response?: { status?: unknown } }).response?.status)
+                    : undefined
+            if (status === 404) {
+                Logger.warn("OpenRouter generation details are unavailable (HTTP 404); continuing without usage fallback.")
+                return
+            }
+            Logger.error("Error fetching OpenRouter generation details:", error)
+            throw error
+        }
+    }
 
-	getModel(): { id: string; info: ModelInfo } {
-		const modelId = this.modelId || this.modelInfo?.id || openRouterDefaultModelId
-		// The runtime Profile contains the reconciled declaration and explicit overrides.
-		const matchingInfo = this.modelInfo?.id === modelId ? this.modelInfo : undefined
-		return {
-			id: modelId,
-			info:
-				matchingInfo ??
-				findCatalogModel(OPENROUTER_PROVIDER_ID, modelId) ??
-				(this.modelId ? { id: modelId } : openRouterDefaultModelInfo),
-		}
-	}
+    getModel(): { id: string; info: ModelInfo } {
+        const modelId = this.modelId || this.modelInfo?.id || openRouterDefaultModelId
+        // The runtime Profile contains the reconciled declaration and explicit overrides.
+        const matchingInfo = this.modelInfo?.id === modelId ? this.modelInfo : undefined
+        return {
+            id: modelId,
+            info:
+                matchingInfo ??
+                findCatalogModel(OPENROUTER_PROVIDER_ID, modelId) ??
+                (this.modelId ? { id: modelId } : openRouterDefaultModelInfo),
+        }
+    }
 }

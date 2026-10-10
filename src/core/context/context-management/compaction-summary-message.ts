@@ -12,11 +12,11 @@ export const PREVIOUS_COMPACTION_SUMMARY_TAG = "previous_task_compaction_summary
  * compacted by an earlier version gain the same delimiter when they are resumed.
  */
 export function formatPreviousCompactionSummary(summary: string): string {
-	const notice = getPrompt("contextManagement", "previousCompactionSummaryNotice")
-	return `<${PREVIOUS_COMPACTION_SUMMARY_TAG}>\n${notice}\n\n${summary}\n</${PREVIOUS_COMPACTION_SUMMARY_TAG}>`
+    const notice = getPrompt("contextManagement", "previousCompactionSummaryNotice")
+    return `<${PREVIOUS_COMPACTION_SUMMARY_TAG}>\n${notice}\n\n${summary}\n</${PREVIOUS_COMPACTION_SUMMARY_TAG}>`
 }
 
 /** Project an accepted compaction summary as the user-role message that replaces the conversation it covers. */
 export function compactionSummaryMessage(summary: string): ClineStorageMessage {
-	return { role: "user", content: [{ type: "text", text: formatPreviousCompactionSummary(summary) }] }
+    return { role: "user", content: [{ type: "text", text: formatPreviousCompactionSummary(summary) }] }
 }

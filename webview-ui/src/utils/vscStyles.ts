@@ -24,21 +24,21 @@ export const VSC_INACTIVE_SELECTION_BACKGROUND = "--vscode-editor-inactiveSelect
 export const VSC_TITLEBAR_INACTIVE_FOREGROUND = "--vscode-titleBar-inactiveForeground"
 
 export function getAsVar(varName: string): string {
-	return `var(${varName})`
+    return `var(${varName})`
 }
 
 export function hexToRGB(hexColor: string): { r: number; g: number; b: number } {
-	const hex = hexColor.replace(/^#/, "").slice(0, 6)
-	const [r, g, b] = [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16))
-	return { r, g, b }
+    const hex = hexColor.replace(/^#/, "").slice(0, 6)
+    const [r, g, b] = [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16))
+    return { r, g, b }
 }
 
 export function colorToHex(colorVar: string): string {
-	const value = getComputedStyle(document.documentElement).getPropertyValue(colorVar).trim()
-	if (value.startsWith("#")) {
-		return value.slice(0, 7)
-	}
+    const value = getComputedStyle(document.documentElement).getPropertyValue(colorVar).trim()
+    if (value.startsWith("#")) {
+        return value.slice(0, 7)
+    }
 
-	const rgbValues = value.match(/\d+/g)?.slice(0, 3).map(Number) || []
-	return `#${rgbValues.map((x) => x.toString(16).padStart(2, "0")).join("")}`
+    const rgbValues = value.match(/\d+/g)?.slice(0, 3).map(Number) || []
+    return `#${rgbValues.map((x) => x.toString(16).padStart(2, "0")).join("")}`
 }

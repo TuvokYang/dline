@@ -10,32 +10,32 @@ import { Controller } from ".."
  * @returns An empty response
  */
 export async function toggleFavoriteModel(controller: Controller, request: StringRequest): Promise<Empty> {
-	try {
-		if (!request.value) {
-			throw new Error("Model ID is required")
-		}
+    try {
+        if (!request.value) {
+            throw new Error("Model ID is required")
+        }
 
-		const modelId = request.value
+        const modelId = request.value
 
-		const favoritedModelIds = controller.stateManager.getGlobalStateKey("favoritedModelIds")
+        const favoritedModelIds = controller.stateManager.getGlobalStateKey("favoritedModelIds")
 
-		// Toggle favorite status
-		const updatedFavorites = favoritedModelIds.includes(modelId)
-			? favoritedModelIds.filter((id) => id !== modelId)
-			: [...favoritedModelIds, modelId]
+        // Toggle favorite status
+        const updatedFavorites = favoritedModelIds.includes(modelId)
+            ? favoritedModelIds.filter((id) => id !== modelId)
+            : [...favoritedModelIds, modelId]
 
-		controller.stateManager.setGlobalState("favoritedModelIds", updatedFavorites)
+        controller.stateManager.setGlobalState("favoritedModelIds", updatedFavorites)
 
-		// Capture telemetry for model favorite toggle
-		const isFavorited = !favoritedModelIds.includes(modelId)
-		telemetryService.captureModelFavoritesUsage(modelId, isFavorited)
+        // Capture telemetry for model favorite toggle
+        const isFavorited = !favoritedModelIds.includes(modelId)
+        telemetryService.captureModelFavoritesUsage(modelId, isFavorited)
 
-		// Post state to webview without changing any other configuration
-		await controller.postStateToWebview()
+        // Post state to webview without changing any other configuration
+        await controller.postStateToWebview()
 
-		return Empty.create()
-	} catch (error) {
-		Logger.error(`Failed to toggle favorite status for model ${request.value}:`, error)
-		throw error
-	}
+        return Empty.create()
+    } catch (error) {
+        Logger.error(`Failed to toggle favorite status for model ${request.value}:`, error)
+        throw error
+    }
 }

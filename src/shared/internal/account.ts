@@ -8,9 +8,9 @@ const CLINE_TRUSTED_TESTER_DOMAINS = ["fibilabs.tech"]
  * E.g. Emails ending with @cline.bot
  */
 export function isClineBotUser(email: string): boolean {
-	return email.endsWith("@cline.bot")
+    return email.endsWith("@cline.bot")
 }
 
 export function isClineInternalTester(email: string): boolean {
-	return isClineBotUser(email) || CLINE_TRUSTED_TESTER_DOMAINS.some((d) => email.endsWith(`@${d}`))
+    return isClineBotUser(email) || CLINE_TRUSTED_TESTER_DOMAINS.some((d) => email.endsWith(`@${d}`))
 }

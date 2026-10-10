@@ -7,14 +7,14 @@ export type { ErrorSettings, IErrorProvider } from "./providers/IErrorProvider"
 export { PostHogErrorProvider } from "./providers/PostHogErrorProvider"
 
 export function getErrorLevelFromString(level: string | undefined): ErrorSettings["level"] {
-	switch (level) {
-		case "disabled":
-		case "off":
-			return "off"
-		case "error":
-		case "crash":
-			return "error"
-		default:
-			return "all"
-	}
+    switch (level) {
+        case "disabled":
+        case "off":
+            return "off"
+        case "error":
+        case "crash":
+            return "error"
+        default:
+            return "all"
+    }
 }

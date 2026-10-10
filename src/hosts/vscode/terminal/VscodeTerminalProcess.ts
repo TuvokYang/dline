@@ -3,16 +3,16 @@ import { EventEmitter } from "events"
 import * as vscode from "vscode"
 import { getLatestTerminalOutput } from "@/hosts/vscode/terminal/get-latest-output"
 import {
-	parseInternalCommandExitMarker,
-	removeInternalCommandExitMarkers,
+    parseInternalCommandExitMarker,
+    removeInternalCommandExitMarkers,
 } from "@/integrations/terminal/command-completion-marker"
 import {
-	isCompilingOutput,
-	MAX_FULL_OUTPUT_SIZE,
-	MAX_UNRETRIEVED_LINES,
-	PROCESS_HOT_TIMEOUT_COMPILING,
-	PROCESS_HOT_TIMEOUT_NORMAL,
-	TRUNCATE_KEEP_LINES,
+    isCompilingOutput,
+    MAX_FULL_OUTPUT_SIZE,
+    MAX_UNRETRIEVED_LINES,
+    PROCESS_HOT_TIMEOUT_COMPILING,
+    PROCESS_HOT_TIMEOUT_NORMAL,
+    TRUNCATE_KEEP_LINES,
 } from "@/integrations/terminal/constants"
 import type { ITerminalProcess, TerminalCompletionDetails, TerminalProcessEvents } from "@/integrations/terminal/types"
 import { Logger } from "@/shared/services/Logger"
@@ -33,93 +33,93 @@ import { Logger } from "@/shared/services/Logger"
  * - 'no_shell_integration': Emitted when shell integration is not available
  */
 export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> implements ITerminalProcess {
-	readonly started: Promise<number>
-	private resolveStarted: ((startedAt: number) => void) | undefined
-	waitForShellIntegration = true
-	private isListening = true
-	private buffer = ""
-	private fullOutput = ""
-	private lastRetrievedIndex = 0
-	isHot = false
-	private hotTimer: NodeJS.Timeout | null = null
-	private exitCode: number | null | undefined = undefined
-	private signal: NodeJS.Signals | null = null
-	private terminal: vscode.Terminal | null = null
-	private completionEmitted = false
-	private completionDetailsReceived = false
-	private completionDetailsWaiter: (() => void) | null = null
-	private terminationPromise: Promise<void> | null = null
-	private cancelledBeforeRun = false
-	private terminalDisposed = false
-	private outputCapacityGate: Promise<void> | undefined
-	private releaseOutputCapacityGate: (() => void) | undefined
+    readonly started: Promise<number>
+    private resolveStarted: ((startedAt: number) => void) | undefined
+    waitForShellIntegration = true
+    private isListening = true
+    private buffer = ""
+    private fullOutput = ""
+    private lastRetrievedIndex = 0
+    isHot = false
+    private hotTimer: NodeJS.Timeout | null = null
+    private exitCode: number | null | undefined = undefined
+    private signal: NodeJS.Signals | null = null
+    private terminal: vscode.Terminal | null = null
+    private completionEmitted = false
+    private completionDetailsReceived = false
+    private completionDetailsWaiter: (() => void) | null = null
+    private terminationPromise: Promise<void> | null = null
+    private cancelledBeforeRun = false
+    private terminalDisposed = false
+    private outputCapacityGate: Promise<void> | undefined
+    private releaseOutputCapacityGate: (() => void) | undefined
 
-	constructor() {
-		super()
-		this.started = new Promise<number>((resolve) => {
-			this.resolveStarted = resolve
-		})
-	}
+    constructor() {
+        super()
+        this.started = new Promise<number>((resolve) => {
+            this.resolveStarted = resolve
+        })
+    }
 
-	async run(terminal: vscode.Terminal, command: string) {
-		if (this.cancelledBeforeRun) return
-		this.resolveStarted?.(Date.now())
-		this.resolveStarted = undefined
-		this.completionDetailsWaiter?.()
-		this.terminal = terminal
-		this.exitCode = undefined
-		this.signal = null
-		this.completionEmitted = false
-		this.completionDetailsReceived = false
-		this.terminationPromise = null
+    async run(terminal: vscode.Terminal, command: string) {
+        if (this.cancelledBeforeRun) return
+        this.resolveStarted?.(Date.now())
+        this.resolveStarted = undefined
+        this.completionDetailsWaiter?.()
+        this.terminal = terminal
+        this.exitCode = undefined
+        this.signal = null
+        this.completionEmitted = false
+        this.completionDetailsReceived = false
+        this.terminationPromise = null
 
-		// When command does not produce any output, we can assume the shell integration API failed and as a fallback return the current terminal contents
-		const returnCurrentTerminalContents = async (): Promise<string | undefined> => {
-			try {
-				const terminalSnapshot = await getLatestTerminalOutput()
-				if (terminalSnapshot?.trim()) {
-					const fallbackMessage = `The command's output could not be captured due to some technical issue, however it has been executed successfully. Here's the current terminal's content to help you get the command's output:\n\n${terminalSnapshot}`
-					for (const line of fallbackMessage.split(/\r?\n/)) {
-						this.emit("line", line, "combined")
-					}
-				}
-				return terminalSnapshot
-			} catch (error) {
-				Logger.error("Error capturing terminal output:", error)
-				return undefined
-			}
-		}
+        // When command does not produce any output, we can assume the shell integration API failed and as a fallback return the current terminal contents
+        const returnCurrentTerminalContents = async (): Promise<string | undefined> => {
+            try {
+                const terminalSnapshot = await getLatestTerminalOutput()
+                if (terminalSnapshot?.trim()) {
+                    const fallbackMessage = `The command's output could not be captured due to some technical issue, however it has been executed successfully. Here's the current terminal's content to help you get the command's output:\n\n${terminalSnapshot}`
+                    for (const line of fallbackMessage.split(/\r?\n/)) {
+                        this.emit("line", line, "combined")
+                    }
+                }
+                return terminalSnapshot
+            } catch (error) {
+                Logger.error("Error capturing terminal output:", error)
+                return undefined
+            }
+        }
 
-		if (terminal.shellIntegration?.executeCommand) {
-			// Track that we're using shell integration
-			const execution = terminal.shellIntegration.executeCommand(command)
-			const stream = execution.read()
-			// todo: need to handle errors
-			let isFirstChunk = true
-			let didOutputNonCommand = false
-			let didEmitEmptyLine = false
+        if (terminal.shellIntegration?.executeCommand) {
+            // Track that we're using shell integration
+            const execution = terminal.shellIntegration.executeCommand(command)
+            const stream = execution.read()
+            // todo: need to handle errors
+            let isFirstChunk = true
+            let didOutputNonCommand = false
+            let didEmitEmptyLine = false
 
-			for await (let data of stream) {
-				await this.waitForOutputCapacity()
-				// Parse shell integration completion markers when present.
-				// Sequence format: ]633;D;<exitCode>
-				const completionMatches = [...data.matchAll(/\]633;D(?:;(-?\d+))?/g)]
-				const latestCompletionMatch = completionMatches[completionMatches.length - 1]
-				if (latestCompletionMatch?.[1] !== undefined) {
-					const parsedExitCode = Number.parseInt(latestCompletionMatch[1], 10)
-					if (Number.isInteger(parsedExitCode)) {
-						this.exitCode = parsedExitCode
-					}
-				}
+            for await (let data of stream) {
+                await this.waitForOutputCapacity()
+                // Parse shell integration completion markers when present.
+                // Sequence format: ]633;D;<exitCode>
+                const completionMatches = [...data.matchAll(/\]633;D(?:;(-?\d+))?/g)]
+                const latestCompletionMatch = completionMatches[completionMatches.length - 1]
+                if (latestCompletionMatch?.[1] !== undefined) {
+                    const parsedExitCode = Number.parseInt(latestCompletionMatch[1], 10)
+                    if (Number.isInteger(parsedExitCode)) {
+                        this.exitCode = parsedExitCode
+                    }
+                }
 
-				// 1. Process chunk and remove artifacts
-				if (isFirstChunk) {
-					/*
+                // 1. Process chunk and remove artifacts
+                if (isFirstChunk) {
+                    /*
 					The first chunk we get from this stream needs to be processed to be more human readable, ie remove vscode's custom escape sequences and identifiers, removing duplicate first char bug, etc.
 					*/
 
-					// bug where sometimes the command output makes its way into vscode shell integration metadata
-					/*
+                    // bug where sometimes the command output makes its way into vscode shell integration metadata
+                    /*
 					]633 is a custom sequence number used by VSCode shell integration:
 					- OSC 633 ; A ST - Mark prompt start
 					- OSC 633 ; B ST - Mark prompt end
@@ -127,388 +127,388 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
 					- OSC 633 ; D [; <exitcode>] ST - Mark execution finished with optional exit code
 					- OSC 633 ; E ; <commandline> [; <nonce>] ST - Explicitly set command line with optional nonce
 					*/
-					// if you print this data you might see something like "eecho hello worldo hello world;5ba85d14-e92a-40c4-b2fd-71525581eeb0]633;C" but this is actually just a bunch of escape sequences, ignore up to the first ;C
-					/* ddateb15026-6a64-40db-b21f-2a621a9830f0]633;CTue Sep 17 06:37:04 EDT 2024 % ]633;D;0]633;P;Cwd=/Users/saoud/Repositories/test */
-					// Gets output between ]633;C (command start) and ]633;D (command end)
-					const outputBetweenSequences = this.removeLastLineArtifacts(
-						data.match(/\]633;C([\s\S]*?)\]633;D/)?.[1] || "",
-					).trim()
+                    // if you print this data you might see something like "eecho hello worldo hello world;5ba85d14-e92a-40c4-b2fd-71525581eeb0]633;C" but this is actually just a bunch of escape sequences, ignore up to the first ;C
+                    /* ddateb15026-6a64-40db-b21f-2a621a9830f0]633;CTue Sep 17 06:37:04 EDT 2024 % ]633;D;0]633;P;Cwd=/Users/saoud/Repositories/test */
+                    // Gets output between ]633;C (command start) and ]633;D (command end)
+                    const outputBetweenSequences = this.removeLastLineArtifacts(
+                        data.match(/\]633;C([\s\S]*?)\]633;D/)?.[1] || "",
+                    ).trim()
 
-					// Once we've retrieved any potential output between sequences, we can remove everything up to end of the last sequence
-					// https://code.visualstudio.com/docs/terminal/shell-integration#_vs-code-custom-sequences-osc-633-st
-					const vscodeSequenceRegex = /\x1b\]633;.[^\x07]*\x07/g
-					const lastMatch = [...data.matchAll(vscodeSequenceRegex)].pop()
-					if (lastMatch && lastMatch.index !== undefined) {
-						data = data.slice(lastMatch.index + lastMatch[0].length)
-					}
-					// Place output back after removing vscode sequences
-					if (outputBetweenSequences) {
-						data = `${outputBetweenSequences}\n${data}`
-					}
-					// ANSI color sequences are preserved for frontend rendering via ansi-to-html
-					// VSCode sequences (]633;...) have already been stripped above via vscodeSequenceRegex
-					// Split data by newlines
-					const lines = data ? data.split("\n") : []
-					// Strip control characters (0x00-0x1F and 0x7F-0x9F) from the first line,
-					// but preserve multi-byte characters (e.g., CJK, emoji) for international use.
-					if (lines.length > 0) {
-						// Only strip C0 control chars (0x00-0x1F) and DEL (0x7F).
-						// 0x80-0x9F are UTF-8 continuation bytes (e.g. CJK E4 B8 80 → 一),
-						// stripping them corrupts multi-byte characters.
-						lines[0] = lines[0].replace(/[\x00-\x1F\x7F]/g, "")
-					}
-					// Check for duplicated first character that might be a terminal artifact
-					// But skip this check for known syntax characters like {, [, ", etc.
-					// De-duplicate first character only for ASCII (charCode < 128)
-					// to avoid corrupting multi-byte Unicode characters.
-					if (
-						lines.length > 0 &&
-						lines[0].length >= 2 &&
-						lines[0].charCodeAt(0) < 128 &&
-						lines[0].charCodeAt(0) === lines[0].charCodeAt(1) &&
-						!["[", "{", '"', "'", "<", "("].includes(lines[0][0])
-					) {
-						lines[0] = lines[0].slice(1)
-					}
-					// Only remove specific terminal artifacts from line beginnings while preserving JSON syntax
-					if (lines.length > 0) {
-						// This regex only removes common terminal artifacts (%, $, >, #) and invisible control chars
-						// but preserves important syntax chars like {, [, ", etc.
-						// Strip C0 control chars (except ESC \x1b, which starts ANSI color sequences)
-						// and common shell prompt artifacts from line beginnings.
-						lines[0] = lines[0].replace(/^[\x00-\x1A\x1C-\x1F%$>#\s]*/, "")
-					}
-					if (lines.length > 1) {
-						lines[1] = lines[1].replace(/^[\x00-\x1A\x1C-\x1F%$>#\s]*/, "")
-					}
-					// Join lines back
-					data = lines.join("\n")
-					isFirstChunk = false
-				} else {
-					// ANSI color sequences preserved for frontend rendering
-				}
+                    // Once we've retrieved any potential output between sequences, we can remove everything up to end of the last sequence
+                    // https://code.visualstudio.com/docs/terminal/shell-integration#_vs-code-custom-sequences-osc-633-st
+                    const vscodeSequenceRegex = /\x1b\]633;.[^\x07]*\x07/g
+                    const lastMatch = [...data.matchAll(vscodeSequenceRegex)].pop()
+                    if (lastMatch && lastMatch.index !== undefined) {
+                        data = data.slice(lastMatch.index + lastMatch[0].length)
+                    }
+                    // Place output back after removing vscode sequences
+                    if (outputBetweenSequences) {
+                        data = `${outputBetweenSequences}\n${data}`
+                    }
+                    // ANSI color sequences are preserved for frontend rendering via ansi-to-html
+                    // VSCode sequences (]633;...) have already been stripped above via vscodeSequenceRegex
+                    // Split data by newlines
+                    const lines = data ? data.split("\n") : []
+                    // Strip control characters (0x00-0x1F and 0x7F-0x9F) from the first line,
+                    // but preserve multi-byte characters (e.g., CJK, emoji) for international use.
+                    if (lines.length > 0) {
+                        // Only strip C0 control chars (0x00-0x1F) and DEL (0x7F).
+                        // 0x80-0x9F are UTF-8 continuation bytes (e.g. CJK E4 B8 80 → 一),
+                        // stripping them corrupts multi-byte characters.
+                        lines[0] = lines[0].replace(/[\x00-\x1F\x7F]/g, "")
+                    }
+                    // Check for duplicated first character that might be a terminal artifact
+                    // But skip this check for known syntax characters like {, [, ", etc.
+                    // De-duplicate first character only for ASCII (charCode < 128)
+                    // to avoid corrupting multi-byte Unicode characters.
+                    if (
+                        lines.length > 0 &&
+                        lines[0].length >= 2 &&
+                        lines[0].charCodeAt(0) < 128 &&
+                        lines[0].charCodeAt(0) === lines[0].charCodeAt(1) &&
+                        !["[", "{", '"', "'", "<", "("].includes(lines[0][0])
+                    ) {
+                        lines[0] = lines[0].slice(1)
+                    }
+                    // Only remove specific terminal artifacts from line beginnings while preserving JSON syntax
+                    if (lines.length > 0) {
+                        // This regex only removes common terminal artifacts (%, $, >, #) and invisible control chars
+                        // but preserves important syntax chars like {, [, ", etc.
+                        // Strip C0 control chars (except ESC \x1b, which starts ANSI color sequences)
+                        // and common shell prompt artifacts from line beginnings.
+                        lines[0] = lines[0].replace(/^[\x00-\x1A\x1C-\x1F%$>#\s]*/, "")
+                    }
+                    if (lines.length > 1) {
+                        lines[1] = lines[1].replace(/^[\x00-\x1A\x1C-\x1F%$>#\s]*/, "")
+                    }
+                    // Join lines back
+                    data = lines.join("\n")
+                    isFirstChunk = false
+                } else {
+                    // ANSI color sequences preserved for frontend rendering
+                }
 
-				// Ctrl+C detection: if user presses Ctrl+C, treat as command terminated
-				if (data.includes("^C") || data.includes("\u0003")) {
-					if (this.hotTimer) {
-						clearTimeout(this.hotTimer)
-					}
-					this.isHot = false
-					break
-				}
+                // Ctrl+C detection: if user presses Ctrl+C, treat as command terminated
+                if (data.includes("^C") || data.includes("\u0003")) {
+                    if (this.hotTimer) {
+                        clearTimeout(this.hotTimer)
+                    }
+                    this.isHot = false
+                    break
+                }
 
-				// The first few chunks can contain the submitted command echoed back by the shell.
-				// Only remove an exact command line: command substrings can also be legitimate output.
-				if (!didOutputNonCommand) {
-					const lines = data.split("\n")
-					for (let i = 0; i < lines.length; i++) {
-						if (lines[i].trim() === command.trim()) {
-							lines.splice(i, 1)
-							i-- // Adjust index after removal
-						} else {
-							didOutputNonCommand = true
-							break
-						}
-					}
-					data = lines.join("\n")
-				}
+                // The first few chunks can contain the submitted command echoed back by the shell.
+                // Only remove an exact command line: command substrings can also be legitimate output.
+                if (!didOutputNonCommand) {
+                    const lines = data.split("\n")
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].trim() === command.trim()) {
+                            lines.splice(i, 1)
+                            i-- // Adjust index after removal
+                        } else {
+                            didOutputNonCommand = true
+                            break
+                        }
+                    }
+                    data = lines.join("\n")
+                }
 
-				// 2. Set isHot depending on the command
-				// Set to hot to stall API requests until terminal is cool again
-				this.isHot = true
-				if (this.hotTimer) {
-					clearTimeout(this.hotTimer)
-				}
-				// these markers indicate the command is some kind of local dev server recompiling the app, which we want to wait for output of before sending request to cline
-				const isCompiling = isCompilingOutput(data)
-				this.hotTimer = setTimeout(
-					() => {
-						this.isHot = false
-					},
-					isCompiling ? PROCESS_HOT_TIMEOUT_COMPILING : PROCESS_HOT_TIMEOUT_NORMAL,
-				)
+                // 2. Set isHot depending on the command
+                // Set to hot to stall API requests until terminal is cool again
+                this.isHot = true
+                if (this.hotTimer) {
+                    clearTimeout(this.hotTimer)
+                }
+                // these markers indicate the command is some kind of local dev server recompiling the app, which we want to wait for output of before sending request to cline
+                const isCompiling = isCompilingOutput(data)
+                this.hotTimer = setTimeout(
+                    () => {
+                        this.isHot = false
+                    },
+                    isCompiling ? PROCESS_HOT_TIMEOUT_COMPILING : PROCESS_HOT_TIMEOUT_NORMAL,
+                )
 
-				// For non-immediately returning commands we want to show loading spinner right away but this wouldn't happen until it emits a line break, so as soon as we get any output we emit "" to let webview know to show spinner
-				// This is only done for the sake of unblocking the UI, in case there may be some time before the command emits a full line
-				if (!didEmitEmptyLine && !this.fullOutput && data) {
-					this.emit("line", "", "combined") // empty line to indicate start of command output stream
-					didEmitEmptyLine = true
-				}
+                // For non-immediately returning commands we want to show loading spinner right away but this wouldn't happen until it emits a line break, so as soon as we get any output we emit "" to let webview know to show spinner
+                // This is only done for the sake of unblocking the UI, in case there may be some time before the command emits a full line
+                if (!didEmitEmptyLine && !this.fullOutput && data) {
+                    this.emit("line", "", "combined") // empty line to indicate start of command output stream
+                    didEmitEmptyLine = true
+                }
 
-				this.fullOutput += data
+                this.fullOutput += data
 
-				// Cap fullOutput at MAX_FULL_OUTPUT_SIZE to prevent memory exhaustion
-				if (this.fullOutput.length > MAX_FULL_OUTPUT_SIZE) {
-					// Keep last half of max size
-					this.fullOutput = this.fullOutput.slice(-MAX_FULL_OUTPUT_SIZE / 2)
-					// Reset lastRetrievedIndex since we truncated the beginning
-					this.lastRetrievedIndex = 0
-				}
+                // Cap fullOutput at MAX_FULL_OUTPUT_SIZE to prevent memory exhaustion
+                if (this.fullOutput.length > MAX_FULL_OUTPUT_SIZE) {
+                    // Keep last half of max size
+                    this.fullOutput = this.fullOutput.slice(-MAX_FULL_OUTPUT_SIZE / 2)
+                    // Reset lastRetrievedIndex since we truncated the beginning
+                    this.lastRetrievedIndex = 0
+                }
 
-				if (this.isListening) {
-					this.emitIfEol(data)
-					this.lastRetrievedIndex = this.fullOutput.length - this.buffer.length
-				}
-			}
+                if (this.isListening) {
+                    this.emitIfEol(data)
+                    this.lastRetrievedIndex = this.fullOutput.length - this.buffer.length
+                }
+            }
 
-			this.emitRemainingBufferIfListening()
+            this.emitRemainingBufferIfListening()
 
-			// the command process is finished, let's check the output to see if we need to use the terminal capture fallback
-			if (!this.fullOutput.trim()) {
-				// No output captured via shell integration, trying fallback
-				telemetryService.captureTerminalOutputFailure(TerminalOutputFailureReason.TIMEOUT, "vscode")
-				const terminalSnapshot = await returnCurrentTerminalContents()
-				// Check if fallback worked
-				if (terminalSnapshot?.trim()) {
-					telemetryService.captureTerminalExecution(true, "vscode", "clipboard")
-				} else {
-					telemetryService.captureTerminalExecution(false, "vscode", "none")
-				}
-			} else {
-				// Shell integration worked
-				telemetryService.captureTerminalExecution(true, "vscode", "shell_integration")
-			}
+            // the command process is finished, let's check the output to see if we need to use the terminal capture fallback
+            if (!this.fullOutput.trim()) {
+                // No output captured via shell integration, trying fallback
+                telemetryService.captureTerminalOutputFailure(TerminalOutputFailureReason.TIMEOUT, "vscode")
+                const terminalSnapshot = await returnCurrentTerminalContents()
+                // Check if fallback worked
+                if (terminalSnapshot?.trim()) {
+                    telemetryService.captureTerminalExecution(true, "vscode", "clipboard")
+                } else {
+                    telemetryService.captureTerminalExecution(false, "vscode", "none")
+                }
+            } else {
+                // Shell integration worked
+                telemetryService.captureTerminalExecution(true, "vscode", "shell_integration")
+            }
 
-			// for now we don't want this delaying requests since we don't send diagnostics automatically anymore (previous: "even though the command is finished, we still want to consider it 'hot' in case so that api request stalls to let diagnostics catch up")
-			// to explain this further, before we would send workspace diagnostics automatically with each request, but now we only send new diagnostics after file edits, so there's no need to wait for a bit after commands run to let diagnostics catch up
-			if (this.hotTimer) {
-				clearTimeout(this.hotTimer)
-			}
-			this.isHot = false
+            // for now we don't want this delaying requests since we don't send diagnostics automatically anymore (previous: "even though the command is finished, we still want to consider it 'hot' in case so that api request stalls to let diagnostics catch up")
+            // to explain this further, before we would send workspace diagnostics automatically with each request, but now we only send new diagnostics after file edits, so there's no need to wait for a bit after commands run to let diagnostics catch up
+            if (this.hotTimer) {
+                clearTimeout(this.hotTimer)
+            }
+            this.isHot = false
 
-			// Give the authoritative terminal-end event a bounded opportunity to
-			// publish its exit code before finalizing the command lifecycle.
-			await this.waitForCompletionDetails()
-			this.complete()
-		} else {
-			// no shell integration detected, we'll fallback to running the command and capturing the terminal's output after some time
-			telemetryService.captureTerminalOutputFailure(TerminalOutputFailureReason.NO_SHELL_INTEGRATION, "vscode")
-			terminal.sendText(command, true)
+            // Give the authoritative terminal-end event a bounded opportunity to
+            // publish its exit code before finalizing the command lifecycle.
+            await this.waitForCompletionDetails()
+            this.complete()
+        } else {
+            // no shell integration detected, we'll fallback to running the command and capturing the terminal's output after some time
+            telemetryService.captureTerminalOutputFailure(TerminalOutputFailureReason.NO_SHELL_INTEGRATION, "vscode")
+            terminal.sendText(command, true)
 
-			// wait 3 seconds for the command to run
-			await new Promise((resolve) => setTimeout(resolve, 3000))
+            // wait 3 seconds for the command to run
+            await new Promise((resolve) => setTimeout(resolve, 3000))
 
-			// For terminals without shell integration, also try to capture terminal content
-			const terminalSnapshot = await returnCurrentTerminalContents()
-			// Check if clipboard fallback worked
-			if (terminalSnapshot?.trim()) {
-				telemetryService.captureTerminalExecution(true, "vscode", "clipboard")
-			} else {
-				telemetryService.captureTerminalExecution(false, "vscode", "none")
-			}
-			// Publish the capability failure first so the manager invalidates a pooled
-			// lease before the generic completion handler can consider it reusable.
-			this.emit("no_shell_integration")
-			// Without shell integration there is no authoritative exit code. Preserve
-			// lifecycle compatibility while leaving success unverified.
-			this.complete()
-			// setTimeout(() => {
-			// 	Logger.log(`Emitting continue after delay for terminal`)
-			// 	// can't emit completed since we don't if the command actually completed, it could still be running server
-			// }, 500) // Adjust this delay as needed
-		}
-	}
+            // For terminals without shell integration, also try to capture terminal content
+            const terminalSnapshot = await returnCurrentTerminalContents()
+            // Check if clipboard fallback worked
+            if (terminalSnapshot?.trim()) {
+                telemetryService.captureTerminalExecution(true, "vscode", "clipboard")
+            } else {
+                telemetryService.captureTerminalExecution(false, "vscode", "none")
+            }
+            // Publish the capability failure first so the manager invalidates a pooled
+            // lease before the generic completion handler can consider it reusable.
+            this.emit("no_shell_integration")
+            // Without shell integration there is no authoritative exit code. Preserve
+            // lifecycle compatibility while leaving success unverified.
+            this.complete()
+            // setTimeout(() => {
+            // 	Logger.log(`Emitting continue after delay for terminal`)
+            // 	// can't emit completed since we don't if the command actually completed, it could still be running server
+            // }, 500) // Adjust this delay as needed
+        }
+    }
 
-	// Inspired by https://github.com/sindresorhus/execa/blob/main/lib/transform/split.js
-	private emitIfEol(chunk: string) {
-		this.buffer += chunk
-		let lineEndIndex: number
-		while ((lineEndIndex = this.buffer.indexOf("\n")) !== -1) {
-			const line = this.buffer.slice(0, lineEndIndex).trimEnd() // removes trailing \r
-			const internalExitCode = parseInternalCommandExitMarker(line)
-			if (internalExitCode !== undefined) {
-				this.exitCode = internalExitCode
-				this.buffer = this.buffer.slice(lineEndIndex + 1)
-				continue
-			}
-			// Remove \r if present (for Windows-style line endings)
-			// if (line.endsWith("\r")) {
-			// 	line = line.slice(0, -1)
-			// }
-			this.emit("line", line, "combined")
-			this.buffer = this.buffer.slice(lineEndIndex + 1)
-		}
-	}
+    // Inspired by https://github.com/sindresorhus/execa/blob/main/lib/transform/split.js
+    private emitIfEol(chunk: string) {
+        this.buffer += chunk
+        let lineEndIndex: number
+        while ((lineEndIndex = this.buffer.indexOf("\n")) !== -1) {
+            const line = this.buffer.slice(0, lineEndIndex).trimEnd() // removes trailing \r
+            const internalExitCode = parseInternalCommandExitMarker(line)
+            if (internalExitCode !== undefined) {
+                this.exitCode = internalExitCode
+                this.buffer = this.buffer.slice(lineEndIndex + 1)
+                continue
+            }
+            // Remove \r if present (for Windows-style line endings)
+            // if (line.endsWith("\r")) {
+            // 	line = line.slice(0, -1)
+            // }
+            this.emit("line", line, "combined")
+            this.buffer = this.buffer.slice(lineEndIndex + 1)
+        }
+    }
 
-	private emitRemainingBufferIfListening() {
-		if (this.buffer && this.isListening) {
-			const remainingBuffer = this.removeLastLineArtifacts(this.buffer)
-			const internalExitCode = parseInternalCommandExitMarker(remainingBuffer)
-			if (internalExitCode !== undefined) {
-				this.exitCode = internalExitCode
-			} else if (remainingBuffer) {
-				this.emit("line", remainingBuffer, "combined")
-			}
-			this.buffer = ""
-			this.lastRetrievedIndex = this.fullOutput.length
-		}
-	}
+    private emitRemainingBufferIfListening() {
+        if (this.buffer && this.isListening) {
+            const remainingBuffer = this.removeLastLineArtifacts(this.buffer)
+            const internalExitCode = parseInternalCommandExitMarker(remainingBuffer)
+            if (internalExitCode !== undefined) {
+                this.exitCode = internalExitCode
+            } else if (remainingBuffer) {
+                this.emit("line", remainingBuffer, "combined")
+            }
+            this.buffer = ""
+            this.lastRetrievedIndex = this.fullOutput.length
+        }
+    }
 
-	/** Whether this command had to dispose its terminal to establish a completion boundary. */
-	wasTerminalDisposed(): boolean {
-		return this.terminalDisposed
-	}
+    /** Whether this command had to dispose its terminal to establish a completion boundary. */
+    wasTerminalDisposed(): boolean {
+        return this.terminalDisposed
+    }
 
-	/** Record authoritative completion metadata from VS Code's terminal lifecycle event. */
-	setCompletionDetails(details: TerminalCompletionDetails): void {
-		if (details.exitCode !== undefined) this.exitCode = details.exitCode
-		if (details.signal !== undefined) this.signal = details.signal
-		this.completionDetailsReceived = true
-		this.completionDetailsWaiter?.()
-	}
+    /** Record authoritative completion metadata from VS Code's terminal lifecycle event. */
+    setCompletionDetails(details: TerminalCompletionDetails): void {
+        if (details.exitCode !== undefined) this.exitCode = details.exitCode
+        if (details.signal !== undefined) this.signal = details.signal
+        this.completionDetailsReceived = true
+        this.completionDetailsWaiter?.()
+    }
 
-	private waitForCompletionDetails(timeoutMs = 100): Promise<void> {
-		if (this.completionDetailsReceived || this.exitCode !== undefined || this.signal !== null) {
-			return Promise.resolve()
-		}
+    private waitForCompletionDetails(timeoutMs = 100): Promise<void> {
+        if (this.completionDetailsReceived || this.exitCode !== undefined || this.signal !== null) {
+            return Promise.resolve()
+        }
 
-		return new Promise((resolve) => {
-			let settled = false
-			const finish = () => {
-				if (settled) return
-				settled = true
-				clearTimeout(timeout)
-				if (this.completionDetailsWaiter === finish) {
-					this.completionDetailsWaiter = null
-				}
-				resolve()
-			}
-			const timeout = setTimeout(finish, timeoutMs)
-			this.completionDetailsWaiter = finish
-		})
-	}
+        return new Promise((resolve) => {
+            let settled = false
+            const finish = () => {
+                if (settled) return
+                settled = true
+                clearTimeout(timeout)
+                if (this.completionDetailsWaiter === finish) {
+                    this.completionDetailsWaiter = null
+                }
+                resolve()
+            }
+            const timeout = setTimeout(finish, timeoutMs)
+            this.completionDetailsWaiter = finish
+        })
+    }
 
-	/** Finalize this command once while preserving the latest completion metadata. */
-	private complete(): void {
-		if (this.completionEmitted) return
-		this.completionEmitted = true
-		this.emit("completed", this.getCompletionDetails())
-		this.emit("continue")
-	}
+    /** Finalize this command once while preserving the latest completion metadata. */
+    private complete(): void {
+        if (this.completionEmitted) return
+        this.completionEmitted = true
+        this.emit("completed", this.getCompletionDetails())
+        this.emit("continue")
+    }
 
-	pauseOutput(): void {
-		if (this.outputCapacityGate) return
-		this.outputCapacityGate = new Promise<void>((resolve) => {
-			this.releaseOutputCapacityGate = resolve
-		})
-	}
+    pauseOutput(): void {
+        if (this.outputCapacityGate) return
+        this.outputCapacityGate = new Promise<void>((resolve) => {
+            this.releaseOutputCapacityGate = resolve
+        })
+    }
 
-	resumeOutput(): void {
-		this.releaseOutputCapacityGate?.()
-		this.outputCapacityGate = undefined
-		this.releaseOutputCapacityGate = undefined
-	}
+    resumeOutput(): void {
+        this.releaseOutputCapacityGate?.()
+        this.outputCapacityGate = undefined
+        this.releaseOutputCapacityGate = undefined
+    }
 
-	continue() {
-		this.emitRemainingBufferIfListening()
-		this.emit("continue")
-	}
+    continue() {
+        this.emitRemainingBufferIfListening()
+        this.emit("continue")
+    }
 
-	private async waitForOutputCapacity(): Promise<void> {
-		await this.outputCapacityGate
-	}
+    private async waitForOutputCapacity(): Promise<void> {
+        await this.outputCapacityGate
+    }
 
-	/** Interrupt the active command, then dispose its terminal if it does not stop promptly. */
-	async terminate(): Promise<void> {
-		if (this.completionEmitted) return
-		if (this.terminationPromise) return this.terminationPromise
+    /** Interrupt the active command, then dispose its terminal if it does not stop promptly. */
+    async terminate(): Promise<void> {
+        if (this.completionEmitted) return
+        if (this.terminationPromise) return this.terminationPromise
 
-		this.signal = "SIGINT"
-		this.resumeOutput()
-		if (!this.terminal) {
-			this.cancelledBeforeRun = true
-			this.waitForShellIntegration = false
-			this.resolveStarted?.(Date.now())
-			this.resolveStarted = undefined
-			this.complete()
-			return
-		}
+        this.signal = "SIGINT"
+        this.resumeOutput()
+        if (!this.terminal) {
+            this.cancelledBeforeRun = true
+            this.waitForShellIntegration = false
+            this.resolveStarted?.(Date.now())
+            this.resolveStarted = undefined
+            this.complete()
+            return
+        }
 
-		const terminal = this.terminal
-		terminal.sendText("\u0003", false)
-		if (this.hotTimer) {
-			clearTimeout(this.hotTimer)
-			this.hotTimer = null
-		}
-		this.isHot = false
+        const terminal = this.terminal
+        terminal.sendText("\u0003", false)
+        if (this.hotTimer) {
+            clearTimeout(this.hotTimer)
+            this.hotTimer = null
+        }
+        this.isHot = false
 
-		this.terminationPromise = new Promise<void>((resolve) => {
-			let settled = false
-			const finish = () => {
-				if (settled) return
-				settled = true
-				clearTimeout(fallbackTimer)
-				this.off("completed", finish)
-				resolve()
-			}
-			const fallbackTimer = setTimeout(() => {
-				if (!this.completionEmitted) {
-					this.terminalDisposed = true
-					terminal.dispose()
-					this.complete()
-				}
-				finish()
-			}, 1000)
-			this.once("completed", finish)
-		})
+        this.terminationPromise = new Promise<void>((resolve) => {
+            let settled = false
+            const finish = () => {
+                if (settled) return
+                settled = true
+                clearTimeout(fallbackTimer)
+                this.off("completed", finish)
+                resolve()
+            }
+            const fallbackTimer = setTimeout(() => {
+                if (!this.completionEmitted) {
+                    this.terminalDisposed = true
+                    terminal.dispose()
+                    this.complete()
+                }
+                finish()
+            }, 1000)
+            this.once("completed", finish)
+        })
 
-		return this.terminationPromise
-	}
+        return this.terminationPromise
+    }
 
-	/**
-	 * Get output that hasn't been retrieved yet.
-	 * Truncates if output is too large to prevent context window overflow.
-	 * @returns The unretrieved output (truncated if necessary)
-	 */
-	getUnretrievedOutput(): string {
-		const unretrieved = removeInternalCommandExitMarkers(this.fullOutput.slice(this.lastRetrievedIndex))
-		this.lastRetrievedIndex = this.fullOutput.length
+    /**
+     * Get output that hasn't been retrieved yet.
+     * Truncates if output is too large to prevent context window overflow.
+     * @returns The unretrieved output (truncated if necessary)
+     */
+    getUnretrievedOutput(): string {
+        const unretrieved = removeInternalCommandExitMarkers(this.fullOutput.slice(this.lastRetrievedIndex))
+        this.lastRetrievedIndex = this.fullOutput.length
 
-		// Truncate if too many lines to prevent context overflow
-		const lines = unretrieved.split("\n")
-		if (lines.length > MAX_UNRETRIEVED_LINES) {
-			const first = lines.slice(0, TRUNCATE_KEEP_LINES)
-			const last = lines.slice(-TRUNCATE_KEEP_LINES)
-			const skipped = lines.length - first.length - last.length
-			return this.removeLastLineArtifacts([...first, `\n... (${skipped} lines truncated) ...\n`, ...last].join("\n"))
-		}
+        // Truncate if too many lines to prevent context overflow
+        const lines = unretrieved.split("\n")
+        if (lines.length > MAX_UNRETRIEVED_LINES) {
+            const first = lines.slice(0, TRUNCATE_KEEP_LINES)
+            const last = lines.slice(-TRUNCATE_KEEP_LINES)
+            const skipped = lines.length - first.length - last.length
+            return this.removeLastLineArtifacts([...first, `\n... (${skipped} lines truncated) ...\n`, ...last].join("\n"))
+        }
 
-		return this.removeLastLineArtifacts(unretrieved)
-	}
+        return this.removeLastLineArtifacts(unretrieved)
+    }
 
-	getCompletionDetails(): TerminalCompletionDetails {
-		return {
-			exitCode: this.exitCode,
-			signal: this.signal,
-		}
-	}
+    getCompletionDetails(): TerminalCompletionDetails {
+        return {
+            exitCode: this.exitCode,
+            signal: this.signal,
+        }
+    }
 
-	// some processing to remove artifacts like '%' at the end of the buffer (it seems that since vsode uses % at the beginning of newlines in terminal, it makes its way into the stream)
-	// This modification will remove '%', '$', '#', or '>' followed by optional whitespace
-	removeLastLineArtifacts(output: string) {
-		const lines = output.trimEnd().split("\n")
-		if (lines.length > 0) {
-			const lastLine = lines[lines.length - 1]
-			// Remove prompt characters and trailing whitespace from the last line
-			lines[lines.length - 1] = lastLine.replace(/[%$#>]\s*$/, "")
-		}
-		return lines.join("\n").trimEnd()
-	}
+    // some processing to remove artifacts like '%' at the end of the buffer (it seems that since vsode uses % at the beginning of newlines in terminal, it makes its way into the stream)
+    // This modification will remove '%', '$', '#', or '>' followed by optional whitespace
+    removeLastLineArtifacts(output: string) {
+        const lines = output.trimEnd().split("\n")
+        if (lines.length > 0) {
+            const lastLine = lines[lines.length - 1]
+            // Remove prompt characters and trailing whitespace from the last line
+            lines[lines.length - 1] = lastLine.replace(/[%$#>]\s*$/, "")
+        }
+        return lines.join("\n").trimEnd()
+    }
 }
 
 export type TerminalProcessResultPromise = VscodeTerminalProcess & Promise<void>
 
 // Similar to execa's ResultPromise, this lets us create a mixin of both a TerminalProcess and a Promise: https://github.com/sindresorhus/execa/blob/main/lib/methods/promise.js
 export function mergePromise(process: VscodeTerminalProcess, promise: Promise<void>): TerminalProcessResultPromise {
-	const nativePromisePrototype = (async () => {})().constructor.prototype
-	const descriptors = ["then", "catch", "finally"].map(
-		(property) => [property, Reflect.getOwnPropertyDescriptor(nativePromisePrototype, property)] as const,
-	)
-	for (const [property, descriptor] of descriptors) {
-		if (descriptor) {
-			const value = descriptor.value.bind(promise)
-			Reflect.defineProperty(process, property, { ...descriptor, value })
-		}
-	}
-	return process as TerminalProcessResultPromise
+    const nativePromisePrototype = (async () => {})().constructor.prototype
+    const descriptors = ["then", "catch", "finally"].map(
+        (property) => [property, Reflect.getOwnPropertyDescriptor(nativePromisePrototype, property)] as const,
+    )
+    for (const [property, descriptor] of descriptors) {
+        if (descriptor) {
+            const value = descriptor.value.bind(promise)
+            Reflect.defineProperty(process, property, { ...descriptor, value })
+        }
+    }
+    return process as TerminalProcessResultPromise
 }

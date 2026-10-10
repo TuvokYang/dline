@@ -12,42 +12,42 @@ import { Controller } from ".."
  * @returns TestConnectionResult with success status and message
  */
 export async function testOtelConnection(_controller: Controller, _: EmptyRequest): Promise<TestConnectionResult> {
-	try {
-		// Awaits attachment: reading providers off the synchronous proxy could
-		// observe an empty list mid-construction and report the collector as
-		// unconfigured when it is merely not built yet.
-		const service = await getTelemetryService()
-		const providers = service.getProviders()
-		const otelProvider = providers.find((p) => p.name === REMOTE_CONFIG_OTEL_PROVIDER_ID)
+    try {
+        // Awaits attachment: reading providers off the synchronous proxy could
+        // observe an empty list mid-construction and report the collector as
+        // unconfigured when it is merely not built yet.
+        const service = await getTelemetryService()
+        const providers = service.getProviders()
+        const otelProvider = providers.find((p) => p.name === REMOTE_CONFIG_OTEL_PROVIDER_ID)
 
-		if (!otelProvider) {
-			return TestConnectionResult.create({
-				success: false,
-				error: "OpenTelemetry provider not configured",
-			})
-		}
+        if (!otelProvider) {
+            return TestConnectionResult.create({
+                success: false,
+                error: "OpenTelemetry provider not configured",
+            })
+        }
 
-		otelProvider.log("dline.test.connection", {
-			test: true,
-			timestamp: new Date().toISOString(),
-			source: "remote_config_settings",
-		})
+        otelProvider.log("dline.test.connection", {
+            test: true,
+            timestamp: new Date().toISOString(),
+            source: "remote_config_settings",
+        })
 
-		otelProvider.recordCounter("dline.test.connection", 1)
+        otelProvider.recordCounter("dline.test.connection", 1)
 
-		await otelProvider.forceFlush()
+        await otelProvider.forceFlush()
 
-		return TestConnectionResult.create({
-			success: true,
-			message: "Test log event sent successfully. Check your OTEL collector for the event.",
-		})
-	} catch (error) {
-		const errorMessage = error instanceof Error ? error.message : String(error)
-		Logger.error("[TEST_OTEL_CONNECTION] Failed to send test event:", error)
+        return TestConnectionResult.create({
+            success: true,
+            message: "Test log event sent successfully. Check your OTEL collector for the event.",
+        })
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        Logger.error("[TEST_OTEL_CONNECTION] Failed to send test event:", error)
 
-		return TestConnectionResult.create({
-			success: false,
-			error: errorMessage,
-		})
-	}
+        return TestConnectionResult.create({
+            success: false,
+            error: errorMessage,
+        })
+    }
 }

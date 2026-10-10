@@ -18,80 +18,80 @@ type ReplyRow = "reasoning" | "text"
  * because a long think is otherwise indistinguishable from a stalled request.
  */
 export class ProviderTextPresenter implements ProviderTextPresentationPort {
-	private readonly rows = new Map<string, number>()
+    private readonly rows = new Map<string, number>()
 
-	constructor(
-		private readonly messages: MessageStateHandler,
-		private readonly nextPresentationId: PresentationIdSequence,
-		private readonly realtime?: RealtimeMessagePublisher,
-		private readonly presentToolPartial?: (projection: Readonly<Record<string, unknown>>) => Promise<void>,
-	) {}
+    constructor(
+        private readonly messages: MessageStateHandler,
+        private readonly nextPresentationId: PresentationIdSequence,
+        private readonly realtime?: RealtimeMessagePublisher,
+        private readonly presentToolPartial?: (projection: Readonly<Record<string, unknown>>) => Promise<void>,
+    ) {}
 
-	showPartial(input: {
-		readonly transientId: string
-		readonly text: string
-		readonly reasoning?: string
-		readonly projection?: Readonly<Record<string, unknown>>
-	}): void {
-		if (input.projection && this.presentToolPartial) {
-			void this.presentToolPartial(input.projection).catch((error) =>
-				Logger.warn(`[ProviderTextPresenter] Failed to present partial tool call: ${String(error)}`),
-			)
-		}
-		// Reasoning first: its row is allocated before the prose row, so the chat
-		// shows the thinking above the answer it led to. Empty reasoning still
-		// opens the row, so encrypted-only thinking reads as activity, not a stall.
-		if (input.reasoning !== undefined) this.show(input.transientId, "reasoning", input.reasoning)
-		if (input.text) this.show(input.transientId, "text", input.text)
-	}
+    showPartial(input: {
+        readonly transientId: string
+        readonly text: string
+        readonly reasoning?: string
+        readonly projection?: Readonly<Record<string, unknown>>
+    }): void {
+        if (input.projection && this.presentToolPartial) {
+            void this.presentToolPartial(input.projection).catch((error) =>
+                Logger.warn(`[ProviderTextPresenter] Failed to present partial tool call: ${String(error)}`),
+            )
+        }
+        // Reasoning first: its row is allocated before the prose row, so the chat
+        // shows the thinking above the answer it led to. Empty reasoning still
+        // opens the row, so encrypted-only thinking reads as activity, not a stall.
+        if (input.reasoning !== undefined) this.show(input.transientId, "reasoning", input.reasoning)
+        if (input.text) this.show(input.transientId, "text", input.text)
+    }
 
-	async commit(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): Promise<void> {
-		await this.settle(input.transientId, "reasoning", input.reasoning ?? "")
-		await this.settle(input.transientId, "text", input.text)
-	}
+    async commit(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): Promise<void> {
+        await this.settle(input.transientId, "reasoning", input.reasoning ?? "")
+        await this.settle(input.transientId, "text", input.text)
+    }
 
-	private show(transientId: string, row: ReplyRow, text: string): void {
-		const message = {
-			ts: this.rowId(transientId, row),
-			type: "say" as const,
-			say: row,
-			text,
-			partial: true,
-		}
-		this.messages.upsertTransientClineMessage(message)
-		this.realtime?.publish(message)
-	}
+    private show(transientId: string, row: ReplyRow, text: string): void {
+        const message = {
+            ts: this.rowId(transientId, row),
+            type: "say" as const,
+            say: row,
+            text,
+            partial: true,
+        }
+        this.messages.upsertTransientClineMessage(message)
+        this.realtime?.publish(message)
+    }
 
-	private async settle(transientId: string, row: ReplyRow, text: string): Promise<void> {
-		const key = rowKey(transientId, row)
-		const existing = this.rows.get(key)
-		this.rows.delete(key)
-		if (!text.trim()) {
-			// A turn that only called tools has no prose to keep. Any row opened by
-			// an early chunk is withdrawn rather than committed empty.
-			if (existing !== undefined) this.messages.removeTransientClineMessage(existing)
-			return
-		}
-		await this.messages.commitTransientClineMessage({
-			ts: existing ?? this.nextPresentationId(),
-			type: "say",
-			say: row,
-			text,
-			partial: false,
-		})
-	}
+    private async settle(transientId: string, row: ReplyRow, text: string): Promise<void> {
+        const key = rowKey(transientId, row)
+        const existing = this.rows.get(key)
+        this.rows.delete(key)
+        if (!text.trim()) {
+            // A turn that only called tools has no prose to keep. Any row opened by
+            // an early chunk is withdrawn rather than committed empty.
+            if (existing !== undefined) this.messages.removeTransientClineMessage(existing)
+            return
+        }
+        await this.messages.commitTransientClineMessage({
+            ts: existing ?? this.nextPresentationId(),
+            type: "say",
+            say: row,
+            text,
+            partial: false,
+        })
+    }
 
-	/** The row a stream owns, allocated once so later chunks update rather than append. */
-	private rowId(transientId: string, row: ReplyRow): number {
-		const key = rowKey(transientId, row)
-		const existing = this.rows.get(key)
-		if (existing !== undefined) return existing
-		const created = this.nextPresentationId()
-		this.rows.set(key, created)
-		return created
-	}
+    /** The row a stream owns, allocated once so later chunks update rather than append. */
+    private rowId(transientId: string, row: ReplyRow): number {
+        const key = rowKey(transientId, row)
+        const existing = this.rows.get(key)
+        if (existing !== undefined) return existing
+        const created = this.nextPresentationId()
+        this.rows.set(key, created)
+        return created
+    }
 }
 
 function rowKey(transientId: string, row: ReplyRow): string {
-	return `${transientId}:${row}`
+    return `${transientId}:${row}`
 }

@@ -21,11 +21,11 @@ import { TaskPhase } from "./TaskPhase"
  * silently inheriting it.
  */
 const WORKING_PHASES: ReadonlySet<TaskPhase> = new Set([
-	TaskPhase.INITIALIZING,
-	TaskPhase.STREAMING,
-	TaskPhase.EXECUTING,
-	TaskPhase.BETWEEN_TURNS,
-	TaskPhase.RESUMING,
+    TaskPhase.INITIALIZING,
+    TaskPhase.STREAMING,
+    TaskPhase.EXECUTING,
+    TaskPhase.BETWEEN_TURNS,
+    TaskPhase.RESUMING,
 ])
 
 /**
@@ -37,7 +37,7 @@ const WORKING_PHASES: ReadonlySet<TaskPhase> = new Set([
  * working task showing no Cancel button.
  */
 export function isTaskWorkingPhase(phase: TaskPhase): boolean {
-	return WORKING_PHASES.has(phase)
+    return WORKING_PHASES.has(phase)
 }
 
 /**
@@ -49,5 +49,5 @@ export function isTaskWorkingPhase(phase: TaskPhase): boolean {
  * not be granted the ability to hold the user's input.
  */
 export function isTaskWorkingPhaseName(phase: string): boolean {
-	return (WORKING_PHASES as ReadonlySet<string>).has(phase)
+    return (WORKING_PHASES as ReadonlySet<string>).has(phase)
 }

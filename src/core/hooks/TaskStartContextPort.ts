@@ -7,9 +7,9 @@ import { getHooksEnabledSafe } from "./hooks-utils"
 
 /** The task identity a TaskStart hook is told about. */
 export interface TaskStartHookIdentity {
-	readonly taskId: string
-	readonly ulid: string
-	readonly initialTask: string
+    readonly taskId: string
+    readonly ulid: string
+    readonly initialTask: string
 }
 
 /**
@@ -21,14 +21,14 @@ export interface TaskStartHookIdentity {
  * has no port.
  */
 export interface TaskStartContextPort {
-	collect(identity: TaskStartHookIdentity): Promise<string | undefined>
+    collect(identity: TaskStartHookIdentity): Promise<string | undefined>
 }
 
 export interface HookTaskStartContextOptions {
-	readonly stateManager: StateManager
-	readonly messages: MessageStateHandler
-	readonly say: (type: string, text?: string) => Promise<number | undefined>
-	readonly model?: () => HookModelInputContext | undefined
+    readonly stateManager: StateManager
+    readonly messages: MessageStateHandler
+    readonly say: (type: string, text?: string) => Promise<number | undefined>
+    readonly model?: () => HookModelInputContext | undefined
 }
 
 /**
@@ -38,30 +38,30 @@ export interface HookTaskStartContextOptions {
  * would run a task the workspace policy just refused.
  */
 export class HookTaskStartContext implements TaskStartContextPort {
-	constructor(private readonly options: HookTaskStartContextOptions) {}
+    constructor(private readonly options: HookTaskStartContextOptions) {}
 
-	async collect(identity: TaskStartHookIdentity): Promise<string | undefined> {
-		const result = await executeHook({
-			hookName: "TaskStart",
-			hookInput: {
-				taskStart: {
-					taskMetadata: { taskId: identity.taskId, ulid: identity.ulid, initialTask: identity.initialTask },
-				},
-			},
-			isCancellable: false,
-			say: (type, text) => this.options.say(type as string, text),
-			messageStateHandler: this.options.messages,
-			taskId: identity.taskId,
-			hooksEnabled: getHooksEnabledSafe(this.options.stateManager.getGlobalSettingsKey("hooksEnabled")),
-			model: this.options.model?.(),
-		})
+    async collect(identity: TaskStartHookIdentity): Promise<string | undefined> {
+        const result = await executeHook({
+            hookName: "TaskStart",
+            hookInput: {
+                taskStart: {
+                    taskMetadata: { taskId: identity.taskId, ulid: identity.ulid, initialTask: identity.initialTask },
+                },
+            },
+            isCancellable: false,
+            say: (type, text) => this.options.say(type as string, text),
+            messageStateHandler: this.options.messages,
+            taskId: identity.taskId,
+            hooksEnabled: getHooksEnabledSafe(this.options.stateManager.getGlobalSettingsKey("hooksEnabled")),
+            model: this.options.model?.(),
+        })
 
-		if (result.cancel) {
-			throw new Error(result.errorMessage ?? "TaskStart hook cancelled the task")
-		}
-		if (result.errorMessage) {
-			Logger.warn(`[TaskStart] Hook reported an error for task ${identity.taskId}: ${result.errorMessage}`)
-		}
-		return result.contextModification
-	}
+        if (result.cancel) {
+            throw new Error(result.errorMessage ?? "TaskStart hook cancelled the task")
+        }
+        if (result.errorMessage) {
+            Logger.warn(`[TaskStart] Hook reported an error for task ${identity.taskId}: ${result.errorMessage}`)
+        }
+        return result.contextModification
+    }
 }

@@ -12,6 +12,6 @@ import { readJournalConversation } from "./JournalConversationReader"
  * old task does not change it.
  */
 export async function readTaskConversation(taskId: string): Promise<ClineStorageMessage[]> {
-	const layout = await resolveInstanceLayout({ taskId })
-	return (await readJournalConversation(layout)) ?? getSavedApiConversationHistory(taskId)
+    const layout = await resolveInstanceLayout({ taskId })
+    return (await readJournalConversation(layout)) ?? getSavedApiConversationHistory(taskId)
 }

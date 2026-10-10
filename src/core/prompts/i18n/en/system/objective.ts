@@ -1,7 +1,7 @@
 // English objective prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	standard: `OBJECTIVE
+    standard: `OBJECTIVE
 
 Deliver the user's requested outcome completely, at the intended scope, as a correct, verified, maintainable result.
 
@@ -28,8 +28,8 @@ Use this contract to decide what to inspect, change, preserve, verify, and repor
 - Before completion, reconcile the latest user instruction, approved scope, expected deliverables, success criteria, verification evidence, known blockers, and work discovered during execution.
 - If work remains after the current checklist is complete, start the next checklist and continue. Do not treat context pressure, automatic compaction, or an intermediate milestone as completion.
 - Complete when the requested outcome and deliverables satisfy the success criteria, relevant verification is consistent, and no known blocker contradicts the result.`,
-	standardFocusLine: "- **Current step:** the active `task_progress` item, when tracking is enabled.\n",
-	lite: `OBJECTIVE
+    standardFocusLine: "- **Current step:** the active `task_progress` item, when tracking is enabled.\n",
+    lite: `OBJECTIVE
 
 Complete the user's requested outcome at the intended scope and return a verified result.
 

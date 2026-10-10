@@ -21,10 +21,10 @@ import type { RootCauseDiagnosis } from "./root-cause-types"
 const BREACH_EVENT_SUFFIX = ".breach"
 
 export interface DiagnosisPipelineOptions {
-	/** Receives each diagnosis. Failures here must not reach the producer. */
-	readonly onDiagnosis: (diagnosis: RootCauseDiagnosis) => void
-	readonly correlator?: IncidentCorrelator
-	readonly analyzer?: RootCauseAnalyzer
+    /** Receives each diagnosis. Failures here must not reach the producer. */
+    readonly onDiagnosis: (diagnosis: RootCauseDiagnosis) => void
+    readonly correlator?: IncidentCorrelator
+    readonly analyzer?: RootCauseAnalyzer
 }
 
 /**
@@ -36,41 +36,41 @@ export interface DiagnosisPipelineOptions {
  * failed operation, only degraded timings.
  */
 function isFailureSignal(event: RuntimeTelemetryEvent): boolean {
-	if (event.attributes[ANALYSIS_ATTRIBUTES.outcome] === OUTCOME.failure) return true
-	return event.name.endsWith(BREACH_EVENT_SUFFIX)
+    if (event.attributes[ANALYSIS_ATTRIBUTES.outcome] === OUTCOME.failure) return true
+    return event.name.endsWith(BREACH_EVENT_SUFFIX)
 }
 
 export class DiagnosisPipeline {
-	private readonly correlator: IncidentCorrelator
-	private readonly analyzer: RootCauseAnalyzer
-	private readonly onDiagnosis: (diagnosis: RootCauseDiagnosis) => void
+    private readonly correlator: IncidentCorrelator
+    private readonly analyzer: RootCauseAnalyzer
+    private readonly onDiagnosis: (diagnosis: RootCauseDiagnosis) => void
 
-	constructor(options: DiagnosisPipelineOptions) {
-		this.correlator = options.correlator ?? new IncidentCorrelator()
-		this.analyzer = options.analyzer ?? new RootCauseAnalyzer()
-		this.onDiagnosis = options.onDiagnosis
-	}
+    constructor(options: DiagnosisPipelineOptions) {
+        this.correlator = options.correlator ?? new IncidentCorrelator()
+        this.analyzer = options.analyzer ?? new RootCauseAnalyzer()
+        this.onDiagnosis = options.onDiagnosis
+    }
 
-	/**
-	 * Feed one event through correlation and, when it signals a failure,
-	 * classification.
-	 *
-	 * Returns the diagnosis so callers can assert on it; production callers
-	 * ignore the result and rely on `onDiagnosis`.
-	 */
-	observe(event: RuntimeTelemetryEvent): RootCauseDiagnosis | undefined {
-		if (!isFailureSignal(event)) {
-			this.correlator.observe(event)
-			return undefined
-		}
+    /**
+     * Feed one event through correlation and, when it signals a failure,
+     * classification.
+     *
+     * Returns the diagnosis so callers can assert on it; production callers
+     * ignore the result and rely on `onDiagnosis`.
+     */
+    observe(event: RuntimeTelemetryEvent): RootCauseDiagnosis | undefined {
+        if (!isFailureSignal(event)) {
+            this.correlator.observe(event)
+            return undefined
+        }
 
-		const diagnosis = this.analyzer.analyze(this.correlator.correlate(event))
-		this.onDiagnosis(diagnosis)
-		return diagnosis
-	}
+        const diagnosis = this.analyzer.analyze(this.correlator.correlate(event))
+        this.onDiagnosis(diagnosis)
+        return diagnosis
+    }
 
-	/** Drops retained history. Used when a session ends. */
-	reset(): void {
-		this.correlator.reset()
-	}
+    /** Drops retained history. Used when a session ends. */
+    reset(): void {
+        this.correlator.reset()
+    }
 }

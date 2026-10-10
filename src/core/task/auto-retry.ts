@@ -6,20 +6,20 @@ import { MAX_AUTO_RETRY_ATTEMPTS } from "./auto-retry-schedule"
 import { ProfileNotValidError } from "./profile-admission"
 
 export interface StreamRetryInput {
-	isSpendLimitError: boolean
-	autoRetryAttempts: number
+    isSpendLimitError: boolean
+    autoRetryAttempts: number
 }
 
 export interface StreamRetryDecision {
-	shouldRetry: boolean
-	shouldPrompt: boolean
+    shouldRetry: boolean
+    shouldPrompt: boolean
 }
 
 export interface DelayedStreamRetryInput {
-	delay: number
-	isAborted: () => boolean
-	isCurrentTask: () => boolean
-	dispatchRetry: () => Promise<void>
+    delay: number
+    isAborted: () => boolean
+    isCurrentTask: () => boolean
+    dispatchRetry: () => Promise<void>
 }
 
 /**
@@ -29,8 +29,8 @@ export interface DelayedStreamRetryInput {
  * @returns True when retry may continue, false when cancellation won.
  */
 export async function waitRetryDelay(delay: number, isAborted: () => boolean): Promise<boolean> {
-	await setTimeoutPromise(delay)
-	return !isAborted()
+    await setTimeoutPromise(delay)
+    return !isAborted()
 }
 
 /**
@@ -42,58 +42,58 @@ export async function waitRetryDelay(delay: number, isAborted: () => boolean): P
  * @returns True when the delay elapsed, false when cancellation won.
  */
 export function waitRetryDelayUnlessAborted(delay: number, signal: AbortSignal): Promise<boolean> {
-	if (signal.aborted) return Promise.resolve(false)
-	return new Promise((resolve) => {
-		const onAbort = () => {
-			clearTimeout(timer)
-			resolve(false)
-		}
-		const timer = setTimeout(() => {
-			signal.removeEventListener("abort", onAbort)
-			resolve(true)
-		}, delay)
-		signal.addEventListener("abort", onAbort, { once: true })
-	})
+    if (signal.aborted) return Promise.resolve(false)
+    return new Promise((resolve) => {
+        const onAbort = () => {
+            clearTimeout(timer)
+            resolve(false)
+        }
+        const timer = setTimeout(() => {
+            signal.removeEventListener("abort", onAbort)
+            resolve(true)
+        }, delay)
+        signal.addEventListener("abort", onAbort, { once: true })
+    })
 }
 
 /** The provider and model a failed request was sent to, for error classification. */
 export interface ProviderIdentity {
-	readonly providerId?: string
-	readonly modelId?: string
+    readonly providerId?: string
+    readonly modelId?: string
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-	return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : undefined
+    return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : undefined
 }
 
 function parseMessageRecord(error: unknown): Record<string, unknown> | undefined {
-	if (!(error instanceof Error)) return undefined
-	try {
-		return asRecord(JSON.parse(error.message))
-	} catch {
-		return undefined
-	}
+    if (!(error instanceof Error)) return undefined
+    try {
+        return asRecord(JSON.parse(error.message))
+    } catch {
+        return undefined
+    }
 }
 
 /** The HTTP status a provider error carries, wherever the provider nested it. */
 function nestedStatusOf(error: unknown, parsed: ClineError): number {
-	const raw = asRecord(error)
-	const messageRecord = parseMessageRecord(error)
-	const rawError = asRecord(raw?.error)
-	const messageError = asRecord(messageRecord?.error)
-	const status =
-		raw?.status ??
-		raw?.statusCode ??
-		asRecord(raw?.response)?.status ??
-		rawError?.status ??
-		asRecord(rawError?.error)?.status ??
-		messageRecord?.status ??
-		messageRecord?.statusCode ??
-		asRecord(messageRecord?.response)?.status ??
-		messageError?.status ??
-		asRecord(messageError?.error)?.status ??
-		parsed._error.status
-	return typeof status === "number" ? status : Number(status)
+    const raw = asRecord(error)
+    const messageRecord = parseMessageRecord(error)
+    const rawError = asRecord(raw?.error)
+    const messageError = asRecord(messageRecord?.error)
+    const status =
+        raw?.status ??
+        raw?.statusCode ??
+        asRecord(raw?.response)?.status ??
+        rawError?.status ??
+        asRecord(rawError?.error)?.status ??
+        messageRecord?.status ??
+        messageRecord?.statusCode ??
+        asRecord(messageRecord?.response)?.status ??
+        messageError?.status ??
+        asRecord(messageError?.error)?.status ??
+        parsed._error.status
+    return typeof status === "number" ? status : Number(status)
 }
 
 /**
@@ -106,25 +106,25 @@ function nestedStatusOf(error: unknown, parsed: ClineError): number {
  * code outside it, such as `stream_read_error`.
  */
 export function isRetryableProviderError(error: unknown, provider: ProviderIdentity = {}): boolean {
-	// A cancelled run is not a provider failure and must not be replayed.
-	if (error instanceof Error && error.name === "AbortError") return false
-	// Only fixing or switching the Profile can admit this request.
-	if (error instanceof ProfileNotValidError) return false
-	if (isOutputLimitExceededError(error)) return false
-	// The same frozen request cannot fit on a second attempt either.
-	if (checkContextWindowExceededError(error)) return false
+    // A cancelled run is not a provider failure and must not be replayed.
+    if (error instanceof Error && error.name === "AbortError") return false
+    // Only fixing or switching the Profile can admit this request.
+    if (error instanceof ProfileNotValidError) return false
+    if (isOutputLimitExceededError(error)) return false
+    // The same frozen request cannot fit on a second attempt either.
+    if (checkContextWindowExceededError(error)) return false
 
-	const parsed = ClineError.transform(error, provider.modelId, provider.providerId)
-	const status = nestedStatusOf(error, parsed)
-	// 408/409/425 are transport-level request states that can accompany an auth
-	// classification without meaning the credentials themselves are rejected.
-	const isRetryableRequestStatus = status === 408 || status === 409 || status === 425
-	return !(
-		parsed.isErrorType(ClineErrorType.Balance) ||
-		parsed.isErrorType(ClineErrorType.SpendLimit) ||
-		parsed.isErrorType(ClineErrorType.QuotaExceeded) ||
-		(parsed.isErrorType(ClineErrorType.Auth) && !isRetryableRequestStatus)
-	)
+    const parsed = ClineError.transform(error, provider.modelId, provider.providerId)
+    const status = nestedStatusOf(error, parsed)
+    // 408/409/425 are transport-level request states that can accompany an auth
+    // classification without meaning the credentials themselves are rejected.
+    const isRetryableRequestStatus = status === 408 || status === 409 || status === 425
+    return !(
+        parsed.isErrorType(ClineErrorType.Balance) ||
+        parsed.isErrorType(ClineErrorType.SpendLimit) ||
+        parsed.isErrorType(ClineErrorType.QuotaExceeded) ||
+        (parsed.isErrorType(ClineErrorType.Auth) && !isRetryableRequestStatus)
+    )
 }
 
 /**
@@ -133,13 +133,13 @@ export function isRetryableProviderError(error: unknown, provider: ProviderIdent
  * @returns True when the retry event ran, false when retry was suppressed.
  */
 export async function runDelayedStreamRetry(input: DelayedStreamRetryInput): Promise<boolean> {
-	const shouldRetry = await waitRetryDelay(input.delay, input.isAborted)
-	if (!shouldRetry || !input.isCurrentTask()) {
-		return false
-	}
+    const shouldRetry = await waitRetryDelay(input.delay, input.isAborted)
+    if (!shouldRetry || !input.isCurrentTask()) {
+        return false
+    }
 
-	await input.dispatchRetry()
-	return true
+    await input.dispatchRetry()
+    return true
 }
 
 /**
@@ -148,13 +148,13 @@ export async function runDelayedStreamRetry(input: DelayedStreamRetryInput): Pro
  * @returns Retry decision for streaming failure recovery.
  */
 export function getStreamRetryDecision(input: StreamRetryInput): StreamRetryDecision {
-	if (input.isSpendLimitError) {
-		return { shouldRetry: false, shouldPrompt: false }
-	}
+    if (input.isSpendLimitError) {
+        return { shouldRetry: false, shouldPrompt: false }
+    }
 
-	if (input.autoRetryAttempts < MAX_AUTO_RETRY_ATTEMPTS) {
-		return { shouldRetry: true, shouldPrompt: false }
-	}
+    if (input.autoRetryAttempts < MAX_AUTO_RETRY_ATTEMPTS) {
+        return { shouldRetry: true, shouldPrompt: false }
+    }
 
-	return { shouldRetry: false, shouldPrompt: true }
+    return { shouldRetry: false, shouldPrompt: true }
 }

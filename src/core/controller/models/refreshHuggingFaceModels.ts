@@ -14,12 +14,12 @@ const HUGGINGFACE_PROVIDER_ID = "huggingface"
  * static context window and prices while the discovery adds newly routed ids.
  */
 export async function refreshHuggingFaceModels(
-	_controller: Controller,
-	_request: EmptyRequest,
+    _controller: Controller,
+    _request: EmptyRequest,
 ): Promise<OpenRouterCompatibleModelInfo> {
-	const models = await discoverProviderModels(HUGGINGFACE_PROVIDER_ID, undefined, { persist: true })
-	if (Object.keys(models).length === 0) {
-		Logger.error("Invalid response from Hugging Face API")
-	}
-	return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
+    const models = await discoverProviderModels(HUGGINGFACE_PROVIDER_ID, undefined, { persist: true })
+    if (Object.keys(models).length === 0) {
+        Logger.error("Invalid response from Hugging Face API")
+    }
+    return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
 }

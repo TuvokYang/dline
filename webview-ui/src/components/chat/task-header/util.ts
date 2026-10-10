@@ -7,31 +7,31 @@ export { formatTokenMetric } from "@/utils/format"
 const isNonZeroPrice = (price: number | undefined): boolean => price !== undefined && price !== 0
 
 export const hasNonZeroModelPricing = (pricing: ModelPricing | undefined): boolean => {
-	if (!pricing) {
-		return false
-	}
+    if (!pricing) {
+        return false
+    }
 
-	if (
-		[
-			pricing.inputPrice,
-			pricing.outputPrice,
-			pricing.cacheWritesPrice,
-			pricing.cacheReadsPrice,
-			pricing.thinkingOutputPrice,
-		].some(isNonZeroPrice)
-	) {
-		return true
-	}
+    if (
+        [
+            pricing.inputPrice,
+            pricing.outputPrice,
+            pricing.cacheWritesPrice,
+            pricing.cacheReadsPrice,
+            pricing.thinkingOutputPrice,
+        ].some(isNonZeroPrice)
+    ) {
+        return true
+    }
 
-	if (
-		(pricing.tiers ?? []).some((tier) =>
-			[tier.inputPrice, tier.outputPrice, tier.cacheWritesPrice, tier.cacheReadsPrice].some(isNonZeroPrice),
-		)
-	) {
-		return true
-	}
+    if (
+        (pricing.tiers ?? []).some((tier) =>
+            [tier.inputPrice, tier.outputPrice, tier.cacheWritesPrice, tier.cacheReadsPrice].some(isNonZeroPrice),
+        )
+    ) {
+        return true
+    }
 
-	return (pricing.thinkingOutputPriceTiers ?? []).some((tier) => isNonZeroPrice(tier.price))
+    return (pricing.thinkingOutputPriceTiers ?? []).some((tier) => isNonZeroPrice(tier.price))
 }
 
 /**
@@ -42,96 +42,96 @@ export const hasNonZeroModelPricing = (pricing: ModelPricing | undefined): boole
  * @returns string - The color code for the block or indicator
  */
 export const getColor = (message: UiMessage): string => {
-	if (message.type === "say") {
-		switch (message.say) {
-			case "task":
-				return COLOR_WHITE // White for system prompt
-			case "user_feedback":
-				return COLOR_WHITE // White for user feedback
-			case "text":
-				return COLOR_GRAY // Gray for assistant responses
-			case "tool":
-				if (message.text) {
-					try {
-						const toolData = JSON.parse(message.text)
-						if (
-							toolData.tool === "readFile" ||
-							toolData.tool === "listFilesTopLevel" ||
-							toolData.tool === "listFilesRecursive" ||
-							toolData.tool === "listCodeDefinitionNames" ||
-							toolData.tool === "searchFiles"
-						) {
-							return COLOR_BEIGE // Beige for file read operations
-						}
-						if (
-							toolData.tool === "editedExistingFile" ||
-							toolData.tool === "newFileCreated" ||
-							toolData.tool === "deletedFile"
-						) {
-							return COLOR_BLUE // Blue for file edit/create operations
-						}
-						if (toolData.tool === "webFetch" || toolData.tool === "webSearch") {
-							return COLOR_PURPLE // Purple for web fetch/search operations
-						}
-					} catch (_e) {
-						// JSON parse error here
-					}
-				}
-				return COLOR_BEIGE // Default beige for tool use
-			case "command":
-			case "command_output":
-				return COLOR_PURPLE // Red for terminal commands
-			case "browser_action":
-			case "browser_action_result":
-				return COLOR_PURPLE // Purple for browser actions
-			case "completion_result":
-				return COLOR_GREEN // Green for task success
-			default:
-				return COLOR_DARK_GRAY // Dark gray for unknown
-		}
-	}
-	if (message.type === "ask") {
-		switch (message.ask) {
-			case "followup":
-				return COLOR_GRAY // Gray for user messages
-			case "make_plan":
-				return COLOR_GRAY // Gray for planning responses
-			case "tool":
-				// Match the color of the tool approval with the tool type
-				if (message.text) {
-					try {
-						const toolData = JSON.parse(message.text)
-						if (
-							toolData.tool === "readFile" ||
-							toolData.tool === "listFilesTopLevel" ||
-							toolData.tool === "listFilesRecursive" ||
-							toolData.tool === "listCodeDefinitionNames" ||
-							toolData.tool === "searchFiles"
-						) {
-							return COLOR_BEIGE // Beige for file read operations
-						}
-						if (
-							toolData.tool === "editedExistingFile" ||
-							toolData.tool === "newFileCreated" ||
-							toolData.tool === "deletedFile"
-						) {
-							return COLOR_BLUE // Blue for file edit/create operations
-						}
-						if (toolData.tool === "webFetch" || toolData.tool === "webSearch") {
-							return COLOR_PURPLE // Purple for web fetch/search operations
-						}
-					} catch (_e) {
-						// JSON parse error here
-					}
-				}
-				return COLOR_BEIGE // Default beige for tool approvals
-			case "command":
-				return COLOR_PURPLE // Red for command approvals (same as terminal commands)
-			case "browser_action_launch":
-				return COLOR_PURPLE // Purple for browser launch approvals (same as browser actions)
-			default:
-				return COLOR_DARK_GRAY // Dark gray for unknown
-		}
-	}
-	return COLOR_WHITE // Default color
+    if (message.type === "say") {
+        switch (message.say) {
+            case "task":
+                return COLOR_WHITE // White for system prompt
+            case "user_feedback":
+                return COLOR_WHITE // White for user feedback
+            case "text":
+                return COLOR_GRAY // Gray for assistant responses
+            case "tool":
+                if (message.text) {
+                    try {
+                        const toolData = JSON.parse(message.text)
+                        if (
+                            toolData.tool === "readFile" ||
+                            toolData.tool === "listFilesTopLevel" ||
+                            toolData.tool === "listFilesRecursive" ||
+                            toolData.tool === "listCodeDefinitionNames" ||
+                            toolData.tool === "searchFiles"
+                        ) {
+                            return COLOR_BEIGE // Beige for file read operations
+                        }
+                        if (
+                            toolData.tool === "editedExistingFile" ||
+                            toolData.tool === "newFileCreated" ||
+                            toolData.tool === "deletedFile"
+                        ) {
+                            return COLOR_BLUE // Blue for file edit/create operations
+                        }
+                        if (toolData.tool === "webFetch" || toolData.tool === "webSearch") {
+                            return COLOR_PURPLE // Purple for web fetch/search operations
+                        }
+                    } catch (_e) {
+                        // JSON parse error here
+                    }
+                }
+                return COLOR_BEIGE // Default beige for tool use
+            case "command":
+            case "command_output":
+                return COLOR_PURPLE // Red for terminal commands
+            case "browser_action":
+            case "browser_action_result":
+                return COLOR_PURPLE // Purple for browser actions
+            case "completion_result":
+                return COLOR_GREEN // Green for task success
+            default:
+                return COLOR_DARK_GRAY // Dark gray for unknown
+        }
+    }
+    if (message.type === "ask") {
+        switch (message.ask) {
+            case "followup":
+                return COLOR_GRAY // Gray for user messages
+            case "make_plan":
+                return COLOR_GRAY // Gray for planning responses
+            case "tool":
+                // Match the color of the tool approval with the tool type
+                if (message.text) {
+                    try {
+                        const toolData = JSON.parse(message.text)
+                        if (
+                            toolData.tool === "readFile" ||
+                            toolData.tool === "listFilesTopLevel" ||
+                            toolData.tool === "listFilesRecursive" ||
+                            toolData.tool === "listCodeDefinitionNames" ||
+                            toolData.tool === "searchFiles"
+                        ) {
+                            return COLOR_BEIGE // Beige for file read operations
+                        }
+                        if (
+                            toolData.tool === "editedExistingFile" ||
+                            toolData.tool === "newFileCreated" ||
+                            toolData.tool === "deletedFile"
+                        ) {
+                            return COLOR_BLUE // Blue for file edit/create operations
+                        }
+                        if (toolData.tool === "webFetch" || toolData.tool === "webSearch") {
+                            return COLOR_PURPLE // Purple for web fetch/search operations
+                        }
+                    } catch (_e) {
+                        // JSON parse error here
+                    }
+                }
+                return COLOR_BEIGE // Default beige for tool approvals
+            case "command":
+                return COLOR_PURPLE // Red for command approvals (same as terminal commands)
+            case "browser_action_launch":
+                return COLOR_PURPLE // Purple for browser launch approvals (same as browser actions)
+            default:
+                return COLOR_DARK_GRAY // Dark gray for unknown
+        }
+    }
+    return COLOR_WHITE // Default color
 }

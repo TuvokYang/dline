@@ -20,57 +20,57 @@ import type { TaskOpening } from "../opened-task"
  * to that opening so the Webview never merges it into another one.
  */
 export class ControllerTaskSessionPorts implements TaskSessionPorts {
-	readonly collaboration: TaskSessionPorts["collaboration"]
-	readonly promptContext: TaskSessionPorts["promptContext"]
-	readonly environment: TaskSessionPorts["environment"]
-	readonly presentation: TaskSessionPorts["presentation"]
-	readonly semanticCatalog: TaskSessionPorts["semanticCatalog"]
-	readonly successor: TaskSessionPorts["successor"]
-	readonly profileUsage: TaskSessionPorts["profileUsage"]
+    readonly collaboration: TaskSessionPorts["collaboration"]
+    readonly promptContext: TaskSessionPorts["promptContext"]
+    readonly environment: TaskSessionPorts["environment"]
+    readonly presentation: TaskSessionPorts["presentation"]
+    readonly semanticCatalog: TaskSessionPorts["semanticCatalog"]
+    readonly successor: TaskSessionPorts["successor"]
+    readonly profileUsage: TaskSessionPorts["profileUsage"]
 
-	constructor(
-		private readonly controller: Controller,
-		opening: TaskOpening,
-	) {
-		const semanticCatalog = inputSemanticCatalogService(controller)
-		this.collaboration = OrchestratorController.getInstance().collaboration
-		this.promptContext = {
-			getHostVersion: () => HostProvider.env.getHostVersion({}),
-			refreshClineRules: (cwd) => refreshClineRulesToggles(controller, cwd),
-			refreshExternalRules: (cwd) => refreshExternalRulesToggles(controller, cwd),
-			refreshWorkflows: (cwd) => refreshWorkflowToggles(controller, cwd),
-			refreshSkills: () => refreshSkills(controller),
-			refreshSubagents: () => refreshSubagents(controller),
-			getMcpServers: () => controller.getMcpServersForOwner(),
-			getTaskMcpServers: () => controller.mcpHub.getServersForOwner(controller.mcpOwnerId),
-		}
-		this.environment = {
-			getHostVersion: () => HostProvider.env.getHostVersion({}),
-			getVisibleFiles: async () => (await HostProvider.window.getVisibleTabs({})).paths,
-			getOpenTabs: async () => (await HostProvider.window.getOpenTabs({})).paths,
-			buildActiveTasksSection: ({ currentCwd, excludeTaskId }) =>
-				buildActiveTasksSection({
-					controllers: OrchestratorController.getInstance().getActiveControllers(),
-					currentCwd,
-					excludeTaskId,
-				}),
-			activeTaskCount: () => OrchestratorController.getInstance().getControllerCount(),
-		}
-		this.presentation = {
-			publish: (row) => sendPartialMessageEvent(controller, convertClineMessageToProto(row), opening),
-		}
-		this.semanticCatalog = {
-			current: () => semanticCatalog.current(),
-			discovered: () => semanticCatalog.discovered(),
-		}
-		this.successor = {
-			start: async (sourceTaskId, handoff) => {
-				if (sourceTaskId !== opening.taskId) return
-				await controller.startSuccessorTask(opening, handoff.context, handoff.taskSettings, handoff.initialUserContent)
-			},
-		}
-		this.profileUsage = {
-			record: (profileId, increment) => controller.recordProfileTokenUsage(profileId, increment),
-		}
-	}
+    constructor(
+        private readonly controller: Controller,
+        opening: TaskOpening,
+    ) {
+        const semanticCatalog = inputSemanticCatalogService(controller)
+        this.collaboration = OrchestratorController.getInstance().collaboration
+        this.promptContext = {
+            getHostVersion: () => HostProvider.env.getHostVersion({}),
+            refreshClineRules: (cwd) => refreshClineRulesToggles(controller, cwd),
+            refreshExternalRules: (cwd) => refreshExternalRulesToggles(controller, cwd),
+            refreshWorkflows: (cwd) => refreshWorkflowToggles(controller, cwd),
+            refreshSkills: () => refreshSkills(controller),
+            refreshSubagents: () => refreshSubagents(controller),
+            getMcpServers: () => controller.getMcpServersForOwner(),
+            getTaskMcpServers: () => controller.mcpHub.getServersForOwner(controller.mcpOwnerId),
+        }
+        this.environment = {
+            getHostVersion: () => HostProvider.env.getHostVersion({}),
+            getVisibleFiles: async () => (await HostProvider.window.getVisibleTabs({})).paths,
+            getOpenTabs: async () => (await HostProvider.window.getOpenTabs({})).paths,
+            buildActiveTasksSection: ({ currentCwd, excludeTaskId }) =>
+                buildActiveTasksSection({
+                    controllers: OrchestratorController.getInstance().getActiveControllers(),
+                    currentCwd,
+                    excludeTaskId,
+                }),
+            activeTaskCount: () => OrchestratorController.getInstance().getControllerCount(),
+        }
+        this.presentation = {
+            publish: (row) => sendPartialMessageEvent(controller, convertClineMessageToProto(row), opening),
+        }
+        this.semanticCatalog = {
+            current: () => semanticCatalog.current(),
+            discovered: () => semanticCatalog.discovered(),
+        }
+        this.successor = {
+            start: async (sourceTaskId, handoff) => {
+                if (sourceTaskId !== opening.taskId) return
+                await controller.startSuccessorTask(opening, handoff.context, handoff.taskSettings, handoff.initialUserContent)
+            },
+        }
+        this.profileUsage = {
+            record: (profileId, increment) => controller.recordProfileTokenUsage(profileId, increment),
+        }
+    }
 }

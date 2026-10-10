@@ -9,6 +9,6 @@ import type { StateManager } from "../storage/StateManager"
  * @returns true if user setting is enabled
  */
 export function isMultiRootEnabled(stateManager: StateManager): boolean {
-	const userSetting = stateManager.getGlobalStateKey("multiRootEnabled")
-	return !!userSetting
+    const userSetting = stateManager.getGlobalStateKey("multiRootEnabled")
+    return !!userSetting
 }

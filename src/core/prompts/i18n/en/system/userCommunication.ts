@@ -1,7 +1,7 @@
 // English user communication prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	main: `USER COMMUNICATION
+    main: `USER COMMUNICATION
 
 Keep the user informed about what you are doing and why without turning routine progress into approval checkpoints. Refer to yourself in the first person and address the user directly.
 

@@ -11,14 +11,14 @@ import type { RuntimeDiagnostic, RuntimeDiagnosticSeverity, RuntimeDiagnosticSin
 export type RuntimeDiagnosticReporter = (message: string, severity: RuntimeDiagnosticSeverity) => void
 
 function describe(taskId: string, entry: RuntimeDiagnostic): string {
-	const parts = [
-		`[TaskRuntime ${taskId}]`,
-		`${entry.source}:${entry.code}`,
-		entry.commandId ? `commandId=${entry.commandId}` : undefined,
-		entry.revision === undefined ? undefined : `revision=${entry.revision}`,
-		entry.message,
-	]
-	return parts.filter((part): part is string => part !== undefined).join(" ")
+    const parts = [
+        `[TaskRuntime ${taskId}]`,
+        `${entry.source}:${entry.code}`,
+        entry.commandId ? `commandId=${entry.commandId}` : undefined,
+        entry.revision === undefined ? undefined : `revision=${entry.revision}`,
+        entry.message,
+    ]
+    return parts.filter((part): part is string => part !== undefined).join(" ")
 }
 
 /**
@@ -31,12 +31,12 @@ function describe(taskId: string, entry: RuntimeDiagnostic): string {
  * which is exactly the state a recovery cannot be diagnosed from.
  */
 export class LoggingRuntimeDiagnostics implements RuntimeDiagnosticSink {
-	constructor(
-		private readonly taskId: string,
-		private readonly report: RuntimeDiagnosticReporter,
-	) {}
+    constructor(
+        private readonly taskId: string,
+        private readonly report: RuntimeDiagnosticReporter,
+    ) {}
 
-	record(entry: RuntimeDiagnostic): void {
-		this.report(describe(this.taskId, entry), entry.severity ?? "failure")
-	}
+    record(entry: RuntimeDiagnostic): void {
+        this.report(describe(this.taskId, entry), entry.severity ?? "failure")
+    }
 }

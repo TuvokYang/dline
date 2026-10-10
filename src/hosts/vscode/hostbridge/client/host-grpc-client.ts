@@ -3,9 +3,9 @@ import * as host from "@shared/proto/dline/host"
 import { HostBridgeClientProvider } from "@/hosts/host-provider-types"
 
 export const vscodeHostBridgeClient: HostBridgeClientProvider = {
-	workspaceClient: createGrpcClient(host.WorkspaceServiceDefinition),
-	envClient: createGrpcClient(host.EnvServiceDefinition),
-	windowClient: createGrpcClient(host.WindowServiceDefinition),
-	diffClient: createGrpcClient(host.DiffServiceDefinition),
-	languageClient: createGrpcClient(host.LanguageServiceDefinition),
+    workspaceClient: createGrpcClient(host.WorkspaceServiceDefinition),
+    envClient: createGrpcClient(host.EnvServiceDefinition),
+    windowClient: createGrpcClient(host.WindowServiceDefinition),
+    diffClient: createGrpcClient(host.DiffServiceDefinition),
+    languageClient: createGrpcClient(host.LanguageServiceDefinition),
 }

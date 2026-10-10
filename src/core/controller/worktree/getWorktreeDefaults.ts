@@ -10,12 +10,12 @@ import { Controller } from ".."
  * Returns a 5-character alphanumeric string
  */
 function generateRandomSuffix(): string {
-	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-	let result = ""
-	for (let i = 0; i < 5; i++) {
-		result += chars.charAt(Math.floor(Math.random() * chars.length))
-	}
-	return result
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+    let result = ""
+    for (let i = 0; i < 5; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    return result
 }
 
 /**
@@ -25,25 +25,25 @@ function generateRandomSuffix(): string {
  * @returns WorktreeDefaults with suggested branch name and path
  */
 export async function getWorktreeDefaults(_controller: Controller, _request: EmptyRequest): Promise<WorktreeDefaults> {
-	const suffix = generateRandomSuffix()
+    const suffix = generateRandomSuffix()
 
-	// Generate suggested branch name
-	const suggestedBranch = `worktree/cline-${suffix}`
+    // Generate suggested branch name
+    const suggestedBranch = `worktree/cline-${suffix}`
 
-	// Generate suggested path in Documents/Cline/Worktrees/<project-name>-<suffix>
-	const documentsPath = await getDocumentsPath()
-	const cwd = await getWorkspacePath()
+    // Generate suggested path in Documents/Cline/Worktrees/<project-name>-<suffix>
+    const documentsPath = await getDocumentsPath()
+    const cwd = await getWorkspacePath()
 
-	// Get project name from workspace path
-	let projectName = "project"
-	if (cwd) {
-		projectName = path.basename(cwd)
-	}
+    // Get project name from workspace path
+    let projectName = "project"
+    if (cwd) {
+        projectName = path.basename(cwd)
+    }
 
-	const suggestedPath = path.join(documentsPath, "Cline", "Worktrees", `${projectName}-${suffix}`)
+    const suggestedPath = path.join(documentsPath, "Cline", "Worktrees", `${projectName}-${suffix}`)
 
-	return WorktreeDefaults.create({
-		suggestedBranch,
-		suggestedPath,
-	})
+    return WorktreeDefaults.create({
+        suggestedBranch,
+        suggestedPath,
+    })
 }

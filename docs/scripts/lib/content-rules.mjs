@@ -4,13 +4,13 @@ import { pagePath, ROOT_LOCALE } from "./content-files.mjs"
 import { findForbiddenText } from "./forbidden-patterns.mjs"
 import { CJK_TEXT } from "./locale-text.mjs"
 import {
-	collectComponentTags,
-	collectImports,
-	collectLinks,
-	frontmatterKeys,
-	lineOf,
-	maskCode,
-	maskFrontmatter,
+    collectComponentTags,
+    collectImports,
+    collectLinks,
+    frontmatterKeys,
+    lineOf,
+    maskCode,
+    maskFrontmatter,
 } from "./mdx-analysis.mjs"
 
 /**
@@ -32,63 +32,63 @@ const EDITION_NAME = Object.freeze({ [ROOT_LOCALE]: "English", [CHINESE_LOCALE]:
  * @returns {Issue[]}
  */
 export function checkPage({ page, source, basePrefix }) {
-	/** @type {Issue[]} */
-	const issues = []
-	/**
-	 * @param {string} message
-	 * @param {string} [text]
-	 * @param {number} [index]
-	 */
-	const report = (message, text, index) =>
-		issues.push({
-			file: page.relativePath,
-			line: text === undefined || index === undefined ? 1 : lineOf(text, index),
-			message,
-		})
+    /** @type {Issue[]} */
+    const issues = []
+    /**
+     * @param {string} message
+     * @param {string} [text]
+     * @param {number} [index]
+     */
+    const report = (message, text, index) =>
+        issues.push({
+            file: page.relativePath,
+            line: text === undefined || index === undefined ? 1 : lineOf(text, index),
+            message,
+        })
 
-	const { frontmatter, body } = maskFrontmatter(source)
-	const keys = frontmatterKeys(frontmatter)
-	for (const key of REQUIRED_FRONTMATTER) {
-		if (!keys.has(key)) {
-			report(`missing frontmatter "${key}"`)
-		}
-	}
-	for (const key of keys) {
-		if (MINTLIFY_FRONTMATTER.has(key)) {
-			report(`Mintlify-only frontmatter "${key}"; remove it or use a Starlight field`)
-		}
-	}
+    const { frontmatter, body } = maskFrontmatter(source)
+    const keys = frontmatterKeys(frontmatter)
+    for (const key of REQUIRED_FRONTMATTER) {
+        if (!keys.has(key)) {
+            report(`missing frontmatter "${key}"`)
+        }
+    }
+    for (const key of keys) {
+        if (MINTLIFY_FRONTMATTER.has(key)) {
+            report(`Mintlify-only frontmatter "${key}"; remove it or use a Starlight field`)
+        }
+    }
 
-	const prose = maskCode(body)
-	const imports = collectImports(prose)
-	for (const [name, index] of collectComponentTags(prose)) {
-		if (!imports.has(name)) {
-			report(
-				`component <${name}> is not imported; convert Mintlify components to Starlight components or Markdown`,
-				prose,
-				index,
-			)
-		}
-	}
-	for (const link of collectLinks(prose)) {
-		const problem = checkLink(link, page.locale, basePrefix)
-		if (problem) {
-			report(`${problem}: ${link.url}`, prose, link.index)
-		}
-	}
+    const prose = maskCode(body)
+    const imports = collectImports(prose)
+    for (const [name, index] of collectComponentTags(prose)) {
+        if (!imports.has(name)) {
+            report(
+                `component <${name}> is not imported; convert Mintlify components to Starlight components or Markdown`,
+                prose,
+                index,
+            )
+        }
+    }
+    for (const link of collectLinks(prose)) {
+        const problem = checkLink(link, page.locale, basePrefix)
+        if (problem) {
+            report(`${problem}: ${link.url}`, prose, link.index)
+        }
+    }
 
-	const forbidden = findForbiddenText(source)
-	if (forbidden) {
-		report(forbidden.reason, source, forbidden.index)
-	}
-	if (page.locale !== CHINESE_LOCALE) {
-		const translatedText = maskCode(source)
-		const cjk = CJK_TEXT.exec(translatedText)
-		if (cjk) {
-			report("Chinese text in an English page", translatedText, cjk.index)
-		}
-	}
-	return issues
+    const forbidden = findForbiddenText(source)
+    if (forbidden) {
+        report(forbidden.reason, source, forbidden.index)
+    }
+    if (page.locale !== CHINESE_LOCALE) {
+        const translatedText = maskCode(source)
+        const cjk = CJK_TEXT.exec(translatedText)
+        if (cjk) {
+            report("Chinese text in an English page", translatedText, cjk.index)
+        }
+    }
+    return issues
 }
 
 /**
@@ -99,34 +99,34 @@ export function checkPage({ page, source, basePrefix }) {
  * @returns {string | undefined}
  */
 export function checkLink({ url, kind }, locale, basePrefix) {
-	if (!url || url.startsWith("#") || url.startsWith("//") || URL_SCHEME.test(url)) {
-		return undefined
-	}
-	if (!url.startsWith("/")) {
-		return kind === "image" ? undefined : "relative link; use a base-free root-relative path such as /getting-started/"
-	}
-	if (kind === "image") {
-		// Root-relative images are served as-is from public/, without dimensions, lazy loading or WebP.
-		return `image bypasses Astro's image pipeline; import it as ${DOCS_ASSETS_ALIAS}/<path> from the repository's assets/docs/`
-	}
-	const path = url.split(/[?#]/, 1)[0] ?? ""
-	if (basePrefix && (path === basePrefix || path.startsWith(`${basePrefix}/`))) {
-		return "link hard-codes the site base; write it without the base"
-	}
-	if (/\.mdx?$/i.test(path)) {
-		return "link targets a source file; link to the page URL instead"
-	}
-	if (isAssetPath(path)) {
-		return undefined
-	}
-	if (!path.endsWith("/")) {
-		return "page link must end with a trailing slash"
-	}
-	const target = path === `/${CHINESE_LOCALE}/` || path.startsWith(CHINESE_PREFIX) ? CHINESE_LOCALE : ROOT_LOCALE
-	if (target !== locale) {
-		return `${EDITION_NAME[locale]} page links to ${target === ROOT_LOCALE ? "an" : "a"} ${EDITION_NAME[target]} page`
-	}
-	return undefined
+    if (!url || url.startsWith("#") || url.startsWith("//") || URL_SCHEME.test(url)) {
+        return undefined
+    }
+    if (!url.startsWith("/")) {
+        return kind === "image" ? undefined : "relative link; use a base-free root-relative path such as /getting-started/"
+    }
+    if (kind === "image") {
+        // Root-relative images are served as-is from public/, without dimensions, lazy loading or WebP.
+        return `image bypasses Astro's image pipeline; import it as ${DOCS_ASSETS_ALIAS}/<path> from the repository's assets/docs/`
+    }
+    const path = url.split(/[?#]/, 1)[0] ?? ""
+    if (basePrefix && (path === basePrefix || path.startsWith(`${basePrefix}/`))) {
+        return "link hard-codes the site base; write it without the base"
+    }
+    if (/\.mdx?$/i.test(path)) {
+        return "link targets a source file; link to the page URL instead"
+    }
+    if (isAssetPath(path)) {
+        return undefined
+    }
+    if (!path.endsWith("/")) {
+        return "page link must end with a trailing slash"
+    }
+    const target = path === `/${CHINESE_LOCALE}/` || path.startsWith(CHINESE_PREFIX) ? CHINESE_LOCALE : ROOT_LOCALE
+    if (target !== locale) {
+        return `${EDITION_NAME[locale]} page links to ${target === ROOT_LOCALE ? "an" : "a"} ${EDITION_NAME[target]} page`
+    }
+    return undefined
 }
 
 /**
@@ -135,24 +135,24 @@ export function checkLink({ url, kind }, locale, basePrefix) {
  * @returns {Issue[]}
  */
 export function checkLocaleParity(pages) {
-	const bySlug = new Map()
-	for (const page of pages) {
-		const locales = bySlug.get(page.slug) ?? new Map()
-		locales.set(page.locale, page)
-		bySlug.set(page.slug, locales)
-	}
-	/** @type {Issue[]} */
-	const issues = []
-	for (const [slug, locales] of bySlug) {
-		const [present] = locales.values()
-		if (!locales.has(CHINESE_LOCALE)) {
-			issues.push({ file: present.relativePath, line: 1, message: `missing Chinese counterpart for "${slug || "(home)"}"` })
-		}
-		if (!locales.has(ROOT_LOCALE)) {
-			issues.push({ file: present.relativePath, line: 1, message: `missing English counterpart for "${slug || "(home)"}"` })
-		}
-	}
-	return issues
+    const bySlug = new Map()
+    for (const page of pages) {
+        const locales = bySlug.get(page.slug) ?? new Map()
+        locales.set(page.locale, page)
+        bySlug.set(page.slug, locales)
+    }
+    /** @type {Issue[]} */
+    const issues = []
+    for (const [slug, locales] of bySlug) {
+        const [present] = locales.values()
+        if (!locales.has(CHINESE_LOCALE)) {
+            issues.push({ file: present.relativePath, line: 1, message: `missing Chinese counterpart for "${slug || "(home)"}"` })
+        }
+        if (!locales.has(ROOT_LOCALE)) {
+            issues.push({ file: present.relativePath, line: 1, message: `missing English counterpart for "${slug || "(home)"}"` })
+        }
+    }
+    return issues
 }
 
 /**
@@ -165,24 +165,24 @@ export function checkLocaleParity(pages) {
  * @returns {{ slugs: Set<string>, directories: Set<string> }}
  */
 export function collectSidebarTargets(sidebar) {
-	const slugs = new Set()
-	const directories = new Set()
-	/** @param {readonly SidebarEntry[]} items */
-	const visit = (items) => {
-		for (const item of items) {
-			if (typeof item === "string") {
-				slugs.add(trimSlashes(item))
-			} else if (item.slug !== undefined) {
-				slugs.add(trimSlashes(item.slug))
-			} else if (item.items) {
-				visit(item.items)
-			} else if (item.autogenerate) {
-				directories.add(trimSlashes(item.autogenerate.directory))
-			}
-		}
-	}
-	visit(sidebar)
-	return { slugs, directories }
+    const slugs = new Set()
+    const directories = new Set()
+    /** @param {readonly SidebarEntry[]} items */
+    const visit = (items) => {
+        for (const item of items) {
+            if (typeof item === "string") {
+                slugs.add(trimSlashes(item))
+            } else if (item.slug !== undefined) {
+                slugs.add(trimSlashes(item.slug))
+            } else if (item.items) {
+                visit(item.items)
+            } else if (item.autogenerate) {
+                directories.add(trimSlashes(item.autogenerate.directory))
+            }
+        }
+    }
+    visit(sidebar)
+    return { slugs, directories }
 }
 
 /**
@@ -194,28 +194,28 @@ export function collectSidebarTargets(sidebar) {
  * @returns {Issue[]}
  */
 export function checkNavigation(pages, sidebar, unlistedSlugs) {
-	const { slugs, directories } = collectSidebarTargets(sidebar)
-	const isListed = (/** @type {string} */ slug) =>
-		slugs.has(slug) || Array.from(directories).some((directory) => slug === directory || slug.startsWith(`${directory}/`))
-	/** @type {Issue[]} */
-	const issues = []
-	for (const page of pages) {
-		if (page.locale === ROOT_LOCALE && !isListed(page.slug) && !unlistedSlugs.has(page.slug)) {
-			issues.push({
-				file: page.relativePath,
-				line: 1,
-				message: "page is published but neither in the sidebar nor in unlistedSlugs",
-			})
-		}
-	}
-	for (const slug of slugs) {
-		for (const locale of [ROOT_LOCALE, CHINESE_LOCALE]) {
-			if (!pages.some((page) => page.slug === slug && page.locale === locale)) {
-				issues.push({ file: "src/data/navigation.mjs", line: 1, message: `sidebar slug "${slug}" has no ${locale} page` })
-			}
-		}
-	}
-	return issues
+    const { slugs, directories } = collectSidebarTargets(sidebar)
+    const isListed = (/** @type {string} */ slug) =>
+        slugs.has(slug) || Array.from(directories).some((directory) => slug === directory || slug.startsWith(`${directory}/`))
+    /** @type {Issue[]} */
+    const issues = []
+    for (const page of pages) {
+        if (page.locale === ROOT_LOCALE && !isListed(page.slug) && !unlistedSlugs.has(page.slug)) {
+            issues.push({
+                file: page.relativePath,
+                line: 1,
+                message: "page is published but neither in the sidebar nor in unlistedSlugs",
+            })
+        }
+    }
+    for (const slug of slugs) {
+        for (const locale of [ROOT_LOCALE, CHINESE_LOCALE]) {
+            if (!pages.some((page) => page.slug === slug && page.locale === locale)) {
+                issues.push({ file: "src/data/navigation.mjs", line: 1, message: `sidebar slug "${slug}" has no ${locale} page` })
+            }
+        }
+    }
+    return issues
 }
 
 /**
@@ -227,23 +227,23 @@ export function checkNavigation(pages, sidebar, unlistedSlugs) {
  * @returns {Issue[]}
  */
 export function checkSections(sidebar) {
-	/** @type {Issue[]} */
-	const issues = []
-	const report = (/** @type {string} */ message) => issues.push({ file: "src/data/navigation.mjs", line: 1, message })
-	const owners = new Map()
-	sidebar.forEach((entry, index) => {
-		if (typeof entry === "string" || !entry.items) {
-			report(`top-level sidebar entry ${index + 1} is not a group; every top-level entry is a documentation section`)
-			return
-		}
-		for (const slug of collectSidebarTargets(entry.items).slugs) {
-			if (owners.has(slug)) {
-				report(`sidebar slug "${slug}" is listed more than once; a page belongs to exactly one place`)
-			}
-			owners.set(slug, index)
-		}
-	})
-	return issues
+    /** @type {Issue[]} */
+    const issues = []
+    const report = (/** @type {string} */ message) => issues.push({ file: "src/data/navigation.mjs", line: 1, message })
+    const owners = new Map()
+    sidebar.forEach((entry, index) => {
+        if (typeof entry === "string" || !entry.items) {
+            report(`top-level sidebar entry ${index + 1} is not a group; every top-level entry is a documentation section`)
+            return
+        }
+        for (const slug of collectSidebarTargets(entry.items).slugs) {
+            if (owners.has(slug)) {
+                report(`sidebar slug "${slug}" is listed more than once; a page belongs to exactly one place`)
+            }
+            owners.set(slug, index)
+        }
+    })
+    return issues
 }
 
 /**
@@ -254,27 +254,27 @@ export function checkSections(sidebar) {
  * @returns {Issue[]}
  */
 export function checkRedirects(redirects, pages) {
-	const pageKeys = new Set(pages.map((page) => trimSlashes(pagePath(page))))
-	const sourceKeys = new Set(Object.keys(redirects).map(trimSlashes))
-	/** @type {Issue[]} */
-	const issues = []
-	const report = (/** @type {string} */ message) => issues.push({ file: "src/data/redirects.mjs", line: 1, message })
-	for (const [from, to] of Object.entries(redirects)) {
-		const targetPath = to.split("#", 1)[0] ?? ""
-		if (!from.startsWith("/") || !to.startsWith("/")) {
-			report(`redirect ${from} -> ${to} must use base-free root-relative paths`)
-			continue
-		}
-		if (pageKeys.has(trimSlashes(from))) {
-			report(`redirect source ${from} shadows an existing page`)
-		}
-		if (sourceKeys.has(trimSlashes(targetPath))) {
-			report(`redirect ${from} -> ${to} forms a chain; point it at the final page`)
-		} else if (!pageKeys.has(trimSlashes(targetPath))) {
-			report(`redirect ${from} -> ${to} does not target a current page`)
-		}
-	}
-	return issues
+    const pageKeys = new Set(pages.map((page) => trimSlashes(pagePath(page))))
+    const sourceKeys = new Set(Object.keys(redirects).map(trimSlashes))
+    /** @type {Issue[]} */
+    const issues = []
+    const report = (/** @type {string} */ message) => issues.push({ file: "src/data/redirects.mjs", line: 1, message })
+    for (const [from, to] of Object.entries(redirects)) {
+        const targetPath = to.split("#", 1)[0] ?? ""
+        if (!from.startsWith("/") || !to.startsWith("/")) {
+            report(`redirect ${from} -> ${to} must use base-free root-relative paths`)
+            continue
+        }
+        if (pageKeys.has(trimSlashes(from))) {
+            report(`redirect source ${from} shadows an existing page`)
+        }
+        if (sourceKeys.has(trimSlashes(targetPath))) {
+            report(`redirect ${from} -> ${to} forms a chain; point it at the final page`)
+        } else if (!pageKeys.has(trimSlashes(targetPath))) {
+            report(`redirect ${from} -> ${to} does not target a current page`)
+        }
+    }
+    return issues
 }
 
 /**
@@ -282,7 +282,7 @@ export function checkRedirects(redirects, pages) {
  * @returns {boolean}
  */
 function isAssetPath(path) {
-	return /\.[a-z\d]+$/i.test(path.slice(path.lastIndexOf("/") + 1))
+    return /\.[a-z\d]+$/i.test(path.slice(path.lastIndexOf("/") + 1))
 }
 
 /**
@@ -290,5 +290,5 @@ function isAssetPath(path) {
  * @returns {string}
  */
 function trimSlashes(value) {
-	return value.replace(/^\/+|\/+$/g, "").toLowerCase()
+    return value.replace(/^\/+|\/+$/g, "").toLowerCase()
 }

@@ -15,14 +15,14 @@ const REQUESTY_PROVIDER_ID = "requesty"
  * @returns Response containing the Requesty models
  */
 export async function refreshRequestyModels(controller: Controller, _: EmptyRequest): Promise<OpenRouterCompatibleModelInfo> {
-	// Requesty keeps its router URL in global settings rather than on the profile.
-	const baseUrl = controller.stateManager.getGlobalSettingsKey("requestyBaseUrl") as string | undefined
-	const credentials = { ...resolveSavedCredentials(REQUESTY_PROVIDER_ID), baseUrl }
-	const models = await discoverProviderModels(REQUESTY_PROVIDER_ID, credentials, { persist: true })
+    // Requesty keeps its router URL in global settings rather than on the profile.
+    const baseUrl = controller.stateManager.getGlobalSettingsKey("requestyBaseUrl") as string | undefined
+    const credentials = { ...resolveSavedCredentials(REQUESTY_PROVIDER_ID), baseUrl }
+    const models = await discoverProviderModels(REQUESTY_PROVIDER_ID, credentials, { persist: true })
 
-	if (Object.keys(models).length === 0) {
-		Logger.error("Invalid response from Requesty API")
-	}
+    if (Object.keys(models).length === 0) {
+        Logger.error("Invalid response from Requesty API")
+    }
 
-	return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
+    return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
 }

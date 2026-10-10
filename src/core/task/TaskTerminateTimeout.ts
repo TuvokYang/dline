@@ -9,32 +9,32 @@ type TimeoutLogger = Pick<typeof Logger, "error" | "warn">
  * fast cleanups still log a stale timeout warning a few seconds later.
  */
 export async function withTerminateTimeout<T>(
-	promise: Promise<T>,
-	ms: number,
-	label: string,
-	logger: TimeoutLogger = Logger,
+    promise: Promise<T>,
+    ms: number,
+    label: string,
+    logger: TimeoutLogger = Logger,
 ): Promise<T | undefined> {
-	let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
 
-	try {
-		return await Promise.race([
-			promise,
-			new Promise<undefined>((resolve) => {
-				timeoutHandle = setTimeout(() => {
-					timeoutHandle = undefined
-					logger.warn(`[Terminate] ${label} timed out after ${ms}ms`)
-					resolve(undefined)
-				}, ms)
-			}),
-		])
-	} catch (error) {
-		logger.error(`[Terminate] ${label} failed:`, error)
-		return undefined
-	} finally {
-		if (timeoutHandle) {
-			clearTimeout(timeoutHandle)
-		}
-	}
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<undefined>((resolve) => {
+                timeoutHandle = setTimeout(() => {
+                    timeoutHandle = undefined
+                    logger.warn(`[Terminate] ${label} timed out after ${ms}ms`)
+                    resolve(undefined)
+                }, ms)
+            }),
+        ])
+    } catch (error) {
+        logger.error(`[Terminate] ${label} failed:`, error)
+        return undefined
+    } finally {
+        if (timeoutHandle) {
+            clearTimeout(timeoutHandle)
+        }
+    }
 }
 
 /**
@@ -44,31 +44,31 @@ export async function withTerminateTimeout<T>(
  * lock or admission fence instead of treating the cleanup as completed.
  */
 export async function withRequiredTerminateTimeout<T>(
-	promise: Promise<T>,
-	ms: number,
-	label: string,
-	logger: TimeoutLogger = Logger,
+    promise: Promise<T>,
+    ms: number,
+    label: string,
+    logger: TimeoutLogger = Logger,
 ): Promise<T> {
-	let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-	let timedOut = false
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
 
-	try {
-		return await Promise.race([
-			promise,
-			new Promise<never>((_resolve, reject) => {
-				timeoutHandle = setTimeout(() => {
-					timeoutHandle = undefined
-					timedOut = true
-					const message = `[Terminate] ${label} timed out after ${ms}ms`
-					logger.warn(message)
-					reject(new Error(message))
-				}, ms)
-			}),
-		])
-	} catch (error) {
-		if (!timedOut) logger.error(`[Terminate] ${label} failed:`, error)
-		throw error
-	} finally {
-		if (timeoutHandle) clearTimeout(timeoutHandle)
-	}
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<never>((_resolve, reject) => {
+                timeoutHandle = setTimeout(() => {
+                    timeoutHandle = undefined
+                    timedOut = true
+                    const message = `[Terminate] ${label} timed out after ${ms}ms`
+                    logger.warn(message)
+                    reject(new Error(message))
+                }, ms)
+            }),
+        ])
+    } catch (error) {
+        if (!timedOut) logger.error(`[Terminate] ${label} failed:`, error)
+        throw error
+    } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle)
+    }
 }

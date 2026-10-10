@@ -1,18 +1,18 @@
 export type WebviewMessage =
-	| { type: "webviewReady" }
-	| { type: "grpc_request"; grpc_request?: GrpcRequest }
-	| { type: "grpc_request_cancel"; grpc_request_cancel?: GrpcCancel }
+    | { type: "webviewReady" }
+    | { type: "grpc_request"; grpc_request?: GrpcRequest }
+    | { type: "grpc_request_cancel"; grpc_request_cancel?: GrpcCancel }
 
 export type GrpcRequest = {
-	service: string
-	method: string
-	message: any // JSON serialized protobuf message
-	request_id: string // For correlating requests and responses
-	is_streaming: boolean // Whether this is a streaming request
+    service: string
+    method: string
+    message: any // JSON serialized protobuf message
+    request_id: string // For correlating requests and responses
+    is_streaming: boolean // Whether this is a streaming request
 }
 
 export type GrpcCancel = {
-	request_id: string // ID of the request to cancel
+    request_id: string // ID of the request to cancel
 }
 
 export type ClineAskResponse = "yesButtonClicked" | "noButtonClicked" | "messageResponse"

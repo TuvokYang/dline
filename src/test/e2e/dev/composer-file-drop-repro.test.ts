@@ -18,40 +18,40 @@ import { expect } from "@playwright/test"
 const MINIMAL_PDF = "%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
 
 e2e("BUGFIX-122 repro - real OS clipboard file paste", async ({ helper, page, sidebar, workspaceDir }) => {
-	e2e.skip(process.platform !== "win32", "Set-Clipboard -Path is Windows only")
-	e2e.setTimeout(120_000)
-	await helper.signin(sidebar)
-	const input = sidebar.getByTestId("chat-input")
-	await expect(input).toBeVisible()
+    e2e.skip(process.platform !== "win32", "Set-Clipboard -Path is Windows only")
+    e2e.setTimeout(120_000)
+    await helper.signin(sidebar)
+    const input = sidebar.getByTestId("chat-input")
+    await expect(input).toBeVisible()
 
-	const pdfPath = path.join(workspaceDir, "clipboard-paste-report.pdf")
-	fs.writeFileSync(pdfPath, MINIMAL_PDF)
-	execFileSync("powershell.exe", ["-NoProfile", "-Command", `Set-Clipboard -Path '${pdfPath.replace(/'/g, "''")}'`])
+    const pdfPath = path.join(workspaceDir, "clipboard-paste-report.pdf")
+    fs.writeFileSync(pdfPath, MINIMAL_PDF)
+    execFileSync("powershell.exe", ["-NoProfile", "-Command", `Set-Clipboard -Path '${pdfPath.replace(/'/g, "''")}'`])
 
-	await input.evaluate((element) => {
-		const record: Record<string, unknown> = {}
-		;(window as unknown as { __bugfix122Paste?: Record<string, unknown> }).__bugfix122Paste = record
-		element.addEventListener(
-			"paste",
-			(event) => {
-				const data = (event as ClipboardEvent).clipboardData
-				record.types = Array.from(data?.types ?? [])
-				record.items = Array.from(data?.items ?? []).map((item) => `${item.kind}:${item.type}`)
-				record.files = Array.from(data?.files ?? []).map((file) => `${file.name}:${file.type}:${file.size}`)
-				record.text = data?.getData("text").slice(0, 300)
-				record.uriList = data?.getData("text/uri-list").slice(0, 300)
-			},
-			{ capture: true },
-		)
-	})
-	await input.click()
-	await page.keyboard.press("Control+V")
-	await page.waitForTimeout(3_000)
-	const observation = await input.evaluate(
-		() => (window as unknown as { __bugfix122Paste?: Record<string, unknown> }).__bugfix122Paste,
-	)
-	console.log(`[BUGFIX-122] clipboard paste observation ${JSON.stringify(observation)}`)
-	console.log(`[BUGFIX-122] input value after paste ${JSON.stringify(await input.inputValue())}`)
-	await expect(sidebar.getByTitle("clipboard-paste-report.pdf")).toBeVisible({ timeout: 15_000 })
-	fs.rmSync(pdfPath, { force: true })
+    await input.evaluate((element) => {
+        const record: Record<string, unknown> = {}
+        ;(window as unknown as { __bugfix122Paste?: Record<string, unknown> }).__bugfix122Paste = record
+        element.addEventListener(
+            "paste",
+            (event) => {
+                const data = (event as ClipboardEvent).clipboardData
+                record.types = Array.from(data?.types ?? [])
+                record.items = Array.from(data?.items ?? []).map((item) => `${item.kind}:${item.type}`)
+                record.files = Array.from(data?.files ?? []).map((file) => `${file.name}:${file.type}:${file.size}`)
+                record.text = data?.getData("text").slice(0, 300)
+                record.uriList = data?.getData("text/uri-list").slice(0, 300)
+            },
+            { capture: true },
+        )
+    })
+    await input.click()
+    await page.keyboard.press("Control+V")
+    await page.waitForTimeout(3_000)
+    const observation = await input.evaluate(
+        () => (window as unknown as { __bugfix122Paste?: Record<string, unknown> }).__bugfix122Paste,
+    )
+    console.log(`[BUGFIX-122] clipboard paste observation ${JSON.stringify(observation)}`)
+    console.log(`[BUGFIX-122] input value after paste ${JSON.stringify(await input.inputValue())}`)
+    await expect(sidebar.getByTitle("clipboard-paste-report.pdf")).toBeVisible({ timeout: 15_000 })
+    fs.rmSync(pdfPath, { force: true })
 })

@@ -6,15 +6,15 @@ import { lexSemanticInput, type SemanticActivation } from "@shared/input-semanti
 export type SemanticSegmentRole = "text" | "command" | "mention"
 
 export interface SemanticHighlightSegment {
-	readonly text: string
-	readonly role: SemanticSegmentRole
-	/**
-	 * Whether the entity still acts as an entity.
-	 *
-	 * An unrecognized mention, or anything a lifecycle barrier pushed into the
-	 * pre-message, reads as literal text and must not look like an entity.
-	 */
-	readonly active: boolean
+    readonly text: string
+    readonly role: SemanticSegmentRole
+    /**
+     * Whether the entity still acts as an entity.
+     *
+     * An unrecognized mention, or anything a lifecycle barrier pushed into the
+     * pre-message, reads as literal text and must not look like an entity.
+     */
+    readonly active: boolean
 }
 
 /** The composer lexes on every keystroke, so its document identity is fixed. */
@@ -24,7 +24,7 @@ const COMPOSER_DOCUMENT_ID = "composer"
 const HISTORY_DOCUMENT_ID = "history"
 
 function escapeHtml(text: string): string {
-	return text.replace(/[<>&]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[character] ?? character)
+    return text.replace(/[<>&]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[character] ?? character)
 }
 
 /**
@@ -35,30 +35,30 @@ function escapeHtml(text: string): string {
  * is shown as literal text because that is how it will be sent.
  */
 export function segmentSemanticInput(
-	rawText: string,
-	catalog: InputSemanticCatalog,
-	documentId: string = COMPOSER_DOCUMENT_ID,
-	activationAt?: (start: number, end: number) => SemanticActivation,
+    rawText: string,
+    catalog: InputSemanticCatalog,
+    documentId: string = COMPOSER_DOCUMENT_ID,
+    activationAt?: (start: number, end: number) => SemanticActivation,
 ): readonly SemanticHighlightSegment[] {
-	const document = lexSemanticInput(rawText, {
-		catalog,
-		documentId,
-		activation: "auto",
-		...(activationAt ? { activationAt } : {}),
-	})
-	const plan = planSemanticCommands(document)
-	// The barrier is a command the task will run, so it stays an entity; only the
-	// nodes it pushed into the pre-message become literal text.
-	const invoked = new Set([...plan.invocations, ...(plan.barrier ? [plan.barrier] : [])].map((command) => command.entityId))
-	return document.nodes.map((node) => {
-		if (isSlashCommandNode(node)) {
-			return { text: node.sourceText, role: "command" as const, active: invoked.has(node.entityId) }
-		}
-		if (isMentionNode(node)) {
-			return { text: node.sourceText, role: "mention" as const, active: node.state === "recognized" }
-		}
-		return { text: node.kind === "text" ? node.text : "", role: "text" as const, active: false }
-	})
+    const document = lexSemanticInput(rawText, {
+        catalog,
+        documentId,
+        activation: "auto",
+        ...(activationAt ? { activationAt } : {}),
+    })
+    const plan = planSemanticCommands(document)
+    // The barrier is a command the task will run, so it stays an entity; only the
+    // nodes it pushed into the pre-message become literal text.
+    const invoked = new Set([...plan.invocations, ...(plan.barrier ? [plan.barrier] : [])].map((command) => command.entityId))
+    return document.nodes.map((node) => {
+        if (isSlashCommandNode(node)) {
+            return { text: node.sourceText, role: "command" as const, active: invoked.has(node.entityId) }
+        }
+        if (isMentionNode(node)) {
+            return { text: node.sourceText, role: "mention" as const, active: node.state === "recognized" }
+        }
+        return { text: node.kind === "text" ? node.text : "", role: "text" as const, active: false }
+    })
 }
 
 /**
@@ -69,7 +69,7 @@ export function segmentSemanticInput(
  * task never ran. Reading the shared lexer keeps display and admission aligned.
  */
 export function segmentSentMessage(rawText: string, catalog: InputSemanticCatalog): readonly SemanticHighlightSegment[] {
-	return segmentSemanticInput(rawText, catalog, HISTORY_DOCUMENT_ID)
+    return segmentSemanticInput(rawText, catalog, HISTORY_DOCUMENT_ID)
 }
 
 /**
@@ -79,17 +79,17 @@ export function segmentSentMessage(rawText: string, catalog: InputSemanticCatalo
  * that will be sent as plain text is never drawn as an active entity.
  */
 export function renderSemanticHighlightHtml(
-	rawText: string,
-	catalog: InputSemanticCatalog,
-	activationAt?: (start: number, end: number) => SemanticActivation,
+    rawText: string,
+    catalog: InputSemanticCatalog,
+    activationAt?: (start: number, end: number) => SemanticActivation,
 ): string {
-	const html = segmentSemanticInput(rawText, catalog, COMPOSER_DOCUMENT_ID, activationAt)
-		.map((segment) =>
-			segment.active && segment.role !== "text"
-				? `<mark class="mention-context-textarea-highlight">${escapeHtml(segment.text)}</mark>`
-				: escapeHtml(segment.text),
-		)
-		.join("")
-	// A trailing newline would otherwise collapse and misalign the layer.
-	return html.replace(/\n$/, "\n\n")
+    const html = segmentSemanticInput(rawText, catalog, COMPOSER_DOCUMENT_ID, activationAt)
+        .map((segment) =>
+            segment.active && segment.role !== "text"
+                ? `<mark class="mention-context-textarea-highlight">${escapeHtml(segment.text)}</mark>`
+                : escapeHtml(segment.text),
+        )
+        .join("")
+    // A trailing newline would otherwise collapse and misalign the layer.
+    return html.replace(/\n$/, "\n\n")
 }

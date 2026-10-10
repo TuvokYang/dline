@@ -12,9 +12,9 @@ const execFileAsync = promisify(execFile)
 export type FsClass = "local" | "network" | "unknown"
 
 export interface FsInfo {
-	fsClass: FsClass
-	/** Lowercase, whitespace-stripped FS type as reported by the OS, or "unknown". */
-	fsType: string
+    fsClass: FsClass
+    /** Lowercase, whitespace-stripped FS type as reported by the OS, or "unknown". */
+    fsType: string
 }
 
 const UNKNOWN: FsInfo = { fsClass: "unknown", fsType: "unknown" }
@@ -28,52 +28,52 @@ const UNKNOWN: FsInfo = { fsClass: "unknown", fsType: "unknown" }
 // they share the not-actually-local performance profile that motivated this
 // work.
 const NETWORK_FS_TYPES = new Set([
-	"nfs",
-	"nfs3",
-	"nfs4",
-	"cifs",
-	"smb",
-	"smbfs",
-	"smb2",
-	"afpfs",
-	"webdav",
-	"davfs",
-	"sshfs",
-	"9p",
-	"9p2000",
-	"fuse",
-	"fuseblk",
-	"macfuse",
-	"virtiofs",
+    "nfs",
+    "nfs3",
+    "nfs4",
+    "cifs",
+    "smb",
+    "smbfs",
+    "smb2",
+    "afpfs",
+    "webdav",
+    "davfs",
+    "sshfs",
+    "9p",
+    "9p2000",
+    "fuse",
+    "fuseblk",
+    "macfuse",
+    "virtiofs",
 ])
 
 const LOCAL_FS_TYPES = new Set([
-	"apfs",
-	"hfs",
-	"hfsplus",
-	"ext2",
-	"ext3",
-	"ext4",
-	"ext2/ext3",
-	"btrfs",
-	"xfs",
-	"f2fs",
-	"zfs",
-	"reiserfs",
-	"jfs",
-	"ntfs",
-	"ntfs3",
-	"vfat",
-	"fat",
-	"fat32",
-	"exfat",
-	"msdos",
-	"tmpfs",
-	"ramfs",
-	"overlay",
-	"overlayfs",
-	"iso9660",
-	"udf",
+    "apfs",
+    "hfs",
+    "hfsplus",
+    "ext2",
+    "ext3",
+    "ext4",
+    "ext2/ext3",
+    "btrfs",
+    "xfs",
+    "f2fs",
+    "zfs",
+    "reiserfs",
+    "jfs",
+    "ntfs",
+    "ntfs3",
+    "vfat",
+    "fat",
+    "fat32",
+    "exfat",
+    "msdos",
+    "tmpfs",
+    "ramfs",
+    "overlay",
+    "overlayfs",
+    "iso9660",
+    "udf",
 ])
 
 const cache = new Map<string, FsInfo>()
@@ -91,66 +91,66 @@ const DETECT_TIMEOUT_MS = 3000
  * The caller never has to handle exceptions.
  */
 export async function getFsInfo(path: string | undefined | null): Promise<FsInfo> {
-	if (!path) {
-		return UNKNOWN
-	}
-	const cached = cache.get(path)
-	if (cached) {
-		return cached
-	}
-	const info = await detectWithTimeout(path)
-	// Skip caching the shared UNKNOWN sentinel so transient failures
-	// (timeout, hung mount) don't permanently misclassify the path.
-	// Successful detect() with an unrecognised fsType returns a fresh
-	// object and is cached normally.
-	if (info !== UNKNOWN) {
-		cache.set(path, info)
-	}
-	return info
+    if (!path) {
+        return UNKNOWN
+    }
+    const cached = cache.get(path)
+    if (cached) {
+        return cached
+    }
+    const info = await detectWithTimeout(path)
+    // Skip caching the shared UNKNOWN sentinel so transient failures
+    // (timeout, hung mount) don't permanently misclassify the path.
+    // Successful detect() with an unrecognised fsType returns a fresh
+    // object and is cached normally.
+    if (info !== UNKNOWN) {
+        cache.set(path, info)
+    }
+    return info
 }
 
 async function detectWithTimeout(path: string): Promise<FsInfo> {
-	let timer: NodeJS.Timeout | undefined
-	const timeout = new Promise<FsInfo>((resolve) => {
-		timer = setTimeout(() => resolve(UNKNOWN), DETECT_TIMEOUT_MS)
-	})
-	try {
-		return await Promise.race([detect(path), timeout])
-	} finally {
-		if (timer) {
-			clearTimeout(timer)
-		}
-	}
+    let timer: NodeJS.Timeout | undefined
+    const timeout = new Promise<FsInfo>((resolve) => {
+        timer = setTimeout(() => resolve(UNKNOWN), DETECT_TIMEOUT_MS)
+    })
+    try {
+        return await Promise.race([detect(path), timeout])
+    } finally {
+        if (timer) {
+            clearTimeout(timer)
+        }
+    }
 }
 
 async function detect(path: string): Promise<FsInfo> {
-	try {
-		// Resolve symlinks so we match mountpoints correctly. On macOS `/tmp`
-		// is a symlink to `/private/tmp`, and /tmp itself isn't a mount point.
-		let resolved = path
-		try {
-			resolved = await realpath(path)
-		} catch {
-			// Path may not exist; fall back to the original string.
-		}
-		if (process.platform === "darwin") {
-			return await detectMacOS(resolved)
-		}
-		if (process.platform === "linux") {
-			// GNU stat: `-f` selects filesystem mode, `-c %T` prints the FS type
-			// as a string ("ext2/ext3", "btrfs", "nfs", "fuseblk", ...).
-			const { stdout } = await execFileAsync("stat", ["-f", "-c", "%T", "--", resolved], {
-				timeout: 2000,
-			})
-			return classify(stdout)
-		}
-		// Windows detection is more involved (GetVolumeInformationW + GetDriveType
-		// or WMI) and we don't have a confirmed slow-FS report there yet. Land
-		// macOS/Linux first; revisit if signal warrants.
-		return UNKNOWN
-	} catch {
-		return UNKNOWN
-	}
+    try {
+        // Resolve symlinks so we match mountpoints correctly. On macOS `/tmp`
+        // is a symlink to `/private/tmp`, and /tmp itself isn't a mount point.
+        let resolved = path
+        try {
+            resolved = await realpath(path)
+        } catch {
+            // Path may not exist; fall back to the original string.
+        }
+        if (process.platform === "darwin") {
+            return await detectMacOS(resolved)
+        }
+        if (process.platform === "linux") {
+            // GNU stat: `-f` selects filesystem mode, `-c %T` prints the FS type
+            // as a string ("ext2/ext3", "btrfs", "nfs", "fuseblk", ...).
+            const { stdout } = await execFileAsync("stat", ["-f", "-c", "%T", "--", resolved], {
+                timeout: 2000,
+            })
+            return classify(stdout)
+        }
+        // Windows detection is more involved (GetVolumeInformationW + GetDriveType
+        // or WMI) and we don't have a confirmed slow-FS report there yet. Land
+        // macOS/Linux first; revisit if signal warrants.
+        return UNKNOWN
+    } catch {
+        return UNKNOWN
+    }
 }
 
 /**
@@ -165,50 +165,50 @@ async function detect(path: string): Promise<FsInfo> {
  *   user@host:/repo on /Volumes/repo (macfuse, nodev, nosuid, ...)
  */
 async function detectMacOS(resolvedPath: string): Promise<FsInfo> {
-	const { stdout } = await execFileAsync("mount", [], { timeout: 2000 })
-	let bestMountpoint = ""
-	let bestFsType = ""
-	for (const line of stdout.split("\n")) {
-		const m = line.match(/^\S+\s+on\s+(.+?)\s+\(([^,)]+)/)
-		if (!m) {
-			continue
-		}
-		const [, mountpoint, fsType] = m
-		const prefix = mountpoint.endsWith("/") ? mountpoint : `${mountpoint}/`
-		if (resolvedPath === mountpoint || resolvedPath.startsWith(prefix)) {
-			if (mountpoint.length > bestMountpoint.length) {
-				bestMountpoint = mountpoint
-				bestFsType = fsType
-			}
-		}
-	}
-	return bestFsType ? classify(bestFsType) : UNKNOWN
+    const { stdout } = await execFileAsync("mount", [], { timeout: 2000 })
+    let bestMountpoint = ""
+    let bestFsType = ""
+    for (const line of stdout.split("\n")) {
+        const m = line.match(/^\S+\s+on\s+(.+?)\s+\(([^,)]+)/)
+        if (!m) {
+            continue
+        }
+        const [, mountpoint, fsType] = m
+        const prefix = mountpoint.endsWith("/") ? mountpoint : `${mountpoint}/`
+        if (resolvedPath === mountpoint || resolvedPath.startsWith(prefix)) {
+            if (mountpoint.length > bestMountpoint.length) {
+                bestMountpoint = mountpoint
+                bestFsType = fsType
+            }
+        }
+    }
+    return bestFsType ? classify(bestFsType) : UNKNOWN
 }
 
 function classify(rawFsType: string): FsInfo {
-	const normalized = normalize(rawFsType)
-	if (!normalized) {
-		return UNKNOWN
-	}
-	if (NETWORK_FS_TYPES.has(normalized)) {
-		return { fsClass: "network", fsType: normalized }
-	}
-	if (LOCAL_FS_TYPES.has(normalized)) {
-		return { fsClass: "local", fsType: normalized }
-	}
-	return { fsClass: "unknown", fsType: normalized }
+    const normalized = normalize(rawFsType)
+    if (!normalized) {
+        return UNKNOWN
+    }
+    if (NETWORK_FS_TYPES.has(normalized)) {
+        return { fsClass: "network", fsType: normalized }
+    }
+    if (LOCAL_FS_TYPES.has(normalized)) {
+        return { fsClass: "local", fsType: normalized }
+    }
+    return { fsClass: "unknown", fsType: normalized }
 }
 
 function normalize(raw: string): string {
-	return raw.trim().replace(/\s+/g, "").toLowerCase()
+    return raw.trim().replace(/\s+/g, "").toLowerCase()
 }
 
 /** Test-only. Resets the per-process cache. */
 export function _resetFsInfoCacheForTests(): void {
-	cache.clear()
+    cache.clear()
 }
 
 /** Test-only. Returns the current cache entry count. */
 export function _getFsInfoCacheSizeForTests(): number {
-	return cache.size
+    return cache.size
 }

@@ -8,18 +8,18 @@ import { Controller } from ".."
  * Initiates Requesty auth with optional custom base URL
  */
 export async function requestyAuthClicked(_: Controller, req: StringRequest): Promise<Empty> {
-	const customBaseUrl = req.value || undefined
-	const callbackUrl = await HostProvider.get().getCallbackUrl("/requesty")
-	const baseUrl = toRequestyServiceUrl(customBaseUrl, "app")
+    const customBaseUrl = req.value || undefined
+    const callbackUrl = await HostProvider.get().getCallbackUrl("/requesty")
+    const baseUrl = toRequestyServiceUrl(customBaseUrl, "app")
 
-	if (!baseUrl) {
-		throw new Error("Invalid Requesty base URL")
-	}
+    if (!baseUrl) {
+        throw new Error("Invalid Requesty base URL")
+    }
 
-	const authUrl = new URL("oauth/authorize", baseUrl)
-	authUrl.searchParams.set("callback_url", callbackUrl)
+    const authUrl = new URL("oauth/authorize", baseUrl)
+    authUrl.searchParams.set("callback_url", callbackUrl)
 
-	await openExternal(authUrl.toString())
+    await openExternal(authUrl.toString())
 
-	return {}
+    return {}
 }

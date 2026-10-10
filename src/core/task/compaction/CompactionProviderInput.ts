@@ -5,11 +5,11 @@ import type { ClineTool } from "@shared/tools"
 
 /** Frozen Provider request for one hidden compaction Pass; every attempt replays it unchanged. */
 export interface CompactionProviderInput {
-	systemPrompt: string
-	messages: ClineStorageMessage[]
-	tools?: ClineTool[]
-	readonly serverTools: readonly ServerTool[]
-	/** Frozen prompt/tool execution projection for this Provider input. */
-	readonly runtime?: ResolvedPromptRuntime
-	providerOutputCap?: number
+    systemPrompt: string
+    messages: ClineStorageMessage[]
+    tools?: ClineTool[]
+    readonly serverTools: readonly ServerTool[]
+    /** Frozen prompt/tool execution projection for this Provider input. */
+    readonly runtime?: ResolvedPromptRuntime
+    providerOutputCap?: number
 }

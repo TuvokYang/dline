@@ -15,12 +15,12 @@
  * phase should have to opt in to holding the user's input, not inherit it.
  */
 const PHASES_THAT_REACH_A_DELIVERY_POINT: ReadonlySet<string> = new Set([
-	"initializing",
-	"streaming",
-	"awaiting_approval",
-	"executing",
-	"between_turns",
-	"resuming",
+    "initializing",
+    "streaming",
+    "awaiting_approval",
+    "executing",
+    "between_turns",
+    "resuming",
 ])
 
 /**
@@ -30,5 +30,5 @@ const PHASES_THAT_REACH_A_DELIVERY_POINT: ReadonlySet<string> = new Set([
  * projection rather than as the backend enum.
  */
 export function taskPhaseStillDelivers(phase: string): boolean {
-	return PHASES_THAT_REACH_A_DELIVERY_POINT.has(phase)
+    return PHASES_THAT_REACH_A_DELIVERY_POINT.has(phase)
 }

@@ -8,17 +8,17 @@ import { canonicalInputQueuePayloadRefs, projectCanonicalInputQueue } from "./ca
 
 /** Reads payloads at the view boundary, then delegates ordering and visibility to the pure canonical projection. */
 export async function materializeCanonicalInputQueue(
-	state: Readonly<TaskState>,
-	payloads: TaskPayloadStore,
-	cache: Map<string, UserInputEnvelope> = new Map(),
+    state: Readonly<TaskState>,
+    payloads: TaskPayloadStore,
+    cache: Map<string, UserInputEnvelope> = new Map(),
 ): Promise<readonly QueuedInputEntry[]> {
-	await Promise.all(
-		canonicalInputQueuePayloadRefs(state).map(async (payloadRef) => {
-			if (cache.has(payloadRef)) return
-			const payload = decodeTaskPayload<UserInputEnvelope>(await payloads.read(payloadRef))
-			if (payload.kind !== "user_input") throw new Error(`Payload ${payloadRef} is not user input`)
-			cache.set(payloadRef, payload)
-		}),
-	)
-	return projectCanonicalInputQueue<SemanticInputDocument>(state, cache)
+    await Promise.all(
+        canonicalInputQueuePayloadRefs(state).map(async (payloadRef) => {
+            if (cache.has(payloadRef)) return
+            const payload = decodeTaskPayload<UserInputEnvelope>(await payloads.read(payloadRef))
+            if (payload.kind !== "user_input") throw new Error(`Payload ${payloadRef} is not user input`)
+            cache.set(payloadRef, payload)
+        }),
+    )
+    return projectCanonicalInputQueue<SemanticInputDocument>(state, cache)
 }

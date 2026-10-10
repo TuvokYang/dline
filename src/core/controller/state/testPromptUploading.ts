@@ -11,34 +11,34 @@ import { Controller } from ".."
  * @returns TestConnectionResult with success status and message
  */
 export async function testPromptUploading(_controller: Controller, _: EmptyRequest): Promise<TestConnectionResult> {
-	try {
-		if (!blobStorage.isReady()) {
-			return TestConnectionResult.create({
-				success: false,
-				error: "Blob storage is not configured or not ready",
-			})
-		}
+    try {
+        if (!blobStorage.isReady()) {
+            return TestConnectionResult.create({
+                success: false,
+                error: "Blob storage is not configured or not ready",
+            })
+        }
 
-		const testKey = `cline-test-${Date.now()}.json`
-		const testContent = JSON.stringify({
-			test: true,
-			timestamp: new Date().toISOString(),
-			source: "remote_config_settings",
-		})
+        const testKey = `cline-test-${Date.now()}.json`
+        const testContent = JSON.stringify({
+            test: true,
+            timestamp: new Date().toISOString(),
+            source: "remote_config_settings",
+        })
 
-		await blobStorage._dangerousStore(testKey, testContent)
+        await blobStorage._dangerousStore(testKey, testContent)
 
-		return TestConnectionResult.create({
-			success: true,
-			message: "Test file uploaded and verified successfully.",
-		})
-	} catch (error) {
-		const errorMessage = error instanceof Error ? error.message : String(error)
-		Logger.error("[TEST_PROMPT_UPLOADING] Failed to test blob storage:", error)
+        return TestConnectionResult.create({
+            success: true,
+            message: "Test file uploaded and verified successfully.",
+        })
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        Logger.error("[TEST_PROMPT_UPLOADING] Failed to test blob storage:", error)
 
-		return TestConnectionResult.create({
-			success: false,
-			error: errorMessage,
-		})
-	}
+        return TestConnectionResult.create({
+            success: false,
+            error: errorMessage,
+        })
+    }
 }

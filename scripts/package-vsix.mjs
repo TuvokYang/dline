@@ -65,11 +65,11 @@ const SUPPORTED_CHANNELS = new Set(["auto", "ci", "production", PRE_RELEASE_CHAN
  * @returns {string|null} Trimmed stdout, or null when the command fails.
  */
 function tryGit(command) {
-	try {
-		return execSync(command, { cwd: PROJECT_ROOT, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim()
-	} catch {
-		return null
-	}
+    try {
+        return execSync(command, { cwd: PROJECT_ROOT, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim()
+    } catch {
+        return null
+    }
 }
 
 /**
@@ -77,7 +77,7 @@ function tryGit(command) {
  * @returns {string} 7-character git hash
  */
 function getGitHash() {
-	return tryGit("git rev-parse --short HEAD") ?? "unknown"
+    return tryGit("git rev-parse --short HEAD") ?? "unknown"
 }
 
 /**
@@ -90,20 +90,20 @@ function getGitHash() {
  * @returns {string|null} Public or unsupported tag name, or null when HEAD has only internal draft tags.
  */
 function getExactTag() {
-	const rawTags = tryGit("git tag --points-at HEAD")
-	if (!rawTags) return null
+    const rawTags = tryGit("git tag --points-at HEAD")
+    if (!rawTags) return null
 
-	const tags = rawTags.split(/\r?\n/).filter(Boolean)
-	const unsupportedTags = tags.filter(
-		(tag) => !PRODUCTION_TAG_PATTERN.test(tag) && !DEV_TAG_PATTERN.test(tag) && !INSIDERS_DRAFT_TAG_PATTERN.test(tag),
-	)
-	if (unsupportedTags.length > 0) return unsupportedTags[0]
+    const tags = rawTags.split(/\r?\n/).filter(Boolean)
+    const unsupportedTags = tags.filter(
+        (tag) => !PRODUCTION_TAG_PATTERN.test(tag) && !DEV_TAG_PATTERN.test(tag) && !INSIDERS_DRAFT_TAG_PATTERN.test(tag),
+    )
+    if (unsupportedTags.length > 0) return unsupportedTags[0]
 
-	const releaseTags = tags.filter((tag) => PRODUCTION_TAG_PATTERN.test(tag) || DEV_TAG_PATTERN.test(tag))
-	if (releaseTags.length > 1) {
-		fail(`HEAD has multiple public release tags: ${releaseTags.join(", ")}. Keep exactly one release channel tag.`)
-	}
-	return releaseTags[0] ?? null
+    const releaseTags = tags.filter((tag) => PRODUCTION_TAG_PATTERN.test(tag) || DEV_TAG_PATTERN.test(tag))
+    if (releaseTags.length > 1) {
+        fail(`HEAD has multiple public release tags: ${releaseTags.join(", ")}. Keep exactly one release channel tag.`)
+    }
+    return releaseTags[0] ?? null
 }
 
 /**
@@ -113,8 +113,8 @@ function getExactTag() {
  * @returns {string|null}
  */
 function getCurrentBranch() {
-	const branch = tryGit("git branch --show-current")
-	return branch ? branch : null
+    const branch = tryGit("git branch --show-current")
+    return branch ? branch : null
 }
 
 /**
@@ -133,10 +133,10 @@ function getCurrentBranch() {
  * @returns {string} Tag or commit SHA to link against.
  */
 function resolveDocumentationRef(tag) {
-	if (tag) return tag
-	const commit = tryGit("git rev-parse HEAD")
-	if (!commit) fail("Cannot resolve HEAD; the packaged README links need an exact commit.")
-	return commit
+    if (tag) return tag
+    const commit = tryGit("git rev-parse HEAD")
+    if (!commit) fail("Cannot resolve HEAD; the packaged README links need an exact commit.")
+    return commit
 }
 
 /**
@@ -144,7 +144,7 @@ function resolveDocumentationRef(tag) {
  * @returns {object}
  */
 function readPackageJson() {
-	return JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"))
+    return JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"))
 }
 
 /**
@@ -152,7 +152,7 @@ function readPackageJson() {
  * @param {object} pkg
  */
 function writePackageJson(pkg) {
-	fs.writeFileSync(PACKAGE_JSON_PATH, `${JSON.stringify(pkg, null, "\t")}\n`)
+    fs.writeFileSync(PACKAGE_JSON_PATH, `${JSON.stringify(pkg, null, "\t")}\n`)
 }
 
 /**
@@ -161,8 +161,8 @@ function writePackageJson(pkg) {
  * @returns {never}
  */
 function fail(reason) {
-	console.error(`[package-vsix] ${reason}`)
-	process.exit(1)
+    console.error(`[package-vsix] ${reason}`)
+    process.exit(1)
 }
 
 /**
@@ -176,9 +176,9 @@ function fail(reason) {
  * @returns {boolean}
  */
 function changelogDocumentsVersion(changelogPath, version) {
-	if (!fs.existsSync(changelogPath)) return false
-	const content = fs.readFileSync(changelogPath, "utf-8")
-	return content.split(/\r?\n/).some((line) => line.trim() === `## [${version}]`)
+    if (!fs.existsSync(changelogPath)) return false
+    const content = fs.readFileSync(changelogPath, "utf-8")
+    return content.split(/\r?\n/).some((line) => line.trim() === `## [${version}]`)
 }
 
 /**
@@ -190,20 +190,20 @@ function changelogDocumentsVersion(changelogPath, version) {
  * @param {string} packageVersion Version currently in package.json.
  */
 function assertReleaseVersionConsistency(channel, tag, tagVersion, packageVersion) {
-	try {
-		assertChannelVersion(channel, tagVersion)
-	} catch (error) {
-		fail(`Tag '${tag}': ${error.message}`)
-	}
-	if (tagVersion !== packageVersion) {
-		fail(`Tag '${tag}' declares version ${tagVersion} but package.json is ${packageVersion}. Bump the version first.`)
-	}
+    try {
+        assertChannelVersion(channel, tagVersion)
+    } catch (error) {
+        fail(`Tag '${tag}': ${error.message}`)
+    }
+    if (tagVersion !== packageVersion) {
+        fail(`Tag '${tag}' declares version ${tagVersion} but package.json is ${packageVersion}. Bump the version first.`)
+    }
 
-	const missing = CHANGELOG_PATHS.filter((changelogPath) => !changelogDocumentsVersion(changelogPath, tagVersion))
-	if (missing.length > 0) {
-		const names = missing.map((changelogPath) => path.relative(PROJECT_ROOT, changelogPath)).join(", ")
-		fail(`No '## [${tagVersion}]' section found in: ${names}. Release notes must exist in every language edition.`)
-	}
+    const missing = CHANGELOG_PATHS.filter((changelogPath) => !changelogDocumentsVersion(changelogPath, tagVersion))
+    if (missing.length > 0) {
+        const names = missing.map((changelogPath) => path.relative(PROJECT_ROOT, changelogPath)).join(", ")
+        fail(`No '## [${tagVersion}]' section found in: ${names}. Release notes must exist in every language edition.`)
+    }
 }
 
 /**
@@ -213,11 +213,11 @@ function assertReleaseVersionConsistency(channel, tag, tagVersion, packageVersio
  * @returns {string}
  */
 function createInsidersVersion(packageVersion) {
-	try {
-		return createPolicyInsidersVersion(packageVersion)
-	} catch (error) {
-		fail(`Cannot derive the Insiders version: ${error.message}`)
-	}
+    try {
+        return createPolicyInsidersVersion(packageVersion)
+    } catch (error) {
+        fail(`Cannot derive the Insiders version: ${error.message}`)
+    }
 }
 
 /**
@@ -227,40 +227,40 @@ function createInsidersVersion(packageVersion) {
  * @returns {{channel: "production"|"pre-release"|"insiders", version: string, tag: string|null}}
  */
 function resolveChannel(packageVersion) {
-	const branch = getCurrentBranch()
-	const tag = getExactTag()
-	const productionTag = tag?.match(PRODUCTION_TAG_PATTERN)
-	const devTag = tag?.match(DEV_TAG_PATTERN)
+    const branch = getCurrentBranch()
+    const tag = getExactTag()
+    const productionTag = tag?.match(PRODUCTION_TAG_PATTERN)
+    const devTag = tag?.match(DEV_TAG_PATTERN)
 
-	if (productionTag) {
-		if (branch !== null && branch !== "main" && branch !== "master") {
-			fail(`Production tag '${tag}' is checked out on '${branch}'. A production tag must live on main.`)
-		}
-		assertReleaseVersionConsistency("production", tag, productionTag[1], packageVersion)
-		return { channel: "production", version: productionTag[1], tag }
-	}
+    if (productionTag) {
+        if (branch !== null && branch !== "main" && branch !== "master") {
+            fail(`Production tag '${tag}' is checked out on '${branch}'. A production tag must live on main.`)
+        }
+        assertReleaseVersionConsistency("production", tag, productionTag[1], packageVersion)
+        return { channel: "production", version: productionTag[1], tag }
+    }
 
-	if (devTag) {
-		if (branch !== null && branch !== "dev") {
-			fail(`Development tag '${tag}' is checked out on '${branch}'. A dev release tag must live on dev.`)
-		}
-		assertReleaseVersionConsistency(PRE_RELEASE_CHANNEL, tag, devTag[1], packageVersion)
-		return { channel: PRE_RELEASE_CHANNEL, version: devTag[1], tag }
-	}
+    if (devTag) {
+        if (branch !== null && branch !== "dev") {
+            fail(`Development tag '${tag}' is checked out on '${branch}'. A dev release tag must live on dev.`)
+        }
+        assertReleaseVersionConsistency(PRE_RELEASE_CHANNEL, tag, devTag[1], packageVersion)
+        return { channel: PRE_RELEASE_CHANNEL, version: devTag[1], tag }
+    }
 
-	if (tag !== null) {
-		fail(`Tag '${tag}' matches neither vX.Y.Z nor dev-vX.Y.Z. Remove it or use a supported release tag.`)
-	}
+    if (tag !== null) {
+        fail(`Tag '${tag}' matches neither vX.Y.Z nor dev-vX.Y.Z. Remove it or use a supported release tag.`)
+    }
 
-	if (branch === "main" || branch === "master") {
-		fail("main has no release tag. Packaging is only allowed from a tagged main commit; tag the promotion first.")
-	}
+    if (branch === "main" || branch === "master") {
+        fail("main has no release tag. Packaging is only allowed from a tagged main commit; tag the promotion first.")
+    }
 
-	if (branch !== "dev") {
-		fail(`Branch '${branch ?? "detached HEAD"}' has no packaging channel. Package from main, dev, or a release tag.`)
-	}
+    if (branch !== "dev") {
+        fail(`Branch '${branch ?? "detached HEAD"}' has no packaging channel. Package from main, dev, or a release tag.`)
+    }
 
-	return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
+    return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
 }
 
 /**
@@ -271,31 +271,31 @@ function resolveChannel(packageVersion) {
  * @returns {{channel: "ci"|"production"|"pre-release"|"insiders", version: string, tag: string|null}}
  */
 function resolveRequestedChannel(requestedChannel, packageVersion) {
-	if (requestedChannel === "auto") {
-		return resolveChannel(packageVersion)
-	}
+    if (requestedChannel === "auto") {
+        return resolveChannel(packageVersion)
+    }
 
-	if (requestedChannel === "insiders") {
-		// Insiders is a separate extension versioned by timestamp, so a release
-		// tag cannot change its identity. A dev-vX.Y.Z tag must name the dev head,
-		// which is exactly the commit the dev push packages as Insiders; rejecting
-		// tagged commits would fail every pre-release's dev Tests run.
-		return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
-	}
+    if (requestedChannel === "insiders") {
+        // Insiders is a separate extension versioned by timestamp, so a release
+        // tag cannot change its identity. A dev-vX.Y.Z tag must name the dev head,
+        // which is exactly the commit the dev push packages as Insiders; rejecting
+        // tagged commits would fail every pre-release's dev Tests run.
+        return { channel: "insiders", version: createInsidersVersion(packageVersion), tag: null }
+    }
 
-	const tag = getExactTag()
-	if (requestedChannel === "ci") {
-		return { channel: "ci", version: packageVersion, tag }
-	}
+    const tag = getExactTag()
+    if (requestedChannel === "ci") {
+        return { channel: "ci", version: packageVersion, tag }
+    }
 
-	const pattern = requestedChannel === "production" ? PRODUCTION_TAG_PATTERN : DEV_TAG_PATTERN
-	const match = tag?.match(pattern)
-	if (!match) {
-		const expected = requestedChannel === "production" ? "vX.Y.Z" : "dev-vX.Y.Z"
-		fail(`${requestedChannel} packaging requires an exact ${expected} tag at HEAD.`)
-	}
-	assertReleaseVersionConsistency(requestedChannel, tag, match[1], packageVersion)
-	return { channel: requestedChannel, version: match[1], tag }
+    const pattern = requestedChannel === "production" ? PRODUCTION_TAG_PATTERN : DEV_TAG_PATTERN
+    const match = tag?.match(pattern)
+    if (!match) {
+        const expected = requestedChannel === "production" ? "vX.Y.Z" : "dev-vX.Y.Z"
+        fail(`${requestedChannel} packaging requires an exact ${expected} tag at HEAD.`)
+    }
+    assertReleaseVersionConsistency(requestedChannel, tag, match[1], packageVersion)
+    return { channel: requestedChannel, version: match[1], tag }
 }
 
 /**
@@ -305,33 +305,33 @@ function resolveRequestedChannel(requestedChannel, packageVersion) {
  * @returns {{requestedChannel: string, outputPath: string|null}}
  */
 function parseArguments(argv) {
-	let requestedChannel = "auto"
-	let outputPath = null
+    let requestedChannel = "auto"
+    let outputPath = null
 
-	for (let index = 0; index < argv.length; index += 1) {
-		const argument = argv[index]
-		if (argument === "--channel") {
-			requestedChannel = argv[index + 1]
-			index += 1
-		} else if (argument === "--out") {
-			outputPath = argv[index + 1]
-			index += 1
-		} else if (argument === "--help" || argument === "-h") {
-			console.log("Usage: npm run vsix -- [--channel auto|ci|insiders|pre-release|production] [--out <path>]")
-			process.exit(0)
-		} else {
-			fail(`Unknown argument '${argument}'.`)
-		}
-	}
+    for (let index = 0; index < argv.length; index += 1) {
+        const argument = argv[index]
+        if (argument === "--channel") {
+            requestedChannel = argv[index + 1]
+            index += 1
+        } else if (argument === "--out") {
+            outputPath = argv[index + 1]
+            index += 1
+        } else if (argument === "--help" || argument === "-h") {
+            console.log("Usage: npm run vsix -- [--channel auto|ci|insiders|pre-release|production] [--out <path>]")
+            process.exit(0)
+        } else {
+            fail(`Unknown argument '${argument}'.`)
+        }
+    }
 
-	if (!requestedChannel || !SUPPORTED_CHANNELS.has(requestedChannel)) {
-		fail(`Unsupported channel '${requestedChannel ?? ""}'.`)
-	}
-	if (argv.includes("--out") && !outputPath) {
-		fail("--out requires a path.")
-	}
+    if (!requestedChannel || !SUPPORTED_CHANNELS.has(requestedChannel)) {
+        fail(`Unsupported channel '${requestedChannel ?? ""}'.`)
+    }
+    if (argv.includes("--out") && !outputPath) {
+        fail("--out requires a path.")
+    }
 
-	return { requestedChannel, outputPath }
+    return { requestedChannel, outputPath }
 }
 
 /**
@@ -347,18 +347,18 @@ function parseArguments(argv) {
  * @returns {boolean} True when the manifest was modified.
  */
 function applyChannelIdentity(pkg, channel, version) {
-	if (channel !== "insiders") return false
+    if (channel !== "insiders") return false
 
-	const displayName = pkg.displayName + INSIDERS_DISPLAY_SUFFIX
+    const displayName = pkg.displayName + INSIDERS_DISPLAY_SUFFIX
 
-	pkg.preview = true
-	pkg.name += INSIDERS_SUFFIX
-	pkg.displayName = displayName
-	pkg.version = version
-	if (pkg.contributes?.viewsContainers?.activitybar?.title) {
-		pkg.contributes.viewsContainers.activitybar.title = displayName
-	}
-	return true
+    pkg.preview = true
+    pkg.name += INSIDERS_SUFFIX
+    pkg.displayName = displayName
+    pkg.version = version
+    if (pkg.contributes?.viewsContainers?.activitybar?.title) {
+        pkg.contributes.viewsContainers.activitybar.title = displayName
+    }
+    return true
 }
 
 // --- Main ---
@@ -377,40 +377,40 @@ console.log(`[package-vsix] Version: ${version}`)
 console.log(`[package-vsix] Documentation ref: ${documentationRef}`)
 
 await withMarketplaceReadme(
-	async (cleanups) => {
-		const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
-		const pkg = JSON.parse(originalContent)
+    async (cleanups) => {
+        const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
+        const pkg = JSON.parse(originalContent)
 
-		// Register restoration before mutating package.json so signals during
-		// vscode:prepublish or vsce packaging restore both temporary files.
-		cleanups.defer(() => {
-			console.log("[package-vsix] Restoring original package.json")
-			fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
-		})
+        // Register restoration before mutating package.json so signals during
+        // vscode:prepublish or vsce packaging restore both temporary files.
+        cleanups.defer(() => {
+            console.log("[package-vsix] Restoring original package.json")
+            fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
+        })
 
-		if (applyChannelIdentity(pkg, channel, version)) {
-			writePackageJson(pkg)
-			console.log(`[package-vsix] Applied ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
-		} else {
-			console.log(`[package-vsix] Packaging ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
-		}
+        if (applyChannelIdentity(pkg, channel, version)) {
+            writePackageJson(pkg)
+            console.log(`[package-vsix] Applied ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
+        } else {
+            console.log(`[package-vsix] Packaging ${channel} identity: name=${pkg.name}, version=${pkg.version}`)
+        }
 
-		const destinationDirectory = resolvedOutputPath ? path.dirname(resolvedOutputPath) : DIST_DIR
-		if (!fs.existsSync(destinationDirectory)) {
-			fs.mkdirSync(destinationDirectory, { recursive: true })
-		}
+        const destinationDirectory = resolvedOutputPath ? path.dirname(resolvedOutputPath) : DIST_DIR
+        if (!fs.existsSync(destinationDirectory)) {
+            fs.mkdirSync(destinationDirectory, { recursive: true })
+        }
 
-		const preRelease = channel === PRE_RELEASE_CHANNEL
-		console.log(
-			`[package-vsix] Packaging through the VSCE API${preRelease ? " as a pre-release" : ""}${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`,
-		)
-		await packageVsix({
-			cwd: PROJECT_ROOT,
-			mode: "build-and-pack",
-			packagePath: resolvedOutputPath,
-			preRelease,
-		})
-		console.log("[package-vsix] Package completed successfully!")
-	},
-	{ ref: documentationRef },
+        const preRelease = channel === PRE_RELEASE_CHANNEL
+        console.log(
+            `[package-vsix] Packaging through the VSCE API${preRelease ? " as a pre-release" : ""}${resolvedOutputPath ? `: ${resolvedOutputPath}` : ""}`,
+        )
+        await packageVsix({
+            cwd: PROJECT_ROOT,
+            mode: "build-and-pack",
+            packagePath: resolvedOutputPath,
+            preRelease,
+        })
+        console.log("[package-vsix] Package completed successfully!")
+    },
+    { ref: documentationRef },
 )

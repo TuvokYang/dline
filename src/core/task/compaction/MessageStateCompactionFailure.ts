@@ -15,22 +15,22 @@ export const COMPACTION_FAILURE_MESSAGE = "Conversation compaction failed before
  * on screen beside the reason it failed.
  */
 export class MessageStateCompactionFailure implements CompactionFailurePresentationPort {
-	constructor(private readonly cards: CompactionRecordPort) {}
+    constructor(private readonly cards: CompactionRecordPort) {}
 
-	/**
-	 * The card states why the run failed, as main's failure card does: whether
-	 * the user retries, waits or force-truncates depends on that reason.
-	 */
-	async present(input: { readonly compactionId: string; readonly attempt: string; readonly error?: string }): Promise<void> {
-		await this.cards.record(input.compactionId, {
-			tool: "summarizeTask",
-			content: "",
-			compactionStatus: "failed",
-			compactionOperationId: input.compactionId,
-			compactionAttemptId: input.attempt,
-			compactionUnitKind: "failure",
-			compactionDurable: true,
-			error: input.error?.trim() ? input.error.trim() : COMPACTION_FAILURE_MESSAGE,
-		} satisfies UiSayTool)
-	}
+    /**
+     * The card states why the run failed, as main's failure card does: whether
+     * the user retries, waits or force-truncates depends on that reason.
+     */
+    async present(input: { readonly compactionId: string; readonly attempt: string; readonly error?: string }): Promise<void> {
+        await this.cards.record(input.compactionId, {
+            tool: "summarizeTask",
+            content: "",
+            compactionStatus: "failed",
+            compactionOperationId: input.compactionId,
+            compactionAttemptId: input.attempt,
+            compactionUnitKind: "failure",
+            compactionDurable: true,
+            error: input.error?.trim() ? input.error.trim() : COMPACTION_FAILURE_MESSAGE,
+        } satisfies UiSayTool)
+    }
 }

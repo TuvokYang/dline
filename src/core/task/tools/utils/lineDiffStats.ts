@@ -8,9 +8,9 @@ import * as diff from "diff"
  * the middle of a file.
  */
 export interface LineDiffStats {
-	linesAdded: number
-	linesDeleted: number
-	linesChanged: number
+    linesAdded: number
+    linesDeleted: number
+    linesChanged: number
 }
 
 /**
@@ -18,10 +18,10 @@ export interface LineDiffStats {
  * Handles trailing newlines correctly (diffLines includes them in the value).
  */
 function countLines(value: string): number {
-	if (!value) return 0
-	// diffLines values end with \n, so split produces a trailing empty string
-	const lines = value.split("\n")
-	return lines[lines.length - 1] === "" ? lines.length - 1 : lines.length
+    if (!value) return 0
+    // diffLines values end with \n, so split produces a trailing empty string
+    const lines = value.split("\n")
+    return lines[lines.length - 1] === "" ? lines.length - 1 : lines.length
 }
 
 /**
@@ -35,38 +35,38 @@ function countLines(value: string): number {
  * @returns LineDiffStats with counts of added, deleted, and changed lines
  */
 export function computeLineDiffStats(before: string, after: string): LineDiffStats {
-	// Normalize trailing newlines so diffLines doesn't treat last-line boundary shifts as changes
-	const normBefore = before ? (before.endsWith("\n") ? before : `${before}\n`) : ""
-	const normAfter = after ? (after.endsWith("\n") ? after : `${after}\n`) : ""
-	const changes = diff.diffLines(normBefore, normAfter)
+    // Normalize trailing newlines so diffLines doesn't treat last-line boundary shifts as changes
+    const normBefore = before ? (before.endsWith("\n") ? before : `${before}\n`) : ""
+    const normAfter = after ? (after.endsWith("\n") ? after : `${after}\n`) : ""
+    const changes = diff.diffLines(normBefore, normAfter)
 
-	let linesAdded = 0
-	let linesDeleted = 0
-	let linesChanged = 0
+    let linesAdded = 0
+    let linesDeleted = 0
+    let linesChanged = 0
 
-	for (let i = 0; i < changes.length; i++) {
-		const change = changes[i]
+    for (let i = 0; i < changes.length; i++) {
+        const change = changes[i]
 
-		if (change.removed) {
-			const removedCount = countLines(change.value)
-			const next = i + 1 < changes.length ? changes[i + 1] : undefined
+        if (change.removed) {
+            const removedCount = countLines(change.value)
+            const next = i + 1 < changes.length ? changes[i + 1] : undefined
 
-			// Pair adjacent remove+add as "changed"
-			if (next?.added) {
-				const addedCount = countLines(next.value)
-				const paired = Math.min(removedCount, addedCount)
-				linesChanged += paired
-				linesDeleted += removedCount - paired
-				linesAdded += addedCount - paired
-				i++ // skip the paired add hunk
-			} else {
-				linesDeleted += removedCount
-			}
-		} else if (change.added) {
-			linesAdded += countLines(change.value)
-		}
-		// unchanged hunks are ignored
-	}
+            // Pair adjacent remove+add as "changed"
+            if (next?.added) {
+                const addedCount = countLines(next.value)
+                const paired = Math.min(removedCount, addedCount)
+                linesChanged += paired
+                linesDeleted += removedCount - paired
+                linesAdded += addedCount - paired
+                i++ // skip the paired add hunk
+            } else {
+                linesDeleted += removedCount
+            }
+        } else if (change.added) {
+            linesAdded += countLines(change.value)
+        }
+        // unchanged hunks are ignored
+    }
 
-	return { linesAdded, linesDeleted, linesChanged }
+    return { linesAdded, linesDeleted, linesChanged }
 }

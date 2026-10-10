@@ -4,18 +4,18 @@ import { describe, expect, it } from "vitest"
 import { UserInputMarkdownBody } from "./UserInputMarkdownBody"
 
 describe("UserInputMarkdownBody", () => {
-	it("renders Markdown inside the bounded direct-input scroll surface", () => {
-		render(<UserInputMarkdownBody markdown={"# Heading\n\n- item"} testId="direct-body" variant="direct" />)
+    it("renders Markdown inside the bounded direct-input scroll surface", () => {
+        render(<UserInputMarkdownBody markdown={"# Heading\n\n- item"} testId="direct-body" variant="direct" />)
 
-		const body = screen.getByTestId("direct-body")
-		expect(screen.getByRole("heading", { name: "Heading" })).toBeInTheDocument()
-		expect(screen.getByText("item")).toBeInTheDocument()
-		expect(body).toHaveClass("overflow-y-auto", "overscroll-contain", "max-h-[min(30vh,320px)]")
-	})
+        const body = screen.getByTestId("direct-body")
+        expect(screen.getByRole("heading", { name: "Heading" })).toBeInTheDocument()
+        expect(screen.getByText("item")).toBeInTheDocument()
+        expect(body).toHaveClass("overflow-y-auto", "overscroll-contain", "max-h-[min(30vh,320px)]")
+    })
 
-	it("uses the smaller pending-queue height contract", () => {
-		render(<UserInputMarkdownBody markdown="queued" testId="queued-body" variant="queued-pending" />)
+    it("uses the smaller pending-queue height contract", () => {
+        render(<UserInputMarkdownBody markdown="queued" testId="queued-body" variant="queued-pending" />)
 
-		expect(screen.getByTestId("queued-body")).toHaveClass("max-h-[min(20vh,180px)]")
-	})
+        expect(screen.getByTestId("queued-body")).toHaveClass("max-h-[min(20vh,180px)]")
+    })
 })

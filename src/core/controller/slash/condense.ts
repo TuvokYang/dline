@@ -7,6 +7,6 @@ import { askResponse } from "../task/askResponse"
  * Command slash command logic
  */
 export async function condense(controller: Controller, _request: StringRequest): Promise<Empty> {
-	await askResponse(controller, AskResponseRequest.create({ responseType: "yesButtonClicked" }))
-	return Empty.create()
+    await askResponse(controller, AskResponseRequest.create({ responseType: "yesButtonClicked" }))
+    return Empty.create()
 }

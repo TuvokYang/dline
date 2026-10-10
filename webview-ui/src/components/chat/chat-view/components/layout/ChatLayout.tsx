@@ -2,8 +2,8 @@ import type React from "react"
 import styled from "styled-components"
 
 interface ChatLayoutProps {
-	isHidden: boolean
-	children: React.ReactNode
+    isHidden: boolean
+    children: React.ReactNode
 }
 
 /**
@@ -11,15 +11,15 @@ interface ChatLayoutProps {
  * Provides the fixed positioning and flex layout structure
  */
 export const ChatLayout: React.FC<ChatLayoutProps> = ({ isHidden, children }) => {
-	return (
-		<ChatLayoutContainer isHidden={isHidden}>
-			<MainContent>{children}</MainContent>
-		</ChatLayoutContainer>
-	)
+    return (
+        <ChatLayoutContainer isHidden={isHidden}>
+            <MainContent>{children}</MainContent>
+        </ChatLayoutContainer>
+    )
 }
 
 const ChatLayoutContainer = styled.div.withConfig({
-	shouldForwardProp: (prop) => !["isHidden"].includes(prop),
+    shouldForwardProp: (prop) => !["isHidden"].includes(prop),
 })<{ isHidden: boolean }>`
 	display: ${(props) => (props.isHidden ? "none" : "grid")};
 	grid-template-rows: 1fr auto;

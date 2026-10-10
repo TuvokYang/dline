@@ -1,6 +1,6 @@
 // English prompts — key-value pairs only, no code logic.
 const prompts: Record<string, string> = {
-	description: `Provide a brief user-visible preamble or progress update during ACT MODE without ending the turn. After displaying the message, execution continues automatically so you can proceed with the next work tool immediately.
+    description: `Provide a brief user-visible preamble or progress update during ACT MODE without ending the turn. After displaying the message, execution continues automatically so you can proceed with the next work tool immediately.
 
 Use this tool to keep the user informed throughout execution. Use it at least:
 - After inspecting relevant files and before modifying files or running state-changing commands: explain what you will change, where, and why
@@ -10,10 +10,10 @@ Use this tool to keep the user informed throughout execution. Use it at least:
 - Before complex or potentially risky operations
 
 Keep the update brief and conversational. Always follow it with an actual work tool in the same turn. Do not call act_mode_respond consecutively; after using it, the next call must perform work. Do not use it for final completion; use attempt_completion instead.`,
-	responseInstruction:
-		"The brief user-visible message explaining the planned change, current progress, completed phase, correction, or relevant rationale.",
-	responseUsage: "Your message here",
-	taskProgressInstruction:
-		"A checklist showing task progress with the latest status of each subtasks included previously if any.",
+    responseInstruction:
+        "The brief user-visible message explaining the planned change, current progress, completed phase, correction, or relevant rationale.",
+    responseUsage: "Your message here",
+    taskProgressInstruction:
+        "A checklist showing task progress with the latest status of each subtasks included previously if any.",
 }
 export default prompts

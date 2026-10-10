@@ -16,20 +16,20 @@ const MAX_STACK_LENGTH = 4_000
  * Every field is re-bounded here because the Webview is not trusted to do it.
  */
 export async function reportWebviewError(_controller: Controller, request: WebviewErrorReport): Promise<Empty> {
-	const kind = WEBVIEW_ERROR_KINDS.has(request.kind) ? request.kind : "unknown"
-	const error = new Error(truncate(request.message, MAX_MESSAGE_LENGTH) || "Unknown Webview error")
-	error.name = `WebviewError(${kind})${request.name ? `:${truncate(request.name, 100)}` : ""}`
-	error.stack = [
-		`${error.name}: ${error.message}`,
-		truncate(request.stack ?? "", MAX_STACK_LENGTH),
-		request.componentStack ? `Component stack:${truncate(request.componentStack, MAX_STACK_LENGTH)}` : "",
-	]
-		.filter(Boolean)
-		.join("\n")
-	Logger.error(`[Webview] ${kind} error`, error)
-	return Empty.create()
+    const kind = WEBVIEW_ERROR_KINDS.has(request.kind) ? request.kind : "unknown"
+    const error = new Error(truncate(request.message, MAX_MESSAGE_LENGTH) || "Unknown Webview error")
+    error.name = `WebviewError(${kind})${request.name ? `:${truncate(request.name, 100)}` : ""}`
+    error.stack = [
+        `${error.name}: ${error.message}`,
+        truncate(request.stack ?? "", MAX_STACK_LENGTH),
+        request.componentStack ? `Component stack:${truncate(request.componentStack, MAX_STACK_LENGTH)}` : "",
+    ]
+        .filter(Boolean)
+        .join("\n")
+    Logger.error(`[Webview] ${kind} error`, error)
+    return Empty.create()
 }
 
 function truncate(value: string, maxLength: number): string {
-	return value.length > maxLength ? `${value.slice(0, maxLength)}…` : value
+    return value.length > maxLength ? `${value.slice(0, maxLength)}…` : value
 }

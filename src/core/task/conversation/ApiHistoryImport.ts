@@ -16,14 +16,14 @@ const operationIdOf = (index: number) => `${OPERATION_PREFIX}${index}`
  * result its call needs.
  */
 function sourceOf(message: ClineStorageMessage): JournalSource {
-	if (message.role === "assistant") return "provider"
-	const answersCall = Array.isArray(message.content) && message.content.some((block) => block.type === "tool_result")
-	return answersCall ? "tool" : "intake"
+    if (message.role === "assistant") return "provider"
+    const answersCall = Array.isArray(message.content) && message.content.some((block) => block.type === "tool_result")
+    return answersCall ? "tool" : "intake"
 }
 
 /** Whether the journal holds nothing the runtime wrote, so the import may still add to it. */
 function holdsOnlyImported(recorded: readonly { readonly operationId: string }[]): boolean {
-	return recorded.every((entry) => entry.operationId.startsWith(OPERATION_PREFIX))
+    return recorded.every((entry) => entry.operationId.startsWith(OPERATION_PREFIX))
 }
 
 /**
@@ -34,13 +34,13 @@ function holdsOnlyImported(recorded: readonly { readonly operationId: string }[]
  * owns the task, before the runtime's first write would close the import off.
  */
 export async function apiHistoryImportPending(input: {
-	readonly journal: ConversationJournal
-	readonly history: readonly ClineStorageMessage[]
+    readonly journal: ConversationJournal
+    readonly history: readonly ClineStorageMessage[]
 }): Promise<boolean> {
-	const { journal, history } = input
-	if (history.length === 0) return false
-	const recorded = await journal.read()
-	return holdsOnlyImported(recorded) && recorded.length < history.length
+    const { journal, history } = input
+    if (history.length === 0) return false
+    const recorded = await journal.read()
+    return holdsOnlyImported(recorded) && recorded.length < history.length
 }
 
 /**
@@ -63,24 +63,24 @@ export async function apiHistoryImportPending(input: {
  * @returns how many messages this call appended.
  */
 export async function importApiHistory(input: {
-	readonly journal: ConversationJournal
-	readonly payloads: TaskPayloadStore
-	readonly history: readonly ClineStorageMessage[]
+    readonly journal: ConversationJournal
+    readonly payloads: TaskPayloadStore
+    readonly history: readonly ClineStorageMessage[]
 }): Promise<number> {
-	const { journal, payloads, history } = input
-	if (history.length === 0) return 0
-	if (!holdsOnlyImported(await journal.read())) return 0
-	let appended = 0
-	for (const [index, message] of history.entries()) {
-		const operationId = operationIdOf(index)
-		if (await journal.findByOperation(operationId)) continue
-		const envelope: ApiHistoryMessageEnvelope = { kind: "api_history_message", message }
-		await journal.append({
-			operationId,
-			payloadRef: await payloads.put(encodeTaskPayload(envelope)),
-			source: sourceOf(message),
-		})
-		appended++
-	}
-	return appended
+    const { journal, payloads, history } = input
+    if (history.length === 0) return 0
+    if (!holdsOnlyImported(await journal.read())) return 0
+    let appended = 0
+    for (const [index, message] of history.entries()) {
+        const operationId = operationIdOf(index)
+        if (await journal.findByOperation(operationId)) continue
+        const envelope: ApiHistoryMessageEnvelope = { kind: "api_history_message", message }
+        await journal.append({
+            operationId,
+            payloadRef: await payloads.put(encodeTaskPayload(envelope)),
+            source: sourceOf(message),
+        })
+        appended++
+    }
+    return appended
 }

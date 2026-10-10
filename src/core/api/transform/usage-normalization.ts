@@ -1,13 +1,13 @@
 export interface InclusiveInputUsage {
-	totalInputTokens: number
-	cacheReadTokens?: number
-	cacheWriteTokens?: number
+    totalInputTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
 }
 
 export interface CanonicalInputUsage {
-	inputTokens: number
-	cacheReadTokens: number
-	cacheWriteTokens: number
+    inputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
 }
 
 /**
@@ -16,17 +16,17 @@ export interface CanonicalInputUsage {
  * input/cache fields.
  */
 export function splitInclusiveInputUsage(usage: InclusiveInputUsage): CanonicalInputUsage {
-	const totalInputTokens = normalizeTokens(usage.totalInputTokens)
-	const cacheReadTokens = normalizeTokens(usage.cacheReadTokens)
-	const cacheWriteTokens = normalizeTokens(usage.cacheWriteTokens)
+    const totalInputTokens = normalizeTokens(usage.totalInputTokens)
+    const cacheReadTokens = normalizeTokens(usage.cacheReadTokens)
+    const cacheWriteTokens = normalizeTokens(usage.cacheWriteTokens)
 
-	return {
-		inputTokens: Math.max(0, totalInputTokens - cacheReadTokens - cacheWriteTokens),
-		cacheReadTokens,
-		cacheWriteTokens,
-	}
+    return {
+        inputTokens: Math.max(0, totalInputTokens - cacheReadTokens - cacheWriteTokens),
+        cacheReadTokens,
+        cacheWriteTokens,
+    }
 }
 
 function normalizeTokens(value: number | undefined): number {
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
 }

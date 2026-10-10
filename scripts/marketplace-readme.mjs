@@ -50,7 +50,7 @@ const HTML_MEDIA_SOURCE = /(<(?:img|source|video)\b[^>]*?\s(?:src|poster)=)(["']
 const HTML_ANCHOR_TARGET = /(<a\b[^>]*?\shref=)(["'])(.*?)\2/gi
 
 function readFile(p) {
-	return fs.readFileSync(p, "utf-8")
+    return fs.readFileSync(p, "utf-8")
 }
 
 /**
@@ -59,13 +59,13 @@ function readFile(p) {
  * @returns {string|null} Normalized URL, or null when the manifest declares none.
  */
 function readRepositoryUrl() {
-	const manifest = JSON.parse(readFile(PACKAGE_JSON_PATH))
-	const url = typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url
-	if (!url) return null
-	return url
-		.replace(/^git\+/, "")
-		.replace(/\.git$/, "")
-		.replace(/\/$/, "")
+    const manifest = JSON.parse(readFile(PACKAGE_JSON_PATH))
+    const url = typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url
+    if (!url) return null
+    return url
+        .replace(/^git\+/, "")
+        .replace(/\.git$/, "")
+        .replace(/\/$/, "")
 }
 
 /**
@@ -74,20 +74,20 @@ function readRepositoryUrl() {
  * @returns {string} Full commit SHA.
  */
 function currentCommit() {
-	try {
-		return execFileSync("git", ["rev-parse", "HEAD"], {
-			cwd: projectRoot,
-			encoding: "utf-8",
-			stdio: ["ignore", "pipe", "ignore"],
-		}).trim()
-	} catch {
-		throw new Error("Cannot resolve the packaged commit with `git rev-parse HEAD`. Pass an explicit ref to pin README links.")
-	}
+    try {
+        return execFileSync("git", ["rev-parse", "HEAD"], {
+            cwd: projectRoot,
+            encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
+        }).trim()
+    } catch {
+        throw new Error("Cannot resolve the packaged commit with `git rev-parse HEAD`. Pass an explicit ref to pin README links.")
+    }
 }
 
 /** @param {string} target */
 function isRepositoryPath(target) {
-	return target !== "" && !URL_SCHEME.test(target) && !target.startsWith("#") && !target.startsWith("//")
+    return target !== "" && !URL_SCHEME.test(target) && !target.startsWith("#") && !target.startsWith("//")
 }
 
 /**
@@ -99,14 +99,14 @@ function isRepositoryPath(target) {
  * @param {string} target Path relative to the repository root, optionally with a fragment or query.
  */
 function pinnedUrl(repositoryUrl, ref, view, target) {
-	const suffixStart = target.search(/[?#]/)
-	const filePath = suffixStart === -1 ? target : target.slice(0, suffixStart)
-	const suffix = suffixStart === -1 ? "" : target.slice(suffixStart)
-	const normalized = path.posix.normalize(filePath.replace(/^\/+/, ""))
-	if (normalized === ".." || normalized.startsWith("../")) {
-		throw new Error(`Marketplace README link '${target}' points outside the repository.`)
-	}
-	return `${repositoryUrl}/${view}/${ref}/${normalized}${suffix}`
+    const suffixStart = target.search(/[?#]/)
+    const filePath = suffixStart === -1 ? target : target.slice(0, suffixStart)
+    const suffix = suffixStart === -1 ? "" : target.slice(suffixStart)
+    const normalized = path.posix.normalize(filePath.replace(/^\/+/, ""))
+    if (normalized === ".." || normalized.startsWith("../")) {
+        throw new Error(`Marketplace README link '${target}' points outside the repository.`)
+    }
+    return `${repositoryUrl}/${view}/${ref}/${normalized}${suffix}`
 }
 
 /**
@@ -116,16 +116,16 @@ function pinnedUrl(repositoryUrl, ref, view, target) {
  * @param {(view: "blob"|"raw", target: string) => string} pin
  */
 function pinLine(line, pin) {
-	return line
-		.replace(MARKDOWN_LINK, (match, bang, text, target, title) =>
-			isRepositoryPath(target) ? `${bang}[${text}](${pin(bang ? "raw" : "blob", target)}${title})` : match,
-		)
-		.replace(HTML_MEDIA_SOURCE, (match, prefix, quote, target) =>
-			isRepositoryPath(target) ? `${prefix}${quote}${pin("raw", target)}${quote}` : match,
-		)
-		.replace(HTML_ANCHOR_TARGET, (match, prefix, quote, target) =>
-			isRepositoryPath(target) ? `${prefix}${quote}${pin("blob", target)}${quote}` : match,
-		)
+    return line
+        .replace(MARKDOWN_LINK, (match, bang, text, target, title) =>
+            isRepositoryPath(target) ? `${bang}[${text}](${pin(bang ? "raw" : "blob", target)}${title})` : match,
+        )
+        .replace(HTML_MEDIA_SOURCE, (match, prefix, quote, target) =>
+            isRepositoryPath(target) ? `${prefix}${quote}${pin("raw", target)}${quote}` : match,
+        )
+        .replace(HTML_ANCHOR_TARGET, (match, prefix, quote, target) =>
+            isRepositoryPath(target) ? `${prefix}${quote}${pin("blob", target)}${quote}` : match,
+        )
 }
 
 /**
@@ -145,20 +145,20 @@ function pinLine(line, pin) {
  * @returns {string} Content whose repository links all point at `ref`.
  */
 export function pinRepositoryLinks(content, repositoryUrl, ref) {
-	if (!repositoryUrl) throw new Error("package.json declares no repository URL; README links cannot be pinned.")
-	if (!ref) throw new Error("No ref to pin README links to.")
-	const pin = (view, target) => pinnedUrl(repositoryUrl, ref, view, target)
-	let inFence = false
-	return content
-		.split("\n")
-		.map((line) => {
-			if (CODE_FENCE.test(line)) {
-				inFence = !inFence
-				return line
-			}
-			return inFence ? line : pinLine(line, pin)
-		})
-		.join("\n")
+    if (!repositoryUrl) throw new Error("package.json declares no repository URL; README links cannot be pinned.")
+    if (!ref) throw new Error("No ref to pin README links to.")
+    const pin = (view, target) => pinnedUrl(repositoryUrl, ref, view, target)
+    let inFence = false
+    return content
+        .split("\n")
+        .map((line) => {
+            if (CODE_FENCE.test(line)) {
+                inFence = !inFence
+                return line
+            }
+            return inFence ? line : pinLine(line, pin)
+        })
+        .join("\n")
 }
 
 /**
@@ -168,41 +168,41 @@ export function pinRepositoryLinks(content, repositoryUrl, ref) {
  *   links are pinned to. Defaults to the checked-out commit.
  */
 export function swapIn(options = {}) {
-	if (!fs.existsSync(MARKETPLACE_PATH)) {
-		throw new Error(`Missing ${MARKETPLACE_PATH}. The marketplace README must exist before publishing.`)
-	}
-	if (!fs.existsSync(README_PATH)) {
-		throw new Error(`Missing ${README_PATH}. Cannot swap in marketplace README.`)
-	}
+    if (!fs.existsSync(MARKETPLACE_PATH)) {
+        throw new Error(`Missing ${MARKETPLACE_PATH}. The marketplace README must exist before publishing.`)
+    }
+    if (!fs.existsSync(README_PATH)) {
+        throw new Error(`Missing ${README_PATH}. Cannot swap in marketplace README.`)
+    }
 
-	const ref = options.ref || currentCommit()
-	const desiredContent = pinRepositoryLinks(readFile(MARKETPLACE_PATH), readRepositoryUrl(), ref)
+    const ref = options.ref || currentCommit()
+    const desiredContent = pinRepositoryLinks(readFile(MARKETPLACE_PATH), readRepositoryUrl(), ref)
 
-	// Compare against the content this call would write, so an outer wrapper that
-	// already swapped with the same ref is still detected as a no-op.
-	if (readFile(README_PATH) === desiredContent) {
-		return { skipped: true }
-	}
+    // Compare against the content this call would write, so an outer wrapper that
+    // already swapped with the same ref is still detected as a no-op.
+    if (readFile(README_PATH) === desiredContent) {
+        return { skipped: true }
+    }
 
-	if (fs.existsSync(BACKUP_PATH)) {
-		throw new Error(
-			`Stale backup at ${BACKUP_PATH}. A previous publish may have aborted before restoring README.md. ` +
-				`Move it back to README.md manually before retrying.`,
-		)
-	}
+    if (fs.existsSync(BACKUP_PATH)) {
+        throw new Error(
+            `Stale backup at ${BACKUP_PATH}. A previous publish may have aborted before restoring README.md. ` +
+                `Move it back to README.md manually before retrying.`,
+        )
+    }
 
-	fs.copyFileSync(README_PATH, BACKUP_PATH)
-	fs.writeFileSync(README_PATH, desiredContent)
-	return { skipped: false }
+    fs.copyFileSync(README_PATH, BACKUP_PATH)
+    fs.writeFileSync(README_PATH, desiredContent)
+    return { skipped: false }
 }
 
 export function restore() {
-	if (!fs.existsSync(BACKUP_PATH)) {
-		return { skipped: true }
-	}
-	fs.copyFileSync(BACKUP_PATH, README_PATH)
-	fs.unlinkSync(BACKUP_PATH)
-	return { skipped: false }
+    if (!fs.existsSync(BACKUP_PATH)) {
+        return { skipped: true }
+    }
+    fs.copyFileSync(BACKUP_PATH, README_PATH)
+    fs.unlinkSync(BACKUP_PATH)
+    return { skipped: false }
 }
 
 /**
@@ -219,32 +219,32 @@ export function restore() {
  * @returns {Promise<T>}
  */
 export async function withMarketplaceReadme(work, options = {}) {
-	const { ref = null, ...cleanupOptions } = options
-	return withSignalSafeCleanup(async (cleanups) => {
-		const swapped = !swapIn({ ref }).skipped
-		if (swapped) {
-			cleanups.defer(() => restore())
-		}
-		return work(cleanups)
-	}, cleanupOptions)
+    const { ref = null, ...cleanupOptions } = options
+    return withSignalSafeCleanup(async (cleanups) => {
+        const swapped = !swapIn({ ref }).skipped
+        if (swapped) {
+            cleanups.defer(() => restore())
+        }
+        return work(cleanups)
+    }, cleanupOptions)
 }
 
 const invokedAsCli = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename)
 if (invokedAsCli) {
-	const cmd = process.argv[2]
-	try {
-		if (cmd === "swap-in") {
-			const result = swapIn()
-			console.log(result.skipped ? "marketplace-readme: already swapped, skipping" : "marketplace-readme: swapped in")
-		} else if (cmd === "restore") {
-			const result = restore()
-			console.log(result.skipped ? "marketplace-readme: no backup, skipping" : "marketplace-readme: restored")
-		} else {
-			console.error("Usage: marketplace-readme.mjs <swap-in|restore>")
-			process.exit(2)
-		}
-	} catch (err) {
-		console.error(`marketplace-readme: ${err.message}`)
-		process.exit(1)
-	}
+    const cmd = process.argv[2]
+    try {
+        if (cmd === "swap-in") {
+            const result = swapIn()
+            console.log(result.skipped ? "marketplace-readme: already swapped, skipping" : "marketplace-readme: swapped in")
+        } else if (cmd === "restore") {
+            const result = restore()
+            console.log(result.skipped ? "marketplace-readme: no backup, skipping" : "marketplace-readme: restored")
+        } else {
+            console.error("Usage: marketplace-readme.mjs <swap-in|restore>")
+            process.exit(2)
+        }
+    } catch (err) {
+        console.error(`marketplace-readme: ${err.message}`)
+        process.exit(1)
+    }
 }

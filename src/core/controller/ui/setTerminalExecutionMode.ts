@@ -8,17 +8,17 @@ import { Controller } from ".."
  * @returns KeyValuePair with success status
  */
 export async function setTerminalExecutionMode(controller: Controller, request: BooleanRequest): Promise<KeyValuePair> {
-	const enableBackgroundExec = request.value
-	const newMode = enableBackgroundExec ? "backgroundExec" : "vscodeTerminal"
+    const enableBackgroundExec = request.value
+    const newMode = enableBackgroundExec ? "backgroundExec" : "vscodeTerminal"
 
-	// Update the global state
-	controller.stateManager.setGlobalState("vscodeTerminalExecutionMode", newMode)
+    // Update the global state
+    controller.stateManager.setGlobalState("vscodeTerminalExecutionMode", newMode)
 
-	// Post updated state to webview
-	await controller.postStateToWebview()
+    // Post updated state to webview
+    await controller.postStateToWebview()
 
-	return KeyValuePair.create({
-		key: "terminalExecutionModeSet",
-		value: newMode,
-	})
+    return KeyValuePair.create({
+        key: "terminalExecutionModeSet",
+        value: newMode,
+    })
 }

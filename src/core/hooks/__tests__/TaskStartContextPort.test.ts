@@ -14,49 +14,49 @@ vi.mock("../hook-executor", () => ({ executeHook }))
 const IDENTITY = { taskId: "task-1", ulid: "ulid-1", initialTask: "do the thing" }
 
 function port(hooksEnabled = true): HookTaskStartContext {
-	return new HookTaskStartContext({
-		stateManager: { getGlobalSettingsKey: () => hooksEnabled } as unknown as StateManager,
-		messages: {} as MessageStateHandler,
-		say: async () => undefined,
-	})
+    return new HookTaskStartContext({
+        stateManager: { getGlobalSettingsKey: () => hooksEnabled } as unknown as StateManager,
+        messages: {} as MessageStateHandler,
+        say: async () => undefined,
+    })
 }
 
 describe("HookTaskStartContext", () => {
-	beforeEach(() => {
-		executeHook.mockReset()
-	})
+    beforeEach(() => {
+        executeHook.mockReset()
+    })
 
-	it("returns the context the hook contributed to the first turn", async () => {
-		executeHook.mockResolvedValue({ wasCancelled: false, contextModification: "WORKSPACE_POLICY" })
+    it("returns the context the hook contributed to the first turn", async () => {
+        executeHook.mockResolvedValue({ wasCancelled: false, contextModification: "WORKSPACE_POLICY" })
 
-		await expect(port().collect(IDENTITY)).resolves.toBe("WORKSPACE_POLICY")
-		expect(executeHook).toHaveBeenCalledWith(
-			expect.objectContaining({
-				hookName: "TaskStart",
-				taskId: "task-1",
-				hooksEnabled: true,
-				hookInput: { taskStart: { taskMetadata: IDENTITY } },
-			}),
-		)
-	})
+        await expect(port().collect(IDENTITY)).resolves.toBe("WORKSPACE_POLICY")
+        expect(executeHook).toHaveBeenCalledWith(
+            expect.objectContaining({
+                hookName: "TaskStart",
+                taskId: "task-1",
+                hooksEnabled: true,
+                hookInput: { taskStart: { taskMetadata: IDENTITY } },
+            }),
+        )
+    })
 
-	it("contributes nothing when no hook is configured", async () => {
-		executeHook.mockResolvedValue({ wasCancelled: false })
+    it("contributes nothing when no hook is configured", async () => {
+        executeHook.mockResolvedValue({ wasCancelled: false })
 
-		await expect(port().collect(IDENTITY)).resolves.toBeUndefined()
-	})
+        await expect(port().collect(IDENTITY)).resolves.toBeUndefined()
+    })
 
-	it("refuses the start when the hook cancels it", async () => {
-		executeHook.mockResolvedValue({ wasCancelled: false, cancel: true, errorMessage: "policy refused" })
+    it("refuses the start when the hook cancels it", async () => {
+        executeHook.mockResolvedValue({ wasCancelled: false, cancel: true, errorMessage: "policy refused" })
 
-		await expect(port().collect(IDENTITY)).rejects.toThrow("policy refused")
-	})
+        await expect(port().collect(IDENTITY)).rejects.toThrow("policy refused")
+    })
 
-	it("passes the hooks-enabled setting through to the executor", async () => {
-		executeHook.mockResolvedValue({ wasCancelled: false })
+    it("passes the hooks-enabled setting through to the executor", async () => {
+        executeHook.mockResolvedValue({ wasCancelled: false })
 
-		await port(false).collect(IDENTITY)
+        await port(false).collect(IDENTITY)
 
-		expect(executeHook).toHaveBeenCalledWith(expect.objectContaining({ hooksEnabled: false }))
-	})
+        expect(executeHook).toHaveBeenCalledWith(expect.objectContaining({ hooksEnabled: false }))
+    })
 })

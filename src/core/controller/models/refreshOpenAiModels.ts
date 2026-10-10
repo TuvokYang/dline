@@ -13,14 +13,14 @@ import { Controller } from ".."
  * @returns Array of model ids
  */
 export async function refreshOpenAiModels(_controller: Controller, request: OpenAiModelsRequest): Promise<StringArray> {
-	if (!request.baseUrl) {
-		return StringArray.create({ values: [] })
-	}
+    if (!request.baseUrl) {
+        return StringArray.create({ values: [] })
+    }
 
-	const models = await discoverProviderModels("openai", {
-		baseUrl: request.baseUrl,
-		apiKey: request.apiKey || undefined,
-	})
+    const models = await discoverProviderModels("openai", {
+        baseUrl: request.baseUrl,
+        apiKey: request.apiKey || undefined,
+    })
 
-	return StringArray.create({ values: Object.keys(models) })
+    return StringArray.create({ values: Object.keys(models) })
 }

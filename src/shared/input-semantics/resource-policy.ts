@@ -15,15 +15,15 @@ const UTF8 = new TextEncoder()
 
 /** Logical lines, so a CRLF or bare-CR paste counts the same as an LF one. */
 export function countTextLines(text: string): number {
-	if (text.length === 0) return 0
-	return text.split(/\r\n|\r|\n/).length
+    if (text.length === 0) return 0
+    return text.split(/\r\n|\r|\n/).length
 }
 
 export function countUtf8Bytes(text: string): number {
-	return UTF8.encode(text).length
+    return UTF8.encode(text).length
 }
 
 /** Whether this text must be stored as a resource rather than sent inline. */
 export function exceedsInlineTextBudget(text: string): boolean {
-	return countTextLines(text) >= INLINE_TEXT_MAX_LINES || countUtf8Bytes(text) >= INLINE_TEXT_MAX_BYTES
+    return countTextLines(text) >= INLINE_TEXT_MAX_LINES || countUtf8Bytes(text) >= INLINE_TEXT_MAX_BYTES
 }

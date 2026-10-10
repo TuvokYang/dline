@@ -17,24 +17,24 @@ const basePrefix = toPrefix(resolveSiteConfig().base)
 const pages = await listPages()
 
 const issues = [
-	...(
-		await Promise.all(pages.map(async (page) => checkPage({ page, source: await readFile(page.file, "utf8"), basePrefix })))
-	).flat(),
-	...checkLocaleParity(pages),
-	...checkNavigation(pages, sidebar, unlistedSlugs),
-	...checkSections(sidebar),
-	...checkRedirects(redirects, pages),
+    ...(
+        await Promise.all(pages.map(async (page) => checkPage({ page, source: await readFile(page.file, "utf8"), basePrefix })))
+    ).flat(),
+    ...checkLocaleParity(pages),
+    ...checkNavigation(pages, sidebar, unlistedSlugs),
+    ...checkSections(sidebar),
+    ...checkRedirects(redirects, pages),
 ]
 
 const rootCount = pages.filter((page) => page.locale === "root").length
 if (issues.length > 0) {
-	for (const issue of issues) {
-		console.error(`src/content/docs/${issue.file}:${issue.line} ${issue.message}`)
-	}
-	console.error(`\nContent check failed: ${issues.length} issue(s) in ${pages.length} page(s).`)
-	process.exitCode = 1
+    for (const issue of issues) {
+        console.error(`src/content/docs/${issue.file}:${issue.line} ${issue.message}`)
+    }
+    console.error(`\nContent check failed: ${issues.length} issue(s) in ${pages.length} page(s).`)
+    process.exitCode = 1
 } else {
-	console.log(
-		`Content check passed: ${pages.length} page(s) (${rootCount} en, ${pages.length - rootCount} zh-CN), ${Object.keys(redirects).length} redirect(s).`,
-	)
+    console.log(
+        `Content check passed: ${pages.length} page(s) (${rootCount} en, ${pages.length - rootCount} zh-CN), ${Object.keys(redirects).length} redirect(s).`,
+    )
 }

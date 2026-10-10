@@ -14,46 +14,46 @@ const EMPTY_RESPONSE = { deployments: [], orchestrationAvailable: false }
  * @returns SapAiCoreModelsResponse with deployments and orchestration availability
  */
 export async function getSapAiCoreModels(
-	_controller: Controller,
-	request: SapAiCoreModelsRequest,
+    _controller: Controller,
+    request: SapAiCoreModelsRequest,
 ): Promise<SapAiCoreModelsResponse> {
-	if (!request.clientId || !request.clientSecret || !request.baseUrl) {
-		return SapAiCoreModelsResponse.create(EMPTY_RESPONSE)
-	}
+    if (!request.clientId || !request.clientSecret || !request.baseUrl) {
+        return SapAiCoreModelsResponse.create(EMPTY_RESPONSE)
+    }
 
-	try {
-		const listing = await sapAiCoreModelSource.fetchListing({
-			baseUrl: request.baseUrl,
-			vendorCredentials: {
-				[SAP_AI_CORE_CREDENTIAL_KEYS.clientId]: request.clientId,
-				[SAP_AI_CORE_CREDENTIAL_KEYS.clientSecret]: request.clientSecret,
-				[SAP_AI_CORE_CREDENTIAL_KEYS.tokenUrl]: request.tokenUrl,
-				[SAP_AI_CORE_CREDENTIAL_KEYS.resourceGroup]: request.resourceGroup,
-			},
-		})
+    try {
+        const listing = await sapAiCoreModelSource.fetchListing({
+            baseUrl: request.baseUrl,
+            vendorCredentials: {
+                [SAP_AI_CORE_CREDENTIAL_KEYS.clientId]: request.clientId,
+                [SAP_AI_CORE_CREDENTIAL_KEYS.clientSecret]: request.clientSecret,
+                [SAP_AI_CORE_CREDENTIAL_KEYS.tokenUrl]: request.tokenUrl,
+                [SAP_AI_CORE_CREDENTIAL_KEYS.resourceGroup]: request.resourceGroup,
+            },
+        })
 
-		if (Object.keys(listing.models).length > 0) {
-			await persistProviderCatalog({
-				providerId: sapAiCoreModelSource.providerId,
-				providerName: sapAiCoreModelSource.providerName,
-				baseUrl: request.baseUrl,
-				billingMode: sapAiCoreModelSource.billingMode,
-				models: listing.models,
-				reconciliationMode: sapAiCoreModelSource.reconciliation,
-			})
-		}
+        if (Object.keys(listing.models).length > 0) {
+            await persistProviderCatalog({
+                providerId: sapAiCoreModelSource.providerId,
+                providerName: sapAiCoreModelSource.providerName,
+                baseUrl: request.baseUrl,
+                billingMode: sapAiCoreModelSource.billingMode,
+                models: listing.models,
+                reconciliationMode: sapAiCoreModelSource.reconciliation,
+            })
+        }
 
-		return SapAiCoreModelsResponse.create({
-			deployments: listing.deployments.map((deployment) =>
-				SapAiCoreModelDeployment.create({
-					modelName: deployment.modelName,
-					deploymentId: deployment.deploymentId,
-				}),
-			),
-			orchestrationAvailable: listing.orchestrationAvailable,
-		})
-	} catch (error) {
-		Logger.error("Error fetching SAP AI Core models:", error)
-		return SapAiCoreModelsResponse.create(EMPTY_RESPONSE)
-	}
+        return SapAiCoreModelsResponse.create({
+            deployments: listing.deployments.map((deployment) =>
+                SapAiCoreModelDeployment.create({
+                    modelName: deployment.modelName,
+                    deploymentId: deployment.deploymentId,
+                }),
+            ),
+            orchestrationAvailable: listing.orchestrationAvailable,
+        })
+    } catch (error) {
+        Logger.error("Error fetching SAP AI Core models:", error)
+        return SapAiCoreModelsResponse.create(EMPTY_RESPONSE)
+    }
 }

@@ -16,42 +16,42 @@ import type { Controller } from "../index"
  * @returns Empty response
  */
 export async function updateApiConfigurationPartial(
-	controller: Controller,
-	request: UpdateApiConfigurationPartialRequest,
+    controller: Controller,
+    request: UpdateApiConfigurationPartialRequest,
 ): Promise<Empty> {
-	try {
-		// Validate request
-		if (!request.updateMask || request.updateMask.length === 0) {
-			throw new Error("update_mask is required and must contain at least one field")
-		}
+    try {
+        // Validate request
+        if (!request.updateMask || request.updateMask.length === 0) {
+            throw new Error("update_mask is required and must contain at least one field")
+        }
 
-		if (!request.apiConfiguration) {
-			throw new Error("api_configuration is required")
-		}
+        if (!request.apiConfiguration) {
+            throw new Error("api_configuration is required")
+        }
 
-		// Get current config and convert new values from proto format
-		const currentConfig = controller.stateManager.getApiConfiguration()
-		const newConfigValues = convertProtoToApiConfiguration(request.apiConfiguration)
+        // Get current config and convert new values from proto format
+        const currentConfig = controller.stateManager.getApiConfiguration()
+        const newConfigValues = convertProtoToApiConfiguration(request.apiConfiguration)
 
-		// Apply only the fields specified in the mask
-		const updatedConfig = { ...currentConfig }
-		for (const field of request.updateMask) {
-			;(updatedConfig as Record<string, any>)[field] = (newConfigValues as Record<string, any>)[field]
-		}
+        // Apply only the fields specified in the mask
+        const updatedConfig = { ...currentConfig }
+        for (const field of request.updateMask) {
+            ;(updatedConfig as Record<string, any>)[field] = (newConfigValues as Record<string, any>)[field]
+        }
 
-		// Update storage and task API handler
-		controller.stateManager.setApiConfiguration(updatedConfig)
-		if (controller.task) {
-			await controller.task.owners.api.rebuild({ abortPrevious: true })
-		}
-		controller.restartAccountUsagePolling()
+        // Update storage and task API handler
+        controller.stateManager.setApiConfiguration(updatedConfig)
+        if (controller.task) {
+            await controller.task.owners.api.rebuild({ abortPrevious: true })
+        }
+        controller.restartAccountUsagePolling()
 
-		// Notify webview
-		await controller.postStateToWebview()
+        // Notify webview
+        await controller.postStateToWebview()
 
-		return Empty.create()
-	} catch (error) {
-		Logger.error(`Failed to update API configuration (partial): ${error}`)
-		throw error
-	}
+        return Empty.create()
+    } catch (error) {
+        Logger.error(`Failed to update API configuration (partial): ${error}`)
+        throw error
+    }
 }

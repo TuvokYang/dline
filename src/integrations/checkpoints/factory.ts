@@ -10,31 +10,31 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 import type { StateManager } from "@/core/storage/StateManager"
 
 type BuildArgs = {
-	taskId: string
-	controller: any // Controller reference for event routing
-	messageStateHandler: MessageStateHandler
-	fileContextTracker: FileContextTracker
-	contextManager: ContextManager
-	diffViewProvider: DiffViewProvider
-	taskState: CheckpointRuntimeState
-	taskFileTracker: TaskFileTracker
-	/** Present when the workspace has more than one root; drives the root coordinator. */
-	workspaceManager?: WorkspaceRootManager
-	/** Rewinds the task's journal conversation when a journal-bounded card is restored. */
-	conversationRewind?: ConversationRewindPort
-	canonicalCheckpoint?: CanonicalCheckpointPort
+    taskId: string
+    controller: any // Controller reference for event routing
+    messageStateHandler: MessageStateHandler
+    fileContextTracker: FileContextTracker
+    contextManager: ContextManager
+    diffViewProvider: DiffViewProvider
+    taskState: CheckpointRuntimeState
+    taskFileTracker: TaskFileTracker
+    /** Present when the workspace has more than one root; drives the root coordinator. */
+    workspaceManager?: WorkspaceRootManager
+    /** Rewinds the task's journal conversation when a journal-bounded card is restored. */
+    conversationRewind?: ConversationRewindPort
+    canonicalCheckpoint?: CanonicalCheckpointPort
 
-	updateTaskHistory: (historyItem: any) => Promise<any[]>
-	say: (...args: any[]) => Promise<number | undefined>
-	cancelTask: () => Promise<void>
-	restoreChatRuntime: (input: { apiIndex: number; editedText?: string }) => Promise<void>
-	postStateToWebview: () => Promise<void>
-	publishMessage: (message: UiMessage) => Promise<void>
+    updateTaskHistory: (historyItem: any) => Promise<any[]>
+    say: (...args: any[]) => Promise<number | undefined>
+    cancelTask: () => Promise<void>
+    restoreChatRuntime: (input: { apiIndex: number; editedText?: string }) => Promise<void>
+    postStateToWebview: () => Promise<void>
+    publishMessage: (message: UiMessage) => Promise<void>
 
-	initialConversationHistoryDeletedRange?: [number, number]
-	initialCheckpointManagerErrorMessage?: string
+    initialConversationHistoryDeletedRange?: [number, number]
+    initialCheckpointManagerErrorMessage?: string
 
-	stateManager: StateManager
+    stateManager: StateManager
 }
 
 /**
@@ -42,56 +42,56 @@ type BuildArgs = {
  * operations to a root coordinator when multiple workspace roots are present.
  */
 export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
-	const {
-		taskId,
-		controller,
-		messageStateHandler,
-		fileContextTracker,
-		contextManager,
-		diffViewProvider,
-		taskState,
-		taskFileTracker,
-		workspaceManager,
-		conversationRewind,
-		canonicalCheckpoint,
-		updateTaskHistory,
-		say,
-		cancelTask,
-		restoreChatRuntime,
-		postStateToWebview,
-		publishMessage,
-		initialConversationHistoryDeletedRange,
-		initialCheckpointManagerErrorMessage,
-		stateManager,
-	} = args
+    const {
+        taskId,
+        controller,
+        messageStateHandler,
+        fileContextTracker,
+        contextManager,
+        diffViewProvider,
+        taskState,
+        taskFileTracker,
+        workspaceManager,
+        conversationRewind,
+        canonicalCheckpoint,
+        updateTaskHistory,
+        say,
+        cancelTask,
+        restoreChatRuntime,
+        postStateToWebview,
+        publishMessage,
+        initialConversationHistoryDeletedRange,
+        initialCheckpointManagerErrorMessage,
+        stateManager,
+    } = args
 
-	const enableCheckpoints = stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
+    const enableCheckpoints = stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
 
-	return createTaskCheckpointManager(
-		{ taskId, controller },
-		{ enableCheckpoints },
-		{
-			diffViewProvider,
-			messageStateHandler,
-			fileContextTracker,
-			contextManager,
-			taskFileTracker,
-			taskState,
-			workspaceManager,
-			conversationRewind,
-			canonicalCheckpoint,
-		},
-		{
-			updateTaskHistory,
-			say,
-			cancelTask,
-			restoreChatRuntime,
-			postStateToWebview,
-			publishMessage,
-		},
-		{
-			conversationHistoryDeletedRange: initialConversationHistoryDeletedRange,
-			checkpointManagerErrorMessage: initialCheckpointManagerErrorMessage,
-		},
-	)
+    return createTaskCheckpointManager(
+        { taskId, controller },
+        { enableCheckpoints },
+        {
+            diffViewProvider,
+            messageStateHandler,
+            fileContextTracker,
+            contextManager,
+            taskFileTracker,
+            taskState,
+            workspaceManager,
+            conversationRewind,
+            canonicalCheckpoint,
+        },
+        {
+            updateTaskHistory,
+            say,
+            cancelTask,
+            restoreChatRuntime,
+            postStateToWebview,
+            publishMessage,
+        },
+        {
+            conversationHistoryDeletedRange: initialConversationHistoryDeletedRange,
+            checkpointManagerErrorMessage: initialCheckpointManagerErrorMessage,
+        },
+    )
 }

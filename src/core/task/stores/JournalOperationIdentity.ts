@@ -5,6 +5,6 @@ type EntryContent = Omit<JournalEntry, "version" | "operationId" | "kind" | "wat
 
 /** Stable semantic identity; execution causation and transient UI identity are replay metadata. */
 export function journalOperationFingerprint(kind: JournalEntryKind, content: EntryContent): string {
-	const { causation: _causation, transientId: _transientId, ...semanticContent } = content
-	return stableJsonStringify({ kind, content: semanticContent })
+    const { causation: _causation, transientId: _transientId, ...semanticContent } = content
+    return stableJsonStringify({ kind, content: semanticContent })
 }

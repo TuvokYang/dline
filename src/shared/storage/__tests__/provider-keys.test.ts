@@ -4,7 +4,7 @@ import { describe, it } from "vitest"
 import { getProviderDefaultModelId } from "../provider-keys"
 
 describe("Provider key mapping", () => {
-	it("returns Moonshot default model ID", () => {
-		expect(getProviderDefaultModelId("moonshot")).to.equal(moonshotDefaultModelId)
-	})
+    it("returns Moonshot default model ID", () => {
+        expect(getProviderDefaultModelId("moonshot")).to.equal(moonshotDefaultModelId)
+    })
 })

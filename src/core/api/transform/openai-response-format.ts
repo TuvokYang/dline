@@ -1,19 +1,19 @@
 import {
-	ResponseInput,
-	ResponseInputFile,
-	ResponseInputImage,
-	ResponseInputMessageContentList,
-	ResponseInputText,
-	ResponseReasoningItem,
+    ResponseInput,
+    ResponseInputFile,
+    ResponseInputImage,
+    ResponseInputMessageContentList,
+    ResponseInputText,
+    ResponseReasoningItem,
 } from "openai/resources/responses/responses"
 import {
-	type ClineAssistantHostedToolBlock,
-	type ClineDocumentContentBlock,
-	ClineStorageMessage,
-	type ClineToolResponseContent,
-	imageSourceMediaType,
-	imageSourceToUrl,
-	isHostedToolBlock,
+    type ClineAssistantHostedToolBlock,
+    type ClineDocumentContentBlock,
+    ClineStorageMessage,
+    type ClineToolResponseContent,
+    imageSourceMediaType,
+    imageSourceToUrl,
+    isHostedToolBlock,
 } from "@/shared/messages/content"
 import { ServerTool } from "@/shared/proto/dline/models/metadata"
 import { getResultFunctionId, getUseFunctionId, projectChatFunctionId } from "./tool-identity-projector"
@@ -27,12 +27,12 @@ const RESPONSES_HOSTED_ITEM_TOOLS: ReadonlyMap<string, string> = new Map([["web_
  * `file_data` carries the PDF as a data URL, the form the Responses API accepts for inline files.
  */
 export function responsesInputFile(block: ClineDocumentContentBlock): ResponseInputFile | undefined {
-	if (block.source.type !== "base64") return undefined
-	return {
-		type: "input_file",
-		filename: block.title || "document.pdf",
-		file_data: `data:${block.source.media_type};base64,${block.source.data}`,
-	}
+    if (block.source.type !== "base64") return undefined
+    return {
+        type: "input_file",
+        filename: block.title || "document.pdf",
+        file_data: `data:${block.source.media_type};base64,${block.source.data}`,
+    }
 }
 
 /**
@@ -43,20 +43,20 @@ export function responsesInputFile(block: ClineDocumentContentBlock): ResponseIn
  * interpret and which costs context for every character.
  */
 export function responsesToolOutput(content: ClineToolResponseContent): string | Array<ResponseInputText | ResponseInputImage> {
-	if (typeof content === "string") return content
-	if (!content.some((block) => block.type === "image")) {
-		return content.map((block) => (block.type === "text" ? block.text : "")).join("\n")
-	}
-	return content.map((block) =>
-		block.type === "image"
-			? { type: "input_image", detail: "auto", image_url: imageSourceToUrl(block.source) }
-			: { type: "input_text", text: block.text },
-	)
+    if (typeof content === "string") return content
+    if (!content.some((block) => block.type === "image")) {
+        return content.map((block) => (block.type === "text" ? block.text : "")).join("\n")
+    }
+    return content.map((block) =>
+        block.type === "image"
+            ? { type: "input_image", detail: "auto", image_url: imageSourceToUrl(block.source) }
+            : { type: "input_text", text: block.text },
+    )
 }
 
 /** Hosted tool names a Responses request declares, used to decide which stored hosted calls it may replay. */
 export function declaredResponsesHostedToolNames(serverTools?: readonly ServerTool[]): ReadonlySet<string> {
-	return new Set(serverTools?.includes(ServerTool.WEB_SEARCH) ? ["web_search"] : [])
+    return new Set(serverTools?.includes(ServerTool.WEB_SEARCH) ? ["web_search"] : [])
 }
 
 /**
@@ -67,23 +67,23 @@ export function declaredResponsesHostedToolNames(serverTools?: readonly ServerTo
  * Returns undefined when the item has no action, because the input item cannot be rebuilt without one.
  */
 export function createResponsesWebSearchReplay(item: {
-	id: string
-	status?: unknown
-	action?: unknown
+    id: string
+    status?: unknown
+    action?: unknown
 }): ClineAssistantHostedToolBlock | undefined {
-	if (typeof item.action !== "object" || item.action === null) return undefined
-	return {
-		type: "hosted_tool",
-		protocol: "openai_responses",
-		blocks: [
-			{
-				type: "web_search_call",
-				id: item.id,
-				status: typeof item.status === "string" ? item.status : "completed",
-				action: item.action,
-			},
-		],
-	}
+    if (typeof item.action !== "object" || item.action === null) return undefined
+    return {
+        type: "hosted_tool",
+        protocol: "openai_responses",
+        blocks: [
+            {
+                type: "web_search_call",
+                id: item.id,
+                status: typeof item.status === "string" ? item.status : "completed",
+                action: item.action,
+            },
+        ],
+    }
 }
 
 /**
@@ -91,15 +91,15 @@ export function createResponsesWebSearchReplay(item: {
  * came from another protocol, or the request does not declare the hosted tool that ran it.
  */
 function replayableResponsesItems(
-	block: ClineAssistantHostedToolBlock,
-	replayHostedTools: ReadonlySet<string> | undefined,
+    block: ClineAssistantHostedToolBlock,
+    replayHostedTools: ReadonlySet<string> | undefined,
 ): Array<Record<string, unknown>> {
-	if (block.protocol !== "openai_responses" || !replayHostedTools?.size) return []
-	const declared = block.blocks.every((item) => {
-		const tool = typeof item.type === "string" ? RESPONSES_HOSTED_ITEM_TOOLS.get(item.type) : undefined
-		return tool !== undefined && replayHostedTools.has(tool)
-	})
-	return declared ? block.blocks : []
+    if (block.protocol !== "openai_responses" || !replayHostedTools?.size) return []
+    const declared = block.blocks.every((item) => {
+        const tool = typeof item.type === "string" ? RESPONSES_HOSTED_ITEM_TOOLS.get(item.type) : undefined
+        return tool !== undefined && replayHostedTools.has(tool)
+    })
+    return declared ? block.blocks : []
 }
 
 /**
@@ -173,217 +173,217 @@ function replayableResponsesItems(
  * @returns ResponseInput array containing the transformed messages with proper reasoning pairing
  */
 export function convertToOpenAIResponsesInput(
-	_messages: ClineStorageMessage[],
-	options?: {
-		usePreviousResponseId?: boolean
-		/**
-		 * Hosted tool names declared by this request. A stored Responses hosted call is sent back as its
-		 * native output item only when its tool is in this set; otherwise it is dropped like any other
-		 * hosted block, so a request never carries a hosted item for a tool it does not declare.
-		 */
-		replayHostedTools?: ReadonlySet<string>
-	},
+    _messages: ClineStorageMessage[],
+    options?: {
+        usePreviousResponseId?: boolean
+        /**
+         * Hosted tool names declared by this request. A stored Responses hosted call is sent back as its
+         * native output item only when its tool is in this set; otherwise it is dropped like any other
+         * hosted block, so a request never carries a hosted item for a tool it does not declare.
+         */
+        replayHostedTools?: ReadonlySet<string>
+    },
 ): {
-	input: ResponseInput
-	previousResponseId?: string
+    input: ResponseInput
+    previousResponseId?: string
 } {
-	// Chain from the latest stored Responses API assistant message when available.
-	// When chaining, only send new items after that assistant turn.
-	let previousResponseId: string | undefined
-	let messages = _messages
-	if (options?.usePreviousResponseId) {
-		for (let i = _messages.length - 1; i >= 0; i--) {
-			const msg = _messages[i]
-			// Must be less than 24 hours old to be considered for chaining as the previous Id is only valid for 24 hours.
-			// Set to 23 hours to account for any potential delays in processing.
-			const isLessThan23HoursOld = msg.ts ? Date.now() - msg.ts < 23 * 60 * 60 * 1000 : false
-			const responseId = msg.provider_metadata?.response_id
-			if (msg.role === "assistant" && responseId && isLessThan23HoursOld) {
-				previousResponseId = responseId
-				messages = _messages.slice(i + 1)
-				break
-			}
-		}
-	}
+    // Chain from the latest stored Responses API assistant message when available.
+    // When chaining, only send new items after that assistant turn.
+    let previousResponseId: string | undefined
+    let messages = _messages
+    if (options?.usePreviousResponseId) {
+        for (let i = _messages.length - 1; i >= 0; i--) {
+            const msg = _messages[i]
+            // Must be less than 24 hours old to be considered for chaining as the previous Id is only valid for 24 hours.
+            // Set to 23 hours to account for any potential delays in processing.
+            const isLessThan23HoursOld = msg.ts ? Date.now() - msg.ts < 23 * 60 * 60 * 1000 : false
+            const responseId = msg.provider_metadata?.response_id
+            if (msg.role === "assistant" && responseId && isLessThan23HoursOld) {
+                previousResponseId = responseId
+                messages = _messages.slice(i + 1)
+                break
+            }
+        }
+    }
 
-	const allItems: any[] = []
-	// Track projected call ids that are actually emitted as function_call items.
-	// Tool outputs whose pairing function_call was truncated away are demoted to
-	// plain user text instead of emitting an orphaned function_call_output item,
-	// which the Responses API rejects with "No tool call found for tool output".
-	const sentCallIds = new Set<string>()
-	// Demoted orphan outputs accumulated across messages, flushed as user text.
-	const demotedOutputs: ResponseInputMessageContentList = []
+    const allItems: any[] = []
+    // Track projected call ids that are actually emitted as function_call items.
+    // Tool outputs whose pairing function_call was truncated away are demoted to
+    // plain user text instead of emitting an orphaned function_call_output item,
+    // which the Responses API rejects with "No tool call found for tool output".
+    const sentCallIds = new Set<string>()
+    // Demoted orphan outputs accumulated across messages, flushed as user text.
+    const demotedOutputs: ResponseInputMessageContentList = []
 
-	for (const m of messages) {
-		if (typeof m.content === "string") {
-			allItems.push({ role: m.role, content: [{ type: "input_text", text: m.content }] })
-			continue
-		}
+    for (const m of messages) {
+        if (typeof m.content === "string") {
+            allItems.push({ role: m.role, content: [{ type: "input_text", text: m.content }] })
+            continue
+        }
 
-		if (m.role === "assistant") {
-			// For assistant messages, we must ensure reasoning items are IMMEDIATELY followed
-			// by their corresponding message or function_call. Process the entire assistant
-			// turn and ensure proper pairing.
-			const assistantItems: any[] = []
+        if (m.role === "assistant") {
+            // For assistant messages, we must ensure reasoning items are IMMEDIATELY followed
+            // by their corresponding message or function_call. Process the entire assistant
+            // turn and ensure proper pairing.
+            const assistantItems: any[] = []
 
-			for (const part of m.content) {
-				if (isHostedToolBlock(part)) {
-					assistantItems.push(...replayableResponsesItems(part, options?.replayHostedTools))
-					continue
-				}
-				const responseId = part.provider_metadata?.response_id
-				switch (part.type) {
-					case "thinking":
-						// Only include reasoning item if it has actual content (thinking text or summary)
-						// Empty reasoning items cause API errors: "Item 'rs_...' of type 'reasoning' was provided without its required following item"
-						const hasThinkingContent = part.thinking && part.thinking.trim().length > 0
-						const hasSummaryContent = part.summary && Array.isArray(part.summary) && part.summary.length > 0
+            for (const part of m.content) {
+                if (isHostedToolBlock(part)) {
+                    assistantItems.push(...replayableResponsesItems(part, options?.replayHostedTools))
+                    continue
+                }
+                const responseId = part.provider_metadata?.response_id
+                switch (part.type) {
+                    case "thinking":
+                        // Only include reasoning item if it has actual content (thinking text or summary)
+                        // Empty reasoning items cause API errors: "Item 'rs_...' of type 'reasoning' was provided without its required following item"
+                        const hasThinkingContent = part.thinking && part.thinking.trim().length > 0
+                        const hasSummaryContent = part.summary && Array.isArray(part.summary) && part.summary.length > 0
 
-						if (responseId && (hasThinkingContent || hasSummaryContent)) {
-							// Use summary if available, otherwise use thinking text
-							let summary: any[] = []
-							if (hasSummaryContent) {
-								// part.summary is already in the correct format from OpenAI Responses API
-								summary = part.summary as any[]
-							} else if (hasThinkingContent) {
-								// Convert thinking text to summary format
-								summary = [
-									{
-										type: "summary_text",
-										text: part.thinking,
-									},
-								]
-							}
+                        if (responseId && (hasThinkingContent || hasSummaryContent)) {
+                            // Use summary if available, otherwise use thinking text
+                            let summary: any[] = []
+                            if (hasSummaryContent) {
+                                // part.summary is already in the correct format from OpenAI Responses API
+                                summary = part.summary as any[]
+                            } else if (hasThinkingContent) {
+                                // Convert thinking text to summary format
+                                summary = [
+                                    {
+                                        type: "summary_text",
+                                        text: part.thinking,
+                                    },
+                                ]
+                            }
 
-							assistantItems.push({
-								id: responseId,
-								type: "reasoning",
-								summary,
-							} as ResponseReasoningItem)
-						}
-						break
-					case "redacted_thinking":
-						// Include reasoning item with encrypted content if it has a call_id
-						// Even if data is missing, we need to maintain the reasoning-function_call pairing
-						if (responseId) {
-							const reasoningItem: any = {
-								id: responseId,
-								type: "reasoning",
-								summary: [],
-							}
-							// Only include encrypted_content if data exists
-							if (part.data) {
-								reasoningItem.encrypted_content = part.data
-							}
-							assistantItems.push(reasoningItem as ResponseReasoningItem)
-						}
-						break
-					case "text":
-						// Message ID goes at the message level, not in the content
-						// The reasoning item and message can have different IDs - they just need to be adjacent
-						const messageItem: any = {
-							type: "message",
-							role: "assistant",
-							content: [{ type: "output_text", text: part.text }],
-						}
-						// Set message-level id if available
-						if (responseId) {
-							messageItem.id = responseId
-						}
-						assistantItems.push(messageItem)
-						break
-					case "image":
-						// Message ID goes at the message level, not in the content
-						const imageItem: any = {
-							type: "message",
-							role: "assistant",
-							content: [{ type: "output_text", text: `[image:${imageSourceMediaType(part.source)}]` }],
-						}
-						// Set message-level id if available (though images typically don't have call_id)
-						if (responseId) {
-							imageItem.id = responseId
-						}
-						assistantItems.push(imageItem)
-						break
-					case "tool_use": {
-						const functionId = getUseFunctionId(part)
-						const projectedCallId = projectChatFunctionId(functionId)
-						sentCallIds.add(projectedCallId)
-						assistantItems.push({
-							type: "function_call",
-							call_id: projectedCallId,
-							name: part.name,
-							arguments: JSON.stringify(part.input ?? {}),
-						})
-						break
-					}
-				}
-			}
+                            assistantItems.push({
+                                id: responseId,
+                                type: "reasoning",
+                                summary,
+                            } as ResponseReasoningItem)
+                        }
+                        break
+                    case "redacted_thinking":
+                        // Include reasoning item with encrypted content if it has a call_id
+                        // Even if data is missing, we need to maintain the reasoning-function_call pairing
+                        if (responseId) {
+                            const reasoningItem: any = {
+                                id: responseId,
+                                type: "reasoning",
+                                summary: [],
+                            }
+                            // Only include encrypted_content if data exists
+                            if (part.data) {
+                                reasoningItem.encrypted_content = part.data
+                            }
+                            assistantItems.push(reasoningItem as ResponseReasoningItem)
+                        }
+                        break
+                    case "text":
+                        // Message ID goes at the message level, not in the content
+                        // The reasoning item and message can have different IDs - they just need to be adjacent
+                        const messageItem: any = {
+                            type: "message",
+                            role: "assistant",
+                            content: [{ type: "output_text", text: part.text }],
+                        }
+                        // Set message-level id if available
+                        if (responseId) {
+                            messageItem.id = responseId
+                        }
+                        assistantItems.push(messageItem)
+                        break
+                    case "image":
+                        // Message ID goes at the message level, not in the content
+                        const imageItem: any = {
+                            type: "message",
+                            role: "assistant",
+                            content: [{ type: "output_text", text: `[image:${imageSourceMediaType(part.source)}]` }],
+                        }
+                        // Set message-level id if available (though images typically don't have call_id)
+                        if (responseId) {
+                            imageItem.id = responseId
+                        }
+                        assistantItems.push(imageItem)
+                        break
+                    case "tool_use": {
+                        const functionId = getUseFunctionId(part)
+                        const projectedCallId = projectChatFunctionId(functionId)
+                        sentCallIds.add(projectedCallId)
+                        assistantItems.push({
+                            type: "function_call",
+                            call_id: projectedCallId,
+                            name: part.name,
+                            arguments: JSON.stringify(part.input ?? {}),
+                        })
+                        break
+                    }
+                }
+            }
 
-			allItems.push(...assistantItems)
-		} else {
-			// User messages - collect all content
-			const messageContent: ResponseInputMessageContentList = []
+            allItems.push(...assistantItems)
+        } else {
+            // User messages - collect all content
+            const messageContent: ResponseInputMessageContentList = []
 
-			for (const part of m.content) {
-				switch (part.type) {
-					case "text":
-						messageContent.push({ type: "input_text", text: part.text })
-						break
-					case "image":
-						messageContent.push({
-							type: "input_image",
-							detail: "auto",
-							image_url: imageSourceToUrl(part.source),
-						})
-						break
-					case "document": {
-						const file = responsesInputFile(part)
-						if (file) messageContent.push(file)
-						break
-					}
-					case "tool_result": {
-						// Flush any pending message content before adding tool result
-						if (messageContent.length > 0) {
-							allItems.push({ role: m.role, content: [...messageContent] })
-							messageContent.length = 0
-						}
-						const functionId = getResultFunctionId(part)
-						const projectedCallId = projectChatFunctionId(functionId)
-						const output = responsesToolOutput(part.content)
-						if (!sentCallIds.has(projectedCallId)) {
-							// The pairing function_call is not in the sent history (truncated or
-							// never recorded). Emitting an orphaned function_call_output would
-							// fail the request, so keep the output as ordinary user content.
-							if (typeof output !== "string") {
-								demotedOutputs.push(...output)
-							} else if (output) {
-								demotedOutputs.push({ type: "input_text", text: output })
-							}
-							break
-						}
-						allItems.push({
-							type: "function_call_output",
-							call_id: projectedCallId,
-							output,
-						})
-						break
-					}
-				}
-			}
+            for (const part of m.content) {
+                switch (part.type) {
+                    case "text":
+                        messageContent.push({ type: "input_text", text: part.text })
+                        break
+                    case "image":
+                        messageContent.push({
+                            type: "input_image",
+                            detail: "auto",
+                            image_url: imageSourceToUrl(part.source),
+                        })
+                        break
+                    case "document": {
+                        const file = responsesInputFile(part)
+                        if (file) messageContent.push(file)
+                        break
+                    }
+                    case "tool_result": {
+                        // Flush any pending message content before adding tool result
+                        if (messageContent.length > 0) {
+                            allItems.push({ role: m.role, content: [...messageContent] })
+                            messageContent.length = 0
+                        }
+                        const functionId = getResultFunctionId(part)
+                        const projectedCallId = projectChatFunctionId(functionId)
+                        const output = responsesToolOutput(part.content)
+                        if (!sentCallIds.has(projectedCallId)) {
+                            // The pairing function_call is not in the sent history (truncated or
+                            // never recorded). Emitting an orphaned function_call_output would
+                            // fail the request, so keep the output as ordinary user content.
+                            if (typeof output !== "string") {
+                                demotedOutputs.push(...output)
+                            } else if (output) {
+                                demotedOutputs.push({ type: "input_text", text: output })
+                            }
+                            break
+                        }
+                        allItems.push({
+                            type: "function_call_output",
+                            call_id: projectedCallId,
+                            output,
+                        })
+                        break
+                    }
+                }
+            }
 
-			// Flush any remaining user message content
-			if (messageContent.length > 0) {
-				allItems.push({ role: m.role, content: [...messageContent] })
-			}
-			// Flush demoted orphan outputs as ordinary user content.
-			if (demotedOutputs.length > 0) {
-				allItems.push({ role: m.role, content: [...demotedOutputs] })
-				demotedOutputs.length = 0
-			}
-		}
-	}
+            // Flush any remaining user message content
+            if (messageContent.length > 0) {
+                allItems.push({ role: m.role, content: [...messageContent] })
+            }
+            // Flush demoted orphan outputs as ordinary user content.
+            if (demotedOutputs.length > 0) {
+                allItems.push({ role: m.role, content: [...demotedOutputs] })
+                demotedOutputs.length = 0
+            }
+        }
+    }
 
-	return { input: allItems, previousResponseId }
+    return { input: allItems, previousResponseId }
 }

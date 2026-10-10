@@ -8,23 +8,23 @@ import { logClaudeCodeOAuthFailure, requireClaudeCodeProfile, toClaudeCodeAuthFl
 
 /** Starts a subscription OAuth flow owned by one explicit Claude Code Profile. */
 export async function startClaudeCodeSignIn(
-	controller: Controller,
-	request: ClaudeCodeProfileRequest,
+    controller: Controller,
+    request: ClaudeCodeProfileRequest,
 ): Promise<ClaudeCodeAuthFlow> {
-	const profile = await requireClaudeCodeProfile(request.profileId)
-	try {
-		const flow = await claudeCodeOAuthManager.startAuthorizationFlow(profile.id)
-		return toClaudeCodeAuthFlow(flow)
-	} catch (error) {
-		logClaudeCodeOAuthFailure("start flow", error)
-		if (error instanceof OAuthFlowError && error.code === "FLOW_ALREADY_IN_PROGRESS") {
-			throw new Error("Another sign-in is already in progress. Finish or cancel it first.")
-		}
-		HostProvider.window.showMessage({
-			type: ShowMessageType.ERROR,
-			message: "Claude Code sign-in could not be started.",
-		})
-		await controller.postStateToWebview()
-		throw new Error("Claude Code sign-in could not be started.")
-	}
+    const profile = await requireClaudeCodeProfile(request.profileId)
+    try {
+        const flow = await claudeCodeOAuthManager.startAuthorizationFlow(profile.id)
+        return toClaudeCodeAuthFlow(flow)
+    } catch (error) {
+        logClaudeCodeOAuthFailure("start flow", error)
+        if (error instanceof OAuthFlowError && error.code === "FLOW_ALREADY_IN_PROGRESS") {
+            throw new Error("Another sign-in is already in progress. Finish or cancel it first.")
+        }
+        HostProvider.window.showMessage({
+            type: ShowMessageType.ERROR,
+            message: "Claude Code sign-in could not be started.",
+        })
+        await controller.postStateToWebview()
+        throw new Error("Claude Code sign-in could not be started.")
+    }
 }

@@ -10,56 +10,56 @@ const DESCRIPTOR_SET = path.resolve("dist-standalone/proto/descriptor_set.pb")
 const typeNameToFQN = new Map()
 
 function addTypeNameToFqn(name, fqn) {
-	if (typeNameToFQN.has(name) && typeNameToFQN.get(name) !== fqn) {
-		throw new Error(`Proto type ${name} redefined (${fqn}).`)
-	}
-	typeNameToFQN.set(name, fqn)
+    if (typeNameToFQN.has(name) && typeNameToFQN.get(name) !== fqn) {
+        throw new Error(`Proto type ${name} redefined (${fqn}).`)
+    }
+    typeNameToFQN.set(name, fqn)
 }
 // Get the fully qualified name for a proto type, e.g. getFqn('StringRequest') returns 'cline.StringRequest'
 export function getFqn(name) {
-	if (!typeNameToFQN.has(name)) {
-		throw Error(`No FQN for ${name}`)
-	}
-	return typeNameToFQN.get(name)
+    if (!typeNameToFQN.has(name)) {
+        throw Error(`No FQN for ${name}`)
+    }
+    return typeNameToFQN.get(name)
 }
 
 export async function getPackageDefinition() {
-	const descriptorBuffer = await fs.readFile(DESCRIPTOR_SET)
-	const options = { longs: Number } // Encode int64 fields as numbers
-	return protoLoader.loadFileDescriptorSetFromBuffer(descriptorBuffer, options)
+    const descriptorBuffer = await fs.readFile(DESCRIPTOR_SET)
+    const options = { longs: Number } // Encode int64 fields as numbers
+    return protoLoader.loadFileDescriptorSetFromBuffer(descriptorBuffer, options)
 }
 
 export async function loadProtoDescriptorSet() {
-	const packageDefinition = await getPackageDefinition()
-	return grpc.loadPackageDefinition(packageDefinition)
+    const packageDefinition = await getPackageDefinition()
+    return grpc.loadPackageDefinition(packageDefinition)
 }
 
 export async function loadServicesFromProtoDescriptor() {
-	// Load service definitions from descriptor set
-	const proto = await loadProtoDescriptorSet()
+    // Load service definitions from descriptor set
+    const proto = await loadProtoDescriptorSet()
 
-	// Extract host services and proto messages from the proto definition
-	const hostServices = {}
-	const hostNs = proto.dline?.host ?? proto.host
-	if (hostNs) {
-		for (const [name, def] of Object.entries(hostNs)) {
-			if (def && "service" in def) {
-				hostServices[name] = def
-			} else {
-				addTypeNameToFqn(name, `dline.host.${name}`)
-			}
-		}
-	}
-	const protobusServices = {}
-	const dlineNs = proto.dline ?? proto.cline
-	if (dlineNs) {
-		for (const [name, def] of Object.entries(dlineNs)) {
-			if (def && "service" in def) {
-				protobusServices[name] = def
-			} else {
-				addTypeNameToFqn(name, `dline.${name}`)
-			}
-		}
-	}
-	return { protobusServices, hostServices }
+    // Extract host services and proto messages from the proto definition
+    const hostServices = {}
+    const hostNs = proto.dline?.host ?? proto.host
+    if (hostNs) {
+        for (const [name, def] of Object.entries(hostNs)) {
+            if (def && "service" in def) {
+                hostServices[name] = def
+            } else {
+                addTypeNameToFqn(name, `dline.host.${name}`)
+            }
+        }
+    }
+    const protobusServices = {}
+    const dlineNs = proto.dline ?? proto.cline
+    if (dlineNs) {
+        for (const [name, def] of Object.entries(dlineNs)) {
+            if (def && "service" in def) {
+                protobusServices[name] = def
+            } else {
+                addTypeNameToFqn(name, `dline.${name}`)
+            }
+        }
+    }
+    return { protobusServices, hostServices }
 }

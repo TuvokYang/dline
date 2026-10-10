@@ -3,10 +3,10 @@ import type { TaskState } from "../kernel"
 
 /** What the task knows about the context window when a request settles. */
 export interface CompactionPressure {
-	/** Tokens the last request actually occupied. */
-	readonly contextTokens: number
-	/** Tokens at which the conversation should be compacted. */
-	readonly compactTriggerTokens: number
+    /** Tokens the last request actually occupied. */
+    readonly contextTokens: number
+    /** Tokens at which the conversation should be compacted. */
+    readonly compactTriggerTokens: number
 }
 
 /**
@@ -25,15 +25,15 @@ export interface CompactionPressure {
  * `completed` - and its request needs the room exactly as much.
  */
 export function shouldCompactAutomatically(state: TaskState, pressure: CompactionPressure): boolean {
-	if (pressure.compactTriggerTokens <= 0) return false
-	if (!shouldCompactProjectedUsage(pressure.contextTokens, pressure.compactTriggerTokens)) return false
-	if (state.halt.status === "stopping") return false
-	if (state.flow.phase === "paused" || state.flow.phase === "terminated") return false
-	return !isCompactionInFlight(state)
+    if (pressure.compactTriggerTokens <= 0) return false
+    if (!shouldCompactProjectedUsage(pressure.contextTokens, pressure.compactTriggerTokens)) return false
+    if (state.halt.status === "stopping") return false
+    if (state.flow.phase === "paused" || state.flow.phase === "terminated") return false
+    return !isCompactionInFlight(state)
 }
 
 /** Whether a compaction run already owns the next summary. */
 function isCompactionInFlight(state: TaskState): boolean {
-	const status = state.flow.compaction?.status
-	return status === "scheduled" || status === "running"
+    const status = state.flow.compaction?.status
+    return status === "scheduled" || status === "running"
 }

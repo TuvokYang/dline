@@ -11,29 +11,29 @@ const subs = new Map<Controller, Set<StreamingResponseHandler<ProtoString>>>()
  * Only events from this controller's task will be sent to the responseStream.
  */
 export async function subscribeToAddToInput(
-	controller: Controller,
-	_request: EmptyRequest,
-	responseStream: StreamingResponseHandler<ProtoString>,
-	requestId?: string,
+    controller: Controller,
+    _request: EmptyRequest,
+    responseStream: StreamingResponseHandler<ProtoString>,
+    requestId?: string,
 ): Promise<void> {
-	let set = subs.get(controller)
-	if (!set) {
-		set = new Set()
-		subs.set(controller, set)
-	}
-	set.add(responseStream)
+    let set = subs.get(controller)
+    if (!set) {
+        set = new Set()
+        subs.set(controller, set)
+    }
+    set.add(responseStream)
 
-	const cleanup = () => {
-		const s = subs.get(controller)
-		if (s) {
-			s.delete(responseStream)
-			if (s.size === 0) subs.delete(controller)
-		}
-	}
+    const cleanup = () => {
+        const s = subs.get(controller)
+        if (s) {
+            s.delete(responseStream)
+            if (s.size === 0) subs.delete(controller)
+        }
+    }
 
-	if (requestId) {
-		getRequestRegistry().registerRequest(requestId, cleanup, { type: "addToInput_subscription" }, responseStream)
-	}
+    if (requestId) {
+        getRequestRegistry().registerRequest(requestId, cleanup, { type: "addToInput_subscription" }, responseStream)
+    }
 }
 
 /**
@@ -42,18 +42,18 @@ export async function subscribeToAddToInput(
  * @param text The text to add to the input
  */
 export async function sendAddToInputEvent(controller: Controller, text: string): Promise<void> {
-	const set = subs.get(controller)
-	if (!set || set.size === 0) return
+    const set = subs.get(controller)
+    if (!set || set.size === 0) return
 
-	const promises = Array.from(set).map(async (responseStream) => {
-		try {
-			const event: ProtoString = { value: text }
-			await responseStream(event, false)
-		} catch (error) {
-			Logger.error("Error sending addToInput event:", error)
-			set.delete(responseStream)
-		}
-	})
+    const promises = Array.from(set).map(async (responseStream) => {
+        try {
+            const event: ProtoString = { value: text }
+            await responseStream(event, false)
+        } catch (error) {
+            Logger.error("Error sending addToInput event:", error)
+            set.delete(responseStream)
+        }
+    })
 
-	await Promise.all(promises)
+    await Promise.all(promises)
 }

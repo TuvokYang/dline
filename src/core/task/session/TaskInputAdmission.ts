@@ -10,27 +10,27 @@ import type { LifecycleCommand } from "../stores/payload/TaskPayloadEnvelopes"
  * the command itself, so whoever carries the command decides where it goes.
  */
 export interface AdmittedLifecycleBarrier {
-	readonly commandId: string
-	readonly before: string
-	/** What the user typed before the barrier; kept by carriers that grant no command authority. */
-	readonly sourceBefore: string
-	readonly premessage: string
-	/** Authority from the commands before the barrier; what the turn keeps once the barrier is claimed. */
-	readonly instructionsBefore: readonly ExplicitInstructionDeclaration[]
-	/** Tools the commands before the barrier authorized; what the turn keeps once the barrier is claimed. */
-	readonly toolsBefore: readonly string[]
+    readonly commandId: string
+    readonly before: string
+    /** What the user typed before the barrier; kept by carriers that grant no command authority. */
+    readonly sourceBefore: string
+    readonly premessage: string
+    /** Authority from the commands before the barrier; what the turn keeps once the barrier is claimed. */
+    readonly instructionsBefore: readonly ExplicitInstructionDeclaration[]
+    /** Tools the commands before the barrier authorized; what the turn keeps once the barrier is claimed. */
+    readonly toolsBefore: readonly string[]
 }
 
 /** What one submission contributes once Core has reviewed it. */
 export interface AdmittedTaskInput {
-	readonly document: SemanticInputDocument
-	/** Ordered projection for the provider; the raw text stays untouched for the UI. */
-	readonly admittedText: string
-	readonly authorizedTools: readonly string[]
-	/** One-shot authority the named commands grant for the turn they open. */
-	readonly explicitInstructions: readonly ExplicitInstructionDeclaration[]
-	/** The lifecycle barrier the submission placed, when it placed one. */
-	readonly barrier?: AdmittedLifecycleBarrier
+    readonly document: SemanticInputDocument
+    /** Ordered projection for the provider; the raw text stays untouched for the UI. */
+    readonly admittedText: string
+    readonly authorizedTools: readonly string[]
+    /** One-shot authority the named commands grant for the turn they open. */
+    readonly explicitInstructions: readonly ExplicitInstructionDeclaration[]
+    /** The lifecycle barrier the submission placed, when it placed one. */
+    readonly barrier?: AdmittedLifecycleBarrier
 }
 
 /**
@@ -45,16 +45,16 @@ export interface AdmittedTaskInput {
  * carrying it has been accepted, so a refused input changes nothing.
  */
 export interface LifecycleBarrierPort {
-	/** Whether a domain carries out this command, so its text stays out of the turn. */
-	owns(commandId: string): boolean
-	/**
-	 * Carry out a command that arrived in an accepted dialog reply.
-	 *
-	 * A reply is not an intake entry, so no round admits it; the owner holds the
-	 * command for the round the reply opens. Call only after the reply was
-	 * accepted - the owner binds it to the generation current at that moment.
-	 */
-	request(command: LifecycleCommand): void
+    /** Whether a domain carries out this command, so its text stays out of the turn. */
+    owns(commandId: string): boolean
+    /**
+     * Carry out a command that arrived in an accepted dialog reply.
+     *
+     * A reply is not an intake entry, so no round admits it; the owner holds the
+     * command for the round the reply opens. Call only after the reply was
+     * accepted - the owner binds it to the generation current at that moment.
+     */
+    request(command: LifecycleCommand): void
 }
 
 /**
@@ -65,15 +65,15 @@ export interface LifecycleBarrierPort {
  * reply never leaves a command behind for a later round.
  */
 export interface ReviewedReply {
-	/** What the reply still says to the model. */
-	readonly text: string
-	/** Carry out the reply's command; call only after the reply was accepted. */
-	commit(): void
+    /** What the reply still says to the model. */
+    readonly text: string
+    /** Carry out the reply's command; call only after the reply was accepted. */
+    commit(): void
 }
 
 export type TaskInputAdmissionResult =
-	| { readonly ok: true; readonly admitted: AdmittedTaskInput }
-	| { readonly ok: false; readonly diagnostics: readonly SemanticInputDiagnostic[] }
+    | { readonly ok: true; readonly admitted: AdmittedTaskInput }
+    | { readonly ok: false; readonly diagnostics: readonly SemanticInputDiagnostic[] }
 
 /**
  * Reviews one submission before it becomes a durable task input.
@@ -83,12 +83,12 @@ export type TaskInputAdmissionResult =
  * expansion details.
  */
 export interface TaskInputAdmissionPort {
-	admit(input: {
-		readonly text?: string
-		readonly images?: readonly string[]
-		readonly files?: readonly string[]
-		readonly semanticInput?: SemanticInputDocument
-	}): Promise<TaskInputAdmissionResult>
+    admit(input: {
+        readonly text?: string
+        readonly images?: readonly string[]
+        readonly files?: readonly string[]
+        readonly semanticInput?: SemanticInputDocument
+    }): Promise<TaskInputAdmissionResult>
 }
 
 /**
@@ -99,8 +99,8 @@ export interface TaskInputAdmissionPort {
  * see their command disappear without being told.
  */
 export class SemanticInputRejectedError extends Error {
-	constructor(readonly diagnostics: readonly SemanticInputDiagnostic[]) {
-		super(`semantic input rejected: ${diagnostics.map((diagnostic) => diagnostic.code).join(", ")}`)
-		this.name = "SemanticInputRejectedError"
-	}
+    constructor(readonly diagnostics: readonly SemanticInputDiagnostic[]) {
+        super(`semantic input rejected: ${diagnostics.map((diagnostic) => diagnostic.code).join(", ")}`)
+        this.name = "SemanticInputRejectedError"
+    }
 }

@@ -15,9 +15,9 @@ import { type HistoryItem, MAX_HISTORY_TASK_TEXT_LENGTH, summarizeHistoryTaskTex
  */
 
 export interface TaskHistoryProjection {
-	items: HistoryItem[]
-	/** Entries whose task text was shortened; 0 means the list was already bounded. */
-	truncatedCount: number
+    items: HistoryItem[]
+    /** Entries whose task text was shortened; 0 means the list was already bounded. */
+    truncatedCount: number
 }
 
 /**
@@ -28,25 +28,25 @@ export interface TaskHistoryProjection {
  * for every later reader.
  */
 export function projectTaskHistory(items: readonly HistoryItem[] | undefined): TaskHistoryProjection {
-	if (!items || items.length === 0) {
-		return { items: [], truncatedCount: 0 }
-	}
+    if (!items || items.length === 0) {
+        return { items: [], truncatedCount: 0 }
+    }
 
-	let truncatedCount = 0
-	const projected = items.map((stored) => {
-		const item = withoutContextWindowIndicator(stored)
-		if (typeof item.task !== "string" || item.task.length <= MAX_HISTORY_TASK_TEXT_LENGTH) {
-			return item
-		}
-		truncatedCount++
-		return { ...item, task: summarizeHistoryTaskText(item.task) }
-	})
+    let truncatedCount = 0
+    const projected = items.map((stored) => {
+        const item = withoutContextWindowIndicator(stored)
+        if (typeof item.task !== "string" || item.task.length <= MAX_HISTORY_TASK_TEXT_LENGTH) {
+            return item
+        }
+        truncatedCount++
+        return { ...item, task: summarizeHistoryTaskText(item.task) }
+    })
 
-	return { items: projected, truncatedCount }
+    return { items: projected, truncatedCount }
 }
 
 function withoutContextWindowIndicator(item: HistoryItem): HistoryItem {
-	if (item.contextWindowIndicator === undefined) return item
-	const { contextWindowIndicator: _omitted, ...listed } = item
-	return listed
+    if (item.contextWindowIndicator === undefined) return item
+    const { contextWindowIndicator: _omitted, ...listed } = item
+    return listed
 }

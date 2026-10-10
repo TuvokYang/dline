@@ -17,29 +17,29 @@ const callbackSubscriptions = new Set<PartialMessageCallback>()
  * Subscribe to partial message events for a specific controller.
  */
 export async function subscribeToPartialMessage(
-	controller: Controller,
-	_request: EmptyRequest,
-	responseStream: StreamingResponseHandler<ProtoUiMessage>,
-	requestId?: string,
+    controller: Controller,
+    _request: EmptyRequest,
+    responseStream: StreamingResponseHandler<ProtoUiMessage>,
+    requestId?: string,
 ): Promise<void> {
-	let set = subs.get(controller)
-	if (!set) {
-		set = new Set()
-		subs.set(controller, set)
-	}
-	set.add(responseStream)
+    let set = subs.get(controller)
+    if (!set) {
+        set = new Set()
+        subs.set(controller, set)
+    }
+    set.add(responseStream)
 
-	const cleanup = () => {
-		const s = subs.get(controller)
-		if (s) {
-			s.delete(responseStream)
-			if (s.size === 0) subs.delete(controller)
-		}
-	}
+    const cleanup = () => {
+        const s = subs.get(controller)
+        if (s) {
+            s.delete(responseStream)
+            if (s.size === 0) subs.delete(controller)
+        }
+    }
 
-	if (requestId) {
-		getRequestRegistry().registerRequest(requestId, cleanup, { type: "partial_message_subscription" }, responseStream)
-	}
+    if (requestId) {
+        getRequestRegistry().registerRequest(requestId, cleanup, { type: "partial_message_subscription" }, responseStream)
+    }
 }
 
 /**
@@ -48,10 +48,10 @@ export async function subscribeToPartialMessage(
  * @returns A function to unsubscribe
  */
 export function registerPartialMessageCallback(callback: PartialMessageCallback): () => void {
-	callbackSubscriptions.add(callback)
-	return () => {
-		callbackSubscriptions.delete(callback)
-	}
+    callbackSubscriptions.add(callback)
+    return () => {
+        callbackSubscriptions.delete(callback)
+    }
 }
 
 /**
@@ -67,39 +67,39 @@ export function registerPartialMessageCallback(callback: PartialMessageCallback)
  * @param owner The opening that produced the row
  */
 export async function sendPartialMessageEvent(
-	controller: Controller,
-	partialMessage: ProtoUiMessage,
-	owner: TaskOpening,
+    controller: Controller,
+    partialMessage: ProtoUiMessage,
+    owner: TaskOpening,
 ): Promise<void> {
-	const current = controller.currentOpening()
-	if (current && (current.taskId !== owner.taskId || current.taskInstanceId !== owner.taskInstanceId)) return
-	partialMessage = { ...partialMessage, taskId: owner.taskId, taskInstanceId: owner.taskInstanceId }
-	// Send to gRPC stream subscribers of this controller
-	const set = subs.get(controller)
-	const streamPromises: Promise<void>[] = []
-	if (set && set.size > 0) {
-		for (const responseStream of set) {
-			streamPromises.push(
-				responseStream(partialMessage, false).catch((error) => {
-					Logger.error("Error sending partial message event:", error)
-					set.delete(responseStream)
-				}),
-			)
-		}
-	}
+    const current = controller.currentOpening()
+    if (current && (current.taskId !== owner.taskId || current.taskInstanceId !== owner.taskInstanceId)) return
+    partialMessage = { ...partialMessage, taskId: owner.taskId, taskInstanceId: owner.taskInstanceId }
+    // Send to gRPC stream subscribers of this controller
+    const set = subs.get(controller)
+    const streamPromises: Promise<void>[] = []
+    if (set && set.size > 0) {
+        for (const responseStream of set) {
+            streamPromises.push(
+                responseStream(partialMessage, false).catch((error) => {
+                    Logger.error("Error sending partial message event:", error)
+                    set.delete(responseStream)
+                }),
+            )
+        }
+    }
 
-	// Await delivery so message order is deterministic — without this,
-	// auto-approved tool partials can race ahead of a subsequent ask.
-	if (streamPromises.length > 0) {
-		await Promise.all(streamPromises)
-	}
+    // Await delivery so message order is deterministic — without this,
+    // auto-approved tool partials can race ahead of a subsequent ask.
+    if (streamPromises.length > 0) {
+        await Promise.all(streamPromises)
+    }
 
-	// Send to callback subscribers (synchronous, global)
-	for (const callback of callbackSubscriptions) {
-		try {
-			callback(partialMessage)
-		} catch (error) {
-			Logger.error("Error in partial message callback:", error)
-		}
-	}
+    // Send to callback subscribers (synchronous, global)
+    for (const callback of callbackSubscriptions) {
+        try {
+            callback(partialMessage)
+        } catch (error) {
+            Logger.error("Error in partial message callback:", error)
+        }
+    }
 }

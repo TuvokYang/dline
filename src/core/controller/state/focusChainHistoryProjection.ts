@@ -26,10 +26,10 @@ const ENTRY_HEADING = "## Completed"
 export const MAX_PROJECTED_FOCUS_CHAIN_ENTRIES = 20
 
 export interface FocusChainHistoryProjection {
-	/** History text to publish, or null when there is nothing to show. */
-	text: string | null
-	/** True when older entries were left out of this projection. */
-	truncated: boolean
+    /** History text to publish, or null when there is nothing to show. */
+    text: string | null
+    /** True when older entries were left out of this projection. */
+    truncated: boolean
 }
 
 /**
@@ -39,20 +39,20 @@ export interface FocusChainHistoryProjection {
  * already discards, so it is dropped rather than counted against the limit.
  */
 export function projectFocusChainHistory(
-	history: string | null | undefined,
-	maxEntries: number = MAX_PROJECTED_FOCUS_CHAIN_ENTRIES,
+    history: string | null | undefined,
+    maxEntries: number = MAX_PROJECTED_FOCUS_CHAIN_ENTRIES,
 ): FocusChainHistoryProjection {
-	if (!history) {
-		return { text: null, truncated: false }
-	}
+    if (!history) {
+        return { text: null, truncated: false }
+    }
 
-	const entryStarts = findEntryStarts(history)
-	if (entryStarts.length <= maxEntries) {
-		return { text: history, truncated: false }
-	}
+    const entryStarts = findEntryStarts(history)
+    if (entryStarts.length <= maxEntries) {
+        return { text: history, truncated: false }
+    }
 
-	const firstKept = entryStarts[entryStarts.length - maxEntries]
-	return { text: history.slice(firstKept), truncated: true }
+    const firstKept = entryStarts[entryStarts.length - maxEntries]
+    return { text: history.slice(firstKept), truncated: true }
 }
 
 /**
@@ -62,20 +62,20 @@ export function projectFocusChainHistory(
  * heading from being read as an entry boundary.
  */
 function findEntryStarts(history: string): number[] {
-	const starts: number[] = []
-	let searchFrom = 0
+    const starts: number[] = []
+    let searchFrom = 0
 
-	while (searchFrom <= history.length) {
-		const index = history.indexOf(ENTRY_HEADING, searchFrom)
-		if (index === -1) {
-			break
-		}
-		const isLineStart = index === 0 || history[index - 1] === "\n"
-		if (isLineStart) {
-			starts.push(index)
-		}
-		searchFrom = index + ENTRY_HEADING.length
-	}
+    while (searchFrom <= history.length) {
+        const index = history.indexOf(ENTRY_HEADING, searchFrom)
+        if (index === -1) {
+            break
+        }
+        const isLineStart = index === 0 || history[index - 1] === "\n"
+        if (isLineStart) {
+            starts.push(index)
+        }
+        searchFrom = index + ENTRY_HEADING.length
+    }
 
-	return starts
+    return starts
 }

@@ -10,36 +10,36 @@ import { Controller } from "../index"
  * @returns The browser connection info
  */
 export async function getBrowserConnectionInfo(controller: Controller, _: EmptyRequest): Promise<BrowserConnectionInfo> {
-	try {
-		// Get browser settings from extension state
-		const browserSettings = controller.stateManager.getGlobalSettingsKey("browserSettings")
+    try {
+        // Get browser settings from extension state
+        const browserSettings = controller.stateManager.getGlobalSettingsKey("browserSettings")
 
-		// Check if there's an active browser session by using the controller's handleWebviewMessage approach
-		// This is similar to what's done in controller/index.ts for the "getBrowserConnectionInfo" message
-		if (controller.task?.owners.browser) {
-			const browserSession = controller.task.owners.browser
-			const connectionInfo = browserSession.getConnectionInfo()
+        // Check if there's an active browser session by using the controller's handleWebviewMessage approach
+        // This is similar to what's done in controller/index.ts for the "getBrowserConnectionInfo" message
+        if (controller.task?.owners.browser) {
+            const browserSession = controller.task.owners.browser
+            const connectionInfo = browserSession.getConnectionInfo()
 
-			// Convert from BrowserSession.BrowserConnectionInfo to proto.BrowserConnectionInfo
-			return BrowserConnectionInfo.create({
-				isConnected: connectionInfo.isConnected,
-				isRemote: connectionInfo.isRemote,
-				host: connectionInfo.host || "", // Ensure host is never undefined
-			})
-		}
+            // Convert from BrowserSession.BrowserConnectionInfo to proto.BrowserConnectionInfo
+            return BrowserConnectionInfo.create({
+                isConnected: connectionInfo.isConnected,
+                isRemote: connectionInfo.isRemote,
+                host: connectionInfo.host || "", // Ensure host is never undefined
+            })
+        }
 
-		// Fallback to browser settings if no active browser session
-		return BrowserConnectionInfo.create({
-			isConnected: false,
-			isRemote: !!browserSettings.remoteBrowserEnabled,
-			host: browserSettings.remoteBrowserHost || "",
-		})
-	} catch (error: unknown) {
-		Logger.error("Error getting browser connection info:", error)
-		return BrowserConnectionInfo.create({
-			isConnected: false,
-			isRemote: false,
-			host: "",
-		})
-	}
+        // Fallback to browser settings if no active browser session
+        return BrowserConnectionInfo.create({
+            isConnected: false,
+            isRemote: !!browserSettings.remoteBrowserEnabled,
+            host: browserSettings.remoteBrowserHost || "",
+        })
+    } catch (error: unknown) {
+        Logger.error("Error getting browser connection info:", error)
+        return BrowserConnectionInfo.create({
+            isConnected: false,
+            isRemote: false,
+            host: "",
+        })
+    }
 }

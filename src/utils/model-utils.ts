@@ -5,11 +5,11 @@ const CLAUDE_VERSION_MATCH_REGEX = /[-_ ]([\d](?:\.[05])?)[-_ ]?/
 export const GEMINI_FLASH_MAX_OUTPUT_TOKENS = 8_192
 
 export function modelDoesntSupportWebp(apiHandlerModel: ApiHandlerModel): boolean {
-	const modelId = apiHandlerModel.id.toLowerCase()
-	// Grok doesn't support WebP via its API.
-	// GLM and Devstral models running through llama.cpp fail with WebP because
-	// llama.cpp's STB image library doesn't support the WebP format.
-	return modelId.includes("grok") || isGLMModelFamily(modelId) || isDevstralModelFamily(modelId)
+    const modelId = apiHandlerModel.id.toLowerCase()
+    // Grok doesn't support WebP via its API.
+    // GLM and Devstral models running through llama.cpp fail with WebP because
+    // llama.cpp's STB image library doesn't support the WebP format.
+    return modelId.includes("grok") || isGLMModelFamily(modelId) || isDevstralModelFamily(modelId)
 }
 
 /**
@@ -19,167 +19,167 @@ export function modelDoesntSupportWebp(apiHandlerModel: ApiHandlerModel): boolea
  * - Devstral models since they don't support reasoning_details field
  */
 export function shouldSkipReasoningForModel(modelId?: string): boolean {
-	if (!modelId) {
-		return false
-	}
-	return modelId.includes("grok-4") || modelId.includes("devstral") || modelId.includes("glm")
+    if (!modelId) {
+        return false
+    }
+    return modelId.includes("grok-4") || modelId.includes("devstral") || modelId.includes("glm")
 }
 
 export function isAnthropicModelId(modelId: string): modelId is AnthropicModelId {
-	const CLAUDE_MODELS = ["sonnet", "opus", "haiku"]
-	return modelId in anthropicModels || CLAUDE_MODELS.some((substring) => modelId.includes(substring))
+    const CLAUDE_MODELS = ["sonnet", "opus", "haiku"]
+    return modelId in anthropicModels || CLAUDE_MODELS.some((substring) => modelId.includes(substring))
 }
 
 export function isClaude4PlusModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	if (!isAnthropicModelId(modelId)) {
-		return false
-	}
-	// Get model version number
-	const versionMatch = modelId.match(CLAUDE_VERSION_MATCH_REGEX)
-	if (!versionMatch) {
-		return false
-	}
-	const version = Number.parseFloat(versionMatch[1])
-	// Check if version is 4.0 or higher
-	return version >= 4
+    const modelId = normalize(id)
+    if (!isAnthropicModelId(modelId)) {
+        return false
+    }
+    // Get model version number
+    const versionMatch = modelId.match(CLAUDE_VERSION_MATCH_REGEX)
+    if (!versionMatch) {
+        return false
+    }
+    const version = Number.parseFloat(versionMatch[1])
+    // Check if version is 4.0 or higher
+    return version >= 4
 }
 
 export function isGemini2dot5ModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return modelId.includes("gemini-2.5")
+    const modelId = normalize(id)
+    return modelId.includes("gemini-2.5")
 }
 
 export function isGrok4ModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return modelId.includes("grok-4")
+    const modelId = normalize(id)
+    return modelId.includes("grok-4")
 }
 
 export function isGPT5ModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return modelId.includes("gpt-5") || modelId.includes("gpt5")
+    const modelId = normalize(id)
+    return modelId.includes("gpt-5") || modelId.includes("gpt5")
 }
 
 export function isGptOssModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return modelId.includes("gpt-oss") || modelId.includes("gpt_oss")
+    const modelId = normalize(id)
+    return modelId.includes("gpt-oss") || modelId.includes("gpt_oss")
 }
 
 export function isGPT51Model(id: string): boolean {
-	const modelId = normalize(id)
-	return modelId.includes("gpt-5.1") || modelId.includes("gpt-5-1")
+    const modelId = normalize(id)
+    return modelId.includes("gpt-5.1") || modelId.includes("gpt-5-1")
 }
 
 export function isGPT52Model(id: string): boolean {
-	const modelId = normalize(id)
-	return modelId.includes("gpt-5.2") || modelId.includes("gpt-5-2")
+    const modelId = normalize(id)
+    return modelId.includes("gpt-5.2") || modelId.includes("gpt-5-2")
 }
 
 export function isGPT51PlusModel(id: string): boolean {
-	const modelId = normalize(id)
-	return (
-		isGPT51Model(modelId) ||
-		isGPT52Model(modelId) ||
-		modelId.includes("gpt-5.3") ||
-		modelId.includes("gpt-5-3") ||
-		modelId.includes("gpt-5.4") ||
-		modelId.includes("gpt-5-4") ||
-		modelId.includes("gpt-5.5") ||
-		modelId.includes("gpt-5-5")
-	)
+    const modelId = normalize(id)
+    return (
+        isGPT51Model(modelId) ||
+        isGPT52Model(modelId) ||
+        modelId.includes("gpt-5.3") ||
+        modelId.includes("gpt-5-3") ||
+        modelId.includes("gpt-5.4") ||
+        modelId.includes("gpt-5-4") ||
+        modelId.includes("gpt-5.5") ||
+        modelId.includes("gpt-5-5")
+    )
 }
 
 export function isGLMModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return (
-		modelId.includes("glm-5") ||
-		modelId.includes("glm-4.7") ||
-		modelId.includes("glm-4.6") ||
-		modelId.includes("glm-4.5") ||
-		// Space-separated variants like "GLM 4.6V" used with openai-compatible local servers
-		modelId.includes("glm 4.") ||
-		modelId.includes("z-ai/glm") ||
-		modelId.includes("zai-org/glm")
-	)
+    const modelId = normalize(id)
+    return (
+        modelId.includes("glm-5") ||
+        modelId.includes("glm-4.7") ||
+        modelId.includes("glm-4.6") ||
+        modelId.includes("glm-4.5") ||
+        // Space-separated variants like "GLM 4.6V" used with openai-compatible local servers
+        modelId.includes("glm 4.") ||
+        modelId.includes("z-ai/glm") ||
+        modelId.includes("zai-org/glm")
+    )
 }
 
 export function isMinimaxModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return modelId.includes("minimax")
+    const modelId = normalize(id)
+    return modelId.includes("minimax")
 }
 
 export function isHermesModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return (
-		modelId.includes("hermes-4") ||
-		modelId.includes("hermes4") ||
-		modelId.includes("nous/hermes-4") ||
-		modelId.includes("nous/hermes4") ||
-		modelId.includes("nous-hermes-4") ||
-		modelId.includes("nous/hermes4") ||
-		modelId.includes("nousresearch/hermes-4") ||
-		modelId.includes("nousresearch/hermes4")
-	)
+    const modelId = normalize(id)
+    return (
+        modelId.includes("hermes-4") ||
+        modelId.includes("hermes4") ||
+        modelId.includes("nous/hermes-4") ||
+        modelId.includes("nous/hermes4") ||
+        modelId.includes("nous-hermes-4") ||
+        modelId.includes("nous/hermes4") ||
+        modelId.includes("nousresearch/hermes-4") ||
+        modelId.includes("nousresearch/hermes4")
+    )
 }
 
 export function isNextGenOpenSourceModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return ["kimi-k2"].some((substring) => modelId.includes(substring))
+    const modelId = normalize(id)
+    return ["kimi-k2"].some((substring) => modelId.includes(substring))
 }
 
 export function isDevstralModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return modelId.includes("devstral")
+    const modelId = normalize(id)
+    return modelId.includes("devstral")
 }
 
 export function isTrinityModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	// OpenRouter: arcee-ai/trinity-large-preview:free and other trinity variants
-	return modelId.includes("arcee-ai/trinity") || modelId.includes("trinity")
+    const modelId = normalize(id)
+    // OpenRouter: arcee-ai/trinity-large-preview:free and other trinity variants
+    return modelId.includes("arcee-ai/trinity") || modelId.includes("trinity")
 }
 
 export function isGemini3ModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return modelId.includes("gemini3") || modelId.includes("gemini-3")
+    const modelId = normalize(id)
+    return modelId.includes("gemini3") || modelId.includes("gemini-3")
 }
 
 export function isGeminiFlashModel(id: string): boolean {
-	const modelId = normalize(id)
-	const isGooglePrefixedGemini = modelId.startsWith("google/gemini")
-	const isDirectGemini = modelId.startsWith("gemini-")
-	return (isGooglePrefixedGemini || isDirectGemini) && modelId.includes("flash")
+    const modelId = normalize(id)
+    const isGooglePrefixedGemini = modelId.startsWith("google/gemini")
+    const isDirectGemini = modelId.startsWith("gemini-")
+    return (isGooglePrefixedGemini || isDirectGemini) && modelId.includes("flash")
 }
 
 function isDeepSeek32ModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return modelId.includes("deepseek") && modelId.includes("3.2") && !modelId.includes("speciale")
+    const modelId = normalize(id)
+    return modelId.includes("deepseek") && modelId.includes("3.2") && !modelId.includes("speciale")
 }
 
 export function isDeepSeekNativeModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	// deepseek-chat and deepseek-reasoner deprecated as of 2026-07-24, mapped to deepseek-v4-flash
-	return modelId.includes("deepseek-v4") || modelId.includes("deepseek-chat") || modelId.includes("deepseek-reasoner")
+    const modelId = normalize(id)
+    // deepseek-chat and deepseek-reasoner deprecated as of 2026-07-24, mapped to deepseek-v4-flash
+    return modelId.includes("deepseek-v4") || modelId.includes("deepseek-chat") || modelId.includes("deepseek-reasoner")
 }
 
 export function isNextGenModelFamily(id: string): boolean {
-	const modelId = normalize(id)
-	return (
-		isClaude4PlusModelFamily(modelId) ||
-		isGemini2dot5ModelFamily(modelId) ||
-		isGrok4ModelFamily(modelId) ||
-		isGPT5ModelFamily(modelId) ||
-		isGptOssModelFamily(modelId) ||
-		isMinimaxModelFamily(modelId) ||
-		isGemini3ModelFamily(modelId) ||
-		isNextGenOpenSourceModelFamily(modelId) ||
-		isDeepSeek32ModelFamily(modelId) ||
-		isDeepSeekNativeModelFamily(modelId)
-	)
+    const modelId = normalize(id)
+    return (
+        isClaude4PlusModelFamily(modelId) ||
+        isGemini2dot5ModelFamily(modelId) ||
+        isGrok4ModelFamily(modelId) ||
+        isGPT5ModelFamily(modelId) ||
+        isGptOssModelFamily(modelId) ||
+        isMinimaxModelFamily(modelId) ||
+        isGemini3ModelFamily(modelId) ||
+        isNextGenOpenSourceModelFamily(modelId) ||
+        isDeepSeek32ModelFamily(modelId) ||
+        isDeepSeekNativeModelFamily(modelId)
+    )
 }
 
 export function isLocalModel(providerInfo: ApiProviderInfo): boolean {
-	const localProviders = ["lmstudio", "ollama"]
-	return localProviders.includes(normalize(providerInfo.providerId))
+    const localProviders = ["lmstudio", "ollama"]
+    return localProviders.includes(normalize(providerInfo.providerId))
 }
 
 /**
@@ -188,15 +188,15 @@ export function isLocalModel(providerInfo: ApiProviderInfo): boolean {
  * @returns The price multiplied by 1,000,000 for per-million-token pricing, or 0 if invalid
  */
 export function parsePrice(priceString: string | undefined): number {
-	if (!priceString || priceString === "" || priceString === "0") {
-		return 0
-	}
-	const parsed = Number.parseFloat(priceString)
-	if (Number.isNaN(parsed)) {
-		return 0
-	}
-	// Convert from per-token to per-million-tokens (multiply by 1,000,000)
-	return parsed * 1_000_000
+    if (!priceString || priceString === "" || priceString === "0") {
+        return 0
+    }
+    const parsed = Number.parseFloat(priceString)
+    if (Number.isNaN(parsed)) {
+        return 0
+    }
+    // Convert from per-token to per-million-tokens (multiply by 1,000,000)
+    return parsed * 1_000_000
 }
 
 /**
@@ -206,7 +206,7 @@ export function parsePrice(priceString: string | undefined): number {
  * @returns True only when native calling is requested and explicitly supported by ModelInfo
  */
 export function isNativeToolCallingConfig(providerInfo: ApiProviderInfo, enableNativeToolCalls: boolean): boolean {
-	return enableNativeToolCalls && providerInfo.model.info.capabilities?.supportsTools === true
+    return enableNativeToolCalls && providerInfo.model.info.capabilities?.supportsTools === true
 }
 
 /**
@@ -216,12 +216,12 @@ export function isNativeToolCallingConfig(providerInfo: ApiProviderInfo, enableN
  * 2. The current model/provider supports native tool calling and handles parallel tools well
  */
 export function isParallelToolCallingEnabled(enableParallelSetting: boolean, providerInfo: ApiProviderInfo): boolean {
-	if (enableParallelSetting) {
-		return true
-	}
-	return providerInfo.model.info.capabilities?.supportsTools === true
+    if (enableParallelSetting) {
+        return true
+    }
+    return providerInfo.model.info.capabilities?.supportsTools === true
 }
 
 function normalize(text: string): string {
-	return text.trim().toLowerCase()
+    return text.trim().toLowerCase()
 }

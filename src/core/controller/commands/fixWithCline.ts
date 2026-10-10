@@ -6,16 +6,16 @@ import { Logger } from "@/shared/services/Logger"
 import { Controller } from "../index"
 
 export async function fixWithCline(controller: Controller, request: CommandContext): Promise<Empty> {
-	const filePath = request.filePath || ""
-	const fileMention = await getFileMentionFromPath(filePath)
-	const problemsString = await singleFileDiagnosticsToProblemsString(filePath, request.diagnostics)
+    const filePath = request.filePath || ""
+    const fileMention = await getFileMentionFromPath(filePath)
+    const problemsString = await singleFileDiagnosticsToProblemsString(filePath, request.diagnostics)
 
-	await controller.initTask(
-		`Fix the following code in ${fileMention}
+    await controller.initTask(
+        `Fix the following code in ${fileMention}
 \`\`\`\n${request.selectedText}\n\`\`\`\n\nProblems:\n${problemsString}`,
-	)
-	Logger.log("fixWithCline", request.selectedText, request.filePath, request.language, problemsString)
+    )
+    Logger.log("fixWithCline", request.selectedText, request.filePath, request.language, problemsString)
 
-	telemetryService.captureButtonClick("codeAction_fixWithCline", controller.task?.owners.identity.taskIncarnationId)
-	return {}
+    telemetryService.captureButtonClick("codeAction_fixWithCline", controller.task?.owners.identity.taskIncarnationId)
+    return {}
 }

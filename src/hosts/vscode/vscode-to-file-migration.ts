@@ -52,15 +52,15 @@ const MIGRATION_VERSION_KEY = "__vscodeMigrationVersion"
  * - ephemeral/transient
  */
 const SKIP_GLOBAL_STATE_KEYS = new Set<string>([
-	"taskHistory", // Already file-based in tasks/taskHistory.json
+    "taskHistory", // Already file-based in tasks/taskHistory.json
 ])
 
 export interface MigrationResult {
-	migrated: boolean
-	globalStateCount: number
-	secretsCount: number
-	workspaceStateCount: number
-	skippedExisting: number
+    migrated: boolean
+    globalStateCount: number
+    secretsCount: number
+    workspaceStateCount: number
+    skippedExisting: number
 }
 
 /**
@@ -78,154 +78,154 @@ export interface MigrationResult {
  * @returns Summary of what was migrated
  */
 export async function exportVSCodeStorageToSharedFiles(
-	vscodeContext: vscode.ExtensionContext,
-	storage: StorageContext,
+    vscodeContext: vscode.ExtensionContext,
+    storage: StorageContext,
 ): Promise<MigrationResult> {
-	const result: MigrationResult = {
-		migrated: false,
-		globalStateCount: 0,
-		secretsCount: 0,
-		workspaceStateCount: 0,
-		skippedExisting: 0,
-	}
+    const result: MigrationResult = {
+        migrated: false,
+        globalStateCount: 0,
+        secretsCount: 0,
+        workspaceStateCount: 0,
+        skippedExisting: 0,
+    }
 
-	// Check sentinels independently
-	const globalVersion = storage.globalState.get<number>(MIGRATION_VERSION_KEY)
-	const workspaceVersion = storage.workspaceState.get<number>(MIGRATION_VERSION_KEY)
+    // Check sentinels independently
+    const globalVersion = storage.globalState.get<number>(MIGRATION_VERSION_KEY)
+    const workspaceVersion = storage.workspaceState.get<number>(MIGRATION_VERSION_KEY)
 
-	const needGlobalMigration = globalVersion === undefined || globalVersion < CURRENT_MIGRATION_VERSION
-	const needWorkspaceMigration = workspaceVersion === undefined || workspaceVersion < CURRENT_MIGRATION_VERSION
+    const needGlobalMigration = globalVersion === undefined || globalVersion < CURRENT_MIGRATION_VERSION
+    const needWorkspaceMigration = workspaceVersion === undefined || workspaceVersion < CURRENT_MIGRATION_VERSION
 
-	if (!needGlobalMigration && !needWorkspaceMigration) {
-		Logger.info(
-			`[Migration] File-backed stores already current (global: v${globalVersion}, workspace: v${workspaceVersion}), skipping.`,
-		)
-		return result
-	}
+    if (!needGlobalMigration && !needWorkspaceMigration) {
+        Logger.info(
+            `[Migration] File-backed stores already current (global: v${globalVersion}, workspace: v${workspaceVersion}), skipping.`,
+        )
+        return result
+    }
 
-	Logger.info(
-		`[Migration] Starting VSCode → file-backed migration (global: ${globalVersion ?? "none"}, workspace: ${workspaceVersion ?? "none"}, target: ${CURRENT_MIGRATION_VERSION})`,
-	)
+    Logger.info(
+        `[Migration] Starting VSCode → file-backed migration (global: ${globalVersion ?? "none"}, workspace: ${workspaceVersion ?? "none"}, target: ${CURRENT_MIGRATION_VERSION})`,
+    )
 
-	try {
-		// ─── 1. Migrate global state + secrets (if needed) ─────────────
-		if (needGlobalMigration) {
-			// Batch global state keys and settings keys
-			const globalStateBatch: Record<string, any> = {}
-			const settingsBatch: Record<string, any> = {}
-			for (const key of GlobalStateAndSettingKeys) {
-				if (SKIP_GLOBAL_STATE_KEYS.has(key)) {
-					continue
-				}
+    try {
+        // ─── 1. Migrate global state + secrets (if needed) ─────────────
+        if (needGlobalMigration) {
+            // Batch global state keys and settings keys
+            const globalStateBatch: Record<string, any> = {}
+            const settingsBatch: Record<string, any> = {}
+            for (const key of GlobalStateAndSettingKeys) {
+                if (SKIP_GLOBAL_STATE_KEYS.has(key)) {
+                    continue
+                }
 
-				const vscodeValue = vscodeContext.globalState.get(key)
-				if (vscodeValue === undefined) {
-					continue
-				}
+                const vscodeValue = vscodeContext.globalState.get(key)
+                if (vscodeValue === undefined) {
+                    continue
+                }
 
-				if (isSettingsKey(key)) {
-					// Settings key → write to settings.json
-					const existingSettingsValue = storage.settings.get(key)
-					if (existingSettingsValue !== undefined) {
-						result.skippedExisting++
-						continue
-					}
-					settingsBatch[key] = vscodeValue
-					result.globalStateCount++
-				} else {
-					// Global state key → write to globalState.json
-					const existingFileValue = storage.globalState.get(key)
-					if (existingFileValue !== undefined) {
-						result.skippedExisting++
-						continue
-					}
-					globalStateBatch[key] = vscodeValue
-					result.globalStateCount++
-				}
-			}
+                if (isSettingsKey(key)) {
+                    // Settings key → write to settings.json
+                    const existingSettingsValue = storage.settings.get(key)
+                    if (existingSettingsValue !== undefined) {
+                        result.skippedExisting++
+                        continue
+                    }
+                    settingsBatch[key] = vscodeValue
+                    result.globalStateCount++
+                } else {
+                    // Global state key → write to globalState.json
+                    const existingFileValue = storage.globalState.get(key)
+                    if (existingFileValue !== undefined) {
+                        result.skippedExisting++
+                        continue
+                    }
+                    globalStateBatch[key] = vscodeValue
+                    result.globalStateCount++
+                }
+            }
 
-			// Add sentinel to batch
-			globalStateBatch[MIGRATION_VERSION_KEY] = CURRENT_MIGRATION_VERSION
+            // Add sentinel to batch
+            globalStateBatch[MIGRATION_VERSION_KEY] = CURRENT_MIGRATION_VERSION
 
-			// Write all global state in one operation
-			if (Object.keys(globalStateBatch).length > 0) {
-				storage.globalState.setBatch(globalStateBatch)
-			}
+            // Write all global state in one operation
+            if (Object.keys(globalStateBatch).length > 0) {
+                storage.globalState.setBatch(globalStateBatch)
+            }
 
-			// Write settings batch
-			if (Object.keys(settingsBatch).length > 0) {
-				storage.settings.setBatch(settingsBatch)
-			}
+            // Write settings batch
+            if (Object.keys(settingsBatch).length > 0) {
+                storage.settings.setBatch(settingsBatch)
+            }
 
-			// Batch secrets
-			const secretsBatch: Record<string, string> = {}
-			for (const key of SecretKeys) {
-				try {
-					const vscodeValue = await vscodeContext.secrets.get(key)
-					if (vscodeValue === undefined || vscodeValue === "") {
-						continue
-					}
+            // Batch secrets
+            const secretsBatch: Record<string, string> = {}
+            for (const key of SecretKeys) {
+                try {
+                    const vscodeValue = await vscodeContext.secrets.get(key)
+                    if (vscodeValue === undefined || vscodeValue === "") {
+                        continue
+                    }
 
-					const existingFileValue = storage.secrets.get(key)
-					if (existingFileValue !== undefined && existingFileValue !== "") {
-						result.skippedExisting++
-						continue
-					}
+                    const existingFileValue = storage.secrets.get(key)
+                    if (existingFileValue !== undefined && existingFileValue !== "") {
+                        result.skippedExisting++
+                        continue
+                    }
 
-					secretsBatch[key] = vscodeValue
-					result.secretsCount++
-				} catch (error) {
-					Logger.error(`[Migration] Failed to read secret '${key}' from VSCode:`, error)
-				}
-			}
+                    secretsBatch[key] = vscodeValue
+                    result.secretsCount++
+                } catch (error) {
+                    Logger.error(`[Migration] Failed to read secret '${key}' from VSCode:`, error)
+                }
+            }
 
-			// Write all secrets in one operation
-			storage.secrets.setBatch(secretsBatch)
-		}
+            // Write all secrets in one operation
+            storage.secrets.setBatch(secretsBatch)
+        }
 
-		// ─── 2. Migrate workspace state (if needed) ────────────────────
-		if (needWorkspaceMigration) {
-			// Batch workspace state keys
-			// Keys that a previous build wrote must be transferred even after they
-			// leave `LocalStateKeys`; the capability toggle migration reads them
-			// afterwards, and skipping them would silently drop stored preferences.
-			const workspaceKeys = new Set<string>([...LocalStateKeys, ...LEGACY_WORKSPACE_STATE_KEYS])
-			const workspaceStateBatch: Record<string, any> = {}
-			for (const key of workspaceKeys) {
-				const vscodeValue = vscodeContext.workspaceState.get(key)
-				if (vscodeValue === undefined) {
-					continue
-				}
+        // ─── 2. Migrate workspace state (if needed) ────────────────────
+        if (needWorkspaceMigration) {
+            // Batch workspace state keys
+            // Keys that a previous build wrote must be transferred even after they
+            // leave `LocalStateKeys`; the capability toggle migration reads them
+            // afterwards, and skipping them would silently drop stored preferences.
+            const workspaceKeys = new Set<string>([...LocalStateKeys, ...LEGACY_WORKSPACE_STATE_KEYS])
+            const workspaceStateBatch: Record<string, any> = {}
+            for (const key of workspaceKeys) {
+                const vscodeValue = vscodeContext.workspaceState.get(key)
+                if (vscodeValue === undefined) {
+                    continue
+                }
 
-				const existingFileValue = storage.workspaceState.get(key)
-				if (existingFileValue !== undefined) {
-					result.skippedExisting++
-					continue
-				}
+                const existingFileValue = storage.workspaceState.get(key)
+                if (existingFileValue !== undefined) {
+                    result.skippedExisting++
+                    continue
+                }
 
-				workspaceStateBatch[key] = vscodeValue
-				result.workspaceStateCount++
-			}
+                workspaceStateBatch[key] = vscodeValue
+                result.workspaceStateCount++
+            }
 
-			// Add sentinel to batch
-			workspaceStateBatch[MIGRATION_VERSION_KEY] = CURRENT_MIGRATION_VERSION
+            // Add sentinel to batch
+            workspaceStateBatch[MIGRATION_VERSION_KEY] = CURRENT_MIGRATION_VERSION
 
-			// Write all workspace state in one operation
-			storage.workspaceState.setBatch(workspaceStateBatch)
-		}
+            // Write all workspace state in one operation
+            storage.workspaceState.setBatch(workspaceStateBatch)
+        }
 
-		result.migrated = true
+        result.migrated = true
 
-		Logger.info(
-			`[Migration] Complete: ${result.globalStateCount} global state keys, ` +
-				`${result.secretsCount} secrets, ${result.workspaceStateCount} workspace state keys migrated. ` +
-				`${result.skippedExisting} keys skipped (already in file store).`,
-		)
-	} catch (error) {
-		Logger.error("[Migration] Fatal error during VSCode → file-backed migration:", error)
-		// Don't write sentinel on failure — migration will retry next startup
-		throw error
-	}
+        Logger.info(
+            `[Migration] Complete: ${result.globalStateCount} global state keys, ` +
+                `${result.secretsCount} secrets, ${result.workspaceStateCount} workspace state keys migrated. ` +
+                `${result.skippedExisting} keys skipped (already in file store).`,
+        )
+    } catch (error) {
+        Logger.error("[Migration] Fatal error during VSCode → file-backed migration:", error)
+        // Don't write sentinel on failure — migration will retry next startup
+        throw error
+    }
 
-	return result
+    return result
 }

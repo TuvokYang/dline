@@ -1,83 +1,83 @@
 {
-	"compilerOptions": {
-		"esModuleInterop": true,
-		"experimentalDecorators": true,
-		"forceConsistentCasingInFileNames": true,
-		"isolatedModules": true,
-		"jsx": "react",
-		"lib": [
-			"es2022",
-			"DOM"
-		],
-		"module": "esnext",
-		"moduleResolution": "Bundler",
-		"noFallthroughCasesInSwitch": true,
-		"noImplicitOverride": true,
-		"noImplicitReturns": true,
-		// This project is bundled by esbuild; tsc is only used for type checking.
-		// Emitting is opt-in so that an accidental `tsc -b` or `tsc -p .` cannot
-		// scatter .js/.js.map next to the sources (rootDir is the repo root).
-		// Build scripts that genuinely need output must pass `--noEmit false`.
-		"noEmit": true,
-		"noUnusedLocals": false,
-		"resolveJsonModule": true,
-		"rootDir": ".",
-		"skipLibCheck": true,
-		"sourceMap": true,
-		"strict": true,
-		"types": [
-			"vitest/globals"
-		],
-		"target": "es2022",
-		"useDefineForClassFields": true,
-		"useUnknownInCatchVariables": false,
-		"paths": {
-			"@/*": [
-				"./src/*"
-			],
-			"@api/*": [
-				"./src/core/api/*"
-			],
-			"@core/*": [
-				"./src/core/*"
-			],
-			"@generated/*": [
-				"./src/generated/*"
-			],
-			"@e2e/*": [
-				"./src/test/e2e/*"
-			],
-			"@hosts/*": [
-				"./src/hosts/*"
-			],
-			"@integrations/*": [
-				"./src/integrations/*"
-			],
-			"@packages/*": [
-				"./src/packages/*"
-			],
-			"@services/*": [
-				"./src/services/*"
-			],
-			"@shared/*": [
-				"./src/shared/*"
-			],
-			"@utils/*": [
-				"./src/utils/*"
-			]
-		}
-	},
-	"include": [
-		"src/**/*",
-		"cli/src/**/*"
-	],
-	"exclude": [
-		"node_modules",
-		".vscode-test",
-		"webview-ui",
-		"src/core/prompts/system-prompt-legacy/**/*",
-		"src/test/e2e/**/*",
-		"src/test/scenarios/**/*",
-		"tests/vscode/workspace*"
-	]
+    "compilerOptions": {
+        "esModuleInterop": true,
+        "experimentalDecorators": true,
+        "forceConsistentCasingInFileNames": true,
+        "isolatedModules": true,
+        "jsx": "react",
+        "lib": [
+            "es2022",
+            "DOM"
+        ],
+        "module": "esnext",
+        "moduleResolution": "Bundler",
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitOverride": true,
+        "noImplicitReturns": true,
+        // This project is bundled by esbuild; tsc is only used for type checking.
+        // Emitting is opt-in so that an accidental `tsc -b` or `tsc -p .` cannot
+        // scatter .js/.js.map next to the sources (rootDir is the repo root).
+        // Build scripts that genuinely need output must pass `--noEmit false`.
+        "noEmit": true,
+        "noUnusedLocals": false,
+        "resolveJsonModule": true,
+        "rootDir": ".",
+        "skipLibCheck": true,
+        "sourceMap": true,
+        "strict": true,
+        "types": [
+            "vitest/globals"
+        ],
+        "target": "es2022",
+        "useDefineForClassFields": true,
+        "useUnknownInCatchVariables": false,
+        "paths": {
+            "@/*": [
+                "./src/*"
+            ],
+            "@api/*": [
+                "./src/core/api/*"
+            ],
+            "@core/*": [
+                "./src/core/*"
+            ],
+            "@generated/*": [
+                "./src/generated/*"
+            ],
+            "@e2e/*": [
+                "./src/test/e2e/*"
+            ],
+            "@hosts/*": [
+                "./src/hosts/*"
+            ],
+            "@integrations/*": [
+                "./src/integrations/*"
+            ],
+            "@packages/*": [
+                "./src/packages/*"
+            ],
+            "@services/*": [
+                "./src/services/*"
+            ],
+            "@shared/*": [
+                "./src/shared/*"
+            ],
+            "@utils/*": [
+                "./src/utils/*"
+            ]
+        }
+    },
+    "include": [
+        "src/**/*",
+        "cli/src/**/*"
+    ],
+    "exclude": [
+        "node_modules",
+        ".vscode-test",
+        "webview-ui",
+        "src/core/prompts/system-prompt-legacy/**/*",
+        "src/test/e2e/**/*",
+        "src/test/scenarios/**/*",
+        "tests/vscode/workspace*"
+    ]
 }

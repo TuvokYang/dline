@@ -3,5 +3,5 @@
 // which is ESM-only and conflicts with mocha's CJS loader.
 
 String.prototype.toPosix = function () {
-	return String(this).replace(/\\\\/g, "/")
+    return String(this).replace(/\\\\/g, "/")
 }

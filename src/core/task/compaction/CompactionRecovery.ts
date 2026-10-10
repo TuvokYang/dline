@@ -5,7 +5,7 @@ export const AUTOMATIC_COMPACTION_FAILED = "automatic_compaction_failed"
 
 /** Durable recovery fact shared by the active runtime and the lightweight history display. */
 export function automaticCompactionFailureAwaitsRecovery(state: Pick<TaskState, "flow">): boolean {
-	return state.flow.compaction?.status === "failed" && state.flow.error === AUTOMATIC_COMPACTION_FAILED
+    return state.flow.compaction?.status === "failed" && state.flow.error === AUTOMATIC_COMPACTION_FAILED
 }
 
 /**
@@ -26,10 +26,10 @@ export type CompactionRunOutcome = "completed" | "failed" | "withdrawn" | "refus
  * offered only while that stopped round is still waiting on the user.
  */
 export interface CompactionRecoveryPort {
-	/** Whether the last round stopped on a failed automatic compaction and has not been retried since. */
-	truncationOffered(): boolean
-	/** Resolves once the run has settled, including its landing. */
-	settlement(compactionId: string): Promise<CompactionRunOutcome>
-	/** Marks the failed round as recovered by truncation, so its Retry is not compacted again from stale usage. */
-	truncated?(): void
+    /** Whether the last round stopped on a failed automatic compaction and has not been retried since. */
+    truncationOffered(): boolean
+    /** Resolves once the run has settled, including its landing. */
+    settlement(compactionId: string): Promise<CompactionRunOutcome>
+    /** Marks the failed round as recovered by truncation, so its Retry is not compacted again from stale usage. */
+    truncated?(): void
 }

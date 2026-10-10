@@ -13,15 +13,15 @@ import type { Controller } from "../index"
  * @returns Empty response
  */
 export async function openWalkthrough(_controller: Controller, _request: EmptyRequest): Promise<Empty> {
-	try {
-		await vscode.commands.executeCommand(
-			"workbench.action.openWalkthrough",
-			`saoudrizwan.${ExtensionRegistryInfo.name}#ClineWalkthrough`,
-		)
-		telemetryService.captureButtonClick("webview_openWalkthrough")
-		return Empty.create({})
-	} catch (error) {
-		Logger.error(`Failed to open walkthrough: ${error}`)
-		throw error
-	}
+    try {
+        await vscode.commands.executeCommand(
+            "workbench.action.openWalkthrough",
+            `saoudrizwan.${ExtensionRegistryInfo.name}#ClineWalkthrough`,
+        )
+        telemetryService.captureButtonClick("webview_openWalkthrough")
+        return Empty.create({})
+    } catch (error) {
+        Logger.error(`Failed to open walkthrough: ${error}`)
+        throw error
+    }
 }

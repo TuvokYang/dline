@@ -8,49 +8,49 @@ import { Controller } from ".."
 import { refreshHooks } from "./refreshHooks"
 
 export async function createHook(
-	controller: Controller,
-	request: CreateHookRequest,
-	globalHooksDirOverride?: string,
+    controller: Controller,
+    request: CreateHookRequest,
+    globalHooksDirOverride?: string,
 ): Promise<CreateHookResponse> {
-	const { hookName, isGlobal, workspaceName } = request
+    const { hookName, isGlobal, workspaceName } = request
 
-	// Validate hook name is one of the valid hook types
-	if (!isValidHookType(hookName)) {
-		throw new Error(`Invalid hook type: "${hookName}". Valid hook types are: ${VALID_HOOK_TYPES.join(", ")}`)
-	}
+    // Validate hook name is one of the valid hook types
+    if (!isValidHookType(hookName)) {
+        throw new Error(`Invalid hook type: "${hookName}". Valid hook types are: ${VALID_HOOK_TYPES.join(", ")}`)
+    }
 
-	// Determine target directory
-	const hooksDir = await resolveHooksDirectory(isGlobal, workspaceName, globalHooksDirOverride)
+    // Determine target directory
+    const hooksDir = await resolveHooksDirectory(isGlobal, workspaceName, globalHooksDirOverride)
 
-	// Ensure directory exists
-	await fs.mkdir(hooksDir, { recursive: true })
+    // Ensure directory exists
+    await fs.mkdir(hooksDir, { recursive: true })
 
-	const hookFileName = process.platform === "win32" ? `${hookName}.ps1` : hookName
-	const hookPath = path.join(hooksDir, hookFileName)
+    const hookFileName = process.platform === "win32" ? `${hookName}.ps1` : hookName
+    const hookPath = path.join(hooksDir, hookFileName)
 
-	// Check if already exists
-	try {
-		await fs.stat(hookPath)
-		throw new Error(`Hook ${hookName} already exists at ${hookPath}`)
-	} catch (error) {
-		// Good - file doesn't exist yet
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-			throw error
-		}
-	}
+    // Check if already exists
+    try {
+        await fs.stat(hookPath)
+        throw new Error(`Hook ${hookName} already exists at ${hookPath}`)
+    } catch (error) {
+        // Good - file doesn't exist yet
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw error
+        }
+    }
 
-	// Get template content
-	const templateContent = getHookTemplate(hookName)
+    // Get template content
+    const templateContent = getHookTemplate(hookName)
 
-	// Write file WITHOUT executable permissions (644) so hook is toggled off by default
-	// User can enable it later when they're ready
-	const mode = 0o644
-	await fs.writeFile(hookPath, templateContent, { mode })
+    // Write file WITHOUT executable permissions (644) so hook is toggled off by default
+    // User can enable it later when they're ready
+    const mode = 0o644
+    await fs.writeFile(hookPath, templateContent, { mode })
 
-	// Invalidate hook discovery cache
-	await HookDiscoveryCache.getInstance().invalidateAll()
+    // Invalidate hook discovery cache
+    await HookDiscoveryCache.getInstance().invalidateAll()
 
-	// Return updated hooks state
-	const hooksToggles = await refreshHooks(controller, undefined, globalHooksDirOverride)
-	return CreateHookResponse.create({ hooksToggles })
+    // Return updated hooks state
+    const hooksToggles = await refreshHooks(controller, undefined, globalHooksDirOverride)
+    return CreateHookResponse.create({ hooksToggles })
 }

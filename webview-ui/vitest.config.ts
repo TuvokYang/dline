@@ -3,6 +3,6 @@ import { defineConfig } from "vitest/config"
 import { webviewProjectConfig } from "./vitest.project"
 
 export default defineConfig({
-	...webviewProjectConfig,
-	plugins: [...webviewProjectConfig.plugins, react()],
+    ...webviewProjectConfig,
+    plugins: [...webviewProjectConfig.plugins, react()],
 })

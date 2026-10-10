@@ -11,5 +11,5 @@ import { publishInputSemanticCatalog } from "./subscribeToInputSemanticCatalog"
  * current set, and any subscriber learns about the same revision.
  */
 export async function getInputSemanticCatalog(controller: Controller, _request: EmptyRequest): Promise<InputSemanticCatalog> {
-	return toProtoInputSemanticCatalog(await publishInputSemanticCatalog(controller))
+    return toProtoInputSemanticCatalog(await publishInputSemanticCatalog(controller))
 }

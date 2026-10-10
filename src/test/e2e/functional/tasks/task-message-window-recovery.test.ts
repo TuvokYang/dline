@@ -10,84 +10,84 @@ const BODY_MARKER = "E2E_HISTORY_PERSISTED_BODY_MUST_RECOVER"
 const FAULT_MARKER = "empty-first-fetch-message"
 
 const emptyFirstMessageWindow = JSON.stringify({
-	action: "delayEmptyFetchMessage",
-	service: "dline.TaskService",
-	method: "fetchMessage",
-	occurrence: 1,
-	delayMs: 2_500,
-	markerName: FAULT_MARKER,
+    action: "delayEmptyFetchMessage",
+    service: "dline.TaskService",
+    method: "fetchMessage",
+    occurrence: 1,
+    delayMs: 2_500,
+    markerName: FAULT_MARKER,
 })
 
 /** Seeds a legacy chat history; the extension imports it into messages.db when the task opens. */
 async function seedCompletedTask(dlineDocsDir: string, workspaceDir: string): Promise<void> {
-	const tasksDir = path.join(dlineDocsDir, "tasks")
-	const taskDir = path.join(tasksDir, TASK_ID)
-	await mkdir(taskDir, { recursive: true })
-	const baseTimestamp = Date.now() - 30_000
-	const historyItem = {
-		id: TASK_ID,
-		ts: baseTimestamp,
-		task: TASK_TEXT,
-		tokensIn: 0,
-		tokensOut: 0,
-		totalCost: 0,
-		cwdOnTaskInitialization: workspaceDir,
-	}
-	const messages = [
-		{ ts: baseTimestamp, type: "say", say: "task", text: TASK_TEXT },
-		{ ts: baseTimestamp + 1, type: "say", say: "text", text: BODY_MARKER },
-	]
-	await Promise.all([
-		writeFile(path.join(tasksDir, "taskHistory.jsonl"), `${JSON.stringify(historyItem)}\n`, "utf8"),
-		writeFile(
-			path.join(taskDir, "ui_messages.jsonl"),
-			`${messages.map((message) => JSON.stringify(message)).join("\n")}\n`,
-			"utf8",
-		),
-		writeFile(path.join(taskDir, "api_conversation_history.jsonl"), "", "utf8"),
-		writeFile(
-			path.join(taskDir, ".lock"),
-			JSON.stringify({ held_by: "e2e-other-dline-instance", locked_at: Date.now(), pid: 4242 }),
-			"utf8",
-		),
-	])
+    const tasksDir = path.join(dlineDocsDir, "tasks")
+    const taskDir = path.join(tasksDir, TASK_ID)
+    await mkdir(taskDir, { recursive: true })
+    const baseTimestamp = Date.now() - 30_000
+    const historyItem = {
+        id: TASK_ID,
+        ts: baseTimestamp,
+        task: TASK_TEXT,
+        tokensIn: 0,
+        tokensOut: 0,
+        totalCost: 0,
+        cwdOnTaskInitialization: workspaceDir,
+    }
+    const messages = [
+        { ts: baseTimestamp, type: "say", say: "task", text: TASK_TEXT },
+        { ts: baseTimestamp + 1, type: "say", say: "text", text: BODY_MARKER },
+    ]
+    await Promise.all([
+        writeFile(path.join(tasksDir, "taskHistory.jsonl"), `${JSON.stringify(historyItem)}\n`, "utf8"),
+        writeFile(
+            path.join(taskDir, "ui_messages.jsonl"),
+            `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`,
+            "utf8",
+        ),
+        writeFile(path.join(taskDir, "api_conversation_history.jsonl"), "", "utf8"),
+        writeFile(
+            path.join(taskDir, ".lock"),
+            JSON.stringify({ held_by: "e2e-other-dline-instance", locked_at: Date.now(), pid: 4242 }),
+            "utf8",
+        ),
+    ])
 }
 
 e2e.describe("Task message window recovery", () => {
-	e2e.use({ grpcUnaryFaults: emptyFirstMessageWindow })
+    e2e.use({ grpcUnaryFaults: emptyFirstMessageWindow })
 
-	e2e(
-		"recovers persisted history after the first message window is empty",
-		async ({ dlineDir, dlineDocsDir, helper, openVSCode, userDataDir, workspaceDir }) => {
-			e2e.setTimeout(180_000)
-			await seedCompletedTask(dlineDocsDir, workspaceDir)
-			expect(await readTaskUiMessagesText(dlineDocsDir, TASK_ID)).toContain(BODY_MARKER)
+    e2e(
+        "recovers persisted history after the first message window is empty",
+        async ({ dlineDir, dlineDocsDir, helper, openVSCode, userDataDir, workspaceDir }) => {
+            e2e.setTimeout(180_000)
+            await seedCompletedTask(dlineDocsDir, workspaceDir)
+            expect(await readTaskUiMessagesText(dlineDocsDir, TASK_ID)).toContain(BODY_MARKER)
 
-			const app = await openVSCode(workspaceDir)
-			try {
-				const page = await app.firstWindow()
-				await E2ETestHelper.openClineSidebar(page)
-				const sidebar = await helper.getSidebar(page)
-				await helper.signin(sidebar)
-				await page.getByRole("button", { name: "History", exact: true }).click()
-				await E2ETestHelper.dismissWhatsNewModal(sidebar)
-				const historyTask = sidebar.locator(".history-item").filter({ hasText: TASK_TEXT })
-				await expect(historyTask).toHaveCount(1)
-				await historyTask.click()
+            const app = await openVSCode(workspaceDir)
+            try {
+                const page = await app.firstWindow()
+                await E2ETestHelper.openClineSidebar(page)
+                const sidebar = await helper.getSidebar(page)
+                await helper.signin(sidebar)
+                await page.getByRole("button", { name: "History", exact: true }).click()
+                await E2ETestHelper.dismissWhatsNewModal(sidebar)
+                const historyTask = sidebar.locator(".history-item").filter({ hasText: TASK_TEXT })
+                await expect(historyTask).toHaveCount(1)
+                await historyTask.click()
 
-				await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
-				await expect(sidebar.getByText(TASK_TEXT, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
-				await expect
-					.poll(async () => readFile(path.join(dlineDir, "e2e-markers", FAULT_MARKER), "utf8").catch(() => ""), {
-						timeout: 30_000,
-					})
-					.toBe("released")
-				expect(await readTaskUiMessagesText(dlineDocsDir, TASK_ID)).toContain(BODY_MARKER)
-				await expect(sidebar.getByText(BODY_MARKER, { exact: true })).toBeVisible({ timeout: 5_000 })
-				await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
-			} finally {
-				await app.close()
-			}
-		},
-	)
+                await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
+                await expect(sidebar.getByText(TASK_TEXT, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
+                await expect
+                    .poll(async () => readFile(path.join(dlineDir, "e2e-markers", FAULT_MARKER), "utf8").catch(() => ""), {
+                        timeout: 30_000,
+                    })
+                    .toBe("released")
+                expect(await readTaskUiMessagesText(dlineDocsDir, TASK_ID)).toContain(BODY_MARKER)
+                await expect(sidebar.getByText(BODY_MARKER, { exact: true })).toBeVisible({ timeout: 5_000 })
+                await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+            } finally {
+                await app.close()
+            }
+        },
+    )
 })

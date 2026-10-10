@@ -4,8 +4,8 @@ import { toProfileSwitchResponse } from "./requestProfileSwitch"
 
 /** Confirm the active Profile transition by immutable operation identity. */
 export async function confirmProfileSwitch(
-	controller: Controller,
-	request: ProfileSwitchOperationRequest,
+    controller: Controller,
+    request: ProfileSwitchOperationRequest,
 ): Promise<ProfileSwitchResponse> {
-	return toProfileSwitchResponse(await controller.confirmProfileSwitch(request.operationId))
+    return toProfileSwitchResponse(await controller.confirmProfileSwitch(request.operationId))
 }

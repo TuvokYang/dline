@@ -3,11 +3,11 @@ import path from "node:path"
 import type { TransactionalUnifyStoreDatabase } from "../backend/api/UnifyStore"
 import { getDlineDocumentsPath } from "../documents-path"
 import {
-	configuredInstanceBackend,
-	databaseLocation,
-	type InstanceBackend,
-	instanceBackend,
-	resolveDatabaseBackend,
+    configuredInstanceBackend,
+    databaseLocation,
+    type InstanceBackend,
+    instanceBackend,
+    resolveDatabaseBackend,
 } from "./InstanceBackends"
 import { type InstanceDatabase, InstanceLayout, type InstanceLocation, instanceRoot } from "./InstanceLayout"
 import { claimOnWrite } from "./WriterClaimedDatabase"
@@ -26,23 +26,23 @@ const writerByDatabase = new Map<string, WriterClaim>()
 const openStorages = new Set<InstanceStorage>()
 
 interface WriterClaim {
-	readonly storage: InstanceStorage
-	readonly writer: string
+    readonly storage: InstanceStorage
+    readonly writer: string
 }
 
 interface OpenedDatabase {
-	readonly key: string
-	readonly database: TransactionalUnifyStoreDatabase
-	readonly backend: InstanceBackend
+    readonly key: string
+    readonly database: TransactionalUnifyStoreDatabase
+    readonly backend: InstanceBackend
 }
 
 function normalizedPath(location: string): string {
-	const resolved = path.resolve(location)
-	return process.platform === "win32" ? resolved.toLowerCase() : resolved
+    const resolved = path.resolve(location)
+    return process.platform === "win32" ? resolved.toLowerCase() : resolved
 }
 
 function isSameOrInside(candidate: string, root: string): boolean {
-	return candidate === root || candidate.startsWith(`${root}${path.sep}`)
+    return candidate === root || candidate.startsWith(`${root}${path.sep}`)
 }
 
 /**
@@ -52,97 +52,97 @@ function isSameOrInside(candidate: string, root: string): boolean {
  * instance. Closing is idempotent; a closed storage rejects new opens.
  */
 export class InstanceStorage {
-	private readonly databases = new Map<InstanceDatabase, OpenedDatabase>()
-	private closePromise: Promise<void> | undefined
+    private readonly databases = new Map<InstanceDatabase, OpenedDatabase>()
+    private closePromise: Promise<void> | undefined
 
-	constructor(readonly layout: InstanceLayout) {}
+    constructor(readonly layout: InstanceLayout) {}
 
-	/**
-	 * Opens `kind` on behalf of `writer`.
-	 *
-	 * The database is opened in whichever backend holds it; a database that does not exist
-	 * yet is created in the configured backend (see `InstanceBackends.ts`). Opening and
-	 * reading are always allowed. The first write claims the database for `writer` until
-	 * this storage closes; a write through any other owner then fails with
-	 * `InstanceDatabaseWriterConflict` before it reaches the file.
-	 *
-	 * @throws when the storage is closed or `kind` is already open in this storage.
-	 */
-	async openDatabase(kind: InstanceDatabase, writer: string): Promise<TransactionalUnifyStoreDatabase> {
-		if (this.closePromise) throw new Error(`Instance storage ${this.layout.root} is closed`)
-		if (this.databases.has(kind)) throw new Error(`Instance database ${kind} is already open in ${this.layout.root}`)
-		const backend = await resolveDatabaseBackend(this.layout, kind, configuredInstanceBackend())
-		const location = databaseLocation(this.layout, kind, backend)
-		// Keyed by the database rather than its file, so the claim survives a backend switch.
-		const key = normalizedPath(this.layout.database(kind))
-		const database = await instanceBackend(backend).open(location)
-		if (this.closePromise) {
-			// Closed while the file was opening: nothing may keep it past close().
-			await database.close()
-			throw new Error(`Instance storage ${this.layout.root} is closed`)
-		}
-		this.databases.set(kind, { key, database, backend })
-		return claimOnWrite(database, () => this.claimWriter(key, kind, location, writer))
-	}
+    /**
+     * Opens `kind` on behalf of `writer`.
+     *
+     * The database is opened in whichever backend holds it; a database that does not exist
+     * yet is created in the configured backend (see `InstanceBackends.ts`). Opening and
+     * reading are always allowed. The first write claims the database for `writer` until
+     * this storage closes; a write through any other owner then fails with
+     * `InstanceDatabaseWriterConflict` before it reaches the file.
+     *
+     * @throws when the storage is closed or `kind` is already open in this storage.
+     */
+    async openDatabase(kind: InstanceDatabase, writer: string): Promise<TransactionalUnifyStoreDatabase> {
+        if (this.closePromise) throw new Error(`Instance storage ${this.layout.root} is closed`)
+        if (this.databases.has(kind)) throw new Error(`Instance database ${kind} is already open in ${this.layout.root}`)
+        const backend = await resolveDatabaseBackend(this.layout, kind, configuredInstanceBackend())
+        const location = databaseLocation(this.layout, kind, backend)
+        // Keyed by the database rather than its file, so the claim survives a backend switch.
+        const key = normalizedPath(this.layout.database(kind))
+        const database = await instanceBackend(backend).open(location)
+        if (this.closePromise) {
+            // Closed while the file was opening: nothing may keep it past close().
+            await database.close()
+            throw new Error(`Instance storage ${this.layout.root} is closed`)
+        }
+        this.databases.set(kind, { key, database, backend })
+        return claimOnWrite(database, () => this.claimWriter(key, kind, location, writer))
+    }
 
-	/** Backend each open database of this storage uses. */
-	openBackends(): ReadonlyMap<InstanceDatabase, InstanceBackend> {
-		return new Map([...this.databases.entries()].map(([kind, opened]) => [kind, opened.backend]))
-	}
+    /** Backend each open database of this storage uses. */
+    openBackends(): ReadonlyMap<InstanceDatabase, InstanceBackend> {
+        return new Map([...this.databases.entries()].map(([kind, opened]) => [kind, opened.backend]))
+    }
 
-	private claimWriter(key: string, kind: InstanceDatabase, location: string, writer: string): void {
-		const claim = writerByDatabase.get(key)
-		if (claim?.storage === this && claim.writer === writer) return
-		if (claim) {
-			throw new Error(
-				`InstanceDatabaseWriterConflict: ${kind} at ${location} is written by ${claim.writer}; ${writer} cannot write it`,
-			)
-		}
-		writerByDatabase.set(key, { storage: this, writer })
-	}
+    private claimWriter(key: string, kind: InstanceDatabase, location: string, writer: string): void {
+        const claim = writerByDatabase.get(key)
+        if (claim?.storage === this && claim.writer === writer) return
+        if (claim) {
+            throw new Error(
+                `InstanceDatabaseWriterConflict: ${kind} at ${location} is written by ${claim.writer}; ${writer} cannot write it`,
+            )
+        }
+        writerByDatabase.set(key, { storage: this, writer })
+    }
 
-	/** Closes every database this instance opened and releases their writer claims. */
-	close(): Promise<void> {
-		this.closePromise ??= this.closeDatabases()
-		return this.closePromise
-	}
+    /** Closes every database this instance opened and releases their writer claims. */
+    close(): Promise<void> {
+        this.closePromise ??= this.closeDatabases()
+        return this.closePromise
+    }
 
-	private async closeDatabases(): Promise<void> {
-		openStorages.delete(this)
-		const opened = [...this.databases.values()]
-		this.databases.clear()
-		const results = await Promise.allSettled(opened.map(({ database }) => database.close()))
-		for (const { key } of opened) {
-			if (writerByDatabase.get(key)?.storage === this) writerByDatabase.delete(key)
-		}
-		const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
-		if (failure) throw failure.reason
-	}
+    private async closeDatabases(): Promise<void> {
+        openStorages.delete(this)
+        const opened = [...this.databases.values()]
+        this.databases.clear()
+        const results = await Promise.allSettled(opened.map(({ database }) => database.close()))
+        for (const { key } of opened) {
+            if (writerByDatabase.get(key)?.storage === this) writerByDatabase.delete(key)
+        }
+        const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
+        if (failure) throw failure.reason
+    }
 }
 
 /** Starts tracking the storage of one instance root; the caller owns closing it. */
 export function openInstanceStorage(root: string): InstanceStorage {
-	const storage = new InstanceStorage(new InstanceLayout(root))
-	openStorages.add(storage)
-	return storage
+    const storage = new InstanceStorage(new InstanceLayout(root))
+    openStorages.add(storage)
+    return storage
 }
 
 /** Resolves the layout of one instance without touching the file system. */
 export async function resolveInstanceLayout(location: InstanceLocation): Promise<InstanceLayout> {
-	return new InstanceLayout(instanceRoot(await getDlineDocumentsPath(), location))
+    return new InstanceLayout(instanceRoot(await getDlineDocumentsPath(), location))
 }
 
 /** Resolves the layout of one instance and creates its root directory. */
 export async function ensureInstanceLayout(location: InstanceLocation): Promise<InstanceLayout> {
-	const layout = await resolveInstanceLayout(location)
-	await mkdir(layout.root, { recursive: true })
-	return layout
+    const layout = await resolveInstanceLayout(location)
+    await mkdir(layout.root, { recursive: true })
+    return layout
 }
 
 /** Whether any instance storage at or below `root` is open in this process. */
 export function hasOpenInstanceStoragesUnder(root: string): boolean {
-	const normalized = normalizedPath(root)
-	return [...openStorages].some((storage) => isSameOrInside(normalizedPath(storage.layout.root), normalized))
+    const normalized = normalizedPath(root)
+    return [...openStorages].some((storage) => isSameOrInside(normalizedPath(storage.layout.root), normalized))
 }
 
 /**
@@ -152,9 +152,9 @@ export function hasOpenInstanceStoragesUnder(root: string): boolean {
  * fails on Windows and can leave a half-deleted task, so deletion calls this first.
  */
 export async function closeInstanceStoragesUnder(taskRoot: string): Promise<void> {
-	const root = normalizedPath(taskRoot)
-	const affected = [...openStorages].filter((storage) => isSameOrInside(normalizedPath(storage.layout.root), root))
-	const results = await Promise.allSettled(affected.map((storage) => storage.close()))
-	const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
-	if (failure) throw failure.reason
+    const root = normalizedPath(taskRoot)
+    const affected = [...openStorages].filter((storage) => isSameOrInside(normalizedPath(storage.layout.root), root))
+    const results = await Promise.allSettled(affected.map((storage) => storage.close()))
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected")
+    if (failure) throw failure.reason
 }

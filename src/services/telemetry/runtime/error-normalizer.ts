@@ -16,27 +16,27 @@ import type { NormalizedRuntimeError } from "./types"
 const MAX_CAUSE_DEPTH = 3
 
 interface ErrorLikeFields {
-	readonly name?: unknown
-	readonly message?: unknown
-	readonly code?: unknown
-	readonly status?: unknown
-	readonly statusCode?: unknown
-	readonly stack?: unknown
-	readonly cause?: unknown
-	readonly _error?: unknown
-	readonly response?: unknown
+    readonly name?: unknown
+    readonly message?: unknown
+    readonly code?: unknown
+    readonly status?: unknown
+    readonly statusCode?: unknown
+    readonly stack?: unknown
+    readonly cause?: unknown
+    readonly _error?: unknown
+    readonly response?: unknown
 }
 
 function readString(value: unknown): string | undefined {
-	return typeof value === "string" && value.length > 0 ? value : undefined
+    return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
 function readStatus(value: unknown): number | undefined {
-	return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599 ? value : undefined
+    return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599 ? value : undefined
 }
 
 function errorFields(value: unknown): ErrorLikeFields {
-	return value !== null && typeof value === "object" ? value : {}
+    return value !== null && typeof value === "object" ? value : {}
 }
 
 /**
@@ -46,60 +46,60 @@ function errorFields(value: unknown): ErrorLikeFields {
  * location, so only the path tail is kept.
  */
 function extractSourceFrame(stack: string | undefined): string | undefined {
-	if (!stack) return undefined
-	for (const line of stack.split("\n")) {
-		const match = /\(?([^()\s]+[/\\][^()\s]+?):(\d+):\d+\)?$/.exec(line.trim())
-		if (!match) continue
-		const [, filePath, lineNumber] = match
-		if (filePath.includes("node_modules")) continue
-		const segments = filePath.split(/[/\\]/)
-		const tail = segments.slice(-2).join("/")
-		return `${tail}:${lineNumber}`
-	}
-	return undefined
+    if (!stack) return undefined
+    for (const line of stack.split("\n")) {
+        const match = /\(?([^()\s]+[/\\][^()\s]+?):(\d+):\d+\)?$/.exec(line.trim())
+        if (!match) continue
+        const [, filePath, lineNumber] = match
+        if (filePath.includes("node_modules")) continue
+        const segments = filePath.split(/[/\\]/)
+        const tail = segments.slice(-2).join("/")
+        return `${tail}:${lineNumber}`
+    }
+    return undefined
 }
 
 function buildFingerprint(name: string, code?: string, status?: number, sourceFrame?: string): string {
-	const sourceFile = sourceFrame?.replace(/:\d+$/, "")
-	const groupingMaterial = ["v2", name, code ?? "-", status ?? "-", sourceFile ?? "-"].join("|")
-	return createHash("sha256").update(groupingMaterial).digest("hex").slice(0, 16)
+    const sourceFile = sourceFrame?.replace(/:\d+$/, "")
+    const groupingMaterial = ["v2", name, code ?? "-", status ?? "-", sourceFile ?? "-"].join("|")
+    return createHash("sha256").update(groupingMaterial).digest("hex").slice(0, 16)
 }
 
 export function normalizeRuntimeError(value: unknown, depth = 0): NormalizedRuntimeError {
-	if (typeof value === "string") {
-		return {
-			name: "Error",
-			message: TELEMETRY_MASK_VALUE,
-			fingerprint: buildFingerprint("Error"),
-		}
-	}
-	if (value === null || typeof value !== "object") {
-		return {
-			name: "NonError",
-			message: TELEMETRY_MASK_VALUE,
-			fingerprint: buildFingerprint("NonError"),
-		}
-	}
+    if (typeof value === "string") {
+        return {
+            name: "Error",
+            message: TELEMETRY_MASK_VALUE,
+            fingerprint: buildFingerprint("Error"),
+        }
+    }
+    if (value === null || typeof value !== "object") {
+        return {
+            name: "NonError",
+            message: TELEMETRY_MASK_VALUE,
+            fingerprint: buildFingerprint("NonError"),
+        }
+    }
 
-	const fields = errorFields(value)
-	const wrapped = errorFields(fields._error)
-	const response = errorFields(fields.response)
-	const name = readErrorIdentifier(fields.name) ?? "Error"
-	const code = readErrorIdentifier(fields.code) ?? readErrorIdentifier(wrapped.code)
-	const status =
-		readStatus(fields.status) ?? readStatus(fields.statusCode) ?? readStatus(wrapped.status) ?? readStatus(response.status)
-	const sourceFrame = extractSourceFrame(readString(fields.stack))
+    const fields = errorFields(value)
+    const wrapped = errorFields(fields._error)
+    const response = errorFields(fields.response)
+    const name = readErrorIdentifier(fields.name) ?? "Error"
+    const code = readErrorIdentifier(fields.code) ?? readErrorIdentifier(wrapped.code)
+    const status =
+        readStatus(fields.status) ?? readStatus(fields.statusCode) ?? readStatus(wrapped.status) ?? readStatus(response.status)
+    const sourceFrame = extractSourceFrame(readString(fields.stack))
 
-	const cause =
-		fields.cause !== undefined && depth < MAX_CAUSE_DEPTH ? normalizeRuntimeError(fields.cause, depth + 1) : undefined
+    const cause =
+        fields.cause !== undefined && depth < MAX_CAUSE_DEPTH ? normalizeRuntimeError(fields.cause, depth + 1) : undefined
 
-	return {
-		name,
-		message: TELEMETRY_MASK_VALUE,
-		code,
-		status,
-		sourceFrame,
-		fingerprint: buildFingerprint(name, code, status, sourceFrame),
-		cause,
-	}
+    return {
+        name,
+        message: TELEMETRY_MASK_VALUE,
+        code,
+        status,
+        sourceFrame,
+        fingerprint: buildFingerprint(name, code, status, sourceFrame),
+        cause,
+    }
 }

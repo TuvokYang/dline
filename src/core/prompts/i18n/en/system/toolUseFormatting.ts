@@ -1,11 +1,11 @@
 // English tool use formatting prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	focusChainExample: `<task_progress>
+    focusChainExample: `<task_progress>
 Checklist here (optional)
 </task_progress>\n`,
 
-	main: `# Tool Use Formatting
+    main: `# Tool Use Formatting
 
 Tool use is formatted using XML-style tags. The tool name is enclosed in opening and closing tags, and each parameter is similarly enclosed within its own set of tags. Here's the structure:
 

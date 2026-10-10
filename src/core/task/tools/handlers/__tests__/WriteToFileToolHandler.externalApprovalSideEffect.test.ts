@@ -9,53 +9,53 @@ import { prepareRegisteredToolAdmission } from "../../../executors/tool/ToolAdmi
 const temporaryRoots: string[] = []
 
 afterEach(async () => {
-	await Promise.all(temporaryRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })))
+    await Promise.all(temporaryRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })))
 })
 
 describe("write admission target side effects", () => {
-	it("keeps an external write closure unstarted while manual approval is pending", async () => {
-		const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-write-admission-"))
-		temporaryRoots.push(temporaryRoot)
-		const workspaceDir = path.join(temporaryRoot, "workspace")
-		const externalPath = path.join(temporaryRoot, "external", "proof.txt")
-		const externalRelativePath = path.relative(workspaceDir, externalPath)
-		await fs.mkdir(workspaceDir)
-		const run = vi.fn(async () => {
-			await fs.mkdir(path.dirname(externalPath), { recursive: true })
-			await fs.writeFile(externalPath, "external risk proof", "utf8")
-		})
+    it("keeps an external write closure unstarted while manual approval is pending", async () => {
+        const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-write-admission-"))
+        temporaryRoots.push(temporaryRoot)
+        const workspaceDir = path.join(temporaryRoot, "workspace")
+        const externalPath = path.join(temporaryRoot, "external", "proof.txt")
+        const externalRelativePath = path.relative(workspaceDir, externalPath)
+        await fs.mkdir(workspaceDir)
+        const run = vi.fn(async () => {
+            await fs.mkdir(path.dirname(externalPath), { recursive: true })
+            await fs.writeFile(externalPath, "external risk proof", "utf8")
+        })
 
-		const admission = prepareRegisteredToolAdmission({
-			canonicalToolName: ClineDefaultTool.FILE_NEW,
-			block: {
-				type: "tool_use",
-				name: ClineDefaultTool.FILE_NEW,
-				params: { path: externalRelativePath, content: "external risk proof" },
-				partial: false,
-				ts: 1,
-				function_id: "call-external-write",
-				dline_tid: "dline-tid-external-write",
-			},
-			description: "[write_to_file for 'proof.txt']",
-			snapshot: {
-				taskId: "task-external-write",
-				cwd: workspaceDir,
-				workspaceRoots: [workspaceDir],
-				settings: {
-					...DEFAULT_AUTO_APPROVAL_SETTINGS,
-					actions: {
-						...DEFAULT_AUTO_APPROVAL_SETTINGS.actions,
-						editFiles: true,
-						editFilesExternally: false,
-					},
-				},
-				blanket: {},
-			},
-			run,
-		})
+        const admission = prepareRegisteredToolAdmission({
+            canonicalToolName: ClineDefaultTool.FILE_NEW,
+            block: {
+                type: "tool_use",
+                name: ClineDefaultTool.FILE_NEW,
+                params: { path: externalRelativePath, content: "external risk proof" },
+                partial: false,
+                ts: 1,
+                function_id: "call-external-write",
+                dline_tid: "dline-tid-external-write",
+            },
+            description: "[write_to_file for 'proof.txt']",
+            snapshot: {
+                taskId: "task-external-write",
+                cwd: workspaceDir,
+                workspaceRoots: [workspaceDir],
+                settings: {
+                    ...DEFAULT_AUTO_APPROVAL_SETTINGS,
+                    actions: {
+                        ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions,
+                        editFiles: true,
+                        editFilesExternally: false,
+                    },
+                },
+                blanket: {},
+            },
+            run,
+        })
 
-		expect(admission).toMatchObject({ outcome: "admitted", decision: { kind: "manual", scope: "edit_external" } })
-		expect(run).not.toHaveBeenCalled()
-		await expect(fs.access(externalPath)).rejects.toMatchObject({ code: "ENOENT" })
-	})
+        expect(admission).toMatchObject({ outcome: "admitted", decision: { kind: "manual", scope: "edit_external" } })
+        expect(run).not.toHaveBeenCalled()
+        await expect(fs.access(externalPath)).rejects.toMatchObject({ code: "ENOENT" })
+    })
 })

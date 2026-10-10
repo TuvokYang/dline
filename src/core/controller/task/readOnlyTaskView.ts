@@ -8,9 +8,9 @@ import type { TaskViewState } from "@shared/ExtensionMessage"
  * controls change, so the conversation stays readable.
  */
 export function readOnlyTaskView(view: TaskViewState): TaskViewState {
-	return {
-		...view,
-		input: { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false },
-		footer: { actions: view.footer.actions.map((action) => ({ ...action, enabled: false })) },
-	}
+    return {
+        ...view,
+        input: { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false },
+        footer: { actions: view.footer.actions.map((action) => ({ ...action, enabled: false })) },
+    }
 }

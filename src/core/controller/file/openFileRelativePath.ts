@@ -12,30 +12,30 @@ import { Controller } from ".."
  * @returns Empty response
  */
 export async function openFileRelativePath(_controller: Controller, request: StringRequest): Promise<Empty> {
-	const workspacePath = await getWorkspacePath()
+    const workspacePath = await getWorkspacePath()
 
-	if (!workspacePath) {
-		Logger.error("Error in openFileRelativePath: No workspace path available")
-		return Empty.create()
-	}
+    if (!workspacePath) {
+        Logger.error("Error in openFileRelativePath: No workspace path available")
+        return Empty.create()
+    }
 
-	if (request.value) {
-		// Parse optional line number suffix: "path/to/file.ts:42"
-		let filePath = request.value
-		let lineNumber: number | undefined
-		const lineMatch = filePath.match(/^(.+):(\d+)$/)
-		if (lineMatch) {
-			filePath = lineMatch[1]
-			lineNumber = Number.parseInt(lineMatch[2], 10)
-		}
+    if (request.value) {
+        // Parse optional line number suffix: "path/to/file.ts:42"
+        let filePath = request.value
+        let lineNumber: number | undefined
+        const lineMatch = filePath.match(/^(.+):(\d+)$/)
+        if (lineMatch) {
+            filePath = lineMatch[1]
+            lineNumber = Number.parseInt(lineMatch[2], 10)
+        }
 
-		// Resolve the relative path to absolute path
-		const resolvedPath = workspaceResolver.resolveWorkspacePath(workspacePath, filePath, "Controller.openFileRelativePath")
-		const absolutePath = typeof resolvedPath === "string" ? resolvedPath : resolvedPath.absolutePath
+        // Resolve the relative path to absolute path
+        const resolvedPath = workspaceResolver.resolveWorkspacePath(workspacePath, filePath, "Controller.openFileRelativePath")
+        const absolutePath = typeof resolvedPath === "string" ? resolvedPath : resolvedPath.absolutePath
 
-		// Open the file using the existing integration
-		openFileIntegration(absolutePath, false, false, lineNumber)
-	}
+        // Open the file using the existing integration
+        openFileIntegration(absolutePath, false, false, lineNumber)
+    }
 
-	return Empty.create()
+    return Empty.create()
 }

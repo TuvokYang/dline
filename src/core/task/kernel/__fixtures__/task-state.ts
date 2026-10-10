@@ -1,10 +1,10 @@
 import { createInitialTaskState, type FlowPhase, type TaskState } from "../types"
 
 export interface RunningTaskStateOptions {
-	readonly taskId?: string
-	readonly turnId?: string
-	readonly revision?: number
-	readonly phase?: FlowPhase
+    readonly taskId?: string
+    readonly turnId?: string
+    readonly revision?: number
+    readonly phase?: FlowPhase
 }
 
 /**
@@ -16,14 +16,14 @@ export interface RunningTaskStateOptions {
  * not testing.
  */
 export function createRunningTaskState(options: RunningTaskStateOptions = {}): TaskState {
-	const taskId = options.taskId ?? "task-1"
-	const revision = options.revision ?? 1
-	const base = createInitialTaskState(taskId)
-	return {
-		...base,
-		revision,
-		flow: { phase: options.phase ?? "running" },
-		turn: { ...base.turn, turnId: options.turnId ?? "turn-a" },
-		journalWatermark: { seq: revision },
-	}
+    const taskId = options.taskId ?? "task-1"
+    const revision = options.revision ?? 1
+    const base = createInitialTaskState(taskId)
+    return {
+        ...base,
+        revision,
+        flow: { phase: options.phase ?? "running" },
+        turn: { ...base.turn, turnId: options.turnId ?? "turn-a" },
+        journalWatermark: { seq: revision },
+    }
 }

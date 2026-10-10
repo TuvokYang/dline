@@ -26,14 +26,14 @@ let lifecycle: RuntimeTelemetryLifecycle | undefined
  * sinks.
  */
 export function setRuntimeTelemetryLifecycle(next: RuntimeTelemetryLifecycle | undefined): RuntimeTelemetryLifecycle | undefined {
-	const previous = lifecycle
-	lifecycle = next
-	return previous
+    const previous = lifecycle
+    lifecycle = next
+    return previous
 }
 
 /** The running pipeline, or `undefined` before activation installs one. */
 export function getRuntimeTelemetryLifecycle(): RuntimeTelemetryLifecycle | undefined {
-	return lifecycle
+    return lifecycle
 }
 
 /**
@@ -48,12 +48,12 @@ const diagnoses: RootCauseDiagnosis[] = []
 
 /** Record a diagnosis so a later export can include it. */
 export function recordRuntimeDiagnosis(diagnosis: RootCauseDiagnosis): void {
-	diagnoses.push(diagnosis)
+    diagnoses.push(diagnosis)
 }
 
 /** Discard accumulated diagnoses. Used when a session ends and by tests. */
 export function clearRuntimeDiagnoses(): void {
-	diagnoses.length = 0
+    diagnoses.length = 0
 }
 
 /**
@@ -68,15 +68,15 @@ export function clearRuntimeDiagnoses(): void {
  * or opted-out user could still produce a diagnostic archive.
  */
 export function getDiagnosticSource(): DiagnosticSource | undefined {
-	const current = lifecycle
-	if (!current?.isEnabled) return undefined
+    const current = lifecycle
+    if (!current?.isEnabled) return undefined
 
-	return {
-		sessionId: current.sessionId,
-		// The lifecycle drains the bus on a timer, so the bus alone would only
-		// hold the last few seconds. `sessionEvents` adds the drained history
-		// back, which is what makes a bundle cover the whole session.
-		events: () => current.sessionEvents(),
-		diagnoses: () => diagnoses,
-	}
+    return {
+        sessionId: current.sessionId,
+        // The lifecycle drains the bus on a timer, so the bus alone would only
+        // hold the last few seconds. `sessionEvents` adds the drained history
+        // back, which is what makes a bundle cover the whole session.
+        events: () => current.sessionEvents(),
+        diagnoses: () => diagnoses,
+    }
 }

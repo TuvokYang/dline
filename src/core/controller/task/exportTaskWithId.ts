@@ -9,14 +9,14 @@ import { Controller } from ".."
  * @returns Empty response
  */
 export async function exportTaskWithId(controller: Controller, request: StringRequest): Promise<Empty> {
-	try {
-		if (request.value) {
-			await controller.exportTaskWithId(request.value)
-		}
-		return Empty.create()
-	} catch (error) {
-		// Log the error but allow it to propagate for proper gRPC error handling
-		Logger.error(`Error exporting task with ID ${request.value}:`, error)
-		throw error
-	}
+    try {
+        if (request.value) {
+            await controller.exportTaskWithId(request.value)
+        }
+        return Empty.create()
+    } catch (error) {
+        // Log the error but allow it to propagate for proper gRPC error handling
+        Logger.error(`Error exporting task with ID ${request.value}:`, error)
+        throw error
+    }
 }

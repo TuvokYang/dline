@@ -5,22 +5,22 @@
 import { DiffParser } from "./diff"
 
 function run(diff: string, original: string) {
-	const p = new DiffParser(original)
-	for (const l of diff.split("\n")) p.processLine(l)
-	p.finalize()
-	return p.getResult()
+    const p = new DiffParser(original)
+    for (const l of diff.split("\n")) p.processLine(l)
+    p.finalize()
+    return p.getResult()
 }
 
 let pass = 0,
-	fail = 0
+    fail = 0
 function check(name: string, ok: boolean) {
-	if (ok) {
-		pass++
-		process.stdout.write(`  ✅ ${name}\n`)
-	} else {
-		fail++
-		process.stdout.write(`  ❌ ${name}\n`)
-	}
+    if (ok) {
+        pass++
+        process.stdout.write(`  ✅ ${name}\n`)
+    } else {
+        fail++
+        process.stdout.write(`  ❌ ${name}\n`)
+    }
 }
 
 // Test 1: single block match
@@ -35,8 +35,8 @@ check("newContent", r1.newContent === "line1\nnew line2\nline3\n")
 // Test 2: multi-block
 process.stdout.write("\nTest 2: multi-block\n")
 const r2 = run(
-	"------- SEARCH\nline1\n=======\nA\n+++++++ REPLACE\n------- SEARCH\nline3\n=======\nB\n+++++++ REPLACE",
-	"line1\nline2\nline3\n",
+    "------- SEARCH\nline1\n=======\nA\n+++++++ REPLACE\n------- SEARCH\nline3\n=======\nB\n+++++++ REPLACE",
+    "line1\nline2\nline3\n",
 )
 check("blocks=2", r2.blocks.length === 2)
 check("block0 ok", !r2.blocks[0].hasError)

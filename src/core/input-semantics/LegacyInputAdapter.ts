@@ -4,24 +4,24 @@ import { lexSemanticInput } from "@shared/input-semantics/lexer"
 
 /** A submission from a client that has no semantic composer. */
 export interface LegacyInput {
-	readonly text?: string
-	readonly images?: readonly string[]
-	readonly files?: readonly string[]
+    readonly text?: string
+    readonly images?: readonly string[]
+    readonly files?: readonly string[]
 }
 
 /** An upgraded legacy submission, paired with the catalog it was lexed against. */
 export interface LegacyAdaptation {
-	readonly document: SemanticInputDocument
-	/**
-	 * The exact catalog that produced this document.
-	 *
-	 * Admission has to review the document against this snapshot rather than
-	 * whatever is current by then. Discovery runs on its own schedule, so a
-	 * capability scan landing between lexing and admission would otherwise
-	 * declare a document stale against a catalog it was never composed for, and
-	 * the submission would be refused a millisecond after it was parsed.
-	 */
-	readonly catalog: InputSemanticCatalog
+    readonly document: SemanticInputDocument
+    /**
+     * The exact catalog that produced this document.
+     *
+     * Admission has to review the document against this snapshot rather than
+     * whatever is current by then. Discovery runs on its own schedule, so a
+     * capability scan landing between lexing and admission would otherwise
+     * declare a document stale against a catalog it was never composed for, and
+     * the submission would be refused a millisecond after it was parsed.
+     */
+    readonly catalog: InputSemanticCatalog
 }
 
 /**
@@ -35,22 +35,22 @@ export interface LegacyAdaptation {
  * task-owned resource nodes only once the resource service owns their local copy.
  */
 export class LegacyInputAdapter {
-	constructor(
-		private readonly catalog: () => Promise<InputSemanticCatalog>,
-		private readonly nextDocumentId: () => string,
-	) {}
+    constructor(
+        private readonly catalog: () => Promise<InputSemanticCatalog>,
+        private readonly nextDocumentId: () => string,
+    ) {}
 
-	async adapt(input: LegacyInput): Promise<LegacyAdaptation> {
-		const catalog = await this.catalog()
-		return {
-			catalog,
-			document: lexSemanticInput(input.text ?? "", {
-				catalog,
-				documentId: this.nextDocumentId(),
-				// A legacy client has no way to confirm a candidate, so its text keeps
-				// the behaviour users already rely on: a typed command activates.
-				activation: "auto",
-			}),
-		}
-	}
+    async adapt(input: LegacyInput): Promise<LegacyAdaptation> {
+        const catalog = await this.catalog()
+        return {
+            catalog,
+            document: lexSemanticInput(input.text ?? "", {
+                catalog,
+                documentId: this.nextDocumentId(),
+                // A legacy client has no way to confirm a candidate, so its text keeps
+                // the behaviour users already rely on: a typed command activates.
+                activation: "auto",
+            }),
+        }
+    }
 }

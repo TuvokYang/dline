@@ -11,20 +11,20 @@ import { Controller } from "../index"
  * @returns A result indicating if the URL is an image and the URL that was checked
  */
 export async function checkIsImageUrl(_: Controller, request: StringRequest): Promise<IsImageUrl> {
-	try {
-		const url = request.value || ""
-		// Check if the URL is an image
-		const isImage = await detectImageUrl(url)
+    try {
+        const url = request.value || ""
+        // Check if the URL is an image
+        const isImage = await detectImageUrl(url)
 
-		return IsImageUrl.create({
-			isImage,
-			url,
-		})
-	} catch (error) {
-		Logger.error(`Error checking if URL is an image: ${request.value}`, error)
-		return IsImageUrl.create({
-			isImage: false,
-			url: request.value || "",
-		})
-	}
+        return IsImageUrl.create({
+            isImage,
+            url,
+        })
+    } catch (error) {
+        Logger.error(`Error checking if URL is an image: ${request.value}`, error)
+        return IsImageUrl.create({
+            isImage: false,
+            url: request.value || "",
+        })
+    }
 }

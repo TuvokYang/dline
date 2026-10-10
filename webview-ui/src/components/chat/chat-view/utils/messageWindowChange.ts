@@ -1,6 +1,6 @@
 /** The only part of a message that identifies its row in the rendered window. */
 export interface MessageIdentity {
-	ts: number
+    ts: number
 }
 
 /**
@@ -22,7 +22,7 @@ export interface MessageIdentity {
  * kept their positions is unchanged.
  */
 export function isTailOnlyUpdate(previous: readonly MessageIdentity[], next: readonly MessageIdentity[]): boolean {
-	const lastIndex = previous.length - 1
-	if (lastIndex < 0 || next.length < previous.length) return false
-	return next[0]?.ts === previous[0]?.ts && next[lastIndex]?.ts === previous[lastIndex]?.ts
+    const lastIndex = previous.length - 1
+    if (lastIndex < 0 || next.length < previous.length) return false
+    return next[0]?.ts === previous[0]?.ts && next[lastIndex]?.ts === previous[lastIndex]?.ts
 }

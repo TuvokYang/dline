@@ -41,26 +41,26 @@ export const CLAUDE_CODE_DEFAULT_ENTRYPOINT = "cli"
  * and the claude-code provider hand over already-serialized messages.
  */
 export interface BillingAttributionMessage {
-	readonly role?: unknown
-	readonly content?: unknown
+    readonly role?: unknown
+    readonly content?: unknown
 }
 
 export interface BillingAttributionInput {
-	readonly messages: readonly BillingAttributionMessage[]
-	readonly clientVersion: string
-	readonly entrypoint?: string
+    readonly messages: readonly BillingAttributionMessage[]
+    readonly clientVersion: string
+    readonly entrypoint?: string
 }
 
 export interface BillingAttributionTextBlock {
-	readonly type: "text"
-	readonly text: string
+    readonly type: "text"
+    readonly text: string
 }
 
 function readTextBlock(block: unknown): string | undefined {
-	if (typeof block !== "object" || block === null) return undefined
-	const candidate = block as { type?: unknown; text?: unknown }
-	if (candidate.type !== "text") return undefined
-	return typeof candidate.text === "string" ? candidate.text : undefined
+    if (typeof block !== "object" || block === null) return undefined
+    const candidate = block as { type?: unknown; text?: unknown }
+    if (candidate.type !== "text") return undefined
+    return typeof candidate.text === "string" ? candidate.text : undefined
 }
 
 /**
@@ -72,28 +72,28 @@ function readTextBlock(block: unknown): string | undefined {
  * message.
  */
 export function extractFirstUserText(messages: readonly BillingAttributionMessage[]): string {
-	for (const message of messages) {
-		if (message?.role !== "user") continue
-		const { content } = message
-		if (typeof content === "string") return content
-		if (Array.isArray(content)) {
-			for (const block of content) {
-				const text = readTextBlock(block)
-				if (text !== undefined) return text
-			}
-		}
-		return ""
-	}
-	return ""
+    for (const message of messages) {
+        if (message?.role !== "user") continue
+        const { content } = message
+        if (typeof content === "string") return content
+        if (Array.isArray(content)) {
+            for (const block of content) {
+                const text = readTextBlock(block)
+                if (text !== undefined) return text
+            }
+        }
+        return ""
+    }
+    return ""
 }
 
 function sampleFingerprintBytes(firstUserText: string): Buffer {
-	const source = Buffer.from(firstUserText, "utf8")
-	const sampled = Buffer.alloc(CLAUDE_CODE_FINGERPRINT_SAMPLE_OFFSETS.length)
-	CLAUDE_CODE_FINGERPRINT_SAMPLE_OFFSETS.forEach((offset, position) => {
-		sampled[position] = offset < source.length ? source[offset] : CLAUDE_CODE_FINGERPRINT_PADDING_BYTE
-	})
-	return sampled
+    const source = Buffer.from(firstUserText, "utf8")
+    const sampled = Buffer.alloc(CLAUDE_CODE_FINGERPRINT_SAMPLE_OFFSETS.length)
+    CLAUDE_CODE_FINGERPRINT_SAMPLE_OFFSETS.forEach((offset, position) => {
+        sampled[position] = offset < source.length ? source[offset] : CLAUDE_CODE_FINGERPRINT_PADDING_BYTE
+    })
+    return sampled
 }
 
 /**
@@ -104,12 +104,12 @@ function sampleFingerprintBytes(firstUserText: string): Buffer {
  * the declared version feed it.
  */
 export function computeClaudeCodeFingerprint(firstUserText: string, clientVersion: string): string {
-	const digest = createHash("sha256")
-		.update(Buffer.from(CLAUDE_CODE_FINGERPRINT_SALT, "utf8"))
-		.update(sampleFingerprintBytes(firstUserText))
-		.update(Buffer.from(clientVersion, "utf8"))
-		.digest("hex")
-	return digest.slice(0, CLAUDE_CODE_FINGERPRINT_LENGTH)
+    const digest = createHash("sha256")
+        .update(Buffer.from(CLAUDE_CODE_FINGERPRINT_SALT, "utf8"))
+        .update(sampleFingerprintBytes(firstUserText))
+        .update(Buffer.from(clientVersion, "utf8"))
+        .digest("hex")
+    return digest.slice(0, CLAUDE_CODE_FINGERPRINT_LENGTH)
 }
 
 /**
@@ -121,15 +121,15 @@ export function computeClaudeCodeFingerprint(firstUserText: string, clientVersio
  * attribution instead of receiving a degraded value.
  */
 export function buildBillingAttributionText(input: BillingAttributionInput): string {
-	const clientVersion = input.clientVersion.trim()
-	if (!clientVersion) {
-		throw new Error("Claude Code billing attribution requires a resolved client version")
-	}
-	const entrypoint = input.entrypoint?.trim() || CLAUDE_CODE_DEFAULT_ENTRYPOINT
-	const fingerprint = computeClaudeCodeFingerprint(extractFirstUserText(input.messages), clientVersion)
-	// The retired `cch=` segment is deliberately absent: current clients stopped
-	// sending it, so re-adding it would diverge from real traffic.
-	return `x-anthropic-billing-header: cc_version=${clientVersion}.${fingerprint}; cc_entrypoint=${entrypoint};`
+    const clientVersion = input.clientVersion.trim()
+    if (!clientVersion) {
+        throw new Error("Claude Code billing attribution requires a resolved client version")
+    }
+    const entrypoint = input.entrypoint?.trim() || CLAUDE_CODE_DEFAULT_ENTRYPOINT
+    const fingerprint = computeClaudeCodeFingerprint(extractFirstUserText(input.messages), clientVersion)
+    // The retired `cch=` segment is deliberately absent: current clients stopped
+    // sending it, so re-adding it would diverge from real traffic.
+    return `x-anthropic-billing-header: cc_version=${clientVersion}.${fingerprint}; cc_entrypoint=${entrypoint};`
 }
 
 /**
@@ -139,5 +139,5 @@ export function buildBillingAttributionText(input: BillingAttributionInput): str
  * marking it would change the cached prefix of every request.
  */
 export function buildBillingAttributionBlock(input: BillingAttributionInput): BillingAttributionTextBlock {
-	return { type: "text", text: buildBillingAttributionText(input) }
+    return { type: "text", text: buildBillingAttributionText(input) }
 }

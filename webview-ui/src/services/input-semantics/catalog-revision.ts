@@ -7,8 +7,8 @@ import { BUILTIN_INPUT_SEMANTICS, type InputSemanticCatalog } from "@shared/inpu
  * answers; revision 0 marks that no backend catalog has arrived yet.
  */
 export const INITIAL_INPUT_SEMANTIC_CATALOG: InputSemanticCatalog = {
-	revision: 0,
-	descriptors: BUILTIN_INPUT_SEMANTICS,
+    revision: 0,
+    descriptors: BUILTIN_INPUT_SEMANTICS,
 }
 
 /**
@@ -18,5 +18,5 @@ export const INITIAL_INPUT_SEMANTIC_CATALOG: InputSemanticCatalog = {
  * an older revision would reintroduce a capability the backend withdrew.
  */
 export function acceptCatalogRevision(current: InputSemanticCatalog, incoming: InputSemanticCatalog): InputSemanticCatalog {
-	return incoming.revision >= current.revision ? incoming : current
+    return incoming.revision >= current.revision ? incoming : current
 }

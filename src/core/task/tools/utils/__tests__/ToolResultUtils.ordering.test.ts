@@ -11,16 +11,16 @@ import { ToolResultUtils } from "../ToolResultUtils"
  * @returns Tool use block with canonical native identities.
  */
 function createBlock(functionId: string, name = "read_file"): ToolUse {
-	return {
-		type: "tool_use",
-		name,
-		params: {},
-		partial: false,
-		function_id: functionId,
-		dline_tid: `dline_tid_${functionId}`,
-		isNativeToolCall: true,
-		ts: 1,
-	} as ToolUse
+    return {
+        type: "tool_use",
+        name,
+        params: {},
+        partial: false,
+        function_id: functionId,
+        dline_tid: `dline_tid_${functionId}`,
+        isNativeToolCall: true,
+        ts: 1,
+    } as ToolUse
 }
 
 /**
@@ -30,51 +30,51 @@ function createBlock(functionId: string, name = "read_file"): ToolUse {
  * @returns Human-readable tool description.
  */
 function describeTool(block: ToolUse): string {
-	return `[${block.name}]`
+    return `[${block.name}]`
 }
 
 describe("ToolResultUtils tool_result ordering", () => {
-	it("places the tool_result before an image block pushed by the same read", () => {
-		// read_file pushes its image block into userMessageContent before the
-		// handler returns, so the result would otherwise land behind the image.
-		const userMessageContent: any[] = [{ type: "image", source: { type: "url", url: "file://a.png" } }]
+    it("places the tool_result before an image block pushed by the same read", () => {
+        // read_file pushes its image block into userMessageContent before the
+        // handler returns, so the result would otherwise land behind the image.
+        const userMessageContent: any[] = [{ type: "image", source: { type: "url", url: "file://a.png" } }]
 
-		ToolResultUtils.pushToolResult(
-			"Successfully read image",
-			createBlock("call-image"),
-			userMessageContent,
-			describeTool,
-			undefined,
-		)
+        ToolResultUtils.pushToolResult(
+            "Successfully read image",
+            createBlock("call-image"),
+            userMessageContent,
+            describeTool,
+            undefined,
+        )
 
-		assert.equal(userMessageContent[0].type, "tool_result")
-		assert.equal(userMessageContent[0].function_id, "call-image")
-		assert.equal(userMessageContent[1].type, "image")
-	})
+        assert.equal(userMessageContent[0].type, "tool_result")
+        assert.equal(userMessageContent[0].function_id, "call-image")
+        assert.equal(userMessageContent[1].type, "image")
+    })
 
-	it("keeps every tool_result of a parallel batch ahead of non-result blocks", () => {
-		const userMessageContent: any[] = [{ type: "image", source: { type: "url", url: "file://a.png" } }]
+    it("keeps every tool_result of a parallel batch ahead of non-result blocks", () => {
+        const userMessageContent: any[] = [{ type: "image", source: { type: "url", url: "file://a.png" } }]
 
-		ToolResultUtils.pushToolResult("first", createBlock("call-1"), userMessageContent, describeTool, undefined)
-		userMessageContent.push({ type: "text", text: "hook context" })
-		ToolResultUtils.pushToolResult("second", createBlock("call-2"), userMessageContent, describeTool, undefined)
+        ToolResultUtils.pushToolResult("first", createBlock("call-1"), userMessageContent, describeTool, undefined)
+        userMessageContent.push({ type: "text", text: "hook context" })
+        ToolResultUtils.pushToolResult("second", createBlock("call-2"), userMessageContent, describeTool, undefined)
 
-		const types = userMessageContent.map((block) => block.type)
-		assert.deepEqual(types, ["tool_result", "tool_result", "image", "text"])
-		assert.equal(userMessageContent[0].function_id, "call-1")
-		assert.equal(userMessageContent[1].function_id, "call-2")
-	})
+        const types = userMessageContent.map((block) => block.type)
+        assert.deepEqual(types, ["tool_result", "tool_result", "image", "text"])
+        assert.equal(userMessageContent[0].function_id, "call-1")
+        assert.equal(userMessageContent[1].function_id, "call-2")
+    })
 
-	it("replaces a re-executed tool_result in place without reordering the batch", () => {
-		const userMessageContent: any[] = []
+    it("replaces a re-executed tool_result in place without reordering the batch", () => {
+        const userMessageContent: any[] = []
 
-		ToolResultUtils.pushToolResult("first", createBlock("call-1"), userMessageContent, describeTool, undefined)
-		ToolResultUtils.pushToolResult("second", createBlock("call-2"), userMessageContent, describeTool, undefined)
-		ToolResultUtils.pushToolResult("first retried", createBlock("call-1"), userMessageContent, describeTool, undefined)
+        ToolResultUtils.pushToolResult("first", createBlock("call-1"), userMessageContent, describeTool, undefined)
+        ToolResultUtils.pushToolResult("second", createBlock("call-2"), userMessageContent, describeTool, undefined)
+        ToolResultUtils.pushToolResult("first retried", createBlock("call-1"), userMessageContent, describeTool, undefined)
 
-		assert.equal(userMessageContent.length, 2)
-		assert.equal(userMessageContent[0].function_id, "call-1")
-		assert.equal(userMessageContent[1].function_id, "call-2")
-		assert.match(userMessageContent[0].content[0].text, /first retried/)
-	})
+        assert.equal(userMessageContent.length, 2)
+        assert.equal(userMessageContent[0].function_id, "call-1")
+        assert.equal(userMessageContent[1].function_id, "call-2")
+        assert.match(userMessageContent[0].content[0].text, /first retried/)
+    })
 })

@@ -1,7 +1,7 @@
 export interface ContextUsageInput {
-	contextWindow: number
-	lastApiReqTotalTokens: number
-	modelId: string
+    contextWindow: number
+    lastApiReqTotalTokens: number
+    modelId: string
 }
 
 const HIGH_CONTEXT_PRESSURE_USED_RATIO = 0.9
@@ -13,7 +13,7 @@ const HIGH_CONTEXT_PRESSURE_USED_RATIO = 0.9
  * @returns True when context usage should be rendered.
  */
 export function showContextUsage(input: ContextUsageInput): boolean {
-	return input.contextWindow > 0
+    return input.contextWindow > 0
 }
 
 /**
@@ -31,23 +31,23 @@ const HIGH_CONTEXT_PRESSURE_HEADING = "# High Context Pressure"
  * of that request's environment; a request already carrying it is left as is.
  */
 export function withHighContextPressureWarning(environment: string, warning: string): string {
-	if (environment.includes(HIGH_CONTEXT_PRESSURE_HEADING)) return environment
-	const close = environment.lastIndexOf("</environment_details>")
-	if (close < 0) return `${environment}\n\n${warning}`
-	return `${environment.slice(0, close)}\n\n${warning}\n${environment.slice(close)}`
+    if (environment.includes(HIGH_CONTEXT_PRESSURE_HEADING)) return environment
+    const close = environment.lastIndexOf("</environment_details>")
+    if (close < 0) return `${environment}\n\n${warning}`
+    return `${environment.slice(0, close)}\n\n${warning}\n${environment.slice(close)}`
 }
 
 export function getHighContextPressureWarning(input: ContextUsageInput): string {
-	if (
-		!Number.isFinite(input.contextWindow) ||
-		!Number.isFinite(input.lastApiReqTotalTokens) ||
-		input.contextWindow <= 0 ||
-		input.lastApiReqTotalTokens <= input.contextWindow * HIGH_CONTEXT_PRESSURE_USED_RATIO
-	) {
-		return ""
-	}
+    if (
+        !Number.isFinite(input.contextWindow) ||
+        !Number.isFinite(input.lastApiReqTotalTokens) ||
+        input.contextWindow <= 0 ||
+        input.lastApiReqTotalTokens <= input.contextWindow * HIGH_CONTEXT_PRESSURE_USED_RATIO
+    ) {
+        return ""
+    }
 
-	return `# High Context Pressure
+    return `# High Context Pressure
 Less than 10% of the context window remains for the complete projected request candidate.
 Avoid launching too many parallel tool calls that may produce large results.
 Keep tool output focused and continue the current work efficiently.

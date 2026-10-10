@@ -10,10 +10,10 @@ import { ServerConfigSchema } from "./schemas"
 export type Transport = StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport
 
 export type McpConnection = {
-	server: McpServer
-	client: Client
-	transport: Transport
-	authProvider?: OAuthClientProvider
+    server: McpServer
+    client: Client
+    transport: Transport
+    authProvider?: OAuthClientProvider
 }
 
 export type McpTransportType = "stdio" | "sse" | "http"

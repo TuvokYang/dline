@@ -15,8 +15,8 @@ const MAX_STACK_LENGTH = 4_000
  * documents as producing exactly this notice.
  */
 const BENIGN_BROWSER_NOTICES = new Set([
-	"ResizeObserver loop completed with undelivered notifications.",
-	"ResizeObserver loop limit exceeded",
+    "ResizeObserver loop completed with undelivered notifications.",
+    "ResizeObserver loop limit exceeded",
 ])
 
 const reportedSignatures = new Set<string>()
@@ -31,49 +31,49 @@ let globalHandlersInstalled = false
  * duplicates are dropped and each session is capped.
  */
 export function reportWebviewError(kind: WebviewErrorKind, error: unknown, componentStack?: string): void {
-	const normalized = normalizeError(error)
-	const signature = `${kind}|${normalized.name}|${normalized.message}`
-	if (reportedSignatures.has(signature) || reportCount >= MAX_REPORTS_PER_SESSION) return
-	reportedSignatures.add(signature)
-	reportCount += 1
-	try {
-		void StateServiceClient.reportWebviewError({
-			kind,
-			message: normalized.message.slice(0, MAX_MESSAGE_LENGTH),
-			name: normalized.name,
-			stack: normalized.stack?.slice(0, MAX_STACK_LENGTH),
-			componentStack: componentStack?.slice(0, MAX_STACK_LENGTH),
-		}).catch(() => undefined)
-	} catch {
-		// The transport itself may be the failing component.
-	}
+    const normalized = normalizeError(error)
+    const signature = `${kind}|${normalized.name}|${normalized.message}`
+    if (reportedSignatures.has(signature) || reportCount >= MAX_REPORTS_PER_SESSION) return
+    reportedSignatures.add(signature)
+    reportCount += 1
+    try {
+        void StateServiceClient.reportWebviewError({
+            kind,
+            message: normalized.message.slice(0, MAX_MESSAGE_LENGTH),
+            name: normalized.name,
+            stack: normalized.stack?.slice(0, MAX_STACK_LENGTH),
+            componentStack: componentStack?.slice(0, MAX_STACK_LENGTH),
+        }).catch(() => undefined)
+    } catch {
+        // The transport itself may be the failing component.
+    }
 }
 
 /** Install window-level handlers once so errors outside React rendering are reported too. */
 export function installGlobalWebviewErrorReporting(): void {
-	if (globalHandlersInstalled) return
-	globalHandlersInstalled = true
-	window.addEventListener("error", (event) => {
-		if (isBenignBrowserNotice(event)) return
-		reportWebviewError("uncaught", event.error ?? event.message)
-	})
-	window.addEventListener("unhandledrejection", (event) => reportWebviewError("unhandled_rejection", event.reason))
+    if (globalHandlersInstalled) return
+    globalHandlersInstalled = true
+    window.addEventListener("error", (event) => {
+        if (isBenignBrowserNotice(event)) return
+        reportWebviewError("uncaught", event.error ?? event.message)
+    })
+    window.addEventListener("unhandledrejection", (event) => reportWebviewError("unhandled_rejection", event.reason))
 }
 
 /** A notice carries no thrown value; anything that was thrown is a real failure even if its text matches. */
 function isBenignBrowserNotice(event: ErrorEvent): boolean {
-	return event.error == null && BENIGN_BROWSER_NOTICES.has(event.message)
+    return event.error == null && BENIGN_BROWSER_NOTICES.has(event.message)
 }
 
 function normalizeError(error: unknown): { name: string; message: string; stack?: string } {
-	if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack }
-	return { name: "NonError", message: typeof error === "string" ? error : safeStringify(error) }
+    if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack }
+    return { name: "NonError", message: typeof error === "string" ? error : safeStringify(error) }
 }
 
 function safeStringify(value: unknown): string {
-	try {
-		return JSON.stringify(value) ?? String(value)
-	} catch {
-		return String(value)
-	}
+    try {
+        return JSON.stringify(value) ?? String(value)
+    } catch {
+        return String(value)
+    }
 }

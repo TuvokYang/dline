@@ -15,12 +15,12 @@ export const UI_MESSAGE_READER = "ui-message-reader"
  * while the writer holds the database.
  */
 export async function openUiMessageRows(instanceRoot: string, owner: string): Promise<UiMessageRowStore> {
-	const storage = openInstanceStorage(instanceRoot)
-	try {
-		const database = await storage.openDatabase(InstanceDatabase.Messages, owner)
-		return await UiMessageRowStore.open(database, () => storage.close())
-	} catch (error) {
-		await storage.close().catch(() => undefined)
-		throw error
-	}
+    const storage = openInstanceStorage(instanceRoot)
+    try {
+        const database = await storage.openDatabase(InstanceDatabase.Messages, owner)
+        return await UiMessageRowStore.open(database, () => storage.close())
+    } catch (error) {
+        await storage.close().catch(() => undefined)
+        throw error
+    }
 }

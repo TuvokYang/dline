@@ -27,48 +27,48 @@ export type MentionCapturePolicy = "snapshot_at_submit" | "resolve_at_execute"
 export type FileNodeOrigin = "pasted_text" | "pasted_file" | "uploaded_file"
 
 export interface TextInputNode {
-	readonly kind: "text"
-	readonly text: string
+    readonly kind: "text"
+    readonly text: string
 }
 
 export interface SlashCommandInputNode {
-	readonly kind: "slash_command"
-	readonly entityId: string
-	/** Catalog descriptor identity, e.g. "command.compact". */
-	readonly commandId: string
-	readonly sourceText: string
-	readonly canonicalName: string
-	readonly namespace: SlashCommandNamespace
-	readonly compositionMode: SlashCommandComposition
-	readonly state: SemanticEntityState
+    readonly kind: "slash_command"
+    readonly entityId: string
+    /** Catalog descriptor identity, e.g. "command.compact". */
+    readonly commandId: string
+    readonly sourceText: string
+    readonly canonicalName: string
+    readonly namespace: SlashCommandNamespace
+    readonly compositionMode: SlashCommandComposition
+    readonly state: SemanticEntityState
 }
 
 export interface MentionInputNode {
-	readonly kind: "mention"
-	readonly entityId: string
-	readonly mentionKind: MentionKind
-	readonly sourceText: string
-	readonly canonicalRef: string
-	readonly workspaceHint?: string
-	readonly capturePolicy?: MentionCapturePolicy
-	readonly state: SemanticEntityState
+    readonly kind: "mention"
+    readonly entityId: string
+    readonly mentionKind: MentionKind
+    readonly sourceText: string
+    readonly canonicalRef: string
+    readonly workspaceHint?: string
+    readonly capturePolicy?: MentionCapturePolicy
+    readonly state: SemanticEntityState
 }
 
 export interface ImageInputNode {
-	readonly kind: "image"
-	readonly entityId: string
-	readonly resourceId: string
-	readonly displayName: string
-	readonly altText?: string
+    readonly kind: "image"
+    readonly entityId: string
+    readonly resourceId: string
+    readonly displayName: string
+    readonly altText?: string
 }
 
 export interface FileInputNode {
-	readonly kind: "file"
-	readonly entityId: string
-	readonly resourceId: string
-	readonly fileOrigin: FileNodeOrigin
-	readonly displayName: string
-	readonly lineCount?: number
+    readonly kind: "file"
+    readonly entityId: string
+    readonly resourceId: string
+    readonly fileOrigin: FileNodeOrigin
+    readonly displayName: string
+    readonly lineCount?: number
 }
 
 export type SemanticInputNode = TextInputNode | SlashCommandInputNode | MentionInputNode | ImageInputNode | FileInputNode
@@ -87,41 +87,41 @@ export type ResourceInputNode = ImageInputNode | FileInputNode
  * change an already confirmed input.
  */
 export interface SemanticResourceBindingRef {
-	readonly resourceId: string
-	readonly expectedContentHash: string
+    readonly resourceId: string
+    readonly expectedContentHash: string
 }
 
 export interface SemanticInputDocument {
-	readonly schemaVersion: typeof SEMANTIC_INPUT_SCHEMA_VERSION
-	readonly parserVersion: string
-	readonly catalogRevision: string
-	readonly documentId: string
-	readonly rawText: string
-	readonly nodes: readonly SemanticInputNode[]
-	readonly resources: readonly SemanticResourceBindingRef[]
+    readonly schemaVersion: typeof SEMANTIC_INPUT_SCHEMA_VERSION
+    readonly parserVersion: string
+    readonly catalogRevision: string
+    readonly documentId: string
+    readonly rawText: string
+    readonly nodes: readonly SemanticInputNode[]
+    readonly resources: readonly SemanticResourceBindingRef[]
 }
 
 export function isTextNode(node: SemanticInputNode): node is TextInputNode {
-	return node.kind === "text"
+    return node.kind === "text"
 }
 
 export function isSlashCommandNode(node: SemanticInputNode): node is SlashCommandInputNode {
-	return node.kind === "slash_command"
+    return node.kind === "slash_command"
 }
 
 export function isMentionNode(node: SemanticInputNode): node is MentionInputNode {
-	return node.kind === "mention"
+    return node.kind === "mention"
 }
 
 export function isResourceNode(node: SemanticInputNode): node is ResourceInputNode {
-	return node.kind === "image" || node.kind === "file"
+    return node.kind === "image" || node.kind === "file"
 }
 
 export function isIdentifiedNode(node: SemanticInputNode): node is IdentifiedInputNode {
-	return !isTextNode(node)
+    return !isTextNode(node)
 }
 
 /** True when the entity takes effect on submit; any other state is content, not intent. */
 export function isActiveEntity(node: SlashCommandInputNode | MentionInputNode): boolean {
-	return node.state === "recognized"
+    return node.state === "recognized"
 }

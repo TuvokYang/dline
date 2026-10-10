@@ -18,76 +18,76 @@ const ASSUMED_CONTEXT_WINDOW = 128_000
 const IMAGE_MARKERS = ["vision", "image"]
 
 export class AiHubMixModelSource extends ModelListingSource {
-	readonly providerId = "aihubmix"
-	readonly providerName = "AIhubmix"
-	override readonly requiresApiKey = false
-	override readonly reconciliation: ProviderModelReconciliationMode = "replace"
-	protected override readonly defaultBaseUrl = "https://aihubmix.com"
+    readonly providerId = "aihubmix"
+    readonly providerName = "AIhubmix"
+    override readonly requiresApiKey = false
+    override readonly reconciliation: ProviderModelReconciliationMode = "replace"
+    protected override readonly defaultBaseUrl = "https://aihubmix.com"
 
-	protected override buildListingUrl(context: ProviderRemoteContext): string {
-		const baseUrl = (context.baseUrl || this.defaultBaseUrl).replace(/\/+$/, "")
-		return `${baseUrl}/call/mdl_info_platform?tag=coding`
-	}
+    protected override buildListingUrl(context: ProviderRemoteContext): string {
+        const baseUrl = (context.baseUrl || this.defaultBaseUrl).replace(/\/+$/, "")
+        return `${baseUrl}/call/mdl_info_platform?tag=coding`
+    }
 
-	/** AIhubmix wraps the array in `{ success, data }` rather than `{ data }` alone. */
-	protected override readPageEntries(payload: unknown): unknown[] {
-		if (!isRecord(payload) || payload.success !== true || !Array.isArray(payload.data)) {
-			return []
-		}
-		return payload.data
-	}
+    /** AIhubmix wraps the array in `{ success, data }` rather than `{ data }` alone. */
+    protected override readPageEntries(payload: unknown): unknown[] {
+        if (!isRecord(payload) || payload.success !== true || !Array.isArray(payload.data)) {
+            return []
+        }
+        return payload.data
+    }
 
-	protected override readModelId(raw: unknown): string | undefined {
-		return readString(raw, "model")
-	}
+    protected override readModelId(raw: unknown): string | undefined {
+        return readString(raw, "model")
+    }
 
-	protected override readContextWindow(raw: unknown): number | undefined {
-		return readPositiveNumber(raw, "context_window") ?? ASSUMED_CONTEXT_WINDOW
-	}
+    protected override readContextWindow(raw: unknown): number | undefined {
+        return readPositiveNumber(raw, "context_window") ?? ASSUMED_CONTEXT_WINDOW
+    }
 
-	protected override readMaxTokens(raw: unknown): number | undefined {
-		return readPositiveNumber(raw, "max_output") ?? ASSUMED_MAX_TOKENS
-	}
+    protected override readMaxTokens(raw: unknown): number | undefined {
+        return readPositiveNumber(raw, "max_output") ?? ASSUMED_MAX_TOKENS
+    }
 
-	protected override readDescription(raw: unknown): string {
-		return readString(raw, "desc_en", "desc") ?? ""
-	}
+    protected override readDescription(raw: unknown): string {
+        return readString(raw, "desc_en", "desc") ?? ""
+    }
 
-	protected override readCapabilities(raw: unknown): ModelCapabilities {
-		return {
-			contextWindow: this.readContextWindow(raw),
-			maxTokens: this.readMaxTokens(raw),
-			supportsImages: supportsImageInput(raw),
-			supportsPromptCache: supportsPromptCache(raw),
-			supportsReasoning: hasFeature(raw, "thinking"),
-		}
-	}
+    protected override readCapabilities(raw: unknown): ModelCapabilities {
+        return {
+            contextWindow: this.readContextWindow(raw),
+            maxTokens: this.readMaxTokens(raw),
+            supportsImages: supportsImageInput(raw),
+            supportsPromptCache: supportsPromptCache(raw),
+            supportsReasoning: hasFeature(raw, "thinking"),
+        }
+    }
 
-	/** Prices are already per million tokens, so they pass through unscaled. */
-	protected override readPricing(raw: unknown): ModelPricing {
-		return {
-			inputPrice: readPositiveNumber(raw, "pricing.input") ?? 0,
-			outputPrice: readPositiveNumber(raw, "pricing.output") ?? 0,
-			cacheWritesPrice: readPositiveNumber(raw, "pricing.cache_write") ?? 0,
-			cacheReadsPrice: readPositiveNumber(raw, "pricing.cache_read") ?? 0,
-		}
-	}
+    /** Prices are already per million tokens, so they pass through unscaled. */
+    protected override readPricing(raw: unknown): ModelPricing {
+        return {
+            inputPrice: readPositiveNumber(raw, "pricing.input") ?? 0,
+            outputPrice: readPositiveNumber(raw, "pricing.output") ?? 0,
+            cacheWritesPrice: readPositiveNumber(raw, "pricing.cache_write") ?? 0,
+            cacheReadsPrice: readPositiveNumber(raw, "pricing.cache_read") ?? 0,
+        }
+    }
 }
 
 function readStringArray(raw: unknown, field: string): string[] {
-	if (!isRecord(raw) || !Array.isArray(raw[field])) {
-		return []
-	}
-	return (raw[field] as unknown[]).filter((entry): entry is string => typeof entry === "string")
+    if (!isRecord(raw) || !Array.isArray(raw[field])) {
+        return []
+    }
+    return (raw[field] as unknown[]).filter((entry): entry is string => typeof entry === "string")
 }
 
 function hasFeature(raw: unknown, feature: string): boolean {
-	return readStringArray(raw, "features").includes(feature)
+    return readStringArray(raw, "features").includes(feature)
 }
 
 function supportsImageInput(raw: unknown): boolean {
-	const advertised = [...readStringArray(raw, "modalities"), ...readStringArray(raw, "features")]
-	return IMAGE_MARKERS.some((marker) => advertised.includes(marker))
+    const advertised = [...readStringArray(raw, "modalities"), ...readStringArray(raw, "features")]
+    return IMAGE_MARKERS.some((marker) => advertised.includes(marker))
 }
 
 /**
@@ -95,20 +95,20 @@ function supportsImageInput(raw: unknown): boolean {
  * price that undercuts the input price, is what marks a cache-capable model.
  */
 function supportsPromptCache(raw: unknown): boolean {
-	if (!isRecord(raw)) {
-		return false
-	}
-	const cacheRatio = raw.cache_ratio
-	if (typeof cacheRatio === "number" && cacheRatio !== 1) {
-		return true
-	}
-	const pricing = raw.pricing
-	if (!isRecord(pricing)) {
-		return false
-	}
-	const cacheRead = pricing.cache_read
-	const input = pricing.input
-	return typeof cacheRead === "number" && typeof input === "number" && cacheRead !== input
+    if (!isRecord(raw)) {
+        return false
+    }
+    const cacheRatio = raw.cache_ratio
+    if (typeof cacheRatio === "number" && cacheRatio !== 1) {
+        return true
+    }
+    const pricing = raw.pricing
+    if (!isRecord(pricing)) {
+        return false
+    }
+    const cacheRead = pricing.cache_read
+    const input = pricing.input
+    return typeof cacheRead === "number" && typeof input === "number" && cacheRead !== input
 }
 
 export const aiHubMixModelSource = new AiHubMixModelSource()

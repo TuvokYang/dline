@@ -3,7 +3,7 @@ import type { UiMessage } from "@shared/ExtensionMessage"
 
 /** Return true when a persisted row represents a completed task boundary. */
 function isCompletionMessage(message: UiMessage): boolean {
-	return message.say === "completion_result" || message.ask === "completion_result"
+    return message.say === "completion_result" || message.ask === "completion_result"
 }
 
 /**
@@ -16,22 +16,22 @@ function isCompletionMessage(message: UiMessage): boolean {
  * checkpoint hash.
  */
 export function resolveCompletionDiffBaseReferences(
-	messages: readonly UiMessage[],
-	messageIndex: number,
+    messages: readonly UiMessage[],
+    messageIndex: number,
 ): CheckpointReferenceSet | undefined {
-	for (let index = messageIndex - 1; index >= 0; index--) {
-		const message = messages[index]
-		const references = message && isCompletionMessage(message) ? readCheckpointReferenceSet(message) : undefined
-		if (references) {
-			return references
-		}
-	}
+    for (let index = messageIndex - 1; index >= 0; index--) {
+        const message = messages[index]
+        const references = message && isCompletionMessage(message) ? readCheckpointReferenceSet(message) : undefined
+        if (references) {
+            return references
+        }
+    }
 
-	for (const message of messages) {
-		if (message.say === "checkpoint_created") {
-			const references = readCheckpointReferenceSet(message)
-			if (references) return references
-		}
-	}
-	return undefined
+    for (const message of messages) {
+        if (message.say === "checkpoint_created") {
+            const references = readCheckpointReferenceSet(message)
+            if (references) return references
+        }
+    }
+    return undefined
 }

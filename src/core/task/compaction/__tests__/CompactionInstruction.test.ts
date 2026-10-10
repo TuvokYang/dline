@@ -6,34 +6,34 @@ import { renderCompactionInstruction } from "../CompactionInstruction"
 const CWD = "/workspace/project"
 
 describe("renderCompactionInstruction", () => {
-	it("carries focus-chain guidance for a Standard request with focus tracking enabled", () => {
-		const rendered = renderCompactionInstruction({
-			cwd: CWD,
-			profile: PromptProfile.Standard,
-			focusChain: { enabled: true },
-			multiRoot: false,
-		})
+    it("carries focus-chain guidance for a Standard request with focus tracking enabled", () => {
+        const rendered = renderCompactionInstruction({
+            cwd: CWD,
+            profile: PromptProfile.Standard,
+            focusChain: { enabled: true },
+            multiRoot: false,
+        })
 
-		expect(rendered).toBe(summarizeTask({ enabled: true }, CWD, false))
-		expect(rendered).not.toBe(summarizeTask(undefined, CWD, false))
-	})
+        expect(rendered).toBe(summarizeTask({ enabled: true }, CWD, false))
+        expect(rendered).not.toBe(summarizeTask(undefined, CWD, false))
+    })
 
-	it("omits focus-chain guidance for a Lite request even when focus tracking is enabled", () => {
-		const rendered = renderCompactionInstruction({
-			cwd: CWD,
-			profile: PromptProfile.Lite,
-			focusChain: { enabled: true },
-			multiRoot: false,
-		})
+    it("omits focus-chain guidance for a Lite request even when focus tracking is enabled", () => {
+        const rendered = renderCompactionInstruction({
+            cwd: CWD,
+            profile: PromptProfile.Lite,
+            focusChain: { enabled: true },
+            multiRoot: false,
+        })
 
-		expect(rendered).toBe(summarizeTask(undefined, CWD, false))
-	})
+        expect(rendered).toBe(summarizeTask(undefined, CWD, false))
+    })
 
-	it("states the workspace path rule for single-root and multi-root workspaces alike", () => {
-		const single = renderCompactionInstruction({ cwd: CWD, profile: PromptProfile.Standard, multiRoot: false })
-		const multi = renderCompactionInstruction({ cwd: CWD, profile: PromptProfile.Standard, multiRoot: true })
+    it("states the workspace path rule for single-root and multi-root workspaces alike", () => {
+        const single = renderCompactionInstruction({ cwd: CWD, profile: PromptProfile.Standard, multiRoot: false })
+        const multi = renderCompactionInstruction({ cwd: CWD, profile: PromptProfile.Standard, multiRoot: true })
 
-		expect(multi).toBe(summarizeTask(undefined, CWD, true))
-		expect(multi).toBe(single)
-	})
+        expect(multi).toBe(summarizeTask(undefined, CWD, true))
+        expect(multi).toBe(single)
+    })
 })

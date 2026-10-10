@@ -9,8 +9,8 @@ import type { ApiHandler } from "../index"
  * resolve their model when the first request starts.
  */
 export function withCrossModelHistory(handler: ApiHandler): ApiHandler {
-	const send = handler.createMessage.bind(handler)
-	handler.createMessage = (systemPrompt, messages, tools, options) =>
-		send(systemPrompt, projectCrossModelHistory(messages, handler.getModel().id), tools, options)
-	return handler
+    const send = handler.createMessage.bind(handler)
+    handler.createMessage = (systemPrompt, messages, tools, options) =>
+        send(systemPrompt, projectCrossModelHistory(messages, handler.getModel().id), tools, options)
+    return handler
 }

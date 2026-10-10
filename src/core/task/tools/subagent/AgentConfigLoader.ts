@@ -12,68 +12,68 @@ import { rejectForbiddenSubagentTools } from "./subagent-tool-policy"
 export const AGENTS_CONFIG_DIRECTORY_NAME = "subagents"
 
 const SubagentOutputTokensSchema = z
-	.number()
-	.finite()
-	.refine(
-		(value) => value > 0 && (value < 1 || Number.isInteger(value)),
-		"maxOutputTokens must be a positive ratio below 1 or a positive integer token count.",
-	)
+    .number()
+    .finite()
+    .refine(
+        (value) => value > 0 && (value < 1 || Number.isInteger(value)),
+        "maxOutputTokens must be a positive ratio below 1 or a positive integer token count.",
+    )
 
 const AgentBaseConfigSchema = z.object({
-	name: z.string().trim().min(1),
-	description: z.string().trim().min(1),
-	tools: z.array(z.nativeEnum(ClineDefaultTool)).default([]),
-	// Set when the author wrote a tool list and policy rejected all of it.
-	// Without this, the resulting empty list is indistinguishable from "no
-	// tools field", and a request to narrow would be read as a request to
-	// inherit — granting more than was asked for.
-	toolsExplicitlyNarrowed: z.boolean().optional(),
-	skills: z.array(z.string().trim().min(1)).optional(),
-	profile: z.string().trim().min(1).nullable().optional(),
-	maxOutputTokens: SubagentOutputTokensSchema.optional(),
-	systemPrompt: z.string().trim().min(1),
+    name: z.string().trim().min(1),
+    description: z.string().trim().min(1),
+    tools: z.array(z.nativeEnum(ClineDefaultTool)).default([]),
+    // Set when the author wrote a tool list and policy rejected all of it.
+    // Without this, the resulting empty list is indistinguishable from "no
+    // tools field", and a request to narrow would be read as a request to
+    // inherit — granting more than was asked for.
+    toolsExplicitlyNarrowed: z.boolean().optional(),
+    skills: z.array(z.string().trim().min(1)).optional(),
+    profile: z.string().trim().min(1).nullable().optional(),
+    maxOutputTokens: SubagentOutputTokensSchema.optional(),
+    systemPrompt: z.string().trim().min(1),
 })
 
 const AgentConfigFrontmatterSchema = z.object({
-	name: z.string().trim().min(1),
-	description: z.string().trim().min(1),
-	profile: z.string().trim().min(1).nullable().optional(),
-	maxOutputTokens: z
-		.preprocess(
-			(value) => (typeof value === "string" && value.trim() ? Number(value.trim()) : value),
-			SubagentOutputTokensSchema,
-		)
-		.optional(),
-	tools: z.union([z.string(), z.array(z.string())]).optional(),
-	skills: z.union([z.string(), z.array(z.string())]).optional(),
+    name: z.string().trim().min(1),
+    description: z.string().trim().min(1),
+    profile: z.string().trim().min(1).nullable().optional(),
+    maxOutputTokens: z
+        .preprocess(
+            (value) => (typeof value === "string" && value.trim() ? Number(value.trim()) : value),
+            SubagentOutputTokensSchema,
+        )
+        .optional(),
+    tools: z.union([z.string(), z.array(z.string())]).optional(),
+    skills: z.union([z.string(), z.array(z.string())]).optional(),
 })
 
 export type AgentBaseConfig = z.infer<typeof AgentBaseConfigSchema>
 
 export interface ResolvedAgentConfig {
-	config: AgentBaseConfig
-	source: "project" | "global"
-	path: string
+    config: AgentBaseConfig
+    source: "project" | "global"
+    path: string
 }
 
 export interface ResolveAgentConfigOptions {
-	subagentToggles?: Record<string, boolean>
-	globalSubagentToggles?: Record<string, boolean>
+    subagentToggles?: Record<string, boolean>
+    globalSubagentToggles?: Record<string, boolean>
 }
 
 function normalizeToolName(toolName: string): ClineDefaultTool {
-	const trimmed = toolName.trim()
-	if (!trimmed) {
-		throw new Error("Tool name cannot be empty.")
-	}
-	if (trimmed === "use_skill") {
-		return ClineDefaultTool.LOAD_SKILL
-	}
-	const asDefaultTool = trimmed as ClineDefaultTool
-	if (Object.values(ClineDefaultTool).includes(asDefaultTool)) {
-		return asDefaultTool
-	}
-	throw new Error(`Unknown tool '${trimmed}'. Expected a ClineDefaultTool value.`)
+    const trimmed = toolName.trim()
+    if (!trimmed) {
+        throw new Error("Tool name cannot be empty.")
+    }
+    if (trimmed === "use_skill") {
+        return ClineDefaultTool.LOAD_SKILL
+    }
+    const asDefaultTool = trimmed as ClineDefaultTool
+    if (Object.values(ClineDefaultTool).includes(asDefaultTool)) {
+        return asDefaultTool
+    }
+    throw new Error(`Unknown tool '${trimmed}'. Expected a ClineDefaultTool value.`)
 }
 
 /**
@@ -86,57 +86,57 @@ function normalizeToolName(toolName: string): ClineDefaultTool {
  * allowlist", so the required tool is granted when that list is resolved.
  */
 function parseTools(tools: string | string[] | undefined): {
-	tools: ClineDefaultTool[]
-	explicitlyNarrowed: boolean
+    tools: ClineDefaultTool[]
+    explicitlyNarrowed: boolean
 } {
-	if (!tools) return { tools: [], explicitlyNarrowed: false }
-	const rawTools = Array.isArray(tools) ? tools : tools.split(",")
-	if (rawTools.length === 0) return { tools: [], explicitlyNarrowed: false }
+    if (!tools) return { tools: [], explicitlyNarrowed: false }
+    const rawTools = Array.isArray(tools) ? tools : tools.split(",")
+    if (rawTools.length === 0) return { tools: [], explicitlyNarrowed: false }
 
-	const requested = Array.from(new Set(rawTools.map(normalizeToolName)))
-	const permitted = rejectForbiddenSubagentTools(requested)
-	// Every entry was rejected, so the author's intent is known to be narrow
-	// even though nothing survived to express it.
-	return { tools: permitted, explicitlyNarrowed: permitted.length === 0 }
+    const requested = Array.from(new Set(rawTools.map(normalizeToolName)))
+    const permitted = rejectForbiddenSubagentTools(requested)
+    // Every entry was rejected, so the author's intent is known to be narrow
+    // even though nothing survived to express it.
+    return { tools: permitted, explicitlyNarrowed: permitted.length === 0 }
 }
 
 function normalizeSkillName(skillName: string): string {
-	const trimmed = skillName.trim()
-	if (!trimmed) throw new Error("Skill name cannot be empty.")
-	return trimmed
+    const trimmed = skillName.trim()
+    if (!trimmed) throw new Error("Skill name cannot be empty.")
+    return trimmed
 }
 
 function parseSkills(skills: string | string[] | undefined): string[] | undefined {
-	if (skills === undefined) return undefined
-	const rawSkills = Array.isArray(skills) ? skills : skills.split(",")
-	return Array.from(new Set(rawSkills.map(normalizeSkillName)))
+    if (skills === undefined) return undefined
+    const rawSkills = Array.isArray(skills) ? skills : skills.split(",")
+    return Array.from(new Set(rawSkills.map(normalizeSkillName)))
 }
 
 export function parseAgentConfigFromYaml(content: string): AgentBaseConfig {
-	const { data, body, hadFrontmatter, parseError } = parseYamlFrontmatter(content)
-	if (parseError) throw new Error(`Failed to parse YAML frontmatter: ${parseError}`)
-	if (!hadFrontmatter) throw new Error("Missing YAML frontmatter block in agent config file.")
-	const parsedFrontmatter = AgentConfigFrontmatterSchema.parse(data)
-	const systemPrompt = body.trim()
-	if (!systemPrompt) throw new Error("Missing system prompt body in agent config file.")
-	const parsedTools = parseTools(parsedFrontmatter.tools)
-	return AgentBaseConfigSchema.parse({
-		name: parsedFrontmatter.name,
-		description: parsedFrontmatter.description,
-		profile: parsedFrontmatter.profile,
-		maxOutputTokens: parsedFrontmatter.maxOutputTokens,
-		tools: parsedTools.tools,
-		...(parsedTools.explicitlyNarrowed ? { toolsExplicitlyNarrowed: true } : {}),
-		skills: parseSkills(parsedFrontmatter.skills),
-		systemPrompt,
-	}) as AgentBaseConfig
+    const { data, body, hadFrontmatter, parseError } = parseYamlFrontmatter(content)
+    if (parseError) throw new Error(`Failed to parse YAML frontmatter: ${parseError}`)
+    if (!hadFrontmatter) throw new Error("Missing YAML frontmatter block in agent config file.")
+    const parsedFrontmatter = AgentConfigFrontmatterSchema.parse(data)
+    const systemPrompt = body.trim()
+    if (!systemPrompt) throw new Error("Missing system prompt body in agent config file.")
+    const parsedTools = parseTools(parsedFrontmatter.tools)
+    return AgentBaseConfigSchema.parse({
+        name: parsedFrontmatter.name,
+        description: parsedFrontmatter.description,
+        profile: parsedFrontmatter.profile,
+        maxOutputTokens: parsedFrontmatter.maxOutputTokens,
+        tools: parsedTools.tools,
+        ...(parsedTools.explicitlyNarrowed ? { toolsExplicitlyNarrowed: true } : {}),
+        skills: parseSkills(parsedFrontmatter.skills),
+        systemPrompt,
+    }) as AgentBaseConfig
 }
 
 function normalizeAgentName(name: string): string {
-	return name.trim().toLowerCase()
+    return name.trim().toLowerCase()
 }
 function isYamlFile(filePath: string): boolean {
-	return /\.(yaml|yml)$/i.test(filePath)
+    return /\.(yaml|yml)$/i.test(filePath)
 }
 
 /**
@@ -147,23 +147,23 @@ function isYamlFile(filePath: string): boolean {
  * @returns Created file path, or undefined when YAML already exists.
  */
 export async function ensureDefaultSubagentConfigExists(dirPath: string): Promise<string | undefined> {
-	await fs.mkdir(dirPath, { recursive: true })
-	const entries = await fs.readdir(dirPath, { withFileTypes: true })
-	if (entries.some((entry) => entry.isFile() && isYamlFile(entry.name))) {
-		return undefined
-	}
+    await fs.mkdir(dirPath, { recursive: true })
+    const entries = await fs.readdir(dirPath, { withFileTypes: true })
+    if (entries.some((entry) => entry.isFile() && isYamlFile(entry.name))) {
+        return undefined
+    }
 
-	const defaultPath = path.join(dirPath, DEFAULT_SUBAGENT_FILE_NAME)
-	try {
-		await fs.writeFile(defaultPath, DEFAULT_SUBAGENT_YAML_CONTENT, { encoding: "utf8", flag: "wx" })
-		Logger.log(`[AgentConfigLoader] Created default subagent config at ${defaultPath}`)
-		return defaultPath
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-			return undefined
-		}
-		throw error
-	}
+    const defaultPath = path.join(dirPath, DEFAULT_SUBAGENT_FILE_NAME)
+    try {
+        await fs.writeFile(defaultPath, DEFAULT_SUBAGENT_YAML_CONTENT, { encoding: "utf8", flag: "wx" })
+        Logger.log(`[AgentConfigLoader] Created default subagent config at ${defaultPath}`)
+        return defaultPath
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+            return undefined
+        }
+        throw error
+    }
 }
 
 /**
@@ -174,38 +174,38 @@ export async function ensureDefaultSubagentConfigExists(dirPath: string): Promis
  * @returns True when the subagent is not explicitly disabled.
  */
 function isEnabledPath(filePath: string, source: "project" | "global", options?: ResolveAgentConfigOptions): boolean {
-	const toggles = source === "global" ? options?.globalSubagentToggles : options?.subagentToggles
-	return toggles?.[filePath] !== false
+    const toggles = source === "global" ? options?.globalSubagentToggles : options?.subagentToggles
+    return toggles?.[filePath] !== false
 }
 
 export async function readAgentConfigsFromDisk(dirPath: string): Promise<Map<string, AgentBaseConfig>> {
-	const configs = new Map<string, AgentBaseConfig>()
-	try {
-		const entries = await fs.readdir(dirPath, { withFileTypes: true })
-		const yamlFiles = entries
-			.filter((e) => e.isFile())
-			.map((e) => e.name)
-			.filter(isYamlFile)
-			.sort((a, b) => a.localeCompare(b))
-		Logger.debug(`[AgentConfigLoader] Found ${yamlFiles.length} YAML file(s).`)
-		await Promise.all(
-			yamlFiles.map(async (fileName) => {
-				const fp = path.join(dirPath, fileName)
-				try {
-					const content = await fs.readFile(fp, "utf8")
-					const parsed = parseAgentConfigFromYaml(content)
-					configs.set(normalizeAgentName(parsed.name), parsed)
-				} catch (error) {
-					Logger.error(`[AgentConfigLoader] Failed to parse agent config '${fileName}'`, error)
-				}
-			}),
-		)
-		return configs
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return configs
-		Logger.error("[AgentConfigLoader] Failed to read agent configs from disk", error)
-		throw error
-	}
+    const configs = new Map<string, AgentBaseConfig>()
+    try {
+        const entries = await fs.readdir(dirPath, { withFileTypes: true })
+        const yamlFiles = entries
+            .filter((e) => e.isFile())
+            .map((e) => e.name)
+            .filter(isYamlFile)
+            .sort((a, b) => a.localeCompare(b))
+        Logger.debug(`[AgentConfigLoader] Found ${yamlFiles.length} YAML file(s).`)
+        await Promise.all(
+            yamlFiles.map(async (fileName) => {
+                const fp = path.join(dirPath, fileName)
+                try {
+                    const content = await fs.readFile(fp, "utf8")
+                    const parsed = parseAgentConfigFromYaml(content)
+                    configs.set(normalizeAgentName(parsed.name), parsed)
+                } catch (error) {
+                    Logger.error(`[AgentConfigLoader] Failed to parse agent config '${fileName}'`, error)
+                }
+            }),
+        )
+        return configs
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return configs
+        Logger.error("[AgentConfigLoader] Failed to read agent configs from disk", error)
+        throw error
+    }
 }
 
 /**
@@ -216,38 +216,38 @@ export async function readAgentConfigsFromDisk(dirPath: string): Promise<Map<str
  * @returns Matching agent config with source, or undefined.
  */
 export async function listEnabledAgentConfigs(cwd: string, options?: ResolveAgentConfigOptions): Promise<ResolvedAgentConfig[]> {
-	const resolved: ResolvedAgentConfig[] = []
-	const seen = new Set<string>()
-	for (const directory of getSubagentsScanDirectories(cwd)) {
-		const configs = await readAgentConfigsFromDisk(directory.path)
-		for (const config of configs.values()) {
-			const normalized = normalizeAgentName(config.name)
-			if (seen.has(normalized)) continue
-			const filePath = await findAgentConfigPath(directory.path, config.name)
-			if (!filePath || !isEnabledPath(filePath, directory.source, options)) continue
-			seen.add(normalized)
-			resolved.push({ config, source: directory.source, path: filePath })
-		}
-	}
-	return resolved
+    const resolved: ResolvedAgentConfig[] = []
+    const seen = new Set<string>()
+    for (const directory of getSubagentsScanDirectories(cwd)) {
+        const configs = await readAgentConfigsFromDisk(directory.path)
+        for (const config of configs.values()) {
+            const normalized = normalizeAgentName(config.name)
+            if (seen.has(normalized)) continue
+            const filePath = await findAgentConfigPath(directory.path, config.name)
+            if (!filePath || !isEnabledPath(filePath, directory.source, options)) continue
+            seen.add(normalized)
+            resolved.push({ config, source: directory.source, path: filePath })
+        }
+    }
+    return resolved
 }
 
 export async function resolveAgentConfig(
-	cwd: string,
-	subagentName?: string,
-	options?: ResolveAgentConfigOptions,
+    cwd: string,
+    subagentName?: string,
+    options?: ResolveAgentConfigOptions,
 ): Promise<ResolvedAgentConfig | undefined> {
-	if (!subagentName?.trim()) return undefined
-	const normalized = normalizeAgentName(subagentName)
-	for (const directory of getSubagentsScanDirectories(cwd)) {
-		const configs = await readAgentConfigsFromDisk(directory.path)
-		const config = configs.get(normalized)
-		if (!config) continue
-		const filePath = await findAgentConfigPath(directory.path, config.name)
-		if (!filePath || !isEnabledPath(filePath, directory.source, options)) return undefined
-		return { config, source: directory.source, path: filePath }
-	}
-	return undefined
+    if (!subagentName?.trim()) return undefined
+    const normalized = normalizeAgentName(subagentName)
+    for (const directory of getSubagentsScanDirectories(cwd)) {
+        const configs = await readAgentConfigsFromDisk(directory.path)
+        const config = configs.get(normalized)
+        if (!config) continue
+        const filePath = await findAgentConfigPath(directory.path, config.name)
+        if (!filePath || !isEnabledPath(filePath, directory.source, options)) return undefined
+        return { config, source: directory.source, path: filePath }
+    }
+    return undefined
 }
 
 /**
@@ -257,183 +257,183 @@ export async function resolveAgentConfig(
  * @returns Matching file path, or undefined.
  */
 async function findAgentConfigPath(dirPath: string, subagentName: string): Promise<string | undefined> {
-	const normalized = normalizeAgentName(subagentName)
-	try {
-		const entries = await fs.readdir(dirPath, { withFileTypes: true })
-		for (const entry of entries) {
-			if (!entry.isFile() || !isYamlFile(entry.name)) continue
-			const filePath = path.join(dirPath, entry.name)
-			try {
-				const parsed = parseAgentConfigFromYaml(await fs.readFile(filePath, "utf8"))
-				if (normalizeAgentName(parsed.name) === normalized) return filePath
-			} catch {}
-		}
-	} catch {
-		return undefined
-	}
-	return undefined
+    const normalized = normalizeAgentName(subagentName)
+    try {
+        const entries = await fs.readdir(dirPath, { withFileTypes: true })
+        for (const entry of entries) {
+            if (!entry.isFile() || !isYamlFile(entry.name)) continue
+            const filePath = path.join(dirPath, entry.name)
+            try {
+                const parsed = parseAgentConfigFromYaml(await fs.readFile(filePath, "utf8"))
+                if (normalizeAgentName(parsed.name) === normalized) return filePath
+            } catch {}
+        }
+    } catch {
+        return undefined
+    }
+    return undefined
 }
 
 export type AgentConfigChangeListener = (configs: ReadonlyMap<string, AgentBaseConfig>, error?: Error) => void
 
 export class AgentConfigLoader {
-	private static instances = new Map<string, AgentConfigLoader>()
-	private readonly directoryPath: string
-	private readonly initialLoadPromise: Promise<void>
-	private watcher?: FSWatcher
-	private disposed = false
-	private cachedConfigs = new Map<string, AgentBaseConfig>()
-	private listeners = new Set<AgentConfigChangeListener>()
+    private static instances = new Map<string, AgentConfigLoader>()
+    private readonly directoryPath: string
+    private readonly initialLoadPromise: Promise<void>
+    private watcher?: FSWatcher
+    private disposed = false
+    private cachedConfigs = new Map<string, AgentBaseConfig>()
+    private listeners = new Set<AgentConfigChangeListener>()
 
-	private constructor(
-		dirPath: string,
-		private readonly ensureDefaultConfig: boolean,
-	) {
-		this.directoryPath = dirPath
-		this.initialLoadPromise = this.load()
-			.then(() => undefined)
-			.catch((e) => Logger.error("[AgentConfigLoader] Failed to load initial agent configs", e))
-			.finally(() => {
-				if (this.disposed) return
-				return this.watch().catch((e) => Logger.error("[AgentConfigLoader] Failed to start watching agent configs", e))
-			})
-	}
+    private constructor(
+        dirPath: string,
+        private readonly ensureDefaultConfig: boolean,
+    ) {
+        this.directoryPath = dirPath
+        this.initialLoadPromise = this.load()
+            .then(() => undefined)
+            .catch((e) => Logger.error("[AgentConfigLoader] Failed to load initial agent configs", e))
+            .finally(() => {
+                if (this.disposed) return
+                return this.watch().catch((e) => Logger.error("[AgentConfigLoader] Failed to start watching agent configs", e))
+            })
+    }
 
-	public static getInstance(dirPath?: string): AgentConfigLoader {
-		const resolvedPath = dirPath || getDlineSubagentsDirectoryPath()
-		const existing = AgentConfigLoader.instances.get(resolvedPath)
-		if (existing) return existing
-		const loader = new AgentConfigLoader(resolvedPath, dirPath === undefined)
-		AgentConfigLoader.instances.set(resolvedPath, loader)
-		return loader
-	}
+    public static getInstance(dirPath?: string): AgentConfigLoader {
+        const resolvedPath = dirPath || getDlineSubagentsDirectoryPath()
+        const existing = AgentConfigLoader.instances.get(resolvedPath)
+        if (existing) return existing
+        const loader = new AgentConfigLoader(resolvedPath, dirPath === undefined)
+        AgentConfigLoader.instances.set(resolvedPath, loader)
+        return loader
+    }
 
-	public static async resetInstanceForTests(): Promise<void> {
-		await Promise.all(Array.from(AgentConfigLoader.instances.values()).map((loader) => loader.dispose()))
-		AgentConfigLoader.instances.clear()
-	}
+    public static async resetInstanceForTests(): Promise<void> {
+        await Promise.all(Array.from(AgentConfigLoader.instances.values()).map((loader) => loader.dispose()))
+        AgentConfigLoader.instances.clear()
+    }
 
-	public getConfigPath(): string {
-		return this.directoryPath
-	}
-	public async ready(): Promise<void> {
-		await this.initialLoadPromise
-	}
+    public getConfigPath(): string {
+        return this.directoryPath
+    }
+    public async ready(): Promise<void> {
+        await this.initialLoadPromise
+    }
 
-	public getCachedConfig(subagentName?: string): AgentBaseConfig | undefined {
-		if (!subagentName?.trim()) return undefined
-		return this.cachedConfigs.get(normalizeAgentName(subagentName))
-	}
+    public getCachedConfig(subagentName?: string): AgentBaseConfig | undefined {
+        if (!subagentName?.trim()) return undefined
+        return this.cachedConfigs.get(normalizeAgentName(subagentName))
+    }
 
-	public getAllCachedConfigs(): ReadonlyMap<string, AgentBaseConfig> {
-		return new Map(this.cachedConfigs)
-	}
+    public getAllCachedConfigs(): ReadonlyMap<string, AgentBaseConfig> {
+        return new Map(this.cachedConfigs)
+    }
 
-	public getAllCachedConfigsWithToolNames(): Array<{ toolName: string; config: AgentBaseConfig }> {
-		return []
-	}
+    public getAllCachedConfigsWithToolNames(): Array<{ toolName: string; config: AgentBaseConfig }> {
+        return []
+    }
 
-	public resolveSubagentNameForTool(_toolName?: string): string | undefined {
-		return undefined
-	}
+    public resolveSubagentNameForTool(_toolName?: string): string | undefined {
+        return undefined
+    }
 
-	public isDynamicSubagentTool(_toolName?: string): boolean {
-		return false
-	}
+    public isDynamicSubagentTool(_toolName?: string): boolean {
+        return false
+    }
 
-	public async load(): Promise<ReadonlyMap<string, AgentBaseConfig>> {
-		if (this.ensureDefaultConfig) {
-			await this.ensureReadmeExists()
-			await ensureDefaultSubagentConfigExists(this.directoryPath)
-		}
-		const configs = await readAgentConfigsFromDisk(this.directoryPath)
-		this.cachedConfigs = configs
-		Logger.debug(`[AgentConfigLoader] Loaded ${configs.size} agent config(s) from disk.`)
-		if (!this.ensureDefaultConfig) {
-			await this.ensureReadmeExists()
-		}
-		return this.getAllCachedConfigs()
-	}
+    public async load(): Promise<ReadonlyMap<string, AgentBaseConfig>> {
+        if (this.ensureDefaultConfig) {
+            await this.ensureReadmeExists()
+            await ensureDefaultSubagentConfigExists(this.directoryPath)
+        }
+        const configs = await readAgentConfigsFromDisk(this.directoryPath)
+        this.cachedConfigs = configs
+        Logger.debug(`[AgentConfigLoader] Loaded ${configs.size} agent config(s) from disk.`)
+        if (!this.ensureDefaultConfig) {
+            await this.ensureReadmeExists()
+        }
+        return this.getAllCachedConfigs()
+    }
 
-	private async ensureReadmeExists(): Promise<void> {
-		try {
-			const readmePath = path.join(this.directoryPath, "README.md")
-			if (
-				await fs.stat(readmePath).then(
-					() => true,
-					() => false,
-				)
-			)
-				return
-			try {
-				const entries = await fs.readdir(this.directoryPath)
-				if (entries.some((e) => e.endsWith(".yml") || e.endsWith(".yaml"))) return
-			} catch {
-				/* directory doesn't exist yet */
-			}
-			await fs.mkdir(this.directoryPath, { recursive: true })
-			await fs.writeFile(readmePath, SUBAGENT_README_CONTENT, "utf8")
-			Logger.log("[AgentConfigLoader] Created README.md in agents directory")
-		} catch (e) {
-			Logger.warn("[AgentConfigLoader] Failed to write README.md:", e)
-		}
-	}
+    private async ensureReadmeExists(): Promise<void> {
+        try {
+            const readmePath = path.join(this.directoryPath, "README.md")
+            if (
+                await fs.stat(readmePath).then(
+                    () => true,
+                    () => false,
+                )
+            )
+                return
+            try {
+                const entries = await fs.readdir(this.directoryPath)
+                if (entries.some((e) => e.endsWith(".yml") || e.endsWith(".yaml"))) return
+            } catch {
+                /* directory doesn't exist yet */
+            }
+            await fs.mkdir(this.directoryPath, { recursive: true })
+            await fs.writeFile(readmePath, SUBAGENT_README_CONTENT, "utf8")
+            Logger.log("[AgentConfigLoader] Created README.md in agents directory")
+        } catch (e) {
+            Logger.warn("[AgentConfigLoader] Failed to write README.md:", e)
+        }
+    }
 
-	public async watch(listener?: AgentConfigChangeListener): Promise<void> {
-		if (this.disposed) return
-		if (listener) this.listeners.add(listener)
-		if (this.watcher) return
-		this.watcher = chokidar.watch(this.directoryPath, {
-			persistent: true,
-			ignoreInitial: true,
-			awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
-		})
-		this.watcher
-			.on("add", (fp) => {
-				if (isYamlFile(fp)) void this.reloadAndNotify()
-			})
-			.on("change", (fp) => {
-				if (isYamlFile(fp)) void this.reloadAndNotify()
-			})
-			.on("unlink", (fp) => {
-				if (isYamlFile(fp)) void this.reloadAndNotify()
-			})
-			.on("error", (error) => {
-				const e = error instanceof Error ? error : new Error(String(error))
-				Logger.error("[AgentConfigLoader] Failed to watch agent configs directory", e)
-				this.notify(this.cachedConfigs, e)
-			})
-	}
+    public async watch(listener?: AgentConfigChangeListener): Promise<void> {
+        if (this.disposed) return
+        if (listener) this.listeners.add(listener)
+        if (this.watcher) return
+        this.watcher = chokidar.watch(this.directoryPath, {
+            persistent: true,
+            ignoreInitial: true,
+            awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+        })
+        this.watcher
+            .on("add", (fp) => {
+                if (isYamlFile(fp)) void this.reloadAndNotify()
+            })
+            .on("change", (fp) => {
+                if (isYamlFile(fp)) void this.reloadAndNotify()
+            })
+            .on("unlink", (fp) => {
+                if (isYamlFile(fp)) void this.reloadAndNotify()
+            })
+            .on("error", (error) => {
+                const e = error instanceof Error ? error : new Error(String(error))
+                Logger.error("[AgentConfigLoader] Failed to watch agent configs directory", e)
+                this.notify(this.cachedConfigs, e)
+            })
+    }
 
-	public unwatch(listener: AgentConfigChangeListener): void {
-		this.listeners.delete(listener)
-	}
+    public unwatch(listener: AgentConfigChangeListener): void {
+        this.listeners.delete(listener)
+    }
 
-	public async dispose(): Promise<void> {
-		this.disposed = true
-		await this.initialLoadPromise
-		const watcher = this.watcher
-		this.watcher = undefined
-		this.listeners.clear()
-		if (watcher) {
-			await watcher.close()
-		}
-	}
+    public async dispose(): Promise<void> {
+        this.disposed = true
+        await this.initialLoadPromise
+        const watcher = this.watcher
+        this.watcher = undefined
+        this.listeners.clear()
+        if (watcher) {
+            await watcher.close()
+        }
+    }
 
-	private async reloadAndNotify(): Promise<void> {
-		try {
-			await this.load()
-			this.notify(this.cachedConfigs)
-		} catch (error) {
-			const e = error instanceof Error ? error : new Error(String(error))
-			Logger.error("[AgentConfigLoader] Failed to reload agent configs", e)
-			this.notify(this.cachedConfigs, e)
-		}
-	}
+    private async reloadAndNotify(): Promise<void> {
+        try {
+            await this.load()
+            this.notify(this.cachedConfigs)
+        } catch (error) {
+            const e = error instanceof Error ? error : new Error(String(error))
+            Logger.error("[AgentConfigLoader] Failed to reload agent configs", e)
+            this.notify(this.cachedConfigs, e)
+        }
+    }
 
-	private notify(configs: ReadonlyMap<string, AgentBaseConfig>, error?: Error): void {
-		for (const listener of this.listeners) listener(new Map(configs), error)
-	}
+    private notify(configs: ReadonlyMap<string, AgentBaseConfig>, error?: Error): void {
+        for (const listener of this.listeners) listener(new Map(configs), error)
+    }
 }
 
 const SUBAGENT_README_CONTENT = `# Dline Subagents

@@ -9,21 +9,21 @@ import type { CompactionContinuation } from "../stores/payload/TaskPayloadEnvelo
  * its request contained.
  */
 export interface CompactionSpan {
-	readonly from: JournalWatermark
-	readonly to: JournalWatermark
+    readonly from: JournalWatermark
+    readonly to: JournalWatermark
 }
 
 /** The summary a completed compaction produced, and the prose that carried it. */
 export interface CompactionSummary {
-	readonly summary: string
-	readonly assistantText?: string
-	/** Span the request summarized; a journal landing without one is refused, never re-derived. */
-	readonly span?: CompactionSpan
-	/**
-	 * Journal seq of the last message the summary stands for, when it covers
-	 * only the oldest part of the span; absent means the whole span.
-	 */
-	readonly coveredThrough?: number
+    readonly summary: string
+    readonly assistantText?: string
+    /** Span the request summarized; a journal landing without one is refused, never re-derived. */
+    readonly span?: CompactionSpan
+    /**
+     * Journal seq of the last message the summary stands for, when it covers
+     * only the oldest part of the span; absent means the whole span.
+     */
+    readonly coveredThrough?: number
 }
 
 /**
@@ -39,19 +39,19 @@ export interface CompactionSummary {
  * can compact with no presentation at all.
  */
 export interface CompactionLandingPort {
-	land(input: CompactionLandingInput): Promise<void>
+    land(input: CompactionLandingInput): Promise<void>
 }
 
 export type CompactionLandingInput = {
-	readonly compactionId: string
-	readonly attempt: string
-	/**
-	 * The run's signal. The canonical landing checks it at its commit point, so
-	 * a run stopped while the landing was preparing never condenses anything.
-	 */
-	readonly signal?: AbortSignal
-	/** The user's reply the span ends on; the summary carries it so it is not condensed away. */
-	readonly continuation?: CompactionContinuation
+    readonly compactionId: string
+    readonly attempt: string
+    /**
+     * The run's signal. The canonical landing checks it at its commit point, so
+     * a run stopped while the landing was preparing never condenses anything.
+     */
+    readonly signal?: AbortSignal
+    /** The user's reply the span ends on; the summary carries it so it is not condensed away. */
+    readonly continuation?: CompactionContinuation
 } & CompactionSummary
 
 /**
@@ -63,15 +63,15 @@ export type CompactionLandingInput = {
  * chat claims it was.
  */
 export class CompositeCompactionLanding implements CompactionLandingPort {
-	constructor(private readonly landings: readonly CompactionLandingPort[]) {}
+    constructor(private readonly landings: readonly CompactionLandingPort[]) {}
 
-	async land(input: CompactionLandingInput): Promise<void> {
-		for (const landing of this.landings) await landing.land(input)
-	}
+    async land(input: CompactionLandingInput): Promise<void> {
+        for (const landing of this.landings) await landing.land(input)
+    }
 }
 
 function readText(value: unknown): string | undefined {
-	return typeof value === "string" && value.trim().length > 0 ? value : undefined
+    return typeof value === "string" && value.trim().length > 0 ? value : undefined
 }
 
 /**
@@ -83,14 +83,14 @@ function readText(value: unknown): string | undefined {
  * must not replace the conversation with an empty one.
  */
 export function readCompactionSummary(result: unknown): CompactionSummary | undefined {
-	if (!result || typeof result !== "object") return undefined
-	const summary = readText((result as { summary?: unknown }).summary)
-	if (!summary) return undefined
-	const assistantText = readText((result as { assistantText?: unknown }).assistantText)
-	const coveredThrough = (result as { coveredThrough?: unknown }).coveredThrough
-	return {
-		summary,
-		...(assistantText === undefined ? {} : { assistantText }),
-		...(typeof coveredThrough === "number" && Number.isSafeInteger(coveredThrough) ? { coveredThrough } : {}),
-	}
+    if (!result || typeof result !== "object") return undefined
+    const summary = readText((result as { summary?: unknown }).summary)
+    if (!summary) return undefined
+    const assistantText = readText((result as { assistantText?: unknown }).assistantText)
+    const coveredThrough = (result as { coveredThrough?: unknown }).coveredThrough
+    return {
+        summary,
+        ...(assistantText === undefined ? {} : { assistantText }),
+        ...(typeof coveredThrough === "number" && Number.isSafeInteger(coveredThrough) ? { coveredThrough } : {}),
+    }
 }

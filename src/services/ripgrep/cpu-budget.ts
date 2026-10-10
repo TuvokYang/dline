@@ -34,18 +34,18 @@ export const WORKSPACE_CPU_BUDGET_RATIO = 0.5
  * alone must always be able to spend its full allowance.
  */
 export interface RipgrepCpuBudget {
-	/** Logical threads reported by the OS, including SMT/Hyper-Threading siblings. */
-	readonly logicalThreads: number
-	/** Value passed to ripgrep's `--threads` flag. */
-	readonly threadsPerProcess: number
-	/** Threads a single task may use across its concurrent processes. */
-	readonly taskBudgetThreads: number
-	/** Concurrent ripgrep processes allowed within one task. */
-	readonly maxProcessesPerTask: number
-	/** Threads all tasks together may use. */
-	readonly workspaceBudgetThreads: number
-	/** Concurrent ripgrep processes allowed across all tasks. */
-	readonly maxProcessesPerWorkspace: number
+    /** Logical threads reported by the OS, including SMT/Hyper-Threading siblings. */
+    readonly logicalThreads: number
+    /** Value passed to ripgrep's `--threads` flag. */
+    readonly threadsPerProcess: number
+    /** Threads a single task may use across its concurrent processes. */
+    readonly taskBudgetThreads: number
+    /** Concurrent ripgrep processes allowed within one task. */
+    readonly maxProcessesPerTask: number
+    /** Threads all tasks together may use. */
+    readonly workspaceBudgetThreads: number
+    /** Concurrent ripgrep processes allowed across all tasks. */
+    readonly maxProcessesPerWorkspace: number
 }
 
 /**
@@ -61,8 +61,8 @@ export interface RipgrepCpuBudget {
  * single thread rather than dividing by zero.
  */
 function detectLogicalThreads(): number {
-	const reported = os.cpus()?.length ?? 0
-	return reported > 0 ? reported : 1
+    const reported = os.cpus()?.length ?? 0
+    return reported > 0 ? reported : 1
 }
 
 /**
@@ -74,40 +74,40 @@ function detectLogicalThreads(): number {
  * traversal while leaving room for a second process once the budget allows.
  */
 function planThreadsPerProcess(taskBudgetThreads: number): number {
-	return taskBudgetThreads >= 2 ? 2 : 1
+    return taskBudgetThreads >= 2 ? 2 : 1
 }
 
 function planBudget(logicalThreads: number): RipgrepCpuBudget {
-	const taskBudgetThreads = Math.max(1, Math.floor(logicalThreads * TASK_CPU_BUDGET_RATIO))
-	// A single task must never be throttled below its own allowance, even when
-	// rounding pushes the workspace share under it on a very small machine.
-	const workspaceBudgetThreads = Math.max(taskBudgetThreads, Math.floor(logicalThreads * WORKSPACE_CPU_BUDGET_RATIO))
+    const taskBudgetThreads = Math.max(1, Math.floor(logicalThreads * TASK_CPU_BUDGET_RATIO))
+    // A single task must never be throttled below its own allowance, even when
+    // rounding pushes the workspace share under it on a very small machine.
+    const workspaceBudgetThreads = Math.max(taskBudgetThreads, Math.floor(logicalThreads * WORKSPACE_CPU_BUDGET_RATIO))
 
-	const threadsPerProcess = planThreadsPerProcess(taskBudgetThreads)
+    const threadsPerProcess = planThreadsPerProcess(taskBudgetThreads)
 
-	return {
-		logicalThreads,
-		threadsPerProcess,
-		taskBudgetThreads,
-		maxProcessesPerTask: Math.max(1, Math.floor(taskBudgetThreads / threadsPerProcess)),
-		workspaceBudgetThreads,
-		maxProcessesPerWorkspace: Math.max(1, Math.floor(workspaceBudgetThreads / threadsPerProcess)),
-	}
+    return {
+        logicalThreads,
+        threadsPerProcess,
+        taskBudgetThreads,
+        maxProcessesPerTask: Math.max(1, Math.floor(taskBudgetThreads / threadsPerProcess)),
+        workspaceBudgetThreads,
+        maxProcessesPerWorkspace: Math.max(1, Math.floor(workspaceBudgetThreads / threadsPerProcess)),
+    }
 }
 
 let cachedBudget: RipgrepCpuBudget | undefined
 
 /** Resolved budget for this process; the CPU topology cannot change at runtime. */
 export function getRipgrepCpuBudget(): RipgrepCpuBudget {
-	if (!cachedBudget) {
-		cachedBudget = planBudget(detectLogicalThreads())
-	}
-	return cachedBudget
+    if (!cachedBudget) {
+        cachedBudget = planBudget(detectLogicalThreads())
+    }
+    return cachedBudget
 }
 
 /** Test seam: recompute the budget, optionally against a forced thread count. */
 export function resetRipgrepCpuBudgetForTesting(logicalThreads?: number): void {
-	cachedBudget = logicalThreads === undefined ? undefined : planBudget(Math.max(1, logicalThreads))
+    cachedBudget = logicalThreads === undefined ? undefined : planBudget(Math.max(1, logicalThreads))
 }
 
 /**
@@ -117,7 +117,7 @@ export function resetRipgrepCpuBudgetForTesting(logicalThreads?: number): void {
  * slot gate so argument construction stays synchronous and testable.
  */
 export function ripgrepThreadArgs(): readonly string[] {
-	return ["--threads", String(getRipgrepCpuBudget().threadsPerProcess)]
+    return ["--threads", String(getRipgrepCpuBudget().threadsPerProcess)]
 }
 
 /**
@@ -136,49 +136,49 @@ export const AMBIENT_RIPGREP_SCOPE: RipgrepBudgetScope = "workspace:ambient"
 
 /** Budget scope for one task, keyed by its task id. */
 export function taskRipgrepScope(taskId: string | undefined): RipgrepBudgetScope {
-	return taskId ? `task:${taskId}` : AMBIENT_RIPGREP_SCOPE
+    return taskId ? `task:${taskId}` : AMBIENT_RIPGREP_SCOPE
 }
 
 /** Waiters queued behind a busy scope, released FIFO. */
 type RipgrepWaiter = () => void
 
 interface ScopeState {
-	active: number
-	readonly waiters: RipgrepWaiter[]
+    active: number
+    readonly waiters: RipgrepWaiter[]
 }
 
 function abortReason(signal: AbortSignal): Error {
-	return signal.reason instanceof Error ? signal.reason : new Error("Ripgrep slot wait aborted")
+    return signal.reason instanceof Error ? signal.reason : new Error("Ripgrep slot wait aborted")
 }
 
 function waitForSlot(waiters: RipgrepWaiter[], grant: () => void, signal?: AbortSignal): Promise<void> {
-	if (signal?.aborted) {
-		return Promise.reject(abortReason(signal))
-	}
+    if (signal?.aborted) {
+        return Promise.reject(abortReason(signal))
+    }
 
-	return new Promise<void>((resolve, reject) => {
-		let settled = false
-		const cleanup = () => signal?.removeEventListener("abort", handleAbort)
-		const waiter = () => {
-			if (settled) return
-			settled = true
-			cleanup()
-			grant()
-			resolve()
-		}
-		const handleAbort = () => {
-			if (settled) return
-			settled = true
-			const index = waiters.indexOf(waiter)
-			if (index >= 0) waiters.splice(index, 1)
-			cleanup()
-			reject(abortReason(signal!))
-		}
+    return new Promise<void>((resolve, reject) => {
+        let settled = false
+        const cleanup = () => signal?.removeEventListener("abort", handleAbort)
+        const waiter = () => {
+            if (settled) return
+            settled = true
+            cleanup()
+            grant()
+            resolve()
+        }
+        const handleAbort = () => {
+            if (settled) return
+            settled = true
+            const index = waiters.indexOf(waiter)
+            if (index >= 0) waiters.splice(index, 1)
+            cleanup()
+            reject(abortReason(signal!))
+        }
 
-		waiters.push(waiter)
-		signal?.addEventListener("abort", handleAbort, { once: true })
-		if (signal?.aborted) handleAbort()
-	})
+        waiters.push(waiter)
+        signal?.addEventListener("abort", handleAbort, { once: true })
+        if (signal?.aborted) handleAbort()
+    })
 }
 
 const scopes = new Map<RipgrepBudgetScope, ScopeState>()
@@ -187,12 +187,12 @@ let workspaceActive = 0
 
 /** Processes currently running across all scopes. Exposed for tests. */
 export function activeRipgrepProcesses(): number {
-	return workspaceActive
+    return workspaceActive
 }
 
 /** Processes currently running for one scope. Exposed for tests. */
 export function activeRipgrepProcessesForScope(scope: RipgrepBudgetScope): number {
-	return scopes.get(scope)?.active ?? 0
+    return scopes.get(scope)?.active ?? 0
 }
 
 /**
@@ -206,93 +206,93 @@ export function activeRipgrepProcessesForScope(scope: RipgrepBudgetScope): numbe
  * keeps the two gates deadlock-free; releasing happens in the reverse order.
  */
 export async function withRipgrepSlot<T>(
-	scope: RipgrepBudgetScope,
-	spawnAndWait: () => Promise<T>,
-	signal?: AbortSignal,
+    scope: RipgrepBudgetScope,
+    spawnAndWait: () => Promise<T>,
+    signal?: AbortSignal,
 ): Promise<T> {
-	await acquireScopeSlot(scope, signal)
-	try {
-		await acquireWorkspaceSlot(signal)
-	} catch (error) {
-		releaseScopeSlot(scope)
-		throw error
-	}
+    await acquireScopeSlot(scope, signal)
+    try {
+        await acquireWorkspaceSlot(signal)
+    } catch (error) {
+        releaseScopeSlot(scope)
+        throw error
+    }
 
-	try {
-		if (signal?.aborted) throw abortReason(signal)
-		return await spawnAndWait()
-	} finally {
-		releaseWorkspaceSlot()
-		releaseScopeSlot(scope)
-	}
+    try {
+        if (signal?.aborted) throw abortReason(signal)
+        return await spawnAndWait()
+    } finally {
+        releaseWorkspaceSlot()
+        releaseScopeSlot(scope)
+    }
 }
 
 function acquireScopeSlot(scope: RipgrepBudgetScope, signal?: AbortSignal): Promise<void> {
-	if (signal?.aborted) return Promise.reject(abortReason(signal))
-	const { maxProcessesPerTask } = getRipgrepCpuBudget()
-	let state = scopes.get(scope)
-	if (!state) {
-		state = { active: 0, waiters: [] }
-		scopes.set(scope, state)
-	}
+    if (signal?.aborted) return Promise.reject(abortReason(signal))
+    const { maxProcessesPerTask } = getRipgrepCpuBudget()
+    let state = scopes.get(scope)
+    if (!state) {
+        state = { active: 0, waiters: [] }
+        scopes.set(scope, state)
+    }
 
-	if (state.active < maxProcessesPerTask) {
-		state.active++
-		return Promise.resolve()
-	}
+    if (state.active < maxProcessesPerTask) {
+        state.active++
+        return Promise.resolve()
+    }
 
-	return waitForSlot(
-		state.waiters,
-		() => {
-			state.active++
-		},
-		signal,
-	)
+    return waitForSlot(
+        state.waiters,
+        () => {
+            state.active++
+        },
+        signal,
+    )
 }
 
 function releaseScopeSlot(scope: RipgrepBudgetScope): void {
-	const state = scopes.get(scope)
-	if (!state) {
-		return
-	}
+    const state = scopes.get(scope)
+    if (!state) {
+        return
+    }
 
-	state.active = Math.max(0, state.active - 1)
-	const next = state.waiters.shift()
-	if (next) {
-		next()
-		return
-	}
-	// Drop idle scopes so finished tasks do not accumulate empty entries.
-	if (state.active === 0) {
-		scopes.delete(scope)
-	}
+    state.active = Math.max(0, state.active - 1)
+    const next = state.waiters.shift()
+    if (next) {
+        next()
+        return
+    }
+    // Drop idle scopes so finished tasks do not accumulate empty entries.
+    if (state.active === 0) {
+        scopes.delete(scope)
+    }
 }
 
 function acquireWorkspaceSlot(signal?: AbortSignal): Promise<void> {
-	if (signal?.aborted) return Promise.reject(abortReason(signal))
-	const { maxProcessesPerWorkspace } = getRipgrepCpuBudget()
-	if (workspaceActive < maxProcessesPerWorkspace) {
-		workspaceActive++
-		return Promise.resolve()
-	}
+    if (signal?.aborted) return Promise.reject(abortReason(signal))
+    const { maxProcessesPerWorkspace } = getRipgrepCpuBudget()
+    if (workspaceActive < maxProcessesPerWorkspace) {
+        workspaceActive++
+        return Promise.resolve()
+    }
 
-	return waitForSlot(
-		workspaceWaiters,
-		() => {
-			workspaceActive++
-		},
-		signal,
-	)
+    return waitForSlot(
+        workspaceWaiters,
+        () => {
+            workspaceActive++
+        },
+        signal,
+    )
 }
 
 function releaseWorkspaceSlot(): void {
-	workspaceActive = Math.max(0, workspaceActive - 1)
-	workspaceWaiters.shift()?.()
+    workspaceActive = Math.max(0, workspaceActive - 1)
+    workspaceWaiters.shift()?.()
 }
 
 /** Test seam: drop queued waiters and reset every in-flight count. */
 export function resetRipgrepSlotsForTesting(): void {
-	scopes.clear()
-	workspaceWaiters.length = 0
-	workspaceActive = 0
+    scopes.clear()
+    workspaceWaiters.length = 0
+    workspaceActive = 0
 }

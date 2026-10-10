@@ -13,61 +13,61 @@
  * This ensures all the elements are rendered with the expected styles consistently without affecting by the parent element / host.
  */
 @layer base {
-	* {
-		@apply border-border outline-ring/50 text-base;
-	}
-	body {
-		@apply bg-background text-foreground;
-	}
-	p {
-		@apply my-0 py-0 text-inherit leading-5 block line-clamp-3;
-		margin-block-start: 1em;
-		margin-block-end: 1em;
-		margin-inline-start: 0px;
-		margin-inline-end: 0px;
-		unicode-bidi: isolate;
-	}
-	span {
-		@apply leading-5;
-		font-size: inherit;
-		color: inherit;
-	}
-	pre {
-		@apply bg-code;
-	}
-	code {
-		@apply bg-code;
-	}
-	h1 {
-		font-size: var(--text-lg);
-		font-weight: var(--font-weight-semibold);
-	}
-	h2 {
-		font-size: var(--text-md);
-		font-weight: var(--font-weight-semibold);
-	}
-	h3 {
-		font-size: var(--text-sm);
-		font-weight: var(--font-weight-semibold);
-	}
-	h4 {
-		font-size: var(--text-base);
-		font-weight: var(--font-weight-bold);
-	}
-	a {
-		@apply text-link hover:text-link-hover;
-		font-size: inherit;
-	}
-	ol {
-		@apply list-decimal pl-3;
-	}
-	ul {
-		@apply list-disc pl-3;
-	}
-	[role="radio"],
-	[role="checkbox"] {
-		margin: calc(var(--design-unit) * 1px) 0;
-	}
+    * {
+        @apply border-border outline-ring/50 text-base;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+    p {
+        @apply my-0 py-0 text-inherit leading-5 block line-clamp-3;
+        margin-block-start: 1em;
+        margin-block-end: 1em;
+        margin-inline-start: 0px;
+        margin-inline-end: 0px;
+        unicode-bidi: isolate;
+    }
+    span {
+        @apply leading-5;
+        font-size: inherit;
+        color: inherit;
+    }
+    pre {
+        @apply bg-code;
+    }
+    code {
+        @apply bg-code;
+    }
+    h1 {
+        font-size: var(--text-lg);
+        font-weight: var(--font-weight-semibold);
+    }
+    h2 {
+        font-size: var(--text-md);
+        font-weight: var(--font-weight-semibold);
+    }
+    h3 {
+        font-size: var(--text-sm);
+        font-weight: var(--font-weight-semibold);
+    }
+    h4 {
+        font-size: var(--text-base);
+        font-weight: var(--font-weight-bold);
+    }
+    a {
+        @apply text-link hover:text-link-hover;
+        font-size: inherit;
+    }
+    ol {
+        @apply list-decimal pl-3;
+    }
+    ul {
+        @apply list-disc pl-3;
+    }
+    [role="radio"],
+    [role="checkbox"] {
+        margin: calc(var(--design-unit) * 1px) 0;
+    }
 }
 
 /**
@@ -76,20 +76,20 @@
  * are handled without theme-specific overrides.
  */
 .latex-block {
-	overflow-x: auto;
-	overflow-y: hidden;
-	padding: 0.35em 0;
-	color: var(--vscode-editor-foreground);
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.35em 0;
+    color: var(--vscode-editor-foreground);
 }
 
 .latex-block svg {
-	max-width: 100%;
-	vertical-align: middle;
+    max-width: 100%;
+    vertical-align: middle;
 }
 
 /* Fallback shown when the TeX source cannot be typeset. */
 .latex-block-error {
-	color: var(--vscode-errorForeground);
-	white-space: pre-wrap;
-	word-break: break-word;
+    color: var(--vscode-errorForeground);
+    white-space: pre-wrap;
+    word-break: break-word;
 }

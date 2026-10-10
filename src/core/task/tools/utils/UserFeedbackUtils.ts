@@ -13,10 +13,10 @@ import type { TaskConfig } from "../types/TaskConfig"
  * @returns `<file_content>` text for the tool result and the PDFs that follow it; both empty when nothing was attached.
  */
 export async function attachToolFeedbackFiles(files: string[] | undefined): Promise<ToolResultAttachments> {
-	if (!files?.length) return { text: "", documents: [] }
-	// Loaded on demand: the extractor pulls in the PDF and spreadsheet parsers.
-	const { processFilesForToolResult } = await import("@integrations/misc/extract-text")
-	return processFilesForToolResult(files)
+    if (!files?.length) return { text: "", documents: [] }
+    // Loaded on demand: the extractor pulls in the PDF and spreadsheet parsers.
+    const { processFilesForToolResult } = await import("@integrations/misc/extract-text")
+    return processFilesForToolResult(files)
 }
 
 /**
@@ -29,19 +29,19 @@ export async function attachToolFeedbackFiles(files: string[] | undefined): Prom
  * @returns True when the same feedback was already acknowledged by the webview response path.
  */
 export function isAckedFeedback(
-	config: Pick<TaskConfig, "taskState">,
-	response: ClineAskResponse,
-	text?: string,
-	images?: string[],
-	files?: string[],
+    config: Pick<TaskConfig, "taskState">,
+    response: ClineAskResponse,
+    text?: string,
+    images?: string[],
+    files?: string[],
 ): boolean {
-	const ackedFeedback = config.taskState.ackedFeedback
-	return Boolean(
-		ackedFeedback?.response === response &&
-			ackedFeedback.text === text &&
-			JSON.stringify(ackedFeedback.images ?? []) === JSON.stringify(images ?? []) &&
-			JSON.stringify(ackedFeedback.files ?? []) === JSON.stringify(files ?? []),
-	)
+    const ackedFeedback = config.taskState.ackedFeedback
+    return Boolean(
+        ackedFeedback?.response === response &&
+            ackedFeedback.text === text &&
+            JSON.stringify(ackedFeedback.images ?? []) === JSON.stringify(images ?? []) &&
+            JSON.stringify(ackedFeedback.files ?? []) === JSON.stringify(files ?? []),
+    )
 }
 
 /**
@@ -54,16 +54,16 @@ export function isAckedFeedback(
  * @returns Promise resolved after optional UI feedback rendering.
  */
 export async function sayFeedbackOnce(
-	config: Pick<TaskConfig, "callbacks" | "taskState">,
-	response: ClineAskResponse,
-	text?: string,
-	images?: string[],
-	files?: string[],
-	presentation?: Pick<InteractionOutcome, "feedbackPresented">,
+    config: Pick<TaskConfig, "callbacks" | "taskState">,
+    response: ClineAskResponse,
+    text?: string,
+    images?: string[],
+    files?: string[],
+    presentation?: Pick<InteractionOutcome, "feedbackPresented">,
 ): Promise<void> {
-	if (presentation?.feedbackPresented) return
-	if (!isAckedFeedback(config, response, text, images, files)) {
-		await config.callbacks.say("user_feedback", text ?? "", images, files)
-	}
-	config.taskState.ackedFeedback = undefined
+    if (presentation?.feedbackPresented) return
+    if (!isAckedFeedback(config, response, text, images, files)) {
+        await config.callbacks.say("user_feedback", text ?? "", images, files)
+    }
+    config.taskState.ackedFeedback = undefined
 }

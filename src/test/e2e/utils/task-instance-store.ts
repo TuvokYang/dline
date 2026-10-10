@@ -10,23 +10,23 @@ import { openUiMessageRows } from "@/core/storage/messages/openUiMessageRows"
 import { readUiMessages } from "@/core/storage/messages/readUiMessages"
 import { readJournalConversation } from "@/core/task/conversation/JournalConversationReader"
 import {
-	type MaterializedPayload,
-	ProviderJournalMessageMaterializer,
+    type MaterializedPayload,
+    ProviderJournalMessageMaterializer,
 } from "@/core/task/executors/provider/service/ProviderJournalMessageMaterializer"
 import type { KernelBlock } from "@/core/task/kernel"
 import {
-	type JournalEntry,
-	type JournalSource,
-	openTaskJournalStores,
-	rebuildJournalProjection,
-	type TaskJournalStores,
+    type JournalEntry,
+    type JournalSource,
+    openTaskJournalStores,
+    rebuildJournalProjection,
+    type TaskJournalStores,
 } from "@/core/task/stores"
 import { FileTaskStateVault } from "@/core/task/stores/FileTaskStateVault"
 import { decodeTaskPayload, encodeTaskPayload } from "@/core/task/stores/payload/TaskPayloadCodec"
 import type {
-	ProviderFinalEnvelope,
-	ToolInvocationEnvelope,
-	ToolResultEnvelope,
+    ProviderFinalEnvelope,
+    ToolInvocationEnvelope,
+    ToolResultEnvelope,
 } from "@/core/task/stores/payload/TaskPayloadEnvelopes"
 import { projectHistoryDisplayState } from "@/core/task/view/canonical/projectHistoryDisplayState"
 import { historyDisplayAnchorRow } from "@/core/task/view/historyDisplayAnchorRow"
@@ -49,16 +49,16 @@ const E2E_READER = "e2e-reader"
 const E2E_FIXTURE_WRITER = "e2e-fixture-writer"
 
 function taskRoot(dlineDocsDir: string, taskId: string): string {
-	return path.join(dlineDocsDir, "tasks", taskId)
+    return path.join(dlineDocsDir, "tasks", taskId)
 }
 
 /** The stored chat history of a task, in display order. */
 export async function readTaskUiMessages(dlineDocsDir: string, taskId: string): Promise<UiMessage[]> {
-	try {
-		return await readUiMessages(taskRoot(dlineDocsDir, taskId))
-	} catch {
-		return []
-	}
+    try {
+        return await readUiMessages(taskRoot(dlineDocsDir, taskId))
+    } catch {
+        return []
+    }
 }
 
 /**
@@ -68,22 +68,22 @@ export async function readTaskUiMessages(dlineDocsDir: string, taskId: string): 
  * text shape the legacy JSONL file had.
  */
 export async function readTaskUiMessagesText(dlineDocsDir: string, taskId: string): Promise<string> {
-	const messages = await readTaskUiMessages(dlineDocsDir, taskId)
-	return messages.length === 0 ? "" : `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`
+    const messages = await readTaskUiMessages(dlineDocsDir, taskId)
+    return messages.length === 0 ? "" : `${messages.map((message) => JSON.stringify(message)).join("\n")}\n`
 }
 
 const LEGACY_CONVERSATION_FILE = "api_conversation_history.jsonl"
 
 async function readLegacyConversation(root: string): Promise<ClineStorageMessage[]> {
-	try {
-		const text = await readFile(path.join(root, LEGACY_CONVERSATION_FILE), "utf8")
-		return text
-			.split(/\r?\n/)
-			.filter((line) => line.trim().length > 0)
-			.map((line) => JSON.parse(line) as ClineStorageMessage)
-	} catch {
-		return []
-	}
+    try {
+        const text = await readFile(path.join(root, LEGACY_CONVERSATION_FILE), "utf8")
+        return text
+            .split(/\r?\n/)
+            .filter((line) => line.trim().length > 0)
+            .map((line) => JSON.parse(line) as ClineStorageMessage)
+    } catch {
+        return []
+    }
 }
 
 /**
@@ -95,14 +95,14 @@ async function readLegacyConversation(root: string): Promise<ClineStorageMessage
  * the journal, so it works while the task is open in the extension.
  */
 export async function readTaskConversation(dlineDocsDir: string, taskId: string): Promise<ClineStorageMessage[]> {
-	const root = taskRoot(dlineDocsDir, taskId)
-	try {
-		const journal = await readJournalConversation(new InstanceLayout(root))
-		if (journal) return journal
-	} catch {
-		// A journal the extension is still creating reads as absent until its first commit.
-	}
-	return await readLegacyConversation(root)
+    const root = taskRoot(dlineDocsDir, taskId)
+    try {
+        const journal = await readJournalConversation(new InstanceLayout(root))
+        if (journal) return journal
+    } catch {
+        // A journal the extension is still creating reads as absent until its first commit.
+    }
+    return await readLegacyConversation(root)
 }
 
 /**
@@ -115,7 +115,7 @@ export async function readTaskConversation(dlineDocsDir: string, taskId: string)
  * boundary that names it resolves, but it hides nothing and shows no summary.
  */
 function asHistoryEntry(entry: JournalEntry): JournalEntry {
-	return entry.kind === "supersede_range" ? { ...entry, kind: "checkpoint_marker" } : entry
+    return entry.kind === "supersede_range" ? { ...entry, kind: "checkpoint_marker" } : entry
 }
 
 /**
@@ -126,26 +126,26 @@ function asHistoryEntry(entry: JournalEntry): JournalEntry {
  * spans they replaced for the model stay in the history.
  */
 async function readJournalHistory(root: string): Promise<ClineStorageMessage[] | undefined> {
-	const layout = new InstanceLayout(root)
-	if (!(await instanceDatabaseExists(layout, InstanceDatabase.Journal))) return undefined
-	const storage = openInstanceStorage(root)
-	try {
-		const { journal, payloads } = await openTaskJournalStores(
-			await storage.openDatabase(InstanceDatabase.Journal, E2E_READER),
-		)
-		const entries = (await journal.read()).map(asHistoryEntry)
-		if (entries.length === 0) return undefined
-		const materializer = new ProviderJournalMessageMaterializer(payloads)
-		const rendered: Array<MaterializedPayload & { readonly payloadRef: string }> = []
-		for (const entry of rebuildJournalProjection(entries).visibleMessages) {
-			if (entry.payloadRef)
-				rendered.push({ payloadRef: entry.payloadRef, ...(await materializer.materializeEntry(entry.payloadRef)) })
-		}
-		const replaced = new Set(rendered.flatMap((item) => [...(item.supersededPayloadRefs ?? [])]))
-		return rendered.filter((item) => !replaced.has(item.payloadRef)).flatMap((item) => [...item.messages])
-	} finally {
-		await storage.close()
-	}
+    const layout = new InstanceLayout(root)
+    if (!(await instanceDatabaseExists(layout, InstanceDatabase.Journal))) return undefined
+    const storage = openInstanceStorage(root)
+    try {
+        const { journal, payloads } = await openTaskJournalStores(
+            await storage.openDatabase(InstanceDatabase.Journal, E2E_READER),
+        )
+        const entries = (await journal.read()).map(asHistoryEntry)
+        if (entries.length === 0) return undefined
+        const materializer = new ProviderJournalMessageMaterializer(payloads)
+        const rendered: Array<MaterializedPayload & { readonly payloadRef: string }> = []
+        for (const entry of rebuildJournalProjection(entries).visibleMessages) {
+            if (entry.payloadRef)
+                rendered.push({ payloadRef: entry.payloadRef, ...(await materializer.materializeEntry(entry.payloadRef)) })
+        }
+        const replaced = new Set(rendered.flatMap((item) => [...(item.supersededPayloadRefs ?? [])]))
+        return rendered.filter((item) => !replaced.has(item.payloadRef)).flatMap((item) => [...item.messages])
+    } finally {
+        await storage.close()
+    }
 }
 
 /**
@@ -158,31 +158,31 @@ async function readJournalHistory(root: string): Promise<ClineStorageMessage[] |
  * text means the task holds the same history.
  */
 export async function readTaskConversationText(dlineDocsDir: string, taskId: string): Promise<string> {
-	const root = taskRoot(dlineDocsDir, taskId)
-	let history: ClineStorageMessage[] | undefined
-	try {
-		history = await readJournalHistory(root)
-	} catch {
-		// A journal the extension is still creating reads as absent until its first commit.
-	}
-	const messages = history ?? (await readLegacyConversation(root))
-	const lines = messages.map(({ ts: _renderedAt, ...message }) => JSON.stringify(message))
-	return lines.length === 0 ? "" : `${lines.join("\n")}\n`
+    const root = taskRoot(dlineDocsDir, taskId)
+    let history: ClineStorageMessage[] | undefined
+    try {
+        history = await readJournalHistory(root)
+    } catch {
+        // A journal the extension is still creating reads as absent until its first commit.
+    }
+    const messages = history ?? (await readLegacyConversation(root))
+    const lines = messages.map(({ ts: _renderedAt, ...message }) => JSON.stringify(message))
+    return lines.length === 0 ? "" : `${lines.join("\n")}\n`
 }
 
 async function withFixtureJournal<T>(root: string, work: (stores: TaskJournalStores) => Promise<T>): Promise<T> {
-	const storage = openInstanceStorage(root)
-	try {
-		return await work(await openTaskJournalStores(await storage.openDatabase(InstanceDatabase.Journal, E2E_FIXTURE_WRITER)))
-	} finally {
-		await storage.close()
-	}
+    const storage = openInstanceStorage(root)
+    try {
+        return await work(await openTaskJournalStores(await storage.openDatabase(InstanceDatabase.Journal, E2E_FIXTURE_WRITER)))
+    } finally {
+        await storage.close()
+    }
 }
 
 /** The journal source the runtime's legacy import assigns to a message. */
 function journalSourceOf(message: ClineStorageMessage): JournalSource {
-	if (message.role === "assistant") return "provider"
-	return Array.isArray(message.content) && message.content.some((block) => block.type === "tool_result") ? "tool" : "intake"
+    if (message.role === "assistant") return "provider"
+    return Array.isArray(message.content) && message.content.some((block) => block.type === "tool_result") ? "tool" : "intake"
 }
 
 /**
@@ -194,39 +194,39 @@ function journalSourceOf(message: ClineStorageMessage): JournalSource {
  * `api-history:` prefix, so a leftover file is not imported on top.
  */
 export async function rewriteTaskConversation(
-	dlineDocsDir: string,
-	taskId: string,
-	transform: (messages: ClineStorageMessage[]) => ClineStorageMessage[] | Promise<ClineStorageMessage[]>,
+    dlineDocsDir: string,
+    taskId: string,
+    transform: (messages: ClineStorageMessage[]) => ClineStorageMessage[] | Promise<ClineStorageMessage[]>,
 ): Promise<void> {
-	const next = await transform(await readTaskConversation(dlineDocsDir, taskId))
-	await withFixtureJournal(taskRoot(dlineDocsDir, taskId), async ({ journal, payloads }) => {
-		const operation = `e2e-seed:${Date.now()}:${journal.watermark().seq}`
-		if (journal.watermark().seq > 0) await journal.rewind({ operationId: `${operation}:rewind`, target: { seq: 0 } })
-		for (const [index, message] of next.entries()) {
-			await journal.append({
-				operationId: `${operation}:${index}`,
-				payloadRef: await payloads.put(encodeTaskPayload({ kind: "api_history_message", message })),
-				source: journalSourceOf(message),
-				watermark: journal.watermark(),
-			})
-		}
-	})
+    const next = await transform(await readTaskConversation(dlineDocsDir, taskId))
+    await withFixtureJournal(taskRoot(dlineDocsDir, taskId), async ({ journal, payloads }) => {
+        const operation = `e2e-seed:${Date.now()}:${journal.watermark().seq}`
+        if (journal.watermark().seq > 0) await journal.rewind({ operationId: `${operation}:rewind`, target: { seq: 0 } })
+        for (const [index, message] of next.entries()) {
+            await journal.append({
+                operationId: `${operation}:${index}`,
+                payloadRef: await payloads.put(encodeTaskPayload({ kind: "api_history_message", message })),
+                source: journalSourceOf(message),
+                watermark: journal.watermark(),
+            })
+        }
+    })
 }
 
 /** Replaces the provider conversation of a closed task with `messages`. */
 export async function seedTaskConversation(
-	dlineDocsDir: string,
-	taskId: string,
-	messages: readonly ClineStorageMessage[],
+    dlineDocsDir: string,
+    taskId: string,
+    messages: readonly ClineStorageMessage[],
 ): Promise<void> {
-	await rewriteTaskConversation(dlineDocsDir, taskId, () => [...messages])
+    await rewriteTaskConversation(dlineDocsDir, taskId, () => [...messages])
 }
 
 type TaskRuntimeState = NonNullable<Awaited<ReturnType<FileTaskStateVault["load"]>>>["state"]
 
 /** The runtime state the task last committed, from `state.json`; safe to read while the task is open. */
 export async function readTaskRuntimeState(dlineDocsDir: string, taskId: string): Promise<TaskRuntimeState | undefined> {
-	return (await new FileTaskStateVault(new InstanceLayout(taskRoot(dlineDocsDir, taskId)).stateFile).load(taskId))?.state
+    return (await new FileTaskStateVault(new InstanceLayout(taskRoot(dlineDocsDir, taskId)).stateFile).load(taskId))?.state
 }
 
 /**
@@ -237,20 +237,20 @@ export async function readTaskRuntimeState(dlineDocsDir: string, taskId: string)
  * derived from `state.json` plus the anchored chat rows.
  */
 export interface TaskInteractionView {
-	phase?: string
-	completionId?: string
-	interactionId?: string
-	interactionKind?: string
-	interactionStatus?: string
-	/** The current turn when it owns the interaction's block. */
-	interactionTurnId?: string
-	anchorInteractionId?: string
-	/** The current turn when it owns the anchored interaction's block. */
-	anchorTurnId?: string
-	turnId?: string
-	/** The current turn's turn-ending block. */
-	blockId?: string
-	blockPhase?: string
+    phase?: string
+    completionId?: string
+    interactionId?: string
+    interactionKind?: string
+    interactionStatus?: string
+    /** The current turn when it owns the interaction's block. */
+    interactionTurnId?: string
+    anchorInteractionId?: string
+    /** The current turn when it owns the anchored interaction's block. */
+    anchorTurnId?: string
+    turnId?: string
+    /** The current turn's turn-ending block. */
+    blockId?: string
+    blockPhase?: string
 }
 
 const COMPLETION_DIALOG_KIND = "completion"
@@ -258,18 +258,18 @@ const COMPLETION_ROW_ASK = "completion_result"
 
 /** Reads the task's turn-ending interaction from durable storage; safe while the task is open. */
 export async function readTaskInteractionView(dlineDocsDir: string, taskId: string): Promise<TaskInteractionView> {
-	const [state, messages] = await Promise.all([
-		readTaskRuntimeState(dlineDocsDir, taskId),
-		readTaskUiMessages(dlineDocsDir, taskId),
-	])
-	return state ? interactionViewOf(state, messages) : {}
+    const [state, messages] = await Promise.all([
+        readTaskRuntimeState(dlineDocsDir, taskId),
+        readTaskUiMessages(dlineDocsDir, taskId),
+    ])
+    return state ? interactionViewOf(state, messages) : {}
 }
 
 /** What a task reopened from History shows before the user answers it. */
 export interface HistoryDisplayView {
-	readonly view: TaskInteractionView
-	/** The stored chat history, followed by the anchor row of an interaction the display synthesized. */
-	readonly messages: UiMessage[]
+    readonly view: TaskInteractionView
+    /** The stored chat history, followed by the anchor row of an interaction the display synthesized. */
+    readonly messages: UiMessage[]
 }
 
 /**
@@ -281,52 +281,52 @@ export interface HistoryDisplayView {
  * so assertions see that dialog instead of the bare stored state.
  */
 export async function readHistoryDisplay(dlineDocsDir: string, taskId: string): Promise<HistoryDisplayView> {
-	const [state, stored] = await Promise.all([
-		readTaskRuntimeState(dlineDocsDir, taskId),
-		readTaskUiMessages(dlineDocsDir, taskId),
-	])
-	if (!state) return { view: {}, messages: stored }
-	const display = projectHistoryDisplayState(taskId, state)
-	const messages = display.synthetic ? [...stored, historyDisplayAnchorRow(display.synthetic, stored)] : stored
-	return { view: interactionViewOf(display.state, messages), messages }
+    const [state, stored] = await Promise.all([
+        readTaskRuntimeState(dlineDocsDir, taskId),
+        readTaskUiMessages(dlineDocsDir, taskId),
+    ])
+    if (!state) return { view: {}, messages: stored }
+    const display = projectHistoryDisplayState(taskId, state)
+    const messages = display.synthetic ? [...stored, historyDisplayAnchorRow(display.synthetic, stored)] : stored
+    return { view: interactionViewOf(display.state, messages), messages }
 }
 
 function interactionViewOf(state: TaskRuntimeState, messages: readonly UiMessage[]): TaskInteractionView {
-	const interaction = state.dialog.primary
-	const block = state.turn.blocks.find((candidate) => candidate.turnEnding)
-	const anchorInteractionId = anchoredInteractionId(state, messages)
-	const owningTurn = (id: string | undefined) =>
-		id && state.turn.blocks.some((candidate) => candidate.blockId === id) ? state.turn.turnId : undefined
-	return {
-		phase: interactionPhase(state),
-		completionId: state.flow.completionId ?? (awaitsCompletion(state) ? interaction?.interactionId : undefined),
-		interactionId: interaction?.interactionId,
-		interactionKind: interaction?.kind,
-		interactionStatus: interaction?.status,
-		interactionTurnId: owningTurn(interaction?.interactionId),
-		anchorInteractionId,
-		anchorTurnId: owningTurn(anchorInteractionId),
-		turnId: state.turn.turnId,
-		blockId: block?.blockId,
-		blockPhase:
-			block && block.phase === "executing" && !isManuallyApproved(state, block.blockId) ? "auto_executing" : block?.phase,
-	}
+    const interaction = state.dialog.primary
+    const block = state.turn.blocks.find((candidate) => candidate.turnEnding)
+    const anchorInteractionId = anchoredInteractionId(state, messages)
+    const owningTurn = (id: string | undefined) =>
+        id && state.turn.blocks.some((candidate) => candidate.blockId === id) ? state.turn.turnId : undefined
+    return {
+        phase: interactionPhase(state),
+        completionId: state.flow.completionId ?? (awaitsCompletion(state) ? interaction?.interactionId : undefined),
+        interactionId: interaction?.interactionId,
+        interactionKind: interaction?.kind,
+        interactionStatus: interaction?.status,
+        interactionTurnId: owningTurn(interaction?.interactionId),
+        anchorInteractionId,
+        anchorTurnId: owningTurn(anchorInteractionId),
+        turnId: state.turn.turnId,
+        blockId: block?.blockId,
+        blockPhase:
+            block && block.phase === "executing" && !isManuallyApproved(state, block.blockId) ? "auto_executing" : block?.phase,
+    }
 }
 
 /** An awaiting completion dialog is the task's finished state: the result is out and only the user's reply remains. */
 function awaitsCompletion(state: TaskRuntimeState): boolean {
-	return state.dialog.primary?.kind === COMPLETION_DIALOG_KIND && state.dialog.primary.status === "awaiting"
+    return state.dialog.primary?.kind === COMPLETION_DIALOG_KIND && state.dialog.primary.status === "awaiting"
 }
 
 function interactionPhase(state: TaskRuntimeState): string {
-	if (state.flow.phase === "completed" || awaitsCompletion(state)) return "completed"
-	if (state.flow.provider?.status === "running") return "streaming"
-	if (state.turn.executingBlockIds.length > 0) return "executing"
-	return state.flow.phase
+    if (state.flow.phase === "completed" || awaitsCompletion(state)) return "completed"
+    if (state.flow.provider?.status === "running") return "streaming"
+    if (state.turn.executingBlockIds.length > 0) return "executing"
+    return state.flow.phase
 }
 
 function isManuallyApproved(state: TaskRuntimeState, blockId: string): boolean {
-	return state.turn.manualApprovalBlockIds.includes(blockId)
+    return state.turn.manualApprovalBlockIds.includes(blockId)
 }
 
 /**
@@ -338,11 +338,11 @@ function isManuallyApproved(state: TaskRuntimeState, blockId: string): boolean {
  * answering a completion reopens the task and releases it.
  */
 function anchoredInteractionId(state: TaskRuntimeState, messages: readonly UiMessage[]): string | undefined {
-	const primary = state.dialog.primary
-	if (primary?.status === "awaiting") return primary.interactionId
-	const latest = messages.findLast((message) => message.type === "ask" && message.interactionId)
-	if (latest?.ask === COMPLETION_ROW_ASK && state.flow.phase !== "completed") return undefined
-	return latest?.interactionId
+    const primary = state.dialog.primary
+    if (primary?.status === "awaiting") return primary.interactionId
+    const latest = messages.findLast((message) => message.type === "ask" && message.interactionId)
+    if (latest?.ask === COMPLETION_ROW_ASK && state.flow.phase !== "completed") return undefined
+    return latest?.interactionId
 }
 
 /**
@@ -353,23 +353,23 @@ function anchoredInteractionId(state: TaskRuntimeState, messages: readonly UiMes
  * the next turn.
  */
 export async function pauseTaskBetweenTurns(dlineDocsDir: string, taskId: string): Promise<void> {
-	const root = taskRoot(dlineDocsDir, taskId)
-	const vault = new FileTaskStateVault(new InstanceLayout(root).stateFile)
-	const durable = await vault.load(taskId)
-	if (!durable) throw new Error(`Expected runtime state for task ${taskId}`)
-	const tail = await withFixtureJournal(root, async ({ journal }) => journal.watermark())
-	const state = durable.state
-	await vault.save({
-		state: {
-			...state,
-			flow: { phase: "paused" },
-			dialog: { approvalsByBlock: {} },
-			turn: { ...state.turn, blocks: [], manualApprovalBlockIds: [], automaticApprovalBlockIds: [], executingBlockIds: [] },
-			halt: { status: "idle", generation: state.generation },
-			journalWatermark: tail,
-		},
-		outbox: [],
-	})
+    const root = taskRoot(dlineDocsDir, taskId)
+    const vault = new FileTaskStateVault(new InstanceLayout(root).stateFile)
+    const durable = await vault.load(taskId)
+    if (!durable) throw new Error(`Expected runtime state for task ${taskId}`)
+    const tail = await withFixtureJournal(root, async ({ journal }) => journal.watermark())
+    const state = durable.state
+    await vault.save({
+        state: {
+            ...state,
+            flow: { phase: "paused" },
+            dialog: { approvalsByBlock: {} },
+            turn: { ...state.turn, blocks: [], manualApprovalBlockIds: [], automaticApprovalBlockIds: [], executingBlockIds: [] },
+            halt: { status: "idle", generation: state.generation },
+            journalWatermark: tail,
+        },
+        outbox: [],
+    })
 }
 
 /**
@@ -382,78 +382,78 @@ export async function pauseTaskBetweenTurns(dlineDocsDir: string, taskId: string
  * so reopening the task resumes into a compose that must pair them again.
  */
 export async function pauseTaskAfterToolResult(dlineDocsDir: string, taskId: string, toolName: string): Promise<void> {
-	const root = taskRoot(dlineDocsDir, taskId)
-	const vault = new FileTaskStateVault(new InstanceLayout(root).stateFile)
-	const durable = await vault.load(taskId)
-	if (!durable) throw new Error(`Expected runtime state for task ${taskId}`)
-	const { turn, tail } = await withFixtureJournal(root, async ({ journal, payloads }) => {
-		const entries = await journal.read()
-		const decode = async <T>(payloadRef: string) => decodeTaskPayload<T>(await payloads.read(payloadRef))
-		for (const entry of entries) {
-			if (entry.kind !== "message" || entry.source !== "provider" || !entry.payloadRef) continue
-			const final = await decode<ProviderFinalEnvelope>(entry.payloadRef)
-			if (final.kind !== "provider_final") continue
-			let dlineTid: string | undefined
-			for (const plan of final.turnPlan.blocks) {
-				const invocation = await decode<ToolInvocationEnvelope>(plan.invocationRef)
-				if (invocation.toolName === toolName) dlineTid = invocation.dlineTid
-			}
-			if (!dlineTid) continue
-			let turnId: string | undefined
-			for (const candidate of entries) {
-				if (candidate.source !== "tool" || !candidate.payloadRef || !candidate.causation?.turnId) continue
-				const result = await decode<ToolResultEnvelope>(candidate.payloadRef)
-				if (result.kind === "tool_result" && result.blockId === dlineTid) turnId = candidate.causation.turnId
-			}
-			if (!turnId) throw new Error(`Expected a journaled ${toolName} result`)
-			const manifest = await journal.findByOperation(`tool.terminal_manifest:${turnId}`)
-			if (!manifest) throw new Error(`Expected compose to have canonicalized the ${toolName} turn`)
-			await journal.rewind({
-				operationId: `e2e-seed:${Date.now()}:rewind`,
-				target: { seq: manifest.watermark.seq - 1 },
-			})
-			const blocks: KernelBlock[] = final.turnPlan.blocks.map((plan) => ({
-				blockId: plan.blockId,
-				index: plan.index,
-				phase: "completed",
-				attempt: plan.attempt,
-				lanes: plan.lanes,
-				turnEnding: plan.turnEnding,
-				invocationRef: plan.invocationRef,
-			}))
-			return { turn: { turnId, mode: final.turnPlan.mode, blocks }, tail: journal.watermark() }
-		}
-		throw new Error(`Expected a provider turn that called ${toolName}`)
-	})
-	const state = durable.state
-	await vault.save({
-		state: {
-			...state,
-			flow: { phase: "paused" },
-			turn: {
-				...state.turn,
-				...turn,
-				manualApprovalBlockIds: [],
-				automaticApprovalBlockIds: [],
-				executingBlockIds: [],
-			},
-			dialog: { approvalsByBlock: {} },
-			halt: { status: "idle", generation: state.generation },
-			journalWatermark: tail,
-		},
-		outbox: [],
-	})
+    const root = taskRoot(dlineDocsDir, taskId)
+    const vault = new FileTaskStateVault(new InstanceLayout(root).stateFile)
+    const durable = await vault.load(taskId)
+    if (!durable) throw new Error(`Expected runtime state for task ${taskId}`)
+    const { turn, tail } = await withFixtureJournal(root, async ({ journal, payloads }) => {
+        const entries = await journal.read()
+        const decode = async <T>(payloadRef: string) => decodeTaskPayload<T>(await payloads.read(payloadRef))
+        for (const entry of entries) {
+            if (entry.kind !== "message" || entry.source !== "provider" || !entry.payloadRef) continue
+            const final = await decode<ProviderFinalEnvelope>(entry.payloadRef)
+            if (final.kind !== "provider_final") continue
+            let dlineTid: string | undefined
+            for (const plan of final.turnPlan.blocks) {
+                const invocation = await decode<ToolInvocationEnvelope>(plan.invocationRef)
+                if (invocation.toolName === toolName) dlineTid = invocation.dlineTid
+            }
+            if (!dlineTid) continue
+            let turnId: string | undefined
+            for (const candidate of entries) {
+                if (candidate.source !== "tool" || !candidate.payloadRef || !candidate.causation?.turnId) continue
+                const result = await decode<ToolResultEnvelope>(candidate.payloadRef)
+                if (result.kind === "tool_result" && result.blockId === dlineTid) turnId = candidate.causation.turnId
+            }
+            if (!turnId) throw new Error(`Expected a journaled ${toolName} result`)
+            const manifest = await journal.findByOperation(`tool.terminal_manifest:${turnId}`)
+            if (!manifest) throw new Error(`Expected compose to have canonicalized the ${toolName} turn`)
+            await journal.rewind({
+                operationId: `e2e-seed:${Date.now()}:rewind`,
+                target: { seq: manifest.watermark.seq - 1 },
+            })
+            const blocks: KernelBlock[] = final.turnPlan.blocks.map((plan) => ({
+                blockId: plan.blockId,
+                index: plan.index,
+                phase: "completed",
+                attempt: plan.attempt,
+                lanes: plan.lanes,
+                turnEnding: plan.turnEnding,
+                invocationRef: plan.invocationRef,
+            }))
+            return { turn: { turnId, mode: final.turnPlan.mode, blocks }, tail: journal.watermark() }
+        }
+        throw new Error(`Expected a provider turn that called ${toolName}`)
+    })
+    const state = durable.state
+    await vault.save({
+        state: {
+            ...state,
+            flow: { phase: "paused" },
+            turn: {
+                ...state.turn,
+                ...turn,
+                manualApprovalBlockIds: [],
+                automaticApprovalBlockIds: [],
+                executingBlockIds: [],
+            },
+            dialog: { approvalsByBlock: {} },
+            halt: { status: "idle", generation: state.generation },
+            journalWatermark: tail,
+        },
+        outbox: [],
+    })
 }
 
 async function readLegacyActivities(root: string): Promise<TaskActivityRecord[]> {
-	try {
-		const parsed = JSON.parse(await readFile(path.join(root, LEGACY_ACTIVITY_FILE), "utf8")) as {
-			activities?: TaskActivityRecord[]
-		}
-		return Array.isArray(parsed.activities) ? parsed.activities : []
-	} catch {
-		return []
-	}
+    try {
+        const parsed = JSON.parse(await readFile(path.join(root, LEGACY_ACTIVITY_FILE), "utf8")) as {
+            activities?: TaskActivityRecord[]
+        }
+        return Array.isArray(parsed.activities) ? parsed.activities : []
+    } catch {
+        return []
+    }
 }
 
 /**
@@ -462,56 +462,56 @@ async function readLegacyActivities(root: string): Promise<TaskActivityRecord[]>
  * `transform` may edit the messages in place and return the same array.
  */
 export async function rewriteTaskUiMessages(
-	dlineDocsDir: string,
-	taskId: string,
-	transform: (messages: UiMessage[]) => UiMessage[] | Promise<UiMessage[]>,
+    dlineDocsDir: string,
+    taskId: string,
+    transform: (messages: UiMessage[]) => UiMessage[] | Promise<UiMessage[]>,
 ): Promise<void> {
-	const root = taskRoot(dlineDocsDir, taskId)
-	const next = await transform(await readUiMessages(root))
-	const rows = await openUiMessageRows(root, E2E_FIXTURE_WRITER)
-	try {
-		await rows.replaceAll(next.map((message, ordinal) => ({ ordinal, ts: message.ts, message })))
-	} finally {
-		await rows.close()
-	}
+    const root = taskRoot(dlineDocsDir, taskId)
+    const next = await transform(await readUiMessages(root))
+    const rows = await openUiMessageRows(root, E2E_FIXTURE_WRITER)
+    try {
+        await rows.replaceAll(next.map((message, ordinal) => ({ ordinal, ts: message.ts, message })))
+    } finally {
+        await rows.close()
+    }
 }
 
 /** Replaces the stored activities of a closed task with `transform(current)`. */
 export async function rewriteTaskActivities(
-	dlineDocsDir: string,
-	taskId: string,
-	transform: (activities: TaskActivityRecord[]) => TaskActivityRecord[] | Promise<TaskActivityRecord[]>,
+    dlineDocsDir: string,
+    taskId: string,
+    transform: (activities: TaskActivityRecord[]) => TaskActivityRecord[] | Promise<TaskActivityRecord[]>,
 ): Promise<void> {
-	const root = taskRoot(dlineDocsDir, taskId)
-	const next = await transform(await readTaskActivities(dlineDocsDir, taskId))
-	const storage = openInstanceStorage(root)
-	try {
-		const database = await storage.openDatabase(InstanceDatabase.Activities, E2E_FIXTURE_WRITER)
-		const rows = await database.openStore(TaskActivityRow)
-		await rows.replaceAll(next.map((record) => new TaskActivityRow(record)))
-	} finally {
-		await storage.close()
-	}
+    const root = taskRoot(dlineDocsDir, taskId)
+    const next = await transform(await readTaskActivities(dlineDocsDir, taskId))
+    const storage = openInstanceStorage(root)
+    try {
+        const database = await storage.openDatabase(InstanceDatabase.Activities, E2E_FIXTURE_WRITER)
+        const rows = await database.openStore(TaskActivityRow)
+        await rows.replaceAll(next.map((record) => new TaskActivityRow(record)))
+    } finally {
+        await storage.close()
+    }
 }
 
 /** The stored activities of a task, in list order. */
 export async function readTaskActivities(dlineDocsDir: string, taskId: string): Promise<TaskActivityRecord[]> {
-	const root = taskRoot(dlineDocsDir, taskId)
-	try {
-		await access(new InstanceLayout(root).database(InstanceDatabase.Activities))
-	} catch {
-		return await readLegacyActivities(root)
-	}
-	const storage = openInstanceStorage(root)
-	try {
-		const database = await storage.openDatabase(InstanceDatabase.Activities, E2E_READER)
-		const rows = await database.openStore(TaskActivityRow)
-		const { fields } = TaskActivityRow.storage
-		const { records } = await rows.query({ orderBy: [desc(fields.createdAt), asc(fields.activityId)] })
-		return records.length > 0 ? records.map((row) => row.record) : await readLegacyActivities(root)
-	} catch {
-		return await readLegacyActivities(root)
-	} finally {
-		await storage.close().catch(() => undefined)
-	}
+    const root = taskRoot(dlineDocsDir, taskId)
+    try {
+        await access(new InstanceLayout(root).database(InstanceDatabase.Activities))
+    } catch {
+        return await readLegacyActivities(root)
+    }
+    const storage = openInstanceStorage(root)
+    try {
+        const database = await storage.openDatabase(InstanceDatabase.Activities, E2E_READER)
+        const rows = await database.openStore(TaskActivityRow)
+        const { fields } = TaskActivityRow.storage
+        const { records } = await rows.query({ orderBy: [desc(fields.createdAt), asc(fields.activityId)] })
+        return records.length > 0 ? records.map((row) => row.record) : await readLegacyActivities(root)
+    } catch {
+        return await readLegacyActivities(root)
+    } finally {
+        await storage.close().catch(() => undefined)
+    }
 }

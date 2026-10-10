@@ -14,12 +14,12 @@ export type TelemetrySetting = "unset" | "enabled" | "disabled"
  * and are stored, gated and transported independently.
  */
 export interface ReportingConsents {
-	/** Product analytics events and metrics. */
-	readonly usage: TelemetrySetting
-	/** Crash, exception, and local runtime diagnostic signals. */
-	readonly error: TelemetrySetting
+    /** Product analytics events and metrics. */
+    readonly usage: TelemetrySetting
+    /** Crash, exception, and local runtime diagnostic signals. */
+    readonly error: TelemetrySetting
 }
 
 export function isReportingAllowed(setting: TelemetrySetting): boolean {
-	return setting === "enabled"
+    return setting === "enabled"
 }

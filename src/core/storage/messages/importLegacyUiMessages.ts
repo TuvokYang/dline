@@ -13,20 +13,20 @@ export const LEGACY_UI_MESSAGE_FILES = ["ui_messages.jsonl", "ui_messages.json",
 export const MIGRATED_SUFFIX = ".migrated"
 
 async function exists(filePath: string): Promise<boolean> {
-	try {
-		await access(filePath)
-		return true
-	} catch {
-		return false
-	}
+    try {
+        await access(filePath)
+        return true
+    } catch {
+        return false
+    }
 }
 
 async function firstLegacyFile(instanceRoot: string): Promise<string | undefined> {
-	for (const name of LEGACY_UI_MESSAGE_FILES) {
-		const candidate = path.join(instanceRoot, name)
-		if (await exists(candidate)) return candidate
-	}
-	return undefined
+    for (const name of LEGACY_UI_MESSAGE_FILES) {
+        const candidate = path.join(instanceRoot, name)
+        if (await exists(candidate)) return candidate
+    }
+    return undefined
 }
 
 /**
@@ -37,24 +37,24 @@ async function firstLegacyFile(instanceRoot: string): Promise<string | undefined
  * latest partial wins, because the task stopped before the message finished.
  */
 function latestPerTimestamp(messages: readonly UiMessage[]): UiMessage[] {
-	const latest = new Map<number, { message: UiMessage; ordinal: number }>()
-	messages.forEach((message, ordinal) => {
-		const previous = latest.get(message.ts)
-		if (message.partial === true && previous && previous.message.partial !== true) return
-		latest.set(message.ts, { message, ordinal })
-	})
-	return [...latest.values()]
-		.sort((left, right) => left.ordinal - right.ordinal)
-		.map(({ message }) => normalizeStoredCheckpointMessage(message))
+    const latest = new Map<number, { message: UiMessage; ordinal: number }>()
+    messages.forEach((message, ordinal) => {
+        const previous = latest.get(message.ts)
+        if (message.partial === true && previous && previous.message.partial !== true) return
+        latest.set(message.ts, { message, ordinal })
+    })
+    return [...latest.values()]
+        .sort((left, right) => left.ordinal - right.ordinal)
+        .map(({ message }) => normalizeStoredCheckpointMessage(message))
 }
 
 function sameTimestamps(expected: readonly UiMessage[], stored: readonly UiMessageRecord[]): boolean {
-	return expected.length === stored.length && expected.every((message, index) => message.ts === stored[index].ts)
+    return expected.length === stored.length && expected.every((message, index) => message.ts === stored[index].ts)
 }
 
 export interface LegacyUiMessages {
-	readonly file: string
-	readonly messages: UiMessage[]
+    readonly file: string
+    readonly messages: UiMessage[]
 }
 
 /**
@@ -65,9 +65,9 @@ export interface LegacyUiMessages {
  * so the result is what the JSONL store would have shown.
  */
 export async function readLegacyUiMessages(instanceRoot: string): Promise<LegacyUiMessages | undefined> {
-	const file = await firstLegacyFile(instanceRoot)
-	if (!file) return undefined
-	return { file, messages: latestPerTimestamp((await readJsonl<unknown>(file)).filter(isStorableMessage)) }
+    const file = await firstLegacyFile(instanceRoot)
+    if (!file) return undefined
+    return { file, messages: latestPerTimestamp((await readJsonl<unknown>(file)).filter(isStorableMessage)) }
 }
 
 /**
@@ -83,25 +83,25 @@ export async function readLegacyUiMessages(instanceRoot: string): Promise<Legacy
  * failing: the task must still open, and the untouched source stays available.
  */
 export async function importLegacyUiMessages(instanceRoot: string, store: UiMessageRowStore): Promise<void> {
-	const legacy = await readLegacyUiMessages(instanceRoot)
-	if (!legacy) return
-	const { file: legacyFile, messages } = legacy
-	const { records: existing } = await store.query()
+    const legacy = await readLegacyUiMessages(instanceRoot)
+    if (!legacy) return
+    const { file: legacyFile, messages } = legacy
+    const { records: existing } = await store.query()
 
-	if (existing.length === 0) {
-		await store.replaceAll(messages.map((message, ordinal) => ({ ordinal, ts: message.ts, message })))
-		const { records: stored } = await store.query()
-		if (!sameTimestamps(messages, stored)) {
-			Logger.error(
-				`[messages.db] UiMessageImportMismatch: ${legacyFile} imported ${stored.length} of ${messages.length} messages; keeping the file`,
-			)
-			return
-		}
-	} else if (!sameTimestamps(messages, existing)) {
-		Logger.warn(
-			`[messages.db] Keeping ${legacyFile}: it holds ${messages.length} messages but messages.db already holds ${existing.length}`,
-		)
-		return
-	}
-	await rename(legacyFile, `${legacyFile}${MIGRATED_SUFFIX}`)
+    if (existing.length === 0) {
+        await store.replaceAll(messages.map((message, ordinal) => ({ ordinal, ts: message.ts, message })))
+        const { records: stored } = await store.query()
+        if (!sameTimestamps(messages, stored)) {
+            Logger.error(
+                `[messages.db] UiMessageImportMismatch: ${legacyFile} imported ${stored.length} of ${messages.length} messages; keeping the file`,
+            )
+            return
+        }
+    } else if (!sameTimestamps(messages, existing)) {
+        Logger.warn(
+            `[messages.db] Keeping ${legacyFile}: it holds ${messages.length} messages but messages.db already holds ${existing.length}`,
+        )
+        return
+    }
+    await rename(legacyFile, `${legacyFile}${MIGRATED_SUFFIX}`)
 }

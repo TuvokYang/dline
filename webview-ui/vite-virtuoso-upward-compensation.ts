@@ -52,13 +52,13 @@ function __dlineViewportTopShift(previousItems, nextItems, scrollTop, wholeListC
  *   uncorrected behaviour silently.
  */
 export function correctVirtuosoUpwardCompensation(code: string): string {
-	const first = code.indexOf(UPWARD_COMPENSATION_SOURCE)
-	if (first === -1 || code.indexOf(UPWARD_COMPENSATION_SOURCE, first + 1) !== -1) {
-		throw new Error(
-			"react-virtuoso upward-scroll compensation no longer matches the expected source; re-verify the correction in vite-virtuoso-upward-compensation.ts against the installed version.",
-		)
-	}
-	return `${code.replace(UPWARD_COMPENSATION_SOURCE, UPWARD_COMPENSATION_REPLACEMENT)}\n${VIEWPORT_TOP_SHIFT_HELPER}`
+    const first = code.indexOf(UPWARD_COMPENSATION_SOURCE)
+    if (first === -1 || code.indexOf(UPWARD_COMPENSATION_SOURCE, first + 1) !== -1) {
+        throw new Error(
+            "react-virtuoso upward-scroll compensation no longer matches the expected source; re-verify the correction in vite-virtuoso-upward-compensation.ts against the installed version.",
+        )
+    }
+    return `${code.replace(UPWARD_COMPENSATION_SOURCE, UPWARD_COMPENSATION_REPLACEMENT)}\n${VIEWPORT_TOP_SHIFT_HELPER}`
 }
 
 /**
@@ -70,12 +70,12 @@ export function correctVirtuosoUpwardCompensation(code: string): string {
  * end-to-end suites run.
  */
 export function virtuosoUpwardCompensationPlugin(): Plugin {
-	return {
-		name: "dline-virtuoso-upward-compensation",
-		enforce: "pre",
-		transform(code, id) {
-			if (!/[\\/]react-virtuoso[\\/]dist[\\/]index\.mjs(\?|$)/.test(id)) return null
-			return { code: correctVirtuosoUpwardCompensation(code), map: null }
-		},
-	}
+    return {
+        name: "dline-virtuoso-upward-compensation",
+        enforce: "pre",
+        transform(code, id) {
+            if (!/[\\/]react-virtuoso[\\/]dist[\\/]index\.mjs(\?|$)/.test(id)) return null
+            return { code: correctVirtuosoUpwardCompensation(code), map: null }
+        },
+    }
 }

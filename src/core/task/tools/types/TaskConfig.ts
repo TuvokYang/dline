@@ -29,9 +29,9 @@ import type { BackgroundResultDeliveryPort } from "../../background/BackgroundRe
 import type { PeerTaskSpawnPort } from "../../executors/spawn/PeerTaskSpawnPort"
 import type { ToolBlockStatePort } from "../../executors/tool/ToolBlockStatePort"
 import type {
-	CompleteInteractionRequest,
-	InteractionOutcome,
-	OpenInteractionRequest,
+    CompleteInteractionRequest,
+    InteractionOutcome,
+    OpenInteractionRequest,
 } from "../../interaction/InteractionProtocol"
 import type { MessageStateHandler } from "../../message-state"
 import type { ProviderRequestRoundPort } from "../../performance/provider-request-round-port"
@@ -47,225 +47,225 @@ import { TASK_CALLBACKS_KEYS, TASK_CONFIG_KEYS, TASK_SERVICES_KEYS } from "../ut
  */
 /** Presentation-only request issued by one handler. */
 export interface SayPresentationRequest {
-	taskSay: UiSay
-	presentation?: string
-	images?: string[]
-	files?: string[]
-	existingTs?: number
+    taskSay: UiSay
+    presentation?: string
+    images?: string[]
+    files?: string[]
+    existingTs?: number
 }
 
 /** Interaction and presentation boundary exposed to handlers. */
 export interface TaskInteractionPorts {
-	open(request: OpenInteractionRequest): Promise<InteractionOutcome>
-	complete(request: CompleteInteractionRequest): Promise<InteractionOutcome>
-	/**
-	 * Record that this completion's result is about to be shown, before it is.
-	 *
-	 * A terminate that lands while the completion is still committing then
-	 * leaves the task finished with this completion as its dialog. Never fails
-	 * the caller: without it a close in that window only loses the completion.
-	 */
-	stageCompletion?(request: CompleteInteractionRequest): Promise<void>
-	say(request: SayPresentationRequest): Promise<void>
+    open(request: OpenInteractionRequest): Promise<InteractionOutcome>
+    complete(request: CompleteInteractionRequest): Promise<InteractionOutcome>
+    /**
+     * Record that this completion's result is about to be shown, before it is.
+     *
+     * A terminate that lands while the completion is still committing then
+     * leaves the task finished with this completion as its dialog. Never fails
+     * the caller: without it a close in that window only loses the completion.
+     */
+    stageCompletion?(request: CompleteInteractionRequest): Promise<void>
+    say(request: SayPresentationRequest): Promise<void>
 }
 
 export interface TaskConfig {
-	// Core identifiers
-	taskId: string
-	ulid: string
-	cwd: string
-	mode: Mode
-	strictPlanModeEnabled: boolean
-	yoloModeToggled: boolean
-	doubleCheckCompletionEnabled: boolean
-	vscodeTerminalExecutionMode: "vscodeTerminal" | "backgroundExec"
-	enableParallelToolCalling: boolean
-	isSubagentExecution: boolean
-	/** Request-frozen global Web Tools switch. */
-	webToolsEnabled?: boolean
-	/** Request-frozen Standard subagent feature gate. */
-	subagentsEnabled?: boolean
-	/** Request-frozen route used to admit or reject local Web Search execution. */
-	webSearchRoutingPlan?: WebSearchRoutingPlan
-	/** Request-scoped one-shot authority for explicit-only tools. */
-	explicitInstructions?: ExplicitInstructionConsumePort
-	/** Authorization consumed by the central gate for the current complete handler invocation. */
-	explicitInstructionAuthorization?: ExplicitInstructionAuthorization
-	// Multi-workspace support (optional for backward compatibility)
-	workspaceManager?: WorkspaceRootManager
-	isMultiRootEnabled?: boolean
+    // Core identifiers
+    taskId: string
+    ulid: string
+    cwd: string
+    mode: Mode
+    strictPlanModeEnabled: boolean
+    yoloModeToggled: boolean
+    doubleCheckCompletionEnabled: boolean
+    vscodeTerminalExecutionMode: "vscodeTerminal" | "backgroundExec"
+    enableParallelToolCalling: boolean
+    isSubagentExecution: boolean
+    /** Request-frozen global Web Tools switch. */
+    webToolsEnabled?: boolean
+    /** Request-frozen Standard subagent feature gate. */
+    subagentsEnabled?: boolean
+    /** Request-frozen route used to admit or reject local Web Search execution. */
+    webSearchRoutingPlan?: WebSearchRoutingPlan
+    /** Request-scoped one-shot authority for explicit-only tools. */
+    explicitInstructions?: ExplicitInstructionConsumePort
+    /** Authorization consumed by the central gate for the current complete handler invocation. */
+    explicitInstructionAuthorization?: ExplicitInstructionAuthorization
+    // Multi-workspace support (optional for backward compatibility)
+    workspaceManager?: WorkspaceRootManager
+    isMultiRootEnabled?: boolean
 
-	// State management
-	taskState: ToolHandlerState
-	blockState: ToolBlockStatePort
-	messageState: MessageStateHandler
+    // State management
+    taskState: ToolHandlerState
+    blockState: ToolBlockStatePort
+    messageState: MessageStateHandler
 
-	// API and services
-	api: ApiHandler
-	services: TaskServices
+    // API and services
+    api: ApiHandler
+    services: TaskServices
 
-	// Settings
-	autoApprovalSettings: AutoApprovalSettings
-	browserSettings: BrowserSettings
-	focusChainSettings: FocusChainSettings
-	capabilityToggles: TaskCapabilityToggles
+    // Settings
+    autoApprovalSettings: AutoApprovalSettings
+    browserSettings: BrowserSettings
+    focusChainSettings: FocusChainSettings
+    capabilityToggles: TaskCapabilityToggles
 
-	// Typed interaction boundary
-	interactions: TaskInteractionPorts
-	/** Structured manual-admission outcomes keyed by canonical block identity. */
-	admissionOutcomes?: ReadonlyMap<string, InteractionOutcome>
+    // Typed interaction boundary
+    interactions: TaskInteractionPorts
+    /** Structured manual-admission outcomes keyed by canonical block identity. */
+    admissionOutcomes?: ReadonlyMap<string, InteractionOutcome>
 
-	// Callbacks (strongly typed)
-	callbacks: TaskCallbacks
+    // Callbacks (strongly typed)
+    callbacks: TaskCallbacks
 
-	// Tool coordination
-	coordinator: ToolExecutorCoordinator
-	/** Task-local allocator for result item identities. */
-	identityFactory: IdentityFactory
-	/** Task-local real-time activity state shared by chat and the Activity view. */
-	activityStore?: TaskActivityStore
-	/** Task-owned Provider round admission for nested compaction and subagent requests. */
-	providerRequestRounds?: ProviderRequestRoundPort
+    // Tool coordination
+    coordinator: ToolExecutorCoordinator
+    /** Task-local allocator for result item identities. */
+    identityFactory: IdentityFactory
+    /** Task-local real-time activity state shared by chat and the Activity view. */
+    activityStore?: TaskActivityStore
+    /** Task-owned Provider round admission for nested compaction and subagent requests. */
+    providerRequestRounds?: ProviderRequestRoundPort
 
-	/** Host-owned peer-task launcher; absent on headless runtimes. */
-	peerTaskSpawner?: PeerTaskSpawnPort
+    /** Host-owned peer-task launcher; absent on headless runtimes. */
+    peerTaskSpawner?: PeerTaskSpawnPort
 
-	/** Producer-owned durable ingress for background command and subagent results. */
-	backgroundResults?: BackgroundResultDeliveryPort
-	/** Task-local background subagent job manager. */
-	subagentJobManager?: SubagentJobManager
+    /** Producer-owned durable ingress for background command and subagent results. */
+    backgroundResults?: BackgroundResultDeliveryPort
+    /** Task-local background subagent job manager. */
+    subagentJobManager?: SubagentJobManager
 
-	/**
-	 * Task-scoped budget bounding how many subagents execute at once.
-	 *
-	 * Held on the task rather than per fan-out call so nested fan-out competes
-	 * for the same allowance instead of multiplying the configured limit.
-	 */
-	subagentFanoutBudget?: SubagentFanoutBudget
+    /**
+     * Task-scoped budget bounding how many subagents execute at once.
+     *
+     * Held on the task rather than per fan-out call so nested fan-out competes
+     * for the same allowance instead of multiplying the configured limit.
+     */
+    subagentFanoutBudget?: SubagentFanoutBudget
 }
 
 /**
  * All services available to tool handlers
  */
 export interface TaskServices {
-	mcpHub: McpHub
-	browserSession: BrowserSession
-	urlContentFetcher: UrlContentFetcher
-	diffViewProvider: DiffViewProvider
-	fileContextTracker: FileContextTracker
-	taskFileTracker: TaskFileTracker
-	ignoreController: IgnoreController
-	commandPermissionController: CommandPermissionController
-	contextManager: ContextManager
-	stateManager: StateManager
-	imageGenerationService: ImageGenerationService
+    mcpHub: McpHub
+    browserSession: BrowserSession
+    urlContentFetcher: UrlContentFetcher
+    diffViewProvider: DiffViewProvider
+    fileContextTracker: FileContextTracker
+    taskFileTracker: TaskFileTracker
+    ignoreController: IgnoreController
+    commandPermissionController: CommandPermissionController
+    contextManager: ContextManager
+    stateManager: StateManager
+    imageGenerationService: ImageGenerationService
 }
 
 /**
  * All callback functions available to tool handlers
  */
 export interface TaskCallbacks {
-	say: (
-		type: UiSay,
-		text?: string,
-		images?: string[],
-		files?: string[],
-		partial?: boolean,
-		existingTs?: number,
-		/**
-		 * `ts` of the command row this message belongs to.
-		 *
-		 * A `command_output` row is only merged into its command by this key, so a
-		 * host that drops it leaves the output orphaned and never rendered.
-		 */
-		commandTs?: number,
-	) => Promise<number | undefined>
+    say: (
+        type: UiSay,
+        text?: string,
+        images?: string[],
+        files?: string[],
+        partial?: boolean,
+        existingTs?: number,
+        /**
+         * `ts` of the command row this message belongs to.
+         *
+         * A `command_output` row is only merged into its command by this key, so a
+         * host that drops it leaves the output orphaned and never rendered.
+         */
+        commandTs?: number,
+    ) => Promise<number | undefined>
 
-	focusChainForceUpdate: (newPlan: string) => Promise<void>
+    focusChainForceUpdate: (newPlan: string) => Promise<void>
 
-	ask: (
-		type: UiAsk,
-		text?: string,
-		partial?: boolean,
-		options?: {
-			existingTs?: number
-			onTsCreated?: (ts: number) => void
-		},
-	) => Promise<{
-		response: ClineAskResponse
-		text?: string
-		images?: string[]
-		files?: string[]
-	}>
+    ask: (
+        type: UiAsk,
+        text?: string,
+        partial?: boolean,
+        options?: {
+            existingTs?: number
+            onTsCreated?: (ts: number) => void
+        },
+    ) => Promise<{
+        response: ClineAskResponse
+        text?: string
+        images?: string[]
+        files?: string[]
+    }>
 
-	/**
-	 * Commit a workspace restore point.
-	 *
-	 * Optional for the same reason as the checklist: a task that only produces
-	 * an answer has no workspace history to step back through.
-	 */
-	saveCheckpoint?: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
+    /**
+     * Commit a workspace restore point.
+     *
+     * Optional for the same reason as the checklist: a task that only produces
+     * an answer has no workspace history to step back through.
+     */
+    saveCheckpoint?: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
 
-	/**
-	 * Wait until the task's baseline restore point exists.
-	 *
-	 * Optional like `saveCheckpoint`: only a surface with workspace history
-	 * builds a baseline while the first request is in flight.
-	 */
-	awaitInitialCheckpoint?: () => Promise<void>
+    /**
+     * Wait until the task's baseline restore point exists.
+     *
+     * Optional like `saveCheckpoint`: only a surface with workspace history
+     * builds a baseline while the first request is in flight.
+     */
+    awaitInitialCheckpoint?: () => Promise<void>
 
-	sayAndCreateMissingParamError: (
-		toolName: ClineDefaultTool,
-		paramName: string,
-		relPath?: string,
-		existingTs?: number,
-	) => Promise<ClineToolResponseContent>
+    sayAndCreateMissingParamError: (
+        toolName: ClineDefaultTool,
+        paramName: string,
+        relPath?: string,
+        existingTs?: number,
+    ) => Promise<ClineToolResponseContent>
 
-	executeCommandTool: (
-		command: string,
-		timeoutSeconds: number | undefined,
-		options?: CommandExecutionOptions,
-	) => Promise<CommandExecutionOutcome>
-	killCommandTool?: (functionId: string) => Promise<CommandCancellationResult>
-	cancelRunningCommandTool?: () => Promise<boolean>
+    executeCommandTool: (
+        command: string,
+        timeoutSeconds: number | undefined,
+        options?: CommandExecutionOptions,
+    ) => Promise<CommandExecutionOutcome>
+    killCommandTool?: (functionId: string) => Promise<CommandCancellationResult>
+    cancelRunningCommandTool?: () => Promise<boolean>
 
-	doesLatestTaskCompletionHaveNewChanges: () => Promise<boolean>
+    doesLatestTaskCompletionHaveNewChanges: () => Promise<boolean>
 
-	/**
-	 * Publish the checklist a tool call carried.
-	 *
-	 * Optional because a checklist belongs to the surface, not to tool
-	 * execution: a task instantiated to generate a title, review a change, or
-	 * decide an approval presents none, and must not have to supply a stub.
-	 */
-	updateFCListFromToolResponse?: (taskProgress: string | undefined) => Promise<void>
+    /**
+     * Publish the checklist a tool call carried.
+     *
+     * Optional because a checklist belongs to the surface, not to tool
+     * execution: a task instantiated to generate a title, review a change, or
+     * decide an approval presents none, and must not have to supply a stub.
+     */
+    updateFCListFromToolResponse?: (taskProgress: string | undefined) => Promise<void>
 
-	// Additional callbacks for task management
-	postStateToWebview: () => Promise<void>
-	reinitExistingTaskFromId: (taskId: string) => Promise<void>
-	cancelTask: () => Promise<void>
-	updateTaskHistory: (update: unknown) => Promise<unknown[]>
+    // Additional callbacks for task management
+    postStateToWebview: () => Promise<void>
+    reinitExistingTaskFromId: (taskId: string) => Promise<void>
+    cancelTask: () => Promise<void>
+    updateTaskHistory: (update: unknown) => Promise<unknown[]>
 
-	applyLatestBrowserSettings: () => Promise<BrowserSession>
+    applyLatestBrowserSettings: () => Promise<BrowserSession>
 
-	switchToActMode: () => Promise<boolean>
+    switchToActMode: () => Promise<boolean>
 
-	// Hook execution callbacks
-	setActiveHookExecution: (hookExecution: HookExecution) => Promise<void>
-	clearActiveHookExecution: () => Promise<void>
-	getActiveHookExecution: () => Promise<HookExecution | undefined>
+    // Hook execution callbacks
+    setActiveHookExecution: (hookExecution: HookExecution) => Promise<void>
+    clearActiveHookExecution: () => Promise<void>
+    getActiveHookExecution: () => Promise<HookExecution | undefined>
 
-	// User prompt hook callback
-	runUserPromptSubmitHook: (
-		userContent: ClineContent[],
-		context: "initial_task" | "resume" | "feedback",
-	) => Promise<{ cancel?: boolean; wasCancelled?: boolean; contextModification?: string; errorMessage?: string }>
+    // User prompt hook callback
+    runUserPromptSubmitHook: (
+        userContent: ClineContent[],
+        context: "initial_task" | "resume" | "feedback",
+    ) => Promise<{ cancel?: boolean; wasCancelled?: boolean; contextModification?: string; errorMessage?: string }>
 
-	/** Update a cline message at the given index and notify the frontend. */
-	updateClineMessage: (
-		index: number,
-		updates: { text?: string; exitCode?: number; commandStatus?: CommandStatus },
-	) => Promise<void>
+    /** Update a cline message at the given index and notify the frontend. */
+    updateClineMessage: (
+        index: number,
+        updates: { text?: string; exitCode?: number; commandStatus?: CommandStatus },
+    ) => Promise<void>
 }
 
 /**
@@ -274,54 +274,54 @@ export interface TaskCallbacks {
  */
 /** Return the canonical turn identity for one handler invocation. */
 export function interactionTurnId(block: { dline_tid?: string }): string {
-	if (!block.dline_tid) {
-		throw new Error("Canonical tool interaction is missing dlineTid")
-	}
-	return `turn:${block.dline_tid}`
+    if (!block.dline_tid) {
+        throw new Error("Canonical tool interaction is missing dlineTid")
+    }
+    return `turn:${block.dline_tid}`
 }
 
 /** Return the canonical interaction identity for one handler invocation. */
 export function interactionId(block: { dline_tid?: string }): string {
-	if (!block.dline_tid) {
-		throw new Error("Canonical tool interaction is missing dlineTid")
-	}
-	return block.dline_tid
+    if (!block.dline_tid) {
+        throw new Error("Canonical tool interaction is missing dlineTid")
+    }
+    return block.dline_tid
 }
 
 export function validateTaskConfig(config: unknown): asserts config is TaskConfig {
-	if (!isRecord(config)) {
-		throw new Error("TaskConfig is null, undefined, or not an object")
-	}
+    if (!isRecord(config)) {
+        throw new Error("TaskConfig is null, undefined, or not an object")
+    }
 
-	for (const key of TASK_CONFIG_KEYS) {
-		if (!(key in config)) {
-			throw new Error(`Missing ${key} in TaskConfig`)
-		}
-	}
+    for (const key of TASK_CONFIG_KEYS) {
+        if (!(key in config)) {
+            throw new Error(`Missing ${key} in TaskConfig`)
+        }
+    }
 
-	if (typeof config.strictPlanModeEnabled !== "boolean") {
-		throw new Error("strictPlanModeEnabled must be a boolean in TaskConfig")
-	}
+    if (typeof config.strictPlanModeEnabled !== "boolean") {
+        throw new Error("strictPlanModeEnabled must be a boolean in TaskConfig")
+    }
 
-	if (!isRecord(config.services)) {
-		throw new Error("services must be an object in TaskConfig")
-	}
-	for (const key of TASK_SERVICES_KEYS) {
-		if (!(key in config.services)) {
-			throw new Error(`Missing services.${key} in TaskConfig`)
-		}
-	}
+    if (!isRecord(config.services)) {
+        throw new Error("services must be an object in TaskConfig")
+    }
+    for (const key of TASK_SERVICES_KEYS) {
+        if (!(key in config.services)) {
+            throw new Error(`Missing services.${key} in TaskConfig`)
+        }
+    }
 
-	if (!isRecord(config.callbacks)) {
-		throw new Error("callbacks must be an object in TaskConfig")
-	}
-	for (const key of TASK_CALLBACKS_KEYS) {
-		if (typeof config.callbacks[key] !== "function") {
-			throw new Error(`Missing or invalid callbacks.${key} in TaskConfig (must be a function)`)
-		}
-	}
+    if (!isRecord(config.callbacks)) {
+        throw new Error("callbacks must be an object in TaskConfig")
+    }
+    for (const key of TASK_CALLBACKS_KEYS) {
+        if (typeof config.callbacks[key] !== "function") {
+            throw new Error(`Missing or invalid callbacks.${key} in TaskConfig (must be a function)`)
+        }
+    }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null
+    return typeof value === "object" && value !== null
 }

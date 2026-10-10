@@ -10,12 +10,12 @@ import { Controller } from ".."
  * @returns Two arrays of image data URLs and other file paths
  */
 export async function selectFiles(_controller: Controller, request: BooleanRequest): Promise<StringArrays> {
-	try {
-		const { images, files } = await selectFilesIntegration(request.value)
-		return StringArrays.create({ values1: images, values2: files })
-	} catch (error) {
-		Logger.error("Error selecting images & files:", error)
-		// Return empty array on error
-		return StringArrays.create({ values1: [], values2: [] })
-	}
+    try {
+        const { images, files } = await selectFilesIntegration(request.value)
+        return StringArrays.create({ values1: images, values2: files })
+    } catch (error) {
+        Logger.error("Error selecting images & files:", error)
+        // Return empty array on error
+        return StringArrays.create({ values1: [], values2: [] })
+    }
 }

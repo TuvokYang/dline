@@ -12,119 +12,119 @@ import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
 
 export class HuggingFaceHandler implements ApiHandler {
-	private client: OpenAI | undefined
-	private cachedModel: { id: string; info: ModelInfo } | undefined
+    private client: OpenAI | undefined
+    private cachedModel: { id: string; info: ModelInfo } | undefined
 
-	constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {}
 
-	private get config() {
-		return this.ctx.profile.huggingface
-	}
-	private get apiKey() {
-		return this.ctx.profile.apiKey
-	}
-	private get modelId() {
-		return this.ctx.profile.modelId || ""
-	}
-	private get modelInfo() {
-		return this.ctx.profile.modelInfo as ModelInfo | undefined
-	}
-	private get baseUrl() {
-		return this.ctx.profile.baseUrl
-	}
+    private get config() {
+        return this.ctx.profile.huggingface
+    }
+    private get apiKey() {
+        return this.ctx.profile.apiKey
+    }
+    private get modelId() {
+        return this.ctx.profile.modelId || ""
+    }
+    private get modelInfo() {
+        return this.ctx.profile.modelInfo as ModelInfo | undefined
+    }
+    private get baseUrl() {
+        return this.ctx.profile.baseUrl
+    }
 
-	private ensureClient(): OpenAI {
-		if (!this.client) {
-			if (!this.apiKey) {
-				throw new Error("Hugging Face API key is required")
-			}
+    private ensureClient(): OpenAI {
+        if (!this.client) {
+            if (!this.apiKey) {
+                throw new Error("Hugging Face API key is required")
+            }
 
-			try {
-				this.client = createOpenAIClient({
-					baseURL: this.baseUrl || "https://router.huggingface.co/v1",
-					apiKey: this.apiKey,
-				})
-			} catch (error: any) {
-				throw new Error(`Error creating Hugging Face client: ${error.message}`)
-			}
-		}
-		return this.client
-	}
+            try {
+                this.client = createOpenAIClient({
+                    baseURL: this.baseUrl || "https://router.huggingface.co/v1",
+                    apiKey: this.apiKey,
+                })
+            } catch (error: any) {
+                throw new Error(`Error creating Hugging Face client: ${error.message}`)
+            }
+        }
+        return this.client
+    }
 
-	private async *yieldUsage(info: ModelInfo, usage: OpenAI.Completions.CompletionUsage | undefined): ApiStream {
-		if (!usage) {
-			return
-		}
+    private async *yieldUsage(info: ModelInfo, usage: OpenAI.Completions.CompletionUsage | undefined): ApiStream {
+        if (!usage) {
+            return
+        }
 
-		const inputTokens = usage.prompt_tokens || 0
-		const outputTokens = usage.completion_tokens || 0
-		const totalCost = calculateApiCostOpenAI(info, inputTokens, outputTokens)
+        const inputTokens = usage.prompt_tokens || 0
+        const outputTokens = usage.completion_tokens || 0
+        const totalCost = calculateApiCostOpenAI(info, inputTokens, outputTokens)
 
-		const usageData = {
-			type: "usage" as const,
-			inputTokens: inputTokens,
-			outputTokens: outputTokens,
-			cacheWriteTokens: 0,
-			cacheReadTokens: 0,
-			totalCost: totalCost,
-		}
+        const usageData = {
+            type: "usage" as const,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            cacheWriteTokens: 0,
+            cacheReadTokens: 0,
+            totalCost: totalCost,
+        }
 
-		yield usageData
-	}
+        yield usageData
+    }
 
-	@withRetry()
-	async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
-		const client = this.ensureClient()
-		const model = this.getModel()
+    @withRetry()
+    async *createMessage(systemPrompt: string, messages: ClineStorageMessage[], tools?: OpenAITool[]): ApiStream {
+        const client = this.ensureClient()
+        const model = this.getModel()
 
-		const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-			{ role: "system", content: systemPrompt },
-			...convertToOpenAiMessages(messages),
-		]
+        const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+            { role: "system", content: systemPrompt },
+            ...convertToOpenAiMessages(messages),
+        ]
 
-		const requestParams = {
-			model: model.id,
-			max_tokens: model.info.capabilities?.maxTokens,
-			messages: openAiMessages,
-			stream: true,
-			stream_options: { include_usage: true },
-			temperature: 0,
-			...getOpenAIToolParams(tools),
-		}
+        const requestParams = {
+            model: model.id,
+            max_tokens: model.info.capabilities?.maxTokens,
+            messages: openAiMessages,
+            stream: true,
+            stream_options: { include_usage: true },
+            temperature: 0,
+            ...getOpenAIToolParams(tools),
+        }
 
-		const toolCallProcessor = new ToolCallProcessor()
-		const stream = (await client.chat.completions.create(requestParams)) as any
+        const toolCallProcessor = new ToolCallProcessor()
+        const stream = (await client.chat.completions.create(requestParams)) as any
 
-		let _chunkCount = 0
-		let _totalContent = ""
+        let _chunkCount = 0
+        let _totalContent = ""
 
-		for await (const chunk of stream) {
-			_chunkCount++
-			const delta = chunk.choices?.[0]?.delta
-			if (delta?.content) {
-				_totalContent += delta.content
+        for await (const chunk of stream) {
+            _chunkCount++
+            const delta = chunk.choices?.[0]?.delta
+            if (delta?.content) {
+                _totalContent += delta.content
 
-				yield {
-					type: "text",
-					text: delta.content,
-				}
-			}
+                yield {
+                    type: "text",
+                    text: delta.content,
+                }
+            }
 
-			if (delta?.tool_calls) {
-				yield* toolCallProcessor.processToolCallDeltas(delta.tool_calls)
-			}
+            if (delta?.tool_calls) {
+                yield* toolCallProcessor.processToolCallDeltas(delta.tool_calls)
+            }
 
-			if (chunk.usage) {
-				yield* this.yieldUsage(model.info, chunk.usage)
-			}
-		}
-	}
+            if (chunk.usage) {
+                yield* this.yieldUsage(model.info, chunk.usage)
+            }
+        }
+    }
 
-	getModel(): { id: string; info: ModelInfo } {
-		this.cachedModel ??= resolveRuntimeModel(this.ctx.profile, {
-			models: huggingFaceModels,
-			defaultModelId: huggingFaceDefaultModelId,
-		})
-		return this.cachedModel
-	}
+    getModel(): { id: string; info: ModelInfo } {
+        this.cachedModel ??= resolveRuntimeModel(this.ctx.profile, {
+            models: huggingFaceModels,
+            defaultModelId: huggingFaceDefaultModelId,
+        })
+        return this.cachedModel
+    }
 }

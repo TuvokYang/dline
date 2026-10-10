@@ -7,129 +7,129 @@ import { sayFeedbackOnce } from "../../utils/UserFeedbackUtils"
 import { NewTaskHandler } from "../NewTaskHandler"
 
 vi.mock("@core/prompts/i18n", () => ({
-	getPrompt: vi.fn(() => "New task confirmed"),
+    getPrompt: vi.fn(() => "New task confirmed"),
 }))
 
 vi.mock("@core/prompts/responses", () => ({
-	formatResponse: {
-		toolResult: vi.fn((text: string, images?: string[], fileContent?: string) =>
-			images || fileContent
-				? [{ type: "text", text }, ...(images ?? []).map((image) => ({ type: "image", source: image }))]
-				: text,
-		),
-	},
+    formatResponse: {
+        toolResult: vi.fn((text: string, images?: string[], fileContent?: string) =>
+            images || fileContent
+                ? [{ type: "text", text }, ...(images ?? []).map((image) => ({ type: "image", source: image }))]
+                : text,
+        ),
+    },
 }))
 
 vi.mock("@integrations/misc/extract-text", () => ({
-	processFilesIntoText: vi.fn(async (files: string[]) => `files:${files.join(",")}`),
+    processFilesIntoText: vi.fn(async (files: string[]) => `files:${files.join(",")}`),
 }))
 
 vi.mock("@integrations/notifications", () => ({
-	showSystemNotification: vi.fn(),
+    showSystemNotification: vi.fn(),
 }))
 
 vi.mock("../../utils/UserFeedbackUtils", () => ({
-	sayFeedbackOnce: vi.fn(async () => undefined),
+    sayFeedbackOnce: vi.fn(async () => undefined),
 }))
 
 interface InteractionResult {
-	actionId: "approve" | "reject"
-	text?: string
-	images?: string[]
-	files?: string[]
+    actionId: "approve" | "reject"
+    text?: string
+    images?: string[]
+    files?: string[]
 }
 
 /** Create a minimal handler configuration with one causal interaction result. */
 function createConfig(result: InteractionResult): TaskConfig {
-	return {
-		taskId: "task-new",
-		ulid: "ulid-new",
-		cwd: "/workspace",
-		mode: "act",
-		taskState: new DefaultToolHandlerState(),
-		autoApprovalSettings: { enableNotifications: false },
-		interactions: {
-			open: vi.fn(async () => ({
-				actionId: result.actionId,
-				draft: {
-					text: result.text ?? "",
-					images: result.images ?? [],
-					files: result.files ?? [],
-				},
-			})),
-		},
-		callbacks: {
-			sayAndCreateMissingParamError: vi.fn(async () => "missing context"),
-		} as unknown as TaskConfig["callbacks"],
-	} as unknown as TaskConfig
+    return {
+        taskId: "task-new",
+        ulid: "ulid-new",
+        cwd: "/workspace",
+        mode: "act",
+        taskState: new DefaultToolHandlerState(),
+        autoApprovalSettings: { enableNotifications: false },
+        interactions: {
+            open: vi.fn(async () => ({
+                actionId: result.actionId,
+                draft: {
+                    text: result.text ?? "",
+                    images: result.images ?? [],
+                    files: result.files ?? [],
+                },
+            })),
+        },
+        callbacks: {
+            sayAndCreateMissingParamError: vi.fn(async () => "missing context"),
+        } as unknown as TaskConfig["callbacks"],
+    } as unknown as TaskConfig
 }
 
 /** Create one complete new_task tool block with canonical identity. */
 function createBlock(context?: string): ToolUse {
-	return {
-		type: "tool_use",
-		name: "new_task",
-		dline_tid: "tid-new-task",
-		function_id: "function-new-task",
-		ts: 100,
-		params: context === undefined ? {} : { context },
-		partial: false,
-	} as ToolUse
+    return {
+        type: "tool_use",
+        name: "new_task",
+        dline_tid: "tid-new-task",
+        function_id: "function-new-task",
+        ts: 100,
+        params: context === undefined ? {} : { context },
+        partial: false,
+    } as ToolUse
 }
 
 describe("NewTaskHandler", () => {
-	it("returns a successor directive for approve even when a draft is present", async () => {
-		const config = createConfig({ actionId: "approve", text: "This draft must not change the action" })
+    it("returns a successor directive for approve even when a draft is present", async () => {
+        const config = createConfig({ actionId: "approve", text: "This draft must not change the action" })
 
-		const result = await new NewTaskHandler().execute(config, createBlock("Successor task context"))
+        const result = await new NewTaskHandler().execute(config, createBlock("Successor task context"))
 
-		expect(config.interactions.open).toHaveBeenCalledWith({
-			turnId: "turn:tid-new-task",
-			interactionId: "tid-new-task",
-			kind: "new_task",
-			presentation: "Successor task context",
-			existingTs: 100,
-		})
-		expect(result).toMatchObject({
-			response: "New task confirmed",
-			postCommit: {
-				type: "start_successor_task",
-				context: "Successor task context",
-				functionId: "function-new-task",
-				dlineTid: "tid-new-task",
-			},
-		})
-	})
+        expect(config.interactions.open).toHaveBeenCalledWith({
+            turnId: "turn:tid-new-task",
+            interactionId: "tid-new-task",
+            kind: "new_task",
+            presentation: "Successor task context",
+            existingTs: 100,
+        })
+        expect(result).toMatchObject({
+            response: "New task confirmed",
+            postCommit: {
+                type: "start_successor_task",
+                context: "Successor task context",
+                functionId: "function-new-task",
+                dlineTid: "tid-new-task",
+            },
+        })
+    })
 
-	it("returns Regenerate Context feedback to the model as a marked result instead of handing off", async () => {
-		const config = createConfig({ actionId: "reject", text: "Narrow the scope", files: ["/workspace/a.md"] })
+    it("returns Regenerate Context feedback to the model as a marked result instead of handing off", async () => {
+        const config = createConfig({ actionId: "reject", text: "Narrow the scope", files: ["/workspace/a.md"] })
 
-		const result = await new NewTaskHandler().execute(config, createBlock("Successor task context"))
+        const result = await new NewTaskHandler().execute(config, createBlock("Successor task context"))
 
-		expect(result).not.toHaveProperty("postCommit")
-		expect(result).toEqual([
-			{
-				type: "text",
-				text: `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\nNarrow the scope\n</feedback>`,
-			},
-		])
-		expect(sayFeedbackOnce).toHaveBeenCalledWith(
-			config,
-			"noButtonClicked",
-			"Narrow the scope",
-			[],
-			["/workspace/a.md"],
-			expect.objectContaining({ actionId: "reject" }),
-		)
-	})
+        expect(result).not.toHaveProperty("postCommit")
+        expect(result).toEqual([
+            {
+                type: "text",
+                text: `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\nNarrow the scope\n</feedback>`,
+            },
+        ])
+        expect(sayFeedbackOnce).toHaveBeenCalledWith(
+            config,
+            "noButtonClicked",
+            "Narrow the scope",
+            [],
+            ["/workspace/a.md"],
+            expect.objectContaining({ actionId: "reject" }),
+        )
+    })
 
-	it("keeps the existing missing-context error path", async () => {
-		const config = createConfig({ actionId: "approve" })
+    it("keeps the existing missing-context error path", async () => {
+        const config = createConfig({ actionId: "approve" })
 
-		const result = await new NewTaskHandler().execute(config, createBlock())
+        const result = await new NewTaskHandler().execute(config, createBlock())
 
-		expect(result).toBe("missing context")
-		expect(config.callbacks.sayAndCreateMissingParamError).toHaveBeenCalledWith("new_task", "context", undefined, 100)
-		expect(config.interactions.open).not.toHaveBeenCalled()
-	})
+        expect(result).toBe("missing context")
+        expect(config.callbacks.sayAndCreateMissingParamError).toHaveBeenCalledWith("new_task", "context", undefined, 100)
+        expect(config.interactions.open).not.toHaveBeenCalled()
+    })
 })

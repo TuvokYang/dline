@@ -17,12 +17,12 @@
  * @returns The escaped path safe for Windows shell execution
  */
 function escapeWindowsShellPath(path: string): string {
-	// Escape backslashes that precede quotes
-	let escaped = path.replace(/\\"/g, '\\\\"')
-	// Escape standalone double quotes by doubling them
-	escaped = escaped.replace(/"/g, '""')
-	// Wrap in double quotes
-	return `"${escaped}"`
+    // Escape backslashes that precede quotes
+    let escaped = path.replace(/\\"/g, '\\\\"')
+    // Escape standalone double quotes by doubling them
+    escaped = escaped.replace(/"/g, '""')
+    // Wrap in double quotes
+    return `"${escaped}"`
 }
 
 /**
@@ -38,10 +38,10 @@ function escapeWindowsShellPath(path: string): string {
  * @returns The escaped path safe for Unix shell execution
  */
 function escapeUnixShellPath(path: string): string {
-	// Replace single quotes with '\'' (close quote, escaped quote, open quote)
-	const escaped = path.replace(/'/g, "'\\''")
-	// Wrap in single quotes
-	return `'${escaped}'`
+    // Replace single quotes with '\'' (close quote, escaped quote, open quote)
+    const escaped = path.replace(/'/g, "'\\''")
+    // Wrap in single quotes
+    return `'${escaped}'`
 }
 
 /**
@@ -63,5 +63,5 @@ function escapeUnixShellPath(path: string): string {
  * @returns The escaped path safe for shell execution on the current platform
  */
 export function escapeShellPath(path: string): string {
-	return process.platform === "win32" ? escapeWindowsShellPath(path) : escapeUnixShellPath(path)
+    return process.platform === "win32" ? escapeWindowsShellPath(path) : escapeUnixShellPath(path)
 }

@@ -9,5 +9,5 @@ import { OnboardingModelGroup } from "@/shared/proto/dline/state"
  * removed and the local table is the only source.
  */
 export function getClineOnboardingModels(): OnboardingModelGroup {
-	return { models: [...CLINE_ONBOARDING_MODELS] }
+    return { models: [...CLINE_ONBOARDING_MODELS] }
 }

@@ -24,27 +24,27 @@ const result = swapIn()
 
 let interrupted = false
 const cleanupOnSignal = (exitCode) => () => {
-	interrupted = true
-	try {
-		if (!result.skipped) {
-			restore()
-		}
-	} catch (err) {
-		console.error(`marketplace-readme: failed to restore on signal: ${err.message}`)
-	}
-	process.exit(exitCode)
+    interrupted = true
+    try {
+        if (!result.skipped) {
+            restore()
+        }
+    } catch (err) {
+        console.error(`marketplace-readme: failed to restore on signal: ${err.message}`)
+    }
+    process.exit(exitCode)
 }
 process.on("SIGINT", cleanupOnSignal(130))
 process.on("SIGTERM", cleanupOnSignal(143))
 
 try {
-	const ovsxArgs = ["ovsx", "publish", "--no-dependencies"]
-	if (isPrerelease) {
-		ovsxArgs.push("--pre-release")
-	}
-	execFileSync("npx", ovsxArgs, { stdio: "inherit" })
+    const ovsxArgs = ["ovsx", "publish", "--no-dependencies"]
+    if (isPrerelease) {
+        ovsxArgs.push("--pre-release")
+    }
+    execFileSync("npx", ovsxArgs, { stdio: "inherit" })
 } finally {
-	if (!interrupted && !result.skipped) {
-		restore()
-	}
+    if (!interrupted && !result.skipped) {
+        restore()
+    }
 }

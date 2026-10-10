@@ -1,8 +1,8 @@
 import {
-	type CheckpointReferenceSet,
-	createCheckpointReferenceSet,
-	normalizeCheckpointHashes,
-	normalizeCheckpointWorkspaceRoots,
+    type CheckpointReferenceSet,
+    createCheckpointReferenceSet,
+    normalizeCheckpointHashes,
+    normalizeCheckpointWorkspaceRoots,
 } from "@shared/checkpoints"
 
 /**
@@ -14,8 +14,8 @@ import {
  * Every other set is stored as JSON and keeps each hash bound to its root.
  */
 export function encodeCheckpointWorkspaceRef(references: CheckpointReferenceSet): string {
-	if (references.workspaceRoots.length === 0 && references.hashes.length === 1) return references.hashes[0]
-	return JSON.stringify({ hashes: references.hashes, workspaceRoots: references.workspaceRoots })
+    if (references.workspaceRoots.length === 0 && references.hashes.length === 1) return references.hashes[0]
+    return JSON.stringify({ hashes: references.hashes, workspaceRoots: references.workspaceRoots })
 }
 
 /**
@@ -26,15 +26,15 @@ export function encodeCheckpointWorkspaceRef(references: CheckpointReferenceSet)
  * to an unintended commit.
  */
 export function decodeCheckpointWorkspaceRef(workspaceRef: string): CheckpointReferenceSet | undefined {
-	if (!workspaceRef.startsWith("{")) {
-		return workspaceRef.length > 0 ? createCheckpointReferenceSet([workspaceRef], []) : undefined
-	}
-	try {
-		const parsed = JSON.parse(workspaceRef) as { hashes?: unknown; workspaceRoots?: unknown }
-		const hashes = normalizeCheckpointHashes(parsed.hashes)
-		if (!hashes.some((hash) => hash.length > 0)) return undefined
-		return createCheckpointReferenceSet(hashes, normalizeCheckpointWorkspaceRoots(parsed.workspaceRoots))
-	} catch {
-		return undefined
-	}
+    if (!workspaceRef.startsWith("{")) {
+        return workspaceRef.length > 0 ? createCheckpointReferenceSet([workspaceRef], []) : undefined
+    }
+    try {
+        const parsed = JSON.parse(workspaceRef) as { hashes?: unknown; workspaceRoots?: unknown }
+        const hashes = normalizeCheckpointHashes(parsed.hashes)
+        if (!hashes.some((hash) => hash.length > 0)) return undefined
+        return createCheckpointReferenceSet(hashes, normalizeCheckpointWorkspaceRoots(parsed.workspaceRoots))
+    } catch {
+        return undefined
+    }
 }

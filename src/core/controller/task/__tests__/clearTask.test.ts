@@ -10,48 +10,48 @@ import { clearTask } from "../clearTask"
  * unfinished.
  */
 describe("clearTask handler", () => {
-	it("preserves an established completion verdict when the user closes the task", async () => {
-		const clearTaskSpy = vi.fn(async () => undefined)
-		const controller = {
-			clearTask: clearTaskSpy,
-			postStateToWebview: vi.fn(async () => undefined),
-		} as unknown as Controller
+    it("preserves an established completion verdict when the user closes the task", async () => {
+        const clearTaskSpy = vi.fn(async () => undefined)
+        const controller = {
+            clearTask: clearTaskSpy,
+            postStateToWebview: vi.fn(async () => undefined),
+        } as unknown as Controller
 
-		await clearTask(controller, EmptyRequest.create())
+        await clearTask(controller, EmptyRequest.create())
 
-		expect(clearTaskSpy).toHaveBeenCalledWith(expect.objectContaining({ preserveCompletedState: true }))
-	})
+        expect(clearTaskSpy).toHaveBeenCalledWith(expect.objectContaining({ preserveCompletedState: true }))
+    })
 
-	it("still clears the panel state so the closed task leaves no visible session", async () => {
-		const clearTaskSpy = vi.fn(async () => undefined)
-		const postStateToWebview = vi.fn(async () => undefined)
-		const controller = {
-			clearTask: clearTaskSpy,
-			postStateToWebview,
-		} as unknown as Controller
+    it("still clears the panel state so the closed task leaves no visible session", async () => {
+        const clearTaskSpy = vi.fn(async () => undefined)
+        const postStateToWebview = vi.fn(async () => undefined)
+        const controller = {
+            clearTask: clearTaskSpy,
+            postStateToWebview,
+        } as unknown as Controller
 
-		await clearTask(controller, EmptyRequest.create())
+        await clearTask(controller, EmptyRequest.create())
 
-		expect(clearTaskSpy).toHaveBeenCalledWith(expect.objectContaining({ clearPanelState: true }))
-		// clearTask publishes the detached state itself. Publishing again here
-		// would only rebuild and rebroadcast the same state the user already sees.
-		expect(postStateToWebview).not.toHaveBeenCalled()
-	})
+        expect(clearTaskSpy).toHaveBeenCalledWith(expect.objectContaining({ clearPanelState: true }))
+        // clearTask publishes the detached state itself. Publishing again here
+        // would only rebuild and rebroadcast the same state the user already sees.
+        expect(postStateToWebview).not.toHaveBeenCalled()
+    })
 
-	/**
-	 * Returning to the recent-tasks view only requires the Task to be detached.
-	 * Keeping the user's close blocked on store flushes, lock release and
-	 * registry cleanup delays a view change that those steps cannot affect.
-	 */
-	it("defers durable teardown so closing returns to the recent view immediately", async () => {
-		const clearTaskSpy = vi.fn(async () => undefined)
-		const controller = {
-			clearTask: clearTaskSpy,
-			postStateToWebview: vi.fn(async () => undefined),
-		} as unknown as Controller
+    /**
+     * Returning to the recent-tasks view only requires the Task to be detached.
+     * Keeping the user's close blocked on store flushes, lock release and
+     * registry cleanup delays a view change that those steps cannot affect.
+     */
+    it("defers durable teardown so closing returns to the recent view immediately", async () => {
+        const clearTaskSpy = vi.fn(async () => undefined)
+        const controller = {
+            clearTask: clearTaskSpy,
+            postStateToWebview: vi.fn(async () => undefined),
+        } as unknown as Controller
 
-		await clearTask(controller, EmptyRequest.create())
+        await clearTask(controller, EmptyRequest.create())
 
-		expect(clearTaskSpy).toHaveBeenCalledWith(expect.objectContaining({ deferTeardown: true }))
-	})
+        expect(clearTaskSpy).toHaveBeenCalledWith(expect.objectContaining({ deferTeardown: true }))
+    })
 })

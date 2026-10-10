@@ -3,22 +3,22 @@ import { downloadAndUnzipVSCode, SilentReporter } from "@vscode/test-electron"
 import { execa } from "execa"
 
 async function installVSCode() {
-	console.log("Downloading VS Code...")
-	await downloadAndUnzipVSCode("stable", undefined, new SilentReporter())
-	console.log("VS Code is ready.")
+    console.log("Downloading VS Code...")
+    await downloadAndUnzipVSCode("stable", undefined, new SilentReporter())
+    console.log("VS Code is ready.")
 }
 
 async function installPlaywright() {
-	console.log("Installing Playwright Chromium and media tools...")
-	await execa("npm", ["exec", "playwright", "install", "chromium"], { stdio: "inherit" })
-	console.log("Playwright is ready.")
+    console.log("Installing Playwright Chromium and media tools...")
+    await execa("npm", ["exec", "playwright", "install", "chromium"], { stdio: "inherit" })
+    console.log("Playwright is ready.")
 }
 
 async function main() {
-	await Promise.all([installVSCode(), installPlaywright()])
+    await Promise.all([installVSCode(), installPlaywright()])
 }
 
 main().catch((error) => {
-	console.error("Failed to prepare VS Code for E2E tests", error)
-	process.exitCode = 1
+    console.error("Failed to prepare VS Code for E2E tests", error)
+    process.exitCode = 1
 })

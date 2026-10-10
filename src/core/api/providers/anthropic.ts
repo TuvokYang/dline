@@ -24,242 +24,242 @@ import { ApiKeyAnthropicTransport } from "./anthropic/transport"
 export { ANTHROPIC_FAST_MODE_BETA } from "./anthropic/transport"
 
 export class AnthropicHandler implements ApiHandler {
-	private client: Anthropic | undefined
+    private client: Anthropic | undefined
 
-	constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {}
 
-	private get config() {
-		return this.ctx.profile.anthropic
-	}
-	private get apiKey() {
-		return this.ctx.profile.apiKey
-	}
-	private get modelId() {
-		return resolveProfileModelId(this.ctx.profile)
-	}
-	private get modelInfo() {
-		return this.ctx.profile.modelInfo as ModelInfo | undefined
-	}
-	private get baseUrl() {
-		return this.ctx.profile.baseUrl
-	}
-	private get billingAttributionEnabled() {
-		return this.config?.claudeCodeIdentity?.enabled === true
-	}
+    private get config() {
+        return this.ctx.profile.anthropic
+    }
+    private get apiKey() {
+        return this.ctx.profile.apiKey
+    }
+    private get modelId() {
+        return resolveProfileModelId(this.ctx.profile)
+    }
+    private get modelInfo() {
+        return this.ctx.profile.modelInfo as ModelInfo | undefined
+    }
+    private get baseUrl() {
+        return this.ctx.profile.baseUrl
+    }
+    private get billingAttributionEnabled() {
+        return this.config?.claudeCodeIdentity?.enabled === true
+    }
 
-	/**
-	 * Resolve the opt-in Claude Code identity for one request.
-	 *
-	 * Returns nothing when the toggle is off so the request stays byte-identical
-	 * to one built without this feature. An identity that cannot be built is
-	 * dropped as well, because an API-key request is valid without it.
-	 */
-	private async resolveClaudeCodeIdentity(messages: readonly BillingAttributionMessage[]): Promise<ClaudeCodeIdentity> {
-		if (!this.billingAttributionEnabled) return { systemBlocks: [], headers: {} }
-		const identity = this.config?.claudeCodeIdentity
-		return buildClaudeCodeIdentity({
-			policy: "optional",
-			messages,
-			clientVersionOverride: identity?.clientVersionOverride,
-			entrypointOverride: identity?.entrypointOverride,
-		})
-	}
+    /**
+     * Resolve the opt-in Claude Code identity for one request.
+     *
+     * Returns nothing when the toggle is off so the request stays byte-identical
+     * to one built without this feature. An identity that cannot be built is
+     * dropped as well, because an API-key request is valid without it.
+     */
+    private async resolveClaudeCodeIdentity(messages: readonly BillingAttributionMessage[]): Promise<ClaudeCodeIdentity> {
+        if (!this.billingAttributionEnabled) return { systemBlocks: [], headers: {} }
+        const identity = this.config?.claudeCodeIdentity
+        return buildClaudeCodeIdentity({
+            policy: "optional",
+            messages,
+            clientVersionOverride: identity?.clientVersionOverride,
+            entrypointOverride: identity?.entrypointOverride,
+        })
+    }
 
-	/** This handler always speaks the Anthropic Messages protocol. */
-	getSelectedApiFormat(): ApiFormat {
-		return ApiFormat.ANTHROPIC_CHAT
-	}
+    /** This handler always speaks the Anthropic Messages protocol. */
+    getSelectedApiFormat(): ApiFormat {
+        return ApiFormat.ANTHROPIC_CHAT
+    }
 
-	supportsServerTool(tool: ServerTool): boolean {
-		return tool === ServerTool.WEB_SEARCH || tool === ServerTool.CODE_EXECUTION || tool === ServerTool.WEB_FETCH
-	}
+    supportsServerTool(tool: ServerTool): boolean {
+        return tool === ServerTool.WEB_SEARCH || tool === ServerTool.CODE_EXECUTION || tool === ServerTool.WEB_FETCH
+    }
 
-	/** Hosted calls this endpoint ran must come back verbatim for the model to keep their results. */
-	getHostedToolReplayProtocol(): HostedToolReplayProtocol {
-		return "anthropic_messages"
-	}
+    /** Hosted calls this endpoint ran must come back verbatim for the model to keep their results. */
+    getHostedToolReplayProtocol(): HostedToolReplayProtocol {
+        return "anthropic_messages"
+    }
 
-	getDocumentInputLimits(): DocumentInputLimits | undefined {
-		return anthropicMessagesDocumentLimits(this.getModel().info)
-	}
+    getDocumentInputLimits(): DocumentInputLimits | undefined {
+        return anthropicMessagesDocumentLimits(this.getModel().info)
+    }
 
-	private contextWindowTiersEnabled(modelId: string): boolean {
-		const registryModel = anthropicModels[modelId]
-		return registryModel === undefined || Boolean(registryModel.capabilities?.contextWindowTiers?.length)
-	}
+    private contextWindowTiersEnabled(modelId: string): boolean {
+        const registryModel = anthropicModels[modelId]
+        return registryModel === undefined || Boolean(registryModel.capabilities?.contextWindowTiers?.length)
+    }
 
-	/**
-	 * Build model metadata for custom Anthropic-compatible models.
-	 *
-	 * @param modelId Custom model identifier configured by the user.
-	 * @returns ModelInfo using profile overrides, provider custom config, or sane defaults.
-	 */
-	// The 1M long-context option is enabled by default; only an explicit false disables it.
-	// This must match the provider UI default so tasks resolve to the same context window.
-	private buildCustomModelInfo(modelId: string): ModelInfo {
-		return buildEffectiveModelInfo(modelId, undefined, {
-			capabilities: this.config?.capabilities,
-			pricing: this.config?.pricing,
-			enableLongContext: this.config?.enableLongContext !== false,
-			pricingTiersEnabled: this.config?.pricingTiersEnabled,
-			preferContextWindowTier: true,
-			contextWindowTiersEnabled: this.contextWindowTiersEnabled(modelId),
-		})
-	}
+    /**
+     * Build model metadata for custom Anthropic-compatible models.
+     *
+     * @param modelId Custom model identifier configured by the user.
+     * @returns ModelInfo using profile overrides, provider custom config, or sane defaults.
+     */
+    // The 1M long-context option is enabled by default; only an explicit false disables it.
+    // This must match the provider UI default so tasks resolve to the same context window.
+    private buildCustomModelInfo(modelId: string): ModelInfo {
+        return buildEffectiveModelInfo(modelId, undefined, {
+            capabilities: this.config?.capabilities,
+            pricing: this.config?.pricing,
+            enableLongContext: this.config?.enableLongContext !== false,
+            pricingTiersEnabled: this.config?.pricingTiersEnabled,
+            preferContextWindowTier: true,
+            contextWindowTiersEnabled: this.contextWindowTiersEnabled(modelId),
+        })
+    }
 
-	/**
-	 * Build effective Anthropic registry model metadata with provider overrides.
-	 *
-	 * @param modelId Selected registry model identifier.
-	 * @returns Effective model metadata for display and request handling.
-	 */
-	private buildRegistryModelInfo(modelId: string): ModelInfo {
-		return buildEffectiveModelInfo(modelId, anthropicModels[modelId], {
-			capabilities: this.config?.capabilities,
-			pricing: this.config?.pricing,
-			enableLongContext: this.config?.enableLongContext !== false,
-			pricingTiersEnabled: this.config?.pricingTiersEnabled,
-			preferContextWindowTier: true,
-			contextWindowTiersEnabled: this.contextWindowTiersEnabled(modelId),
-		})
-	}
+    /**
+     * Build effective Anthropic registry model metadata with provider overrides.
+     *
+     * @param modelId Selected registry model identifier.
+     * @returns Effective model metadata for display and request handling.
+     */
+    private buildRegistryModelInfo(modelId: string): ModelInfo {
+        return buildEffectiveModelInfo(modelId, anthropicModels[modelId], {
+            capabilities: this.config?.capabilities,
+            pricing: this.config?.pricing,
+            enableLongContext: this.config?.enableLongContext !== false,
+            pricingTiersEnabled: this.config?.pricingTiersEnabled,
+            preferContextWindowTier: true,
+            contextWindowTiersEnabled: this.contextWindowTiersEnabled(modelId),
+        })
+    }
 
-	/**
-	 * Resolve the model identifier sent to the Anthropic API.
-	 *
-	 * @param modelId Base registry or custom model identifier.
-	 * @param modelInfo Effective metadata containing selectable context tiers.
-	 * @returns API model identifier with the selected tier suffix applied.
-	 */
-	private resolveApiModelId(modelId: AnthropicModelId, modelInfo: ModelInfo): string {
-		const baseModelId = modelId.endsWith(ANTHROPIC_FAST_MODE_SUFFIX)
-			? modelId.slice(0, -ANTHROPIC_FAST_MODE_SUFFIX.length)
-			: modelId
-		const tier = selectContextTier(modelInfo.capabilities, this.config?.enableLongContext !== false)
-		return `${baseModelId}${tier?.apiModelSuffix ?? ""}`
-	}
+    /**
+     * Resolve the model identifier sent to the Anthropic API.
+     *
+     * @param modelId Base registry or custom model identifier.
+     * @param modelInfo Effective metadata containing selectable context tiers.
+     * @returns API model identifier with the selected tier suffix applied.
+     */
+    private resolveApiModelId(modelId: AnthropicModelId, modelInfo: ModelInfo): string {
+        const baseModelId = modelId.endsWith(ANTHROPIC_FAST_MODE_SUFFIX)
+            ? modelId.slice(0, -ANTHROPIC_FAST_MODE_SUFFIX.length)
+            : modelId
+        const tier = selectContextTier(modelInfo.capabilities, this.config?.enableLongContext !== false)
+        return `${baseModelId}${tier?.apiModelSuffix ?? ""}`
+    }
 
-	private ensureClient(): Anthropic {
-		if (!this.client) {
-			if (!this.apiKey) {
-				throw new Error("Anthropic API key is required")
-			}
-			try {
-				this.client = createAnthropicClient(
-					{ kind: "api_key", apiKey: this.apiKey },
-					{ baseUrl: this.baseUrl, defaultHeaders: buildExternalBasicHeaders() },
-				)
-			} catch (error) {
-				throw new Error(`Error creating Anthropic client: ${error.message}`)
-			}
-		}
-		return this.client
-	}
+    private ensureClient(): Anthropic {
+        if (!this.client) {
+            if (!this.apiKey) {
+                throw new Error("Anthropic API key is required")
+            }
+            try {
+                this.client = createAnthropicClient(
+                    { kind: "api_key", apiKey: this.apiKey },
+                    { baseUrl: this.baseUrl, defaultHeaders: buildExternalBasicHeaders() },
+                )
+            } catch (error) {
+                throw new Error(`Error creating Anthropic client: ${error.message}`)
+            }
+        }
+        return this.client
+    }
 
-	@withRetry()
-	async *createMessage(
-		systemPrompt: string,
-		messages: ClineStorageMessage[],
-		tools?: AnthropicTool[],
-		options?: ApiRequestOptions,
-	): ApiStream {
-		const model = this.getModel()
-		const transport = new ApiKeyAnthropicTransport(this.ensureClient(), model.id.endsWith(ANTHROPIC_FAST_MODE_SUFFIX))
+    @withRetry()
+    async *createMessage(
+        systemPrompt: string,
+        messages: ClineStorageMessage[],
+        tools?: AnthropicTool[],
+        options?: ApiRequestOptions,
+    ): ApiStream {
+        const model = this.getModel()
+        const transport = new ApiKeyAnthropicTransport(this.ensureClient(), model.id.endsWith(ANTHROPIC_FAST_MODE_SUFFIX))
 
-		const anthropicMessages = prepareAnthropicMessages(messages, model.info, options)
-		const claudeCodeIdentity = await this.resolveClaudeCodeIdentity(anthropicMessages)
-		const requestBody = buildAnthropicMessagesRequest({
-			model: this.resolveApiModelId(model.id, model.info),
-			modelInfo: model.info,
-			systemPrompt,
-			systemPrefix: claudeCodeIdentity.systemBlocks,
-			messages: anthropicMessages,
-			reasoning: resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning),
-			tools,
-			options,
-			// The route for models without prompt caching has never forced a tool choice; keep that request shape.
-			forcedToolChoice: anthropicPromptCacheOn(model.info) ? "model_declared" : "never",
-		})
+        const anthropicMessages = prepareAnthropicMessages(messages, model.info, options)
+        const claudeCodeIdentity = await this.resolveClaudeCodeIdentity(anthropicMessages)
+        const requestBody = buildAnthropicMessagesRequest({
+            model: this.resolveApiModelId(model.id, model.info),
+            modelInfo: model.info,
+            systemPrompt,
+            systemPrefix: claudeCodeIdentity.systemBlocks,
+            messages: anthropicMessages,
+            reasoning: resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning),
+            tools,
+            options,
+            // The route for models without prompt caching has never forced a tool choice; keep that request shape.
+            forcedToolChoice: anthropicPromptCacheOn(model.info) ? "model_declared" : "never",
+        })
 
-		yield* streamAnthropicMessagesEndpoint({
-			messages: requestBody.messages,
-			openStream: (continuationMessages) =>
-				transport.open({ ...requestBody, messages: continuationMessages }, claudeCodeIdentity.headers),
-		})
-	}
+        yield* streamAnthropicMessagesEndpoint({
+            messages: requestBody.messages,
+            openStream: (continuationMessages) =>
+                transport.open({ ...requestBody, messages: continuationMessages }, claudeCodeIdentity.headers),
+        })
+    }
 
-	async countInputTokens(input: {
-		readonly systemPrompt: string
-		readonly messages: ClineStorageMessage[]
-		readonly tools?: AnthropicTool[]
-		readonly options?: ApiRequestOptions
-	}): Promise<number | undefined> {
-		try {
-			const model = this.getModel()
-			const anthropicMessages = prepareAnthropicMessages(input.messages, model.info, input.options)
-			const claudeCodeIdentity = await this.resolveClaudeCodeIdentity(anthropicMessages)
-			const requestBody = buildAnthropicMessagesRequest({
-				model: this.resolveApiModelId(model.id, model.info),
-				modelInfo: model.info,
-				systemPrompt: input.systemPrompt,
-				systemPrefix: claudeCodeIdentity.systemBlocks,
-				messages: anthropicMessages,
-				reasoning: resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning),
-				tools: input.tools,
-				options: input.options,
-				forcedToolChoice: anthropicPromptCacheOn(model.info) ? "model_declared" : "never",
-			})
-			const result = await this.ensureClient().messages.countTokens({
-				model: requestBody.model,
-				messages: requestBody.messages,
-				...(requestBody.system === undefined ? {} : { system: requestBody.system }),
-				...(requestBody.tools === undefined ? {} : { tools: requestBody.tools }),
-				...(requestBody.tool_choice === undefined ? {} : { tool_choice: requestBody.tool_choice }),
-				...(requestBody.thinking === undefined ? {} : { thinking: requestBody.thinking }),
-			})
-			return result.input_tokens
-		} catch (error) {
-			Logger.warn("Anthropic token counting failed", error)
-			return undefined
-		}
-	}
+    async countInputTokens(input: {
+        readonly systemPrompt: string
+        readonly messages: ClineStorageMessage[]
+        readonly tools?: AnthropicTool[]
+        readonly options?: ApiRequestOptions
+    }): Promise<number | undefined> {
+        try {
+            const model = this.getModel()
+            const anthropicMessages = prepareAnthropicMessages(input.messages, model.info, input.options)
+            const claudeCodeIdentity = await this.resolveClaudeCodeIdentity(anthropicMessages)
+            const requestBody = buildAnthropicMessagesRequest({
+                model: this.resolveApiModelId(model.id, model.info),
+                modelInfo: model.info,
+                systemPrompt: input.systemPrompt,
+                systemPrefix: claudeCodeIdentity.systemBlocks,
+                messages: anthropicMessages,
+                reasoning: resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning),
+                tools: input.tools,
+                options: input.options,
+                forcedToolChoice: anthropicPromptCacheOn(model.info) ? "model_declared" : "never",
+            })
+            const result = await this.ensureClient().messages.countTokens({
+                model: requestBody.model,
+                messages: requestBody.messages,
+                ...(requestBody.system === undefined ? {} : { system: requestBody.system }),
+                ...(requestBody.tools === undefined ? {} : { tools: requestBody.tools }),
+                ...(requestBody.tool_choice === undefined ? {} : { tool_choice: requestBody.tool_choice }),
+                ...(requestBody.thinking === undefined ? {} : { thinking: requestBody.thinking }),
+            })
+            return result.input_tokens
+        } catch (error) {
+            Logger.warn("Anthropic token counting failed", error)
+            return undefined
+        }
+    }
 
-	/**
-	 * Resolve the Anthropic model ID and metadata for the current profile.
-	 *
-	 * @returns Configured model ID and model metadata without replacing custom IDs.
-	 */
-	getModel(): { id: AnthropicModelId; info: ModelInfo } {
-		const mid = this.modelId
-		if (mid && this.modelInfo?.id === mid) {
-			return {
-				id: mid as AnthropicModelId,
-				info: prioritizeApiFormat(
-					buildEffectiveModelInfo(mid, this.modelInfo, {
-						capabilities: this.config?.capabilities,
-						pricing: this.config?.pricing,
-						enableLongContext: this.config?.enableLongContext !== false,
-						pricingTiersEnabled: this.config?.pricingTiersEnabled,
-						preferContextWindowTier: true,
-						contextWindowTiersEnabled: this.contextWindowTiersEnabled(mid),
-					}),
-					ApiFormat.ANTHROPIC_CHAT,
-				),
-			}
-		}
-		if (mid && anthropicModels[mid]) {
-			const id = mid as AnthropicModelId
-			return { id, info: prioritizeApiFormat(this.buildRegistryModelInfo(id), ApiFormat.ANTHROPIC_CHAT) }
-		}
-		if (mid) {
-			return {
-				id: mid as AnthropicModelId,
-				info: prioritizeApiFormat(this.buildCustomModelInfo(mid), ApiFormat.ANTHROPIC_CHAT),
-			}
-		}
-		return {
-			id: anthropicDefaultModelId,
-			info: prioritizeApiFormat(this.buildRegistryModelInfo(anthropicDefaultModelId), ApiFormat.ANTHROPIC_CHAT),
-		}
-	}
+    /**
+     * Resolve the Anthropic model ID and metadata for the current profile.
+     *
+     * @returns Configured model ID and model metadata without replacing custom IDs.
+     */
+    getModel(): { id: AnthropicModelId; info: ModelInfo } {
+        const mid = this.modelId
+        if (mid && this.modelInfo?.id === mid) {
+            return {
+                id: mid as AnthropicModelId,
+                info: prioritizeApiFormat(
+                    buildEffectiveModelInfo(mid, this.modelInfo, {
+                        capabilities: this.config?.capabilities,
+                        pricing: this.config?.pricing,
+                        enableLongContext: this.config?.enableLongContext !== false,
+                        pricingTiersEnabled: this.config?.pricingTiersEnabled,
+                        preferContextWindowTier: true,
+                        contextWindowTiersEnabled: this.contextWindowTiersEnabled(mid),
+                    }),
+                    ApiFormat.ANTHROPIC_CHAT,
+                ),
+            }
+        }
+        if (mid && anthropicModels[mid]) {
+            const id = mid as AnthropicModelId
+            return { id, info: prioritizeApiFormat(this.buildRegistryModelInfo(id), ApiFormat.ANTHROPIC_CHAT) }
+        }
+        if (mid) {
+            return {
+                id: mid as AnthropicModelId,
+                info: prioritizeApiFormat(this.buildCustomModelInfo(mid), ApiFormat.ANTHROPIC_CHAT),
+            }
+        }
+        return {
+            id: anthropicDefaultModelId,
+            info: prioritizeApiFormat(this.buildRegistryModelInfo(anthropicDefaultModelId), ApiFormat.ANTHROPIC_CHAT),
+        }
+    }
 }

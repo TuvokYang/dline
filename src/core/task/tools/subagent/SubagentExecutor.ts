@@ -1,60 +1,60 @@
 export type SubagentExecStatus = "completed" | "failed" | "timeout" | "cancelled"
 
 export interface SubagentRuntimeConfig {
-	profileName?: string
-	providerId: string
-	modelId: string
-	apiFormat?: string
-	thinkingEnabled?: boolean
-	reasoningEffort?: string
-	thinkingBudgetTokens?: number
+    profileName?: string
+    providerId: string
+    modelId: string
+    apiFormat?: string
+    thinkingEnabled?: boolean
+    reasoningEffort?: string
+    thinkingBudgetTokens?: number
 }
 
 export interface SubagentRunStats {
-	toolCalls: number
-	inputTokens: number
-	outputTokens: number
-	cacheWriteTokens: number
-	cacheReadTokens: number
-	totalCost: number
-	currency: string
-	contextTokens: number
-	contextWindow: number
-	contextUsagePercentage: number
+    toolCalls: number
+    inputTokens: number
+    outputTokens: number
+    cacheWriteTokens: number
+    cacheReadTokens: number
+    totalCost: number
+    currency: string
+    contextTokens: number
+    contextWindow: number
+    contextUsagePercentage: number
 }
 
 export interface SubagentProgressEvent {
-	kind: "thinking" | "assistant_message" | "tool_call" | "tool_result" | "retry"
-	phase?: "delta" | "final"
-	text?: string
-	toolCallId?: string
-	toolName?: string
-	toolStatus?: "started" | "completed" | "failed"
-	summary?: string
-	durationMs?: number
-	error?: string
-	retryAttempt?: number
-	maxRetries?: number
-	delayMs?: number
-	cumulativeDelayMs?: number
+    kind: "thinking" | "assistant_message" | "tool_call" | "tool_result" | "retry"
+    phase?: "delta" | "final"
+    text?: string
+    toolCallId?: string
+    toolName?: string
+    toolStatus?: "started" | "completed" | "failed"
+    summary?: string
+    durationMs?: number
+    error?: string
+    retryAttempt?: number
+    maxRetries?: number
+    delayMs?: number
+    cumulativeDelayMs?: number
 }
 
 export interface SubagentProgressUpdate {
-	runtime?: SubagentRuntimeConfig
-	stats?: SubagentRunStats
-	latestToolCall?: string
-	status?: "running" | "completed" | "failed" | "cancelled"
-	result?: string
-	error?: string
-	event?: SubagentProgressEvent
+    runtime?: SubagentRuntimeConfig
+    stats?: SubagentRunStats
+    latestToolCall?: string
+    status?: "running" | "completed" | "failed" | "cancelled"
+    result?: string
+    error?: string
+    event?: SubagentProgressEvent
 }
 
 export interface SubagentExecResult {
-	status: SubagentExecStatus
-	result?: string
-	error?: string
-	retryable?: boolean
-	stats: SubagentRunStats
+    status: SubagentExecStatus
+    result?: string
+    error?: string
+    retryable?: boolean
+    stats: SubagentRunStats
 }
 
 /**
@@ -66,16 +66,16 @@ export interface SubagentExecResult {
 export type SubagentFinishReason = "timeout" | "user" | "context_pressure"
 
 export interface SubagentRunnerLike {
-	run(prompt: string, onProgress: (update: SubagentProgressUpdate) => void): Promise<SubagentExecResult>
-	abort(): Promise<void>
-	requestFinish(reason: SubagentFinishReason): Promise<boolean>
+    run(prompt: string, onProgress: (update: SubagentProgressUpdate) => void): Promise<SubagentExecResult>
+    abort(): Promise<void>
+    requestFinish(reason: SubagentFinishReason): Promise<boolean>
 }
 
 export interface RunSubagentInput {
-	runner: SubagentRunnerLike
-	prompt: string
-	timeoutSeconds: number
-	onProgress: (update: SubagentProgressUpdate) => void
+    runner: SubagentRunnerLike
+    prompt: string
+    timeoutSeconds: number
+    onProgress: (update: SubagentProgressUpdate) => void
 }
 
 /**
@@ -84,15 +84,15 @@ export interface RunSubagentInput {
  * @returns Completed, failed, timeout, or cancelled execution result.
  */
 export async function runSubagent(input: RunSubagentInput): Promise<SubagentExecResult> {
-	let timeoutHandle: NodeJS.Timeout | undefined
-	if (input.timeoutSeconds > 0) {
-		timeoutHandle = setTimeout(() => {
-			void input.runner.requestFinish("timeout")
-		}, input.timeoutSeconds * 1000)
-	}
-	try {
-		return await input.runner.run(input.prompt, input.onProgress)
-	} finally {
-		if (timeoutHandle) clearTimeout(timeoutHandle)
-	}
+    let timeoutHandle: NodeJS.Timeout | undefined
+    if (input.timeoutSeconds > 0) {
+        timeoutHandle = setTimeout(() => {
+            void input.runner.requestFinish("timeout")
+        }, input.timeoutSeconds * 1000)
+    }
+    try {
+        return await input.runner.run(input.prompt, input.onProgress)
+    } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle)
+    }
 }

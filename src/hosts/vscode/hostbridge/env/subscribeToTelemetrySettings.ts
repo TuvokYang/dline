@@ -7,12 +7,12 @@ import { Setting } from "@/shared/proto/dline/host"
  * Subscribe to changes to the telemetry settings.
  */
 export async function subscribeToTelemetrySettings(
-	_: EmptyRequest,
-	responseStream: StreamingResponseHandler,
-	_requestId?: string,
+    _: EmptyRequest,
+    responseStream: StreamingResponseHandler,
+    _requestId?: string,
 ): Promise<void> {
-	vscode.env.onDidChangeTelemetryEnabled((isTelemetryEnabled) => {
-		const event = { isEnabled: isTelemetryEnabled ? Setting.ENABLED : Setting.DISABLED }
-		responseStream(event, false)
-	})
+    vscode.env.onDidChangeTelemetryEnabled((isTelemetryEnabled) => {
+        const event = { isEnabled: isTelemetryEnabled ? Setting.ENABLED : Setting.DISABLED }
+        responseStream(event, false)
+    })
 }

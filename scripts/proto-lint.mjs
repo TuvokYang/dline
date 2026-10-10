@@ -22,14 +22,14 @@ const protoDir = "proto"
 const files = []
 
 function collect(dir) {
-	for (const entry of readdirSync(dir, { withFileTypes: true })) {
-		const full = join(dir, entry.name)
-		if (entry.isDirectory()) {
-			collect(full)
-		} else if (entry.name.endsWith(".proto")) {
-			files.push(full)
-		}
-	}
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+            collect(full)
+        } else if (entry.name.endsWith(".proto")) {
+            files.push(full)
+        }
+    }
 }
 collect(protoDir)
 
@@ -39,17 +39,17 @@ const rpcRegex = /rpc\s+(\w*[A-Z]{2,}\w*)\s*\(/g
 let hasError = false
 
 for (const file of files) {
-	const content = readFileSync(file, "utf8")
-	let match
-	while ((match = rpcRegex.exec(content)) !== null) {
-		console.error(`[proto-lint] Error: ${file}: RPC name "${match[1]}" contains repeated capital letters`)
-		hasError = true
-	}
+    const content = readFileSync(file, "utf8")
+    let match
+    while ((match = rpcRegex.exec(content)) !== null) {
+        console.error(`[proto-lint] Error: ${file}: RPC name "${match[1]}" contains repeated capital letters`)
+        hasError = true
+    }
 }
 
 if (hasError) {
-	console.error("[proto-lint] Proto lint failed: RPC naming convention violations found")
-	process.exit(1)
+    console.error("[proto-lint] Proto lint failed: RPC naming convention violations found")
+    process.exit(1)
 }
 
 console.log("[proto-lint] Proto lint passed")

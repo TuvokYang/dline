@@ -13,5 +13,5 @@ export const DLINE_SOURCE_REF: string = __DLINE_SOURCE_REF__
  * so shipped links never show another branch's content.
  */
 export function repositoryFileUrl(filePath: string): string {
-	return `${DLINE_REPOSITORY_URL}/blob/${DLINE_SOURCE_REF}/${filePath.replace(/^\/+/, "")}`
+    return `${DLINE_REPOSITORY_URL}/blob/${DLINE_SOURCE_REF}/${filePath.replace(/^\/+/, "")}`
 }

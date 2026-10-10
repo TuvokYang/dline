@@ -5,151 +5,151 @@ export type AssistantMessageContent = TextStreamContent | ToolUse | ReasoningStr
 export { parseAssistantMessage } from "./parse-assistant-message"
 
 export interface TextStreamContent {
-	type: "text"
-	content: string
-	partial: boolean
-	/**
-	 * Stable UI message ts assigned at parse/stream time.
-	 * All partial updates and final messages for this block share the same ts,
-	 * enabling frontend same-ts-replace semantics without post-hoc identity matching.
-	 */
-	ts: number
+    type: "text"
+    content: string
+    partial: boolean
+    /**
+     * Stable UI message ts assigned at parse/stream time.
+     * All partial updates and final messages for this block share the same ts,
+     * enabling frontend same-ts-replace semantics without post-hoc identity matching.
+     */
+    ts: number
 }
 
 export const toolParamNames = [
-	"command",
-	"function_id",
-	"workdirectory",
-	"requires_approval",
-	"path",
-	// Legacy parser alias for frozen schemas and persisted task messages. New
-	// canonical tool descriptors advertise only workspace-relative `path`.
-	"absolutePath",
-	"content",
-	"diff",
-	"regex",
-	"file_pattern",
-	"file_path",
-	"recursive",
-	"line",
-	"character",
-	"new_name",
-	"dry_run",
-	"find",
-	"replace",
-	"literal",
-	"action",
-	"url",
-	"coordinate",
-	"text",
-	"query",
-	"allowed_domains",
-	"blocked_domains",
-	"prompt",
-	"agent_name",
-	"task",
-	"mode",
-	"server_name",
-	"tool_name",
-	"arguments",
-	"uri",
-	"question",
-	"options",
-	"response",
-	"result",
-	"context",
-	"title",
-	"what_happened",
-	"steps_to_reproduce",
-	"api_request_output",
-	"additional_context",
-	"needs_more_exploration",
-	"new_plan",
-	"reason",
-	"requires_acknowledgment",
-	"task_progress",
-	"background",
-	"synchronous",
-	"timeout",
-	"mute_stdout",
-	"input",
-	"from_ref",
-	"to_ref",
-	"skill_name",
-	"name",
-	// The batch subagent tool takes one structured list. Over XML it arrives as
-	// JSON text, because that transport carries every parameter as a string.
-	"subagents",
-	"start_line",
-	"end_line",
-	"show_metadata",
-	"profile",
-	"count",
-	"width",
-	"height",
-	"aspect_ratio",
-	"quality",
-	"background",
-	"output_format",
-	"output_compression",
-	"reference_artifact_ids",
-	"mask_artifact_id",
+    "command",
+    "function_id",
+    "workdirectory",
+    "requires_approval",
+    "path",
+    // Legacy parser alias for frozen schemas and persisted task messages. New
+    // canonical tool descriptors advertise only workspace-relative `path`.
+    "absolutePath",
+    "content",
+    "diff",
+    "regex",
+    "file_pattern",
+    "file_path",
+    "recursive",
+    "line",
+    "character",
+    "new_name",
+    "dry_run",
+    "find",
+    "replace",
+    "literal",
+    "action",
+    "url",
+    "coordinate",
+    "text",
+    "query",
+    "allowed_domains",
+    "blocked_domains",
+    "prompt",
+    "agent_name",
+    "task",
+    "mode",
+    "server_name",
+    "tool_name",
+    "arguments",
+    "uri",
+    "question",
+    "options",
+    "response",
+    "result",
+    "context",
+    "title",
+    "what_happened",
+    "steps_to_reproduce",
+    "api_request_output",
+    "additional_context",
+    "needs_more_exploration",
+    "new_plan",
+    "reason",
+    "requires_acknowledgment",
+    "task_progress",
+    "background",
+    "synchronous",
+    "timeout",
+    "mute_stdout",
+    "input",
+    "from_ref",
+    "to_ref",
+    "skill_name",
+    "name",
+    // The batch subagent tool takes one structured list. Over XML it arrives as
+    // JSON text, because that transport carries every parameter as a string.
+    "subagents",
+    "start_line",
+    "end_line",
+    "show_metadata",
+    "profile",
+    "count",
+    "width",
+    "height",
+    "aspect_ratio",
+    "quality",
+    "background",
+    "output_format",
+    "output_compression",
+    "reference_artifact_ids",
+    "mask_artifact_id",
 ] as const
 
 export type ToolParamName = (typeof toolParamNames)[number]
 
 export interface ToolUse {
-	type: "tool_use"
-	name: ClineDefaultTool // id of the tool being used
-	// params is a partial record, allowing only some or none of the possible parameters to be used
-	params: Partial<Record<ToolParamName, string>>
-	partial: boolean
-	/**
-	 * Stable UI message ts assigned at parse/stream time.
-	 * All partial updates and final messages for this block share the same ts,
-	 * enabling frontend same-ts-replace semantics without post-hoc identity matching.
-	 */
-	ts: number
-	/**
-	 * Whether this tool use was initiated by a native tool call
-	 */
-	isNativeToolCall?: boolean
-	/** The only runtime tool-use/result pairing identity. */
-	function_id: string
-	/** The only runtime tool lifecycle identity. */
-	dline_tid: string
-	/**
-	 * Thought signature associated with this tool use, used by Gemini
-	 */
-	signature?: string
+    type: "tool_use"
+    name: ClineDefaultTool // id of the tool being used
+    // params is a partial record, allowing only some or none of the possible parameters to be used
+    params: Partial<Record<ToolParamName, string>>
+    partial: boolean
+    /**
+     * Stable UI message ts assigned at parse/stream time.
+     * All partial updates and final messages for this block share the same ts,
+     * enabling frontend same-ts-replace semantics without post-hoc identity matching.
+     */
+    ts: number
+    /**
+     * Whether this tool use was initiated by a native tool call
+     */
+    isNativeToolCall?: boolean
+    /** The only runtime tool-use/result pairing identity. */
+    function_id: string
+    /** The only runtime tool lifecycle identity. */
+    dline_tid: string
+    /**
+     * Thought signature associated with this tool use, used by Gemini
+     */
+    signature?: string
 }
 
 export interface ReasoningStreamContent {
-	type: "reasoning"
-	/**
-	 * The reasoning text generated by the model.
-	 * Redacted reasoning block will have this field set to "[REDACTED]" or an empty string.
-	 */
-	reasoning: string
-	/**
-	 * openrouter has various properties that we can pass back unmodified in api requests to preserve reasoning traces
-	 */
-	details?: unknown
-	/**
-	 * It's used when sending the thinking block back to the  API.
-	 * API expects this in completed form, not as array of deltas.
-	 */
-	signature?: string
-	/**
-	 * whether this reasoning block has been redacted
-	 */
-	redacted?: boolean
-	/**
-	 * redacted data
-	 */
-	data?: string
-	/**
-	 * Indicates whether this is a partial reasoning block
-	 */
-	partial: boolean
+    type: "reasoning"
+    /**
+     * The reasoning text generated by the model.
+     * Redacted reasoning block will have this field set to "[REDACTED]" or an empty string.
+     */
+    reasoning: string
+    /**
+     * openrouter has various properties that we can pass back unmodified in api requests to preserve reasoning traces
+     */
+    details?: unknown
+    /**
+     * It's used when sending the thinking block back to the  API.
+     * API expects this in completed form, not as array of deltas.
+     */
+    signature?: string
+    /**
+     * whether this reasoning block has been redacted
+     */
+    redacted?: boolean
+    /**
+     * redacted data
+     */
+    data?: string
+    /**
+     * Indicates whether this is a partial reasoning block
+     */
+    partial: boolean
 }

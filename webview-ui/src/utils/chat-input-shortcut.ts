@@ -1,26 +1,26 @@
 import type { ChatInputSendShortcut } from "@shared/ChatInputSendShortcut"
 
 export interface ChatInputKeyEvent {
-	key: string
-	altKey: boolean
-	ctrlKey: boolean
-	metaKey: boolean
-	shiftKey: boolean
+    key: string
+    altKey: boolean
+    ctrlKey: boolean
+    metaKey: boolean
+    shiftKey: boolean
 }
 
 export function shouldSendChatInput(event: ChatInputKeyEvent, shortcut: ChatInputSendShortcut, isComposing: boolean): boolean {
-	if (event.key !== "Enter" || isComposing || event.altKey || event.metaKey) {
-		return false
-	}
+    if (event.key !== "Enter" || isComposing || event.altKey || event.metaKey) {
+        return false
+    }
 
-	switch (shortcut) {
-		case "ctrlEnter":
-			return event.ctrlKey && !event.shiftKey
-		case "shiftEnter":
-			return event.shiftKey && !event.ctrlKey
-		case "enter":
-			return !event.ctrlKey && !event.shiftKey
-	}
+    switch (shortcut) {
+        case "ctrlEnter":
+            return event.ctrlKey && !event.shiftKey
+        case "shiftEnter":
+            return event.shiftKey && !event.ctrlKey
+        case "enter":
+            return !event.ctrlKey && !event.shiftKey
+    }
 }
 
 /**
@@ -36,13 +36,13 @@ export function shouldSendChatInput(event: ChatInputKeyEvent, shortcut: ChatInpu
  * so completion keeps priority and the submit follows the next press.
  */
 export function shouldCompleteMenuSelection(
-	event: ChatInputKeyEvent,
-	shortcut: ChatInputSendShortcut,
-	isComposing: boolean,
+    event: ChatInputKeyEvent,
+    shortcut: ChatInputSendShortcut,
+    isComposing: boolean,
 ): boolean {
-	if (isComposing) return false
-	if (event.key === "Tab") return true
-	if (event.key !== "Enter") return false
-	if (shortcut === "enter") return true
-	return !shouldSendChatInput(event, shortcut, isComposing)
+    if (isComposing) return false
+    if (event.key === "Tab") return true
+    if (event.key !== "Enter") return false
+    if (shortcut === "enter") return true
+    return !shouldSendChatInput(event, shortcut, isComposing)
 }

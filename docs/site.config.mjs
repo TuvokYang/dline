@@ -19,10 +19,10 @@ export const DEFAULT_BASE = "/"
  * @returns {{ site: string, base: string }}
  */
 export function resolveSiteConfig(env = process.env) {
-	return {
-		site: normalizeSite(env.DOCS_SITE || DEFAULT_SITE),
-		base: normalizeBase(env.DOCS_BASE || DEFAULT_BASE),
-	}
+    return {
+        site: normalizeSite(env.DOCS_SITE || DEFAULT_SITE),
+        base: normalizeBase(env.DOCS_BASE || DEFAULT_BASE),
+    }
 }
 
 /**
@@ -32,8 +32,8 @@ export function resolveSiteConfig(env = process.env) {
  * @returns {string}
  */
 export function normalizeBase(base) {
-	const trimmed = base.trim().replace(/^\/+|\/+$/g, "")
-	return trimmed ? `/${trimmed}/` : "/"
+    const trimmed = base.trim().replace(/^\/+|\/+$/g, "")
+    return trimmed ? `/${trimmed}/` : "/"
 }
 
 /**
@@ -43,5 +43,5 @@ export function normalizeBase(base) {
  * @returns {string}
  */
 export function normalizeSite(site) {
-	return new URL(site).origin
+    return new URL(site).origin
 }

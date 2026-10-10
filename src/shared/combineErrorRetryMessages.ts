@@ -1,80 +1,80 @@
 import { UiMessage } from "./ExtensionMessage"
 
 const recoveredStreamSayTypes = new Set([
-	"reasoning",
-	"text",
-	"tool",
-	"use_mcp_server",
-	"use_subagents",
-	"browser_action_launch",
-	"browser_action",
+    "reasoning",
+    "text",
+    "tool",
+    "use_mcp_server",
+    "use_subagents",
+    "browser_action_launch",
+    "browser_action",
 ])
 
 function isTerminalRetryFailure(message: UiMessage): boolean {
-	try {
-		const retryInfo = JSON.parse(message.text || "{}") as { failed?: unknown }
-		return retryInfo.failed === true
-	} catch {
-		return false
-	}
+    try {
+        const retryInfo = JSON.parse(message.text || "{}") as { failed?: unknown }
+        return retryInfo.failed === true
+    } catch {
+        return false
+    }
 }
 
 function isRecoveredStreamMessage(message: UiMessage, conversationHistoryIndex: number): boolean {
-	if ((message.conversationHistoryIndex ?? 0) !== conversationHistoryIndex) {
-		return false
-	}
+    if ((message.conversationHistoryIndex ?? 0) !== conversationHistoryIndex) {
+        return false
+    }
 
-	if (message.type === "ask") {
-		if ((message.ask === "followup" || message.ask === "completion_result") && message.partial !== true) {
-			return Boolean(message.text)
-		}
-		return message.partial === true && message.ask !== undefined
-	}
+    if (message.type === "ask") {
+        if ((message.ask === "followup" || message.ask === "completion_result") && message.partial !== true) {
+            return Boolean(message.text)
+        }
+        return message.partial === true && message.ask !== undefined
+    }
 
-	if (message.say === "completion_result" && message.partial !== true) {
-		return Boolean(message.text)
-	}
+    if (message.say === "completion_result" && message.partial !== true) {
+        return Boolean(message.text)
+    }
 
-	return (
-		message.partial === true &&
-		message.say !== undefined &&
-		recoveredStreamSayTypes.has(message.say) &&
-		Boolean(message.text || message.reasoning)
-	)
+    return (
+        message.partial === true &&
+        message.say !== undefined &&
+        recoveredStreamSayTypes.has(message.say) &&
+        Boolean(message.text || message.reasoning)
+    )
 }
 
 function projectCanonicalApiError(messages: UiMessage[]): UiMessage[] {
-	const canonicalError = messages.at(-1)
-	if (canonicalError?.type !== "ask" || canonicalError.ask !== "api_req_failed" || !canonicalError.text) {
-		return messages
-	}
+    const canonicalError = messages.at(-1)
+    if (canonicalError?.type !== "ask" || canonicalError.ask !== "api_req_failed" || !canonicalError.text) {
+        return messages
+    }
 
-	let requestIndex = -1
-	for (let index = messages.length - 2; index >= 0; index--) {
-		if (messages[index].type === "say" && messages[index].say === "api_req_started") {
-			requestIndex = index
-			break
-		}
-	}
-	if (requestIndex === -1) {
-		return messages
-	}
+    let requestIndex = -1
+    for (let index = messages.length - 2; index >= 0; index--) {
+        if (messages[index].type === "say" && messages[index].say === "api_req_started") {
+            requestIndex = index
+            break
+        }
+    }
+    if (requestIndex === -1) {
+        return messages
+    }
 
-	const request = messages[requestIndex]
-	try {
-		const requestInfo = JSON.parse(request.text || "{}")
-		if (requestInfo.streamingFailedMessage === canonicalError.text) {
-			return messages
-		}
-		const projected = [...messages]
-		projected[requestIndex] = {
-			...request,
-			text: JSON.stringify({ ...requestInfo, streamingFailedMessage: canonicalError.text }),
-		}
-		return projected
-	} catch {
-		return messages
-	}
+    const request = messages[requestIndex]
+    try {
+        const requestInfo = JSON.parse(request.text || "{}")
+        if (requestInfo.streamingFailedMessage === canonicalError.text) {
+            return messages
+        }
+        const projected = [...messages]
+        projected[requestIndex] = {
+            ...request,
+            text: JSON.stringify({ ...requestInfo, streamingFailedMessage: canonicalError.text }),
+        }
+        return projected
+    } catch {
+        return messages
+    }
 }
 
 /**
@@ -115,76 +115,76 @@ function projectCanonicalApiError(messages: UiMessage[]): UiMessage[] {
  * // Result: [{ type: 'say', say: 'api_req_started', text: '{}', ts: 1002 }]
  */
 export function combineErrorRetryMessages(messages: UiMessage[]): UiMessage[] {
-	const projectedMessages = projectCanonicalApiError(messages)
-	const result: UiMessage[] = []
+    const projectedMessages = projectCanonicalApiError(messages)
+    const result: UiMessage[] = []
 
-	for (let i = 0; i < projectedMessages.length; i++) {
-		const message = projectedMessages[i]
+    for (let i = 0; i < projectedMessages.length; i++) {
+        const message = projectedMessages[i]
 
-		if (message.say === "error_retry") {
-			// Look ahead to find if there's another error_retry before the next api_req_started
-			const isTerminalFailure = isTerminalRetryFailure(message)
-			let hasLaterErrorRetry = false
-			let hasApiReqStartedBefore = false
-			let hasRecoveredConversation = false
-			let hasCanonicalRecoveryAsk = false
-			let hasRetryStarted = false
-			const conversationHistoryIndex = message.conversationHistoryIndex ?? 0
+        if (message.say === "error_retry") {
+            // Look ahead to find if there's another error_retry before the next api_req_started
+            const isTerminalFailure = isTerminalRetryFailure(message)
+            let hasLaterErrorRetry = false
+            let hasApiReqStartedBefore = false
+            let hasRecoveredConversation = false
+            let hasCanonicalRecoveryAsk = false
+            let hasRetryStarted = false
+            const conversationHistoryIndex = message.conversationHistoryIndex ?? 0
 
-			for (let j = i + 1; j < projectedMessages.length; j++) {
-				const laterMessage = projectedMessages[j]
-				if (laterMessage.say === "error_retry") {
-					hasLaterErrorRetry = true
-					break
-				}
-				if (laterMessage.type === "ask" && laterMessage.ask === "api_req_failed") {
-					hasCanonicalRecoveryAsk = true
-					// An exhausted card stays beside the canonical ask's actions, so
-					// the scan continues past it: a Retry answered there may already
-					// have recovered, and only a later response proves that.
-					if (!isTerminalFailure) break
-					continue
-				}
-				if (laterMessage.say === "api_req_retried") {
-					hasRetryStarted = true
-					continue
-				}
-				if (laterMessage.say === "api_req_started") {
-					hasApiReqStartedBefore = true
-					hasRetryStarted = true
-					continue
-				}
-				if (
-					hasRetryStarted &&
-					((laterMessage.conversationHistoryIndex ?? 0) > conversationHistoryIndex ||
-						isRecoveredStreamMessage(laterMessage, conversationHistoryIndex))
-				) {
-					hasRecoveredConversation = true
-					break
-				}
-			}
+            for (let j = i + 1; j < projectedMessages.length; j++) {
+                const laterMessage = projectedMessages[j]
+                if (laterMessage.say === "error_retry") {
+                    hasLaterErrorRetry = true
+                    break
+                }
+                if (laterMessage.type === "ask" && laterMessage.ask === "api_req_failed") {
+                    hasCanonicalRecoveryAsk = true
+                    // An exhausted card stays beside the canonical ask's actions, so
+                    // the scan continues past it: a Retry answered there may already
+                    // have recovered, and only a later response proves that.
+                    if (!isTerminalFailure) break
+                    continue
+                }
+                if (laterMessage.say === "api_req_retried") {
+                    hasRetryStarted = true
+                    continue
+                }
+                if (laterMessage.say === "api_req_started") {
+                    hasApiReqStartedBefore = true
+                    hasRetryStarted = true
+                    continue
+                }
+                if (
+                    hasRetryStarted &&
+                    ((laterMessage.conversationHistoryIndex ?? 0) > conversationHistoryIndex ||
+                        isRecoveredStreamMessage(laterMessage, conversationHistoryIndex))
+                ) {
+                    hasRecoveredConversation = true
+                    break
+                }
+            }
 
-			// Case 1: Another error_retry follows before api_req_started - skip this one
-			if (hasLaterErrorRetry) {
-				continue
-			}
+            // Case 1: Another error_retry follows before api_req_started - skip this one
+            if (hasLaterErrorRetry) {
+                continue
+            }
 
-			// A canonical recovery ask replaces transient retry status, but the
-			// exhausted card remains the visible explanation beside its actions.
-			// Any later durable model response retires both states entirely.
-			if (hasRecoveredConversation || (hasCanonicalRecoveryAsk && !isTerminalFailure)) {
-				continue
-			}
+            // A canonical recovery ask replaces transient retry status, but the
+            // exhausted card remains the visible explanation beside its actions.
+            // Any later durable model response retires both states entirely.
+            if (hasRecoveredConversation || (hasCanonicalRecoveryAsk && !isTerminalFailure)) {
+                continue
+            }
 
-			// Case 2: api_req_started follows (no later error_retry) - retry succeeded.
-			// Keep only a terminal failure until a durable response proves recovery.
-			if (hasApiReqStartedBefore && !isTerminalFailure) {
-				continue
-			}
-		}
+            // Case 2: api_req_started follows (no later error_retry) - retry succeeded.
+            // Keep only a terminal failure until a durable response proves recovery.
+            if (hasApiReqStartedBefore && !isTerminalFailure) {
+                continue
+            }
+        }
 
-		result.push(message)
-	}
+        result.push(message)
+    }
 
-	return result
+    return result
 }

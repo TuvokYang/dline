@@ -7,31 +7,31 @@ import { Logger } from "@/shared/services/Logger"
 import { Controller } from "../index"
 
 export async function explainWithCline(
-	controller: Controller,
-	request: CommandContext,
-	notebookContext?: string,
+    controller: Controller,
+    request: CommandContext,
+    notebookContext?: string,
 ): Promise<Empty> {
-	if (!request.selectedText?.trim() && !notebookContext) {
-		HostProvider.window.showMessage({
-			type: ShowMessageType.INFORMATION,
-			message: "Please select some code to explain.",
-		})
-		return {}
-	}
+    if (!request.selectedText?.trim() && !notebookContext) {
+        HostProvider.window.showMessage({
+            type: ShowMessageType.INFORMATION,
+            message: "Please select some code to explain.",
+        })
+        return {}
+    }
 
-	const filePath = request.filePath || ""
-	const fileMention = await getFileMentionFromPath(filePath)
-	let prompt = `Explain the following code from ${fileMention}:
+    const filePath = request.filePath || ""
+    const fileMention = await getFileMentionFromPath(filePath)
+    let prompt = `Explain the following code from ${fileMention}:
 \`\`\`${request.language}\n${request.selectedText}\n\`\`\``
 
-	// Add notebook context if provided (includes cell JSON)
-	if (notebookContext) {
-		Logger.log("Adding notebook context to explainWithCline task")
-		prompt += notebookContext
-	}
+    // Add notebook context if provided (includes cell JSON)
+    if (notebookContext) {
+        Logger.log("Adding notebook context to explainWithCline task")
+        prompt += notebookContext
+    }
 
-	await controller.initTask(prompt)
-	telemetryService.captureButtonClick("codeAction_explainCode", controller.task?.owners.identity.taskIncarnationId)
+    await controller.initTask(prompt)
+    telemetryService.captureButtonClick("codeAction_explainCode", controller.task?.owners.identity.taskIncarnationId)
 
-	return {}
+    return {}
 }

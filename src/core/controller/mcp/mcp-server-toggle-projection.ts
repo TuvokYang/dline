@@ -7,11 +7,11 @@ import type { McpServer } from "@shared/mcp"
  * override workspace preferences while the shared McpHub connection stays live.
  */
 export function projectMcpServersWithToggleOverrides(
-	servers: readonly McpServer[],
-	overrides: Readonly<Record<string, boolean>>,
+    servers: readonly McpServer[],
+    overrides: Readonly<Record<string, boolean>>,
 ): McpServer[] {
-	return servers.map((server) => {
-		if (!Object.hasOwn(overrides, server.name)) return server
-		return { ...server, disabled: overrides[server.name] !== true }
-	})
+    return servers.map((server) => {
+        if (!Object.hasOwn(overrides, server.name)) return server
+        return { ...server, disabled: overrides[server.name] !== true }
+    })
 }

@@ -12,16 +12,16 @@ import type { AttachedDocumentEnvelope } from "./TaskPayloadEnvelopes"
  * @returns Refs in attachment order; `undefined` when there is nothing to store.
  */
 export async function putAttachedDocuments(
-	payloads: Pick<TaskPayloadStore, "put">,
-	documents: readonly ClineUserAttachedDocumentBlock[] | undefined,
+    payloads: Pick<TaskPayloadStore, "put">,
+    documents: readonly ClineUserAttachedDocumentBlock[] | undefined,
 ): Promise<readonly string[] | undefined> {
-	if (!documents?.length) return undefined
-	const refs: string[] = []
-	for (const document of documents) {
-		const envelope: AttachedDocumentEnvelope = { kind: "attached_document", document }
-		refs.push(await payloads.put(encodeTaskPayload(envelope)))
-	}
-	return refs
+    if (!documents?.length) return undefined
+    const refs: string[] = []
+    for (const document of documents) {
+        const envelope: AttachedDocumentEnvelope = { kind: "attached_document", document }
+        refs.push(await payloads.put(encodeTaskPayload(envelope)))
+    }
+    return refs
 }
 
 /**
@@ -29,15 +29,15 @@ export async function putAttachedDocuments(
  * @throws `InvalidAttachedDocumentPayload` when a ref names another payload kind.
  */
 export async function readAttachedDocuments(
-	payloads: Pick<TaskPayloadStore, "read">,
-	refs: readonly string[] | undefined,
+    payloads: Pick<TaskPayloadStore, "read">,
+    refs: readonly string[] | undefined,
 ): Promise<ClineUserAttachedDocumentBlock[]> {
-	if (!refs?.length) return []
-	const documents: ClineUserAttachedDocumentBlock[] = []
-	for (const ref of refs) {
-		const envelope = decodeTaskPayload<AttachedDocumentEnvelope>(await payloads.read(ref))
-		if (envelope.kind !== "attached_document") throw new Error("InvalidAttachedDocumentPayload")
-		documents.push(envelope.document)
-	}
-	return documents
+    if (!refs?.length) return []
+    const documents: ClineUserAttachedDocumentBlock[] = []
+    for (const ref of refs) {
+        const envelope = decodeTaskPayload<AttachedDocumentEnvelope>(await payloads.read(ref))
+        if (envelope.kind !== "attached_document") throw new Error("InvalidAttachedDocumentPayload")
+        documents.push(envelope.document)
+    }
+    return documents
 }

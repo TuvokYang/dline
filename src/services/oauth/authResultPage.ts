@@ -3,15 +3,15 @@ import type { OAuthAccountPresentation } from "./types"
 export type AuthResultStatus = "success" | "failure"
 
 export interface AuthResultPageOptions {
-	status: AuthResultStatus
-	/** Page title and heading text. */
-	title: string
-	/** Primary explanation rendered under the heading. */
-	description: string
-	/** Optional closing hint rendered below the account block. */
-	hint?: string
-	/** Optional account summary. Omitted entirely when absent. */
-	account?: OAuthAccountPresentation
+    status: AuthResultStatus
+    /** Page title and heading text. */
+    title: string
+    /** Primary explanation rendered under the heading. */
+    description: string
+    /** Optional closing hint rendered below the account block. */
+    hint?: string
+    /** Optional account summary. Omitted entirely when absent. */
+    account?: OAuthAccountPresentation
 }
 
 /**
@@ -173,19 +173,19 @@ p {
  * input even though the page is served over loopback.
  */
 function escapeHtml(value: string): string {
-	return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")
+    return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")
 }
 
 function renderAccount(account: OAuthAccountPresentation | undefined): string {
-	if (!account) return ""
-	const rows = [
-		account.providerName ? `<span class="provider">${escapeHtml(account.providerName)}</span>` : "",
-		account.accountName ? `<span class="name">${escapeHtml(account.accountName)}</span>` : "",
-		account.accountDetail ? `<span class="detail">${escapeHtml(account.accountDetail)}</span>` : "",
-		account.planName ? `<span class="plan">${escapeHtml(account.planName)}</span>` : "",
-	].filter((row) => row.length > 0)
-	if (rows.length === 0) return ""
-	return `<div class="account">${rows.join("")}</div>`
+    if (!account) return ""
+    const rows = [
+        account.providerName ? `<span class="provider">${escapeHtml(account.providerName)}</span>` : "",
+        account.accountName ? `<span class="name">${escapeHtml(account.accountName)}</span>` : "",
+        account.accountDetail ? `<span class="detail">${escapeHtml(account.accountDetail)}</span>` : "",
+        account.planName ? `<span class="plan">${escapeHtml(account.planName)}</span>` : "",
+    ].filter((row) => row.length > 0)
+    if (rows.length === 0) return ""
+    return `<div class="account">${rows.join("")}</div>`
 }
 
 /**
@@ -199,9 +199,9 @@ function renderAccount(account: OAuthAccountPresentation | undefined): string {
  * @returns A self-contained HTML document with no external resource references.
  */
 export function renderAuthResultPage(options: AuthResultPageOptions): string {
-	const logoClass = `logo ${options.status}`
-	const hint = options.hint ? `<div class="hint">${escapeHtml(options.hint)}</div>` : ""
-	return `<!doctype html>
+    const logoClass = `logo ${options.status}`
+    const hint = options.hint ? `<div class="hint">${escapeHtml(options.hint)}</div>` : ""
+    return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">

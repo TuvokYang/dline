@@ -22,12 +22,12 @@ const FRONTMATTER_KEY = /^([A-Za-z_][\w:-]*)\s*:/gm
  * @returns {{ frontmatter: string, body: string }}
  */
 export function maskFrontmatter(source) {
-	const match = FRONTMATTER.exec(source)
-	if (!match) {
-		return { frontmatter: "", body: source }
-	}
-	const blankLines = match[0].replace(/[^\n]/g, "")
-	return { frontmatter: match[1] ?? "", body: blankLines + source.slice(match[0].length) }
+    const match = FRONTMATTER.exec(source)
+    if (!match) {
+        return { frontmatter: "", body: source }
+    }
+    const blankLines = match[0].replace(/[^\n]/g, "")
+    return { frontmatter: match[1] ?? "", body: blankLines + source.slice(match[0].length) }
 }
 
 /**
@@ -36,25 +36,25 @@ export function maskFrontmatter(source) {
  * @returns {string}
  */
 export function maskCode(text) {
-	/** @type {string | undefined} */
-	let openFence
-	return text
-		.split("\n")
-		.map((line) => {
-			const marker = FENCE.exec(line)?.[1]
-			if (openFence) {
-				if (marker && marker[0] === openFence[0] && marker.length >= openFence.length && line.trim() === marker) {
-					openFence = undefined
-				}
-				return ""
-			}
-			if (marker) {
-				openFence = marker
-				return ""
-			}
-			return line.replace(INLINE_CODE, (span) => " ".repeat(span.length))
-		})
-		.join("\n")
+    /** @type {string | undefined} */
+    let openFence
+    return text
+        .split("\n")
+        .map((line) => {
+            const marker = FENCE.exec(line)?.[1]
+            if (openFence) {
+                if (marker && marker[0] === openFence[0] && marker.length >= openFence.length && line.trim() === marker) {
+                    openFence = undefined
+                }
+                return ""
+            }
+            if (marker) {
+                openFence = marker
+                return ""
+            }
+            return line.replace(INLINE_CODE, (span) => " ".repeat(span.length))
+        })
+        .join("\n")
 }
 
 /**
@@ -63,21 +63,21 @@ export function maskCode(text) {
  * @returns {Set<string>}
  */
 export function collectImports(text) {
-	const names = new Set()
-	for (const [, clause = ""] of text.matchAll(IMPORT)) {
-		for (const part of clause.replace(/[{}]/g, ",").split(",")) {
-			const local = part
-				.trim()
-				.split(/\s+as\s+/)
-				.at(-1)
-				?.replace(/^\*\s*/, "")
-				.trim()
-			if (local) {
-				names.add(local)
-			}
-		}
-	}
-	return names
+    const names = new Set()
+    for (const [, clause = ""] of text.matchAll(IMPORT)) {
+        for (const part of clause.replace(/[{}]/g, ",").split(",")) {
+            const local = part
+                .trim()
+                .split(/\s+as\s+/)
+                .at(-1)
+                ?.replace(/^\*\s*/, "")
+                .trim()
+            if (local) {
+                names.add(local)
+            }
+        }
+    }
+    return names
 }
 
 /**
@@ -86,14 +86,14 @@ export function collectImports(text) {
  * @returns {Map<string, number>}
  */
 export function collectComponentTags(text) {
-	const tags = new Map()
-	for (const match of text.matchAll(COMPONENT_TAG)) {
-		const name = match[1] ?? ""
-		if (!tags.has(name)) {
-			tags.set(name, match.index)
-		}
-	}
-	return tags
+    const tags = new Map()
+    for (const match of text.matchAll(COMPONENT_TAG)) {
+        const name = match[1] ?? ""
+        if (!tags.has(name)) {
+            tags.set(name, match.index)
+        }
+    }
+    return tags
 }
 
 /**
@@ -107,18 +107,18 @@ export function collectComponentTags(text) {
  * @returns {ContentLink[]}
  */
 export function collectLinks(text) {
-	/** @type {ContentLink[]} */
-	const links = []
-	for (const match of text.matchAll(INLINE_LINK)) {
-		links.push({ url: match[2] ?? "", kind: match[1] ? "image" : "link", index: match.index })
-	}
-	for (const match of text.matchAll(DEFINITION)) {
-		links.push({ url: match[1] ?? "", kind: "link", index: match.index })
-	}
-	for (const match of text.matchAll(ATTRIBUTE)) {
-		links.push({ url: match[1] ?? match[2] ?? match[3] ?? "", kind: "attribute", index: match.index })
-	}
-	return links.sort((left, right) => left.index - right.index)
+    /** @type {ContentLink[]} */
+    const links = []
+    for (const match of text.matchAll(INLINE_LINK)) {
+        links.push({ url: match[2] ?? "", kind: match[1] ? "image" : "link", index: match.index })
+    }
+    for (const match of text.matchAll(DEFINITION)) {
+        links.push({ url: match[1] ?? "", kind: "link", index: match.index })
+    }
+    for (const match of text.matchAll(ATTRIBUTE)) {
+        links.push({ url: match[1] ?? match[2] ?? match[3] ?? "", kind: "attribute", index: match.index })
+    }
+    return links.sort((left, right) => left.index - right.index)
 }
 
 /**
@@ -127,7 +127,7 @@ export function collectLinks(text) {
  * @returns {Set<string>}
  */
 export function frontmatterKeys(frontmatter) {
-	return new Set(Array.from(frontmatter.matchAll(FRONTMATTER_KEY), (match) => match[1] ?? ""))
+    return new Set(Array.from(frontmatter.matchAll(FRONTMATTER_KEY), (match) => match[1] ?? ""))
 }
 
 /**
@@ -137,9 +137,9 @@ export function frontmatterKeys(frontmatter) {
  * @returns {number}
  */
 export function lineOf(text, index) {
-	let line = 1
-	for (let position = text.indexOf("\n"); position !== -1 && position < index; position = text.indexOf("\n", position + 1)) {
-		line += 1
-	}
-	return line
+    let line = 1
+    for (let position = text.indexOf("\n"); position !== -1 && position < index; position = text.indexOf("\n", position + 1)) {
+        line += 1
+    }
+    return line
 }

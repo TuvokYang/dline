@@ -4,15 +4,15 @@ import { useMemo } from "react"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
 
 interface LoadCapabilityRowProps {
-	payload: LoadCapabilityPayload
-	isExpanded: boolean
-	onToggleExpand: () => void
+    payload: LoadCapabilityPayload
+    isExpanded: boolean
+    onToggleExpand: () => void
 }
 
 const KIND_LABELS: Record<LoadCapabilityPayload["kind"], string> = {
-	mcp: "MCP",
-	skill: "Skill",
-	workflow: "Workflow",
+    mcp: "MCP",
+    skill: "Skill",
+    workflow: "Workflow",
 }
 
 /**
@@ -22,51 +22,51 @@ const KIND_LABELS: Record<LoadCapabilityPayload["kind"], string> = {
  * @returns React element for loading, completed, or failed capability load states.
  */
 export default function LoadCapabilityRow({ payload, isExpanded, onToggleExpand }: LoadCapabilityRowProps) {
-	const title = useMemo(() => buildTitle(payload), [payload])
-	const details = payload.details ?? []
-	const canExpand = payload.status === "completed" && (details.length > 0 || !!payload.body)
+    const title = useMemo(() => buildTitle(payload), [payload])
+    const details = payload.details ?? []
+    const canExpand = payload.status === "completed" && (details.length > 0 || !!payload.body)
 
-	return (
-		<div>
-			<div className="flex items-center gap-2.5 mb-3">
-				<StatusIcon status={payload.status} />
-				<span className="font-bold">{title}</span>
-			</div>
-			<div
-				className={joinClasses(
-					"bg-code border border-editor-group-border overflow-hidden rounded-xs",
-					borderClass(payload.status),
-				)}>
-				<button
-					className={joinClasses(
-						"w-full text-left py-[9px] px-2.5 flex items-center gap-2",
-						canExpand ? "cursor-pointer" : "cursor-default",
-					)}
-					disabled={!canExpand}
-					onClick={canExpand ? onToggleExpand : undefined}
-					type="button">
-					<span className="ph-no-capture min-w-0 flex-1">
-						<span className="font-medium">{payload.name || "Unnamed capability"}</span>
-						{payload.source ? <span className="text-description ml-2">{payload.source}</span> : null}
-						{payload.summary ? (
-							<span className="block text-description mt-1 whitespace-pre-wrap">{payload.summary}</span>
-						) : null}
-						{payload.error ? (
-							<span className="block text-error mt-1 whitespace-pre-wrap">{payload.error}</span>
-						) : null}
-					</span>
-					{canExpand ? (
-						isExpanded ? (
-							<ChevronDownIcon className="size-4" />
-						) : (
-							<ChevronRightIcon className="size-4" />
-						)
-					) : null}
-				</button>
-				{canExpand && isExpanded ? <ExpandedContent body={payload.body} details={details} /> : null}
-			</div>
-		</div>
-	)
+    return (
+        <div>
+            <div className="flex items-center gap-2.5 mb-3">
+                <StatusIcon status={payload.status} />
+                <span className="font-bold">{title}</span>
+            </div>
+            <div
+                className={joinClasses(
+                    "bg-code border border-editor-group-border overflow-hidden rounded-xs",
+                    borderClass(payload.status),
+                )}>
+                <button
+                    className={joinClasses(
+                        "w-full text-left py-[9px] px-2.5 flex items-center gap-2",
+                        canExpand ? "cursor-pointer" : "cursor-default",
+                    )}
+                    disabled={!canExpand}
+                    onClick={canExpand ? onToggleExpand : undefined}
+                    type="button">
+                    <span className="ph-no-capture min-w-0 flex-1">
+                        <span className="font-medium">{payload.name || "Unnamed capability"}</span>
+                        {payload.source ? <span className="text-description ml-2">{payload.source}</span> : null}
+                        {payload.summary ? (
+                            <span className="block text-description mt-1 whitespace-pre-wrap">{payload.summary}</span>
+                        ) : null}
+                        {payload.error ? (
+                            <span className="block text-error mt-1 whitespace-pre-wrap">{payload.error}</span>
+                        ) : null}
+                    </span>
+                    {canExpand ? (
+                        isExpanded ? (
+                            <ChevronDownIcon className="size-4" />
+                        ) : (
+                            <ChevronRightIcon className="size-4" />
+                        )
+                    ) : null}
+                </button>
+                {canExpand && isExpanded ? <ExpandedContent body={payload.body} details={details} /> : null}
+            </div>
+        </div>
+    )
 }
 
 /**
@@ -76,13 +76,13 @@ export default function LoadCapabilityRow({ payload, isExpanded, onToggleExpand 
  * @returns Icon element for the payload status.
  */
 function StatusIcon({ status }: { status: LoadCapabilityPayload["status"] }) {
-	if (status === "loading") {
-		return <LoaderCircleIcon className="size-2 animate-spin" />
-	}
-	if (status === "failed") {
-		return <AlertCircleIcon className="size-2 text-error" />
-	}
-	return <CheckCircle2Icon className="size-2 text-success" />
+    if (status === "loading") {
+        return <LoaderCircleIcon className="size-2 animate-spin" />
+    }
+    if (status === "failed") {
+        return <AlertCircleIcon className="size-2 text-error" />
+    }
+    return <CheckCircle2Icon className="size-2 text-success" />
 }
 
 /**
@@ -92,25 +92,25 @@ function StatusIcon({ status }: { status: LoadCapabilityPayload["status"] }) {
  * @returns Expanded detail section.
  */
 function ExpandedContent({ details, body }: { details: LoadCapabilityDetail[]; body?: string }) {
-	return (
-		<div
-			className={`border-t border-editor-group-border px-2.5 py-2 text-sm ${TOOL_RESPONSE_SCROLL_CLASS}`}
-			data-testid="load-capability-details-scroll">
-			{details.length > 0 ? (
-				<dl className="space-y-1">
-					{details.map((detail) => (
-						<div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2" key={detail.label}>
-							<dt className="text-description">{detail.label}</dt>
-							<dd className="ph-no-capture whitespace-pre-wrap break-words">{formatDetail(detail.value)}</dd>
-						</div>
-					))}
-				</dl>
-			) : null}
-			{body ? (
-				<pre className="ph-no-capture mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs">{body}</pre>
-			) : null}
-		</div>
-	)
+    return (
+        <div
+            className={`border-t border-editor-group-border px-2.5 py-2 text-sm ${TOOL_RESPONSE_SCROLL_CLASS}`}
+            data-testid="load-capability-details-scroll">
+            {details.length > 0 ? (
+                <dl className="space-y-1">
+                    {details.map((detail) => (
+                        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2" key={detail.label}>
+                            <dt className="text-description">{detail.label}</dt>
+                            <dd className="ph-no-capture whitespace-pre-wrap break-words">{formatDetail(detail.value)}</dd>
+                        </div>
+                    ))}
+                </dl>
+            ) : null}
+            {body ? (
+                <pre className="ph-no-capture mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs">{body}</pre>
+            ) : null}
+        </div>
+    )
 }
 
 /**
@@ -120,14 +120,14 @@ function ExpandedContent({ details, body }: { details: LoadCapabilityDetail[]; b
  * @returns Human-readable row title.
  */
 function buildTitle(payload: LoadCapabilityPayload): string {
-	const label = KIND_LABELS[payload.kind]
-	if (payload.status === "loading") {
-		return `Loading ${label}`
-	}
-	if (payload.status === "failed") {
-		return `Failed to load ${label}`
-	}
-	return `Loaded ${label}`
+    const label = KIND_LABELS[payload.kind]
+    if (payload.status === "loading") {
+        return `Loading ${label}`
+    }
+    if (payload.status === "failed") {
+        return `Failed to load ${label}`
+    }
+    return `Loaded ${label}`
 }
 
 /**
@@ -137,13 +137,13 @@ function buildTitle(payload: LoadCapabilityPayload): string {
  * @returns Tailwind class names for status decoration.
  */
 function borderClass(status: LoadCapabilityPayload["status"]): string {
-	if (status === "failed") {
-		return "border-error/40"
-	}
-	if (status === "completed") {
-		return "border-success/30"
-	}
-	return ""
+    if (status === "failed") {
+        return "border-error/40"
+    }
+    if (status === "completed") {
+        return "border-success/30"
+    }
+    return ""
 }
 
 /**
@@ -153,7 +153,7 @@ function borderClass(status: LoadCapabilityPayload["status"]): string {
  * @returns Display text for the detail value.
  */
 function formatDetail(value: LoadCapabilityDetail["value"]): string {
-	return typeof value === "string" ? value : JSON.stringify(value, null, 2)
+    return typeof value === "string" ? value : JSON.stringify(value, null, 2)
 }
 
 /**
@@ -163,5 +163,5 @@ function formatDetail(value: LoadCapabilityDetail["value"]): string {
  * @returns Combined class names without empty values.
  */
 function joinClasses(...classes: Array<string | undefined>): string {
-	return classes.filter((className): className is string => Boolean(className)).join(" ")
+    return classes.filter((className): className is string => Boolean(className)).join(" ")
 }

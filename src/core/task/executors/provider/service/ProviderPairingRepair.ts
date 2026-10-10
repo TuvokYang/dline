@@ -15,5 +15,5 @@ import cloneDeep from "clone-deep"
  * repair edits in place, so it runs on a copy.
  */
 export function repairProviderPairing(messages: readonly ClineStorageMessage[]): ClineStorageMessage[] {
-	return new ContextManager().repairProviderMessages(cloneDeep([...messages]))
+    return new ContextManager().repairProviderMessages(cloneDeep([...messages]))
 }

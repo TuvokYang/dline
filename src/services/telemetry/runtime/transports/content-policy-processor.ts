@@ -17,31 +17,31 @@ import { RuntimeContentPolicy } from "../content-policy"
  * redact it.
  */
 export class ContentPolicyProcessor implements LogRecordProcessor {
-	constructor(private readonly policy: RuntimeContentPolicy = RuntimeContentPolicy.forEvents()) {}
+    constructor(private readonly policy: RuntimeContentPolicy = RuntimeContentPolicy.forEvents()) {}
 
-	/**
-	 * Rewrites the record's attributes in place.
-	 *
-	 * The SDK gives no way to replace the attribute bag wholesale, so rejected
-	 * keys are deleted and retained ones written back. Deleting rather than
-	 * masking is deliberate: a truncated command line is still a command line.
-	 */
-	onEmit(logRecord: LogRecord, _context?: Context): void {
-		const { attributes } = logRecord
-		const result = this.policy.apply(attributes as Record<string, unknown>)
+    /**
+     * Rewrites the record's attributes in place.
+     *
+     * The SDK gives no way to replace the attribute bag wholesale, so rejected
+     * keys are deleted and retained ones written back. Deleting rather than
+     * masking is deliberate: a truncated command line is still a command line.
+     */
+    onEmit(logRecord: LogRecord, _context?: Context): void {
+        const { attributes } = logRecord
+        const result = this.policy.apply(attributes as Record<string, unknown>)
 
-		for (const key of Object.keys(attributes)) {
-			delete attributes[key]
-		}
-		Object.assign(attributes, result.attributes)
-	}
+        for (const key of Object.keys(attributes)) {
+            delete attributes[key]
+        }
+        Object.assign(attributes, result.attributes)
+    }
 
-	async forceFlush(): Promise<void> {
-		// Nothing is buffered here; redaction is synchronous.
-	}
+    async forceFlush(): Promise<void> {
+        // Nothing is buffered here; redaction is synchronous.
+    }
 
-	async shutdown(): Promise<void> {
-		// Cardinality tracking is per-session and must not leak into the next one.
-		this.policy.reset()
-	}
+    async shutdown(): Promise<void> {
+        // Cardinality tracking is per-session and must not leak into the next one.
+        this.policy.reset()
+    }
 }

@@ -2,14 +2,14 @@ import OpenAI from "openai"
 import type { ResponseInput, ResponseInputMessageContentList } from "openai/resources/responses/responses"
 import { ApiProvider } from "@/shared/api"
 import {
-	ClineAssistantRedactedThinkingBlock,
-	ClineAssistantThinkingBlock,
-	ClineAssistantToolUseBlock,
-	ClineImageContentBlock,
-	ClineStorageMessage,
-	ClineTextContentBlock,
-	ClineUserToolResultContentBlock,
-	imageSourceToUrl,
+    ClineAssistantRedactedThinkingBlock,
+    ClineAssistantThinkingBlock,
+    ClineAssistantToolUseBlock,
+    ClineImageContentBlock,
+    ClineStorageMessage,
+    ClineTextContentBlock,
+    ClineUserToolResultContentBlock,
+    imageSourceToUrl,
 } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import { getResultFunctionId, getUseFunctionId, projectChatFunctionId } from "./tool-identity-projector"
@@ -19,361 +19,361 @@ import { splitToolResultContent } from "./tool-result-content"
  * Project canonical history into DeepSeek Responses input without provider-owned replay IDs.
  */
 export function convertDeepSeekResponsesInput(messages: ClineStorageMessage[]): ResponseInput {
-	const input: ResponseInput = []
+    const input: ResponseInput = []
 
-	for (const message of messages) {
-		if (typeof message.content === "string") {
-			input.push({ role: message.role, content: [{ type: "input_text", text: message.content }] })
-			continue
-		}
+    for (const message of messages) {
+        if (typeof message.content === "string") {
+            input.push({ role: message.role, content: [{ type: "input_text", text: message.content }] })
+            continue
+        }
 
-		if (message.role === "assistant") {
-			let content: string[] = []
-			const flushContent = () => {
-				if (content.length === 0) return
-				input.push({ type: "message", role: "assistant", content: content.join("\n") })
-				content = []
-			}
+        if (message.role === "assistant") {
+            let content: string[] = []
+            const flushContent = () => {
+                if (content.length === 0) return
+                input.push({ type: "message", role: "assistant", content: content.join("\n") })
+                content = []
+            }
 
-			for (const part of message.content) {
-				if (part.type === "text") {
-					content.push(part.text)
-				} else if (part.type === "image") {
-					content.push(`[image:${part.source.type === "base64" ? part.source.media_type : "remote URL"}]`)
-				} else if (part.type === "tool_use") {
-					flushContent()
-					input.push({
-						type: "function_call",
-						call_id: getUseFunctionId(part),
-						name: part.name,
-						arguments: JSON.stringify(part.input ?? {}),
-					})
-				}
-			}
-			flushContent()
-			continue
-		}
+            for (const part of message.content) {
+                if (part.type === "text") {
+                    content.push(part.text)
+                } else if (part.type === "image") {
+                    content.push(`[image:${part.source.type === "base64" ? part.source.media_type : "remote URL"}]`)
+                } else if (part.type === "tool_use") {
+                    flushContent()
+                    input.push({
+                        type: "function_call",
+                        call_id: getUseFunctionId(part),
+                        name: part.name,
+                        arguments: JSON.stringify(part.input ?? {}),
+                    })
+                }
+            }
+            flushContent()
+            continue
+        }
 
-		let content: ResponseInputMessageContentList = []
-		const flushContent = () => {
-			if (content.length === 0) return
-			input.push({ role: "user", content })
-			content = []
-		}
-		const toolResultImages: ClineImageContentBlock[] = []
+        let content: ResponseInputMessageContentList = []
+        const flushContent = () => {
+            if (content.length === 0) return
+            input.push({ role: "user", content })
+            content = []
+        }
+        const toolResultImages: ClineImageContentBlock[] = []
 
-		for (const part of message.content) {
-			if (part.type === "text") {
-				content.push({ type: "input_text", text: part.text })
-			} else if (part.type === "image") {
-				content.push({ type: "input_image", detail: "auto", image_url: imageSourceToUrl(part.source) })
-			} else if (part.type === "tool_result") {
-				flushContent()
-				const result = splitToolResultContent(part.content)
-				toolResultImages.push(...result.images)
-				input.push({ type: "function_call_output", call_id: getResultFunctionId(part), output: result.text })
-			}
-		}
-		flushContent()
-		if (toolResultImages.length > 0) {
-			input.push({
-				role: "user",
-				content: toolResultImages.map((image) => ({
-					type: "input_image",
-					detail: "auto",
-					image_url: imageSourceToUrl(image.source),
-				})),
-			})
-		}
-	}
+        for (const part of message.content) {
+            if (part.type === "text") {
+                content.push({ type: "input_text", text: part.text })
+            } else if (part.type === "image") {
+                content.push({ type: "input_image", detail: "auto", image_url: imageSourceToUrl(part.source) })
+            } else if (part.type === "tool_result") {
+                flushContent()
+                const result = splitToolResultContent(part.content)
+                toolResultImages.push(...result.images)
+                input.push({ type: "function_call_output", call_id: getResultFunctionId(part), output: result.text })
+            }
+        }
+        flushContent()
+        if (toolResultImages.length > 0) {
+            input.push({
+                role: "user",
+                content: toolResultImages.map((image) => ({
+                    type: "input_image",
+                    detail: "auto",
+                    image_url: imageSourceToUrl(image.source),
+                })),
+            })
+        }
+    }
 
-	return input
+    return input
 }
 
 /** Convert local function declarations to the DeepSeek Responses tool shape. */
 export function convertDeepSeekResponsesTools(tools?: OpenAI.Chat.ChatCompletionTool[]) {
-	return tools
-		?.filter((tool): tool is OpenAI.Chat.ChatCompletionFunctionTool => tool.type === "function")
-		.map((tool) => ({
-			type: "function" as const,
-			name: tool.function.name,
-			description: tool.function.description,
-			parameters: tool.function.parameters ?? null,
-			strict: tool.function.strict ?? false,
-		}))
+    return tools
+        ?.filter((tool): tool is OpenAI.Chat.ChatCompletionFunctionTool => tool.type === "function")
+        .map((tool) => ({
+            type: "function" as const,
+            name: tool.function.name,
+            description: tool.function.description,
+            parameters: tool.function.parameters ?? null,
+            strict: tool.function.strict ?? false,
+        }))
 }
 
 // ---- copied from openai-format.ts ----
 
 type ReasoningDetail = {
-	type: string
-	text?: string
-	data?: string
-	signature?: string | null
-	id?: string | null
-	format: string
-	index?: number
+    type: string
+    text?: string
+    data?: string
+    signature?: string | null
+    id?: string | null
+    format: string
+    index?: number
 }
 
 function consolidateReasoningDetails(reasoningDetails: ReasoningDetail[]): ReasoningDetail[] {
-	if (!reasoningDetails || reasoningDetails.length === 0) {
-		return []
-	}
+    if (!reasoningDetails || reasoningDetails.length === 0) {
+        return []
+    }
 
-	const groupedByIndex = new Map<number, ReasoningDetail[]>()
+    const groupedByIndex = new Map<number, ReasoningDetail[]>()
 
-	for (const detail of reasoningDetails) {
-		if (detail.type === "reasoning.encrypted" && !detail.data) continue
+    for (const detail of reasoningDetails) {
+        if (detail.type === "reasoning.encrypted" && !detail.data) continue
 
-		const index = detail.index ?? 0
-		if (!groupedByIndex.has(index)) {
-			groupedByIndex.set(index, [])
-		}
-		groupedByIndex.get(index)?.push(detail)
-	}
+        const index = detail.index ?? 0
+        if (!groupedByIndex.has(index)) {
+            groupedByIndex.set(index, [])
+        }
+        groupedByIndex.get(index)?.push(detail)
+    }
 
-	const consolidated: ReasoningDetail[] = []
+    const consolidated: ReasoningDetail[] = []
 
-	for (const [index, details] of groupedByIndex.entries()) {
-		let concatenatedText = ""
-		let signature: string | undefined
-		let id: string | undefined
-		let format = "unknown"
-		let type = "reasoning.text"
+    for (const [index, details] of groupedByIndex.entries()) {
+        let concatenatedText = ""
+        let signature: string | undefined
+        let id: string | undefined
+        let format = "unknown"
+        let type = "reasoning.text"
 
-		for (const detail of details) {
-			if (detail.text) {
-				concatenatedText += detail.text
-			}
-			if (detail.signature) {
-				signature = detail.signature
-			}
-			if (detail.id) {
-				id = detail.id
-			}
-			if (detail.format) {
-				format = detail.format
-			}
-			if (detail.type) {
-				type = detail.type
-			}
-		}
+        for (const detail of details) {
+            if (detail.text) {
+                concatenatedText += detail.text
+            }
+            if (detail.signature) {
+                signature = detail.signature
+            }
+            if (detail.id) {
+                id = detail.id
+            }
+            if (detail.format) {
+                format = detail.format
+            }
+            if (detail.type) {
+                type = detail.type
+            }
+        }
 
-		if (concatenatedText) {
-			const consolidatedEntry: ReasoningDetail = {
-				type: type,
-				text: concatenatedText,
-				signature: signature,
-				id: id,
-				format: format,
-				index: index,
-			}
-			consolidated.push(consolidatedEntry)
-		}
+        if (concatenatedText) {
+            const consolidatedEntry: ReasoningDetail = {
+                type: type,
+                text: concatenatedText,
+                signature: signature,
+                id: id,
+                format: format,
+                index: index,
+            }
+            consolidated.push(consolidatedEntry)
+        }
 
-		let lastDataEntry: ReasoningDetail | undefined
-		for (const detail of details) {
-			if (detail.data) {
-				lastDataEntry = {
-					type: detail.type,
-					data: detail.data,
-					signature: detail.signature,
-					id: detail.id,
-					format: detail.format,
-					index: index,
-				}
-			}
-		}
-		if (lastDataEntry) {
-			consolidated.push(lastDataEntry)
-		}
-	}
+        let lastDataEntry: ReasoningDetail | undefined
+        for (const detail of details) {
+            if (detail.data) {
+                lastDataEntry = {
+                    type: detail.type,
+                    data: detail.data,
+                    signature: detail.signature,
+                    id: detail.id,
+                    format: detail.format,
+                    index: index,
+                }
+            }
+        }
+        if (lastDataEntry) {
+            consolidated.push(lastDataEntry)
+        }
+    }
 
-	return consolidated
+    return consolidated
 }
 
 export function convertDeepseekToOpenAiMessages(
-	anthropicMessages: Omit<ClineStorageMessage, "modelInfo">[],
-	provider?: ApiProvider,
+    anthropicMessages: Omit<ClineStorageMessage, "modelInfo">[],
+    provider?: ApiProvider,
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
-	const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = []
+    const openAiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = []
 
-	for (const anthropicMessage of anthropicMessages) {
-		if (typeof anthropicMessage.content === "string") {
-			openAiMessages.push({
-				role: anthropicMessage.role,
-				content: anthropicMessage.content,
-			})
-		} else {
-			if (anthropicMessage.role === "user") {
-				const { nonToolMessages, toolMessages } = anthropicMessage.content.reduce<{
-					nonToolMessages: (ClineTextContentBlock | ClineImageContentBlock)[]
-					toolMessages: ClineUserToolResultContentBlock[]
-				}>(
-					(acc, part) => {
-						if (part.type === "tool_result") {
-							acc.toolMessages.push(part)
-						} else if (part.type === "text" || part.type === "image") {
-							acc.nonToolMessages.push(part)
-						}
-						return acc
-					},
-					{ nonToolMessages: [], toolMessages: [] },
-				)
+    for (const anthropicMessage of anthropicMessages) {
+        if (typeof anthropicMessage.content === "string") {
+            openAiMessages.push({
+                role: anthropicMessage.role,
+                content: anthropicMessage.content,
+            })
+        } else {
+            if (anthropicMessage.role === "user") {
+                const { nonToolMessages, toolMessages } = anthropicMessage.content.reduce<{
+                    nonToolMessages: (ClineTextContentBlock | ClineImageContentBlock)[]
+                    toolMessages: ClineUserToolResultContentBlock[]
+                }>(
+                    (acc, part) => {
+                        if (part.type === "tool_result") {
+                            acc.toolMessages.push(part)
+                        } else if (part.type === "text" || part.type === "image") {
+                            acc.nonToolMessages.push(part)
+                        }
+                        return acc
+                    },
+                    { nonToolMessages: [], toolMessages: [] },
+                )
 
-				const toolResultImages: ClineImageContentBlock[] = []
-				toolMessages.forEach((toolMessage) => {
-					let content: string
+                const toolResultImages: ClineImageContentBlock[] = []
+                toolMessages.forEach((toolMessage) => {
+                    let content: string
 
-					if (typeof toolMessage.content === "string") {
-						content = toolMessage.content
-					} else if (Array.isArray(toolMessage.content)) {
-						content =
-							toolMessage.content
-								?.map((part) => {
-									if (part.type === "image") {
-										toolResultImages.push(part)
-										return "(see following user message for image)"
-									}
-									return part.text
-								})
-								.join("\n") ?? ""
-					} else {
-						content = ""
-					}
+                    if (typeof toolMessage.content === "string") {
+                        content = toolMessage.content
+                    } else if (Array.isArray(toolMessage.content)) {
+                        content =
+                            toolMessage.content
+                                ?.map((part) => {
+                                    if (part.type === "image") {
+                                        toolResultImages.push(part)
+                                        return "(see following user message for image)"
+                                    }
+                                    return part.text
+                                })
+                                .join("\n") ?? ""
+                    } else {
+                        content = ""
+                    }
 
-					// Defensive: if tool_use_id is empty, send as user text
-					// to avoid "Messages with role 'tool' must be a response to a
-					// preceding message with 'tool_calls'" from OpenAI-compatible APIs
-					openAiMessages.push({
-						role: "tool",
-						tool_call_id: projectChatFunctionId(getResultFunctionId(toolMessage), provider),
-						content: content,
-					})
-				})
+                    // Defensive: if tool_use_id is empty, send as user text
+                    // to avoid "Messages with role 'tool' must be a response to a
+                    // preceding message with 'tool_calls'" from OpenAI-compatible APIs
+                    openAiMessages.push({
+                        role: "tool",
+                        tool_call_id: projectChatFunctionId(getResultFunctionId(toolMessage), provider),
+                        content: content,
+                    })
+                })
 
-				if (toolResultImages.length > 0) {
-					openAiMessages.push({
-						role: "user",
-						content: toolResultImages.map((part) => ({
-							type: "image_url",
-							image_url: { url: imageSourceToUrl(part.source) },
-						})),
-					})
-				}
+                if (toolResultImages.length > 0) {
+                    openAiMessages.push({
+                        role: "user",
+                        content: toolResultImages.map((part) => ({
+                            type: "image_url",
+                            image_url: { url: imageSourceToUrl(part.source) },
+                        })),
+                    })
+                }
 
-				if (nonToolMessages.length > 0) {
-					openAiMessages.push({
-						role: "user",
-						content: nonToolMessages.map((part) => {
-							if (part.type === "image") {
-								return {
-									type: "image_url",
-									image_url: {
-										url: imageSourceToUrl(part.source),
-									},
-								}
-							}
-							return { type: "text", text: part.text }
-						}),
-					})
-				}
-			} else if (anthropicMessage.role === "assistant") {
-				const { nonToolMessages, toolMessages } = anthropicMessage.content.reduce<{
-					nonToolMessages: (
-						| ClineTextContentBlock
-						| ClineImageContentBlock
-						| ClineAssistantThinkingBlock
-						| ClineAssistantRedactedThinkingBlock
-					)[]
-					toolMessages: ClineAssistantToolUseBlock[]
-				}>(
-					(acc, part) => {
-						if (part.type === "tool_use") {
-							acc.toolMessages.push(part)
-						} else if (part.type === "text" || part.type === "image") {
-							acc.nonToolMessages.push(part)
-						}
-						return acc
-					},
-					{ nonToolMessages: [], toolMessages: [] },
-				)
+                if (nonToolMessages.length > 0) {
+                    openAiMessages.push({
+                        role: "user",
+                        content: nonToolMessages.map((part) => {
+                            if (part.type === "image") {
+                                return {
+                                    type: "image_url",
+                                    image_url: {
+                                        url: imageSourceToUrl(part.source),
+                                    },
+                                }
+                            }
+                            return { type: "text", text: part.text }
+                        }),
+                    })
+                }
+            } else if (anthropicMessage.role === "assistant") {
+                const { nonToolMessages, toolMessages } = anthropicMessage.content.reduce<{
+                    nonToolMessages: (
+                        | ClineTextContentBlock
+                        | ClineImageContentBlock
+                        | ClineAssistantThinkingBlock
+                        | ClineAssistantRedactedThinkingBlock
+                    )[]
+                    toolMessages: ClineAssistantToolUseBlock[]
+                }>(
+                    (acc, part) => {
+                        if (part.type === "tool_use") {
+                            acc.toolMessages.push(part)
+                        } else if (part.type === "text" || part.type === "image") {
+                            acc.nonToolMessages.push(part)
+                        }
+                        return acc
+                    },
+                    { nonToolMessages: [], toolMessages: [] },
+                )
 
-				let content: string | undefined
-				const reasoningDetails: any[] = []
-				if (nonToolMessages.length > 0) {
-					nonToolMessages.forEach((part) => {
-						const anyPart = part as any
-						if (part.type === "text" && anyPart.reasoning_details) {
-							if (Array.isArray(anyPart.reasoning_details)) {
-								reasoningDetails.push(...anyPart.reasoning_details)
-							} else {
-								reasoningDetails.push(anyPart.reasoning_details)
-							}
-						}
-					})
-					content = nonToolMessages
-						.map((part) => {
-							if (part.type === "text" && part.text) {
-								return part.text
-							}
-							return ""
-						})
-						.join("\n")
-				}
+                let content: string | undefined
+                const reasoningDetails: any[] = []
+                if (nonToolMessages.length > 0) {
+                    nonToolMessages.forEach((part) => {
+                        const anyPart = part as any
+                        if (part.type === "text" && anyPart.reasoning_details) {
+                            if (Array.isArray(anyPart.reasoning_details)) {
+                                reasoningDetails.push(...anyPart.reasoning_details)
+                            } else {
+                                reasoningDetails.push(anyPart.reasoning_details)
+                            }
+                        }
+                    })
+                    content = nonToolMessages
+                        .map((part) => {
+                            if (part.type === "text" && part.text) {
+                                return part.text
+                            }
+                            return ""
+                        })
+                        .join("\n")
+                }
 
-				const tool_calls: OpenAI.Chat.ChatCompletionMessageToolCall[] = toolMessages.map((toolMessage) => {
-					const toolDetails = toolMessage.reasoning_details
-					const toolId = getUseFunctionId(toolMessage)
-					if (toolDetails) {
-						if (Array.isArray(toolDetails)) {
-							const validDetails = toolDetails.filter((detail: any) => detail?.id === toolId)
-							if (validDetails.length > 0) {
-								reasoningDetails.push(...validDetails)
-							}
-						} else {
-							const detail = toolDetails as any
-							if (detail?.id === toolId) {
-								reasoningDetails.push(toolDetails)
-							}
-						}
-					}
+                const tool_calls: OpenAI.Chat.ChatCompletionMessageToolCall[] = toolMessages.map((toolMessage) => {
+                    const toolDetails = toolMessage.reasoning_details
+                    const toolId = getUseFunctionId(toolMessage)
+                    if (toolDetails) {
+                        if (Array.isArray(toolDetails)) {
+                            const validDetails = toolDetails.filter((detail: any) => detail?.id === toolId)
+                            if (validDetails.length > 0) {
+                                reasoningDetails.push(...validDetails)
+                            }
+                        } else {
+                            const detail = toolDetails as any
+                            if (detail?.id === toolId) {
+                                reasoningDetails.push(toolDetails)
+                            }
+                        }
+                    }
 
-					return {
-						id: projectChatFunctionId(toolId, provider),
-						type: "function",
-						function: {
-							name: toolMessage.name,
-							arguments: JSON.stringify(toolMessage.input),
-						},
-					}
-				})
+                    return {
+                        id: projectChatFunctionId(toolId, provider),
+                        type: "function",
+                        function: {
+                            name: toolMessage.name,
+                            arguments: JSON.stringify(toolMessage.input),
+                        },
+                    }
+                })
 
-				const hasToolCalls = tool_calls.length > 0
-				const hasMeaningfulContent = content !== undefined && content.trim() !== ""
-				const finalContent = hasMeaningfulContent ? content : hasToolCalls ? null : undefined
+                const hasToolCalls = tool_calls.length > 0
+                const hasMeaningfulContent = content !== undefined && content.trim() !== ""
+                const finalContent = hasMeaningfulContent ? content : hasToolCalls ? null : undefined
 
-				const consolidatedReasoningDetails =
-					reasoningDetails.length > 0 ? consolidateReasoningDetails(reasoningDetails as any) : []
+                const consolidatedReasoningDetails =
+                    reasoningDetails.length > 0 ? consolidateReasoningDetails(reasoningDetails as any) : []
 
-				// skip pure-thinking messages (only reasoning_content, no text or tool_calls)
-				if (finalContent === undefined && !hasToolCalls) {
-					Logger.warn("skipping deepseek pure-thinking message — use convertDeepSeekMessages for thinking mode")
-					continue
-				}
+                // skip pure-thinking messages (only reasoning_content, no text or tool_calls)
+                if (finalContent === undefined && !hasToolCalls) {
+                    Logger.warn("skipping deepseek pure-thinking message — use convertDeepSeekMessages for thinking mode")
+                    continue
+                }
 
-				openAiMessages.push({
-					role: "assistant",
-					content: finalContent,
-					tool_calls: tool_calls?.length > 0 ? tool_calls : undefined,
-					// @ts-expect-error
-					reasoning_details: consolidatedReasoningDetails.length > 0 ? consolidatedReasoningDetails : undefined,
-				})
-			}
-		}
-	}
+                openAiMessages.push({
+                    role: "assistant",
+                    content: finalContent,
+                    tool_calls: tool_calls?.length > 0 ? tool_calls : undefined,
+                    // @ts-expect-error
+                    reasoning_details: consolidatedReasoningDetails.length > 0 ? consolidatedReasoningDetails : undefined,
+                })
+            }
+        }
+    }
 
-	return openAiMessages
+    return openAiMessages
 }
 // ---- end -----
 
@@ -386,7 +386,7 @@ export function convertDeepseekToOpenAiMessages(
  * - In turns without tool calls: reasoning_content is optional and will be ignored
  */
 export type DeepSeekModelMessage = OpenAI.Chat.ChatCompletionMessageParam & {
-	reasoning_content: string
+    reasoning_content: string
 }
 
 /**
@@ -405,42 +405,42 @@ export type DeepSeekModelMessage = OpenAI.Chat.ChatCompletionMessageParam & {
  * @returns DeepSeekModelMessage[] ready to send to DeepSeek API
  */
 export function convertDeepSeekMessages(originalMessages: ClineStorageMessage[], systemPrompt: string): DeepSeekModelMessage[] {
-	const result: DeepSeekModelMessage[] = [{ role: "system", content: systemPrompt } as DeepSeekModelMessage]
-	let pendingThinking = ""
+    const result: DeepSeekModelMessage[] = [{ role: "system", content: systemPrompt } as DeepSeekModelMessage]
+    let pendingThinking = ""
 
-	for (const msg of originalMessages) {
-		if (msg.role === "assistant") {
-			const { thinkingText, hasText, hasToolUse } = extractAssistantBlocks(msg)
-			const converted = buildAssistantMessage(msg, hasText, hasToolUse)
+    for (const msg of originalMessages) {
+        if (msg.role === "assistant") {
+            const { thinkingText, hasText, hasToolUse } = extractAssistantBlocks(msg)
+            const converted = buildAssistantMessage(msg, hasText, hasToolUse)
 
-			if (converted) {
-				// Build reasoning_content: pending + current thinking
-				let reasoning = ""
-				if (pendingThinking) {
-					reasoning = pendingThinking
-					pendingThinking = ""
-				}
-				if (thinkingText) {
-					reasoning = reasoning ? `${reasoning}\n${thinkingText}` : thinkingText
-				}
-				if (reasoning) {
-					converted.reasoning_content = reasoning
-				}
-				result.push(converted)
-			} else {
-				// Pure thinking message — accumulate for next valid assistant
-				if (thinkingText) {
-					pendingThinking = pendingThinking ? `${pendingThinking}\n${thinkingText}` : thinkingText
-				}
-			}
-		} else if (msg.role === "user") {
-			result.push(...convertUser(msg))
-			// New turn clears pending thinking buffer
-			pendingThinking = ""
-		}
-	}
+            if (converted) {
+                // Build reasoning_content: pending + current thinking
+                let reasoning = ""
+                if (pendingThinking) {
+                    reasoning = pendingThinking
+                    pendingThinking = ""
+                }
+                if (thinkingText) {
+                    reasoning = reasoning ? `${reasoning}\n${thinkingText}` : thinkingText
+                }
+                if (reasoning) {
+                    converted.reasoning_content = reasoning
+                }
+                result.push(converted)
+            } else {
+                // Pure thinking message — accumulate for next valid assistant
+                if (thinkingText) {
+                    pendingThinking = pendingThinking ? `${pendingThinking}\n${thinkingText}` : thinkingText
+                }
+            }
+        } else if (msg.role === "user") {
+            result.push(...convertUser(msg))
+            // New turn clears pending thinking buffer
+            pendingThinking = ""
+        }
+    }
 
-	return result
+    return result
 }
 
 // ---- Internal converters ----
@@ -449,30 +449,30 @@ export function convertDeepSeekMessages(originalMessages: ClineStorageMessage[],
  * Extracts thinking text and checks for text/tool_use blocks in an assistant message.
  */
 function extractAssistantBlocks(msg: ClineStorageMessage): {
-	thinkingText: string
-	hasText: boolean
-	hasToolUse: boolean
+    thinkingText: string
+    hasText: boolean
+    hasToolUse: boolean
 } {
-	let thinkingText = ""
-	let hasText = false
-	let hasToolUse = false
+    let thinkingText = ""
+    let hasText = false
+    let hasToolUse = false
 
-	if (Array.isArray(msg.content)) {
-		for (const part of msg.content) {
-			if (part.type === "thinking") {
-				thinkingText += (part as ClineAssistantThinkingBlock).thinking
-			} else if (part.type === "text") {
-				hasText = true
-			} else if (part.type === "tool_use") {
-				hasToolUse = true
-			}
-		}
-	} else if (typeof msg.content === "string" && msg.content.length > 0) {
-		// String-content assistant messages (e.g. older conversations) are plain text
-		hasText = true
-	}
+    if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+            if (part.type === "thinking") {
+                thinkingText += (part as ClineAssistantThinkingBlock).thinking
+            } else if (part.type === "text") {
+                hasText = true
+            } else if (part.type === "tool_use") {
+                hasToolUse = true
+            }
+        }
+    } else if (typeof msg.content === "string" && msg.content.length > 0) {
+        // String-content assistant messages (e.g. older conversations) are plain text
+        hasText = true
+    }
 
-	return { thinkingText, hasText, hasToolUse }
+    return { thinkingText, hasText, hasToolUse }
 }
 
 /**
@@ -480,112 +480,112 @@ function extractAssistantBlocks(msg: ClineStorageMessage): {
  * Returns null if the message has neither text nor tool_use (pure thinking).
  */
 function buildAssistantMessage(msg: ClineStorageMessage, hasText: boolean, hasToolUse: boolean): DeepSeekModelMessage | null {
-	if (!hasText && !hasToolUse) {
-		return null
-	}
+    if (!hasText && !hasToolUse) {
+        return null
+    }
 
-	if (!Array.isArray(msg.content)) {
-		return { role: "assistant", content: msg.content || null } as DeepSeekModelMessage
-	}
+    if (!Array.isArray(msg.content)) {
+        return { role: "assistant", content: msg.content || null } as DeepSeekModelMessage
+    }
 
-	const textParts: string[] = []
-	const toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] = []
+    const textParts: string[] = []
+    const toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] = []
 
-	for (const part of msg.content) {
-		if (part.type === "text") {
-			textParts.push((part as ClineTextContentBlock).text)
-		} else if (part.type === "tool_use") {
-			const toolUse = part as ClineAssistantToolUseBlock
-			toolCalls.push({
-				id: projectChatFunctionId(getUseFunctionId(toolUse)),
-				type: "function",
-				function: {
-					name: toolUse.name,
-					arguments: JSON.stringify(toolUse.input),
-				},
-			})
-		}
-		// thinking and redacted_thinking are ignored here
-	}
+    for (const part of msg.content) {
+        if (part.type === "text") {
+            textParts.push((part as ClineTextContentBlock).text)
+        } else if (part.type === "tool_use") {
+            const toolUse = part as ClineAssistantToolUseBlock
+            toolCalls.push({
+                id: projectChatFunctionId(getUseFunctionId(toolUse)),
+                type: "function",
+                function: {
+                    name: toolUse.name,
+                    arguments: JSON.stringify(toolUse.input),
+                },
+            })
+        }
+        // thinking and redacted_thinking are ignored here
+    }
 
-	return {
-		role: "assistant",
-		content: hasText ? textParts.join("\n") : null,
-		tool_calls: hasToolUse ? toolCalls : undefined,
-		reasoning_content: "",
-	}
+    return {
+        role: "assistant",
+        content: hasText ? textParts.join("\n") : null,
+        tool_calls: hasToolUse ? toolCalls : undefined,
+        reasoning_content: "",
+    }
 }
 
 function convertUser(msg: ClineStorageMessage): DeepSeekModelMessage[] {
-	const result: DeepSeekModelMessage[] = []
+    const result: DeepSeekModelMessage[] = []
 
-	if (!Array.isArray(msg.content)) {
-		result.push({ role: "user", content: msg.content } as DeepSeekModelMessage)
-		return result
-	}
+    if (!Array.isArray(msg.content)) {
+        result.push({ role: "user", content: msg.content } as DeepSeekModelMessage)
+        return result
+    }
 
-	const toolResultBlocks: ClineUserToolResultContentBlock[] = []
-	const textParts: string[] = []
-	const imageBlocks: ClineImageContentBlock[] = []
+    const toolResultBlocks: ClineUserToolResultContentBlock[] = []
+    const textParts: string[] = []
+    const imageBlocks: ClineImageContentBlock[] = []
 
-	for (const part of msg.content) {
-		if (part.type === "tool_result") {
-			toolResultBlocks.push(part as ClineUserToolResultContentBlock)
-		} else if (part.type === "text") {
-			textParts.push((part as ClineTextContentBlock).text)
-		} else if (part.type === "image") {
-			imageBlocks.push(part as ClineImageContentBlock)
-		}
-	}
+    for (const part of msg.content) {
+        if (part.type === "tool_result") {
+            toolResultBlocks.push(part as ClineUserToolResultContentBlock)
+        } else if (part.type === "text") {
+            textParts.push((part as ClineTextContentBlock).text)
+        } else if (part.type === "image") {
+            imageBlocks.push(part as ClineImageContentBlock)
+        }
+    }
 
-	// Tool results → role: "tool"
-	// Track processed tool_use_ids to skip duplicates.
-	// Duplicates can arise when the same tool executes twice (e.g.
-	// partial → reRender lifecycle bug), producing multiple tool_result
-	// blocks for one tool_use_id. Skipping here prevents 400 errors
-	// from DeepSeek/OpenAI-compatible APIs.
-	const seenToolIds = new Set<string>()
+    // Tool results → role: "tool"
+    // Track processed tool_use_ids to skip duplicates.
+    // Duplicates can arise when the same tool executes twice (e.g.
+    // partial → reRender lifecycle bug), producing multiple tool_result
+    // blocks for one tool_use_id. Skipping here prevents 400 errors
+    // from DeepSeek/OpenAI-compatible APIs.
+    const seenToolIds = new Set<string>()
 
-	for (const tr of toolResultBlocks) {
-		const functionId = getResultFunctionId(tr)
-		if (seenToolIds.has(functionId)) {
-			continue
-		}
-		seenToolIds.add(functionId)
+    for (const tr of toolResultBlocks) {
+        const functionId = getResultFunctionId(tr)
+        if (seenToolIds.has(functionId)) {
+            continue
+        }
+        seenToolIds.add(functionId)
 
-		// A tool message carries text only; its images join the following user message as image parts.
-		const { text, images } = splitToolResultContent(tr.content ?? "")
-		imageBlocks.push(...images)
-		result.push({
-			role: "tool",
-			tool_call_id: projectChatFunctionId(functionId),
-			content: text,
-		} as DeepSeekModelMessage)
-	}
+        // A tool message carries text only; its images join the following user message as image parts.
+        const { text, images } = splitToolResultContent(tr.content ?? "")
+        imageBlocks.push(...images)
+        result.push({
+            role: "tool",
+            tool_call_id: projectChatFunctionId(functionId),
+            content: text,
+        } as DeepSeekModelMessage)
+    }
 
-	// Non-tool content → role: "user"
-	if (textParts.length > 0 || imageBlocks.length > 0) {
-		if (imageBlocks.length === 0) {
-			result.push({
-				role: "user",
-				content: textParts.join("\n"),
-			} as DeepSeekModelMessage)
-		} else {
-			const parts: OpenAI.Chat.ChatCompletionContentPart[] = textParts.map((t) => ({
-				type: "text" as const,
-				text: t,
-			}))
-			for (const img of imageBlocks) {
-				parts.push({
-					type: "image_url",
-					image_url: {
-						url: imageSourceToUrl(img.source),
-					},
-				})
-			}
-			result.push({ role: "user", content: parts } as DeepSeekModelMessage)
-		}
-	}
+    // Non-tool content → role: "user"
+    if (textParts.length > 0 || imageBlocks.length > 0) {
+        if (imageBlocks.length === 0) {
+            result.push({
+                role: "user",
+                content: textParts.join("\n"),
+            } as DeepSeekModelMessage)
+        } else {
+            const parts: OpenAI.Chat.ChatCompletionContentPart[] = textParts.map((t) => ({
+                type: "text" as const,
+                text: t,
+            }))
+            for (const img of imageBlocks) {
+                parts.push({
+                    type: "image_url",
+                    image_url: {
+                        url: imageSourceToUrl(img.source),
+                    },
+                })
+            }
+            result.push({ role: "user", content: parts } as DeepSeekModelMessage)
+        }
+    }
 
-	return result
+    return result
 }

@@ -8,13 +8,13 @@ import type { Controller } from "../index"
  * toggled with no task open is recorded at the workspace or global level.
  */
 export interface CapabilityWriteContext {
-	readonly hasWorkspace: boolean
-	readonly hasTask: boolean
+    readonly hasWorkspace: boolean
+    readonly hasTask: boolean
 }
 
 export function capabilityWriteContext(controller: Controller): CapabilityWriteContext {
-	return {
-		hasWorkspace: controller.stateManager.hasWorkspaceScope,
-		hasTask: controller.task !== undefined,
-	}
+    return {
+        hasWorkspace: controller.stateManager.hasWorkspaceScope,
+        hasTask: controller.task !== undefined,
+    }
 }

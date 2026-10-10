@@ -10,13 +10,13 @@ import type { CSSProperties } from "react"
  * Apply these styles inline to keep native dropdowns aligned with the active theme.
  */
 export const nativeSelectStyle: CSSProperties = {
-	backgroundColor: "var(--vscode-dropdown-background)",
-	borderColor: "var(--vscode-dropdown-border)",
-	color: "var(--vscode-dropdown-foreground)",
+    backgroundColor: "var(--vscode-dropdown-background)",
+    borderColor: "var(--vscode-dropdown-border)",
+    color: "var(--vscode-dropdown-foreground)",
 }
 
 /** Companion style for every `<option>` rendered inside a native select popup. */
 export const nativeSelectOptionStyle: CSSProperties = {
-	backgroundColor: "var(--vscode-dropdown-background)",
-	color: "var(--vscode-dropdown-foreground)",
+    backgroundColor: "var(--vscode-dropdown-background)",
+    color: "var(--vscode-dropdown-foreground)",
 }

@@ -6,15 +6,15 @@ import { fileExistsAtPath } from "./fs"
  * @returns Promise resolving to array of existing file paths
  */
 export async function filterExistingFiles(filePaths: string[]): Promise<string[]> {
-	const filteredPaths: string[] = []
+    const filteredPaths: string[] = []
 
-	for (const filePath of filePaths) {
-		if (!filePath) {
-			continue
-		}
-		if (await fileExistsAtPath(filePath)) {
-			filteredPaths.push(filePath)
-		}
-	}
-	return filteredPaths
+    for (const filePath of filePaths) {
+        if (!filePath) {
+            continue
+        }
+        if (await fileExistsAtPath(filePath)) {
+            filteredPaths.push(filePath)
+        }
+    }
+    return filteredPaths
 }

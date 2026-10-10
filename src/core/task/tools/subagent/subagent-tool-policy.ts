@@ -25,8 +25,8 @@ const KNOWN_TOOL_NAMES: ReadonlySet<ClineDefaultTool> = new Set(Object.values(Cl
  * more work done reports back and lets the task decide.
  */
 const DELEGATION_TOOL_NAMES: ReadonlySet<ClineDefaultTool> = new Set([
-	ClineDefaultTool.USE_SUBAGENT,
-	ClineDefaultTool.USE_SUBAGENTS,
+    ClineDefaultTool.USE_SUBAGENT,
+    ClineDefaultTool.USE_SUBAGENTS,
 ])
 
 /**
@@ -46,12 +46,12 @@ const DELEGATION_TOOL_NAMES: ReadonlySet<ClineDefaultTool> = new Set([
  * order to finish.
  */
 export function isForbiddenSubagentTool(tool: string): boolean {
-	if (tool === REQUIRED_SUBAGENT_TOOL) return false
-	return (
-		TURN_ENDING_TOOL_NAMES.has(tool) ||
-		CONVERSATIONAL_TOOL_NAMES.has(tool as ClineDefaultTool) ||
-		DELEGATION_TOOL_NAMES.has(tool as ClineDefaultTool)
-	)
+    if (tool === REQUIRED_SUBAGENT_TOOL) return false
+    return (
+        TURN_ENDING_TOOL_NAMES.has(tool) ||
+        CONVERSATIONAL_TOOL_NAMES.has(tool as ClineDefaultTool) ||
+        DELEGATION_TOOL_NAMES.has(tool as ClineDefaultTool)
+    )
 }
 
 /**
@@ -66,7 +66,7 @@ export function isForbiddenSubagentTool(tool: string): boolean {
  * @returns The same tools minus the ones policy forbids, order preserved.
  */
 export function rejectForbiddenSubagentTools<T extends string>(requestedTools: readonly T[]): T[] {
-	return requestedTools.filter((tool) => !isForbiddenSubagentTool(tool))
+    return requestedTools.filter((tool) => !isForbiddenSubagentTool(tool))
 }
 
 /**
@@ -82,15 +82,15 @@ export function rejectForbiddenSubagentTools<T extends string>(requestedTools: r
  *   removed. May be empty, which on disk means "inherit the default allowlist".
  */
 export function sanitizeSubagentToolsForPersistence(requestedTools: readonly string[]): ClineDefaultTool[] {
-	// An unrecognised name would be written happily and then rejected by the
-	// loader, which fails the whole document and makes the subagent disappear.
-	// Refusing it here keeps what can be stored equal to what can be read back.
-	const known = requestedTools.filter((tool): tool is ClineDefaultTool => KNOWN_TOOL_NAMES.has(tool as ClineDefaultTool))
-	// The required tool is dropped rather than rejected: it is permitted, and the
-	// UI keeps it checked, but resolution grants it regardless. It is excluded
-	// here separately from the forbidden set, which it does not belong to.
-	const selectable = known.filter((tool) => tool !== REQUIRED_SUBAGENT_TOOL)
-	return Array.from(new Set(rejectForbiddenSubagentTools(selectable)))
+    // An unrecognised name would be written happily and then rejected by the
+    // loader, which fails the whole document and makes the subagent disappear.
+    // Refusing it here keeps what can be stored equal to what can be read back.
+    const known = requestedTools.filter((tool): tool is ClineDefaultTool => KNOWN_TOOL_NAMES.has(tool as ClineDefaultTool))
+    // The required tool is dropped rather than rejected: it is permitted, and the
+    // UI keeps it checked, but resolution grants it regardless. It is excluded
+    // here separately from the forbidden set, which it does not belong to.
+    const selectable = known.filter((tool) => tool !== REQUIRED_SUBAGENT_TOOL)
+    return Array.from(new Set(rejectForbiddenSubagentTools(selectable)))
 }
 
 /**
@@ -115,21 +115,21 @@ export function sanitizeSubagentToolsForPersistence(requestedTools: readonly str
  * @returns Ordered, de-duplicated allowlist with the policy applied.
  */
 export function sanitizeSubagentTools(
-	requestedTools: readonly string[] | undefined,
-	options: { builtInDefault?: boolean; explicitlyNarrowed?: boolean } = {},
+    requestedTools: readonly string[] | undefined,
+    options: { builtInDefault?: boolean; explicitlyNarrowed?: boolean } = {},
 ): ClineDefaultTool[] {
-	const specified = requestedTools && requestedTools.length > 0
-	if (!specified && options.explicitlyNarrowed) {
-		return [REQUIRED_SUBAGENT_TOOL]
-	}
+    const specified = requestedTools && requestedTools.length > 0
+    if (!specified && options.explicitlyNarrowed) {
+        return [REQUIRED_SUBAGENT_TOOL]
+    }
 
-	const source = specified ? requestedTools : (DEFAULT_SUBAGENT_ALLOWED_TOOLS as readonly string[])
+    const source = specified ? requestedTools : (DEFAULT_SUBAGENT_ALLOWED_TOOLS as readonly string[])
 
-	const allowed = source.filter((tool): tool is ClineDefaultTool => {
-		if (isForbiddenSubagentTool(tool)) return false
-		if (options.builtInDefault && tool === ClineDefaultTool.BASH) return false
-		return true
-	})
+    const allowed = source.filter((tool): tool is ClineDefaultTool => {
+        if (isForbiddenSubagentTool(tool)) return false
+        if (options.builtInDefault && tool === ClineDefaultTool.BASH) return false
+        return true
+    })
 
-	return Array.from(new Set<ClineDefaultTool>([...allowed, REQUIRED_SUBAGENT_TOOL]))
+    return Array.from(new Set<ClineDefaultTool>([...allowed, REQUIRED_SUBAGENT_TOOL]))
 }

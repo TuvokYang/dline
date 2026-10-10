@@ -11,9 +11,9 @@ import { refreshGroqModels } from "./refreshGroqModels"
  * @returns Response containing Groq models (protobuf types)
  */
 export async function refreshGroqModelsRpc(
-	controller: Controller,
-	_request: EmptyRequest,
+    controller: Controller,
+    _request: EmptyRequest,
 ): Promise<OpenRouterCompatibleModelInfo> {
-	const models = await refreshGroqModels(controller)
-	return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
+    const models = await refreshGroqModels(controller)
+    return OpenRouterCompatibleModelInfo.create({ models: toProtobufModels(models) })
 }

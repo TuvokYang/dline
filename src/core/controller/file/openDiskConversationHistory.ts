@@ -19,10 +19,10 @@ const EXPORT_STEM = "api_conversation_history"
  * @param request Carries the task ID in `value`.
  */
 export async function openDiskConversationHistory(_controller: Controller, request: StringRequest): Promise<Empty> {
-	if (!request.value) return Empty.create()
-	const messages = await readTaskConversation(request.value)
-	const exportPath = resolveTaskTempFilePath(request.value, TaskTempSection.ConversationExport, EXPORT_STEM, "jsonl")
-	await writeFileAtomic(exportPath, messages.map((message) => `${JSON.stringify(message)}\n`).join(""))
-	openFileIntegration(exportPath)
-	return Empty.create()
+    if (!request.value) return Empty.create()
+    const messages = await readTaskConversation(request.value)
+    const exportPath = resolveTaskTempFilePath(request.value, TaskTempSection.ConversationExport, EXPORT_STEM, "jsonl")
+    await writeFileAtomic(exportPath, messages.map((message) => `${JSON.stringify(message)}\n`).join(""))
+    openFileIntegration(exportPath)
+    return Empty.create()
 }

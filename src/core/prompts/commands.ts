@@ -16,32 +16,32 @@ const commandGenerator = new CommandPromptGenerator(englishTemplateStore)
  * @returns Rendered command prompt text.
  */
 function generateCommand(templateId: string, env: PromptEnv = {}): string {
-	return commandGenerator.generate(templateId, env).text
+    return commandGenerator.generate(templateId, env).text
 }
 
 export const newTaskToolResponse = () => {
-	return `${generateCommand("commands.newTaskMain", {
-		TOOL_CALL_FORMAT: generateCommand("commands.newTaskXmlToolCallFormat"),
-	})}\n`
+    return `${generateCommand("commands.newTaskMain", {
+        TOOL_CALL_FORMAT: generateCommand("commands.newTaskXmlToolCallFormat"),
+    })}\n`
 }
 
 /** Generate the shared summarize_task instruction for explicit manual compaction. */
 export const condenseToolResponse = (focusChainSettings?: { enabled: boolean }) => summarizeTask(focusChainSettings)
 
 export const newRuleToolResponse = () =>
-	`${generateCommand("commands.newRuleToolResponse", {
-		TOOL_CALL_FORMAT: generateCommand("commands.newRuleXmlToolCallFormat"),
-	})}\n`
+    `${generateCommand("commands.newRuleToolResponse", {
+        TOOL_CALL_FORMAT: generateCommand("commands.newRuleXmlToolCallFormat"),
+    })}\n`
 
 export const reportBugToolResponse = () =>
-	`${generateCommand("commands.reportBugToolResponse", {
-		TOOL_CALL_FORMAT: generateCommand("commands.reportBugXmlToolCallFormat"),
-	})}\n`
+    `${generateCommand("commands.reportBugToolResponse", {
+        TOOL_CALL_FORMAT: generateCommand("commands.reportBugXmlToolCallFormat"),
+    })}\n`
 
 export const explainChangesToolResponse = () =>
-	`${generateCommand("commands.explainChangesToolResponse", {
-		TOOL_CALL_FORMAT: generateCommand("commands.explainChangesXmlToolCallFormat"),
-	})}\n`
+    `${generateCommand("commands.explainChangesToolResponse", {
+        TOOL_CALL_FORMAT: generateCommand("commands.explainChangesXmlToolCallFormat"),
+    })}\n`
 
 /**
  * Generates the provider-independent deep-planning slash command response.
@@ -52,10 +52,10 @@ export const explainChangesToolResponse = () =>
  * @returns The deep-planning prompt string with explicit runtime settings applied.
  */
 export const deepPlanningToolResponse = (
-	promptProfile: PromptProfile,
-	focusChainSettings?: { enabled: boolean },
-	providerInfo?: ApiProviderInfo,
-	enableNativeToolCalls?: boolean,
+    promptProfile: PromptProfile,
+    focusChainSettings?: { enabled: boolean },
+    providerInfo?: ApiProviderInfo,
+    enableNativeToolCalls?: boolean,
 ) => {
-	return getDeepPlanningPrompt(promptProfile, focusChainSettings, providerInfo, enableNativeToolCalls)
+    return getDeepPlanningPrompt(promptProfile, focusChainSettings, providerInfo, enableNativeToolCalls)
 }

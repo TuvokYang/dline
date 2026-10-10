@@ -41,14 +41,14 @@ import { SCROLL_SETTLE_MS } from "./windowGrowthTiming"
  * @returns True while the gesture should still be treated as running.
  */
 export function isGestureActive(msSinceLastScroll: number | null): boolean {
-	return msSinceLastScroll !== null && msSinceLastScroll < SCROLL_SETTLE_MS
+    return msSinceLastScroll !== null && msSinceLastScroll < SCROLL_SETTLE_MS
 }
 
 /** Height the list believes a row has, or undefined when it is not known. */
 export function expectedRowHeight(knownSize: unknown): number | undefined {
-	const size =
-		typeof knownSize === "string" ? Number.parseFloat(knownSize) : typeof knownSize === "number" ? knownSize : Number.NaN
-	return Number.isFinite(size) && size > 0 ? size : undefined
+    const size =
+        typeof knownSize === "string" ? Number.parseFloat(knownSize) : typeof knownSize === "number" ? knownSize : Number.NaN
+    return Number.isFinite(size) && size > 0 ? size : undefined
 }
 
 /**
@@ -65,6 +65,6 @@ export function expectedRowHeight(knownSize: unknown): number | undefined {
  * @returns The height to hold the row at, or undefined to leave it alone.
  */
 export function heightToHold(knownSize: unknown, scrolling: boolean, measured: boolean): number | undefined {
-	if (!scrolling || measured) return undefined
-	return expectedRowHeight(knownSize)
+    if (!scrolling || measured) return undefined
+    return expectedRowHeight(knownSize)
 }

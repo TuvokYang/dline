@@ -17,35 +17,35 @@ export const SETTINGS_MIGRATION_VERSION_KEY = "__settingsMigrationVersion" as co
 export const SETTINGS_MIGRATION_VERSION = 2
 
 export type SettingsRepositoryMetadataKey =
-	| typeof SETTINGS_REPOSITORY_REVISION_KEY
-	| typeof SETTINGS_REPOSITORY_SOURCE_ID_KEY
-	| typeof SETTINGS_REPOSITORY_SCHEMA_KEY
+    | typeof SETTINGS_REPOSITORY_REVISION_KEY
+    | typeof SETTINGS_REPOSITORY_SOURCE_ID_KEY
+    | typeof SETTINGS_REPOSITORY_SCHEMA_KEY
 
 export interface SettingsSnapshot {
-	readonly schemaVersion: typeof SETTINGS_REPOSITORY_SCHEMA_VERSION
-	readonly revision: number
-	readonly values: Readonly<Settings>
-	readonly contentHash: string
+    readonly schemaVersion: typeof SETTINGS_REPOSITORY_SCHEMA_VERSION
+    readonly revision: number
+    readonly values: Readonly<Settings>
+    readonly contentHash: string
 }
 
 export interface SettingsCommit {
-	readonly revision: number
-	readonly changedKeys: readonly SettingsKey[]
-	readonly snapshot: SettingsSnapshot
-	readonly sourceId: string
+    readonly revision: number
+    readonly changedKeys: readonly SettingsKey[]
+    readonly snapshot: SettingsSnapshot
+    readonly sourceId: string
 }
 
 export type SettingsCommitListener = (commit: SettingsCommit) => void | Promise<void>
 
 export interface SettingsRepositoryOptions {
-	readonly filePath: string
-	readonly sourceId?: string
-	readonly watch?: boolean
+    readonly filePath: string
+    readonly sourceId?: string
+    readonly watch?: boolean
 }
 
 export interface PersistedSettingsDocument {
-	readonly [key: string]: unknown
-	readonly [SETTINGS_REPOSITORY_REVISION_KEY]?: number
-	readonly [SETTINGS_REPOSITORY_SOURCE_ID_KEY]?: string
-	readonly [SETTINGS_REPOSITORY_SCHEMA_KEY]?: number
+    readonly [key: string]: unknown
+    readonly [SETTINGS_REPOSITORY_REVISION_KEY]?: number
+    readonly [SETTINGS_REPOSITORY_SOURCE_ID_KEY]?: string
+    readonly [SETTINGS_REPOSITORY_SCHEMA_KEY]?: number
 }

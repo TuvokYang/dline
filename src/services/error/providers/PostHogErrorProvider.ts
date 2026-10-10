@@ -17,7 +17,7 @@ import type { ErrorSettings, IErrorProvider } from "./IErrorProvider"
 const isDev = envFlagEnabled(process.env.IS_DEV)
 
 type PostHogErrorClient = PostHogClientValidConfig & {
-	enableExceptionAutocapture: boolean
+    enableExceptionAutocapture: boolean
 }
 
 /**
@@ -25,147 +25,147 @@ type PostHogErrorClient = PostHogClientValidConfig & {
  * Handles PostHog-specific error tracking and logging
  */
 export class PostHogErrorProvider implements IErrorProvider {
-	private client: PostHog
-	private errorSettings: ErrorSettings
-	// Does not accept shared client
-	private readonly isSharedClient = false
+    private client: PostHog
+    private errorSettings: ErrorSettings
+    // Does not accept shared client
+    private readonly isSharedClient = false
 
-	constructor(clientConfig: PostHogErrorClient) {
-		this.client = new PostHog(clientConfig.errorTrackingApiKey, {
-			host: clientConfig.host,
-			fetch: (url, options) => fetch(url, options),
-			enableExceptionAutocapture: clientConfig.enableExceptionAutocapture,
-			before_send: (event) => PostHogClientProvider.eventFilter(event),
-		})
-		// Initialize error settings
-		this.errorSettings = {
-			enabled: true,
-			hostEnabled: true,
-			level: "all",
-		}
-	}
+    constructor(clientConfig: PostHogErrorClient) {
+        this.client = new PostHog(clientConfig.errorTrackingApiKey, {
+            host: clientConfig.host,
+            fetch: (url, options) => fetch(url, options),
+            enableExceptionAutocapture: clientConfig.enableExceptionAutocapture,
+            before_send: (event) => PostHogClientProvider.eventFilter(event),
+        })
+        // Initialize error settings
+        this.errorSettings = {
+            enabled: true,
+            hostEnabled: true,
+            level: "all",
+        }
+    }
 
-	public async initialize(): Promise<PostHogErrorProvider> {
-		// Listen for host telemetry changes
-		HostProvider.env.subscribeToTelemetrySettings(
-			{},
-			{
-				onResponse: (event: { isEnabled: Setting }) => {
-					const hostEnabled = event.isEnabled === Setting.ENABLED || event.isEnabled === Setting.UNSUPPORTED
-					this.errorSettings.hostEnabled = hostEnabled
-				},
-			},
-		)
+    public async initialize(): Promise<PostHogErrorProvider> {
+        // Listen for host telemetry changes
+        HostProvider.env.subscribeToTelemetrySettings(
+            {},
+            {
+                onResponse: (event: { isEnabled: Setting }) => {
+                    const hostEnabled = event.isEnabled === Setting.ENABLED || event.isEnabled === Setting.UNSUPPORTED
+                    this.errorSettings.hostEnabled = hostEnabled
+                },
+            },
+        )
 
-		const hostSettings = await HostProvider.env.getTelemetrySettings({})
-		if (hostSettings.isEnabled === Setting.DISABLED) {
-			this.errorSettings.hostEnabled = false
-		}
+        const hostSettings = await HostProvider.env.getTelemetrySettings({})
+        if (hostSettings.isEnabled === Setting.DISABLED) {
+            this.errorSettings.hostEnabled = false
+        }
 
-		this.errorSettings.level = getErrorLevelFromString(hostSettings.errorLevel)
+        this.errorSettings.level = getErrorLevelFromString(hostSettings.errorLevel)
 
-		return this
-	}
+        return this
+    }
 
-	captureException(error: Error | ClineError, properties?: Record<string, unknown>): Promise<void> {
-		if (!this.isEnabled() || this.errorSettings.level === "off") {
-			return Promise.resolve()
-		}
+    captureException(error: Error | ClineError, properties?: Record<string, unknown>): Promise<void> {
+        if (!this.isEnabled() || this.errorSettings.level === "off") {
+            return Promise.resolve()
+        }
 
-		const errorDetails = {
-			name: error.name,
-			extension_version: pkg.version,
-			is_dev: isDev,
-			...properties,
-		}
+        const errorDetails = {
+            name: error.name,
+            extension_version: pkg.version,
+            is_dev: isDev,
+            ...properties,
+        }
 
-		return this.client.captureExceptionImmediate(error, this.distinctId, errorDetails)
-	}
+        return this.client.captureExceptionImmediate(error, this.distinctId, errorDetails)
+    }
 
-	public logException(error: Error | ClineError, properties: Record<string, unknown> = {}): void {
-		if (!this.isEnabled() || this.errorSettings.level === "off") {
-			return
-		}
+    public logException(error: Error | ClineError, properties: Record<string, unknown> = {}): void {
+        if (!this.isEnabled() || this.errorSettings.level === "off") {
+            return
+        }
 
-		const errorDetails = {
-			message: error.message,
-			stack: error.stack,
-			name: error.name,
-			extension_version: pkg.version,
-			is_dev: isDev,
-			...properties,
-		}
+        const errorDetails = {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+            extension_version: pkg.version,
+            is_dev: isDev,
+            ...properties,
+        }
 
-		if (error instanceof ClineError) {
-			Object.assign(errorDetails, {
-				modelId: error.modelId,
-				providerId: error.providerId,
-				serialized_error: error.serialize(),
-			})
-		}
+        if (error instanceof ClineError) {
+            Object.assign(errorDetails, {
+                modelId: error.modelId,
+                providerId: error.providerId,
+                serialized_error: error.serialize(),
+            })
+        }
 
-		this.client.capture({
-			distinctId: this.distinctId,
-			event: "extension.error",
-			properties: {
-				error_type: "exception",
-				...errorDetails,
-				timestamp: new Date().toISOString(),
-			},
-		})
+        this.client.capture({
+            distinctId: this.distinctId,
+            event: "extension.error",
+            properties: {
+                error_type: "exception",
+                ...errorDetails,
+                timestamp: new Date().toISOString(),
+            },
+        })
 
-		Logger.internalError("[PostHogErrorProvider] Logging exception", error)
-	}
+        Logger.internalError("[PostHogErrorProvider] Logging exception", error)
+    }
 
-	public logMessage(
-		message: string,
-		level: "error" | "warning" | "log" | "debug" | "info" = "log",
-		properties: Record<string, unknown> = {},
-	): void {
-		if (!this.isEnabled() || this.errorSettings.level === "off") {
-			return
-		}
+    public logMessage(
+        message: string,
+        level: "error" | "warning" | "log" | "debug" | "info" = "log",
+        properties: Record<string, unknown> = {},
+    ): void {
+        if (!this.isEnabled() || this.errorSettings.level === "off") {
+            return
+        }
 
-		// Filter messages based on error level
-		if (this.errorSettings.level === "error" && level !== "error") {
-			return
-		}
+        // Filter messages based on error level
+        if (this.errorSettings.level === "error" && level !== "error") {
+            return
+        }
 
-		this.client.capture({
-			distinctId: this.distinctId,
-			event: "extension.message",
-			properties: {
-				message: message.substring(0, 500), // Truncate long messages
-				level,
-				extension_version: pkg.version,
-				is_dev: isDev,
-				timestamp: new Date().toISOString(),
-				...properties,
-			},
-		})
-	}
+        this.client.capture({
+            distinctId: this.distinctId,
+            event: "extension.message",
+            properties: {
+                message: message.substring(0, 500), // Truncate long messages
+                level,
+                extension_version: pkg.version,
+                is_dev: isDev,
+                timestamp: new Date().toISOString(),
+                ...properties,
+            },
+        })
+    }
 
-	public isEnabled(): boolean {
-		// Error reporting has its own consent: agreeing to be measured is not
-		// agreeing to have crashes collected, nor the reverse. An undecided
-		// user has not consented.
-		return (
-			isReportingAllowed(StateManager.get().getGlobalSettingsKey("errorReportingSetting")) && this.errorSettings.hostEnabled
-		)
-	}
+    public isEnabled(): boolean {
+        // Error reporting has its own consent: agreeing to be measured is not
+        // agreeing to have crashes collected, nor the reverse. An undecided
+        // user has not consented.
+        return (
+            isReportingAllowed(StateManager.get().getGlobalSettingsKey("errorReportingSetting")) && this.errorSettings.hostEnabled
+        )
+    }
 
-	public getSettings(): ErrorSettings {
-		return { ...this.errorSettings }
-	}
+    public getSettings(): ErrorSettings {
+        return { ...this.errorSettings }
+    }
 
-	private get distinctId(): string {
-		return getDistinctId()
-	}
+    private get distinctId(): string {
+        return getDistinctId()
+    }
 
-	public async dispose(): Promise<void> {
-		// Only shut down the client if it's not shared (we own it)
-		if (!this.isSharedClient) {
-			await this.client.shutdown().catch((error) => Logger.internalError("Error shutting down PostHog client:", error))
-		}
-	}
+    public async dispose(): Promise<void> {
+        // Only shut down the client if it's not shared (we own it)
+        if (!this.isSharedClient) {
+            await this.client.shutdown().catch((error) => Logger.internalError("Error shutting down PostHog client:", error))
+        }
+    }
 }

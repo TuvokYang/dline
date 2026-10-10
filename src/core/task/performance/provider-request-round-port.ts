@@ -4,19 +4,19 @@ import type { ApiResponseExecutionToolSummary } from "./api-response-execution-t
 export type ProviderRequestRoundSource = "ordinary" | "compaction" | "subagent"
 
 export interface ProviderRequestRoundAdmissionInput {
-	readonly source: ProviderRequestRoundSource
-	readonly apiIndex?: number
+    readonly source: ProviderRequestRoundSource
+    readonly apiIndex?: number
 }
 
 export interface ProviderRequestRoundAdmission {
-	bindAttempt<T>(stream: AsyncIterable<T>, taskAttempt: number): AsyncIterable<T>
-	attachExactUsage(usage: ApiRequestRoundUsage): void
-	completeProviderOnly(): void
-	completeTools(summary: ApiResponseExecutionToolSummary): void
-	completeTurnEndAwaitingUser(summary: ApiResponseExecutionToolSummary): void
+    bindAttempt<T>(stream: AsyncIterable<T>, taskAttempt: number): AsyncIterable<T>
+    attachExactUsage(usage: ApiRequestRoundUsage): void
+    completeProviderOnly(): void
+    completeTools(summary: ApiResponseExecutionToolSummary): void
+    completeTurnEndAwaitingUser(summary: ApiResponseExecutionToolSummary): void
 }
 
 /** Task-owned boundary for admitting one logical request and observing all of its actual Provider sends. */
 export interface ProviderRequestRoundPort {
-	admit(input: ProviderRequestRoundAdmissionInput): ProviderRequestRoundAdmission
+    admit(input: ProviderRequestRoundAdmissionInput): ProviderRequestRoundAdmission
 }

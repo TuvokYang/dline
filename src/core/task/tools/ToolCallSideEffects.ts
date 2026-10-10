@@ -18,15 +18,15 @@ import type { TaskConfig } from "./types/TaskConfig"
  * the same tools without supplying stubs for effects it does not have.
  */
 export interface ToolCallSideEffectPort {
-	/** Publish the checklist a call carried, for a surface that presents one. */
-	readonly reportProgress?: (progress: string) => Promise<void>
-	/** Commit a restore point, for a surface that tracks workspace history. */
-	readonly commitCheckpoint?: () => Promise<void>
-	/**
-	 * Wait until the task's baseline restore point exists, for a surface that
-	 * builds one while the first request is in flight.
-	 */
-	readonly awaitInitialCheckpoint?: () => Promise<void>
+    /** Publish the checklist a call carried, for a surface that presents one. */
+    readonly reportProgress?: (progress: string) => Promise<void>
+    /** Commit a restore point, for a surface that tracks workspace history. */
+    readonly commitCheckpoint?: () => Promise<void>
+    /**
+     * Wait until the task's baseline restore point exists, for a surface that
+     * builds one while the first request is in flight.
+     */
+    readonly awaitInitialCheckpoint?: () => Promise<void>
 }
 
 /**
@@ -38,12 +38,12 @@ export interface ToolCallSideEffectPort {
  * same state.
  */
 export function toolMayChangeWorkspace(tool: ClineDefaultTool): boolean {
-	if ((READ_ONLY_TOOLS as readonly ClineDefaultTool[]).includes(tool)) return false
-	// MCP calls may mutate external systems, but a Dline workspace checkpoint
-	// cannot restore those side effects. Emitting one after every response only
-	// creates misleading restore rows and duplicates the call/result presentation.
-	if (tool === ClineDefaultTool.MCP_USE || tool === ClineDefaultTool.MCP_ACCESS) return false
-	return !CONVERSATIONAL_TOOL_NAMES.has(tool)
+    if ((READ_ONLY_TOOLS as readonly ClineDefaultTool[]).includes(tool)) return false
+    // MCP calls may mutate external systems, but a Dline workspace checkpoint
+    // cannot restore those side effects. Emitting one after every response only
+    // creates misleading restore rows and duplicates the call/result presentation.
+    if (tool === ClineDefaultTool.MCP_USE || tool === ClineDefaultTool.MCP_ACCESS) return false
+    return !CONVERSATIONAL_TOOL_NAMES.has(tool)
 }
 
 /**
@@ -54,16 +54,16 @@ export function toolMayChangeWorkspace(tool: ClineDefaultTool): boolean {
  * caller instead of being indistinguishable from "the checklist was empty".
  */
 export function resolveToolCallSideEffects(config: TaskConfig): ToolCallSideEffectPort {
-	const callbacks = config.callbacks as Partial<TaskConfig["callbacks"]> | undefined
-	return {
-		...(callbacks?.updateFCListFromToolResponse === undefined
-			? {}
-			: { reportProgress: (progress: string) => callbacks.updateFCListFromToolResponse!(progress) }),
-		...(callbacks?.saveCheckpoint === undefined ? {} : { commitCheckpoint: () => callbacks.saveCheckpoint!() }),
-		...(callbacks?.awaitInitialCheckpoint === undefined
-			? {}
-			: { awaitInitialCheckpoint: () => callbacks.awaitInitialCheckpoint!() }),
-	}
+    const callbacks = config.callbacks as Partial<TaskConfig["callbacks"]> | undefined
+    return {
+        ...(callbacks?.updateFCListFromToolResponse === undefined
+            ? {}
+            : { reportProgress: (progress: string) => callbacks.updateFCListFromToolResponse!(progress) }),
+        ...(callbacks?.saveCheckpoint === undefined ? {} : { commitCheckpoint: () => callbacks.saveCheckpoint!() }),
+        ...(callbacks?.awaitInitialCheckpoint === undefined
+            ? {}
+            : { awaitInitialCheckpoint: () => callbacks.awaitInitialCheckpoint!() }),
+    }
 }
 
 /**
@@ -76,12 +76,12 @@ export function resolveToolCallSideEffects(config: TaskConfig): ToolCallSideEffe
  * baseline between showing the result and offering the next step.
  */
 export async function awaitToolCallPreconditions(port: ToolCallSideEffectPort, tool: ClineDefaultTool): Promise<void> {
-	if (!port.awaitInitialCheckpoint || (READ_ONLY_TOOLS as readonly ClineDefaultTool[]).includes(tool)) return
-	try {
-		await port.awaitInitialCheckpoint()
-	} catch (error) {
-		Logger.error(`Initial checkpoint failed before ${tool}`, error instanceof Error ? error : undefined)
-	}
+    if (!port.awaitInitialCheckpoint || (READ_ONLY_TOOLS as readonly ClineDefaultTool[]).includes(tool)) return
+    try {
+        await port.awaitInitialCheckpoint()
+    } catch (error) {
+        Logger.error(`Initial checkpoint failed before ${tool}`, error instanceof Error ? error : undefined)
+    }
 }
 
 /**
@@ -99,24 +99,24 @@ export async function awaitToolCallPreconditions(port: ToolCallSideEffectPort, t
  * repository must not turn into a refused tool.
  */
 export async function applyToolCallSideEffects(
-	port: ToolCallSideEffectPort,
-	block: ToolUse,
-	tool: ClineDefaultTool,
+    port: ToolCallSideEffectPort,
+    block: ToolUse,
+    tool: ClineDefaultTool,
 ): Promise<void> {
-	const progress = block.params.task_progress
-	if (port.reportProgress && progress?.trim()) {
-		try {
-			await port.reportProgress(progress)
-		} catch (error) {
-			Logger.error(`Failed to apply task_progress from ${block.name}`, error instanceof Error ? error : undefined)
-		}
-	}
+    const progress = block.params.task_progress
+    if (port.reportProgress && progress?.trim()) {
+        try {
+            await port.reportProgress(progress)
+        } catch (error) {
+            Logger.error(`Failed to apply task_progress from ${block.name}`, error instanceof Error ? error : undefined)
+        }
+    }
 
-	if (port.commitCheckpoint && toolMayChangeWorkspace(tool)) {
-		try {
-			await port.commitCheckpoint()
-		} catch (error) {
-			Logger.error(`Failed to save checkpoint after ${tool}`, error instanceof Error ? error : undefined)
-		}
-	}
+    if (port.commitCheckpoint && toolMayChangeWorkspace(tool)) {
+        try {
+            await port.commitCheckpoint()
+        } catch (error) {
+            Logger.error(`Failed to save checkpoint after ${tool}`, error instanceof Error ? error : undefined)
+        }
+    }
 }

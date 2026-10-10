@@ -16,18 +16,18 @@ import type { CompactionRecordPort } from "./MessageStateCompactionCards"
  * the conversation to.
  */
 export class MessageStateCompactionLanding implements CompactionLandingPort {
-	/** @param cards Writes the card in place of the run's progress card, or as a new row when it showed none. */
-	constructor(private readonly cards: CompactionRecordPort) {}
+    /** @param cards Writes the card in place of the run's progress card, or as a new row when it showed none. */
+    constructor(private readonly cards: CompactionRecordPort) {}
 
-	async land(input: { readonly compactionId: string; readonly attempt: string } & CompactionSummary): Promise<void> {
-		await this.cards.record(input.compactionId, {
-			tool: "summarizeTask",
-			content: input.summary,
-			compactionStatus: "completed",
-			compactionOperationId: input.compactionId,
-			compactionUnitKind: "pass",
-			compactionDurable: true,
-			...(input.span ? { compactionJournalBoundary: { seq: input.span.to.seq } } : {}),
-		} satisfies UiSayTool)
-	}
+    async land(input: { readonly compactionId: string; readonly attempt: string } & CompactionSummary): Promise<void> {
+        await this.cards.record(input.compactionId, {
+            tool: "summarizeTask",
+            content: input.summary,
+            compactionStatus: "completed",
+            compactionOperationId: input.compactionId,
+            compactionUnitKind: "pass",
+            compactionDurable: true,
+            ...(input.span ? { compactionJournalBoundary: { seq: input.span.to.seq } } : {}),
+        } satisfies UiSayTool)
+    }
 }

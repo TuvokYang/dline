@@ -9,13 +9,13 @@
  * @returns true if the line is a focus chain item (- [ ], - [x], or - [X])
  */
 export function isFocusChainItem(line: string): boolean {
-	return (
-		line.startsWith("- [ ]") ||
-		line.startsWith("- [x]") ||
-		line.startsWith("- [X]") ||
-		line.startsWith("[+] - [") ||
-		line.startsWith("[-] - [")
-	)
+    return (
+        line.startsWith("- [ ]") ||
+        line.startsWith("- [x]") ||
+        line.startsWith("- [X]") ||
+        line.startsWith("[+] - [") ||
+        line.startsWith("[-] - [")
+    )
 }
 
 /**
@@ -24,7 +24,7 @@ export function isFocusChainItem(line: string): boolean {
  * @returns true if the line is a completed focus chain item (- [x] or - [X])
  */
 export function isCompletedFocusChainItem(line: string): boolean {
-	return line.startsWith("- [x]") || line.startsWith("- [X]")
+    return line.startsWith("- [x]") || line.startsWith("- [X]")
 }
 
 /**
@@ -39,11 +39,11 @@ export const FOCUS_CHAIN_ITEM_REGEX = /^-\s*\[([ xX])\]\s*(.+)$/
  * @returns Object with checked status and text, or null if not a focus chain item
  */
 export function parseFocusChainItem(line: string): { checked: boolean; text: string } | null {
-	const match = line.match(FOCUS_CHAIN_ITEM_REGEX)
-	if (match) {
-		const checked = match[1] === "x" || match[1] === "X"
-		const text = match[2].trim()
-		return { checked, text }
-	}
-	return null
+    const match = line.match(FOCUS_CHAIN_ITEM_REGEX)
+    if (match) {
+        const checked = match[1] === "x" || match[1] === "X"
+        const text = match[2].trim()
+        return { checked, text }
+    }
+    return null
 }

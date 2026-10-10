@@ -33,10 +33,10 @@ const PACKAGE_JSON_PATH = path.join(PROJECT_ROOT, "package.json")
  * @returns {string} 7-character git hash
  */
 function getGitHash() {
-	return execSync("git rev-parse --short HEAD", {
-		cwd: PROJECT_ROOT,
-		encoding: "utf-8",
-	}).trim()
+    return execSync("git rev-parse --short HEAD", {
+        cwd: PROJECT_ROOT,
+        encoding: "utf-8",
+    }).trim()
 }
 
 /**
@@ -44,10 +44,10 @@ function getGitHash() {
  * @returns {string}
  */
 function tryGitFullHash() {
-	return execSync("git rev-parse HEAD", {
-		cwd: PROJECT_ROOT,
-		encoding: "utf-8",
-	}).trim()
+    return execSync("git rev-parse HEAD", {
+        cwd: PROJECT_ROOT,
+        encoding: "utf-8",
+    }).trim()
 }
 
 /**
@@ -55,15 +55,15 @@ function tryGitFullHash() {
  * @returns {boolean}
  */
 function isOnTag() {
-	try {
-		execSync("git describe --tags --exact-match", {
-			cwd: PROJECT_ROOT,
-			stdio: "ignore",
-		})
-		return true
-	} catch {
-		return false
-	}
+    try {
+        execSync("git describe --tags --exact-match", {
+            cwd: PROJECT_ROOT,
+            stdio: "ignore",
+        })
+        return true
+    } catch {
+        return false
+    }
 }
 
 /**
@@ -71,16 +71,16 @@ function isOnTag() {
  * @returns {boolean}
  */
 function isOnMainBranch() {
-	try {
-		const branch = execSync("git branch --show-current", {
-			cwd: PROJECT_ROOT,
-			encoding: "utf-8",
-		}).trim()
-		return branch === "main" || branch === "master"
-	} catch {
-		// If detached HEAD or error, treat as non-main
-		return false
-	}
+    try {
+        const branch = execSync("git branch --show-current", {
+            cwd: PROJECT_ROOT,
+            encoding: "utf-8",
+        }).trim()
+        return branch === "main" || branch === "master"
+    } catch {
+        // If detached HEAD or error, treat as non-main
+        return false
+    }
 }
 
 /**
@@ -88,7 +88,7 @@ function isOnMainBranch() {
  * @returns {{ version: string, [key: string]: any }}
  */
 function _readPackageJson() {
-	return JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"))
+    return JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"))
 }
 
 /**
@@ -96,7 +96,7 @@ function _readPackageJson() {
  * @param {object} pkg
  */
 function writePackageJson(pkg) {
-	fs.writeFileSync(PACKAGE_JSON_PATH, `${JSON.stringify(pkg, null, "\t")}\n`)
+    fs.writeFileSync(PACKAGE_JSON_PATH, `${JSON.stringify(pkg, null, "\t")}\n`)
 }
 
 // --- Main ---
@@ -125,62 +125,62 @@ console.log(`[package-dev] Documentation ref: ${documentationRef}`)
  * esbuild.mjs makes the bundle variant verifiable.
  */
 function assertDevBundle() {
-	const bundlePath = path.join(PROJECT_ROOT, "dist", "extension.js")
-	const header = fs.readFileSync(bundlePath, "utf-8").slice(0, 512)
-	const marker = header.match(/DLINE_BUILD_TYPE:(\w+)/)
-	if (!marker || marker[1] !== "dev") {
-		throw new Error(
-			`[package-dev] dist/extension.js is not a dev bundle (marker: ${marker ? marker[1] : "missing"}). ` +
-				"Another build (e.g. test:e2e prepublish) overwrote it. Re-run vsix:dev without concurrent builds.",
-		)
-	}
-	console.log("[package-dev] Verified dist/extension.js is a dev bundle.")
+    const bundlePath = path.join(PROJECT_ROOT, "dist", "extension.js")
+    const header = fs.readFileSync(bundlePath, "utf-8").slice(0, 512)
+    const marker = header.match(/DLINE_BUILD_TYPE:(\w+)/)
+    if (!marker || marker[1] !== "dev") {
+        throw new Error(
+            `[package-dev] dist/extension.js is not a dev bundle (marker: ${marker ? marker[1] : "missing"}). ` +
+                "Another build (e.g. test:e2e prepublish) overwrote it. Re-run vsix:dev without concurrent builds.",
+        )
+    }
+    console.log("[package-dev] Verified dist/extension.js is a dev bundle.")
 }
 
 await withMarketplaceReadme(
-	async (cleanups) => {
-		if (onTag || onMain) {
-			console.log("[package-dev] On main branch or tag, packaging with original version...")
-		} else {
-			const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
-			const pkg = JSON.parse(originalContent)
-			const originalVersion = pkg.version
+    async (cleanups) => {
+        if (onTag || onMain) {
+            console.log("[package-dev] On main branch or tag, packaging with original version...")
+        } else {
+            const originalContent = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8")
+            const pkg = JSON.parse(originalContent)
+            const originalVersion = pkg.version
 
-			// Register restoration before mutating package.json so signals during any
-			// subsequent build or pack step restore both temporary files.
-			cleanups.defer(() => {
-				console.log(`[package-dev] Restoring original version: ${originalVersion}`)
-				fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
-			})
-			pkg.version = `${pkg.version}-${hash}`
-			writePackageJson(pkg)
-			console.log(`[package-dev] Modified version: ${originalVersion} → ${pkg.version}`)
-		}
+            // Register restoration before mutating package.json so signals during any
+            // subsequent build or pack step restore both temporary files.
+            cleanups.defer(() => {
+                console.log(`[package-dev] Restoring original version: ${originalVersion}`)
+                fs.writeFileSync(PACKAGE_JSON_PATH, originalContent)
+            })
+            pkg.version = `${pkg.version}-${hash}`
+            writePackageJson(pkg)
+            console.log(`[package-dev] Modified version: ${originalVersion} → ${pkg.version}`)
+        }
 
-		// 1. Run the same validation and Webview build as vscode:prepublish,
-		// then produce a dev extension bundle with IS_DEV=true and source maps.
-		console.log("[package-dev] Building extension in dev mode...")
-		for (const command of ["npm run check-types", "npm run build:webview", "npm run lint", "node esbuild.mjs"]) {
-			execSync(command, {
-				cwd: PROJECT_ROOT,
-				stdio: "inherit",
-				shell: true,
-			})
-		}
+        // 1. Run the same validation and Webview build as vscode:prepublish,
+        // then produce a dev extension bundle with IS_DEV=true and source maps.
+        console.log("[package-dev] Building extension in dev mode...")
+        for (const command of ["npm run check-types", "npm run build:webview", "npm run lint", "node esbuild.mjs"]) {
+            execSync(command, {
+                cwd: PROJECT_ROOT,
+                stdio: "inherit",
+                shell: true,
+            })
+        }
 
-		// 2. Pack the already-built files without running vscode:prepublish, which
-		// would overwrite dist with a production bundle.
-		assertDevBundle()
-		const packageManifest = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"))
-		const expectedPackagePath = path.join(PROJECT_ROOT, `${packageManifest.name}-${packageManifest.version}.vsix`)
-		console.log("[package-dev] Creating VSIX through the shared VSCE API adapter...")
-		const { packagePath } = await packageVsix({
-			cwd: PROJECT_ROOT,
-			mode: "pack-only",
-			packagePath: expectedPackagePath,
-		})
-		const packageSizeMb = fs.statSync(packagePath).size / 1_000_000
-		console.log(`[package-dev] Package completed: ${packagePath} (${packageSizeMb.toFixed(2)} MB)`)
-	},
-	{ ref: documentationRef },
+        // 2. Pack the already-built files without running vscode:prepublish, which
+        // would overwrite dist with a production bundle.
+        assertDevBundle()
+        const packageManifest = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"))
+        const expectedPackagePath = path.join(PROJECT_ROOT, `${packageManifest.name}-${packageManifest.version}.vsix`)
+        console.log("[package-dev] Creating VSIX through the shared VSCE API adapter...")
+        const { packagePath } = await packageVsix({
+            cwd: PROJECT_ROOT,
+            mode: "pack-only",
+            packagePath: expectedPackagePath,
+        })
+        const packageSizeMb = fs.statSync(packagePath).size / 1_000_000
+        console.log(`[package-dev] Package completed: ${packagePath} (${packageSizeMb.toFixed(2)} MB)`)
+    },
+    { ref: documentationRef },
 )

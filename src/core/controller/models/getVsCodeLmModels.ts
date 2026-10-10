@@ -12,14 +12,14 @@ import { Controller } from ".."
  * @returns Array of VS Code LM models
  */
 export async function getVsCodeLmModels(_controller: Controller, _request: EmptyRequest): Promise<VsCodeLmModelsArray> {
-	try {
-		const models = await vscode.lm.selectChatModels({})
+    try {
+        const models = await vscode.lm.selectChatModels({})
 
-		const protoModels = convertVsCodeNativeModelsToProtoModels(models || [])
+        const protoModels = convertVsCodeNativeModelsToProtoModels(models || [])
 
-		return VsCodeLmModelsArray.create({ models: protoModels })
-	} catch (error) {
-		Logger.error("Error fetching VS Code LM models:", error)
-		return VsCodeLmModelsArray.create({ models: [] })
-	}
+        return VsCodeLmModelsArray.create({ models: protoModels })
+    } catch (error) {
+        Logger.error("Error fetching VS Code LM models:", error)
+        return VsCodeLmModelsArray.create({ models: [] })
+    }
 }

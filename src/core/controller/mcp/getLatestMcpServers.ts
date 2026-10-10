@@ -11,15 +11,15 @@ import type { Controller } from "../index"
  * @returns McpServers response with list of all MCP servers
  */
 export async function getLatestMcpServers(controller: Controller, _request: Empty): Promise<McpServers> {
-	try {
-		const mcpServers = await controller.getLatestMcpServersForOwner()
+    try {
+        const mcpServers = await controller.getLatestMcpServersForOwner()
 
-		// Convert to proto format
-		const protoServers = convertMcpServersToProtoMcpServers(mcpServers)
+        // Convert to proto format
+        const protoServers = convertMcpServersToProtoMcpServers(mcpServers)
 
-		return McpServers.create({ mcpServers: protoServers })
-	} catch (error) {
-		Logger.error("Error fetching latest MCP servers:", error)
-		throw error
-	}
+        return McpServers.create({ mcpServers: protoServers })
+    } catch (error) {
+        Logger.error("Error fetching latest MCP servers:", error)
+        throw error
+    }
 }

@@ -7,7 +7,7 @@ import { dispatchInteraction } from "./dispatchInteraction"
 export type TransitionDraftOutcome = "none" | "replied" | "rejected"
 
 function hasContent(chatContent: ChatContent | undefined): chatContent is ChatContent {
-	return Boolean(chatContent?.message?.trim() || chatContent?.images?.length || chatContent?.files?.length)
+    return Boolean(chatContent?.message?.trim() || chatContent?.images?.length || chatContent?.files?.length)
 }
 
 /**
@@ -29,31 +29,31 @@ function hasContent(chatContent: ChatContent | undefined): chatContent is ChatCo
  * and is not delivered.
  */
 export async function replyWithTransitionDraft(
-	controller: Controller,
-	chatContent: ChatContent | undefined,
-	session = controller.task,
+    controller: Controller,
+    chatContent: ChatContent | undefined,
+    session = controller.task,
 ): Promise<TransitionDraftOutcome> {
-	if (!session || controller.task !== session || !hasContent(chatContent)) return "none"
-	const state = session.state()
-	const primary = state.dialog.primary
-	if (!primary || primary.status !== "awaiting" || primary.receiverGeneration === undefined) return "none"
-	if (!primary.actionRules.some((rule) => rule.actionId === "reply")) return "none"
-	const result = await dispatchInteraction(
-		controller,
-		DispatchInteractionRequest.create({
-			taskId: session.taskId,
-			// The switch was committed on this opening, so the reply speaks for it.
-			taskInstanceId: session.taskInstanceId,
-			turnId: primary.turnId,
-			interactionId: primary.interactionId,
-			actionId: "reply",
-			stateRevision: state.revision,
-			draft: {
-				text: chatContent.message ?? "",
-				images: [...(chatContent.images ?? [])],
-				files: [...(chatContent.files ?? [])],
-			},
-		}),
-	)
-	return result.accepted ? "replied" : "rejected"
+    if (!session || controller.task !== session || !hasContent(chatContent)) return "none"
+    const state = session.state()
+    const primary = state.dialog.primary
+    if (!primary || primary.status !== "awaiting" || primary.receiverGeneration === undefined) return "none"
+    if (!primary.actionRules.some((rule) => rule.actionId === "reply")) return "none"
+    const result = await dispatchInteraction(
+        controller,
+        DispatchInteractionRequest.create({
+            taskId: session.taskId,
+            // The switch was committed on this opening, so the reply speaks for it.
+            taskInstanceId: session.taskInstanceId,
+            turnId: primary.turnId,
+            interactionId: primary.interactionId,
+            actionId: "reply",
+            stateRevision: state.revision,
+            draft: {
+                text: chatContent.message ?? "",
+                images: [...(chatContent.images ?? [])],
+                files: [...(chatContent.files ?? [])],
+            },
+        }),
+    )
+    return result.accepted ? "replied" : "rejected"
 }

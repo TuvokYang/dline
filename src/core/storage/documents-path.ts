@@ -16,42 +16,42 @@ let cachedDocumentsPath: string | undefined
 let cachedDlineDocumentsPath: string | undefined
 
 export async function getDocumentsPath(): Promise<string> {
-	if (cachedDocumentsPath) return cachedDocumentsPath
+    if (cachedDocumentsPath) return cachedDocumentsPath
 
-	if (process.platform === "win32") {
-		try {
-			const { stdout: docsPath } = await execa("powershell", [
-				"-NoProfile",
-				"-Command",
-				"[System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::MyDocuments)",
-			])
-			if (docsPath.trim()) {
-				cachedDocumentsPath = docsPath.trim()
-				return cachedDocumentsPath
-			}
-		} catch {
-			Logger.error("Failed to retrieve Windows Documents path.")
-		}
-	} else if (process.platform === "linux") {
-		try {
-			await execa("which", ["xdg-user-dir"])
-			const { stdout } = await execa("xdg-user-dir", ["DOCUMENTS"])
-			if (stdout.trim()) {
-				cachedDocumentsPath = stdout.trim()
-				return cachedDocumentsPath
-			}
-		} catch {
-			Logger.error("Failed to retrieve XDG Documents path.")
-		}
-	}
+    if (process.platform === "win32") {
+        try {
+            const { stdout: docsPath } = await execa("powershell", [
+                "-NoProfile",
+                "-Command",
+                "[System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::MyDocuments)",
+            ])
+            if (docsPath.trim()) {
+                cachedDocumentsPath = docsPath.trim()
+                return cachedDocumentsPath
+            }
+        } catch {
+            Logger.error("Failed to retrieve Windows Documents path.")
+        }
+    } else if (process.platform === "linux") {
+        try {
+            await execa("which", ["xdg-user-dir"])
+            const { stdout } = await execa("xdg-user-dir", ["DOCUMENTS"])
+            if (stdout.trim()) {
+                cachedDocumentsPath = stdout.trim()
+                return cachedDocumentsPath
+            }
+        } catch {
+            Logger.error("Failed to retrieve XDG Documents path.")
+        }
+    }
 
-	cachedDocumentsPath = path.join(os.homedir(), "Documents")
-	return cachedDocumentsPath
+    cachedDocumentsPath = path.join(os.homedir(), "Documents")
+    return cachedDocumentsPath
 }
 
 export function getDlineHomePath(): string {
-	if (process.env.DLINE_HOME_DIR) return process.env.DLINE_HOME_DIR
-	return path.join(os.homedir(), ".dline")
+    if (process.env.DLINE_HOME_DIR) return process.env.DLINE_HOME_DIR
+    return path.join(os.homedir(), ".dline")
 }
 
 /**
@@ -64,14 +64,14 @@ export function getDlineHomePath(): string {
  * latter is for the main .dline directory (providers, rules, etc.).
  */
 export function getDlineDataDir(): string {
-	const dlineDir = process.env.DLINE_DIR || path.join(os.homedir(), ".dline")
-	return path.join(dlineDir, "data")
+    const dlineDir = process.env.DLINE_DIR || path.join(os.homedir(), ".dline")
+    return path.join(dlineDir, "data")
 }
 
 export function getDlineDocumentsPathSync(): string {
-	if (process.env.DLINE_DOCS_DIR) return process.env.DLINE_DOCS_DIR
-	if (cachedDocumentsPath) return path.join(cachedDocumentsPath, "dline")
-	return path.join(os.homedir(), "Documents", "dline")
+    if (process.env.DLINE_DOCS_DIR) return process.env.DLINE_DOCS_DIR
+    if (cachedDocumentsPath) return path.join(cachedDocumentsPath, "dline")
+    return path.join(os.homedir(), "Documents", "dline")
 }
 
 /**
@@ -80,12 +80,12 @@ export function getDlineDocumentsPathSync(): string {
  * Call once during extension initialization, before any filesystem operations.
  */
 export async function warmupDocumentsPathCache(): Promise<void> {
-	await getDocumentsPath()
+    await getDocumentsPath()
 }
 
 export async function getDlineDocumentsPath(): Promise<string> {
-	if (process.env.DLINE_DOCS_DIR) return process.env.DLINE_DOCS_DIR
-	if (cachedDlineDocumentsPath) return cachedDlineDocumentsPath
-	cachedDlineDocumentsPath = path.join(await getDocumentsPath(), "dline")
-	return cachedDlineDocumentsPath
+    if (process.env.DLINE_DOCS_DIR) return process.env.DLINE_DOCS_DIR
+    if (cachedDlineDocumentsPath) return cachedDlineDocumentsPath
+    cachedDlineDocumentsPath = path.join(await getDocumentsPath(), "dline")
+    return cachedDlineDocumentsPath
 }

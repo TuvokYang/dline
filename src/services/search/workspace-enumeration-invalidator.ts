@@ -28,11 +28,11 @@ export type WatchFactory = (paths: readonly string[], options: ChokidarOptions) 
 const UNWATCHED_DIRECTORIES = new Set([".git", "node_modules", "dist", "build", "out", "tmp"])
 
 function isUnwatchedDirectory(candidate: string): boolean {
-	return candidate.split(/[\\/]/).some((segment) => UNWATCHED_DIRECTORIES.has(segment))
+    return candidate.split(/[\\/]/).some((segment) => UNWATCHED_DIRECTORIES.has(segment))
 }
 
 interface RootWatch {
-	readonly watcher: FSWatcher
+    readonly watcher: FSWatcher
 }
 
 const watches = new Map<string, RootWatch>()
@@ -40,7 +40,7 @@ let watchFactory: WatchFactory = (paths, options) => chokidar.watch([...paths], 
 
 /** Test seam: swap the watcher implementation. */
 export function setWatchFactoryForTesting(factory: WatchFactory | undefined): void {
-	watchFactory = factory ?? ((paths, options) => chokidar.watch([...paths], options))
+    watchFactory = factory ?? ((paths, options) => chokidar.watch([...paths], options))
 }
 
 /**
@@ -50,64 +50,64 @@ export function setWatchFactoryForTesting(factory: WatchFactory | undefined): vo
  * are a no-op, so the watcher is created once and outlives individual walks.
  */
 export function ensureWorkspaceWatched(workspacePath: string, onFileSetChanged: () => void): void {
-	const root = path.resolve(workspacePath)
-	if (watches.has(root)) {
-		return
-	}
+    const root = path.resolve(workspacePath)
+    if (watches.has(root)) {
+        return
+    }
 
-	let watcher: FSWatcher
-	try {
-		watcher = watchFactory([root], {
-			persistent: false,
-			ignoreInitial: true,
-			// A rename lands as unlink+add; coalescing them is the caller's job.
-			atomic: true,
-			ignored: (candidate: string) => isUnwatchedDirectory(path.relative(root, path.resolve(candidate))),
-		})
-	} catch (error) {
-		// Watching is an optimisation: without it the TTL still bounds staleness,
-		// so a failure must not break the picker.
-		Logger.warn(`[file-search] failed to watch ${root} for enumeration invalidation: ${error}`)
-		return
-	}
+    let watcher: FSWatcher
+    try {
+        watcher = watchFactory([root], {
+            persistent: false,
+            ignoreInitial: true,
+            // A rename lands as unlink+add; coalescing them is the caller's job.
+            atomic: true,
+            ignored: (candidate: string) => isUnwatchedDirectory(path.relative(root, path.resolve(candidate))),
+        })
+    } catch (error) {
+        // Watching is an optimisation: without it the TTL still bounds staleness,
+        // so a failure must not break the picker.
+        Logger.warn(`[file-search] failed to watch ${root} for enumeration invalidation: ${error}`)
+        return
+    }
 
-	const entry: RootWatch = { watcher }
-	watches.set(root, entry)
+    const entry: RootWatch = { watcher }
+    watches.set(root, entry)
 
-	watcher
-		.on("add", onFileSetChanged)
-		.on("unlink", onFileSetChanged)
-		.on("addDir", onFileSetChanged)
-		.on("unlinkDir", onFileSetChanged)
-		.on("error", (error) => {
-			Logger.warn(`[file-search] enumeration watcher error for ${root}: ${error}`)
-		})
+    watcher
+        .on("add", onFileSetChanged)
+        .on("unlink", onFileSetChanged)
+        .on("addDir", onFileSetChanged)
+        .on("unlinkDir", onFileSetChanged)
+        .on("error", (error) => {
+            Logger.warn(`[file-search] enumeration watcher error for ${root}: ${error}`)
+        })
 }
 
 /** Stop watching a root; used when its cache entry is evicted for good. */
 export async function stopWatchingWorkspace(workspacePath: string): Promise<void> {
-	const root = path.resolve(workspacePath)
-	const entry = watches.get(root)
-	if (!entry) {
-		return
-	}
-	watches.delete(root)
-	try {
-		await entry.watcher.close()
-	} catch (error) {
-		Logger.warn(`[file-search] failed to close enumeration watcher for ${root}: ${error}`)
-	}
+    const root = path.resolve(workspacePath)
+    const entry = watches.get(root)
+    if (!entry) {
+        return
+    }
+    watches.delete(root)
+    try {
+        await entry.watcher.close()
+    } catch (error) {
+        Logger.warn(`[file-search] failed to close enumeration watcher for ${root}: ${error}`)
+    }
 }
 
 /** Test seam: drop every watcher without waiting for close to settle. */
 export function resetWorkspaceWatchersForTesting(): void {
-	for (const [, entry] of watches) {
-		void entry.watcher.close?.()
-	}
-	watches.clear()
+    for (const [, entry] of watches) {
+        void entry.watcher.close?.()
+    }
+    watches.clear()
 }
 
 /** Roots currently watched. Exposed for tests. */
 export function watchedWorkspaceRoots(): string[] {
-	return [...watches.keys()]
+    return [...watches.keys()]
 }

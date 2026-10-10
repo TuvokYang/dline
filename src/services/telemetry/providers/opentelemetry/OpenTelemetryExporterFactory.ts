@@ -7,10 +7,10 @@ import { OTLPMetricExporter as OTLPMetricExporterHTTP } from "@opentelemetry/exp
 import { OTLPMetricExporter as OTLPMetricExporterProto } from "@opentelemetry/exporter-metrics-otlp-proto"
 import { ConsoleLogRecordExporter, LogRecordExporter } from "@opentelemetry/sdk-logs"
 import {
-	ConsoleMetricExporter,
-	type MetricReader,
-	PeriodicExportingMetricReader,
-	type PushMetricExporter,
+    ConsoleMetricExporter,
+    type MetricReader,
+    PeriodicExportingMetricReader,
+    type PushMetricExporter,
 } from "@opentelemetry/sdk-metrics"
 import { Logger } from "@/shared/services/Logger"
 import { isTelemetryDebugDiagnosticsEnabled } from "../../development-mode"
@@ -21,138 +21,138 @@ import { wrapLogsExporterWithDiagnostics, wrapMetricsExporterWithDiagnostics } f
  * Create a console log exporter
  */
 export function createConsoleLogExporter(): ConsoleLogRecordExporter {
-	return new ConsoleLogRecordExporter()
+    return new ConsoleLogRecordExporter()
 }
 
 export function ensurePathSuffix(url: URL, suffix: string): void {
-	const pathname = url.pathname
-	const normalizedPathname = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname
-	url.pathname = normalizedPathname
-	if (!normalizedPathname.endsWith(suffix)) {
-		url.pathname = `${normalizedPathname}${suffix}`
-	}
+    const pathname = url.pathname
+    const normalizedPathname = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname
+    url.pathname = normalizedPathname
+    if (!normalizedPathname.endsWith(suffix)) {
+        url.pathname = `${normalizedPathname}${suffix}`
+    }
 }
 
 /**
  * Create an OTLP log exporter based on protocol
  */
 export function createOTLPLogExporter(
-	protocol: string,
-	endpoint: string,
-	insecure: boolean,
-	headers?: Record<string, string>,
-	timeoutMs = 30_000,
+    protocol: string,
+    endpoint: string,
+    insecure: boolean,
+    headers?: Record<string, string>,
+    timeoutMs = 30_000,
 ): LogRecordExporter | null {
-	try {
-		let exporter: LogRecordExporter | null = null
-		const logsUrl = new URL(endpoint)
-		ensurePathSuffix(logsUrl, "/v1/logs")
+    try {
+        let exporter: LogRecordExporter | null = null
+        const logsUrl = new URL(endpoint)
+        ensurePathSuffix(logsUrl, "/v1/logs")
 
-		switch (protocol) {
-			case "grpc": {
-				const grpcEndpoint = endpoint.replace(/^https?:\/\//, "")
-				const credentials = insecure ? grpcCredentials.createInsecure() : grpcCredentials.createSsl()
+        switch (protocol) {
+            case "grpc": {
+                const grpcEndpoint = endpoint.replace(/^https?:\/\//, "")
+                const credentials = insecure ? grpcCredentials.createInsecure() : grpcCredentials.createSsl()
 
-				exporter = new OTLPLogExporterGRPC({
-					url: grpcEndpoint,
-					credentials: credentials,
-					headers,
-				})
-				break
-			}
-			case "http/json": {
-				exporter = new OTLPLogExporterHTTP({ url: logsUrl.toString(), headers })
-				break
-			}
-			case "http/protobuf": {
-				exporter = new OTLPLogExporterProto({ url: logsUrl.toString(), headers })
-				break
-			}
-			default:
-				Logger.warn(`[OTEL] Unknown OTLP protocol for logs: ${protocol}`)
-				return null
-		}
+                exporter = new OTLPLogExporterGRPC({
+                    url: grpcEndpoint,
+                    credentials: credentials,
+                    headers,
+                })
+                break
+            }
+            case "http/json": {
+                exporter = new OTLPLogExporterHTTP({ url: logsUrl.toString(), headers })
+                break
+            }
+            case "http/protobuf": {
+                exporter = new OTLPLogExporterProto({ url: logsUrl.toString(), headers })
+                break
+            }
+            default:
+                Logger.warn(`[OTEL] Unknown OTLP protocol for logs: ${protocol}`)
+                return null
+        }
 
-		wrapExporterWithDeliveryAccounting(exporter, (batch: unknown) => (Array.isArray(batch) ? batch.length : 0), timeoutMs)
-		// Wrap with diagnostics if debug is enabled
-		if (isTelemetryDebugDiagnosticsEnabled()) {
-			wrapLogsExporterWithDiagnostics(exporter, protocol, logsUrl.toString())
-		}
+        wrapExporterWithDeliveryAccounting(exporter, (batch: unknown) => (Array.isArray(batch) ? batch.length : 0), timeoutMs)
+        // Wrap with diagnostics if debug is enabled
+        if (isTelemetryDebugDiagnosticsEnabled()) {
+            wrapLogsExporterWithDiagnostics(exporter, protocol, logsUrl.toString())
+        }
 
-		return exporter
-	} catch (error) {
-		Logger.error("[OTEL] Error creating OTLP log exporter:", error)
-		return null
-	}
+        return exporter
+    } catch (error) {
+        Logger.error("[OTEL] Error creating OTLP log exporter:", error)
+        return null
+    }
 }
 
 /**
  * Create a console metric reader with exporter
  */
 export function createConsoleMetricReader(intervalMs: number, timeoutMs: number): MetricReader {
-	const exporter = new ConsoleMetricExporter()
-	return new PeriodicExportingMetricReader({
-		exporter,
-		exportIntervalMillis: intervalMs,
-		exportTimeoutMillis: timeoutMs,
-	})
+    const exporter = new ConsoleMetricExporter()
+    return new PeriodicExportingMetricReader({
+        exporter,
+        exportIntervalMillis: intervalMs,
+        exportTimeoutMillis: timeoutMs,
+    })
 }
 
 /**
  * Create an OTLP metric reader with exporter based on protocol
  */
 export function createOTLPMetricReader(
-	protocol: string,
-	endpoint: string,
-	insecure: boolean,
-	intervalMs: number,
-	timeoutMs: number,
-	headers?: Record<string, string>,
+    protocol: string,
+    endpoint: string,
+    insecure: boolean,
+    intervalMs: number,
+    timeoutMs: number,
+    headers?: Record<string, string>,
 ): MetricReader | null {
-	try {
-		let exporter: PushMetricExporter | null = null
+    try {
+        let exporter: PushMetricExporter | null = null
 
-		const metricsUrl = new URL(endpoint)
-		ensurePathSuffix(metricsUrl, "/v1/metrics")
+        const metricsUrl = new URL(endpoint)
+        ensurePathSuffix(metricsUrl, "/v1/metrics")
 
-		switch (protocol) {
-			case "grpc": {
-				const grpcEndpoint = endpoint.replace(/^https?:\/\//, "")
-				const credentials = insecure ? grpcCredentials.createInsecure() : grpcCredentials.createSsl()
+        switch (protocol) {
+            case "grpc": {
+                const grpcEndpoint = endpoint.replace(/^https?:\/\//, "")
+                const credentials = insecure ? grpcCredentials.createInsecure() : grpcCredentials.createSsl()
 
-				exporter = new OTLPMetricExporterGRPC({
-					url: grpcEndpoint,
-					credentials: credentials,
-					headers,
-				})
-				break
-			}
-			case "http/json": {
-				exporter = new OTLPMetricExporterHTTP({ url: metricsUrl.toString(), headers })
-				break
-			}
-			case "http/protobuf": {
-				exporter = new OTLPMetricExporterProto({ url: metricsUrl.toString(), headers })
-				break
-			}
-			default:
-				Logger.warn(`[OTEL] Unknown OTLP protocol for metrics: ${protocol}`)
-				return null
-		}
+                exporter = new OTLPMetricExporterGRPC({
+                    url: grpcEndpoint,
+                    credentials: credentials,
+                    headers,
+                })
+                break
+            }
+            case "http/json": {
+                exporter = new OTLPMetricExporterHTTP({ url: metricsUrl.toString(), headers })
+                break
+            }
+            case "http/protobuf": {
+                exporter = new OTLPMetricExporterProto({ url: metricsUrl.toString(), headers })
+                break
+            }
+            default:
+                Logger.warn(`[OTEL] Unknown OTLP protocol for metrics: ${protocol}`)
+                return null
+        }
 
-		wrapExporterWithDeliveryAccounting(exporter, (batch: unknown) => (Array.isArray(batch) ? batch.length : 1), timeoutMs)
-		// Wrap with diagnostics if debug is enabled
-		if (isTelemetryDebugDiagnosticsEnabled()) {
-			wrapMetricsExporterWithDiagnostics(exporter, protocol, metricsUrl.toString())
-		}
+        wrapExporterWithDeliveryAccounting(exporter, (batch: unknown) => (Array.isArray(batch) ? batch.length : 1), timeoutMs)
+        // Wrap with diagnostics if debug is enabled
+        if (isTelemetryDebugDiagnosticsEnabled()) {
+            wrapMetricsExporterWithDiagnostics(exporter, protocol, metricsUrl.toString())
+        }
 
-		return new PeriodicExportingMetricReader({
-			exporter,
-			exportIntervalMillis: intervalMs,
-			exportTimeoutMillis: timeoutMs,
-		})
-	} catch (error) {
-		Logger.error("[OTEL] Error creating OTLP metric reader:", error)
-		return null
-	}
+        return new PeriodicExportingMetricReader({
+            exporter,
+            exportIntervalMillis: intervalMs,
+            exportTimeoutMillis: timeoutMs,
+        })
+    } catch (error) {
+        Logger.error("[OTEL] Error creating OTLP metric reader:", error)
+        return null
+    }
 }

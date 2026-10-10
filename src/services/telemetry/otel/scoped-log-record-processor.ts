@@ -29,60 +29,60 @@ import type { LogRecord, LogRecordProcessor } from "@opentelemetry/sdk-logs"
  * first, silently stopping delivery to a collector that was still configured.
  */
 export class ScopeRouterProcessor implements LogRecordProcessor {
-	private readonly routes = new Map<string, Map<string, LogRecordProcessor[]>>()
+    private readonly routes = new Map<string, Map<string, LogRecordProcessor[]>>()
 
-	/**
-	 * Replaces the processors registered by one owner for one scope.
-	 *
-	 * Other owners on the same scope, and every other scope, are untouched.
-	 */
-	setRoute(scopeName: string, ownerId: string, processors: readonly LogRecordProcessor[]): void {
-		if (processors.length === 0) {
-			this.clearRoute(scopeName, ownerId)
-			return
-		}
-		const owners = this.routes.get(scopeName) ?? new Map<string, LogRecordProcessor[]>()
-		owners.set(ownerId, [...processors])
-		this.routes.set(scopeName, owners)
-	}
+    /**
+     * Replaces the processors registered by one owner for one scope.
+     *
+     * Other owners on the same scope, and every other scope, are untouched.
+     */
+    setRoute(scopeName: string, ownerId: string, processors: readonly LogRecordProcessor[]): void {
+        if (processors.length === 0) {
+            this.clearRoute(scopeName, ownerId)
+            return
+        }
+        const owners = this.routes.get(scopeName) ?? new Map<string, LogRecordProcessor[]>()
+        owners.set(ownerId, [...processors])
+        this.routes.set(scopeName, owners)
+    }
 
-	clearRoute(scopeName: string, ownerId: string): void {
-		const owners = this.routes.get(scopeName)
-		if (!owners) return
-		owners.delete(ownerId)
-		if (owners.size === 0) {
-			this.routes.delete(scopeName)
-		}
-	}
+    clearRoute(scopeName: string, ownerId: string): void {
+        const owners = this.routes.get(scopeName)
+        if (!owners) return
+        owners.delete(ownerId)
+        if (owners.size === 0) {
+            this.routes.delete(scopeName)
+        }
+    }
 
-	/** Number of scopes with at least one registered owner. */
-	get scopeCount(): number {
-		return this.routes.size
-	}
+    /** Number of scopes with at least one registered owner. */
+    get scopeCount(): number {
+        return this.routes.size
+    }
 
-	onEmit(logRecord: LogRecord, context?: Context): void {
-		const owners = this.routes.get(logRecord.instrumentationScope.name)
-		if (!owners) {
-			return
-		}
-		for (const processors of owners.values()) {
-			for (const processor of processors) {
-				processor.onEmit(logRecord, context)
-			}
-		}
-	}
+    onEmit(logRecord: LogRecord, context?: Context): void {
+        const owners = this.routes.get(logRecord.instrumentationScope.name)
+        if (!owners) {
+            return
+        }
+        for (const processors of owners.values()) {
+            for (const processor of processors) {
+                processor.onEmit(logRecord, context)
+            }
+        }
+    }
 
-	async forceFlush(): Promise<void> {
-		await Promise.all(this.all().map((processor) => processor.forceFlush()))
-	}
+    async forceFlush(): Promise<void> {
+        await Promise.all(this.all().map((processor) => processor.forceFlush()))
+    }
 
-	async shutdown(): Promise<void> {
-		const processors = this.all()
-		this.routes.clear()
-		await Promise.all(processors.map((processor) => processor.shutdown()))
-	}
+    async shutdown(): Promise<void> {
+        const processors = this.all()
+        this.routes.clear()
+        await Promise.all(processors.map((processor) => processor.shutdown()))
+    }
 
-	private all(): LogRecordProcessor[] {
-		return [...this.routes.values()].flatMap((owners) => [...owners.values()].flat())
-	}
+    private all(): LogRecordProcessor[] {
+        return [...this.routes.values()].flatMap((owners) => [...owners.values()].flat())
+    }
 }

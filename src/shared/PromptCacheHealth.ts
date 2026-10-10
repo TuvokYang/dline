@@ -5,13 +5,13 @@ export type PromptCacheWarningReason = "cache_not_improving" | "near_context_low
 export type PromptCacheHealthResetReason = "profile_changed" | "compaction_completed"
 
 export interface PromptCacheHealthSnapshot {
-	readonly status: PromptCacheHealthStatus
-	readonly sampleCount: number
-	readonly warmingRound: number
-	readonly warmingTarget: number
-	readonly hitRate?: number
-	readonly cacheReadTokens?: number
-	readonly promptTokens?: number
-	readonly nearContextWindow: boolean
-	readonly warningReason?: PromptCacheWarningReason
+    readonly status: PromptCacheHealthStatus
+    readonly sampleCount: number
+    readonly warmingRound: number
+    readonly warmingTarget: number
+    readonly hitRate?: number
+    readonly cacheReadTokens?: number
+    readonly promptTokens?: number
+    readonly nearContextWindow: boolean
+    readonly warningReason?: PromptCacheWarningReason
 }

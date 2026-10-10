@@ -18,19 +18,19 @@ import { Logger } from "@/shared/services/Logger"
  * expandString("${env:MISSING}") // Returns: "${env:MISSING}" (unchanged)
  */
 function expandString(value: string): string {
-	return value.replace(/\$\{env:([^}]+)\}/g, (match, varName) => {
-		// Trim whitespace from variable name to be forgiving of formatting
-		const trimmedVarName = varName.trim()
-		const envValue = process.env[trimmedVarName]
+    return value.replace(/\$\{env:([^}]+)\}/g, (match, varName) => {
+        // Trim whitespace from variable name to be forgiving of formatting
+        const trimmedVarName = varName.trim()
+        const envValue = process.env[trimmedVarName]
 
-		if (envValue === undefined) {
-			Logger.warn(`[MCP Config] Environment variable not found: ${trimmedVarName}`)
-			return match // Leave unexpanded to show what's missing
-		}
+        if (envValue === undefined) {
+            Logger.warn(`[MCP Config] Environment variable not found: ${trimmedVarName}`)
+            return match // Leave unexpanded to show what's missing
+        }
 
-		// Empty string is a valid value, return it
-		return envValue
-	})
+        // Empty string is a valid value, return it
+        return envValue
+    })
 }
 
 /**
@@ -50,25 +50,25 @@ function expandString(value: string): string {
  * // Returns object with all ${env:*} references expanded
  */
 export function expandEnvironmentVariables<T>(value: T): T {
-	// Handle string values
-	if (typeof value === "string") {
-		return expandString(value) as T
-	}
+    // Handle string values
+    if (typeof value === "string") {
+        return expandString(value) as T
+    }
 
-	// Handle arrays
-	if (Array.isArray(value)) {
-		return value.map((item) => expandEnvironmentVariables(item)) as T
-	}
+    // Handle arrays
+    if (Array.isArray(value)) {
+        return value.map((item) => expandEnvironmentVariables(item)) as T
+    }
 
-	// Handle objects (but not null)
-	if (value && typeof value === "object") {
-		const result: any = {}
-		for (const [key, val] of Object.entries(value)) {
-			result[key] = expandEnvironmentVariables(val)
-		}
-		return result
-	}
+    // Handle objects (but not null)
+    if (value && typeof value === "object") {
+        const result: any = {}
+        for (const [key, val] of Object.entries(value)) {
+            result[key] = expandEnvironmentVariables(val)
+        }
+        return result
+    }
 
-	// Return primitives unchanged (numbers, booleans, null, undefined)
-	return value
+    // Return primitives unchanged (numbers, booleans, null, undefined)
+    return value
 }

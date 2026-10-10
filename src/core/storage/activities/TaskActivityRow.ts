@@ -2,12 +2,12 @@ import type { TaskActivityRecord } from "@shared/task-activity"
 import { column, defineEntity } from "../backend/api/EntitySchema"
 
 function isActivityRecord(value: unknown): value is TaskActivityRecord {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		!Array.isArray(value) &&
-		typeof (value as { activityId?: unknown }).activityId === "string"
-	)
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        !Array.isArray(value) &&
+        typeof (value as { activityId?: unknown }).activityId === "string"
+    )
 }
 
 /**
@@ -18,23 +18,23 @@ function isActivityRecord(value: unknown): value is TaskActivityRecord {
  * order the activity list is shown in survives writes of single rows.
  */
 export class TaskActivityRow {
-	static readonly storage = defineEntity<TaskActivityRow>()({
-		schemaId: "task-activity",
-		version: 1,
-		columns: {
-			activityId: column.text({ primary: true }),
-			createdAt: column.integer({ indexed: true }),
-			record: column.json({ validate: isActivityRecord }),
-		},
-		defaultOrder: [{ field: "createdAt", direction: "desc" }],
-		hydrate: (values) => new TaskActivityRow(values.record),
-	})
+    static readonly storage = defineEntity<TaskActivityRow>()({
+        schemaId: "task-activity",
+        version: 1,
+        columns: {
+            activityId: column.text({ primary: true }),
+            createdAt: column.integer({ indexed: true }),
+            record: column.json({ validate: isActivityRecord }),
+        },
+        defaultOrder: [{ field: "createdAt", direction: "desc" }],
+        hydrate: (values) => new TaskActivityRow(values.record),
+    })
 
-	readonly activityId: string
-	readonly createdAt: number
+    readonly activityId: string
+    readonly createdAt: number
 
-	constructor(readonly record: TaskActivityRecord) {
-		this.activityId = record.activityId
-		this.createdAt = record.createdAt
-	}
+    constructor(readonly record: TaskActivityRecord) {
+        this.activityId = record.activityId
+        this.createdAt = record.createdAt
+    }
 }

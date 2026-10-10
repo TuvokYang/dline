@@ -9,47 +9,47 @@ import * as OpenAiCodexAuthStore from "./OpenAiCodexAuthStore"
 import * as ProviderSecretStore from "./ProviderSecretStore"
 
 export {
-	getClaudeCodeProfileAuthFileName,
-	getClaudeCodeProfileAuthPath,
-	isClaudeCodeProfileAuthFileName,
+    getClaudeCodeProfileAuthFileName,
+    getClaudeCodeProfileAuthPath,
+    isClaudeCodeProfileAuthFileName,
 } from "./ClaudeCodeProfileAuthPath"
 export type {
-	ClaudeCodeOAuthCredentials,
-	ClaudeCodeProfileAuthReadResult,
-	ClaudeCodeProfileAuthRepositoryOptions,
+    ClaudeCodeOAuthCredentials,
+    ClaudeCodeProfileAuthReadResult,
+    ClaudeCodeProfileAuthRepositoryOptions,
 } from "./ClaudeCodeProfileAuthRepository"
 export { ClaudeCodeProfileAuthRepository, parseClaudeCodeOAuthCredentials } from "./ClaudeCodeProfileAuthRepository"
 export type {
-	OAuthProfileCatalogEntry,
-	OpenAiCodexProfileAuthGarbageCollectionResult,
-	OpenAiCodexProfileAuthGarbageCollectorOptions,
+    OAuthProfileCatalogEntry,
+    OpenAiCodexProfileAuthGarbageCollectionResult,
+    OpenAiCodexProfileAuthGarbageCollectorOptions,
 } from "./OpenAiCodexProfileAuthGarbageCollector"
 export { OpenAiCodexProfileAuthGarbageCollector } from "./OpenAiCodexProfileAuthGarbageCollector"
 export type {
-	OAuthProfileIdentity,
-	OpenAiCodexProfileAuthMigrationOptions,
-	OpenAiCodexProfileAuthMigrationResult,
+    OAuthProfileIdentity,
+    OpenAiCodexProfileAuthMigrationOptions,
+    OpenAiCodexProfileAuthMigrationResult,
 } from "./OpenAiCodexProfileAuthMigration"
 export { OpenAiCodexProfileAuthMigration } from "./OpenAiCodexProfileAuthMigration"
 export {
-	getLegacyOpenAiCodexAuthMigrationPath,
-	getLegacyOpenAiCodexAuthPath,
-	getOpenAiCodexProfileAuthDigest,
-	getOpenAiCodexProfileAuthFileName,
-	getOpenAiCodexProfileAuthPath,
-	isOpenAiCodexProfileAuthFileName,
-	LEGACY_OPENAI_CODEX_AUTH_FILE_NAME,
-	LEGACY_OPENAI_CODEX_AUTH_MIGRATION_FILE_NAME,
+    getLegacyOpenAiCodexAuthMigrationPath,
+    getLegacyOpenAiCodexAuthPath,
+    getOpenAiCodexProfileAuthDigest,
+    getOpenAiCodexProfileAuthFileName,
+    getOpenAiCodexProfileAuthPath,
+    isOpenAiCodexProfileAuthFileName,
+    LEGACY_OPENAI_CODEX_AUTH_FILE_NAME,
+    LEGACY_OPENAI_CODEX_AUTH_MIGRATION_FILE_NAME,
 } from "./OpenAiCodexProfileAuthPath"
 export type {
-	OpenAiCodexProfileAuthReadResult,
-	OpenAiCodexProfileAuthRepositoryOptions,
-	OpenAiCodexProfileAuthSaveIfMissingResult,
-	OpenAiOAuthCredentials,
+    OpenAiCodexProfileAuthReadResult,
+    OpenAiCodexProfileAuthRepositoryOptions,
+    OpenAiCodexProfileAuthSaveIfMissingResult,
+    OpenAiOAuthCredentials,
 } from "./OpenAiCodexProfileAuthRepository"
 export {
-	OpenAiCodexProfileAuthRepository,
-	parseOpenAiOAuthCredentials,
+    OpenAiCodexProfileAuthRepository,
+    parseOpenAiOAuthCredentials,
 } from "./OpenAiCodexProfileAuthRepository"
 
 import * as WandbStore from "./WandbStore"
@@ -110,11 +110,11 @@ export const setWandbApiKey = WandbStore.setWandbApiKey
 
 // Testing
 export function resetAllStores(): void {
-	AccountStore.resetAccountStore()
-	ApiKeyStore.resetApiKeyStore()
-	McpOAuthStore.resetMcpOAuthStore()
-	OcaTokenStore.resetOcaTokenStore()
-	OpenAiCodexAuthStore.resetOpenAiCodexAuthStore()
-	ProviderSecretStore.resetProviderSecretStore()
-	WandbStore.resetWandbStore()
+    AccountStore.resetAccountStore()
+    ApiKeyStore.resetApiKeyStore()
+    McpOAuthStore.resetMcpOAuthStore()
+    OcaTokenStore.resetOcaTokenStore()
+    OpenAiCodexAuthStore.resetOpenAiCodexAuthStore()
+    ProviderSecretStore.resetProviderSecretStore()
+    WandbStore.resetWandbStore()
 }

@@ -10,176 +10,176 @@ export type McpMode = "full" | "server-use-only" | "off"
 export type McpServerSource = "settings" | "workspace"
 
 export type McpServer = {
-	name: string
-	displayName?: string
-	description?: string
-	source?: McpServerSource
-	config: string
-	status: "connected" | "connecting" | "disconnected"
-	error?: string
-	tools?: McpTool[]
-	resources?: McpResource[]
-	resourceTemplates?: McpResourceTemplate[]
-	prompts?: McpPrompt[]
-	disabled?: boolean
-	timeout?: number
-	uid?: string
-	oauthRequired?: boolean
-	oauthAuthStatus?: McpOAuthAuthStatus
+    name: string
+    displayName?: string
+    description?: string
+    source?: McpServerSource
+    config: string
+    status: "connected" | "connecting" | "disconnected"
+    error?: string
+    tools?: McpTool[]
+    resources?: McpResource[]
+    resourceTemplates?: McpResourceTemplate[]
+    prompts?: McpPrompt[]
+    disabled?: boolean
+    timeout?: number
+    uid?: string
+    oauthRequired?: boolean
+    oauthAuthStatus?: McpOAuthAuthStatus
 }
 
 export type McpOAuthAuthStatus = "authenticated" | "unauthenticated" | "pending"
 
 export type McpTool = {
-	name: string
-	description?: string
-	inputSchema?: object
-	autoApprove?: boolean
+    name: string
+    description?: string
+    inputSchema?: object
+    autoApprove?: boolean
 }
 
 export type McpResource = {
-	uri: string
-	name: string
-	mimeType?: string
-	description?: string
+    uri: string
+    name: string
+    mimeType?: string
+    description?: string
 }
 
 export type McpResourceTemplate = {
-	uriTemplate: string
-	name: string
-	description?: string
-	mimeType?: string
+    uriTemplate: string
+    name: string
+    description?: string
+    mimeType?: string
 }
 
 export type McpPromptArgument = {
-	name: string
-	description?: string
-	required?: boolean
+    name: string
+    description?: string
+    required?: boolean
 }
 
 export type McpPrompt = {
-	name: string
-	title?: string
-	description?: string
-	arguments?: McpPromptArgument[]
+    name: string
+    title?: string
+    description?: string
+    arguments?: McpPromptArgument[]
 }
 
 export type McpPromptMessageContent =
-	| {
-			type: "text"
-			text: string
-	  }
-	| {
-			type: "image"
-			data: string
-			mimeType: string
-	  }
-	| {
-			type: "audio"
-			data: string
-			mimeType: string
-	  }
-	| {
-			type: "resource"
-			resource: {
-				uri: string
-				mimeType?: string
-				text?: string
-				blob?: string
-			}
-	  }
+    | {
+          type: "text"
+          text: string
+      }
+    | {
+          type: "image"
+          data: string
+          mimeType: string
+      }
+    | {
+          type: "audio"
+          data: string
+          mimeType: string
+      }
+    | {
+          type: "resource"
+          resource: {
+              uri: string
+              mimeType?: string
+              text?: string
+              blob?: string
+          }
+      }
 
 export type McpPromptMessage = {
-	role: "user" | "assistant"
-	content: McpPromptMessageContent
+    role: "user" | "assistant"
+    content: McpPromptMessageContent
 }
 
 export type McpPromptResponse = {
-	description?: string
-	messages: McpPromptMessage[]
+    description?: string
+    messages: McpPromptMessage[]
 }
 
 export type McpResourceResponse = {
-	_meta?: Record<string, any>
-	contents: Array<{
-		uri: string
-		mimeType?: string
-		text?: string
-		blob?: string
-	}>
+    _meta?: Record<string, any>
+    contents: Array<{
+        uri: string
+        mimeType?: string
+        text?: string
+        blob?: string
+    }>
 }
 
 export type McpToolCallResponse = {
-	_meta?: Record<string, any>
-	content: Array<
-		| {
-				type: "text"
-				text: string
-		  }
-		| {
-				type: "image"
-				data: string
-				mimeType: string
-		  }
-		| {
-				type: "audio"
-				data: string
-				mimeType: string
-		  }
-		| {
-				type: "resource"
-				resource: {
-					uri: string
-					mimeType?: string
-					text?: string
-					blob?: string
-				}
-		  }
-		| {
-				type: "resource_link"
-				uri: string
-				name?: string
-				description?: string
-				mimeType?: string
-		  }
-	>
-	isError?: boolean
+    _meta?: Record<string, any>
+    content: Array<
+        | {
+              type: "text"
+              text: string
+          }
+        | {
+              type: "image"
+              data: string
+              mimeType: string
+          }
+        | {
+              type: "audio"
+              data: string
+              mimeType: string
+          }
+        | {
+              type: "resource"
+              resource: {
+                  uri: string
+                  mimeType?: string
+                  text?: string
+                  blob?: string
+              }
+          }
+        | {
+              type: "resource_link"
+              uri: string
+              name?: string
+              description?: string
+              mimeType?: string
+          }
+    >
+    isError?: boolean
 }
 
 export interface McpMarketplaceItem {
-	mcpId: string
-	githubUrl: string
-	name: string
-	author: string
-	description: string
-	codiconIcon: string
-	logoUrl: string
-	category: string
-	tags: string[]
-	requiresApiKey: boolean
-	readmeContent?: string
-	llmsInstallationContent?: string
-	isRecommended: boolean
-	githubStars: number
-	downloadCount: number
-	createdAt: string
-	updatedAt: string
-	lastGithubSync: string
+    mcpId: string
+    githubUrl: string
+    name: string
+    author: string
+    description: string
+    codiconIcon: string
+    logoUrl: string
+    category: string
+    tags: string[]
+    requiresApiKey: boolean
+    readmeContent?: string
+    llmsInstallationContent?: string
+    isRecommended: boolean
+    githubStars: number
+    downloadCount: number
+    createdAt: string
+    updatedAt: string
+    lastGithubSync: string
 }
 
 export interface McpMarketplaceCatalog {
-	items: McpMarketplaceItem[]
+    items: McpMarketplaceItem[]
 }
 
 export interface McpDownloadResponse {
-	mcpId: string
-	githubUrl: string
-	name: string
-	author: string
-	description: string
-	readmeContent: string
-	llmsInstallationContent: string
-	requiresApiKey: boolean
+    mcpId: string
+    githubUrl: string
+    name: string
+    author: string
+    description: string
+    readmeContent: string
+    llmsInstallationContent: string
+    requiresApiKey: boolean
 }
 
 export type McpViewTab = "marketplace" | "addRemote" | "configure"

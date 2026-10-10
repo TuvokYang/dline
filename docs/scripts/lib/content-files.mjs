@@ -21,16 +21,16 @@ const PAGE_EXTENSION = /\.mdx?$/i
  * @returns {PageIdentity | undefined}
  */
 export function toPageIdentity(relativePath) {
-	const posixPath = relativePath.replaceAll("\\", "/")
-	if (!PAGE_EXTENSION.test(posixPath)) {
-		return undefined
-	}
-	const segments = posixPath.replace(PAGE_EXTENSION, "").toLowerCase().split("/")
-	if (segments.at(-1) === "index") {
-		segments.pop()
-	}
-	const locale = SECONDARY_LOCALES.includes(segments[0] ?? "") ? String(segments.shift()) : ROOT_LOCALE
-	return { relativePath: posixPath, locale, slug: segments.join("/") }
+    const posixPath = relativePath.replaceAll("\\", "/")
+    if (!PAGE_EXTENSION.test(posixPath)) {
+        return undefined
+    }
+    const segments = posixPath.replace(PAGE_EXTENSION, "").toLowerCase().split("/")
+    if (segments.at(-1) === "index") {
+        segments.pop()
+    }
+    const locale = SECONDARY_LOCALES.includes(segments[0] ?? "") ? String(segments.shift()) : ROOT_LOCALE
+    return { relativePath: posixPath, locale, slug: segments.join("/") }
 }
 
 /**
@@ -39,8 +39,8 @@ export function toPageIdentity(relativePath) {
  * @returns {string}
  */
 export function pagePath(page) {
-	const segments = [page.locale === ROOT_LOCALE ? "" : page.locale, page.slug].filter(Boolean)
-	return segments.length ? `/${segments.join("/")}/` : "/"
+    const segments = [page.locale === ROOT_LOCALE ? "" : page.locale, page.slug].filter(Boolean)
+    return segments.length ? `/${segments.join("/")}/` : "/"
 }
 
 /**
@@ -50,18 +50,18 @@ export function pagePath(page) {
  * @returns {Promise<PageEntry[]>}
  */
 export async function listPages(root = CONTENT_ROOT) {
-	const entries = await readdir(root, { recursive: true, withFileTypes: true })
-	/** @type {PageEntry[]} */
-	const pages = []
-	for (const entry of entries) {
-		if (!entry.isFile() || entry.name.startsWith("_")) {
-			continue
-		}
-		const file = path.join(entry.parentPath, entry.name)
-		const identity = toPageIdentity(path.relative(root, file))
-		if (identity) {
-			pages.push({ ...identity, file })
-		}
-	}
-	return pages.sort((left, right) => left.relativePath.localeCompare(right.relativePath))
+    const entries = await readdir(root, { recursive: true, withFileTypes: true })
+    /** @type {PageEntry[]} */
+    const pages = []
+    for (const entry of entries) {
+        if (!entry.isFile() || entry.name.startsWith("_")) {
+            continue
+        }
+        const file = path.join(entry.parentPath, entry.name)
+        const identity = toPageIdentity(path.relative(root, file))
+        if (identity) {
+            pages.push({ ...identity, file })
+        }
+    }
+    return pages.sort((left, right) => left.relativePath.localeCompare(right.relativePath))
 }

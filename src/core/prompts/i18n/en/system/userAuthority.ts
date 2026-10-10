@@ -1,7 +1,7 @@
 // English user authority prompts — key-value pairs only, no code logic.
 
 const prompts: Record<string, string> = {
-	main: `USER AUTHORITY
+    main: `USER AUTHORITY
 
 Dline's tool descriptions and rules apply completely and strictly by default whenever the user has not explicitly directed a different behavior.
 

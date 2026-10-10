@@ -9,23 +9,23 @@ import type { ProviderModelReconciliationMode } from "../../provider-model-recon
 import { ModelListingSource, readPerMillionPrice, readPositiveNumber } from "../model-listing-source"
 
 export class BasetenModelSource extends ModelListingSource {
-	readonly providerId = "baseten"
-	readonly providerName = "Baseten"
-	override readonly reconciliation: ProviderModelReconciliationMode = "overlay-remote"
-	protected override readonly defaultBaseUrl = "https://inference.baseten.co/v1"
+    readonly providerId = "baseten"
+    readonly providerName = "Baseten"
+    override readonly reconciliation: ProviderModelReconciliationMode = "overlay-remote"
+    protected override readonly defaultBaseUrl = "https://inference.baseten.co/v1"
 
-	protected override readContextWindow(raw: unknown): number | undefined {
-		return readPositiveNumber(raw, "context_length")
-	}
+    protected override readContextWindow(raw: unknown): number | undefined {
+        return readPositiveNumber(raw, "context_length")
+    }
 
-	protected override readPricing(raw: unknown): ModelPricing | undefined {
-		const inputPrice = readPerMillionPrice(raw, "pricing.prompt")
-		const outputPrice = readPerMillionPrice(raw, "pricing.completion")
-		if (inputPrice === undefined && outputPrice === undefined) {
-			return undefined
-		}
-		return { inputPrice, outputPrice }
-	}
+    protected override readPricing(raw: unknown): ModelPricing | undefined {
+        const inputPrice = readPerMillionPrice(raw, "pricing.prompt")
+        const outputPrice = readPerMillionPrice(raw, "pricing.completion")
+        if (inputPrice === undefined && outputPrice === undefined) {
+            return undefined
+        }
+        return { inputPrice, outputPrice }
+    }
 }
 
 export const basetenModelSource = new BasetenModelSource()

@@ -5,27 +5,27 @@
  */
 
 export function getHookTemplate(hookName: string): string {
-	if (process.platform === "win32") {
-		return getWindowsPowerShellTemplate(hookName)
-	}
+    if (process.platform === "win32") {
+        return getWindowsPowerShellTemplate(hookName)
+    }
 
-	const templates: Record<string, string> = {
-		TaskStart: getTaskStartTemplate(),
-		TaskResume: getTaskResumeTemplate(),
-		TaskCancel: getTaskCancelTemplate(),
-		TaskComplete: getTaskCompleteTemplate(),
-		PreToolUse: getPreToolUseTemplate(),
-		PostToolUse: getPostToolUseTemplate(),
-		UserPromptSubmit: getUserPromptSubmitTemplate(),
-		Notification: getNotificationTemplate(),
-		PreCompact: getPreCompactTemplate(),
-	}
+    const templates: Record<string, string> = {
+        TaskStart: getTaskStartTemplate(),
+        TaskResume: getTaskResumeTemplate(),
+        TaskCancel: getTaskCancelTemplate(),
+        TaskComplete: getTaskCompleteTemplate(),
+        PreToolUse: getPreToolUseTemplate(),
+        PostToolUse: getPostToolUseTemplate(),
+        UserPromptSubmit: getUserPromptSubmitTemplate(),
+        Notification: getNotificationTemplate(),
+        PreCompact: getPreCompactTemplate(),
+    }
 
-	return templates[hookName] || getDefaultTemplate(hookName)
+    return templates[hookName] || getDefaultTemplate(hookName)
 }
 
 function getWindowsPowerShellTemplate(hookName: string): string {
-	return `# ${hookName} Hook
+    return `# ${hookName} Hook
 # PowerShell template for Windows hook execution.
 
 try {
@@ -46,7 +46,7 @@ try {
 }
 
 function getTaskStartTemplate(): string {
-	return `#!/bin/bash
+    return `#!/bin/bash
 #
 # TaskStart Hook
 # 
@@ -101,7 +101,7 @@ fi
 }
 
 function getTaskResumeTemplate(): string {
-	return `#!/bin/bash
+    return `#!/bin/bash
 #
 # TaskResume Hook
 # 
@@ -142,7 +142,7 @@ echo '{"cancel":false,"contextModification":"","errorMessage":""}'
 }
 
 function getTaskCancelTemplate(): string {
-	return `#!/bin/bash
+    return `#!/bin/bash
 #
 # TaskCancel Hook
 # 
@@ -182,7 +182,7 @@ echo '{"cancel":false,"contextModification":"","errorMessage":""}'
 }
 
 function getTaskCompleteTemplate(): string {
-	return `#!/bin/bash
+    return `#!/bin/bash
 #
 # TaskComplete Hook
 # 
@@ -223,7 +223,7 @@ echo '{"cancel":false,"contextModification":"","errorMessage":""}'
 }
 
 function getPreToolUseTemplate(): string {
-	return `#!/bin/bash
+    return `#!/bin/bash
 #
 # PreToolUse Hook
 # 
@@ -265,7 +265,7 @@ echo '{"cancel":false,"contextModification":"","errorMessage":""}'
 }
 
 function getPostToolUseTemplate(): string {
-	return `#!/bin/bash
+    return `#!/bin/bash
 #
 # PostToolUse Hook
 # 
@@ -315,7 +315,7 @@ echo '{"cancel":false,"contextModification":"","errorMessage":""}'
 }
 
 function getUserPromptSubmitTemplate(): string {
-	return `#!/bin/bash
+    return `#!/bin/bash
 #
 # UserPromptSubmit Hook
 # 
@@ -349,7 +349,7 @@ echo '{"cancel":false,"contextModification":"","errorMessage":""}'
 }
 
 function getNotificationTemplate(): string {
-	return `#!/bin/bash
+    return `#!/bin/bash
 #
 # Notification Hook
 #
@@ -412,7 +412,7 @@ echo '{"cancel":false,"contextModification":"","errorMessage":""}'
 }
 
 function getPreCompactTemplate(): string {
-	return `#!/bin/bash
+    return `#!/bin/bash
 #
 # PreCompact Hook
 # 
@@ -468,7 +468,7 @@ echo '{"cancel":false,"contextModification":"","errorMessage":""}'
 }
 
 function getDefaultTemplate(hookName: string): string {
-	return `#!/bin/bash
+    return `#!/bin/bash
 #
 # ${hookName} Hook
 # 

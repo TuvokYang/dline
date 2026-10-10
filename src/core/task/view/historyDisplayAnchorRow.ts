@@ -12,10 +12,10 @@ import type { HistoryDisplayProjection } from "./canonical/projectHistoryDisplay
  * chat row, which the kernel-only projection must not depend on.
  */
 export function historyDisplayAnchorRow(
-	synthetic: NonNullable<HistoryDisplayProjection["synthetic"]>,
-	durableMessages: readonly UiMessage[],
+    synthetic: NonNullable<HistoryDisplayProjection["synthetic"]>,
+    durableMessages: readonly UiMessage[],
 ): UiMessage {
-	const ts = durableMessages.reduce((latest, message) => Math.max(latest, message.ts), 0) + 1
-	const ask = synthetic.kind === "completion" ? "resume_completed_task" : getInteraction(synthetic.kind).taskAsk
-	return createCanonicalAskRow(ask, "", ts, synthetic.interactionId)
+    const ts = durableMessages.reduce((latest, message) => Math.max(latest, message.ts), 0) + 1
+    const ask = synthetic.kind === "completion" ? "resume_completed_task" : getInteraction(synthetic.kind).taskAsk
+    return createCanonicalAskRow(ask, "", ts, synthetic.interactionId)
 }

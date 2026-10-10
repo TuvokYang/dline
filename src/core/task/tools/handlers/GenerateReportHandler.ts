@@ -10,76 +10,76 @@ import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler {
-	readonly name = ClineDefaultTool.GENERATE_REPORT
+    readonly name = ClineDefaultTool.GENERATE_REPORT
 
-	getDescription(block: ToolUse): string {
-		return `[${block.name}] ${(block.params as Record<string, string>).title || ""}`
-	}
+    getDescription(block: ToolUse): string {
+        return `[${block.name}] ${(block.params as Record<string, string>).title || ""}`
+    }
 
-	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-		const content = uiHelpers.removeClosingTag(block, "content", block.params.content)
-		if (content) {
-			const sharedMessage = JSON.stringify({
-				title: block.params.title || "",
-				content,
-			})
-			await uiHelpers.ask("generate_report" as any, sharedMessage, true, { existingTs: block.ts }).catch(() => {})
-		}
-	}
+    async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
+        const content = uiHelpers.removeClosingTag(block, "content", block.params.content)
+        if (content) {
+            const sharedMessage = JSON.stringify({
+                title: block.params.title || "",
+                content,
+            })
+            await uiHelpers.ask("generate_report" as any, sharedMessage, true, { existingTs: block.ts }).catch(() => {})
+        }
+    }
 
-	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
-		const title: string = (block.params as Record<string, string>).title || ""
-		const content: string = (block.params as Record<string, string>).content || ""
+    async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {
+        const title: string = (block.params as Record<string, string>).title || ""
+        const content: string = (block.params as Record<string, string>).content || ""
 
-		if (!title || !content) {
-			config.taskState.consecutiveMistakeCount++
-			const missingParam = !title ? "title" : "content"
-			return await config.callbacks.sayAndCreateMissingParamError(block.name, missingParam, undefined, block.ts)
-		}
+        if (!title || !content) {
+            config.taskState.consecutiveMistakeCount++
+            const missingParam = !title ? "title" : "content"
+            return await config.callbacks.sayAndCreateMissingParamError(block.name, missingParam, undefined, block.ts)
+        }
 
-		config.taskState.consecutiveMistakeCount = 0
+        config.taskState.consecutiveMistakeCount = 0
 
-		const sharedMessage = JSON.stringify({ title, content })
+        const sharedMessage = JSON.stringify({ title, content })
 
-		config.taskState.isAwaitingPlanResponse = true
+        config.taskState.isAwaitingPlanResponse = true
 
-		const outcome = await config.interactions.open({
-			turnId: interactionTurnId(block),
-			interactionId: interactionId(block),
-			kind: "generate_report",
-			presentation: sharedMessage,
-			existingTs: block.ts,
-		})
-		return this.continueInteraction(config, block, outcome)
-	}
+        const outcome = await config.interactions.open({
+            turnId: interactionTurnId(block),
+            interactionId: interactionId(block),
+            kind: "generate_report",
+            presentation: sharedMessage,
+            existingTs: block.ts,
+        })
+        return this.continueInteraction(config, block, outcome)
+    }
 
-	/** Consume a report response without replaying report presentation. */
-	async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
-		const text = outcome.draft?.text
-		const images = outcome.draft?.images
-		const files = outcome.draft?.files
+    /** Consume a report response without replaying report presentation. */
+    async continueInteraction(config: TaskConfig, _block: ToolUse, outcome: InteractionOutcome): Promise<ToolHandlerResult> {
+        const text = outcome.draft?.text
+        const images = outcome.draft?.images
+        const files = outcome.draft?.files
 
-		config.taskState.isAwaitingPlanResponse = false
-		const attachments = await attachToolFeedbackFiles(files)
-		const fileContentString = attachments.text
+        config.taskState.isAwaitingPlanResponse = false
+        const attachments = await attachToolFeedbackFiles(files)
+        const fileContentString = attachments.text
 
-		// Handle mode switching response (same as MakePlanHandler)
-		if (config.taskState.didRespondToPlanAskBySwitchingMode) {
-			config.taskState.didRespondToPlanAskBySwitchingMode = false
-			const switchMsg = text
-				? renderPrompt("toolHandlers", "planSwitchToActWithMessage", { TEXT: text })
-				: getPrompt("toolHandlers", "planSwitchToAct")
-			return withToolDocuments(formatResponse.toolResult(switchMsg, images, fileContentString), attachments.documents)
-		}
+        // Handle mode switching response (same as MakePlanHandler)
+        if (config.taskState.didRespondToPlanAskBySwitchingMode) {
+            config.taskState.didRespondToPlanAskBySwitchingMode = false
+            const switchMsg = text
+                ? renderPrompt("toolHandlers", "planSwitchToActWithMessage", { TEXT: text })
+                : getPrompt("toolHandlers", "planSwitchToAct")
+            return withToolDocuments(formatResponse.toolResult(switchMsg, images, fileContentString), attachments.documents)
+        }
 
-		if (text || (images && images.length > 0) || fileContentString) {
-			await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
-			return withToolDocuments(
-				formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString),
-				attachments.documents,
-			)
-		}
+        if (text || (images && images.length > 0) || fileContentString) {
+            await sayFeedbackOnce(config, "messageResponse", text, images, files, outcome)
+            return withToolDocuments(
+                formatResponse.toolResult(`<feedback>\n${text}\n</feedback>`, images, fileContentString),
+                attachments.documents,
+            )
+        }
 
-		return formatResponse.toolResult("[GENERATE_REPORT] User reviewed the report and continued.")
-	}
+        return formatResponse.toolResult("[GENERATE_REPORT] User reviewed the report and continued.")
+    }
 }

@@ -17,11 +17,11 @@ import { type BuiltBundle, type BundleEnvironment, buildDiagnosticBundle, type R
 
 /** Source of the events and diagnoses to export. */
 export interface DiagnosticSource {
-	readonly sessionId: string
-	/** Events currently available, oldest first. */
-	events(): readonly RuntimeTelemetryEvent[]
-	/** Diagnoses produced for those events. */
-	diagnoses(): readonly RootCauseDiagnosis[]
+    readonly sessionId: string
+    /** Events currently available, oldest first. */
+    events(): readonly RuntimeTelemetryEvent[]
+    /** Diagnoses produced for those events. */
+    diagnoses(): readonly RootCauseDiagnosis[]
 }
 
 /**
@@ -34,34 +34,34 @@ export interface DiagnosticSource {
  * never scan the workspace looking for things to attach.
  */
 export interface RawArtifactConsent {
-	readonly confirmed: boolean
-	readonly artifacts: readonly RawArtifact[]
+    readonly confirmed: boolean
+    readonly artifacts: readonly RawArtifact[]
 }
 
 export interface ExportRequest {
-	readonly destinationPath: string
-	readonly extensionVersion: string
-	readonly hostVersion: string
-	readonly rawConsent?: RawArtifactConsent
-	/** Injectable so tests do not depend on wall time. */
-	readonly now?: () => number
+    readonly destinationPath: string
+    readonly extensionVersion: string
+    readonly hostVersion: string
+    readonly rawConsent?: RawArtifactConsent
+    /** Injectable so tests do not depend on wall time. */
+    readonly now?: () => number
 }
 
 export interface ExportResult {
-	readonly archive: BundleArchiveResult
-	readonly bundle: BuiltBundle
+    readonly archive: BundleArchiveResult
+    readonly bundle: BuiltBundle
 }
 
 export function describeEnvironment(extensionVersion: string, hostVersion: string): BundleEnvironment {
-	return {
-		platform: os.platform(),
-		arch: os.arch(),
-		nodeVersion: process.versions.node,
-		hostVersion,
-		extensionVersion,
-		cpuCount: os.cpus().length,
-		totalMemoryBytes: os.totalmem(),
-	}
+    return {
+        platform: os.platform(),
+        arch: os.arch(),
+        nodeVersion: process.versions.node,
+        hostVersion,
+        extensionVersion,
+        cpuCount: os.cpus().length,
+        totalMemoryBytes: os.totalmem(),
+    }
 }
 
 /**
@@ -71,19 +71,19 @@ export function describeEnvironment(extensionVersion: string, hostVersion: strin
  * the manifest and checksums without reopening the zip.
  */
 export async function exportDiagnosticBundle(source: DiagnosticSource, request: ExportRequest): Promise<ExportResult> {
-	const identity = readBuildIdentity()
-	const bundle = buildDiagnosticBundle({
-		sessionId: source.sessionId,
-		createdAt: (request.now ?? Date.now)(),
-		events: source.events(),
-		diagnoses: source.diagnoses(),
-		environment: describeEnvironment(request.extensionVersion, request.hostVersion),
-		buildId: identity.buildId,
-		rawArtifacts: selectRawArtifacts(request.rawConsent),
-	})
+    const identity = readBuildIdentity()
+    const bundle = buildDiagnosticBundle({
+        sessionId: source.sessionId,
+        createdAt: (request.now ?? Date.now)(),
+        events: source.events(),
+        diagnoses: source.diagnoses(),
+        environment: describeEnvironment(request.extensionVersion, request.hostVersion),
+        buildId: identity.buildId,
+        rawArtifacts: selectRawArtifacts(request.rawConsent),
+    })
 
-	const archive = await writeBundleArchive(bundle, request.destinationPath)
-	return { archive, bundle }
+    const archive = await writeBundleArchive(bundle, request.destinationPath)
+    return { archive, bundle }
 }
 
 /**
@@ -94,6 +94,6 @@ export async function exportDiagnosticBundle(source: DiagnosticSource, request: 
  * the user's last expressed intent was not to attach them.
  */
 function selectRawArtifacts(consent: RawArtifactConsent | undefined): readonly RawArtifact[] {
-	if (!consent?.confirmed) return []
-	return consent.artifacts
+    if (!consent?.confirmed) return []
+    return consent.artifacts
 }

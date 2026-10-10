@@ -22,21 +22,21 @@ export const MAX_ENCRYPTED_REASONING_ITEMS = 64
 export const MAX_ENCRYPTED_REASONING_BYTES = 256_000
 
 export interface EncryptedReasoningBudget {
-	readonly maxItems: number
-	readonly maxBytes: number
+    readonly maxItems: number
+    readonly maxBytes: number
 }
 
 export const DEFAULT_ENCRYPTED_REASONING_BUDGET: EncryptedReasoningBudget = {
-	maxItems: MAX_ENCRYPTED_REASONING_ITEMS,
-	maxBytes: MAX_ENCRYPTED_REASONING_BYTES,
+    maxItems: MAX_ENCRYPTED_REASONING_ITEMS,
+    maxBytes: MAX_ENCRYPTED_REASONING_BYTES,
 }
 
 /** Stream phase that produced an encrypted reasoning payload. */
 export type EncryptedReasoningPhase = "partial" | "final"
 
 interface EncryptedReasoningEntry {
-	block: ClineAssistantRedactedThinkingBlock
-	phase: EncryptedReasoningPhase
+    block: ClineAssistantRedactedThinkingBlock
+    phase: EncryptedReasoningPhase
 }
 
 /**
@@ -46,7 +46,7 @@ interface EncryptedReasoningEntry {
  * @returns The payload size in bytes, or 0 when the block carries no data.
  */
 export function encryptedReasoningBlockBytes(block: ClineAssistantRedactedThinkingBlock): number {
-	return typeof block.data === "string" ? Buffer.byteLength(block.data, "utf8") : 0
+    return typeof block.data === "string" ? Buffer.byteLength(block.data, "utf8") : 0
 }
 
 /**
@@ -57,72 +57,72 @@ export function encryptedReasoningBlockBytes(block: ClineAssistantRedactedThinki
  * overwritten by a late snapshot.
  */
 export class EncryptedReasoningAccumulator {
-	private readonly entries = new Map<string, EncryptedReasoningEntry>()
-	private droppedItemCount = 0
+    private readonly entries = new Map<string, EncryptedReasoningEntry>()
+    private droppedItemCount = 0
 
-	constructor(private readonly budget: EncryptedReasoningBudget = DEFAULT_ENCRYPTED_REASONING_BUDGET) {}
+    constructor(private readonly budget: EncryptedReasoningBudget = DEFAULT_ENCRYPTED_REASONING_BUDGET) {}
 
-	/**
-	 * Record one encrypted reasoning payload.
-	 *
-	 * @param itemId Stable provider item id used as the refresh key.
-	 * @param block The encrypted reasoning block carrying the payload.
-	 * @param phase Whether the payload is an in-progress snapshot or the authoritative final item.
-	 * @returns Whether the payload was retained.
-	 */
-	record(itemId: string, block: ClineAssistantRedactedThinkingBlock, phase: EncryptedReasoningPhase): boolean {
-		const existing = this.entries.get(itemId)
-		if (existing) {
-			// A final payload is authoritative; a later snapshot must not overwrite it.
-			if (existing.phase === "final" && phase !== "final") {
-				return false
-			}
-			existing.block = block
-			existing.phase = phase
-			return true
-		}
+    /**
+     * Record one encrypted reasoning payload.
+     *
+     * @param itemId Stable provider item id used as the refresh key.
+     * @param block The encrypted reasoning block carrying the payload.
+     * @param phase Whether the payload is an in-progress snapshot or the authoritative final item.
+     * @returns Whether the payload was retained.
+     */
+    record(itemId: string, block: ClineAssistantRedactedThinkingBlock, phase: EncryptedReasoningPhase): boolean {
+        const existing = this.entries.get(itemId)
+        if (existing) {
+            // A final payload is authoritative; a later snapshot must not overwrite it.
+            if (existing.phase === "final" && phase !== "final") {
+                return false
+            }
+            existing.block = block
+            existing.phase = phase
+            return true
+        }
 
-		if (!this.hasRoomForNewItem(block)) {
-			this.droppedItemCount += 1
-			return false
-		}
-		this.entries.set(itemId, { block, phase })
-		return true
-	}
+        if (!this.hasRoomForNewItem(block)) {
+            this.droppedItemCount += 1
+            return false
+        }
+        this.entries.set(itemId, { block, phase })
+        return true
+    }
 
-	/** Return the retained blocks in provider stream order. */
-	blocks(): ClineAssistantRedactedThinkingBlock[] {
-		return [...this.entries.values()].map((entry) => entry.block)
-	}
+    /** Return the retained blocks in provider stream order. */
+    blocks(): ClineAssistantRedactedThinkingBlock[] {
+        return [...this.entries.values()].map((entry) => entry.block)
+    }
 
-	/** Number of distinct reasoning items rejected because the budget was exhausted. */
-	droppedItems(): number {
-		return this.droppedItemCount
-	}
+    /** Number of distinct reasoning items rejected because the budget was exhausted. */
+    droppedItems(): number {
+        return this.droppedItemCount
+    }
 
-	/** Total retained encrypted payload size in bytes. */
-	retainedBytes(): number {
-		let total = 0
-		for (const entry of this.entries.values()) {
-			total += encryptedReasoningBlockBytes(entry.block)
-		}
-		return total
-	}
+    /** Total retained encrypted payload size in bytes. */
+    retainedBytes(): number {
+        let total = 0
+        for (const entry of this.entries.values()) {
+            total += encryptedReasoningBlockBytes(entry.block)
+        }
+        return total
+    }
 
-	private hasRoomForNewItem(block: ClineAssistantRedactedThinkingBlock): boolean {
-		const maxItems = Math.max(0, Math.floor(this.budget.maxItems))
-		const maxBytes = Math.max(0, Math.floor(this.budget.maxBytes))
-		if (this.entries.size >= maxItems) {
-			return false
-		}
-		return this.retainedBytes() + encryptedReasoningBlockBytes(block) <= maxBytes
-	}
+    private hasRoomForNewItem(block: ClineAssistantRedactedThinkingBlock): boolean {
+        const maxItems = Math.max(0, Math.floor(this.budget.maxItems))
+        const maxBytes = Math.max(0, Math.floor(this.budget.maxBytes))
+        if (this.entries.size >= maxItems) {
+            return false
+        }
+        return this.retainedBytes() + encryptedReasoningBlockBytes(block) <= maxBytes
+    }
 }
 
 export interface EncryptedReasoningRepairResult {
-	readonly messages: ClineStorageMessage[]
-	readonly removedBlockCount: number
-	readonly repairedMessageCount: number
+    readonly messages: ClineStorageMessage[]
+    readonly removedBlockCount: number
+    readonly repairedMessageCount: number
 }
 
 /**
@@ -141,43 +141,43 @@ export interface EncryptedReasoningRepairResult {
  * @returns The repaired history plus counts describing what was removed.
  */
 export function repairPersistedEncryptedReasoning(
-	messages: readonly ClineStorageMessage[],
-	budget: EncryptedReasoningBudget = DEFAULT_ENCRYPTED_REASONING_BUDGET,
+    messages: readonly ClineStorageMessage[],
+    budget: EncryptedReasoningBudget = DEFAULT_ENCRYPTED_REASONING_BUDGET,
 ): EncryptedReasoningRepairResult {
-	let removedBlockCount = 0
-	let repairedMessageCount = 0
+    let removedBlockCount = 0
+    let repairedMessageCount = 0
 
-	const repaired = messages.map((message) => {
-		if (message.role !== "assistant" || !Array.isArray(message.content)) return message
+    const repaired = messages.map((message) => {
+        if (message.role !== "assistant" || !Array.isArray(message.content)) return message
 
-		const content = message.content as readonly unknown[]
-		const redactedIndexes: number[] = []
-		const accumulator = new EncryptedReasoningAccumulator(budget)
-		let anonymousCount = 0
+        const content = message.content as readonly unknown[]
+        const redactedIndexes: number[] = []
+        const accumulator = new EncryptedReasoningAccumulator(budget)
+        let anonymousCount = 0
 
-		content.forEach((block, index) => {
-			if (!isRedactedThinkingBlock(block)) return
-			redactedIndexes.push(index)
-			const itemId = block.provider_metadata?.response_id ?? `anonymous:${anonymousCount++}`
-			// Persisted blocks carry no phase, and a later block supersedes an earlier one.
-			accumulator.record(itemId, block, "partial")
-		})
-		if (redactedIndexes.length === 0) return message
+        content.forEach((block, index) => {
+            if (!isRedactedThinkingBlock(block)) return
+            redactedIndexes.push(index)
+            const itemId = block.provider_metadata?.response_id ?? `anonymous:${anonymousCount++}`
+            // Persisted blocks carry no phase, and a later block supersedes an earlier one.
+            accumulator.record(itemId, block, "partial")
+        })
+        if (redactedIndexes.length === 0) return message
 
-		const retained = new Set<ClineAssistantRedactedThinkingBlock>(accumulator.blocks())
-		if (retained.size === redactedIndexes.length) return message
+        const retained = new Set<ClineAssistantRedactedThinkingBlock>(accumulator.blocks())
+        if (retained.size === redactedIndexes.length) return message
 
-		const nextContent = content.filter(
-			(block, index) => !redactedIndexes.includes(index) || retained.has(block as ClineAssistantRedactedThinkingBlock),
-		)
-		removedBlockCount += redactedIndexes.length - retained.size
-		repairedMessageCount += 1
-		return { ...message, content: nextContent } as ClineStorageMessage
-	})
+        const nextContent = content.filter(
+            (block, index) => !redactedIndexes.includes(index) || retained.has(block as ClineAssistantRedactedThinkingBlock),
+        )
+        removedBlockCount += redactedIndexes.length - retained.size
+        repairedMessageCount += 1
+        return { ...message, content: nextContent } as ClineStorageMessage
+    })
 
-	return { messages: repaired, removedBlockCount, repairedMessageCount }
+    return { messages: repaired, removedBlockCount, repairedMessageCount }
 }
 
 function isRedactedThinkingBlock(block: unknown): block is ClineAssistantRedactedThinkingBlock {
-	return typeof block === "object" && block !== null && (block as { type?: unknown }).type === "redacted_thinking"
+    return typeof block === "object" && block !== null && (block as { type?: unknown }).type === "redacted_thinking"
 }

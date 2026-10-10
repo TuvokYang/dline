@@ -6,7 +6,7 @@
  * refused call) must derive it the same way.
  */
 export function approvalInteractionId(dlineTid: string): string {
-	return `approval:${dlineTid}`
+    return `approval:${dlineTid}`
 }
 
 /**
@@ -16,5 +16,5 @@ export function approvalInteractionId(dlineTid: string): string {
  * and a restored task can still show them.
  */
 export function isApprovalRowOf(rowInteractionId: string | undefined, dlineTid: string): boolean {
-	return rowInteractionId === approvalInteractionId(dlineTid) || rowInteractionId === dlineTid
+    return rowInteractionId === approvalInteractionId(dlineTid) || rowInteractionId === dlineTid
 }

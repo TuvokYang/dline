@@ -7,24 +7,24 @@ import type { ApiStopReason } from "./stream"
  * @returns The provider-neutral stop reason, or undefined when the stream has not stopped yet.
  */
 export function normalizeAnthropicStopReason(reason: string | null | undefined): ApiStopReason | undefined {
-	switch (reason) {
-		case null:
-		case undefined:
-			return undefined
-		case "end_turn":
-			return "end_turn"
-		case "tool_use":
-			return "tool_use"
-		case "max_tokens":
-		case "model_context_window_exceeded":
-			return "output_limit"
-		case "stop_sequence":
-			return "stop_sequence"
-		case "refusal":
-			return "content_filter"
-		default:
-			return "other"
-	}
+    switch (reason) {
+        case null:
+        case undefined:
+            return undefined
+        case "end_turn":
+            return "end_turn"
+        case "tool_use":
+            return "tool_use"
+        case "max_tokens":
+        case "model_context_window_exceeded":
+            return "output_limit"
+        case "stop_sequence":
+            return "stop_sequence"
+        case "refusal":
+            return "content_filter"
+        default:
+            return "other"
+    }
 }
 
 /**
@@ -34,22 +34,22 @@ export function normalizeAnthropicStopReason(reason: string | null | undefined):
  * @returns The provider-neutral stop reason, or undefined when the choice has not finished yet.
  */
 export function normalizeOpenAIFinishReason(reason: string | null | undefined): ApiStopReason | undefined {
-	switch (reason) {
-		case null:
-		case undefined:
-			return undefined
-		case "stop":
-			return "end_turn"
-		case "tool_calls":
-		case "function_call":
-			return "tool_use"
-		case "length":
-			return "output_limit"
-		case "content_filter":
-			return "content_filter"
-		default:
-			return "other"
-	}
+    switch (reason) {
+        case null:
+        case undefined:
+            return undefined
+        case "stop":
+            return "end_turn"
+        case "tool_calls":
+        case "function_call":
+            return "tool_use"
+        case "length":
+            return "output_limit"
+        case "content_filter":
+            return "content_filter"
+        default:
+            return "other"
+    }
 }
 
 /**
@@ -60,12 +60,12 @@ export function normalizeOpenAIFinishReason(reason: string | null | undefined): 
  * @returns The provider-neutral stop reason, or undefined for a non-terminal status.
  */
 export function normalizeResponsesStopReason(
-	status: string | null | undefined,
-	incompleteReason?: string | null,
+    status: string | null | undefined,
+    incompleteReason?: string | null,
 ): ApiStopReason | undefined {
-	if (status === "completed") return "end_turn"
-	if (status !== "incomplete") return undefined
-	if (incompleteReason === "max_output_tokens") return "output_limit"
-	if (incompleteReason === "content_filter") return "content_filter"
-	return "other"
+    if (status === "completed") return "end_turn"
+    if (status !== "incomplete") return undefined
+    if (incompleteReason === "max_output_tokens") return "output_limit"
+    if (incompleteReason === "content_filter") return "content_filter"
+    return "other"
 }

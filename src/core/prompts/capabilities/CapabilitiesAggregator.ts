@@ -15,21 +15,21 @@ import { hashPromptContent } from "../system-prompt-cache/hash"
 import type { CapabilitiesSnapshot, CapabilityEntry } from "./types"
 
 export interface CapabilityToggleState extends SkillToggleState {
-	readonly workflowToggles?: Record<string, boolean>
-	readonly globalWorkflowToggles?: Record<string, boolean>
-	readonly remoteWorkflowEntries?: readonly GlobalInstructionsFile[]
-	readonly remoteWorkflowToggles?: Record<string, boolean>
-	readonly subagentToggles?: Record<string, boolean>
-	readonly globalSubagentToggles?: Record<string, boolean>
+    readonly workflowToggles?: Record<string, boolean>
+    readonly globalWorkflowToggles?: Record<string, boolean>
+    readonly remoteWorkflowEntries?: readonly GlobalInstructionsFile[]
+    readonly remoteWorkflowToggles?: Record<string, boolean>
+    readonly subagentToggles?: Record<string, boolean>
+    readonly globalSubagentToggles?: Record<string, boolean>
 }
 
 export interface CapabilityMcpHub {
-	getServers(): McpServer[]
+    getServers(): McpServer[]
 }
 
 export interface CollectCapabilitiesInput extends CapabilityToggleState {
-	readonly cwd: string
-	readonly mcpHub?: CapabilityMcpHub
+    readonly cwd: string
+    readonly mcpHub?: CapabilityMcpHub
 }
 
 /**
@@ -39,7 +39,7 @@ export interface CollectCapabilitiesInput extends CapabilityToggleState {
  * @returns Single-line prompt-safe description.
  */
 function normalizeDescription(description: string | undefined): string {
-	return (description ?? "").replace(/\s+/g, " ").trim().slice(0, 240)
+    return (description ?? "").replace(/\s+/g, " ").trim().slice(0, 240)
 }
 
 /**
@@ -49,24 +49,24 @@ function normalizeDescription(description: string | undefined): string {
  * @returns Stable capability entries.
  */
 function stableEntries(entries: CapabilityEntry[]): CapabilityEntry[] {
-	const deduped = new Map<string, CapabilityEntry>()
-	for (const entry of entries) {
-		const name = entry.name.trim()
-		if (!name || deduped.has(name)) {
-			continue
-		}
-		deduped.set(name, {
-			name,
-			description: normalizeDescription(entry.description),
-			...(entry.contentHash === undefined ? {} : { contentHash: entry.contentHash }),
-			...(entry.nativeToolHash === undefined ? {} : { nativeToolHash: entry.nativeToolHash }),
-			// Rebuilding the entry field by field silently drops anything not
-			// listed here, which is how the advertised allowlist went missing
-			// while the renderer and the collector were both correct.
-			...(entry.tools === undefined ? {} : { tools: entry.tools }),
-		})
-	}
-	return Array.from(deduped.values()).sort((a, b) => a.name.localeCompare(b.name))
+    const deduped = new Map<string, CapabilityEntry>()
+    for (const entry of entries) {
+        const name = entry.name.trim()
+        if (!name || deduped.has(name)) {
+            continue
+        }
+        deduped.set(name, {
+            name,
+            description: normalizeDescription(entry.description),
+            ...(entry.contentHash === undefined ? {} : { contentHash: entry.contentHash }),
+            ...(entry.nativeToolHash === undefined ? {} : { nativeToolHash: entry.nativeToolHash }),
+            // Rebuilding the entry field by field silently drops anything not
+            // listed here, which is how the advertised allowlist went missing
+            // while the renderer and the collector were both correct.
+            ...(entry.tools === undefined ? {} : { tools: entry.tools }),
+        })
+    }
+    return Array.from(deduped.values()).sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /**
@@ -76,22 +76,22 @@ function stableEntries(entries: CapabilityEntry[]): CapabilityEntry[] {
  * @returns MCP capability entries containing only name and description.
  */
 function collectMcp(mcpHub: CapabilityMcpHub | undefined): CapabilityEntry[] {
-	if (!mcpHub) {
-		return []
-	}
-	return stableEntries(
-		mcpHub
-			.getServers()
-			.filter((server) => server.status === "connected" && server.disabled !== true)
-			.flatMap((server) =>
-				(server.tools ?? []).map((tool) => ({
-					name: `${server.name}.${tool.name}`,
-					description: tool.description ?? "",
-					contentHash: hashStableJson(tool.inputSchema ?? { type: "object", properties: {} }),
-					nativeToolHash: hashPromptContent(`${server.uid ?? server.name}${CLINE_MCP_TOOL_IDENTIFIER}${tool.name}`),
-				})),
-			),
-	)
+    if (!mcpHub) {
+        return []
+    }
+    return stableEntries(
+        mcpHub
+            .getServers()
+            .filter((server) => server.status === "connected" && server.disabled !== true)
+            .flatMap((server) =>
+                (server.tools ?? []).map((tool) => ({
+                    name: `${server.name}.${tool.name}`,
+                    description: tool.description ?? "",
+                    contentHash: hashStableJson(tool.inputSchema ?? { type: "object", properties: {} }),
+                    nativeToolHash: hashPromptContent(`${server.uid ?? server.name}${CLINE_MCP_TOOL_IDENTIFIER}${tool.name}`),
+                })),
+            ),
+    )
 }
 
 /**
@@ -101,18 +101,18 @@ function collectMcp(mcpHub: CapabilityMcpHub | undefined): CapabilityEntry[] {
  * @returns Skill capability entries containing only name and description.
  */
 async function collectSkills(input: CollectCapabilitiesInput): Promise<CapabilityEntry[]> {
-	const skills = await discoverAvailableSkills(input.cwd, input)
-	const entries = await Promise.all(
-		skills.map(async (skill) => {
-			const content = await getSkillContent(skill.name, skills, input.remoteSkillEntries)
-			return {
-				name: skill.name,
-				description: skill.description,
-				contentHash: hashPromptContent(content?.instructions ?? ""),
-			}
-		}),
-	)
-	return stableEntries(entries)
+    const skills = await discoverAvailableSkills(input.cwd, input)
+    const entries = await Promise.all(
+        skills.map(async (skill) => {
+            const content = await getSkillContent(skill.name, skills, input.remoteSkillEntries)
+            return {
+                name: skill.name,
+                description: skill.description,
+                contentHash: hashPromptContent(content?.instructions ?? ""),
+            }
+        }),
+    )
+    return stableEntries(entries)
 }
 
 /**
@@ -125,13 +125,13 @@ async function collectSkills(input: CollectCapabilitiesInput): Promise<Capabilit
  * @returns True when the capability is not explicitly disabled.
  */
 function isEnabledPath(
-	filePath: string,
-	source: "project" | "global",
-	localToggles: Record<string, boolean> | undefined,
-	globalToggles: Record<string, boolean> | undefined,
+    filePath: string,
+    source: "project" | "global",
+    localToggles: Record<string, boolean> | undefined,
+    globalToggles: Record<string, boolean> | undefined,
 ): boolean {
-	const toggles = source === "global" ? globalToggles : localToggles
-	return toggles?.[filePath] !== false
+    const toggles = source === "global" ? globalToggles : localToggles
+    return toggles?.[filePath] !== false
 }
 
 /**
@@ -141,21 +141,21 @@ function isEnabledPath(
  * @returns Markdown workflow file paths.
  */
 async function readWorkflowFiles(directoryPath: string): Promise<string[]> {
-	try {
-		const dirEntries = (await fs.readdir(directoryPath, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))
-		const nested = await Promise.all(
-			dirEntries.map(async (entry) => {
-				const entryPath = path.join(directoryPath, entry.name)
-				if (entry.isDirectory()) {
-					return readWorkflowFiles(entryPath)
-				}
-				return /\.(md|mdx)$/i.test(entry.name) ? [entryPath] : []
-			}),
-		)
-		return nested.flat()
-	} catch {
-		return []
-	}
+    try {
+        const dirEntries = (await fs.readdir(directoryPath, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))
+        const nested = await Promise.all(
+            dirEntries.map(async (entry) => {
+                const entryPath = path.join(directoryPath, entry.name)
+                if (entry.isDirectory()) {
+                    return readWorkflowFiles(entryPath)
+                }
+                return /\.(md|mdx)$/i.test(entry.name) ? [entryPath] : []
+            }),
+        )
+        return nested.flat()
+    } catch {
+        return []
+    }
 }
 
 /**
@@ -165,34 +165,34 @@ async function readWorkflowFiles(directoryPath: string): Promise<string[]> {
  * @returns Workflow capability entries containing only name and description.
  */
 async function collectWorkflows(input: CollectCapabilitiesInput): Promise<CapabilityEntry[]> {
-	const entries: CapabilityEntry[] = []
-	for (const dir of getWorkflowsScanDirectories(input.cwd)) {
-		if (!(await fileExistsAtPath(dir.path)) || !(await isDirectory(dir.path))) {
-			continue
-		}
-		const files = await readWorkflowFiles(dir.path)
-		for (const filePath of files) {
-			if (!isEnabledPath(filePath, dir.source, input.workflowToggles, input.globalWorkflowToggles)) {
-				continue
-			}
-			try {
-				const content = await fs.readFile(filePath, "utf8")
-				const { data } = parseYamlFrontmatter(content)
-				const name = typeof data.name === "string" ? data.name : path.basename(filePath, path.extname(filePath))
-				const description = typeof data.description === "string" ? data.description : ""
-				entries.push({ name, description, contentHash: hashPromptContent(content) })
-			} catch {}
-		}
-	}
-	for (const workflow of input.remoteWorkflowEntries ?? []) {
-		if (!workflow.alwaysEnabled && input.remoteWorkflowToggles?.[workflow.name] === false) continue
-		try {
-			const { data } = parseYamlFrontmatter(workflow.contents)
-			const description = typeof data.description === "string" ? data.description : ""
-			entries.push({ name: workflow.name, description, contentHash: hashPromptContent(workflow.contents) })
-		} catch {}
-	}
-	return stableEntries(entries)
+    const entries: CapabilityEntry[] = []
+    for (const dir of getWorkflowsScanDirectories(input.cwd)) {
+        if (!(await fileExistsAtPath(dir.path)) || !(await isDirectory(dir.path))) {
+            continue
+        }
+        const files = await readWorkflowFiles(dir.path)
+        for (const filePath of files) {
+            if (!isEnabledPath(filePath, dir.source, input.workflowToggles, input.globalWorkflowToggles)) {
+                continue
+            }
+            try {
+                const content = await fs.readFile(filePath, "utf8")
+                const { data } = parseYamlFrontmatter(content)
+                const name = typeof data.name === "string" ? data.name : path.basename(filePath, path.extname(filePath))
+                const description = typeof data.description === "string" ? data.description : ""
+                entries.push({ name, description, contentHash: hashPromptContent(content) })
+            } catch {}
+        }
+    }
+    for (const workflow of input.remoteWorkflowEntries ?? []) {
+        if (!workflow.alwaysEnabled && input.remoteWorkflowToggles?.[workflow.name] === false) continue
+        try {
+            const { data } = parseYamlFrontmatter(workflow.contents)
+            const description = typeof data.description === "string" ? data.description : ""
+            entries.push({ name: workflow.name, description, contentHash: hashPromptContent(workflow.contents) })
+        } catch {}
+    }
+    return stableEntries(entries)
 }
 
 /**
@@ -202,44 +202,44 @@ async function collectWorkflows(input: CollectCapabilitiesInput): Promise<Capabi
  * @returns Subagent capability entries containing only name and description.
  */
 async function collectSubagents(input: CollectCapabilitiesInput): Promise<CapabilityEntry[]> {
-	const entries: CapabilityEntry[] = []
-	for (const dir of getSubagentsScanDirectories(input.cwd)) {
-		if (!(await fileExistsAtPath(dir.path)) || !(await isDirectory(dir.path))) {
-			continue
-		}
-		const files = (await fs.readdir(dir.path)).sort((a, b) => a.localeCompare(b))
-		for (const fileName of files) {
-			if (!/\.(yaml|yml)$/i.test(fileName)) {
-				continue
-			}
-			const filePath = path.join(dir.path, fileName)
-			if (!isEnabledPath(filePath, dir.source, input.subagentToggles, input.globalSubagentToggles)) {
-				continue
-			}
-			try {
-				const content = await fs.readFile(filePath, "utf8")
-				const config = parseAgentConfigFromYaml(content)
-				entries.push({
-					name: config.name,
-					description: config.description,
-					contentHash: hashPromptContent(content),
-					// Advertise the allowlist that will actually be enforced, produced by
-					// the same policy the builder applies, so the caller cannot be told a
-					// capability it will not get.
-					tools: sanitizeSubagentTools(config.tools, {
-						builtInDefault: isDefaultSubagentName(config.name),
-						explicitlyNarrowed: config.toolsExplicitlyNarrowed === true,
-					}),
-				})
-			} catch {}
-		}
-	}
-	entries.push({
-		name: DEFAULT_SUBAGENT_CONFIG.name,
-		description: DEFAULT_SUBAGENT_CONFIG.description,
-		tools: sanitizeSubagentTools(DEFAULT_SUBAGENT_CONFIG.tools, { builtInDefault: true }),
-	})
-	return stableEntries(entries)
+    const entries: CapabilityEntry[] = []
+    for (const dir of getSubagentsScanDirectories(input.cwd)) {
+        if (!(await fileExistsAtPath(dir.path)) || !(await isDirectory(dir.path))) {
+            continue
+        }
+        const files = (await fs.readdir(dir.path)).sort((a, b) => a.localeCompare(b))
+        for (const fileName of files) {
+            if (!/\.(yaml|yml)$/i.test(fileName)) {
+                continue
+            }
+            const filePath = path.join(dir.path, fileName)
+            if (!isEnabledPath(filePath, dir.source, input.subagentToggles, input.globalSubagentToggles)) {
+                continue
+            }
+            try {
+                const content = await fs.readFile(filePath, "utf8")
+                const config = parseAgentConfigFromYaml(content)
+                entries.push({
+                    name: config.name,
+                    description: config.description,
+                    contentHash: hashPromptContent(content),
+                    // Advertise the allowlist that will actually be enforced, produced by
+                    // the same policy the builder applies, so the caller cannot be told a
+                    // capability it will not get.
+                    tools: sanitizeSubagentTools(config.tools, {
+                        builtInDefault: isDefaultSubagentName(config.name),
+                        explicitlyNarrowed: config.toolsExplicitlyNarrowed === true,
+                    }),
+                })
+            } catch {}
+        }
+    }
+    entries.push({
+        name: DEFAULT_SUBAGENT_CONFIG.name,
+        description: DEFAULT_SUBAGENT_CONFIG.description,
+        tools: sanitizeSubagentTools(DEFAULT_SUBAGENT_CONFIG.tools, { builtInDefault: true }),
+    })
+    return stableEntries(entries)
 }
 
 /**
@@ -249,15 +249,15 @@ async function collectSubagents(input: CollectCapabilitiesInput): Promise<Capabi
  * @returns Snapshot containing only capability names and descriptions.
  */
 export async function collectCapabilities(input: CollectCapabilitiesInput): Promise<CapabilitiesSnapshot> {
-	const [skills, workflows, subagents] = await Promise.all([
-		collectSkills(input),
-		collectWorkflows(input),
-		collectSubagents(input),
-	])
-	return {
-		mcp: collectMcp(input.mcpHub),
-		skills,
-		workflows,
-		subagents,
-	}
+    const [skills, workflows, subagents] = await Promise.all([
+        collectSkills(input),
+        collectWorkflows(input),
+        collectSubagents(input),
+    ])
+    return {
+        mcp: collectMcp(input.mcpHub),
+        skills,
+        workflows,
+        subagents,
+    }
 }
