@@ -1,5 +1,5 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import type { MessageStateHandler } from "../../message-state"
 import { ProviderTextPresenter } from "../ProviderTextPresenter"
 
@@ -96,6 +96,18 @@ describe("ProviderTextPresenter", () => {
 		presenter.showPartial({ transientId: "provider:turn-1", text: "Answer" })
 
 		expect([...rows.values()].map((row) => row.say)).toEqual(["text"])
+	})
+
+	it("forwards one native tool projection without creating a prose row", async () => {
+		const messages = createMessages()
+		const presentToolPartial = vi.fn(async () => undefined)
+		const presenter = new ProviderTextPresenter(messages.handler, () => 101, undefined, presentToolPartial)
+		const projection = { kind: "provider.tool_partial", block: { type: "tool_use", name: "qna_respond", partial: true } }
+
+		presenter.showPartial({ transientId: "provider:turn-1", text: "", projection })
+		await vi.waitFor(() => expect(presentToolPartial).toHaveBeenCalledWith(projection))
+
+		expect(messages.rows.size).toBe(0)
 	})
 
 	it("keeps the reasoning of a reply that said nothing else", async () => {

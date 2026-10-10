@@ -31,9 +31,9 @@ export class ProviderRetryGate implements ProviderRetryPolicy {
 	}
 
 	wait(delayMs: number, signal: AbortSignal): Promise<ProviderRetryWait> {
-		this.setSequence(true)
 		if (signal.aborted) return Promise.resolve("cancelled")
 		return new Promise<ProviderRetryWait>((resolve) => {
+			let timer: ReturnType<typeof setTimeout>
 			const finish = (outcome: ProviderRetryWait) => {
 				clearTimeout(timer)
 				signal.removeEventListener("abort", onAbort)
@@ -41,9 +41,12 @@ export class ProviderRetryGate implements ProviderRetryPolicy {
 				resolve(outcome)
 			}
 			const onAbort = () => finish("cancelled")
-			const timer = setTimeout(() => finish("send"), Math.max(0, delayMs))
+			timer = setTimeout(() => finish("send"), Math.max(0, delayMs))
 			signal.addEventListener("abort", onAbort, { once: true })
 			this.release = finish
+			// Publish only after Retry can release the wait. The Webview may render
+			// and click the button synchronously from this notification.
+			this.setSequence(true)
 		})
 	}
 

@@ -41,6 +41,11 @@ jobs:
     outputs:
       sha256: ${{ steps.vsix.outputs.sha256 }}
     steps:
+      - name: Checkout validated production commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.commit_sha }}
+
       - name: Download production VSIX
         uses: actions/download-artifact@v8
         with:
@@ -96,19 +101,43 @@ jobs:
         with:
           subject-path: ${{ steps.vsix.outputs.path }}
 
+      - name: Build release notes from changelog
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: node scripts/extract-changelog-section.mjs CHANGELOG.md "$VERSION" "$RUNNER_TEMP/release-notes.md"
+
       - name: Create or update stable GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
           VSIX_PATH: ${{ steps.vsix.outputs.path }}
+          NOTES_PATH: ${{ runner.temp }}/release-notes.md
         shell: bash
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$TAG" --draft=false --prerelease=false --title "Dline ${TAG}" --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --draft=false --prerelease=false --title "Dline ${TAG}" --notes-file "$NOTES_PATH" --repo "$GITHUB_REPOSITORY"
             gh release upload "$TAG" "$VSIX_PATH" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" "$VSIX_PATH" --verify-tag --generate-notes --title "Dline ${TAG}" --repo "$GITHUB_REPOSITORY"
+            gh release create "$TAG" "$VSIX_PATH" --verify-tag --notes-file "$NOTES_PATH" --title "Dline ${TAG}" --repo "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Verify stable GitHub release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_json=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets)
+          expected_count=$(jq --arg name "$ASSET_NAME" '[.assets[] | select(.name == $name and .size > 0)] | length' <<<"$release_json")
+          vsix_count=$(jq '[.assets[] | select(.name | endswith(".vsix"))] | length' <<<"$release_json")
+          if [[ "$expected_count" != "1" || "$vsix_count" != "1" ]]; then
+            echo "Error: stable release '$TAG' must contain exactly one non-empty VSIX named '$ASSET_NAME'."
+            jq '{assets: [.assets[] | {name, size}]}' <<<"$release_json"
+            exit 1
           fi
 
       - name: Upload verified registry package

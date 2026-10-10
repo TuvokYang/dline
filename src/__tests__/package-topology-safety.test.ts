@@ -58,6 +58,7 @@ describe("package topology safety", () => {
 
 	it("publishes one verified production artifact idempotently through either serialized path", async () => {
 		const automaticWorkflow = await readProjectFile(".github/workflows/release.yml")
+		const insidersWorkflow = await readProjectFile(".github/workflows/publish-insiders.yml")
 		const manualWorkflow = await readProjectFile(".github/workflows/publish-vscode-marketplace.yml")
 		const productionPublisher = await readProjectFile(".github/workflows/publish-production-release.yml")
 		const registryWorkflow = await readProjectFile(".github/workflows/publish-vsix-registries.yml")
@@ -67,7 +68,19 @@ describe("package topology safety", () => {
 		expect(automaticWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
 		expect(manualWorkflow).toContain("uses: ./.github/workflows/publish-production-release.yml")
 		expect(productionPublisher).toContain('gh release upload "$TAG" "$VSIX_PATH" --clobber')
+		expect(productionPublisher).toContain('node scripts/extract-changelog-section.mjs CHANGELOG.md "$VERSION"')
+		expect(productionPublisher).toContain('gh release create "$TAG" "$VSIX_PATH" --verify-tag --notes-file "$NOTES_PATH"')
+		expect(productionPublisher).not.toContain("--generate-notes")
+		expect(productionPublisher).toContain("Verify stable GitHub release asset")
+		expect(productionPublisher).toContain("select(.name == $name and .size > 0)")
+		expect(productionPublisher).toContain('select(.name | endswith(".vsix"))')
+		expect(productionPublisher).toContain('expected_count" != "1" || "$vsix_count" != "1"')
 		expect(productionPublisher).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
+		expect(insidersWorkflow).toContain("group: publish-insiders")
+		expect(insidersWorkflow).toContain("Prune older Insiders drafts")
+		expect(insidersWorkflow).toContain("select(.draft == true and .tag_name != $keep)")
+		expect(insidersWorkflow).toContain('gh release delete "$stale_tag" --yes')
+		expect(insidersWorkflow).toContain('remaining_drafts[0]}" != "$RELEASE_TAG"')
 		expect(registryWorkflow).toContain('"$VSCE_BIN" publish --skip-duplicate "${track_args[@]}" --packagePath "$vsix_path"')
 		expect(registryWorkflow).toContain('"$OVSX_BIN" publish "$vsix_path" --skip-duplicate')
 		// Marketplace publication is opt-in and reported as disabled, not as a failed registry.

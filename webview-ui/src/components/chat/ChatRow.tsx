@@ -53,7 +53,12 @@ import { cancelTaskActivities } from "./activity/useTaskActivities"
 import CodeExecutionRow from "./CodeExecutionRow"
 import { CommandOutputContent, CommandOutputRow } from "./CommandOutputRow"
 import { CompletionOutputRow } from "./CompletionOutputRow"
-import { resolveApiErrorMessage } from "./chat-view/utils/messageUtils"
+import {
+	collectMcpResponseTexts,
+	isPrimaryCheckpointForUserTurn,
+	parseMcpServerResponse,
+	resolveApiErrorMessage,
+} from "./chat-view/utils/messageUtils"
 import { describeCompactionFailure } from "./compaction-failure-label"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
 import { DiffEditRow } from "./DiffEditRow"
@@ -446,19 +451,23 @@ export const ChatRowContent = memo(
 					return [null, null]
 				case "use_mcp_server":
 					const mcpServerUse = JSON.parse(message.text || "{}") as UiAskUseMcpServer
+					const serverDisplayName = getMcpServerDisplayName(mcpServerUse.serverName, mcpMarketplaceCatalog)
 					return [
 						isMcpServerResponding ? (
 							<ProgressIndicator />
 						) : (
 							<span className="codicon codicon-server text-foreground mb-[-1.5px]" />
 						),
-						<span className="ph-no-capture font-bold text-foreground break-words">
-							Dline wants to {mcpServerUse.type === "use_mcp_tool" ? "use a tool" : "access a resource"} on the{" "}
-							<code className="break-all">
-								{getMcpServerDisplayName(mcpServerUse.serverName, mcpMarketplaceCatalog)}
-							</code>{" "}
-							MCP server:
-						</span>,
+						message.type === "ask" ? (
+							<span className="ph-no-capture font-bold text-foreground break-words">
+								Dline wants to {mcpServerUse.type === "use_mcp_tool" ? "use a tool" : "access a resource"} on the{" "}
+								<code className="break-all">{serverDisplayName}</code> MCP server:
+							</span>
+						) : (
+							<span className="ph-no-capture font-bold text-foreground break-words">
+								Dline is using the <code className="break-all">{serverDisplayName}</code> MCP server:
+							</span>
+						),
 					]
 				case "completion_result":
 					return [
@@ -1078,6 +1087,7 @@ export const ChatRowContent = memo(
 		if (message.ask === "use_mcp_server" || message.say === "use_mcp_server") {
 			const useMcpServer = JSON.parse(message.text || "{}") as UiAskUseMcpServer
 			const server = mcpServers.find((server) => server.name === useMcpServer.serverName)
+			const responseTexts = collectMcpResponseTexts(clineMessages, message.ts)
 			return (
 				<div>
 					<div className={HEADER_CLASSNAMES}>
@@ -1142,6 +1152,11 @@ export const ChatRowContent = memo(
 							</div>
 						)}
 					</div>
+					{responseTexts.length > 0 && (
+						<div className="mt-1" data-testid="mcp-response-group">
+							<McpResponseDisplay responseText={responseTexts.join("\n\n")} />
+						</div>
+					)}
 				</div>
 			)
 		}
@@ -1166,8 +1181,10 @@ export const ChatRowContent = memo(
 						)
 					case "api_req_finished":
 						return <InvisibleSpacer /> // we should never see this message type
-					case "mcp_server_response":
-						return <McpResponseDisplay responseText={message.text || ""} />
+					case "mcp_server_response": {
+						const response = parseMcpServerResponse(message.text)
+						return <McpResponseDisplay responseText={response.responses.join("\n\n")} />
+					}
 					case "mcp_notification":
 						return (
 							<div
@@ -1267,6 +1284,7 @@ export const ChatRowContent = memo(
 					case "clineignore_error":
 						return <ErrorRow errorType="clineignore_error" message={message} />
 					case "checkpoint_created":
+						if (!isPrimaryCheckpointForUserTurn(message.ts, clineMessages)) return <InvisibleSpacer />
 						return (
 							<CheckmarkControl
 								hasWorkspaceCheckpoint={message.lastCheckpointHash?.some(Boolean) === true}
@@ -1666,7 +1684,11 @@ export const ChatRowContent = memo(
 						} catch {
 							// legacy format — use text as content
 						}
-						return <GenerateReportRow content={content} headClassNames={HEADER_CLASSNAMES} title={title} />
+						return (
+							<div data-streaming={message.partial === true ? "true" : "false"} data-testid="generate-report-row">
+								<GenerateReportRow content={content} headClassNames={HEADER_CLASSNAMES} title={title} />
+							</div>
+						)
 					}
 					case "status_acknowledgment": {
 						const text = message.text || ""

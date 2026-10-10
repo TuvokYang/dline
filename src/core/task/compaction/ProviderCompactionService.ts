@@ -2,14 +2,17 @@ import { randomUUID } from "node:crypto"
 import { createCompactionConversationRange } from "@core/context/context-management/compaction-conversation-range"
 import { CompactionPassBudgetError } from "@core/context/context-management/compaction-pass-budget-error"
 import { resolveCompactionWindowBudget } from "@core/context/context-management/compaction-window-budget"
-import {
-	type ContextWindowCandidateEstimator,
-	type ContextWindowRequestPressure,
-	estimateContextWindowCandidate,
+import type {
+	ContextWindowCandidateEstimator,
+	ContextWindowRequestPressure,
 } from "@core/context/context-management/context-window-projection"
 import {
+	estimateContextWindowCandidate,
+	estimateContextWindowCandidateBreakdown,
+} from "@core/context/context-management/context-window-projection"
+import type { CompactTriggerOptions } from "@core/context/context-management/context-window-utils"
+import {
 	COMPACTION_CLOSURE_RESERVE_TOKENS,
-	type CompactTriggerOptions,
 	computeSummarizeBudget,
 	getContextWindowInfo,
 	MIN_COMPACTION_SUMMARY_OUTPUT_TOKENS,
@@ -17,23 +20,20 @@ import {
 } from "@core/context/context-management/context-window-utils"
 import { buildSummaryRefitGuidance } from "@core/context/context-management/summary-refit"
 import { decideTargetWindowFitting } from "@core/context/context-management/TargetWindowFittingService"
-import {
-	buildCompactionPassHistory,
-	buildTargetCandidateHistory,
-	type TargetWindowFittingState,
-} from "@core/context/context-management/target-window-fitting"
+import type { TargetWindowFittingState } from "@core/context/context-management/target-window-fitting"
+import { buildCompactionPassHistory, buildTargetCandidateHistory } from "@core/context/context-management/target-window-fitting"
 import { resolveTokenPerByte } from "@core/context/context-management/token-estimation"
 import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
 import { ClineDefaultTool } from "@shared/tools"
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry-schedule"
-import {
-	type ContextCompactionIndicatorProjection,
-	type ContextCompactionPassRequest,
-	ContextCompactionSession,
-	type ContextCompactionSessionInput,
-	type ContextCompactionSessionPorts,
-	type ContextCompactionTriggerKind,
+import type {
+	ContextCompactionIndicatorProjection,
+	ContextCompactionPassRequest,
+	ContextCompactionSessionInput,
+	ContextCompactionSessionPorts,
+	ContextCompactionTriggerKind,
 } from "../ContextCompactionSession"
+import { ContextCompactionSession } from "../ContextCompactionSession"
 import { estimateContextWindowIndicatorSegments } from "../ContextWindowIndicatorProjection"
 import { CompactionRunFailedError } from "../executors/compaction/CompactionCommandExecutor"
 import type { ProductionCompactionService } from "../executors/compaction/ProductionCompactionAdapter"
@@ -272,23 +272,25 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			estimatePassInput: async (sessionInput, passHistory) => {
 				const request = this.passRequest(frame, sessionInput, passHistory, undefined, undefined, "estimate")
 				try {
-					return estimateContextWindowCandidate(request.providerInput, estimator)
+					return this.estimateProviderInput(frame, request.providerInput, estimator)
 				} finally {
 					request.explicitInstructions.cancel()
 				}
 			},
-			buildPassRequest: async (sessionInput, state, feedback, passHistory) =>
-				this.passRequest(
+			buildPassRequest: async (sessionInput, state, feedback, passHistory) => {
+				const request = this.passRequest(
 					frame,
 					sessionInput,
 					passHistory ?? buildCompactionPassHistory(state),
 					feedback,
 					smallestLimit(state.nextPassSummaryCarryLimitTokens, context.maxOutputTokens),
 					"send",
-				),
+				)
+				return this.assertOfficialPassBudget(frame, request, estimator, policy().passInputCeilingTokens)
+			},
 			buildSummaryRefitRequest: async (sessionInput, state, carryLimitTokens, refitAttempt) => {
 				if (!state.cumulativeSummary) throw new Error("Summary refit requires an existing cumulative summary")
-				return this.passRequest(
+				const request = this.passRequest(
 					frame,
 					sessionInput,
 					[{ role: "user", content: [{ type: "text", text: state.cumulativeSummary }] }],
@@ -296,6 +298,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
 					carryLimitTokens,
 					"send",
 				)
+				return this.assertOfficialPassBudget(frame, request, estimator, policy().passInputCeilingTokens)
 			},
 			reprojectTarget: async (sessionInput, state) => {
 				// Measured as it would be sent, as dev does: the next request carries
@@ -315,8 +318,9 @@ export class ProviderCompactionService implements ProductionCompactionService {
 					serverTools: frame.options?.serverTools ?? [],
 				}
 				const contextWindow = getContextWindowInfo(frame.api).contextWindow
+				const candidateEstimatedTokens = await this.estimateProviderInput(frame, providerInput, estimator)
 				const decision = decideTargetWindowFitting({
-					candidateEstimatedTokens: estimateContextWindowCandidate(providerInput, estimator),
+					candidateEstimatedTokens,
 					providerContextWindow: contextWindow,
 					...this.options.triggerOptions?.(),
 					hasMoreTurns: state.coveredTurnCount < state.turns.length,
@@ -425,6 +429,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			if (
 				budget.decision !== "ready" &&
 				purpose === "send" &&
+				frame.api.countInputTokens === undefined &&
 				budget.estimatedInputTokens > policy.passInputCeilingTokens
 			) {
 				// Structured so the session narrows the range with the measurement
@@ -464,6 +469,43 @@ export class ProviderCompactionService implements ProductionCompactionService {
 			apiFormat,
 		})
 		return { providerId, modelId, ...(tokenPerByte === undefined ? {} : { tokenPerByte }) }
+	}
+
+	private async estimateProviderInput(
+		frame: ProviderRequestFrame,
+		providerInput: ContextCompactionPassRequest["providerInput"],
+		estimator: ContextWindowCandidateEstimator,
+	): Promise<number> {
+		const official = await frame.api.countInputTokens?.({
+			systemPrompt: providerInput.systemPrompt,
+			messages: providerInput.messages,
+			tools: providerInput.tools,
+			options: { ...frame.options, serverTools: providerInput.serverTools },
+		})
+		return typeof official === "number" && Number.isFinite(official) && official >= 0
+			? Math.ceil(official)
+			: estimateContextWindowCandidate(providerInput, estimator)
+	}
+
+	private async assertOfficialPassBudget(
+		frame: ProviderRequestFrame,
+		request: ContextCompactionPassRequest,
+		estimator: ContextWindowCandidateEstimator,
+		passInputCeilingTokens: number,
+	): Promise<ContextCompactionPassRequest> {
+		if (frame.api.countInputTokens === undefined) return request
+		const estimatedInputTokens = await this.estimateProviderInput(frame, request.providerInput, estimator)
+		if (estimatedInputTokens <= passInputCeilingTokens) return request
+
+		const fallback = estimateContextWindowCandidateBreakdown(request.providerInput, estimator)
+		request.explicitInstructions.cancel()
+		throw new CompactionPassBudgetError({
+			estimatedInputTokens,
+			contextWindow: getContextWindowInfo(frame.api).contextWindow,
+			availableRemainder: Math.max(0, passInputCeilingTokens - estimatedInputTokens),
+			estimatedTextTokens: fallback.textTokens,
+			estimatedImageTokens: fallback.imageTokens,
+		})
 	}
 }
 

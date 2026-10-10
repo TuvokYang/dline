@@ -59,8 +59,9 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 	/**
 	 * Handle partial block streaming for attempt_completion
 	 */
-	async handlePartialBlock(_block: ToolUse, _uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-		// Completion remains provisional until all commit prerequisites succeed.
+	async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
+		const result = uiHelpers.removeClosingTag(block, "result", block.params.result)
+		if (result) await uiHelpers.say("completion_result", result, undefined, undefined, true, block.ts)
 	}
 
 	async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {

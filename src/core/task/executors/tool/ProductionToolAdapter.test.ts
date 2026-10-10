@@ -75,7 +75,7 @@ describe("createProductionToolAdapter", () => {
 
 	// The handler returns attached PDFs with its result; storing each as its own
 	// payload is what lets the next request place them after the result.
-	it("reports an already-persisted failed result to the tool domain without writing a duplicate", async () => {
+	it("completes an already-persisted model-facing failed result without writing a duplicate", async () => {
 		const payloads = new MemoryPayloads()
 		const journal = new InMemoryConversationJournal()
 		const invocationRef = await payloads.put(encodeTaskPayload(INVOCATION))
@@ -90,7 +90,7 @@ describe("createProductionToolAdapter", () => {
 
 		await expect(
 			options.runner.runBlock({ commandId: "command-failed", turnId: "turn-1", dlineTid: "block-1", invocationRef }),
-		).rejects.toThrow("ToolReportedFailure")
+		).resolves.toBeUndefined()
 
 		const entry = await journal.findByOperation("tool.result:command-failed")
 		if (!entry?.payloadRef) throw new Error("missing failed result")

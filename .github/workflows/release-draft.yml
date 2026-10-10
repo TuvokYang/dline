@@ -152,19 +152,7 @@ jobs:
         env:
           VERSION: ${{ needs.verify-tag.outputs.version }}
         shell: bash
-        run: |
-          set -euo pipefail
-
-          notes_path="$RUNNER_TEMP/release-notes.md"
-          awk -v version="$VERSION" '
-            $0 == "## [" version "]" { found=1; next }
-            found && /^## \[/ { exit }
-            found { print }
-          ' CHANGELOG.md > "$notes_path"
-          if [[ ! -s "$notes_path" ]]; then
-            echo "Error: no CHANGELOG.md entry found for version $VERSION"
-            exit 1
-          fi
+        run: node scripts/extract-changelog-section.mjs CHANGELOG.md "$VERSION" "$RUNNER_TEMP/release-notes.md"
 
       - name: Create or update public GitHub pre-release
         env:

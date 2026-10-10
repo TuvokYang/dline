@@ -153,6 +153,9 @@ for (const protocolCase of PROTOCOL_CASES) {
 			await expect(sidebar.getByText(report.startMarker, { exact: true })).toHaveCount(1)
 			await expect(sidebar.getByText(report.middleMarker, { exact: true })).toHaveCount(1)
 			await expect(sidebar.getByText(report.endMarker, { exact: true })).toHaveCount(1)
+			await expect(sidebar.getByTestId("generate-report-row")).toHaveAttribute("data-streaming", "false", {
+				timeout: 60_000,
+			})
 			await expect(sidebar.getByTestId("chat-input")).toBeEnabled()
 			await expectNoDecisionButtons(sidebar)
 

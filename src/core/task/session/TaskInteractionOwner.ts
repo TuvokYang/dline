@@ -264,10 +264,17 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		const pending = this.pending.get(interactionId)
 		if (pending) {
 			this.pending.delete(interactionId)
-			pending.resolve(outcome)
 			// A queued answer must remain recoverable until the tool runner has
 			// journaled its result. Terminal tool feedback retires this owner.
-			if (!this.session?.state().dialog.primary?.acceptedResponse?.queuedInput) void this.retire(interactionId)
+			if (this.session?.state().dialog.primary?.acceptedResponse?.queuedInput) {
+				pending.resolve(outcome)
+				return
+			}
+			// A normal turn-ending handler may launch the next provider round as
+			// soon as its await resolves. Keep it parked until the old dialog is
+			// durably retired, otherwise the next dialog races the still-primary one
+			// and is rejected with phase_invalid.
+			void this.retire(interactionId).then(() => pending.resolve(outcome))
 			return
 		}
 		// Read the kind before retiring: the continuation needs to know what it is
@@ -643,7 +650,12 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
 		const result = await session.assembly.runtime.submit(event)
 		if (result.kind === "rejected") {
 			this.pending.delete(request.interactionId)
-			throw new Error(result.reason)
+			const active = session.state().dialog.primary
+			const rejectionMessage = "message" in result ? result.message : result.diagnostic.message
+			Logger.error(
+				`[TaskInteractionOwner] Rejected ${request.kind} interaction ${request.interactionId}: ${result.reason} (${rejectionMessage}); active=${active?.interactionId ?? "none"}/${active?.kind ?? "none"}/${active?.status ?? "none"}; requestedTurn=${request.turnId}; activeTurn=${active?.turnId ?? "none"}; revision=${session.state().revision}`,
+			)
+			throw new Error(`${result.reason}: ${rejectionMessage}`)
 		}
 		return outcome
 	}

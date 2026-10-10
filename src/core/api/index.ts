@@ -128,6 +128,18 @@ export interface ApiHandler {
 		tools?: ClineTool[],
 		options?: ApiRequestOptions,
 	): ApiStream
+	/**
+	 * Count one complete provider input with the provider's official tokenizer.
+	 *
+	 * Implementations return undefined when the endpoint is unavailable so
+	 * request-scoped calibrated estimation can remain the bounded fallback.
+	 */
+	countInputTokens?(input: {
+		readonly systemPrompt: string
+		readonly messages: ClineStorageMessage[]
+		readonly tools?: ClineTool[]
+		readonly options?: ApiRequestOptions
+	}): Promise<number | undefined>
 	getModel(): ApiHandlerModel
 	/** Report protocol-adapter support without consulting provider or model identifiers. */
 	supportsServerTool?(tool: ServerTool): boolean

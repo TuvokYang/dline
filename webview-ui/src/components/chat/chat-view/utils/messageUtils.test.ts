@@ -5,6 +5,7 @@ import {
 	findGroupedMessageByTs,
 	groupLowStakesTools,
 	groupMessages,
+	isPrimaryCheckpointForUserTurn,
 	isToolGroup,
 	resolveApiErrorMessage,
 	resolveMessageRowExpanded,
@@ -305,5 +306,34 @@ describe("groupLowStakesTools", () => {
 		expect(grouped).toHaveLength(2)
 		expect(grouped[0]).toMatchObject({ type: "say", say: "reasoning", text: "Planning next read" })
 		expect(isToolGroup(grouped[1])).toBe(true)
+	})
+})
+
+describe("isPrimaryCheckpointForUserTurn", () => {
+	it("keeps the restore baseline and hides later checkpoints across opaque reasoning and file edits", () => {
+		const messages: UiMessage[] = [
+			{ type: "say", say: "task", text: "update files", ts: 1 },
+			{ type: "say", say: "checkpoint_created", ts: 2 },
+			{ type: "say", say: "reasoning", text: "", ts: 3 },
+			createToolMessage(4, "editedExistingFile"),
+			{ type: "say", say: "checkpoint_created", ts: 5 },
+			createToolMessage(6, "editedExistingFile"),
+			{ type: "say", say: "checkpoint_created", ts: 7 },
+		]
+
+		expect(isPrimaryCheckpointForUserTurn(2, messages)).toBe(true)
+		expect(isPrimaryCheckpointForUserTurn(5, messages)).toBe(false)
+		expect(isPrimaryCheckpointForUserTurn(7, messages)).toBe(false)
+	})
+
+	it("starts a new visible baseline after user feedback", () => {
+		const messages: UiMessage[] = [
+			{ type: "say", say: "task", text: "first turn", ts: 1 },
+			{ type: "say", say: "checkpoint_created", ts: 2 },
+			{ type: "say", say: "user_feedback", text: "continue", ts: 3 },
+			{ type: "say", say: "checkpoint_created", ts: 4 },
+		]
+
+		expect(isPrimaryCheckpointForUserTurn(4, messages)).toBe(true)
 	})
 })

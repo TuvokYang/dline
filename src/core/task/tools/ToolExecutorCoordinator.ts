@@ -3,12 +3,8 @@ import { formatResponse } from "@core/prompts/responses"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@/shared/mcp"
 import { ClineDefaultTool } from "@/shared/tools"
 import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
-import {
-	rejectToolCall,
-	type ToolApprovalPresentation,
-	type ToolPreflightResult,
-	type ToolSideEffect,
-} from "../executors/tool/ToolPreflight"
+import type { ToolApprovalPresentation, ToolPreflightResult, ToolSideEffect } from "../executors/tool/ToolPreflight"
+import { rejectToolCall } from "../executors/tool/ToolPreflight"
 import {
 	authorizeExplicitToolExecution,
 	explicitToolRefusalMessage,
@@ -247,6 +243,13 @@ export class ToolExecutorCoordinator {
 		}
 
 		return undefined
+	}
+
+	/** Present one incomplete tool block without admitting or executing it. */
+	async presentPartial(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
+		const handler = this.getHandler(block.name)
+		if (!handler || !("handlePartialBlock" in handler)) return
+		await (handler as IPartialBlockHandler).handlePartialBlock(block, uiHelpers)
 	}
 
 	/** Prepare one registry-owned admission without starting the handler. */

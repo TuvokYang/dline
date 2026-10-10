@@ -50,6 +50,7 @@ describe("package-vsix release channels", () => {
 		expect(draft).toContain("package_channel: pre-release")
 		expect(draft).toContain('.name == "dline" and')
 		expect(draft).toContain("Microsoft.VisualStudio.Code.PreRelease")
+		expect(draft).toContain('node scripts/extract-changelog-section.mjs CHANGELOG.md "$VERSION"')
 		expect(draft).not.toContain("dline-preview")
 		expect(registries).toContain('($channel == "pre-release" and .name == "dline" and .preview != true')
 		expect(registries).toContain("track_args=(--pre-release)")

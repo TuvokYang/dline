@@ -631,6 +631,79 @@ e2e(
 )
 
 e2e(
+	"Subagent recovery controls - literal upstream HTTP/2 failure retries the same run and completes once",
+	async ({ helper, server, sidebar, userDataDir, workspaceDir }) => {
+		e2e.setTimeout(180_000)
+		const agentName = "e2e-upstream-http2-retry"
+		const childTask = "E2E_SUBAGENT_UPSTREAM_HTTP2_TASK"
+		const childResult = "E2E_SUBAGENT_UPSTREAM_HTTP2_RECOVERED"
+		const diagnostic = "Upstream HTTP/2 stream failed"
+		await writeResponsesSubagent(workspaceDir, agentName, "E2E upstream HTTP/2 retry agent")
+
+		await helper.signin(sidebar)
+		server.resetOpenAiMock()
+		server.enqueueOpenAiResponses(
+			{
+				type: "tool",
+				id: "call_upstream_http2_subagent",
+				name: "use_subagent",
+				arguments: {
+					agent_name: agentName,
+					task: childTask,
+					context: "Retry the literal upstream HTTP/2 failure and return one final result.",
+					timeout: 120,
+				},
+			},
+			{
+				type: "tool",
+				id: "call_upstream_http2_parent_complete",
+				name: "attempt_completion",
+				arguments: { result: "E2E_SUBAGENT_UPSTREAM_HTTP2_PARENT_DONE" },
+				expectedToolResults: [{ callId: "call_upstream_http2_subagent", contentIncludes: childResult }],
+			},
+		)
+		server.enqueueResponses(
+			"openai-compatible-responses",
+			{
+				type: "error",
+				status: 400,
+				code: "upstream_error",
+				message: diagnostic,
+				requestId: "req_upstream_http2_1",
+			},
+			{
+				type: "tool",
+				id: "call_upstream_http2_child_complete",
+				name: "attempt_completion",
+				arguments: { result: childResult },
+			},
+		)
+
+		await sendTask(sidebar, "Start a subagent that must retry the literal upstream HTTP/2 failure.")
+		await expect(sidebar.getByText(childResult, { exact: false })).toHaveCount(1, { timeout: 120_000 })
+		await expect(sidebar.getByText("E2E_SUBAGENT_UPSTREAM_HTTP2_PARENT_DONE", { exact: false }).last()).toBeVisible({
+			timeout: 120_000,
+		})
+
+		const taskHeading = sidebar.getByRole("heading", { name: childTask, exact: true })
+		await expect(taskHeading).toHaveCount(1)
+		await sidebar.getByRole("tab", { name: /^Activities(?: \d+)?$/ }).click()
+		await sidebar.getByRole("button", { name: "All", exact: true }).first().click()
+		const activity = sidebar.getByTestId("activity-item").filter({ hasText: agentName })
+		await expect(activity).toHaveCount(1)
+		await expect(activity).toHaveAttribute("data-activity-status", "completed")
+
+		const childConsumptions = server.getMockConsumptions("openai-compatible-responses")
+		expect(childConsumptions).toHaveLength(2)
+		expect(childConsumptions[0]).toMatchObject({ responseType: "error", status: 400 })
+		expect(childConsumptions[1]).toMatchObject({ responseType: "tool", toolName: "attempt_completion" })
+		expect(childConsumptions.every((entry) => entry.contractError === undefined)).toBe(true)
+		await expect(sidebar.getByText(diagnostic, { exact: false })).toHaveCount(0)
+		await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/Upstream HTTP\/2 stream failed/])
+	},
+)
+
+e2e(
 	"Subagent recovery controls - Task reopen restores Retry recipe and injects the recovered result once",
 	async ({ dlineDocsDir, helper, page, server, sidebar, userDataDir, workspaceDir }, testInfo) => {
 		e2e.setTimeout(360_000)

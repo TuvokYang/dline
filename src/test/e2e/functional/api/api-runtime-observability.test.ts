@@ -1187,7 +1187,7 @@ e2e(
 		)
 
 		await sendTask(sidebar, task)
-		await expect(sidebar.getByTestId("error-retry-box")).toContainText(retryAttemptLabel(1), { timeout: 90_000 })
+		await expect.poll(() => server.getMockConsumptions("deepseek-chat").length, { timeout: 90_000 }).toBe(2)
 		await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
 		const consumptions = server.getMockConsumptions("deepseek-chat")

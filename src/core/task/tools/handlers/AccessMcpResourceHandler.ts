@@ -73,7 +73,8 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
 			arguments: undefined,
 		} satisfies UiAskUseMcpServer)
 
-		await config.callbacks.say("use_mcp_server", completeMessage, undefined, undefined, false, block.ts)
+		const requestTs =
+			(await config.callbacks.say("use_mcp_server", completeMessage, undefined, undefined, false, block.ts)) ?? block.ts
 		telemetryService.captureToolUsage(
 			config.ulid ?? "",
 			block.name,
@@ -112,7 +113,7 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
 			"mcp_server_response",
 			JSON.stringify({
 				type: "mcp_server_response",
-				requestTs: block.ts,
+				requestTs,
 				responses: responseItems,
 			} satisfies UiSayMcpServerResponse),
 		)

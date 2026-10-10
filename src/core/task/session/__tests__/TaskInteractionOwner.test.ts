@@ -51,6 +51,10 @@ function createOwner(options?: {
 	readonly messages?: MessageStateHandler
 	readonly nextPresentationId?: () => number
 	readonly publishRow?: (row: UiMessage) => unknown
+	readonly submit?: (event: { type: string }) => Promise<{
+		readonly kind: "accepted"
+		readonly receipt?: { readonly durable: Promise<void> }
+	}>
 }): {
 	owner: TaskInteractionOwner
 	messages: MessageStateHandler
@@ -79,7 +83,7 @@ function createOwner(options?: {
 				submit: async (event: { type: string }) => {
 					submitted.push(event.type)
 					announce?.()
-					return { kind: "accepted" as const }
+					return options?.submit?.(event) ?? { kind: "accepted" as const }
 				},
 			},
 		},
@@ -421,5 +425,34 @@ describe("TaskInteractionOwner", () => {
 		await expect(waiting).resolves.toMatchObject({ actionId: "reply" })
 		expect(continuation.continue).not.toHaveBeenCalled()
 		expect(submitted).toEqual(["dialog.requested", "dialog.resolved"])
+	})
+
+	it("does not release an awaited handler until dialog retirement is durable", async () => {
+		let releaseRetirement!: () => void
+		const retirementDurable = new Promise<void>((resolve) => {
+			releaseRetirement = resolve
+		})
+		const { owner, whenSubmitted } = createOwner({
+			submit: async (event) =>
+				event.type === "dialog.resolved"
+					? { kind: "accepted", receipt: { durable: retirementDurable } }
+					: { kind: "accepted" },
+		})
+		const waiting = owner.open({ turnId: "turn-1", interactionId: "i-1", kind: "followup", presentation: "ask" })
+		await whenSubmitted()
+		let released = false
+		void waiting.then(() => {
+			released = true
+		})
+
+		const retired = whenSubmitted()
+		owner.resolve("i-1", { actionId: "reply" })
+		await retired
+		await Promise.resolve()
+		expect(released).toBe(false)
+
+		releaseRetirement()
+		await expect(waiting).resolves.toMatchObject({ actionId: "reply" })
+		expect(released).toBe(true)
 	})
 })

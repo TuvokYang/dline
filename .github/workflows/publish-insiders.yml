@@ -196,6 +196,32 @@ jobs:
               --repo "$GITHUB_REPOSITORY"
           fi
 
+      - name: Prune older Insiders drafts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.verify-insiders.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t stale_drafts < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq -r --arg keep "$RELEASE_TAG" '.[] | select(.draft == true and .tag_name != $keep) | .tag_name'
+          )
+          for stale_tag in "${stale_drafts[@]}"; do
+            echo "Deleting superseded draft release '$stale_tag'."
+            gh release delete "$stale_tag" --yes --repo "$GITHUB_REPOSITORY"
+          done
+
+          mapfile -t remaining_drafts < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq -r '.[] | select(.draft == true) | .tag_name'
+          )
+          if [[ "${#remaining_drafts[@]}" -ne 1 || "${remaining_drafts[0]}" != "$RELEASE_TAG" ]]; then
+            echo "Error: expected the current Insiders release '$RELEASE_TAG' to be the only remaining draft."
+            printf 'Remaining draft: %s\n' "${remaining_drafts[@]}"
+            exit 1
+          fi
+
   publish-registries:
     name: Publish Insiders registries
     needs: verify-insiders

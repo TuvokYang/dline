@@ -40,6 +40,8 @@ interface ControllerOptions {
 	readonly rowWriteFails?: boolean
 	/** Hold the chat row's durable write until the returned release is called. */
 	readonly holdRowWrite?: boolean
+	/** Hold the accepted runtime response until its receipt becomes durable. */
+	readonly holdResponseWrite?: boolean
 	/** False for a window that shows the task while another window owns it. */
 	readonly writable?: boolean
 }
@@ -47,6 +49,10 @@ interface ControllerOptions {
 function controller(taskState: TaskState = state(), options: ControllerOptions = {}) {
 	const resolve = vi.fn()
 	const presentDenial = vi.fn(async () => undefined)
+	let releaseResponseWrite = () => {}
+	const responseWritten = new Promise<void>((release) => {
+		releaseResponseWrite = release
+	})
 	const respond = vi.fn(async () =>
 		options.rejected
 			? { kind: "rejected" as const, reason: "stale_attempt" }
@@ -54,7 +60,10 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 					kind: "accepted" as const,
 					state: taskState,
 					commands: [],
-					receipt: { revision: taskState.revision, durable: Promise.resolve() },
+					receipt: {
+						revision: taskState.revision,
+						durable: options.holdResponseWrite ? responseWritten : Promise.resolve(),
+					},
 				},
 	)
 	const put = vi.fn(async (_payload: Uint8Array) => `payload-${put.mock.calls.length}`)
@@ -102,6 +111,7 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
 		clineMessages,
 		beginDurableClineMessage,
 		releaseRowWrite: () => releaseRowWrite(),
+		releaseResponseWrite: () => releaseResponseWrite(),
 		approvalFeedback,
 	}
 }

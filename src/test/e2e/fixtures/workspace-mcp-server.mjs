@@ -15,7 +15,15 @@ server.registerTool(
 		description: "E2E workspace MCP capability marker",
 		inputSchema: { value: z.string() },
 	},
-	async ({ value }) => ({ content: [{ type: "text", text: value }] }),
+	async ({ value }) => ({
+		content:
+			value === "E2E_MCP_AGGREGATE"
+				? [
+						{ type: "text", text: "E2E_MCP_AGGREGATE_FIRST" },
+						{ type: "text", text: "E2E_MCP_AGGREGATE_SECOND" },
+					]
+				: [{ type: "text", text: value }],
+	}),
 )
 
 await server.connect(new StdioServerTransport())

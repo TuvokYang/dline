@@ -199,6 +199,30 @@ describe("ProviderCompactionService", () => {
 		expect(sent).toContain("b".repeat(1_000))
 	})
 
+	it("prefers the provider official input count over calibrated byte estimation", async () => {
+		const counted = probe([{ type: "text", text: SUMMARY_TEXT }])
+		const countInputTokens = vi.fn(async () => 100_000)
+		;(counted.frame.api as { countInputTokens?: typeof countInputTokens }).countInputTokens = countInputTokens
+		const requestPressures: NonNullable<ServiceOptions["requestPressures"]> = () => [
+			{
+				providerId: "openai",
+				modelId: "probe-model",
+				apiFormat: undefined,
+				estimatedTextBytes: 1_000,
+				estimatedMediaTokens: 0,
+				actualInputTokens: 1_000,
+			},
+		]
+
+		await run(service(counted.frame, undefined, { requestPressures }), TWO_LARGE_TURNS)
+
+		expect(countInputTokens).toHaveBeenCalled()
+		expect(counted.calls).toHaveLength(1)
+		const sent = JSON.stringify(counted.calls[0]?.[1])
+		expect(sent).toContain("task A")
+		expect(sent).toContain("task B")
+	})
+
 	// A Pass that cannot fit the window is refused before anything is sent:
 	// sending it with a guessed budget only fails at the provider after paying
 	// for the input.

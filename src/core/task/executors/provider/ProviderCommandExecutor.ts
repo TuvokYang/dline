@@ -3,14 +3,14 @@ import type { CommandExecutor } from "../../runtime"
 import type { ConversationJournal, TaskViewPort } from "../../stores"
 import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort, type TaskEventSink } from "../contracts"
 import { presentationOf } from "./ProviderFailure"
-import {
-	mergeProviderUsage,
-	type ProviderReceivingEstimate,
-	type ProviderRequestOutcome,
-	type ProviderRequestRecord,
-	type ProviderRequestReportPort,
-	type ProviderRetryNotice,
+import type {
+	ProviderReceivingEstimate,
+	ProviderRequestOutcome,
+	ProviderRequestRecord,
+	ProviderRequestReportPort,
+	ProviderRetryNotice,
 } from "./service/ProviderRequestReport"
+import { mergeProviderUsage } from "./service/ProviderRequestReport"
 
 export type ProviderExecutionChunk =
 	| {
@@ -68,7 +68,12 @@ export interface ProviderTextPresentationPort {
 	 * An empty `reasoning` still opens the reasoning row: the model is thinking,
 	 * but only in an encrypted form that must never be shown.
 	 */
-	showPartial(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): void
+	showPartial(input: {
+		readonly transientId: string
+		readonly text: string
+		readonly reasoning?: string
+		readonly projection?: Readonly<Record<string, unknown>>
+	}): void
 	/** Settle those rows once the turn is durable, or retract a row that received nothing. */
 	commit(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): Promise<void>
 }
@@ -338,6 +343,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
 						transientId: chunk.transientId,
 						text: chunk.text ?? "",
 						...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
+						...(chunk.projection === undefined ? {} : { projection: chunk.projection }),
 					})
 					continue
 				}

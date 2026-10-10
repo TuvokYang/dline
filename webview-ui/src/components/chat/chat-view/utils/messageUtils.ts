@@ -142,25 +142,19 @@ function isMcpRequest(message: UiMessage): boolean {
 	return message.ask === "use_mcp_server" || message.say === "use_mcp_server"
 }
 
+function nearestPriorMcpRequestIndex(messages: UiMessage[], responseIndex: number): number {
+	for (let index = responseIndex - 1; index >= 0; index--) {
+		if (isMcpRequest(messages[index])) return index
+	}
+	return -1
+}
+
 function isAttachedMcpResponse(messages: UiMessage[], responseIndex: number): boolean {
 	const response = parseMcpServerResponse(messages[responseIndex]?.text)
 	if (response.requestTs !== undefined) {
-		return messages.some((message) => message.ts === response.requestTs && isMcpRequest(message))
+		if (messages.some((message) => message.ts === response.requestTs && isMcpRequest(message))) return true
 	}
-	for (let index = responseIndex - 1; index >= 0; index--) {
-		const candidate = messages[index]
-		if (isMcpRequest(candidate)) return true
-		if (
-			candidate.say === "mcp_server_request_started" ||
-			candidate.say === "mcp_notification" ||
-			candidate.say === "checkpoint_created" ||
-			candidate.say === "mcp_server_response"
-		) {
-			continue
-		}
-		return false
-	}
-	return false
+	return nearestPriorMcpRequestIndex(messages, responseIndex) !== -1
 }
 
 export function collectMcpResponseTexts(messages: UiMessage[], requestTs: number): string[] {
@@ -173,24 +167,15 @@ export function collectMcpResponseTexts(messages: UiMessage[], requestTs: number
 
 	const requestIndex = messages.findIndex((message) => message.ts === requestTs && isMcpRequest(message))
 	if (requestIndex === -1) return []
-	const responses: string[] = []
-	for (let index = requestIndex + 1; index < messages.length; index++) {
-		const candidate = messages[index]
-		if (isMcpRequest(candidate)) break
-		if (candidate.say === "mcp_server_response") {
-			responses.push(...parseMcpServerResponse(candidate.text).responses)
-			continue
+	return messages.flatMap((candidate, index) => {
+		if (candidate.say !== "mcp_server_response" || index <= requestIndex) return []
+		const response = parseMcpServerResponse(candidate.text)
+		if (response.requestTs !== undefined) {
+			const linkedRequestExists = messages.some((message) => message.ts === response.requestTs && isMcpRequest(message))
+			if (linkedRequestExists) return []
 		}
-		if (
-			candidate.say === "mcp_server_request_started" ||
-			candidate.say === "mcp_notification" ||
-			candidate.say === "checkpoint_created"
-		) {
-			continue
-		}
-		break
-	}
-	return responses
+		return nearestPriorMcpRequestIndex(messages, index) === requestIndex ? response.responses : []
+	})
 }
 
 /**
@@ -511,6 +496,28 @@ function isDisplayedCheckpoint(checkpointIndex: number, allMessages: UiMessage[]
 	}
 
 	// Start of messages - checkpoint is displayed (no preceding tool group)
+	return true
+}
+
+/**
+ * Keep one visible restore baseline per user-authored turn.
+ *
+ * File-mutating tools still commit every durable checkpoint, but showing each
+ * autonomous edit as another full-width checkpoint row floods the timeline.
+ * Opaque reasoning and provider request rows are implementation detail and do
+ * not start a new user turn, so later checkpoints remain available to recovery
+ * code without being rendered as duplicate controls.
+ */
+export function isPrimaryCheckpointForUserTurn(checkpointTs: number, allMessages: UiMessage[]): boolean {
+	const checkpointIndex = allMessages.findIndex(
+		(message) => message.ts === checkpointTs && message.say === "checkpoint_created",
+	)
+	if (checkpointIndex === -1) return false
+	for (let index = checkpointIndex - 1; index >= 0; index--) {
+		const message = allMessages[index]
+		if (message.say === "checkpoint_created") return false
+		if (message.say === "task" || message.say === "user_feedback") return true
+	}
 	return true
 }
 

@@ -56,4 +56,16 @@ describe("SubagentMetrics context usage", () => {
 		// Costs at or above 0.01 render with two fraction digits by existing design.
 		expect(metrics.textContent).toContain("$0.01")
 	})
+
+	it.each([
+		["USD", "$0.01"],
+		["CNY", "CN¥0.01"],
+		["JPY", "JP¥0.01"],
+		["EUR", "€0.01"],
+		["CHF", "CHF 0.01"],
+	])("formats model currency %s without a yuan fallback", (currency, expected) => {
+		render(<SubagentMetrics {...baseProps} currency={currency} />)
+
+		expect(screen.getByTestId("subagent-metrics")).toHaveTextContent(expected)
+	})
 })

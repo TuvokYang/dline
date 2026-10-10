@@ -234,6 +234,18 @@ export async function dispatchInteraction(
 		}
 		return response(false, normalizeResult(result.reason))
 	}
+	try {
+		await result.receipt.durable
+	} catch (error) {
+		if (feedbackBlockId) {
+			session.approvalFeedback.take(feedbackBlockId)
+			if (priorFeedback) session.approvalFeedback.record(feedbackBlockId, priorFeedback)
+		}
+		Logger.error(
+			`dispatchInteraction: accepted reply was not durable for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
+		)
+		return response(false, "invalid_runtime_event")
+	}
 	const denialPresentation =
 		approvalEntry && request.actionId === "reject"
 			? (() => {

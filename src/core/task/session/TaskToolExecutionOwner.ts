@@ -10,11 +10,11 @@ import { ClineDefaultTool } from "@shared/tools"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
 import type { BackgroundResultDeliveryPort } from "../background/BackgroundResultDeliveryPort"
 import type { PeerTaskSpawnPort } from "../executors/spawn/PeerTaskSpawnPort"
-import {
-	materializeToolInvocation,
-	type ProductionToolConfigFactory,
-	type ProductionToolConfigFactoryInput,
+import type {
+	ProductionToolConfigFactory,
+	ProductionToolConfigFactoryInput,
 } from "../executors/tool/production/DefaultProductionToolExecutionService"
+import { materializeToolInvocation } from "../executors/tool/production/DefaultProductionToolExecutionService"
 import type { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
 import type { ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
 import type { ToolBlockStatePort } from "../executors/tool/ToolBlockStatePort"
@@ -32,6 +32,7 @@ import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { SubagentFanoutBudget, usableSubagentLimit } from "../tools/subagent/SubagentFanoutBudget"
 import { SubagentJobManager } from "../tools/subagent/SubagentJobManager"
 import type { TaskCallbacks, TaskConfig, TaskInteractionPorts, TaskServices } from "../tools/types/TaskConfig"
+import { createUIHelpers } from "../tools/types/UIHelpers"
 import type { TaskApiHandlerOwner } from "./TaskApiHandlerOwner"
 
 export interface TaskToolExecutionOwnerOptions {
@@ -126,6 +127,12 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
 		const block = await this.readInvocation(invocationRef)
 		const runtime = this.options.toolRuntime
 		await runtime.presentDenial(this.create({ coordinator: runtime.coordinator }), block)
+	}
+
+	/** Route one provider-owned incomplete block through its existing presentation handler. */
+	presentPartial(block: ToolUse): Promise<void> {
+		const runtime = this.options.toolRuntime
+		return runtime.coordinator.presentPartial(block, createUIHelpers(this.create({ coordinator: runtime.coordinator })))
 	}
 
 	/** The result a manually rejected tool reports to the model, in its handler's own words. */

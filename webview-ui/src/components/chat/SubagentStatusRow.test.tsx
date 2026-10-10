@@ -908,8 +908,7 @@ describe("SubagentStatusRow", () => {
 		expect(runtime).toHaveTextContent("high")
 		const metrics = within(item).getByTestId("subagent-metrics")
 		expect(metrics).toHaveTextContent("Cache:85%")
-		expect(metrics).toHaveTextContent("¥0.01")
-		expect(metrics).not.toHaveTextContent("CN")
+		expect(metrics).toHaveTextContent("CN¥0.01")
 	})
 
 	it("keeps Task, Tools, and Output content-sized within the bounded Work card", () => {

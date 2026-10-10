@@ -1,3 +1,4 @@
+import { Logger } from "@shared/services/Logger"
 import type { ProviderTextPresentationPort } from "../executors/provider/ProviderCommandExecutor"
 import type { MessageStateHandler } from "../message-state"
 import type { PresentationIdSequence } from "./PresentationIdSequence"
@@ -23,9 +24,20 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
 		private readonly messages: MessageStateHandler,
 		private readonly nextPresentationId: PresentationIdSequence,
 		private readonly realtime?: RealtimeMessagePublisher,
+		private readonly presentToolPartial?: (projection: Readonly<Record<string, unknown>>) => Promise<void>,
 	) {}
 
-	showPartial(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): void {
+	showPartial(input: {
+		readonly transientId: string
+		readonly text: string
+		readonly reasoning?: string
+		readonly projection?: Readonly<Record<string, unknown>>
+	}): void {
+		if (input.projection && this.presentToolPartial) {
+			void this.presentToolPartial(input.projection).catch((error) =>
+				Logger.warn(`[ProviderTextPresenter] Failed to present partial tool call: ${String(error)}`),
+			)
+		}
 		// Reasoning first: its row is allocated before the prose row, so the chat
 		// shows the thinking above the answer it led to. Empty reasoning still
 		// opens the row, so encrypted-only thinking reads as activity, not a stall.

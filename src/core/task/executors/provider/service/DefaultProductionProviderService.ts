@@ -6,13 +6,13 @@ import { parseAssistantMessage, type ToolUse } from "@core/assistant-message"
 import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
 import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@shared/mcp"
-import {
-	type ClineAssistantContent,
-	type ClineAssistantToolUseBlock,
-	type ClineStorageMessage,
-	type HostedToolReplayProtocol,
-	projectInternalMessagesForProvider,
+import type {
+	ClineAssistantContent,
+	ClineAssistantToolUseBlock,
+	ClineStorageMessage,
+	HostedToolReplayProtocol,
 } from "@shared/messages/content"
+import { projectInternalMessagesForProvider } from "@shared/messages/content"
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import { Logger } from "@shared/services/Logger"
 import { ClineError } from "@/services/error"
@@ -22,6 +22,7 @@ import { isRetryableProviderError, type ProviderIdentity, waitRetryDelayUnlessAb
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry-schedule"
 import { ContextWindowReceivingTracker } from "../../../ContextWindowReceivingTracker"
 import { type ApiRequestTiming, calculateApiRequestTiming } from "../../../performance/api-request-timing"
+import { ReasoningIndicator } from "../../../reasoning-indicator"
 import { StreamResponseHandler } from "../../../StreamResponseHandler"
 import type { JournalWatermark } from "../../../stores"
 import type {
@@ -29,6 +30,7 @@ import type {
 	ProviderDraftEnvelope,
 	ToolInvocationEnvelope,
 } from "../../../stores/payload/TaskPayloadEnvelopes"
+import { parsePartialToolInput } from "../../../tools/partial-tool-input"
 import type { ProductionProviderChunk, ProductionProviderService } from "../ProductionProviderAdapter"
 import { ProviderFailure } from "../ProviderFailure"
 import { closeQuietly, detachOnAbort } from "./detachOnAbort"
@@ -368,6 +370,27 @@ export function materializeNativeToolCall(
 	}
 }
 
+/** Materialize the display-safe portion of an incomplete native tool call. */
+export function materializePartialNativeToolCall(
+	name: string,
+	argumentsValue: unknown,
+	resolveServerName: (key: string) => string = (key) => key,
+): Pick<ToolUse, "name" | "params"> {
+	const input = parsePartialToolInput(argumentsValue)
+	const marker = name.indexOf(CLINE_MCP_TOOL_IDENTIFIER)
+	if (marker < 0) return { name: name as ToolUse["name"], params: toolParams(input) }
+	const serverKey = name.slice(0, marker)
+	const toolName = name.slice(marker + CLINE_MCP_TOOL_IDENTIFIER.length)
+	return {
+		name: ClineDefaultTool.MCP_USE,
+		params: {
+			server_name: resolveServerName(serverKey),
+			tool_name: toolName,
+			arguments: JSON.stringify(input),
+		},
+	}
+}
+
 /** Production provider executor: request preparation is injected; stream folding stays provider-domain local. */
 export class DefaultProductionProviderService implements ProductionProviderService {
 	private readonly identities: IdentityFactory
@@ -401,7 +424,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 		const transientId = `provider:${prepared.turnId}`
 		let text = ""
 		let reasoningText = ""
-		let encryptedReasoningShown = false
+		let reasoningIndicator = new ReasoningIndicator()
 		// Replay needs what the provider signed, not only what it said: Anthropic
 		// drops an unsigned thinking block and the Responses API replays summaries
 		// and encrypted items, so the same accumulator dev and subagents use folds them.
@@ -470,28 +493,43 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 									redacted_data: chunk.redacted_data,
 									redacted_phase: chunk.redacted_phase,
 								})
-								if (!chunk.reasoning) {
-									// Encrypted-only reasoning has nothing to show, but the row must
-									// still open once so the chat reads it as thinking, not a stall.
-									if (chunk.redacted_data && !encryptedReasoningShown && reasoningText.length === 0) {
-										encryptedReasoningShown = true
-										yield { kind: "partial", transientId, text: visibleAssistantText(text), reasoning: "" }
+								const action = reasoningIndicator.decide({
+									hasPlainReasoning: Boolean(chunk.reasoning),
+									hasEncryptedReasoning: Boolean(chunk.redacted_data),
+									assistantTextStarted: visibleAssistantText(text).length > 0,
+									hasPendingNativeToolUse: nativeTools.size > 0,
+								})
+								if (chunk.reasoning) reasoningText += chunk.reasoning
+								if (action === "open_placeholder") {
+									yield { kind: "partial", transientId, text: visibleAssistantText(text), reasoning: "" }
+								} else if (action === "publish_text") {
+									yield {
+										kind: "partial",
+										transientId,
+										text: visibleAssistantText(text),
+										reasoning: reasoningText,
 									}
-									break
-								}
-								reasoningText += chunk.reasoning
-								// Shown while it streams, as dev did: a long think is otherwise
-								// indistinguishable from a stalled request.
-								yield {
-									kind: "partial",
-									transientId,
-									text: visibleAssistantText(text),
-									reasoning: reasoningText,
 								}
 								break
 							case "tool_calls":
 								toolActivity = true
 								this.consumeNativeTool(nativeTools, chunk)
+								const pendingTool = nativeTools.get(chunk.dline_tid)
+								const partialBlock = pendingTool?.name
+									? {
+											type: "tool_use" as const,
+											...materializePartialNativeToolCall(
+												pendingTool.name,
+												pendingTool.arguments,
+												this.options.resolveMcpServerName,
+											),
+											partial: true,
+											ts: pendingTool.presentationId,
+											isNativeToolCall: true,
+											function_id: pendingTool.functionId,
+											dline_tid: pendingTool.dlineTid,
+										}
+									: undefined
 								// The completed chunk may omit the name, so it is read from the call
 								// the earlier deltas accumulated.
 								if (chunk.phase === "completed" && isTurnEndingToolName(nativeTools.get(chunk.dline_tid)?.name))
@@ -503,7 +541,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 									projection: {
 										kind: "provider.tool_partial",
 										dlineTid: chunk.dline_tid,
-										toolName: chunk.tool_call.function.name,
+										...(partialBlock ? { block: partialBlock } : {}),
 									},
 								}
 								break
@@ -545,7 +583,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
 					// turn's stream, so the resent stream rewrites them from scratch.
 					text = ""
 					reasoningText = ""
-					encryptedReasoningShown = false
+					reasoningIndicator = new ReasoningIndicator()
 					reasoning = newReasoning()
 					nativeTools.clear()
 					hostedToolBlocks.length = 0

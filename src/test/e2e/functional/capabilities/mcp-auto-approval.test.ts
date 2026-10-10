@@ -127,7 +127,7 @@ e2e(
 				arguments: {
 					server_name: MCP_NAME,
 					tool_name: MCP_TOOL_NAME,
-					arguments: JSON.stringify({ value: "E2E_MCP_DEFAULT_ALLOWED" }),
+					arguments: JSON.stringify({ value: "E2E_MCP_AGGREGATE" }),
 				},
 			},
 			{
@@ -135,7 +135,10 @@ e2e(
 				id: "call_mcp_default_completion",
 				name: "attempt_completion",
 				arguments: { result: "E2E_MCP_DEFAULT_ALLOWED_DONE" },
-				expectedToolResults: [{ callId: "call_mcp_default_allowed", contentIncludes: "E2E_MCP_DEFAULT_ALLOWED" }],
+				expectedToolResults: [
+					{ callId: "call_mcp_default_allowed", contentIncludes: "E2E_MCP_AGGREGATE_FIRST" },
+					{ callId: "call_mcp_default_allowed", contentIncludes: "E2E_MCP_AGGREGATE_SECOND" },
+				],
 			},
 		)
 		await sendTask(sidebar, "Use the configured MCP echo tool without asking me first.")
@@ -143,6 +146,16 @@ e2e(
 			timeout: 60_000,
 		})
 		await expect(sidebar.getByText("Approve", { exact: true })).toHaveCount(0)
+		const requestCard = sidebar.getByTestId("mcp-request-card")
+		await expect(requestCard).toHaveCount(1)
+		await expect(sidebar.getByText(`Dline is using the ${MCP_NAME} MCP server:`, { exact: true })).toBeVisible()
+		await expect(sidebar.getByText(`Dline wants to use the ${MCP_NAME} MCP server:`, { exact: true })).toHaveCount(0)
+		const responseGroup = sidebar.getByTestId("mcp-response-group")
+		await expect(responseGroup).toHaveCount(1)
+		await expect(responseGroup.getByTestId("mcp-response-card")).toHaveCount(1)
+		await expect(sidebar.getByTestId("mcp-response-card")).toHaveCount(1)
+		await expect(responseGroup).toContainText("E2E_MCP_AGGREGATE_FIRST")
+		await expect(responseGroup).toContainText("E2E_MCP_AGGREGATE_SECOND")
 		expect(server.getMockConsumptions("openai-compatible-responses").map((entry) => entry.toolName)).toEqual([
 			"use_mcp_tool",
 			"attempt_completion",

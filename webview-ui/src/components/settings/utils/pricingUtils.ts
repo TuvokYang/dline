@@ -2,18 +2,7 @@ import type { ModelInfo } from "@shared/api"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
 import { resolveThinkingBudgetBounds } from "@shared/providers/thinking-budget"
 
-const CURRENCY_SYMBOLS: Readonly<Record<string, string>> = {
-	USD: "$",
-	CNY: "¥",
-	EUR: "€",
-	GBP: "£",
-}
-
-/** Resolve a compact display symbol without silently changing the declared currency. */
-export const getCurrencySymbol = (currency?: string): string => {
-	const code = currency?.trim().toUpperCase() || "USD"
-	return CURRENCY_SYMBOLS[code] ?? `${code} `
-}
+export { getCurrencySymbol } from "@/utils/currency"
 
 /**
  * Formats a price as a currency string.

@@ -14,6 +14,7 @@ import { Logger } from "@/shared/services/Logger"
 import { Session } from "@/shared/services/Session"
 import { ClineDefaultTool } from "@/shared/tools"
 import { EncryptedReasoningAccumulator, type EncryptedReasoningPhase } from "./reasoning-retention"
+import { parsePartialToolInput } from "./tools/partial-tool-input"
 
 export interface PendingToolUse {
 	function_id: string
@@ -55,16 +56,6 @@ export interface PendingReasoning {
 	redactedThinking: EncryptedReasoningAccumulator
 	summary: unknown[] | ClineReasoningDetailParam[]
 }
-
-const ESCAPE_MAP: Record<string, string> = {
-	"\\n": "\n",
-	"\\t": "\t",
-	"\\r": "\r",
-	'\\"': '"',
-	"\\\\": "\\",
-}
-
-const ESCAPE_PATTERN = /\\[ntr"\\]/g
 
 export class StreamResponseHandler {
 	private toolUseHandler: ToolUseHandler
@@ -160,7 +151,7 @@ class ToolUseHandler {
 			try {
 				input = JSON.parse(pending.input)
 			} catch {
-				input = this.extractPartialJsonFields(pending.input)
+				input = parsePartialToolInput(pending.input)
 			}
 		}
 
@@ -217,7 +208,7 @@ class ToolUseHandler {
 					input = JSON.parse(pending.input)
 				} catch {
 					// Fall back to extracting partial fields from incomplete JSON
-					input = this.extractPartialJsonFields(pending.input)
+					input = parsePartialToolInput(pending.input)
 				}
 			}
 
@@ -296,42 +287,6 @@ class ToolUseHandler {
 		Session.get().updateToolCall(pending.function_id, pending.name)
 
 		return pending
-	}
-
-	private extractPartialJsonFields(partialJson: string): Record<string, any> {
-		const result: Record<string, any> = {}
-		// Phase 1: Require closing quote for all fields.
-		// Without the closing quote guard, truncated path values (e.g. "path":"s)
-		// leak into handlePartialBlock, which opens the diff editor at the wrong path
-		// and the real path is never applied because isEditing stays true.
-		const closedPattern = /"(\w+)":\s*"((?:[^"\\]|\\.)*)"/g
-
-		for (const match of partialJson.matchAll(closedPattern)) {
-			result[match[1]] = match[2].replace(ESCAPE_PATTERN, (m) => ESCAPE_MAP[m])
-		}
-
-		// Phase 2: For long streaming fields, extract incremental
-		// content from an unclosed string value so that partial rendering can show
-		// growing text instead of waiting for the closing quote.
-		// Includes: generic text fields (content, diff), compaction context
-		// (summarize_task/new_task), and turn-ending tool response fields
-		// (response for make_plan/qna_respond/act_mode_respond, result for attempt_completion).
-		const streamingFields = ["context", "content", "diff", "response", "result"]
-		for (const field of streamingFields) {
-			if (result[field] !== undefined) {
-				continue // already extracted with closed quote in Phase 1
-			}
-			// Match from the opening quote of the field value to end of string.
-			// `$` anchors to end-of-string because partialJson is a single-line
-			// accumulated JSON fragment with all newlines escaped as \n.
-			const openPattern = new RegExp(`"${field}":\\s*"((?:[^"\\\\]|\\\\.)*)`)
-			const match = partialJson.match(openPattern)
-			if (match) {
-				result[field] = match[1].replace(ESCAPE_PATTERN, (m) => ESCAPE_MAP[m])
-			}
-		}
-
-		return result
 	}
 }
 

@@ -87,6 +87,23 @@ describe("UseMcpToolHandler auto-approval", () => {
 		expect(config.services.mcpHub.callTool).toHaveBeenCalledWith("docs", "search", {}, "ulid-1")
 	})
 
+	it("links the response to the actual persisted MCP request row", async () => {
+		const config = createConfig(true, true)
+		const say = config.callbacks.say as ReturnType<typeof vi.fn>
+		say.mockImplementation(async (type: string) => (type === "use_mcp_server" ? 84 : undefined))
+		const handler = new UseMcpToolHandler()
+
+		await handler.execute(config, block)
+
+		const responseCall = say.mock.calls.find((call) => call[0] === "mcp_server_response")
+		expect(responseCall).toBeDefined()
+		expect(JSON.parse(responseCall?.[1] as string)).toMatchObject({
+			type: "mcp_server_response",
+			requestTs: 84,
+			responses: ["ok"],
+		})
+	})
+
 	it("classifies a missing server name as a validation failure before MCP execution", async () => {
 		const config = createConfig(true, true)
 		const handler = new UseMcpToolHandler()

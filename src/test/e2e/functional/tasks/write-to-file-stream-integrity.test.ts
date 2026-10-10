@@ -108,10 +108,11 @@ e2e(
 		// An output limit the provider enforced is a final failure: replaying the
 		// same request would only be cut off again, so it is reported for the user
 		// to act on rather than retried automatically.
-		await expect(sidebar.getByTestId("api-error-box")).toBeVisible({ timeout: 60_000 })
+		// The canonical error interaction owns recovery; no legacy inline retry row
+		// should compete with its Retry / Start New Task actions.
+		await expect(sidebar.getByRole("button", { name: "Retry", exact: true }).last()).toBeVisible({ timeout: 60_000 })
+		await expect(sidebar.getByRole("button", { name: "Start New Task", exact: true }).last()).toBeVisible()
 		await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)
-		// The user can still choose to retry, for example after raising the output limit.
-		await expect(sidebar.getByRole("button", { name: "Retry", exact: true }).last()).toBeVisible()
 		await expect
 			.poll(
 				() =>

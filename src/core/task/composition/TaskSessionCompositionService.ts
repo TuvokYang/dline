@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import type { ToolUse } from "@core/assistant-message"
 import { collectContextWindowRequestPressures } from "@core/context/context-management/context-pressure"
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
@@ -38,11 +39,8 @@ import { ProviderRetryGate } from "../executors/provider/service/ProviderRetryGa
 import { DefaultProductionToolExecutionService } from "../executors/tool/production/DefaultProductionToolExecutionService"
 import { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
 import { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
-import {
-	type TaskCompletionProjection,
-	type TaskCompletionProjectionUpdate,
-	TaskCompletionProjector,
-} from "../history/TaskCompletionProjector"
+import type { TaskCompletionProjection, TaskCompletionProjectionUpdate } from "../history/TaskCompletionProjector"
+import { TaskCompletionProjector } from "../history/TaskCompletionProjector"
 import type { TaskState } from "../kernel"
 import { MessageStateHandler } from "../message-state"
 import { buildNewTaskFeedbackContent, findLatestNewTaskFeedback, perRequestHistory } from "../new-task/new-task-feedback"
@@ -78,10 +76,8 @@ import { openActiveTaskSession } from "../session/TaskSessionFactory"
 import type { TaskSessionOwners } from "../session/TaskSessionOwners"
 import { TaskToolExecutionOwner } from "../session/TaskToolExecutionOwner"
 import { TurnContinuationRenderer } from "../session/TurnContinuationRenderer"
-import {
-	ResumeDialogContinuation,
-	type TaskResumptionPort as ResumeDialogContinuationPorts,
-} from "../session/UnownedDialogContinuation"
+import type { TaskResumptionPort as ResumeDialogContinuationPorts } from "../session/UnownedDialogContinuation"
+import { ResumeDialogContinuation } from "../session/UnownedDialogContinuation"
 import { restoreCheckpoint as restoreCanonicalCheckpoint } from "../shell/checkpoint-restore"
 import { openTaskPersistence, type TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
 import { InMemoryBackgroundDeliveryLedger, type TaskViewPort } from "../stores"
@@ -742,7 +738,17 @@ export class TaskSessionCompositionService {
 			dialogAwaiting: interactions,
 			// A reply that calls no tool has no block to render it, so the prose
 			// itself is what the chat must show.
-			providerPresentation: new ProviderTextPresenter(messages, nextPresentationId, realtimeMessages),
+			providerPresentation: new ProviderTextPresenter(
+				messages,
+				nextPresentationId,
+				realtimeMessages,
+				async (projection) => {
+					if (projection.kind !== "provider.tool_partial") return
+					const block = projection.block
+					if (!block || typeof block !== "object") return
+					await toolExecution.presentPartial(block as ToolUse)
+				},
+			),
 			readMistakeLimit: () => ({
 				count: toolState.consecutiveMistakeCount,
 				limit: options.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes") ?? 3,

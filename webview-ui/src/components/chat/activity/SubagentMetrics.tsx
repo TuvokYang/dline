@@ -1,3 +1,4 @@
+import { formatCurrencyAmount } from "@/utils/currency"
 import { formatTokenMetric } from "../task-header/util"
 
 interface SubagentMetricsProps {
@@ -47,11 +48,8 @@ export function formatSubagentDuration(startedAt: number | undefined, finishedAt
 
 function formatSubagentCost(totalCost: number | undefined, currency: string | undefined): string {
 	const normalizedCost = Number.isFinite(totalCost) ? Math.max(0, totalCost ?? 0) : 0
-	const currencyCode = currency?.trim().toUpperCase() || "USD"
 	const maximumFractionDigits = normalizedCost >= 0.01 ? 2 : 4
-	const currencySymbols: Record<string, string> = { CNH: "¥", CNY: "¥", RMB: "¥", JPY: "¥", USD: "$", EUR: "€", GBP: "£" }
-	const symbol = currencySymbols[currencyCode] ?? currencyCode
-	return `${symbol}${normalizedCost.toFixed(maximumFractionDigits)}`
+	return formatCurrencyAmount(normalizedCost, currency, maximumFractionDigits)
 }
 
 export function SubagentMetrics({

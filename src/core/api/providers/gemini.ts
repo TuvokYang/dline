@@ -1,12 +1,7 @@
 // Restore GenerateContentConfig import and add GenerateContentResponseUsageMetadata
-import {
-	ApiError,
-	FunctionCallingConfigMode,
-	type GenerateContentConfig,
-	type GenerateContentResponseUsageMetadata,
-	GoogleGenAI,
-	FunctionDeclaration as GoogleTool,
-} from "@google/genai"
+
+import type { GenerateContentConfig, GenerateContentResponseUsageMetadata } from "@google/genai"
+import { ApiError, FunctionCallingConfigMode, GoogleGenAI, FunctionDeclaration as GoogleTool } from "@google/genai"
 import { GeminiModelId, geminiDefaultModelId, geminiModels, ModelInfo } from "@shared/api"
 import { observeProviderStream } from "@shared/provider-attempt-observer"
 import { GEMINI_FLASH_MAX_OUTPUT_TOKENS, isGeminiFlashModel } from "@utils/model-utils"
@@ -350,41 +345,31 @@ export class GeminiHandler implements ApiHandler {
 		return { id: geminiDefaultModelId, info: geminiModels[geminiDefaultModelId] }
 	}
 
-	async countTokens(content: Array<any>): Promise<number> {
+	async countInputTokens(input: {
+		readonly systemPrompt: string
+		readonly messages: ClineStorageMessage[]
+		readonly tools?: GoogleTool[]
+	}): Promise<number | undefined> {
 		try {
 			const client = this.ensureClient()
 			const { id: model } = this.getModel()
-			const geminiContent = content.map((block) => {
-				if (typeof block === "string") return { text: block }
-				return { text: JSON.stringify(block) }
+			const response = await client.models.countTokens({
+				model,
+				contents: input.messages.map(convertAnthropicMessageToGemini),
+				config: {
+					systemInstruction: input.systemPrompt,
+					...(input.tools?.length ? { tools: [{ functionDeclarations: input.tools }] } : {}),
+				},
 			})
-			const response = await client.models.countTokens({ model, contents: [{ parts: geminiContent }] })
 			if (response.totalTokens === undefined) {
-				Logger.warn("Gemini token counting returned undefined, using fallback")
-				return this.estimateTokens(content)
+				Logger.warn("Gemini token counting returned undefined")
+				return undefined
 			}
 			return response.totalTokens
 		} catch (error) {
-			Logger.warn("Gemini token counting failed, using fallback", error)
-			return this.estimateTokens(content)
+			Logger.warn("Gemini token counting failed", error)
+			return undefined
 		}
-	}
-
-	private estimateTokens(content: Array<any>): number {
-		const totalChars = content.reduce((total, block) => {
-			if (typeof block === "string") return total + block.length
-			if (block && typeof block === "object") {
-				try {
-					const jsonStr = JSON.stringify(block)
-					return total + jsonStr.length
-				} catch (e) {
-					Logger.warn("Failed to stringify block for token estimation", e)
-					return total
-				}
-			}
-			return total
-		}, 0)
-		return Math.ceil(totalChars / 4)
 	}
 
 	private parseRetryDelay(retryAfter?: string): number {

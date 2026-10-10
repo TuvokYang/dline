@@ -260,6 +260,7 @@ function stubApiHandler(
 	contextWindow = 200_000,
 	hostedWebSearch = false,
 	abort = vi.fn(),
+	currency = "USD",
 ) {
 	vi.spyOn(coreApi, "buildApiHandler").mockReturnValue({
 		abort,
@@ -269,6 +270,7 @@ function stubApiHandler(
 			id: "anthropic/claude-sonnet-4.5",
 			info: {
 				contextWindow,
+				pricing: { currency },
 				apiFormats: [ApiFormat.ANTHROPIC_CHAT],
 				supportsPromptCache: true,
 				capabilities: {
@@ -2071,6 +2073,47 @@ describe("SubagentRunner", () => {
 		assert.match(result.error || "", /stream_initialization_failed/i)
 	})
 
+	it("retries the literal Upstream HTTP/2 stream failed transport error in the same run", async () => {
+		const createMessage = vi
+			.fn()
+			.mockImplementationOnce(async function* () {
+				yield* []
+				throw new Error("Upstream HTTP/2 stream failed")
+			})
+			.mockImplementationOnce(async function* () {
+				yield {
+					type: "tool_calls",
+					function_id: "fn-complete",
+					dline_tid: "tid-complete",
+					tool_call: { function: { name: "attempt_completion", arguments: '{"result":"recovered"}' } },
+					phase: "completed",
+				}
+			})
+		vi.spyOn(global, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void) => {
+			queueMicrotask(callback)
+			return {} as NodeJS.Timeout
+		}) as typeof setTimeout)
+		stubSystemPrompt(false)
+		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+		stubApiHandler(createMessage)
+		initializeHostProvider()
+
+		const progressEvents: Array<Record<string, unknown>> = []
+		const result = await new SubagentRunner(createTaskConfig(false)).run("Recover transport", (update) => {
+			if (update.event) progressEvents.push(update.event as unknown as Record<string, unknown>)
+		})
+
+		assert.equal(result.status, "completed")
+		assert.equal(result.result, "recovered")
+		assert.equal(createMessage.mock.calls.length, 2)
+		assert.deepEqual(
+			progressEvents.filter((event) => event.kind === "retry"),
+			[{ kind: "retry", retryAttempt: 1, maxRetries: 5, delayMs: 5_000, cumulativeDelayMs: 5_000 }],
+		)
+		assert.equal(progressEvents.filter((event) => event.kind === "tool_call").length, 1)
+	})
+
 	it("retries retryable initial API failures five times with cumulative progress events", async () => {
 		const createMessage = vi.fn().mockImplementation(async function* () {
 			yield* []
@@ -2512,7 +2555,7 @@ describe("SubagentRunner", () => {
 		stubSystemPrompt(false)
 		vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
 		vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
-		stubApiHandler(createMessage)
+		stubApiHandler(createMessage, 200_000, false, vi.fn(), "CNY")
 		initializeHostProvider()
 
 		const result = await new SubagentRunner(createTaskConfig(false, { providerRequestRounds: { admit } })).run(
@@ -2531,7 +2574,7 @@ describe("SubagentRunner", () => {
 				cacheReadTokens: 0,
 				cacheUsageReported: true,
 				totalCost: 0,
-				currency: "USD",
+				currency: "CNY",
 			},
 		])
 		assert.deepEqual(

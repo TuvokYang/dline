@@ -9,6 +9,7 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
 import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
+import { Logger } from "@/shared/services/Logger"
 import { anthropicMessagesDocumentLimits } from "../document-input-limits"
 import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
 import { withRetry } from "../retry"
@@ -185,6 +186,42 @@ export class AnthropicHandler implements ApiHandler {
 			openStream: (continuationMessages) =>
 				transport.open({ ...requestBody, messages: continuationMessages }, claudeCodeIdentity.headers),
 		})
+	}
+
+	async countInputTokens(input: {
+		readonly systemPrompt: string
+		readonly messages: ClineStorageMessage[]
+		readonly tools?: AnthropicTool[]
+		readonly options?: ApiRequestOptions
+	}): Promise<number | undefined> {
+		try {
+			const model = this.getModel()
+			const anthropicMessages = prepareAnthropicMessages(input.messages, model.info, input.options)
+			const claudeCodeIdentity = await this.resolveClaudeCodeIdentity(anthropicMessages)
+			const requestBody = buildAnthropicMessagesRequest({
+				model: this.resolveApiModelId(model.id, model.info),
+				modelInfo: model.info,
+				systemPrompt: input.systemPrompt,
+				systemPrefix: claudeCodeIdentity.systemBlocks,
+				messages: anthropicMessages,
+				reasoning: resolveAnthropicReasoning(model.info.capabilities, this.config?.reasoning),
+				tools: input.tools,
+				options: input.options,
+				forcedToolChoice: anthropicPromptCacheOn(model.info) ? "model_declared" : "never",
+			})
+			const result = await this.ensureClient().messages.countTokens({
+				model: requestBody.model,
+				messages: requestBody.messages,
+				...(requestBody.system === undefined ? {} : { system: requestBody.system }),
+				...(requestBody.tools === undefined ? {} : { tools: requestBody.tools }),
+				...(requestBody.tool_choice === undefined ? {} : { tool_choice: requestBody.tool_choice }),
+				...(requestBody.thinking === undefined ? {} : { thinking: requestBody.thinking }),
+			})
+			return result.input_tokens
+		} catch (error) {
+			Logger.warn("Anthropic token counting failed", error)
+			return undefined
+		}
 	}
 
 	/**

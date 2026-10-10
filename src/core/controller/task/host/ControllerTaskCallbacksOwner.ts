@@ -268,11 +268,20 @@ export class ControllerTaskCallbacksOwner {
 	private async ask(
 		type: UiAsk,
 		text?: string,
-		_partial?: boolean,
+		partial?: boolean,
 		options?: { existingTs?: number; onTsCreated?: (ts: number) => void },
 	): Promise<{ response: ClineAskResponse; text?: string; images?: string[]; files?: string[] }> {
 		const ts = options?.existingTs ?? this.options.nextPresentationId()
 		options?.onTsCreated?.(ts)
+		if (partial === true) {
+			const message: UiMessage = { ts, type: "ask", ask: type, text, partial: true }
+			await this.options.messages.upsertClineMessageInMemory(message)
+			await this.publishRow(message, `partial ${type} row ${ts}`)
+			// Partial handlers deliberately ignore this promise. Rejecting keeps the
+			// preview presentation-only instead of manufacturing a host interaction
+			// that would execute beside the canonical final tool call.
+			throw new Error("Current ask promise was ignored")
+		}
 		const interactionId = `host:${randomUUID()}`
 		const outcome = await this.options.interactions.open({
 			turnId: `turn:${interactionId}`,

@@ -37,7 +37,11 @@ function showingOpening(opening: { taskId: string; taskInstanceId: string } = OP
 	return { currentOpening: () => opening }
 }
 
-function owner(messages: MessageStateHandler, controller: object = showingOpening()): ControllerTaskCallbacksOwner {
+function owner(
+	messages: MessageStateHandler,
+	controller: object = showingOpening(),
+	interactions: { open: ReturnType<typeof vi.fn> } = { open: vi.fn() },
+): ControllerTaskCallbacksOwner {
 	return new ControllerTaskCallbacksOwner({
 		controller: controller as never,
 		taskId: "task-1",
@@ -47,7 +51,7 @@ function owner(messages: MessageStateHandler, controller: object = showingOpenin
 			getGlobalStateKey: () => undefined,
 		} as never,
 		messages,
-		interactions: {} as never,
+		interactions: interactions as never,
 		nextPresentationId: createPresentationIdSequence(Date.now, () => messages.clineMessages.at(-1)?.ts),
 		api: {} as never,
 		toolState: {} as never,
@@ -194,6 +198,19 @@ describe("ControllerTaskCallbacksOwner say", () => {
 
 		expect(written).toContainEqual(expect.objectContaining({ ts: 99, text: "preview", partial: true }))
 		expect(delivered).toEqual([{ ts: 99, text: "preview", partial: true }])
+	})
+
+	it("presents a partial ask without opening a competing host interaction", async () => {
+		const { handler, written } = messageStore()
+		const interactions = { open: vi.fn() }
+		const callbacks = owner(handler, showingOpening(), interactions).callbacks
+
+		await expect(callbacks.ask("qna_respond", '{"response":"preview"}', true, { existingTs: 99 })).rejects.toThrow(
+			"Current ask promise was ignored",
+		)
+
+		expect(interactions.open).not.toHaveBeenCalled()
+		expect(written).toContainEqual(expect.objectContaining({ ts: 99, type: "ask", ask: "qna_respond", partial: true }))
 	})
 
 	// A late row from a replaced opening must not land in the view that now shows another one.
