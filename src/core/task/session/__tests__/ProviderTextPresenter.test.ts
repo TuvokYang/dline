@@ -70,6 +70,10 @@ describe("ProviderTextPresenter", () => {
             ["reasoning", "THINKING", false, streamed[0].ts],
             ["text", "Answer", false, streamed[1].ts],
         ])
+        expect(published.slice(-2)).toEqual([
+            expect.objectContaining({ ts: streamed[0].ts, say: "reasoning", text: "THINKING", partial: false }),
+            expect.objectContaining({ ts: streamed[1].ts, say: "text", text: "Answer", partial: false }),
+        ])
     })
 
     // Encrypted-only reasoning has no text to show, yet the chat must still read

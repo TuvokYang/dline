@@ -135,6 +135,7 @@ export function adaptCanonicalTaskView(
                   taskAsk: anchor.ask ?? definition.taskAsk,
                   presentationKind: kind === "change_todo_list" ? "focus_chain_change" : definition.presentationKind,
                   askMessageTs: anchor.ts,
+                  presentationText: anchor.text,
                   anchorVerified: true,
               }
             : undefined

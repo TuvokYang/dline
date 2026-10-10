@@ -31,7 +31,11 @@ import {
     shouldPreinstallDlineVsix,
     type VSCodeLaunchIsolation,
 } from "./vscode-launch-isolation"
-import { resolveVSCodeDownloadPlatform, resolveVSCodeDownloadVersion } from "./vscode-version-resolver"
+import {
+    E2E_VSCODE_DOWNLOAD_TIMEOUT_MS,
+    resolveVSCodeDownloadPlatform,
+    resolveVSCodeDownloadVersion,
+} from "./vscode-version-resolver"
 
 /** Bound for re-proving a palette option is clickable; a closed QuickInput fails here and is retried. */
 const COMMAND_OPTION_ACTIONABLE_TIMEOUT_MS = 5_000
@@ -737,6 +741,7 @@ export const e2e = test
                 platform: vscodePlatform,
                 cachePath: vscodeCachePath,
                 reporter: new SilentReporter(),
+                timeout: E2E_VSCODE_DOWNLOAD_TIMEOUT_MS,
             })
             const electronEnvironment = { ...process.env, ...portableEnvironment(launchIsolation) }
             delete electronEnvironment.ELECTRON_RUN_AS_NODE

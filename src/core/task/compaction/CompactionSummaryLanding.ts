@@ -70,6 +70,19 @@ export class CompositeCompactionLanding implements CompactionLandingPort {
     }
 }
 
+/** Refreshes prompt-derived state only after a usable summary has landed. */
+export class PromptStateCompactionLanding implements CompactionLandingPort {
+    constructor(
+        private readonly prompt: { requestRefresh(reason: "post_compaction"): void },
+        private readonly promptCache: { recordCompactionResult(success: boolean): void },
+    ) {}
+
+    async land(_input: CompactionLandingInput): Promise<void> {
+        this.prompt.requestRefresh("post_compaction")
+        this.promptCache.recordCompactionResult(true)
+    }
+}
+
 function readText(value: unknown): string | undefined {
     return typeof value === "string" && value.trim().length > 0 ? value : undefined
 }

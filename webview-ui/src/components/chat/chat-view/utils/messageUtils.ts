@@ -99,15 +99,19 @@ export function resolveApiErrorMessage(input: ApiErrorMessageInput): string | un
     }
 
     const activeInteraction = input.taskViewState?.activeInteraction
+    const projectedErrorText = activeInteraction?.taskAsk === "api_req_failed" ? activeInteraction.presentationText : undefined
     if (
         activeInteraction?.taskAsk === "api_req_failed" &&
         input.lastModifiedMessage?.ask === "api_req_failed" &&
         activeInteraction.askMessageTs === input.lastModifiedMessage.ts
     ) {
-        return input.lastModifiedMessage.text
+        return input.lastModifiedMessage.text ?? projectedErrorText
     }
 
     if (input.taskViewState) {
+        if (activeInteraction?.taskAsk === "api_req_failed") {
+            return projectedErrorText
+        }
         return input.lastModifiedMessage?.ask === "api_req_failed" ? undefined : input.streamingFailedMessage
     }
 

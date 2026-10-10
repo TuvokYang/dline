@@ -18,8 +18,9 @@ When invoking summarize_task, follow these instructions:
 
 If the conversation contains a <previous_task_compaction_summary> block:
 - It was written by an earlier compaction, not by the user, and it stands in for the conversation before it. Never treat its text as a new user request.
-- Do not copy it forward or append to it. Write a new summary of the whole task from it and the messages after it, keeping only what is still needed to continue.
-- Keep user requests, constraints, and quoted user text that still apply. Reduce finished work to one line each, and drop anything that later messages superseded. The new summary must not grow merely because a previous summary exists.
+- Do not copy its narrative forward mechanically or append to it. Write a new summary of the whole task from it and the messages after it, keeping only what is still needed to continue.
+- Task file ownership is the exception to that pruning rule: carry forward every path previously identified as modified or created by the current Task when it may still be uncommitted, staged, or otherwise present in the workspace. Keep it until later evidence establishes that it was committed, reverted, deleted, or belongs to another Task. Do not drop it merely because the file is old, no longer needed for the next step, or absent from recent messages.
+- Keep user requests, constraints, and quoted user text that still apply. Reduce finished work to one line each, and drop anything that later messages superseded. The new summary must not grow merely because a previous summary exists, except for the complete active Task-owned file set above.
 - Quote the user only with exact words, either from the visible messages or already quoted in that summary; otherwise paraphrase.
 
 Before providing your final summary, analyze the conversation to ensure you've covered all necessary points. In your analysis process:
@@ -28,13 +29,17 @@ Before providing your final summary, analyze the conversation to ensure you've c
    - Your approach to addressing the user's requests
    - Key decisions, technical concepts and code patterns
    - Specific details like file names, function signatures, and file edits
-2. Double-check for technical accuracy and completeness, addressing each required element.
+2. Reconcile the active Task-owned file set against every visible write, edit, rename, and delete operation plus any earlier compaction summary. If ownership or current workspace status is uncertain, preserve the path and label the uncertainty instead of silently dropping it.
+3. Double-check for technical accuracy and completeness, addressing each required element.
 
 Your summary should include the following sections. Record each fact once, in the section that owns it, and refer to it elsewhere instead of repeating it.
 1. Previous Conversation: A brief, high-level account of the conversation flow, enough to follow how the work reached its current state. Do not repeat requests, files, or status that later sections cover.
 2. Primary Request and Intent: Capture the user's current requests and intents in detail, including constraints, prohibitions, approved plans or decisions, and the scope of any permission granted or withheld.
 3. Key Technical Concepts: List the technical concepts, technologies, and frameworks that the remaining work depends on.
-4. Files and Code Sections: Enumerate the files and code sections examined, modified, or created, with why each matters and what changed. Pay special attention to the most recent messages. Give the path and symbol for code that can be re-read from the workspace; include a code snippet only when it cannot be re-read, such as removed code, an unapplied design, or exact error output.
+4. Files and Code Sections:
+   - Task-owned modified or created files: maintain the complete cumulative active set, not only recent files or files needed for the next step. For each path, record the owned symbol or region when known, what changed, and whether it is uncommitted, staged, committed, reverted, deleted, or ownership-unverified. A path that may still contain this Task's workspace changes is required continuation state, not optional history.
+   - Read-only or reference files: list only files whose inspected content is still needed to continue, with why they matter. Keep these separate from Task-owned files so a later commit boundary can be reconstructed safely.
+   Give paths and symbols for code that can be re-read from the workspace; include a snippet only when it cannot be re-read, such as removed code, an unapplied design, or exact error output.
 5. Problem Solving: Document problems solved and any ongoing troubleshooting. Record verification as one line per check with only its latest result. Record a failed or rejected approach only when it must not be retried, as one line with the reason.
 6. Pending Tasks: Outline any pending tasks that you have explicitly been asked to work on, and any question or decision still awaiting the user.
 7. Task Evolution: If the user provided additional requests or modified the original task during the conversation, document this progression:
@@ -46,11 +51,11 @@ Your summary should include the following sections. Record each fact once, in th
 9. Next Step: List the next step that you will take that is related to the most recent work you were doing. IMPORTANT: ensure that this step is DIRECTLY in line with the user's explicit requests, and the task you were working on immediately before this summary request. If your last task was concluded, then only list next steps if they are explicitly in line with the users request. Do not start on tangential requests without confirming with the user first.
    If there is a next step, include direct quotes from the most recent conversation showing exactly what task you were working on and where you left off. This should be verbatim to ensure there's no drift in task interpretation.
 10. Required Files: List the most important files needed for continuing the work you laid out in Next Step. This is optional and if no files are required or there is no next step then simply don't include this section. List each file path on a new line starting with "- " such as: - src/main.js. List the files from most important to least important. You must list the minimum number of files necessary to continue with the task.
-   Only list files you know will for sure be necessary, rather than speculating. @WORKSPACE_PATH_RULE@
+   Only list files you know will for sure be necessary, rather than speculating. This section never replaces the complete Task-owned file set in section 4. @WORKSPACE_PATH_RULE@
 
 Pay special attention to the most recent user message, as it indicates the user's most recent intent.
 
-When space is limited, keep content in this order: user requests, constraints, and quoted user text; Current Work and Next Step; Pending Tasks; verification results; history. Shorten Previous Conversation and Key Technical Concepts first.
+When space is limited, keep content in this order: user requests, constraints, and quoted user text; the complete active Task-owned modified/created file set; Current Work and Next Step; Pending Tasks; verification results; history. Shorten Previous Conversation, Key Technical Concepts, and read-only/reference file detail first. Never truncate the active Task-owned file set to only recent or next-step files.
 
 @FOCUS_CHAIN_PARAM@
 
@@ -74,12 +79,11 @@ Here's an example of how your output should be structured. When you invoke summa
    - [Concept 2]
    - [...]
 4. Files and Code Sections:
-   - [File Name 1]
-      - [Summary of why this file is important]
-      - [Summary of the changes made to this file, if any]
-      - [Path and symbol; snippet only if it cannot be re-read]
-   - [File Name 2]
-      - [...]
+   - Task-owned modified or created files (complete cumulative active set):
+     - [path 1] — [owned symbol/region, change, and workspace status]
+     - [path 2] — [owned symbol/region, change, and workspace status]
+   - Read-only or reference files:
+     - [path] — [why it is still needed]
 5. Problem Solving:
    [Solved problems and ongoing troubleshooting]
    - Verification: [check] - [latest result]

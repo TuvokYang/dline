@@ -516,8 +516,12 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         const existingIndex = all.findIndex((m) => m.ts === msg.ts)
 
         if (existingIndex >= 0) {
-            const previousMessage = { ...all[existingIndex] }
-            this.keepPlace(msg, all[existingIndex])
+            const existing = all[existingIndex]
+            // A slow partial presenter must never regress a row that already reached
+            // its canonical final state under the same causal identity.
+            if (existing.partial !== true && msg.partial === true) return existing
+            const previousMessage = { ...existing }
+            this.keepPlace(msg, existing)
             // The upsert replaces the whole row, so a presentation refresh that does
             // not carry the causal identity would silently drop it. The Webview
             // matches its active interaction against exactly this field, and losing

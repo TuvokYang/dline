@@ -279,6 +279,12 @@ describe("TaskContextUsageProjection", () => {
                 compaction: { compactionId: "c:1", attempt: "c:1:1", contextRef: "r", status: "scheduled" },
             },
         } as TaskState)
+        harness.projection.compactionPassStarted("c:1", 0, "pass:1", {
+            durableContextTokens: 70_000,
+            pendingSendTokens: 5_000,
+            environmentTokens: 0,
+            contextWindow: WINDOW,
+        })
 
         await harness.projection.record({ turnId: "turn-1", contextTokens: 90_000, outputTokens: 0, contextWindow: WINDOW })
         await harness.projection.unmeasured({ turnId: "turn-1" })
@@ -295,6 +301,12 @@ describe("TaskContextUsageProjection", () => {
                 flow: { phase: "running", compaction: { compactionId: "c:1", attempt: "c:1:1", contextRef: "r", status } },
             }) as TaskState
         harness.projection.committed(compaction("scheduled"))
+        harness.projection.compactionPassStarted("c:1", 0, "pass:1", {
+            durableContextTokens: 70_000,
+            pendingSendTokens: 5_000,
+            environmentTokens: 0,
+            contextWindow: WINDOW,
+        })
         expect(harness.target.contextWindowIndicator?.phase).toBe("sending")
 
         // The run carries on after the summary lands; the request that carries
@@ -342,31 +354,64 @@ describe("TaskContextUsageProjection", () => {
         expect(harness.target.contextWindowIndicator).toMatchObject({ contextWindow: WINDOW, mode: "plan" })
     })
 
-    it("shows a scheduled compaction as sending and settles once it ends", async () => {
+    it("projects the actual hidden Pass request instead of fabricating old context plus tail", async () => {
         const harness = createProjection()
-        await request(harness, "turn-1", 80_100)
-        const compaction = (status: "scheduled" | "running" | "completed") =>
-            ({
-                ...awaiting("qna_response"),
-                flow: {
-                    phase: "running",
-                    compaction: { compactionId: "compaction:1", attempt: "compaction:1:1", contextRef: "ref-1", status },
+        await request(harness, "turn-1", 441_433)
+        harness.projection.committed({ ...running(), flow: { phase: "waiting" } })
+        harness.projection.staged({ pendingContextTokens: 30_000 })
+        harness.projection.committed({
+            ...running(),
+            flow: {
+                phase: "running",
+                compaction: {
+                    compactionId: "compaction:1",
+                    attempt: "compaction:1:1",
+                    contextRef: "ref-1",
+                    status: "scheduled",
                 },
-            }) as TaskState
+            },
+        } as TaskState)
 
-        harness.projection.committed(compaction("scheduled"))
-        expect(harness.target.contextWindowIndicator?.phase).toBe("sending")
-        expect(harness.target.contextWindowIndicator?.durableContextTokens).toBeGreaterThan(50_000)
-        const revision = harness.target.contextWindowIndicator?.revision
-        // The same run moving from scheduled to running is not a second request.
-        harness.projection.committed(compaction("running"))
-        expect(harness.target.contextWindowIndicator?.revision).toBe(revision)
+        expect(harness.target.contextWindowIndicator).toMatchObject({ phase: "stable" })
+        expect(total(harness)).toBe(441_433)
 
-        harness.projection.committed({ ...compaction("completed"), flow: { phase: "waiting" } } as TaskState)
-        expect(harness.target.contextWindowIndicator?.phase).toBe("stable")
+        harness.projection.compactionPassStarted("compaction:1", 0, "pass-attempt:1", {
+            durableContextTokens: 306_000,
+            pendingSendTokens: 13_000,
+            environmentTokens: 0,
+            contextWindow: WINDOW,
+        })
+        expect(harness.target.contextWindowIndicator).toMatchObject({
+            phase: "sending",
+            lineage: { kind: "compaction_pass", operationId: "compaction:1", passIndex: 0 },
+            durableContextTokens: 306_000,
+            pendingSendTokens: 13_000,
+            environmentTokens: 0,
+        })
+        expect(total(harness)).toBe(319_000)
     })
 
-    it("shows a compaction as the reported context plus the tail the round added since", async () => {
+    it("does not invent a Sending request before the hidden Pass starts", async () => {
+        const harness = createProjection()
+        await request(harness, "turn-1", 80_100)
+        harness.projection.committed({
+            ...running(),
+            flow: {
+                phase: "running",
+                compaction: {
+                    compactionId: "compaction:1",
+                    attempt: "compaction:1:1",
+                    contextRef: "ref-1",
+                    status: "scheduled",
+                },
+            },
+        } as TaskState)
+
+        expect(harness.target.contextWindowIndicator?.lineage.kind).toBe("ordinary")
+        expect(harness.target.contextWindowIndicator?.phase).not.toBe("sending")
+    })
+
+    it("shows the actual Pass instead of deriving one from the reported context and staged tail", async () => {
         const harness = createProjection()
         await request(harness, "turn-1", 17_392)
         // The run continues after this report, so the figure is still receiving.
@@ -382,16 +427,19 @@ describe("TaskContextUsageProjection", () => {
             }) as TaskState
 
         harness.projection.committed(compaction("compaction:1:1"))
+        expect(total(harness)).toBe(930_100)
+        harness.projection.compactionPassStarted("compaction:1", 0, "pass:1", {
+            durableContextTokens: 306_000,
+            pendingSendTokens: 13_000,
+            environmentTokens: 0,
+            contextWindow: WINDOW,
+        })
         expect(harness.target.contextWindowIndicator).toMatchObject({
             phase: "sending",
             lineage: { kind: "compaction_pass" },
-            pendingSendTokens: 66_000,
+            pendingSendTokens: 13_000,
         })
-        expect(total(harness)).toBe(996_100)
-
-        // A retried attempt starts from a figure that already carries the tail.
-        harness.projection.committed(compaction("compaction:1:2"))
-        expect(total(harness)).toBe(996_100)
+        expect(total(harness)).toBe(319_000)
 
         harness.projection.compacted({ contextTokens: 17_000, contextWindow: WINDOW })
         expect(total(harness)).toBe(17_000)
@@ -408,10 +456,11 @@ describe("TaskContextUsageProjection", () => {
             },
         } as TaskState)
         expect(total(harness)).toBe(930_100)
-
         const pass = { durableContextTokens: 400_000, pendingSendTokens: 2_000, environmentTokens: 3_000, contextWindow: WINDOW }
+        harness.projection.compactionPassStarted("compaction:1", 0, "pass:1", pass)
+
         harness.projection.compactionPassProjected("compaction:0", pass)
-        expect(total(harness)).toBe(930_100)
+        expect(total(harness)).toBe(405_000)
 
         harness.projection.compactionPassProjected("compaction:1", pass)
         // Settling folds the Pass's pending tail into the durable figure.
@@ -512,6 +561,12 @@ describe("TaskContextUsageProjection", () => {
                 flow: { phase: "running", compaction: { compactionId: "c:1", attempt: "c:1:1", contextRef: "r", status } },
             }) as TaskState
         harness.projection.committed(compacting("running"))
+        harness.projection.compactionPassStarted("c:1", 0, "pass:1", {
+            durableContextTokens: 400_000,
+            pendingSendTokens: 10_000,
+            environmentTokens: 0,
+            contextWindow: WINDOW,
+        })
         expect(harness.target.contextWindowIndicator?.phase).toBe("sending")
 
         harness.projection.compacted({ contextTokens: 120_000, contextWindow: WINDOW })
@@ -532,6 +587,12 @@ describe("TaskContextUsageProjection", () => {
             ...running(),
             flow: { phase: "running", compaction: { compactionId: "c:1", attempt: "c:1:1", contextRef: "r", status: "running" } },
         } as TaskState)
+        harness.projection.compactionPassStarted("c:1", 0, "pass:1", {
+            durableContextTokens: 400_000,
+            pendingSendTokens: 10_000,
+            environmentTokens: 0,
+            contextWindow: WINDOW,
+        })
         harness.projection.committed(running())
         expect(harness.target.contextWindowIndicator?.phase).toBe("stable")
         expect(total(harness)).toBe(800_000)

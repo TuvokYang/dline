@@ -72,6 +72,30 @@ describe("interaction anchor identity", () => {
         expect(anchor?.interactionId).toBe(INTERACTION_ID)
     })
 
+    it("does not let a late partial overwrite a row that already finalized", async () => {
+        const { messageState } = await createMessageState("final-row-wins")
+        await messageState.addToClineMessages({
+            ts: ANCHOR_TS,
+            type: "say",
+            say: "tool",
+            text: '{"tool":"actModeRespond","content":"Done"}',
+            partial: false,
+        })
+
+        await messageState.upsertClineMessageInMemory({
+            ts: ANCHOR_TS,
+            type: "say",
+            say: "tool",
+            text: '{"tool":"actModeRespond","content":"Still working"}',
+            partial: true,
+        })
+
+        expect(messageState.clineMessages.find((message) => message.ts === ANCHOR_TS)).toMatchObject({
+            text: '{"tool":"actModeRespond","content":"Done"}',
+            partial: false,
+        })
+    })
+
     it("does not overwrite an explicitly different identity", async () => {
         const { messageState } = await createMessageState("anchor-identity-explicit")
         await messageState.addToClineMessages(anchorRow())

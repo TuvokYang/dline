@@ -92,7 +92,7 @@ describe("auto-condense context trigger", () => {
         expect(computeCompactTrigger(1_000_000, computeSummarizeBudget(), defaultPolicy)).toBe(268_500)
     })
 
-    it("can trigger with 180K provider headroom when Maximum context is configured as an absolute cap", () => {
+    it("keeps hidden Passes on the provider window when Maximum context is an ordinary-request cap", () => {
         const providerContextWindow = 752_000
         const configuredMaximumContext = 572_000
         const policy = resolveCompactTriggerPolicy(providerContextWindow, computeSummarizeBudget(), {
@@ -105,13 +105,11 @@ describe("auto-condense context trigger", () => {
         expect(policy).toMatchObject({
             branch: "absolute_cap",
             effectiveContextLimitTokens: configuredMaximumContext,
-            hardPassContextWindowTokens: configuredMaximumContext,
+            hardPassContextWindowTokens: providerContextWindow,
             projectedUsageTriggerTokens: 566_500,
             compactTriggerTokens: 568_500,
-            // The absolute cap keeps no percentage reserve, so the concession is half of the
-            // closure reserve alone.
-            passInputCeilingAllowanceTokens: 1_500,
-            passInputCeilingTokens: 568_000,
+            passInputCeilingAllowanceTokens: 182_499,
+            passInputCeilingTokens: 748_999,
         })
         expect(shouldCompactProjectedUsage(566_499, policy.compactTriggerTokens)).toBe(false)
         expect(shouldCompactProjectedUsage(566_500, policy.compactTriggerTokens)).toBe(true)
@@ -131,7 +129,7 @@ describe("auto-condense context trigger", () => {
         expect(computeCompactTrigger(2_000_000, summarizeBudget, settings)).toBe(1_966_500)
     })
 
-    it("lends half of the guarded reserve so a complete range stays one Pass", () => {
+    it("uses the provider hard window for a hidden Pass instead of the ordinary trigger", () => {
         const policy = resolveCompactTriggerPolicy(472_000, computeSummarizeBudget(), {
             triggerPercent: 95,
             minReserveTokens: 5_000,
@@ -146,11 +144,10 @@ describe("auto-condense context trigger", () => {
             hardPassContextWindowTokens: 472_000,
             projectedUsageTriggerTokens: 442_900,
             compactTriggerTokens: 444_900,
-            passInputCeilingAllowanceTokens: 11_800,
-            passInputCeilingTokens: 454_700,
+            passInputCeilingAllowanceTokens: 26_099,
+            passInputCeilingTokens: 468_999,
         })
-        // 472000 window at 95%: reserve 23600, so the concession is exactly half of that reserve.
-        expect(policy.passInputCeilingTokens - policy.projectedUsageTriggerTokens).toBe(11_800)
+        expect(policy.passInputCeilingTokens).toBe(472_000 - 3_000 - 1)
     })
 
     it("never resolves a Pass ceiling below the compaction trigger", () => {
@@ -193,16 +190,17 @@ describe("auto-condense context trigger", () => {
             hardPassContextWindowTokens: 272_000,
             projectedUsageTriggerTokens: 258_340,
             compactTriggerTokens: 260_340,
-            passInputCeilingAllowanceTokens: 4_080,
-            passInputCeilingTokens: 262_420,
+            passInputCeilingAllowanceTokens: 10_659,
+            passInputCeilingTokens: 268_999,
         })
         expect(absolutePolicy).toMatchObject({
             branch: "absolute_cap",
             effectiveContextLimitTokens: 272_000,
-            hardPassContextWindowTokens: 272_000,
+            hardPassContextWindowTokens: 1_000_000,
             projectedUsageTriggerTokens: 266_500,
             compactTriggerTokens: 268_500,
-            passInputCeilingTokens: 268_000,
+            passInputCeilingAllowanceTokens: 730_499,
+            passInputCeilingTokens: 996_999,
         })
     })
 

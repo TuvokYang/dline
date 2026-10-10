@@ -37,6 +37,7 @@ describe("adaptCanonicalTaskView", () => {
             interactionId: "interaction-1",
             taskAsk: "followup",
             askMessageTs: 100,
+            presentationText: "question",
             anchorVerified: true,
         })
         expect(view.input).toMatchObject({ enabled: true, enterAction: "reply" })

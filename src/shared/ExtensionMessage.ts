@@ -525,6 +525,8 @@ export interface ActiveInteractionView {
     taskAsk: UiAsk
     presentationKind: string
     askMessageTs: number
+    /** Text from the verified ask anchor, retained while that row is outside the loaded Webview window. */
+    presentationText?: string
     /** Backend registered the exact ask anchor in durable write order even if the Webview window has not loaded it yet. */
     anchorVerified?: boolean
 }

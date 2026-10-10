@@ -1,11 +1,22 @@
 /** Prepare the VS Code and Playwright binaries used by the E2E tests. */
-import { downloadAndUnzipVSCode, SilentReporter } from "@vscode/test-electron"
+import { readFile } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
+import { downloadAndUnzipVSCode } from "@vscode/test-electron"
 import { execa } from "execa"
 
+const { stable: vscodeVersion, downloadTimeoutMs } = JSON.parse(
+    await readFile(new URL("../vscode-version.json", import.meta.url), "utf8"),
+)
+const vscodeCachePath = fileURLToPath(new URL("../../../../.vscode-test/", import.meta.url))
+
 async function installVSCode() {
-    console.log("Downloading VS Code...")
-    await downloadAndUnzipVSCode("stable", undefined, new SilentReporter())
-    console.log("VS Code is ready.")
+    console.log(`Preparing pinned VS Code ${vscodeVersion} in ${vscodeCachePath}...`)
+    await downloadAndUnzipVSCode({
+        version: vscodeVersion,
+        cachePath: vscodeCachePath,
+        timeout: downloadTimeoutMs,
+    })
+    console.log(`VS Code ${vscodeVersion} is ready.`)
 }
 
 async function installPlaywright() {

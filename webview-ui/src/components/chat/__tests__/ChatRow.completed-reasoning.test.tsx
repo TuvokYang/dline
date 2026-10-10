@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { render, screen } from "@testing-library/react"
 import React from "react"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ChatRowContent } from "../ChatRow"
 
 void React
+
+let taskPhase = "completed"
 
 vi.mock("@context/ExtensionStateContext", () => ({
     useExtensionState: () => ({
@@ -15,7 +17,7 @@ vi.mock("@context/ExtensionStateContext", () => ({
         vscodeTerminalExecutionMode: "backgroundExec",
         clineMessages: [],
         showFeatureTips: true,
-        taskViewState: { taskId: "task-1", phase: "completed" },
+        taskViewState: { taskId: "task-1", phase: taskPhase },
         currentTaskItem: { id: "task-1" },
     }),
 }))
@@ -32,6 +34,10 @@ const baseProps = {
 }
 
 describe("ChatRow completed reasoning", () => {
+    beforeEach(() => {
+        taskPhase = "completed"
+    })
+
     it("treats a stale partial reasoning message as static after the canonical task phase completes", () => {
         render(
             <ChatRowContent
@@ -50,6 +56,28 @@ describe("ChatRow completed reasoning", () => {
         expect(screen.getByText("Thinking", { exact: true })).toBeInTheDocument()
         expect(screen.queryByText("Thinking...", { exact: true })).not.toBeInTheDocument()
         expect(screen.queryByText("Waiting...", { exact: true })).not.toBeInTheDocument()
+        expect(screen.queryByTestId("feature-tip")).not.toBeInTheDocument()
+    })
+
+    it("collapses partial reasoning after a following response or tool row owns the tail", () => {
+        taskPhase = "streaming"
+        render(
+            <ChatRowContent
+                {...baseProps}
+                isLast={false}
+                message={{
+                    ts: 1,
+                    type: "say",
+                    say: "reasoning",
+                    partial: true,
+                    text: "Reasoning before the turn-ending tool",
+                }}
+            />,
+        )
+
+        expect(screen.getByText("Thinking", { exact: true })).toBeInTheDocument()
+        expect(screen.queryByText("Thinking...", { exact: true })).not.toBeInTheDocument()
+        expect(screen.queryByText("Reasoning before the turn-ending tool", { exact: true })).not.toBeInTheDocument()
         expect(screen.queryByTestId("feature-tip")).not.toBeInTheDocument()
     })
 })

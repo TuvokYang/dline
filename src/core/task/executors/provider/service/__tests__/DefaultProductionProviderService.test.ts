@@ -324,6 +324,47 @@ describe("DefaultProductionProviderService", () => {
         expect(chunks.find((chunk) => chunk.kind === "final")).toMatchObject({ reasoning: "THINK_MORE", text: "Answer." })
     })
 
+    it("publishes reasoning before a following turn-ending call even after prose starts", async () => {
+        const chunks = await run(
+            [
+                text("Answer first."),
+                { type: "reasoning", reasoning: "LATE_THOUGHT", signature: "late-signature" } as ApiStreamChunk,
+                {
+                    type: "tool_calls",
+                    function_id: "call_attempt",
+                    dline_tid: "tid_attempt",
+                    argumentsMode: "snapshot",
+                    tool_call: { function: { name: "attempt_completion", arguments: '{"result":"DONE"}' } },
+                } as ApiStreamChunk,
+                {
+                    type: "tool_calls",
+                    phase: "completed",
+                    function_id: "call_attempt",
+                    dline_tid: "tid_attempt",
+                    argumentsMode: "snapshot",
+                    tool_call: { function: { arguments: '{"result":"DONE"}' } },
+                } as ApiStreamChunk,
+            ],
+            true,
+        )
+
+        const reasoningIndex = chunks.findIndex((chunk) => chunk.kind === "partial" && chunk.reasoning === "LATE_THOUGHT")
+        const toolIndex = chunks.findIndex(
+            (chunk) => chunk.kind === "partial" && chunk.projection?.kind === "provider.tool_partial",
+        )
+        expect(reasoningIndex).toBeGreaterThanOrEqual(0)
+        expect(toolIndex).toBeGreaterThan(reasoningIndex)
+
+        const final = chunks.find((chunk) => chunk.kind === "final")
+        if (final?.kind !== "final") throw new Error("missing final chunk")
+        expect(final).toMatchObject({ reasoning: "LATE_THOUGHT", text: "Answer first." })
+        expect(final.content).toEqual([
+            expect.objectContaining({ type: "thinking", thinking: "LATE_THOUGHT", signature: "late-signature" }),
+            { type: "text", text: "Answer first." },
+            expect.objectContaining({ type: "tool_use", name: "attempt_completion" }),
+        ])
+    })
+
     // dev showed the response filling the window while it streamed; without it
     // the header froze on the request's input until the final usage arrived.
     it("reports what the response occupies while it streams, then the provider's own output", async () => {

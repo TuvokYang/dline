@@ -52,6 +52,12 @@ export interface CompactionEnvironmentPreview {
 
 /** Receives the next request each accepted Pass projects, for the context-window indicator. */
 export interface CompactionIndicatorPort {
+    passStarted?(
+        compactionId: string,
+        passIndex: number,
+        attemptId: string,
+        projection: ContextCompactionIndicatorProjection,
+    ): void
     passProjected(compactionId: string, projection: ContextCompactionIndicatorProjection): void
 }
 
@@ -358,6 +364,26 @@ export class ProviderCompactionService implements ProductionCompactionService {
             },
             publish: async (_sessionInput, event) => {
                 if (event.kind === "failed") outcome.failure = event.error
+                if (event.kind === "pass_started") {
+                    const contextWindow = getContextWindowInfo(frame.api).contextWindow
+                    const segments = estimateContextWindowIndicatorSegments({
+                        providerInput: event.providerInput,
+                        durableMessageCount: Math.max(0, event.providerInput.messages.length - 1),
+                        ...estimator,
+                    })
+                    this.options.indicator?.passStarted?.(
+                        input.compactionId,
+                        event.passIdentity.passIndex,
+                        event.attempt.authorizationAttemptId,
+                        {
+                            durableContextTokens: segments.durableContextTokens,
+                            pendingSendTokens: segments.pendingSendTokens,
+                            environmentTokens: segments.environmentTokens,
+                            contextWindow,
+                            mode: _sessionInput.targetMode,
+                        },
+                    )
+                }
                 if (event.kind === "pass_completed" && event.projection.indicator) {
                     this.options.indicator?.passProjected(input.compactionId, event.projection.indicator)
                 }

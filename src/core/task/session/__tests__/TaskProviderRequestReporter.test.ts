@@ -145,6 +145,43 @@ describe("TaskProviderRequestReporter", () => {
         ])
     })
 
+    it("persists the admitted request calibration sample for later compaction estimates", async () => {
+        const state = messageState()
+        const reporter = new TaskProviderRequestReporter({
+            messages: state.handler,
+            nextPresentationId: () => 101,
+            api: apiHandler,
+            promptCache: new PromptCacheHealthTracker("task-1", { debug: () => {}, warn: () => {} }),
+            admittedRequest: () => ({
+                estimatedTokens: 595_061,
+                estimatedTextBytes: 2_209_000,
+                estimatedMediaTokens: 0,
+                providerId: "openai",
+                modelId: "gpt-5.6-sol",
+                apiFormat: ApiFormat.OPENAI_RESPONSES,
+                projectedUsageTokens: 595_061,
+                segments: {
+                    durableContextTokens: 570_000,
+                    pendingSendTokens: 20_000,
+                    environmentTokens: 5_061,
+                    totalTokens: 595_061,
+                },
+            }),
+        })
+
+        await reporter.begin({ turnId: "turn-calibration" })
+
+        expect(requestInfo(state.rows[0])).toMatchObject({
+            estimatedContextTokens: 595_061,
+            estimatedTextBytes: 2_209_000,
+            estimatedMediaTokens: 0,
+            providerId: "openai",
+            modelId: "gpt-5.6-sol",
+            apiFormat: ApiFormat.OPENAI_RESPONSES,
+            contextTokensSource: "estimate",
+        })
+    })
+
     it("preserves an explicitly reported zero cost", async () => {
         const harness = createReporter()
         await (await harness.reporter.begin({ turnId: "turn-free" })).settle({

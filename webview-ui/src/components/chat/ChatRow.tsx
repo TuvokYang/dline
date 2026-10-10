@@ -1233,23 +1233,27 @@ export const ChatRowContent = memo(
                         )
                     }
                     case "reasoning": {
-                        const isReasoningStreaming = message.partial === true && taskViewState?.phase !== "completed"
+                        const isReasoningPartial = message.partial === true && taskViewState?.phase !== "completed"
+                        // A following response or tool row owns the visible tail. Keep the
+                        // reasoning row and its timestamp, but collapse it instead of leaving
+                        // an earlier Thinking block expanded beneath newer activity.
+                        const isActiveReasoning = isReasoningPartial && isLast
                         const hasReasoningText = !!message.text?.trim()
-                        // Show feature tips throughout the entire thinking/reasoning phase
-                        const _showFeatureTip = isReasoningStreaming
+                        // Show feature tips only while reasoning still owns the visible tail.
+                        const _showFeatureTip = isActiveReasoning
                         return (
                             <div>
                                 <ThinkingRow
-                                    isExpanded={(isReasoningStreaming && hasReasoningText) || isExpanded}
-                                    isStreaming={isReasoningStreaming}
+                                    isExpanded={(isActiveReasoning && hasReasoningText) || isExpanded}
+                                    isStreaming={isActiveReasoning}
                                     isVisible={true}
-                                    onToggle={isReasoningStreaming ? undefined : handleToggle}
+                                    onToggle={isActiveReasoning ? undefined : handleToggle}
                                     reasoningContent={message.text}
-                                    showChevron={!isReasoningStreaming || hasReasoningText}
+                                    showChevron={!isActiveReasoning || hasReasoningText}
                                     showTitle={true}
-                                    title={isReasoningStreaming ? (hasReasoningText ? "Thinking..." : "Thinking") : "Thinking"}
+                                    title={isActiveReasoning ? (hasReasoningText ? "Thinking..." : "Thinking") : "Thinking"}
                                 />
-                                {isReasoningStreaming && showFeatureTips !== false && <FeatureTip />}
+                                {isActiveReasoning && showFeatureTips !== false && <FeatureTip />}
                             </div>
                         )
                     }

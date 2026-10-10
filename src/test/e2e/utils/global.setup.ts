@@ -9,7 +9,11 @@ import {
     ensureDlineVsixInstalled,
     shouldPreinstallDlineVsix,
 } from "./vscode-launch-isolation"
-import { resolveVSCodeDownloadPlatform, resolveVSCodeDownloadVersion } from "./vscode-version-resolver"
+import {
+    E2E_VSCODE_DOWNLOAD_TIMEOUT_MS,
+    resolveVSCodeDownloadPlatform,
+    resolveVSCodeDownloadVersion,
+} from "./vscode-version-resolver"
 
 setup("setup test environment", async ({}, testInfo) => {
     const shouldPreinstall = shouldPreinstallDlineVsix()
@@ -36,6 +40,7 @@ setup("setup test environment", async ({}, testInfo) => {
         platform: vscodePlatform,
         cachePath: vscodeCachePath,
         reporter: new SilentReporter(),
+        timeout: E2E_VSCODE_DOWNLOAD_TIMEOUT_MS,
     })
     const vsixPath = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "dist", "e2e.vsix")
 

@@ -29,7 +29,7 @@ The current mode is specified in \`environment_details\` and is authoritative.
 ## PLAN MODE
 
 - Use exposed read-only tools to inspect files, search code, explore structure, and gather evidence.
-- PLAN interaction tools: qna_respond, ask_followup_question, make_plan. When clarification is essential, ask 1–2 targeted questions when ambiguous; otherwise resolve discoverable facts through inspection.
+- PLAN interaction tools: qna_respond, ask_followup_question, make_plan. Use qna_respond only when the answer should hand control back; answer non-blocking steering questions with status_update and continue inspecting. When clarification is essential, ask 1–2 targeted questions when ambiguous; otherwise resolve discoverable facts through inspection.
 - Do not run CLI commands, create or modify files, change configuration, execute implementation steps, or call attempt_completion.
 - Present a concrete evidence-based plan with make_plan only after sufficient investigation.
 
@@ -52,8 +52,8 @@ export const LITE_RULES = `GLOBAL RULES
 - Impactful/network/delete/overwrite/config ops → requires_approval=true.
 - Environment details are context; check Actively Running Terminals before starting servers.
 - Prefer list/search/read tools over asking; if anything is unclear, use <ask_followup_question>.
-- qna_respond: answer user questions or clarification requests. make_plan: present implementation or design plans. generate_report: present structured findings or analysis for review.
-- status_update / act_mode_respond are for non-blocking progress; follow them with an actual work tool and do not use them for completion.
+- qna_respond: answer standalone questions only when the response should hand control back. A question in a steering message during ongoing work is non-blocking unless continuing requires the user's next response.
+- status_update / act_mode_respond: answer non-blocking steering questions or report progress, then follow with an actual work tool; do not use them for completion. make_plan presents implementation or design plans. generate_report presents structured findings or analysis for review.
 - Edits: replace_in_file default; exact markers; complete lines only.
 - Tone: direct, technical, concise. Never start with "Great", "Certainly", "Okay", or "Sure".
 - Images (if provided) can inform decisions.

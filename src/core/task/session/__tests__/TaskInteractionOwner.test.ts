@@ -173,6 +173,31 @@ describe("TaskInteractionOwner", () => {
         expect(rows[0]).toMatchObject({ ts: 1, text: "kept" })
     })
 
+    it("promotes a streamed command row into its approval anchor without appending a duplicate", async () => {
+        const rows: UiMessage[] = [{ ts: 10, type: "say", say: "command", text: "npm test", partial: true }]
+        const messages = createMessages(rows)
+        const { owner } = createOwner({ messages, nextPresentationId: () => 50 })
+
+        await owner.anchor({
+            interactionId: "approval:tid-command",
+            kind: "tool_approval",
+            ask: "command",
+            body: "npm test",
+        })
+
+        expect(messages.finalizeClineMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                ts: 10,
+                type: "ask",
+                ask: "command",
+                interactionId: "approval:tid-command",
+                commandStatus: "pending",
+                partial: false,
+            }),
+        )
+        expect(messages.addToClineMessages).not.toHaveBeenCalled()
+    })
+
     it("keeps a single complete anchor row as it is", async () => {
         const anchor: UiMessage = { ts: 10, type: "ask", ask: "tool", text: "{}", partial: false, interactionId: "approval-1" }
         const messages = createMessages([anchor])

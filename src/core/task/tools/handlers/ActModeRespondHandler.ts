@@ -21,8 +21,9 @@ export class ActModeRespondHandler implements IToolHandler, IPartialBlockHandler
 
         const message = uiHelpers.removeClosingTag(block, "response", response)
 
-        // Display partial message as "text" type to avoid blocking
-        await uiHelpers.say("text", message, undefined, undefined, true, block.ts).catch(() => {})
+        // Keep the same renderer from the first partial through the final row.
+        const toolMsg = JSON.stringify({ tool: "actModeRespond", content: message })
+        await uiHelpers.say("tool", toolMsg, undefined, undefined, true, block.ts).catch(() => {})
     }
 
     async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {

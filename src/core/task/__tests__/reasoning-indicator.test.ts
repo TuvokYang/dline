@@ -56,11 +56,11 @@ describe("ReasoningIndicator", () => {
         expect(indicator.isPlaceholderOnly).toBe(false)
     })
 
-    it("stays silent once assistant text has started", () => {
+    it("publishes plain reasoning after assistant text starts without opening an opaque placeholder", () => {
         const indicator = new ReasoningIndicator()
 
         expect(indicator.decide(signals({ hasEncryptedReasoning: true, assistantTextStarted: true }))).toBe("none")
-        expect(indicator.decide(signals({ hasPlainReasoning: true, assistantTextStarted: true }))).toBe("none")
+        expect(indicator.decide(signals({ hasPlainReasoning: true, assistantTextStarted: true }))).toBe("publish_text")
         expect(indicator.isPlaceholderOnly).toBe(false)
     })
 
@@ -68,6 +68,7 @@ describe("ReasoningIndicator", () => {
         const indicator = new ReasoningIndicator()
 
         expect(indicator.decide(signals({ hasEncryptedReasoning: true, hasPendingNativeToolUse: true }))).toBe("none")
+        expect(indicator.decide(signals({ hasPlainReasoning: true, hasPendingNativeToolUse: true }))).toBe("none")
         expect(indicator.isPlaceholderOnly).toBe(false)
     })
 

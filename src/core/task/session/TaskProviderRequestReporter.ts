@@ -176,6 +176,11 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
             text: JSON.stringify({
                 request: input.turnId,
                 ...(estimate === undefined ? {} : { estimatedContextTokens: estimate, contextTokensSource: "estimate" as const }),
+                ...(opening?.estimatedTextBytes === undefined ? {} : { estimatedTextBytes: opening.estimatedTextBytes }),
+                ...(opening?.estimatedMediaTokens === undefined ? {} : { estimatedMediaTokens: opening.estimatedMediaTokens }),
+                ...(opening?.providerId === undefined ? {} : { providerId: opening.providerId }),
+                ...(opening?.modelId === undefined ? {} : { modelId: opening.modelId }),
+                ...(opening?.apiFormat === undefined ? {} : { apiFormat: opening.apiFormat }),
             } satisfies UiApiReqInfo),
         })
         const { contextWindow } = ContextWindowManagement.getContextWindowInfo(this.options.api())

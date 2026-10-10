@@ -21,9 +21,14 @@ export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
     }
 
     async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-        const response = (block.params as Record<string, string>).response
-        const message = uiHelpers.removeClosingTag(block, "response", response)
-        await uiHelpers.say("text", message, undefined, undefined, true, block.ts).catch(() => {})
+        const params = block.params as Record<string, string>
+        const message = uiHelpers.removeClosingTag(block, "response", params.response)
+        if (params.requires_acknowledgment === "true") {
+            await uiHelpers.say("text", message, undefined, undefined, true, block.ts).catch(() => {})
+            return
+        }
+        const toolMsg = JSON.stringify({ tool: "statusUpdate", content: message })
+        await uiHelpers.say("tool", toolMsg, undefined, undefined, true, block.ts).catch(() => {})
     }
 
     async execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {

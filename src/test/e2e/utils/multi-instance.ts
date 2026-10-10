@@ -11,7 +11,11 @@ import {
     FULL_RATE_RENDERING_ARGUMENTS,
     portableEnvironment,
 } from "./vscode-launch-isolation"
-import { resolveVSCodeDownloadPlatform, resolveVSCodeDownloadVersion } from "./vscode-version-resolver"
+import {
+    E2E_VSCODE_DOWNLOAD_TIMEOUT_MS,
+    resolveVSCodeDownloadPlatform,
+    resolveVSCodeDownloadVersion,
+} from "./vscode-version-resolver"
 
 export interface MultiInstanceSurface {
     readonly app: ElectronApplication
@@ -115,6 +119,7 @@ export class MultiInstanceLauncher {
             platform: vscodePlatform,
             cachePath: vscodeCachePath,
             reporter: new SilentReporter(),
+            timeout: E2E_VSCODE_DOWNLOAD_TIMEOUT_MS,
         })
         return this.executablePath
     }

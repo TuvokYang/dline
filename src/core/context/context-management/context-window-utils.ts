@@ -12,17 +12,7 @@ const SUMMARIZE_INSTRUCTION_BUDGET = 2_500
 const ESTIMATION_TOLERANCE = 2_000
 export const COMPACTION_CLOSURE_RESERVE_TOKENS = 3_000
 /**
- * Share of the guarded reserve one compaction Pass may borrow to remain a single request.
- *
- * The trailing complete logical turns routinely overshoot the trigger by a small margin.
- * Splitting that range into an extra Pass strands most of the context window and forces the
- * excluded tail to be replayed as a fresh prefix after compaction, destroying prompt-cache
- * reuse. Borrowing part of the reserve is far cheaper than that split, so half of it is
- * available; the closure reserve and the summary response stay guarded by the ceiling below.
- */
-const COMPACTION_CONCESSION_RATIO = 0.5
-/**
- * Smallest output space a hidden Pass request must leave inside the hard context window.
+ * Smallest output space a hidden Pass request must leave inside the provider's hard context window.
  *
  * The real output ceiling is resolved per request by the window budget, which subtracts the
  * concession already spent by the input. This constant only keeps the Pass ceiling strictly
@@ -49,45 +39,31 @@ export interface CompactTriggerPolicy {
     /**
      * Maximum estimated input one hidden compaction Pass request may carry.
      *
-     * This is the trigger plus the reserve concession, capped so the borrowed tokens can never
-     * consume the space the summary response still needs.
+     * This is derived from the provider's hard context window, not from the ordinary-request
+     * trigger or an optional auto-condense cap. Those settings decide when compaction starts and
+     * how small its landed target should be; they must not truncate a hidden Pass the provider can hold.
      */
     passInputCeilingTokens: number
-    /** Tokens borrowed from the guarded reserve so a complete range stays a single Pass. */
+    /** Diagnostic headroom between the ordinary-request trigger and the hidden Pass ceiling. */
     passInputCeilingAllowanceTokens: number
 }
 
-interface CompactionConcession {
-    concessionTokens: number
+interface CompactionPassCeiling {
+    allowanceTokens: number
     passInputCeilingTokens: number
 }
 
-/**
- * Resolve how far one Pass may borrow from the guarded reserve to avoid splitting.
- *
- * The concession is derived only from the reserve, then bounded by the hard requirement that
- * the request still leaves room for the closure reserve and a usable summary response.
- *
- * @param reserveTokens The guarded reserve the concession ratio applies to.
- * @param projectedUsageTriggerTokens The compaction trigger, which is also the recommended Pass input length.
- * @param hardPassContextWindowTokens The hard context boundary a Pass request must respect.
- * @returns The granted concession and the resulting Pass input ceiling.
- */
-function resolveCompactionConcession(
-    reserveTokens: number,
+/** Resolve the hidden Pass ceiling from the provider's hard window. */
+function resolveCompactionPassCeiling(
     projectedUsageTriggerTokens: number,
     hardPassContextWindowTokens: number,
-): CompactionConcession {
-    const requestedConcession = Math.floor(Math.max(0, reserveTokens) * COMPACTION_CONCESSION_RATIO)
-    const summarySafeInputCeiling = Math.max(
+): CompactionPassCeiling {
+    const passInputCeilingTokens = Math.max(
         0,
         hardPassContextWindowTokens - COMPACTION_CLOSURE_RESERVE_TOKENS - MIN_COMPACTION_SUMMARY_OUTPUT_TOKENS,
     )
-    // The concession widens what one Pass may carry, but a request can never claim the space the
-    // window must keep for the closure reserve and the summary itself.
-    const passInputCeilingTokens = Math.min(projectedUsageTriggerTokens + requestedConcession, summarySafeInputCeiling)
     return {
-        concessionTokens: Math.max(0, passInputCeilingTokens - projectedUsageTriggerTokens),
+        allowanceTokens: Math.max(0, passInputCeilingTokens - projectedUsageTriggerTokens),
         passInputCeilingTokens,
     }
 }
@@ -148,18 +124,12 @@ export function resolveCompactTriggerPolicy(
     const maxContextTokens = normalizeAutoCondenseMaxContextTokens(options.maxContextTokens)
     if (maxContextTokens > 0 && normalizedContextWindow > maxContextTokens) {
         const effectiveContextLimitTokens = maxContextTokens
-        const hardPassContextWindowTokens = maxContextTokens
+        const hardPassContextWindowTokens = normalizedContextWindow
         const projectedUsageTriggerTokens = Math.max(
             0,
             effectiveContextLimitTokens - normalizedInstructionBudget - COMPACTION_CLOSURE_RESERVE_TOKENS,
         )
-        // The absolute cap has no percentage reserve, so the closure reserve is the only
-        // budget a complete range may borrow from before it would have to split.
-        const concession = resolveCompactionConcession(
-            COMPACTION_CLOSURE_RESERVE_TOKENS,
-            projectedUsageTriggerTokens,
-            hardPassContextWindowTokens,
-        )
+        const passCeiling = resolveCompactionPassCeiling(projectedUsageTriggerTokens, hardPassContextWindowTokens)
         return {
             branch: "absolute_cap",
             guardedReserveTokens: 0,
@@ -167,8 +137,8 @@ export function resolveCompactTriggerPolicy(
             hardPassContextWindowTokens,
             projectedUsageTriggerTokens,
             compactTriggerTokens: projectedUsageTriggerTokens + ESTIMATION_TOLERANCE,
-            passInputCeilingTokens: concession.passInputCeilingTokens,
-            passInputCeilingAllowanceTokens: concession.concessionTokens,
+            passInputCeilingTokens: passCeiling.passInputCeilingTokens,
+            passInputCeilingAllowanceTokens: passCeiling.allowanceTokens,
         }
     }
 
@@ -186,7 +156,7 @@ export function resolveCompactTriggerPolicy(
         0,
         effectiveContextLimitTokens - normalizedInstructionBudget - COMPACTION_CLOSURE_RESERVE_TOKENS,
     )
-    const concession = resolveCompactionConcession(guardedReserveTokens, projectedUsageTriggerTokens, hardPassContextWindowTokens)
+    const passCeiling = resolveCompactionPassCeiling(projectedUsageTriggerTokens, hardPassContextWindowTokens)
     return {
         branch: "percentage_guarded",
         guardedReserveTokens,
@@ -194,8 +164,8 @@ export function resolveCompactTriggerPolicy(
         hardPassContextWindowTokens,
         projectedUsageTriggerTokens,
         compactTriggerTokens: projectedUsageTriggerTokens + ESTIMATION_TOLERANCE,
-        passInputCeilingTokens: concession.passInputCeilingTokens,
-        passInputCeilingAllowanceTokens: concession.concessionTokens,
+        passInputCeilingTokens: passCeiling.passInputCeilingTokens,
+        passInputCeilingAllowanceTokens: passCeiling.allowanceTokens,
     }
 }
 

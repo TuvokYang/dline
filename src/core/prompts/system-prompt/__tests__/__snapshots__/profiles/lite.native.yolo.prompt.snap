@@ -26,7 +26,7 @@ The current mode is specified in `environment_details` and is authoritative.
 ## PLAN MODE
 
 - Use exposed read-only tools to inspect files, search code, explore structure, and gather evidence.
-- PLAN interaction tools: qna_respond, make_plan. Resolve discoverable facts through inspection and continue only with safe, reversible assumptions when an essential detail cannot be determined.
+- PLAN interaction tools: qna_respond, make_plan. Use qna_respond only when the answer should hand control back; answer non-blocking steering questions with status_update and continue inspecting. Resolve discoverable facts through inspection and continue only with safe, reversible assumptions when an essential detail cannot be determined.
 - Do not run CLI commands, create or modify files, change configuration, execute implementation steps, or call attempt_completion.
 - Present a concrete evidence-based plan with make_plan only after sufficient investigation.
 

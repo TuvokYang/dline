@@ -18,7 +18,7 @@ export interface ReasoningIndicatorSignals {
     readonly hasPlainReasoning: boolean
     /** The chunk carries an opaque encrypted reasoning payload. */
     readonly hasEncryptedReasoning: boolean
-    /** Assistant text already started; reasoning UI must stay stable afterwards. */
+    /** Assistant text already started; an opaque placeholder must not be introduced above it. */
     readonly assistantTextStarted: boolean
     /** A native tool call is already being streamed. */
     readonly hasPendingNativeToolUse: boolean
@@ -45,8 +45,11 @@ export class ReasoningIndicator {
      * already shows text.
      */
     decide(signals: ReasoningIndicatorSignals): ReasoningIndicatorAction {
-        // Once text or a tool call owns the turn, reasoning UI stays frozen.
-        if (signals.assistantTextStarted || signals.hasPendingNativeToolUse) {
+        // A tool already owns the visible tail, so later provider metadata must not
+        // insert thinking after it. Plain reasoning received before the tool is
+        // always published, even if prose started first; the chat collapses that
+        // row once a following response or tool row becomes visible.
+        if (signals.hasPendingNativeToolUse) {
             return "none"
         }
 
@@ -56,6 +59,11 @@ export class ReasoningIndicator {
             // contentless and must not be withdrawn later.
             this.placeholderOpen = false
             return "publish_text"
+        }
+
+        // Do not introduce an opaque placeholder above prose that is already visible.
+        if (signals.assistantTextStarted) {
+            return "none"
         }
 
         if (signals.hasEncryptedReasoning && !this.placeholderOpen && !this.publishedText) {

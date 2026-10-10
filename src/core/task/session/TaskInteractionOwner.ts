@@ -200,23 +200,33 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         readonly body: string
         readonly ask?: string
     }): Promise<void> {
-        const asks = this.messages.clineMessages.filter(
+        const currentMessages = this.messages.clineMessages
+        const asks = currentMessages.filter(
             (message) => message.type === "ask" && message.interactionId === request.interactionId,
         )
         if (asks.length === 1 && !asks[0].partial) return
         await this.messages.removeMessagesByTs(asks.map((message) => message.ts))
         const definition = getInteraction(request.kind as OpenInteractionRequest["kind"])
-        // The row must sort after everything already written. Wall-clock time is
-        // not enough here: an approval is revealed in the same millisecond as the
-        // rows around it, and a row that sorts before its own tool output makes
-        // the chat collapse the pair into two separate entries.
+        const ask = (request.ask ?? definition.taskAsk) as UiAsk
+        // Provider streaming presents a command before its approval interaction is
+        // planned. Reuse that partial row so denial updates one command in place;
+        // appending a second ask leaves the first statusless row rendered as legacy Completed.
+        const streamedCommand =
+            ask === "command"
+                ? [...currentMessages]
+                      .reverse()
+                      .find(
+                          (message) =>
+                              message.type === "say" &&
+                              message.say === "command" &&
+                              message.partial === true &&
+                              message.text === request.body,
+                      )
+                : undefined
+        // Other approval rows must sort after everything already written. Wall-clock
+        // time is not enough when several rows are revealed in the same millisecond.
         await this.presentAnchor(
-            createCanonicalAskRow(
-                (request.ask ?? definition.taskAsk) as UiAsk,
-                request.body,
-                this.nextRowTs(),
-                request.interactionId,
-            ),
+            createCanonicalAskRow(ask, request.body, streamedCommand?.ts ?? this.nextRowTs(), request.interactionId),
         )
     }
 

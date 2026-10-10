@@ -16,6 +16,8 @@ export interface CreateContextWindowIndicatorInput {
 export interface BeginContextWindowIndicatorSendInput {
     lineage: ContextWindowIndicatorLineage
     durableContextTokens: number
+    /** Replace a larger prior request baseline, as a hidden compaction Pass does. */
+    allowDecrease?: boolean
     pendingSendTokens: number
     environmentTokens: number
     contextWindow: number
@@ -227,26 +229,26 @@ export class ContextWindowIndicator {
     beginSend(input: BeginContextWindowIndicatorSendInput): ContextWindowIndicatorSnapshot {
         const completedExchangeTokens = normalizeTokens(this.completedExchangeTokens)
         const pendingInputTokens = normalizeTokens(this.pendingInputTokens)
-        const durableContextTokens = Math.max(
-            normalizeTokens(input.durableContextTokens),
-            this.current.durableContextTokens + completedExchangeTokens,
-        )
-        const pendingSendTokens = Math.max(
-            pendingInputTokens,
-            Math.max(0, normalizeTokens(input.pendingSendTokens) - completedExchangeTokens),
-        )
-        this.stableBaseline = {
-            snapshot: {
-                ...cloneSnapshot(this.current),
-                durableContextTokens,
-                pendingSendTokens: 0,
-                receivingTokens: 0,
-                stagedTokens: pendingInputTokens,
-                phase: "stable",
-            },
-            completedExchangeTokens: 0,
-            pendingInputTokens,
-        }
+        const durableContextTokens = input.allowDecrease
+            ? normalizeTokens(input.durableContextTokens)
+            : Math.max(normalizeTokens(input.durableContextTokens), this.current.durableContextTokens + completedExchangeTokens)
+        const pendingSendTokens = input.allowDecrease
+            ? normalizeTokens(input.pendingSendTokens)
+            : Math.max(pendingInputTokens, Math.max(0, normalizeTokens(input.pendingSendTokens) - completedExchangeTokens))
+        this.stableBaseline = input.allowDecrease
+            ? this.createStableBaseline({ phase: "stable" })
+            : {
+                  snapshot: {
+                      ...cloneSnapshot(this.current),
+                      durableContextTokens,
+                      pendingSendTokens: 0,
+                      receivingTokens: 0,
+                      stagedTokens: pendingInputTokens,
+                      phase: "stable",
+                  },
+                  completedExchangeTokens: 0,
+                  pendingInputTokens,
+              }
         this.completedExchangeTokens = 0
         this.pendingInputTokens = 0
         this.current = {

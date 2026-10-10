@@ -72,13 +72,14 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
             if (existing !== undefined) this.messages.removeTransientClineMessage(existing)
             return
         }
-        await this.messages.commitTransientClineMessage({
+        const committed = await this.messages.commitTransientClineMessage({
             ts: existing ?? this.nextPresentationId(),
             type: "say",
             say: row,
             text,
             partial: false,
         })
+        this.realtime?.publish(committed)
     }
 
     /** The row a stream owns, allocated once so later chunks update rather than append. */

@@ -163,7 +163,7 @@ describe("ProviderCompactionService", () => {
         expect(lastText(calls)).toContain(`Hard limit for the complete response: ${cap} tokens.`)
     })
 
-    it("honours a caller ceiling and the absolute context cap below the model limits", async () => {
+    it("honours a caller output ceiling without treating the ordinary context cap as a Provider limit", async () => {
         const capped = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 1_000_000, maxTokens: 384_000 })
         await run(service(capped.frame), { sourceHistory: SOURCE, maxOutputTokens: 12_000 })
         expect(outputCap(capped.calls)).toBe(12_000)
@@ -173,7 +173,33 @@ describe("ProviderCompactionService", () => {
             service(absolute.frame, () => ({ maxContextTokens: 50_000 })),
             { sourceHistory: SOURCE },
         )
-        expect(outputCap(absolute.calls)).toBeLessThan(50_000)
+        expect(outputCap(absolute.calls)).toBe(384_000)
+    })
+
+    it("keeps the complete Provider-fitting source in one Pass above an ordinary absolute cap", async () => {
+        const absolute = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 1_000_000, maxTokens: 64_000 })
+        const requestPressures: NonNullable<ServiceOptions["requestPressures"]> = () => [
+            {
+                providerId: "openai",
+                modelId: "probe-model",
+                apiFormat: undefined,
+                estimatedTextBytes: 1_000,
+                estimatedMediaTokens: 0,
+                actualInputTokens: 100,
+            },
+        ]
+
+        await run(
+            service(absolute.frame, () => ({ maxContextTokens: 50_000 }), { requestPressures }),
+            TWO_LARGE_TURNS,
+        )
+
+        expect(absolute.calls).toHaveLength(1)
+        const sent = JSON.stringify(absolute.calls[0]?.[1])
+        expect(sent).toContain("task A")
+        expect(sent).toContain("task B")
+        expect(sent).toContain("a".repeat(1_000))
+        expect(sent).toContain("b".repeat(1_000))
     })
 
     it("uses exact Provider token-per-byte history to maximize complete turns in one Pass", async () => {
@@ -340,12 +366,33 @@ describe("ProviderCompactionService", () => {
         expect(result).toEqual({ summary: "THE SUMMARY", coveredThrough: 14 })
     })
 
-    it("hands each accepted Pass's projected next request to the indicator", async () => {
+    it("hands the actual hidden Pass request to the indicator before provider execution", async () => {
         const { frame } = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 200_000, maxTokens: 64_000 })
+        const passStarted = vi.fn()
         const passProjected = vi.fn()
 
         await run(
-            service(frame, () => ({ triggerPercent: 95 }), { indicator: { passProjected } }),
+            service(frame, () => ({ triggerPercent: 95 }), { indicator: { passStarted, passProjected } }),
+            { sourceHistory: SOURCE },
+        )
+
+        expect(passStarted).toHaveBeenCalledOnce()
+        const [compactionId, passIndex, attemptId, projection] = passStarted.mock.calls[0] ?? []
+        expect(compactionId).toBe("compaction:1")
+        expect(passIndex).toBe(0)
+        expect(attemptId).toEqual(expect.any(String))
+        expect(projection).toMatchObject({ contextWindow: 200_000, environmentTokens: 0 })
+        expect(projection.durableContextTokens).toBeGreaterThan(0)
+        expect(projection.pendingSendTokens).toBeGreaterThan(0)
+    })
+
+    it("hands each accepted Pass's projected next request to the indicator", async () => {
+        const { frame } = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 200_000, maxTokens: 64_000 })
+        const passStarted = vi.fn()
+        const passProjected = vi.fn()
+
+        await run(
+            service(frame, () => ({ triggerPercent: 95 }), { indicator: { passStarted, passProjected } }),
             TWO_LARGE_TURNS,
         )
 

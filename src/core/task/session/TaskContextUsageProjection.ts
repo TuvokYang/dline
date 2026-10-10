@@ -1,8 +1,4 @@
-import {
-    type ContextWindowIndicatorLineage,
-    type ContextWindowIndicatorSnapshot,
-    getContextWindowIndicatorTotalTokens,
-} from "@shared/context-window-indicator"
+import { type ContextWindowIndicatorLineage, type ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import { Logger } from "@shared/services/Logger"
 import type { Mode } from "@shared/storage/types"
 import { ContextWindowIndicator } from "../ContextWindowIndicator"
@@ -231,7 +227,7 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
      * context - must be free to replace it even while the run continues.
      */
     committed(state: Readonly<TaskState>): void {
-        const changed = this.beginCompaction(state) || ((isRunAtRest(state) || this.compactionEnded(state)) && this.settle())
+        const changed = this.compactionEnded(state) ? this.rollbackCompaction() : isRunAtRest(state) && this.settle()
         if (changed) this.publish()
     }
 
@@ -249,6 +245,45 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
         const adopted = this.indicator.adoptScope(this.options.scope())
         if (adopted.revision === before) return
         this.show(adopted)
+        this.publish()
+    }
+
+    /** Shows the actual hidden Pass request once its frozen Provider input exists. */
+    compactionPassStarted(
+        compactionId: string,
+        passIndex: number,
+        attemptId: string,
+        pass: {
+            readonly durableContextTokens: number
+            readonly pendingSendTokens: number
+            readonly environmentTokens: number
+            readonly contextWindow: number
+        },
+    ): void {
+        const indicator = this.indicator
+        if (!indicator) return
+        const scope = this.options.scope()
+        this.pendingTail = 0
+        this.lineage = {
+            kind: "compaction_pass",
+            operationId: compactionId,
+            passIndex,
+            attemptIndex: 0,
+            attemptId,
+        }
+        this.show(
+            indicator.beginSend({
+                lineage: this.lineage,
+                durableContextTokens: pass.durableContextTokens,
+                pendingSendTokens: pass.pendingSendTokens,
+                environmentTokens: pass.environmentTokens,
+                contextWindow: pass.contextWindow,
+                profileId: scope.profileId,
+                profileName: scope.profileName,
+                mode: scope.mode,
+                allowDecrease: true,
+            }),
+        )
         this.publish()
     }
 
@@ -355,49 +390,12 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
         return this.compactionShown() && !compactionInFlight(state)
     }
 
-    /**
-     * Shows a compaction's own request as sending.
-     *
-     * Compaction runs in its own execution domain and never passes through the
-     * provider reporter, so the committed run is the only sign it is in flight.
-     * Its figure is the conversation it condenses: the last reported occupancy
-     * plus the tail the round added since, which the summary request carries
-     * although no provider has measured it yet. The tail is taken once; a retried
-     * attempt starts from a figure that already includes it.
-     */
-    private beginCompaction(state: Readonly<TaskState>): boolean {
-        const compaction = compactionInFlight(state)
-        if (!compaction || !this.indicator) return false
-        if (this.lineage.kind === "compaction_pass" && this.lineage.attemptId === compaction.attempt) return false
+    private rollbackCompaction(): boolean {
         const indicator = this.indicator
-        const current = indicator.getSnapshot()
-        const scope = this.options.scope()
-        const tail = this.pendingTail
-        this.pendingTail = 0
-        const segments = projectAuthoritativeContextWindowIndicatorSegments({
-            projectedTotalTokens: getContextWindowIndicatorTotalTokens(current) + tail,
-            durableContextTokens: current.durableContextTokens,
-            estimatedEnvironmentTokens: current.environmentTokens,
-        })
-        this.lineage = {
-            kind: "compaction_pass",
-            operationId: compaction.compactionId,
-            passIndex: 0,
-            attemptIndex: 0,
-            attemptId: compaction.attempt,
-        }
-        this.show(
-            indicator.beginSend({
-                lineage: this.lineage,
-                durableContextTokens: segments.durableContextTokens,
-                pendingSendTokens: segments.pendingSendTokens,
-                environmentTokens: segments.environmentTokens,
-                contextWindow: current.contextWindow,
-                profileId: scope.profileId,
-                profileName: scope.profileName,
-                mode: scope.mode,
-            }),
-        )
+        if (!indicator || this.lineage.kind !== "compaction_pass") return false
+        const rolledBack = indicator.rollback({ lineage: this.lineage })
+        this.lineage = rolledBack.lineage
+        this.show(indicator.settle({ lineage: this.lineage }))
         return true
     }
 

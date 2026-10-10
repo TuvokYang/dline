@@ -135,6 +135,21 @@ describe("resolveApiErrorMessage", () => {
         expect(resolved).toBeUndefined()
     })
 
+    it("uses the verified presentation text while the exact ask row is outside the loaded message window", () => {
+        const taskViewState = createErrorTaskViewState()
+        if (!taskViewState.activeInteraction) throw new Error("Expected active interaction")
+        taskViewState.activeInteraction.presentationText = "Current API request failed"
+        taskViewState.activeInteraction.anchorVerified = true
+
+        const resolved = resolveApiErrorMessage({
+            isLast: true,
+            lastModifiedMessage: { type: "ask", ask: "api_req_failed", text: "Previous API error", ts: 1 },
+            taskViewState,
+        })
+
+        expect(resolved).toBe("Current API request failed")
+    })
+
     it("clears both persisted API error carriers when canonical Task state has recovered", () => {
         const recoveredView: TaskViewState = {
             taskId: "task-1",

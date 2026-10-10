@@ -73,6 +73,43 @@ function createConfig(askResult: {
 describe("StatusUpdateHandler", () => {
     const handler = new StatusUpdateHandler()
 
+    it("streams a non-blocking update with the same tool row shape as its final presentation", async () => {
+        const say = vi.fn(async () => undefined)
+
+        await handler.handlePartialBlock(
+            {
+                name: ClineDefaultTool.STATUS_UPDATE,
+                ts: 101,
+                params: { response: "Still working", requires_acknowledgment: "false" },
+            } as any,
+            { removeClosingTag: () => "Still working", say } as any,
+        )
+
+        expect(say).toHaveBeenCalledWith(
+            "tool",
+            JSON.stringify({ tool: "statusUpdate", content: "Still working" }),
+            undefined,
+            undefined,
+            true,
+            101,
+        )
+    })
+
+    it("keeps an acknowledged update as text until the interaction owns its final row", async () => {
+        const say = vi.fn(async () => undefined)
+
+        await handler.handlePartialBlock(
+            {
+                name: ClineDefaultTool.STATUS_UPDATE,
+                ts: 102,
+                params: { response: "Please confirm", requires_acknowledgment: "true" },
+            } as any,
+            { removeClosingTag: () => "Please confirm", say } as any,
+        )
+
+        expect(say).toHaveBeenCalledWith("text", "Please confirm", undefined, undefined, true, 102)
+    })
+
     it("uses noButtonClicked as stop response for acknowledged status update", async () => {
         const config = createConfig({ response: "noButtonClicked", text: "先停止，我要调整方向" })
 
