@@ -24,7 +24,7 @@ import { CanonicalCheckpointRepository, canonicalCheckpointRef } from "../checkp
 import { renderCompactionInstruction } from "../compaction/CompactionInstruction"
 import { CompactionRequestScopes } from "../compaction/CompactionRequestScopes"
 import { CompactionRoundBarrier } from "../compaction/CompactionRoundBarrier"
-import { CompositeCompactionLanding } from "../compaction/CompactionSummaryLanding"
+import { CompositeCompactionLanding, PromptStateCompactionLanding } from "../compaction/CompactionSummaryLanding"
 import { ContextUsageCompactionLanding } from "../compaction/ContextUsageCompactionLanding"
 import { FinalContextWindowGuard } from "../compaction/FinalContextWindowGuard"
 import { InteractionCompactionReview } from "../compaction/InteractionCompactionReview"
@@ -695,6 +695,7 @@ export class TaskSessionCompositionService {
                     conversation: providerConversation,
                     usage: contextUsage,
                 }),
+                new PromptStateCompactionLanding(prompt, promptCache),
             ]),
             // A summary the user asked for is theirs to accept or regenerate before
             // it replaces the conversation, through the same dialog every task uses.
@@ -867,10 +868,13 @@ export class TaskSessionCompositionService {
                             budgetGuidance,
                         }),
                     triggerOptions: readCompactTriggerOptions,
+                    requestPressures: () => collectContextWindowRequestPressures(messages.clineMessages),
                     scopes: compactionScopes,
                     progress: compactionCards,
                     environment,
                     indicator: {
+                        passStarted: (compactionId, passIndex, attemptId, projection) =>
+                            contextUsage.compactionPassStarted(compactionId, passIndex, attemptId, projection),
                         passProjected: (compactionId, projection) =>
                             contextUsage.compactionPassProjected(compactionId, projection),
                     },

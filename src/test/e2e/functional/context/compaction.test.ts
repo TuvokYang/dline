@@ -299,6 +299,11 @@ async function configureReducedCapScenario(dlineDir: string): Promise<void> {
     )
 }
 
+async function setAutoCompactionEnabled(dlineDir: string, enabled: boolean): Promise<void> {
+    const settings = JSON.parse(await readFile(settingsPath(dlineDir), "utf8")) as Record<string, unknown>
+    await writeFile(settingsPath(dlineDir), `${JSON.stringify({ ...settings, useAutoCondense: enabled }, null, 2)}\n`, "utf8")
+}
+
 async function configureResponsesContextPressure(dlineDir: string): Promise<void> {
     const profiles = JSON.parse(await readFile(profilesPath(dlineDir), "utf8")) as StoredProfile[]
     const profile = profiles.find((candidate) => candidate.name === E2E_PROFILE_NAMES.mockOpenAiResponses)
@@ -726,6 +731,7 @@ e2e(
                 id: "call_442_7k_summary",
                 name: "summarize_task",
                 arguments: { context: `${summaryMarker} preserves the complete prior turn.` },
+                delayMs: 2_000,
                 expectedRequestIncludes: ["The current conversation is rapidly running out of context", "E2E_442_7K_TASK"],
                 expectedRequestExcludes: [continuationMarker],
                 matchRequestContract: true,
@@ -746,7 +752,27 @@ e2e(
             const sidebar = await openSidebar(app, helper)
             await sendTask(sidebar, "E2E_442_7K_TASK")
             await expect(sidebar.getByText("E2E_442_7K_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+            const expandTaskHeader = sidebar.getByLabel("Expand task header")
+            if (await expandTaskHeader.isVisible()) await expandTaskHeader.click()
+            await expect(sidebar.getByTestId("context-window-indicator")).toBeVisible({ timeout: 60_000 })
+
             await sendTask(sidebar, continuationMarker)
+            const progress = sidebar.getByTestId("context-window-segmented-progress")
+            await expect(progress).toHaveAttribute("data-phase", "sending", { timeout: 30_000 })
+            const hiddenPass = await progress.evaluate((element) => {
+                const segments = Array.from(element.querySelectorAll<HTMLElement>("[data-segment]"))
+                const tokens = (kind: string) =>
+                    Number(segments.find((segment) => segment.dataset.segment === kind)?.dataset.authoritativeTokens ?? 0)
+                return {
+                    activeTokens: tokens("active"),
+                    durableTokens: tokens("durable"),
+                    totalTokens: segments.reduce((total, segment) => total + Number(segment.dataset.authoritativeTokens ?? 0), 0),
+                }
+            })
+            expect(hiddenPass.activeTokens).toBeGreaterThan(0)
+            expect(hiddenPass.durableTokens).toBeLessThan(442_600)
+            expect(hiddenPass.totalTokens).toBeLessThan(442_600)
+
             await expect(sidebar.getByText("E2E_442_7K_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
@@ -758,6 +784,153 @@ e2e(
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await app.close()
+        }
+    },
+)
+
+e2e(
+    "OpenAI compaction - calibrated 430K source remains complete in one hidden Pass",
+    async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
+        e2e.setTimeout(360_000)
+        await configureTriggerBoundary(dlineDir, 472_000, 420_000, 5_000, 30_000, 95)
+        await setAutoCompactionEnabled(dlineDir, false)
+
+        const taskText = "E2E_CALIBRATED_COMPLETE_SOURCE_TASK"
+        const turnAMarker = "E2E_CALIBRATED_COMPLETE_SOURCE_TURN_A"
+        const turnBMarker = "E2E_CALIBRATED_COMPLETE_SOURCE_TURN_B"
+        const calibrationMarkers = [
+            "E2E_CALIBRATED_SAMPLE_ONE",
+            "E2E_CALIBRATED_SAMPLE_TWO",
+            "E2E_CALIBRATED_SAMPLE_THREE",
+        ] as const
+        const continuationMarker = "E2E_CALIBRATED_COMPLETE_SOURCE_CONTINUE"
+        const summaryMarker = "E2E_CALIBRATED_COMPLETE_SOURCE_SUMMARY"
+        const completionMarker = "E2E_CALIBRATED_COMPLETE_SOURCE_OK"
+        const turnAResponse = `${turnAMarker}:${"A".repeat(1_750_000)}`
+        const turnBResponse = `${turnBMarker}:${"B".repeat(350_000)}`
+
+        server.enqueueResponses(
+            "openai-compatible-responses",
+            {
+                type: "tool",
+                id: "call_calibrated_source_setup",
+                name: "qna_respond",
+                arguments: { response: "E2E_CALIBRATED_COMPLETE_SOURCE_SETUP_READY" },
+                usage: { inputTokens: 1_000, outputTokens: 100 },
+                matchRequestContract: true,
+            },
+            ...calibrationMarkers.map((marker, index) => ({
+                type: "tool" as const,
+                id: `call_calibrated_source_sample_${index + 1}`,
+                name: "qna_respond",
+                arguments: { response: `${marker}_READY` },
+                // Three matching large-body samples dominate the setup sample's ratio.
+                usage: { inputTokens: 430_000, outputTokens: 100 },
+                matchRequestContract: true,
+            })),
+            {
+                type: "tool",
+                id: "call_calibrated_source_summary",
+                name: "summarize_task",
+                arguments: { context: `${summaryMarker} preserves every complete seeded and calibration turn.` },
+                matchRequestContract: true,
+            },
+            {
+                type: "tool",
+                id: "call_calibrated_source_complete",
+                name: "attempt_completion",
+                arguments: { result: completionMarker },
+                expectedRequestIncludes: [summaryMarker, continuationMarker],
+                matchRequestContract: true,
+            },
+        )
+
+        let firstApp: ElectronApplication | undefined
+        let resumedApp: ElectronApplication | undefined
+        try {
+            firstApp = await openVSCode(workspaceDir)
+            const first = await openSidebar(firstApp, helper)
+            await sendTask(first, taskText)
+            await expect(first.getByText("E2E_CALIBRATED_COMPLETE_SOURCE_SETUP_READY", { exact: false }).last()).toBeVisible({
+                timeout: 60_000,
+            })
+            await closeCurrentTask(first)
+            await firstApp.close()
+            firstApp = undefined
+            helper.clearCachedFrame()
+
+            const taskId = await onlyTaskId(dlineDocsDir)
+            const seededTokens = await seedLargeCompactionHistory(dlineDocsDir, taskId, [
+                { user: `${turnAMarker}_USER`, assistant: turnAResponse },
+                { user: `${turnBMarker}_USER`, assistant: turnBResponse },
+            ])
+            expect(seededTokens).toBeGreaterThan(510_000)
+            expect(seededTokens).toBeLessThan(550_000)
+
+            resumedApp = await openVSCode(workspaceDir)
+            let page = await resumedApp.firstWindow()
+            await E2ETestHelper.openClineSidebar(page)
+            let sidebar = await helper.getSidebar(page)
+            await E2ETestHelper.dismissWhatsNewModal(sidebar)
+            await helper.signin(sidebar)
+            await reopenTask(page, sidebar, taskText)
+
+            for (const marker of calibrationMarkers) {
+                await submitTask(sidebar, marker)
+                await expect(sidebar.getByText(`${marker}_READY`, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+            }
+
+            await closeCurrentTask(sidebar)
+            await resumedApp.close()
+            resumedApp = undefined
+            helper.clearCachedFrame()
+            await setAutoCompactionEnabled(dlineDir, true)
+
+            resumedApp = await openVSCode(workspaceDir)
+            page = await resumedApp.firstWindow()
+            await E2ETestHelper.openClineSidebar(page)
+            sidebar = await helper.getSidebar(page)
+            await E2ETestHelper.dismissWhatsNewModal(sidebar)
+            await helper.signin(sidebar)
+            await reopenTask(page, sidebar, taskText)
+            await submitTask(sidebar, continuationMarker)
+            await expect(sidebar.getByText(completionMarker, { exact: true }).last()).toBeVisible({ timeout: 180_000 })
+
+            await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 180_000 }).toBe(6)
+            const requests = server.getMockConsumptions("openai-compatible-responses")
+            expect(requests.every((request) => request.contractError === undefined)).toBe(true)
+            expect(requests.slice(1, 4).every((request) => request.usage?.inputTokens === 430_000)).toBe(true)
+            expect(requests[4]).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
+            expect(requests[5]).toMatchObject({ responseType: "tool", toolName: "attempt_completion" })
+
+            const hiddenPassText = JSON.stringify(requests[4].requestBody)
+            const continuedRequestText = JSON.stringify(requests[5].requestBody)
+            const evidence = {
+                seededTokens,
+                hiddenPassBytes: Buffer.byteLength(hiddenPassText, "utf8"),
+                hiddenPassContainsTurnA: hiddenPassText.includes(turnAMarker),
+                hiddenPassContainsTurnB: hiddenPassText.includes(turnBMarker),
+                continuedRequestContainsTurnA: continuedRequestText.includes(turnAMarker),
+                continuedRequestContainsTurnB: continuedRequestText.includes(turnBMarker),
+            }
+            const evidencePath = testInfo.outputPath("calibrated-complete-source-evidence.json")
+            await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8")
+            await testInfo.attach("calibrated-complete-source-evidence.json", {
+                path: evidencePath,
+                contentType: "application/json",
+            })
+
+            // A calibrated full request below the Provider hard window must stay one Pass.
+            // The current regression drops the newest complete turn because compaction lacks requestPressures.
+            expect(hiddenPassText).toContain(turnAMarker)
+            expect(hiddenPassText).toContain(turnBMarker)
+            expect(continuedRequestText).not.toContain(turnAMarker)
+            expect(continuedRequestText).not.toContain(turnBMarker)
+            expect(requests.filter((request) => request.toolName === "summarize_task")).toHaveLength(1)
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await firstApp?.close()
+            await resumedApp?.close()
         }
     },
 )
