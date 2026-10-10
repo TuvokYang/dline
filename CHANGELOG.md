@@ -10,9 +10,20 @@
 - 每任务存储改为 `messages.db`、`activities.db` 与 `metrics.db`：旧的 `ui_messages.jsonl` 与 `activities.json` 首次打开时导入并重命名为 `*.migrated`，旧的 `<任务 ID>.db` 移为 `metrics.db`；`api_conversation_history.jsonl` 保持不变
 - 同一任务已在另一窗口打开时，本窗口只读显示：输入框与底部操作被禁用，回复、队列、压缩、活动控制、模式/Profile 切换和检查点恢复都会被拒绝，需通过任务锁提示中的强制解锁接管后才能继续
 - 移除已废弃的按模式 OCA/OpenRouter 模型 ID、模型信息与推理强度设置项（启动时一次性清理），旧任务继续时改用所选 Profile 的默认推理强度；同时移除旧的 `updateApiConfigurationProto` RPC，以及 Webview 中未使用的 Groq/Hugging Face/Baseten 模型列表状态
+- 上下文压缩改为使用 Provider 官方输入计数，或按同一 Provider、模型与 API 格式的真实用量校准文本估算；图片与文档独立计量，多轮压缩会持久保存已接受的 Pass，并从最后一个安全检查点恢复
+- Subagent 成本沿用实际模型的计费币种；人民币与日元使用无歧义标识，未知币种保留货币代码
 
 ### Fixes
 - 对话框高度限制在 Webview 可视区域内并滚动显示内容，较矮的侧边栏中长对话框不再把标题和关闭按钮推出屏幕
+- 修复旧任务导入后因工具消息失配导致压缩保留几乎全部历史、Anthropic 请求被拒、Resume 重跑已完成范围，以及压缩期间排队输入丢失或不可编辑的问题
+- 修复普通任务与 Subagent 遇到上游 HTTP/2 流错误时直接失败；现在会在保持请求、任务与运行身份的前提下有界重试，手动 Retry 可接管等待中的自动重试
+- 修复 `attempt_completion`、`qna_respond`、`generate_report` 等长文本工具只在结束时出现、产生重复结果，或关闭重开后丢失的问题
+- 修复 MCP 同一次调用的多个响应显示为多张卡片并重复产生 checkpoint；响应现在聚合为一张可折叠卡，执行态与审批态文案分离
+- 修复加密或删减后的 reasoning 泄漏到可见文本、产生多个 Thinking/checkpoint 行，或完成后遗留空 Thinking 占位的问题
+- 修复 Background Edit 抢占编辑器焦点、历史任务打开失败进入错误任务表面，以及恢复后的空白输入行和过期 Context Window/Focus Chain 展示
+
+### Release
+- Insiders draft 每次生成后只保留最新一个并展示当前累计 dev 变更；pre-release 与 production Release notes 从对应 changelog 版本段落生成，缺失或为空时停止发布，并校验 production Release 只有一个正确命名且非空的 VSIX
 
 ## [0.10.0]
 

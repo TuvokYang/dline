@@ -10,9 +10,20 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Per-task storage moves to `messages.db`, `activities.db`, and `metrics.db`: an existing `ui_messages.jsonl` or `activities.json` is imported on first open and renamed to `*.migrated`, an existing `<task-id>.db` becomes `metrics.db`, and `api_conversation_history.jsonl` is left unchanged
 - A task already open in another window is read-only in this window: input and footer actions are disabled, and replies, queue changes, compaction, activity controls, mode and Profile switches, and checkpoint restore are refused until you take the task over with force unlock in the lock banner
 - Removed the deprecated per-mode OCA/OpenRouter model ID, model info and reasoning effort settings (cleaned once at startup), so continued tasks use the selected Profile's default reasoning effort; also removed the legacy `updateApiConfigurationProto` RPC and unused Groq/Hugging Face/Baseten model list state in the Webview
+- Context compaction now uses the provider's official input count when available, or calibrates text estimates from real usage for the same provider, model, and API format; images and documents are counted separately, accepted passes are persisted, and multi-pass compaction resumes from the last safe checkpoint
+- Subagent costs now use the effective model's billing currency, with unambiguous labels for Chinese yuan and Japanese yen and the currency code retained for unknown currencies
 
 ### Fixes
 - Dialogs stay within the Webview height and scroll their content, so a long dialog in a short sidebar no longer pushes its title and close button off screen
+- Fixed imported tasks retaining almost all history after tool-message mismatches, Anthropic requests being rejected, Resume repeating completed compaction ranges, and queued input being lost or locked during compaction
+- Fixed ordinary tasks and subagents failing immediately on upstream HTTP/2 stream errors; bounded retries now preserve request, task, and run identity, while a manual Retry can take over a pending automatic retry
+- Fixed long `attempt_completion`, `qna_respond`, and `generate_report` output appearing only at the end, producing duplicate results, or disappearing after close and reopen
+- Fixed multiple responses from one MCP call appearing as separate cards with repeated checkpoints; responses are now grouped into one collapsible card and execution copy is distinct from approval copy
+- Fixed encrypted or redacted reasoning leaking into visible text, producing multiple Thinking or checkpoint rows, or leaving an empty Thinking placeholder after completion
+- Fixed Background Edit taking editor focus, history-open failures entering the wrong task surface, and restored tasks showing blank input rows or stale Context Window and Focus Chain state
+
+### Release
+- Each Insiders run now keeps only the latest draft and shows the current cumulative dev changes; pre-release and production notes come from the matching changelog version section, fail when that section is missing or empty, and verify that a production Release has exactly one correctly named, non-empty VSIX
 
 ## [0.10.0]
 

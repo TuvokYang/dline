@@ -131,6 +131,13 @@ jobs:
       actions: read
       contents: write
     steps:
+      - name: Checkout tested dev commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.verify-insiders.outputs.commit_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Download verified Insiders VSIX
         uses: actions/download-artifact@v8
         with:
@@ -169,6 +176,8 @@ jobs:
           set -euo pipefail
           vsix_path="release-artifact/$ASSET_NAME"
           notes_path="$RUNNER_TEMP/insiders-notes.md"
+          unreleased_notes_path="$RUNNER_TEMP/unreleased-notes.md"
+          node scripts/extract-changelog-section.mjs CHANGELOG.md Unreleased "$unreleased_notes_path" --allow-empty
           cat > "$notes_path" <<EOF
           Automated Insiders build for dev commit \`$COMMIT_SHA\`.
 
@@ -176,6 +185,14 @@ jobs:
           - SHA-256: \`$SHA256\`
           - Validated Tests run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}
           EOF
+          if [[ -s "$unreleased_notes_path" ]]; then
+            cat >> "$notes_path" <<EOF
+
+          ## 当前 dev 变更
+
+          EOF
+            cat "$unreleased_notes_path" >> "$notes_path"
+          fi
           title="Dline Insiders ${COMMIT_SHA:0:12}"
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \

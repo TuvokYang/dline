@@ -77,6 +77,14 @@ describe("package topology safety", () => {
 		expect(productionPublisher).toContain('expected_count" != "1" || "$vsix_count" != "1"')
 		expect(productionPublisher).toContain("uses: ./.github/workflows/publish-vsix-registries.yml")
 		expect(insidersWorkflow).toContain("group: publish-insiders")
+		expect(insidersWorkflow).toContain("name: Checkout tested dev commit")
+		expect(insidersWorkflow).toContain("ref: ${{ needs.verify-insiders.outputs.commit_sha }}")
+		expect(insidersWorkflow).toContain("persist-credentials: false")
+		expect(insidersWorkflow).toContain(
+			'node scripts/extract-changelog-section.mjs CHANGELOG.md Unreleased "$unreleased_notes_path" --allow-empty',
+		)
+		expect(insidersWorkflow).toContain('if [[ -s "$unreleased_notes_path" ]]; then')
+		expect(insidersWorkflow).toContain('cat "$unreleased_notes_path" >> "$notes_path"')
 		expect(insidersWorkflow).toContain("Prune older Insiders drafts")
 		expect(insidersWorkflow).toContain("select(.draft == true and .tag_name != $keep)")
 		expect(insidersWorkflow).toContain('gh release delete "$stale_tag" --yes')
