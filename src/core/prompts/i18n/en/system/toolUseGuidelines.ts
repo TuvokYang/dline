@@ -19,7 +19,7 @@ const prompts: Record<string, string> = {
 
 ## TURN-END Tools
 
-Tools marked [TURN-END] hand control back to the user. Calling one terminates the current execution turn: the runtime stops the automatic API/tool loop and opens the tool's user interaction. Do not emit additional tool calls after a TURN-END call in the same response. Execution resumes from the user's submitted feedback or selected action.
+Tools marked [TURN-END] hand control back to the user. Use a TURN-END tool when the user needs to provide information or a decision, explicitly requested a plan or report for review, or the entire current task is complete. Calling one terminates the current execution turn: the runtime stops the automatic API/tool loop and opens the tool's user interaction. Do not emit additional tool calls after a TURN-END call in the same response. Execution resumes from the user's submitted feedback or selected action.
 
 ${EXPLICIT_INSTRUCTIONS_SECTION}`,
 }

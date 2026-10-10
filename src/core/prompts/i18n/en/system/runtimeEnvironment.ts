@@ -13,7 +13,7 @@ const prompts: Record<string, string> = {
     localWebSearchCapabilities:
         "\n- When the task requires current information (for example current documentation, best practices, or news), use web_search. This request routes that tool through Dline's local executor.",
     serverWebSearchCapabilities:
-        "\n- Use web search only when the user explicitly requests external search or verification, or when the task cannot be completed reliably without external retrieval. Do not search merely because information may be current or recent.",
+        "\n- Use web search when the user requests external search or verification, when the task cannot be completed reliably without external retrieval, or when known solutions to a similar problem would inform a decision that local evidence cannot settle. Do not search merely because information may be current or recent.",
     connectedMcpServers: "Connected MCP servers: @NAMES@",
     workspaceReferenceHint: " For the default workspace, use relative paths.",
     parallelToolsRule:

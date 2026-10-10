@@ -26,7 +26,7 @@ export function createStandardSystemSections(config: SystemSectionContentConfig)
         "agent-role": STANDARD_AGENT_ROLE,
         "user-authority": SHARED_USER_AUTHORITY,
         objective: createStandardObjective(config),
-        "act-vs-plan": createStandardActVsPlan(),
+        "act-vs-plan": createStandardActVsPlan(config),
         "user-communication": SHARED_USER_COMMUNICATION,
         "tool-use": createStandardToolUse(config),
         "task-progress": config.focusChainEnabled ? SHARED_TASK_PROGRESS : "",

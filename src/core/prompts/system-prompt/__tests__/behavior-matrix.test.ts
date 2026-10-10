@@ -69,6 +69,20 @@ async function generate(profile: PromptProfile, transport: "native" | "xml", ove
     return new SystemPromptGenerator().generate(context)
 }
 
+/** Extracts the ACT MODE section so assertions cannot match the same wording elsewhere in the prompt. */
+function actModeSection(result: Awaited<ReturnType<typeof generate>>): string {
+    const start = result.systemPrompt.indexOf("## ACT MODE")
+    const end = result.systemPrompt.indexOf("## PLAN MODE", start)
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+    return result.systemPrompt.slice(start, end)
+}
+
+const SUBAGENT_DECISION_SOURCE = "Delegate independent research or review to subagents"
+const WEB_DECISION_SOURCE = "Search the web for how similar problems have been solved"
+const INTERACTIVE_USER_DECISIONS = "Interrupt the user only for"
+const YOLO_USER_DECISIONS = "Asking is not available"
+
 /** Reports whether one tool is exposed through the selected transport. */
 function exposes(result: Awaited<ReturnType<typeof generate>>, transport: "native" | "xml", name: string): boolean {
     return transport === "native" ? toolNames(result.tools).includes(name) : result.systemPrompt.includes(`## ${name}`)
@@ -240,5 +254,57 @@ describe("Standard/Lite transport and capability behavior matrix", () => {
 
         expect(exposes(result, transport, "change_todo_list")).toBe(false)
         expect(JSON.stringify(result.tools ?? [])).not.toContain("task_progress")
+    })
+
+    it.each(["native", "xml"] as const)("renders ACT MODE decision sources from Standard/%s capabilities", async (transport) => {
+        const local = actModeSection(await generate(PromptProfile.Standard, transport))
+        const hosted = actModeSection(
+            await generate(PromptProfile.Standard, transport, { webSearchRoutingPlan: HOSTED_WEB_SEARCH_ROUTING_PLAN }),
+        )
+        const noWeb = actModeSection(
+            await generate(PromptProfile.Standard, transport, {
+                clineWebToolsEnabled: false,
+                webSearchRoutingPlan: DISABLED_WEB_SEARCH_ROUTING_PLAN,
+            }),
+        )
+        const noSubagents = actModeSection(await generate(PromptProfile.Standard, transport, { subagentsEnabled: false }))
+        const subagentRun = actModeSection(await generate(PromptProfile.Standard, transport, { isSubagentRun: true }))
+
+        expect(local).toContain(SUBAGENT_DECISION_SOURCE)
+        expect(local).toContain(WEB_DECISION_SOURCE)
+        expect(hosted).toContain(WEB_DECISION_SOURCE)
+        expect(noWeb).not.toContain(WEB_DECISION_SOURCE)
+        expect(noWeb).toContain(SUBAGENT_DECISION_SOURCE)
+        expect(noSubagents).not.toContain(SUBAGENT_DECISION_SOURCE)
+        expect(noSubagents).toContain(WEB_DECISION_SOURCE)
+        expect(subagentRun).not.toContain(SUBAGENT_DECISION_SOURCE)
+        for (const section of [local, hosted, noWeb, noSubagents, subagentRun]) {
+            expect(section).not.toMatch(/@ACT_[A-Z_]+@/)
+        }
+    })
+
+    it.each([
+        [PromptProfile.Standard, "native"],
+        [PromptProfile.Standard, "xml"],
+        [PromptProfile.Lite, "native"],
+        [PromptProfile.Lite, "xml"],
+    ] as const)("switches ACT MODE user decisions with yolo mode for %s/%s", async (profile, transport) => {
+        const interactive = actModeSection(await generate(profile, transport))
+        const yolo = actModeSection(await generate(profile, transport, { yoloModeToggled: true }))
+
+        expect(interactive).toContain(INTERACTIVE_USER_DECISIONS)
+        expect(interactive).not.toContain(YOLO_USER_DECISIONS)
+        expect(yolo).toContain(YOLO_USER_DECISIONS)
+        expect(yolo).not.toContain(INTERACTIVE_USER_DECISIONS)
+    })
+
+    it.each(["native", "xml"] as const)("keeps subagent and web decision sources out of Lite/%s", async (transport) => {
+        const section = actModeSection(
+            await generate(PromptProfile.Lite, transport, { webSearchRoutingPlan: HOSTED_WEB_SEARCH_ROUTING_PLAN }),
+        )
+
+        expect(section).not.toContain(SUBAGENT_DECISION_SOURCE)
+        expect(section).not.toContain(WEB_DECISION_SOURCE)
+        expect(section).not.toMatch(/@ACT_[A-Z_]+@/)
     })
 })

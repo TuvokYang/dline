@@ -1,9 +1,12 @@
 // English prompts — key-value pairs only, no code logic.
+
+// Shared by both subagent tools so the delegation limits have one wording.
+const SUBAGENT_USAGE_LIMITS =
+    "Delegate only work large enough to justify a separate context, such as multi-file research, an independent review, or parallel investigation; read a few files, run a search, or inspect a definition yourself. Every result returns into your context, so weigh your remaining context before delegating: when Context Window Usage in environment_details exceeds 85% or fewer than 50K tokens remain, avoid starting new subagents and continue with direct tool calls."
+
 const prompts: Record<string, string> = {
-    description:
-        "Run up to @MAX_SUBAGENTS_PER_BATCH@ subagents from one call. Describe each one as an item in the subagents array; items run concurrently up to the configured subagent limit and the rest wait their turn, so a wide batch is accepted in full rather than trimmed. Each subagent returns a comprehensive research result with tool and token stats. Use this to preserve the main task's context window by delegating self-contained research. Keep each delegated research boundary independent from the main task's modification boundary: provide only the context needed for investigation, and do not treat files explored or reported by a subagent as authorized write scope. Using one item is valid.",
-    singleDescription:
-        "Run one focused default or named subagent. Omit agent_name or use 'default' for the built-in readonly research subagent; use an advertised YAML name for a configured agent. Use this to preserve the main task's context window through self-contained research. Keep the delegated research boundary independent from the main task's modification boundary, and do not infer write authorization from files the subagent explores or reports.",
+    description: `Run up to @MAX_SUBAGENTS_PER_BATCH@ subagents from one call. Describe each one as an item in the subagents array; items run concurrently up to the configured subagent limit and the rest wait their turn, so a wide batch is accepted in full rather than trimmed. Each subagent returns a comprehensive research result with tool and token stats. Use this to preserve the main task's context window by delegating self-contained research. ${SUBAGENT_USAGE_LIMITS} Keep each delegated research boundary independent from the main task's modification boundary: provide only the context needed for investigation, and do not treat files explored or reported by a subagent as authorized write scope. Using one item is valid.`,
+    singleDescription: `Run one focused default or named subagent. Omit agent_name or use 'default' for the built-in readonly research subagent; use an advertised YAML name for a configured agent. Use this to preserve the main task's context window through self-contained research. ${SUBAGENT_USAGE_LIMITS} Keep the delegated research boundary independent from the main task's modification boundary, and do not infer write authorization from files the subagent explores or reports.`,
     agentNameInstruction: "Optional advertised subagent name. Omit or use 'default' for the built-in default profile.",
     taskInstruction: "Focused task for the subagent.",
     contextInstruction:

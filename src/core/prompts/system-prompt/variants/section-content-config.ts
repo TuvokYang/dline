@@ -7,4 +7,8 @@ export interface SystemSectionContentConfig {
     readonly focusChainEnabled: boolean
     readonly yoloModeEnabled: boolean
     readonly userInstructionsEnabled: boolean
+    /** Web Search runs through Dline's local executor for this request. */
+    readonly localWebSearchEnabled: boolean
+    /** Web Search runs as a provider-hosted server tool for this request. */
+    readonly serverWebSearchEnabled: boolean
 }

@@ -287,6 +287,19 @@ describe("provider tool projector", () => {
     })
 
     it.each([
+        ClineDefaultTool.USE_SUBAGENT,
+        ClineDefaultTool.USE_SUBAGENTS,
+    ])("limits %s to substantial work while the main context has room", (toolId) => {
+        const context = { ...BASE_CONTEXT, subagentsEnabled: true, isSubagentRun: false }
+        const tool = findTool(new ToolPromptGenerator().generate(PromptProfile.Standard, context), toolId)
+        const description = tool && "function" in tool ? tool.function.description : undefined
+
+        expect(description).toContain("read a few files")
+        expect(description).toContain("exceeds 85%")
+        expect(description).toContain("fewer than 50K tokens remain")
+    })
+
+    it.each([
         PromptProfile.Standard,
         PromptProfile.Lite,
     ])("does not expose recursive task or subagent tools during a %s subagent run", (profile) => {

@@ -257,7 +257,7 @@
     "type": "function",
     "function": {
       "name": "act_mode_respond",
-      "description": "Provide a brief user-visible preamble or progress update during ACT MODE without ending the turn. After displaying the message, execution continues automatically so you can proceed with the next work tool immediately.\n\nUse this tool to keep the user informed throughout execution. Use it at least:\n- After inspecting relevant files and before modifying files or running state-changing commands: explain what you will change, where, and why\n- After a coherent batch of changes or checks: report what was completed, what verification showed, and what comes next\n- When the user corrects or redirects work during execution: acknowledge the correction, explain its effect on the current approach, and then continue\n- When you find or correct your own mistake, a result contradicts your expectation, or your approach changes\n- Before complex or potentially risky operations\n\nKeep the update brief and conversational. Always follow it with an actual work tool in the same turn. Do not call act_mode_respond consecutively; after using it, the next call must perform work. Do not use it for final completion; use attempt_completion instead.",
+      "description": "Provide a brief user-visible preamble or progress update during ACT MODE without ending the turn. After displaying the message, execution continues automatically so you can proceed with the next work tool immediately.\n\nSend updates at the moments USER COMMUNICATION defines. An update informs the user; it never asks a question or requests approval.\n\nKeep the update brief and conversational. Always follow it with an actual work tool in the same turn. Do not call act_mode_respond consecutively; after using it, the next call must perform work. Do not use it for final completion; use attempt_completion instead.",
       "strict": false,
       "parameters": {
         "type": "object",
@@ -345,7 +345,7 @@
     "type": "function",
     "function": {
       "name": "status_update",
-      "description": "Provide a brief user-visible preamble, progress statement, or correction during task execution without ending the turn. By default, execution continues immediately so you can proceed with the next work tool without waiting.\n\nUse this tool to tell the user what you will change and why, announce a completed phase and its verification result, explain a change in approach, acknowledge a correction or changed direction received during execution, or report and correct your own mistake.\n\nSet requires_acknowledgment to true ONLY when you need the user to confirm before continuing — this displays \"知晓\" (acknowledge) and \"停止\" (stop) buttons. Otherwise leave it false and continue with actual work in the same turn.\n\nDo not call status_update consecutively; the next call must perform work. Do not use it for final completion — use attempt_completion.",
+      "description": "Provide a brief user-visible preamble, progress statement, or correction during task execution without ending the turn. By default, execution continues immediately so you can proceed with the next work tool without waiting.\n\nUse it at the moments USER COMMUNICATION defines, including acknowledging a correction received during execution.\n\nSet requires_acknowledgment to true ONLY when the user should read this message before you continue — this displays Acknowledge and Stop buttons. Acknowledgment confirms only that the user has seen the message; it is not permission or a decision. Request permission or a decision with ask_followup_question. Otherwise leave it false and continue with actual work in the same turn.\n\nDo not call status_update consecutively; the next call must perform work. Do not use it for final completion — use attempt_completion.",
       "strict": false,
       "parameters": {
         "type": "object",
@@ -356,7 +356,7 @@
           },
           "requires_acknowledgment": {
             "type": "boolean",
-            "description": "Set to true if you need the user to explicitly acknowledge before continuing. Defaults to false — execution continues immediately."
+            "description": "Set to true only when the user should read the message before you continue; acknowledgment is not permission. Defaults to false — execution continues immediately."
           }
         },
         "required": [

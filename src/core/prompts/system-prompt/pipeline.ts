@@ -17,8 +17,6 @@ export interface SystemPromptConfig extends SystemSectionContentConfig {
     readonly browserEnabled: boolean
     readonly cliEnvironment: boolean
     readonly webToolsEnabled: boolean
-    readonly localWebSearchEnabled: boolean
-    readonly serverWebSearchEnabled: boolean
 }
 
 const COMPLETE_TEMPLATE_ENV_KEYS = [
