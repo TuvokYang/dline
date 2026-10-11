@@ -1,4 +1,10 @@
 import { writeFile } from "node:fs/promises"
+import {
+    type ComposerTextReaderWindow,
+    expectComposerPlaceholder,
+    expectComposerText,
+    installComposerTextReader,
+} from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type TestInfo } from "@playwright/test"
 
@@ -59,7 +65,7 @@ e2e("Close Task click and detach", async ({ helper, server, sidebar, userDataDir
         let closed = false
         try {
             await expect(closeButton).toHaveCount(0, { timeout: 8_000 })
-            await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
+            await expectComposerPlaceholder(sidebar.getByTestId("chat-input"), "Type your task here...")
             closed = true
         } finally {
             observations.push({
@@ -121,18 +127,22 @@ e2e("Turn-end feedback and next interaction", async ({ helper, server, sidebar, 
     const input = sidebar.getByTestId("chat-input")
     await expect(input).toBeEnabled()
     await input.fill(feedback)
+    await installComposerTextReader(sidebar)
     await sidebar.evaluate((marker) => {
-        const scope = window as typeof window & { __dlineTurnEndProbe?: { timeline: unknown[]; timer: number } }
+        const scope = window as typeof window &
+            ComposerTextReaderWindow & { __dlineTurnEndProbe?: { timeline: unknown[]; timer: number } }
+        const readDraft = scope.__dlineE2EComposerText
+        if (!readDraft) throw new Error("composer text reader is not installed")
         const timeline: unknown[] = []
         const sample = () => {
-            const composer = document.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')
+            const composer = document.querySelector('[data-testid="chat-input"]')
             const echoes = Array.from(
                 document.querySelectorAll('[data-testid="direct-user-input"], [data-testid="queued-user-input"]'),
             ).filter((element) => element.textContent?.includes(marker)).length
             const secondAskVisible = document.body.textContent?.includes("E2E_TURN_END_SECOND") ?? false
             const next = {
                 atMs: Date.now(),
-                text: composer?.value ?? null,
+                text: composer ? readDraft(composer) : null,
                 echoes,
                 secondAskVisible,
                 sendDisabled: document.querySelector('[data-testid="send-button"]')?.getAttribute("disabled") !== null,
@@ -172,7 +182,7 @@ e2e("Turn-end feedback and next interaction", async ({ helper, server, sidebar, 
     await attachDiagnostic(testInfo, "turn-end-input-observations", { timeline, consumptions })
     expect(timeline.some(({ echoes, text }) => echoes > 0 && text?.includes(feedback))).toBe(false)
     expect(consumptions.every(({ contractError }) => contractError === undefined)).toBe(true)
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await input.fill("E2E_TURN_END_SECOND_FEEDBACK")
     await input.press("Enter")
     await expect(sidebar.getByText("E2E_TURN_END_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })

@@ -3,7 +3,7 @@ import type { MessageStateHandler } from "@core/task/message-state"
 import { type ReviewedReply, SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
 import { encodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
 import type { DialogDraftEnvelope, DialogSelectionEnvelope } from "@core/task/stores/payload/TaskPayloadEnvelopes"
-import type { SemanticInputDocument } from "@shared/input-semantics/document"
+import { isResourceNode, type SemanticInputDocument } from "@shared/input-semantics/document"
 import { type DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
 import { decodeAdmissibleSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Logger } from "@shared/services/Logger"
@@ -47,6 +47,17 @@ function decodeDraftDocument(request: DispatchInteractionRequest): {
 }
 
 /**
+ * Whether a reply names its attachments twice: as resource nodes in its
+ * document and again as flat lists. The document is the only authority for a
+ * structured reply's attachments; flat lists beside resource nodes would be
+ * delivered as well, so such a reply is refused instead of guessed at.
+ */
+function mixesResourceCarriers(draft: DispatchInteractionRequest["draft"], document: SemanticInputDocument): boolean {
+    const hasFlatCarriers = (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0
+    return hasFlatCarriers && document.nodes.some(isResourceNode)
+}
+
+/**
  * Show a reply whose lifecycle command consumed all of it, as the user typed it.
  *
  * The dialog handler echoes only the text a reply keeps; when the command took
@@ -63,6 +74,7 @@ async function showConsumedReply(
     messages: MessageStateHandler,
     nextPresentationId: (() => number) | undefined,
     request: DispatchInteractionRequest,
+    carried: ReplyCarriers,
 ): Promise<void> {
     const draft = request.draft
     const rowId = `reply:${request.interactionId}`
@@ -76,11 +88,24 @@ async function showConsumedReply(
         type: "say",
         say: "user_feedback",
         text: draft.text,
-        images: [...draft.images],
-        files: [...draft.files],
+        images: [...carried.images],
+        files: [...carried.files],
         interactionId: rowId,
     })
     await registered.persistence
+}
+
+/** The flat attachments a reply hands on: what the request sent plus its verified resources. */
+interface ReplyCarriers {
+    readonly images: readonly string[]
+    readonly files: readonly string[]
+}
+
+function replyCarriersOf(draft: DispatchInteractionRequest["draft"], reviewed: ReviewedReply | undefined): ReplyCarriers {
+    return {
+        images: [...(draft?.images ?? []), ...(reviewed?.images ?? [])],
+        files: [...(draft?.files ?? []), ...(reviewed?.files ?? [])],
+    }
 }
 
 /** The dialog action that abandons the task for a fresh one instead of answering it. */
@@ -161,6 +186,10 @@ export async function dispatchInteraction(
     const decodedDraft = decodeDraftDocument(request)
     if (decodedDraft.invalid) return response(false, "invalid_payload")
     const draftDocument = decodedDraft.document
+    if (draftDocument && mixesResourceCarriers(request.draft, draftDocument)) {
+        Logger.warn(`dispatchInteraction: refusing a reply to ${request.interactionId} that carries resources twice`)
+        return response(false, "invalid_payload")
+    }
     // A reply is user input like any submission: a lifecycle command typed into
     // it acts instead of reaching the model as literal feedback. What remains is
     // the text the reply keeps once the command and its premessage are taken out;
@@ -183,6 +212,9 @@ export async function dispatchInteraction(
         return response(false, "invalid_payload")
     }
     const draftText = request.draft ? (reviewed?.text ?? request.draft.text) : undefined
+    // A structured reply sends its attachments as resources; receivers still read
+    // flat lists, so its verified resources join whatever the request carried.
+    const carried = replyCarriersOf(request.draft, reviewed)
     // Once a command was taken out, only the structure before it is the reply;
     // storing the whole document would let a later admission act on it again.
     const storedDocument = reviewed ? reviewed.document : draftDocument
@@ -191,8 +223,8 @@ export async function dispatchInteraction(
               encodeTaskPayload<DialogDraftEnvelope>({
                   kind: "dialog_draft",
                   text: draftText ?? request.draft.text,
-                  images: [...request.draft.images],
-                  files: [...request.draft.files],
+                  images: [...carried.images],
+                  files: [...carried.files],
                   ...(storedDocument === undefined ? {} : { semanticInput: storedDocument }),
               }),
           )
@@ -212,8 +244,8 @@ export async function dispatchInteraction(
     if (feedbackBlockId && request.draft) {
         session.approvalFeedback.record(feedbackBlockId, {
             text: draftText ?? request.draft.text,
-            images: [...request.draft.images],
-            files: [...request.draft.files],
+            images: [...carried.images],
+            files: [...carried.files],
         })
     }
     const result = approvalEntry
@@ -284,10 +316,10 @@ export async function dispatchInteraction(
     const replyConsumed = Boolean(reviewed && !reviewed.text && request.draft?.text)
     // An approval's note reaches the model only through the block's result, never
     // as intake, so no other path shows the user the note they sent with it.
-    const approvalNote = Boolean(approvalEntry && hasDraftContent(request.draft))
+    const approvalNote = Boolean(approvalEntry && hasDraftContent(request.draft, carried))
     const consumedRow =
         replyConsumed || approvalNote
-            ? showConsumedReply(session.messages, session.owners.nextPresentationId, request).catch((error: unknown) => {
+            ? showConsumedReply(session.messages, session.owners.nextPresentationId, request, carried).catch((error: unknown) => {
                   Logger.warn(
                       `dispatchInteraction: could not show the reply for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
                   )
@@ -302,8 +334,8 @@ export async function dispatchInteraction(
         draft: request.draft
             ? {
                   text: draftText ?? request.draft.text,
-                  images: [...request.draft.images],
-                  files: [...request.draft.files],
+                  images: [...carried.images],
+                  files: [...carried.files],
                   // The same structure the payload holds: a continuation that
                   // re-admits the reply must not meet the claimed command again.
                   ...(storedDocument === undefined ? {} : { semanticInput: storedDocument }),
@@ -324,6 +356,6 @@ export async function dispatchInteraction(
     return response(true, "accepted")
 }
 
-function hasDraftContent(draft: DispatchInteractionRequest["draft"]): boolean {
-    return Boolean(draft && (draft.text.trim().length > 0 || draft.images.length > 0 || draft.files.length > 0))
+function hasDraftContent(draft: DispatchInteractionRequest["draft"], carried: ReplyCarriers): boolean {
+    return Boolean(draft && (draft.text.trim().length > 0 || carried.images.length > 0 || carried.files.length > 0))
 }

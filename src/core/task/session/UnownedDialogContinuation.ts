@@ -143,14 +143,19 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
         const context = createResumeSubmissionContext(resolution.kind)
         const processAnyway = resolution.kind === "mistake_limit" && resolution.outcome.actionId === "process_anyway"
         const manualRetry = resolution.kind === "error_retry" && resolution.outcome.actionId === "retry"
+        // A structured draft's flat lists only project its resources for receivers
+        // that read no structure; admitting the document again restores them, and
+        // passing both would claim two authorities for the same attachments.
+        const attachments =
+            draft?.semanticInput === undefined
+                ? { images: draft?.images, files: draft?.files }
+                : { semanticInput: draft.semanticInput }
         try {
             const input = await this.resumption.materialize({
                 text: draft?.text,
                 ...(processAnyway ? { admittedText: formatResponse.tooManyMistakes(draft?.text) } : {}),
-                images: draft?.images,
-                files: draft?.files,
+                ...attachments,
                 ...(context === undefined ? {} : { context }),
-                ...(draft?.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
             })
             if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
             if (processAnyway) this.resetMistakes?.()

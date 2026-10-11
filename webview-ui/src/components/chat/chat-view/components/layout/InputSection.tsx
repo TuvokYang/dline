@@ -4,9 +4,9 @@ import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import React, { useEffect, useRef, useState } from "react"
 import ChatTextArea from "@/components/chat/ChatTextArea"
 import { InputQueuePanel, type InputQueuePanelEntry } from "@/components/chat/input/InputQueuePanel"
-import type { ModeSwitchDraft } from "@/components/chat/mode-switch/useModeSwitch"
+import type { ComposerSegment } from "@/components/chat/input/semantic-composer/model"
+import type { ComposerSendDraft } from "@/components/chat/input/semantic-composer/send-draft"
 import QuotedMessagePreview from "@/components/chat/QuotedMessagePreview"
-import { provenanceForRecalledDraft, rebaseProvenance } from "@/services/input-semantics/paste-provenance"
 import type { AcceptedInteractionSettlement, InteractionDraft } from "@/task-interaction/types"
 import { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
 import { resolveSendDisposition } from "./submit-or-enqueue"
@@ -17,7 +17,8 @@ interface InputSectionProps {
     scrollBehavior: ScrollBehavior
     placeholderText: string
     shouldDisableFilesAndImages: boolean
-    selectFilesAndImages: () => Promise<void>
+    /** Whether the active model reads images natively, so the file dialog offers them. */
+    imagesAllowed: boolean
     draft: InteractionDraft
     /** The catalog every submission of this view is composed against. */
     semanticCatalog: InputSemanticCatalog
@@ -63,7 +64,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
     scrollBehavior,
     placeholderText,
     shouldDisableFilesAndImages,
-    selectFilesAndImages,
+    imagesAllowed,
     draft: currentDraft,
     semanticCatalog,
     enabled,
@@ -86,19 +87,10 @@ export const InputSection: React.FC<InputSectionProps> = ({
         activeQuote,
         setActiveQuote,
         isTextAreaFocused,
-        inputValue,
-        setInputValue,
-        undoInputValue,
-        redoInputValue,
+        composer,
         sendingDisabled,
-        selectedImages,
-        setSelectedImages,
-        selectedFiles,
-        setSelectedFiles,
-        textAreaRef,
+        composerRef,
         handleFocusChange,
-        pasteProvenance,
-        commitPasteProvenance,
         restoreDraft,
     } = chatState
 
@@ -108,7 +100,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
     // event cannot dispatch the same draft, while a successor interaction remains
     // independently submitable even if the prior RPC is still settling.
     const directSubmissionsInFlightRef = useRef(new Set<string>())
-    const submitDraft = async (capturedDraft?: ModeSwitchDraft) => {
+    const submitDraft = async (capturedDraft?: ComposerSendDraft) => {
         const directSubmissionKey = `${submissionScope ?? "unscoped"}:${
             submissionIdentity ?? `draft-${currentDraft.ownerRevision ?? "unowned"}`
         }`
@@ -127,10 +119,10 @@ export const InputSection: React.FC<InputSectionProps> = ({
                   }
                 : currentDraft
             if (!onSubmit) {
-                // A new task adds the quote itself, so it composes from the pasted spans
-                // rather than from a document that does not include the quote.
-                await messageHandlers.handleSendMessage(draft.text, draft.images, draft.files, {
-                    spans: rebaseProvenance(pasteProvenance, draft.text).spans,
+                // A new task adds the quote itself as a literal, so it composes from
+                // the frozen draft rather than from a document without the quote.
+                await messageHandlers.handleSendMessage({
+                    segments: capturedDraft?.segments ?? composer.state.segments,
                     catalog: semanticCatalog,
                 })
                 return
@@ -170,26 +162,22 @@ export const InputSection: React.FC<InputSectionProps> = ({
      * the same input twice and invite an accidental duplicate send.
      */
     const clearComposerDraft = () => {
-        setInputValue("")
-        setSelectedImages([])
-        setSelectedFiles([])
+        composer.retire()
         setActiveQuote(null)
     }
 
-    // The text last handed to the queue, held until the composer reports a
-    // different value. Without it, a send arriving before React has rendered the
-    // cleared text area would read the stale value and queue it a second time.
-    const handedToQueueRef = useRef<string>()
-    if (inputValue !== handedToQueueRef.current) {
+    // The draft last handed to the queue, held until the composer holds a
+    // different draft. Without it, a second send arriving before the queue
+    // acknowledged the first would queue the same draft again, and the composer
+    // would keep showing input the queue already owns. Drafts are immutable, so
+    // identity is exact: any edit produces a new one.
+    const handedToQueueRef = useRef<readonly ComposerSegment[]>()
+    if (composer.state.segments !== handedToQueueRef.current) {
         handedToQueueRef.current = undefined
     }
 
-    const enqueueBlockedDraft = (capturedDraft: ModeSwitchDraft) => {
-        // The captured text comes from the text area, which still holds the old
-        // value until React re-renders with the cleared state. A second send
-        // arriving in that window would queue the same draft again, and the
-        // composer would keep showing text the queue already owns.
-        if (capturedDraft.text === handedToQueueRef.current) {
+    const enqueueBlockedDraft = (capturedDraft: ComposerSendDraft) => {
+        if (capturedDraft.segments === handedToQueueRef.current) {
             return
         }
         const draft = {
@@ -209,7 +197,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
                         handedToQueueRef.current = undefined
                         return
                     }
-                    if (handedToQueueRef.current !== capturedDraft.text) {
+                    if (handedToQueueRef.current !== capturedDraft.segments) {
                         return
                     }
                     onAccepted?.()
@@ -223,24 +211,26 @@ export const InputSection: React.FC<InputSectionProps> = ({
         // Only commit when the entry is still there; otherwise this is ordinary
         // new input and must be queued rather than dropped.
         if (editingEntryId && editedEntryExists && onCommitQueuedInput) {
-            handedToQueueRef.current = capturedDraft.text
+            handedToQueueRef.current = capturedDraft.segments
             clearAcceptedDraft(onCommitQueuedInput(editingEntryId, draft), () => setEditingEntryId(undefined))
             return
         }
         // Nothing will drain the queue, so the draft stays in the composer where
         // the user can still see it and send it once the task accepts input.
         // The ref is left alone as well, otherwise the retry would be mistaken
-        // for a duplicate of a send that never happened.
+        // for a duplicate of a send that never happened. The refusal is shown:
+        // a send that leaves no trace reads as lost input.
         if (!onEnqueueInput || !queueCanDeliver) {
+            composer.reportSendRefusal("input_not_ready")
             return
         }
-        handedToQueueRef.current = capturedDraft.text
+        handedToQueueRef.current = capturedDraft.segments
         clearAcceptedDraft(onEnqueueInput(draft))
     }
 
     // Every entry point — the Enter key, the send button and a resume — decides
     // here, so a send behaves the same way whichever one raised it.
-    const handleSend = (capturedDraft?: ModeSwitchDraft) => {
+    const handleSend = (capturedDraft?: ComposerSendDraft) => {
         const canSubmit = !(capturedDraft && onSubmit && enabled === false)
         const disposition = resolveSendDisposition({ canSubmit, queueCanDeliver })
         if (disposition === "submit") {
@@ -251,7 +241,9 @@ export const InputSection: React.FC<InputSectionProps> = ({
         // so it stays where the user can still see and resend it.
         if (disposition === "enqueue" && capturedDraft) {
             enqueueBlockedDraft(capturedDraft)
+            return
         }
+        if (capturedDraft) composer.reportSendRefusal("input_not_ready")
     }
 
     /**
@@ -271,15 +263,16 @@ export const InputSection: React.FC<InputSectionProps> = ({
         if (!entry) {
             return
         }
-        setInputValue(entry.text)
-        // Recalling the text alone would release what the entry still holds
-        // back, and an edit could then complete a pasted fragment into a command.
-        commitPasteProvenance(provenanceForRecalledDraft(entry.text, entry.semanticInput))
-        setSelectedImages([...entry.images])
-        setSelectedFiles([...entry.files])
-        // The composer now represents this entry, so an unrelated quote left in
-        // it must go: keeping it would attach a quote the entry never had.
-        setActiveQuote(entry.activeQuote ?? null)
+        // The entry comes back with what it still holds back, so an edit cannot
+        // complete a pasted fragment into a command. The composer now represents
+        // this entry, so an unrelated quote left in it is replaced as well.
+        restoreDraft({
+            text: entry.text,
+            images: [...entry.images],
+            files: [...entry.files],
+            activeQuote: entry.activeQuote ?? null,
+            ...(entry.semanticInput === undefined ? {} : { semanticInput: entry.semanticInput }),
+        })
         setEditingEntryId(id)
         onEditQueuedInput?.(id)
     }
@@ -317,32 +310,22 @@ export const InputSection: React.FC<InputSectionProps> = ({
             )}
 
             <ChatTextArea
-                activeQuote={activeQuote}
+                attachmentsDisabled={shouldDisableFilesAndImages}
                 clineAsk={clineAsk}
-                commitPasteProvenance={commitPasteProvenance}
-                inputValue={inputValue}
+                composer={composer}
+                imagesAllowed={imagesAllowed}
                 onFocusChange={handleFocusChange}
                 onHeightChange={() => {
                     if (isAtBottom) {
                         scrollToBottomAuto()
                     }
                 }}
-                onSelectFilesAndImages={selectFilesAndImages}
                 onSend={handleSend}
                 onSendBlocked={onEnqueueInput ? enqueueBlockedDraft : undefined}
-                pasteProvenance={pasteProvenance}
                 placeholderText={placeholderText}
-                redoInputValue={redoInputValue}
-                ref={textAreaRef}
-                selectedFiles={selectedFiles}
-                selectedImages={selectedImages}
+                ref={composerRef}
                 semanticCatalog={semanticCatalog}
                 sendingDisabled={enabled === undefined ? sendingDisabled : !enabled}
-                setInputValue={setInputValue}
-                setSelectedFiles={setSelectedFiles}
-                setSelectedImages={setSelectedImages}
-                shouldDisableFilesAndImages={shouldDisableFilesAndImages}
-                undoInputValue={undoInputValue}
             />
         </>
     )

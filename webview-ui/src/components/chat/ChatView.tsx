@@ -4,10 +4,11 @@ import { combineErrorRetryMessages } from "@shared/combineErrorRetryMessages"
 import { combineHookSequences } from "@shared/combineHookSequences"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { taskPhaseStillDelivers } from "@shared/InputQueueDelivery"
-import { BooleanRequest, StringRequest } from "@shared/proto/dline/common"
+import { StringRequest } from "@shared/proto/dline/common"
 import type { ModelInfo } from "@shared/proto/dline/models"
 import { AskResponseRequest, CompactTaskRequest } from "@shared/proto/dline/task"
 import { toProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
+import { resolveInputMediaTypes } from "@shared/providers/input-media"
 import { resolveProfileModelInfo } from "@shared/providers/profile-model-info"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useApiProfiles } from "@/components/settings/providers/useApiProfiles"
@@ -15,7 +16,6 @@ import { useProviderModels } from "@/components/settings/providers/useProviderMo
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useShowNavbar } from "@/context/PlatformContext"
 import { FileServiceClient, TaskServiceClient, UiServiceClient } from "@/services/grpc-client"
-import { composeSubmission, newComposerDocumentId, provenanceForRecalledDraft } from "@/services/input-semantics/paste-provenance"
 import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSemanticCatalog"
 import { getTaskViewKey } from "@/services/task-messages"
 import { createInteractionDispatchGate } from "@/task-interaction/dispatch-gate"
@@ -41,7 +41,6 @@ import { useTaskActivities } from "./activity/useTaskActivities"
 import AutoApproveBar from "./auto-approve-menu/AutoApproveBar"
 // Import utilities and hooks from the new structure
 import {
-    CHAT_CONSTANTS,
     ChatLayout,
     convertHtmlToMarkdown,
     filterVisibleMessages,
@@ -57,6 +56,10 @@ import {
     WelcomeSection,
 } from "./chat-view"
 import { resolveActiveProfile, resolveTaskCurrency } from "./chat-view/utils/profileUtils"
+import { createCommandAtom } from "./input/semantic-composer/atoms"
+import { type ComposerSegment, contentLength, isBlankDraft, trimSegments } from "./input/semantic-composer/model"
+import { composeComposerSubmission } from "./input/semantic-composer/projection"
+import { composerSendBlock } from "./input/semantic-composer/send-draft"
 import { useInputQueue } from "./input/useInputQueue"
 
 interface ChatViewProps {
@@ -66,10 +69,9 @@ interface ChatViewProps {
     showHistoryView: () => void
 }
 
-// Use constants from the imported module
-const MAX_IMAGES_AND_FILES_PER_MESSAGE = CHAT_CONSTANTS.MAX_IMAGES_AND_FILES_PER_MESSAGE
 const QUICK_WINS_HISTORY_THRESHOLD = 3
 const EMPTY_MODEL_INFO: ModelInfo = { id: "", capabilities: {}, pricing: {} }
+const MANUAL_COMPACT_COMMAND_ID = "command.compact"
 const MANUAL_COMPACT_COMMAND = "/cmd:compact"
 
 const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryView }: ChatViewProps) => {
@@ -176,55 +178,32 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     // Retained input the user typed while the task was busy. The backend owns it;
     // this only projects it and forwards the user's changes.
     const inputQueue = useInputQueue(taskId)
-    const {
-        inputValue,
-        setInputValue,
-        activeQuote,
-        setActiveQuote,
-        selectedImages,
-        setSelectedImages,
-        selectedFiles,
-        setSelectedFiles,
-        restoreDraft,
-        expandedRows,
-        setExpandedRows,
-        textAreaRef,
-        pasteProvenance,
-        commitPasteProvenance,
-    } = chatState
+    const { composer, activeQuote, setActiveQuote, restoreDraft, expandedRows, setExpandedRows, composerRef } = chatState
     useStoppedReasoningExpansion(messages, taskViewState?.phase, taskId, setExpandedRows)
     const semanticCatalog = useInputSemanticCatalog()
-    // Every surface that submits the draft - composer, footer, resume - reads one
-    // derived document, so a held pasted candidate stays held whichever sends it.
-    const draftSemanticInput = useMemo(
-        () =>
-            composeSubmission({
-                text: inputValue,
-                spans: pasteProvenance.text === inputValue ? pasteProvenance.spans : [],
-                catalog: semanticCatalog,
-                documentId: newComposerDocumentId(),
-            }).semanticInput,
-        [inputValue, pasteProvenance, semanticCatalog],
+    const draftSegments = composer.state.segments
+    // Every surface that submits the draft - composer, footer, resume - reads this one
+    // composition, under the draft's own document identity, so a held candidate stays
+    // held whichever sends it and an accepted send is recognized as this draft.
+    const draftSubmission = useMemo(
+        () => composeComposerSubmission(draftSegments, { catalog: semanticCatalog, documentId: composer.documentId }),
+        [composer.documentId, draftSegments, semanticCatalog],
     )
     const draftRevisionRef = useRef(0)
-    const previousDraftSourceRef = useRef({ inputValue, activeQuote, selectedImages, selectedFiles })
+    const previousDraftSourceRef = useRef({ draftSegments, activeQuote })
     const previousDraftSource = previousDraftSourceRef.current
-    if (
-        previousDraftSource.inputValue !== inputValue ||
-        previousDraftSource.activeQuote !== activeQuote ||
-        previousDraftSource.selectedImages !== selectedImages ||
-        previousDraftSource.selectedFiles !== selectedFiles
-    ) {
+    if (previousDraftSource.draftSegments !== draftSegments || previousDraftSource.activeQuote !== activeQuote) {
         draftRevisionRef.current += 1
-        previousDraftSourceRef.current = { inputValue, activeQuote, selectedImages, selectedFiles }
+        previousDraftSourceRef.current = { draftSegments, activeQuote }
     }
+    // Attachments travel as resource nodes of the document; the flat arrays stay empty.
     const interactionDraft: InteractionDraft = {
-        text: inputValue,
-        images: selectedImages,
-        files: selectedFiles,
+        text: draftSubmission.text,
+        images: [],
+        files: [],
         activeQuote,
         ownerRevision: draftRevisionRef.current,
-        ...(draftSemanticInput === undefined ? {} : { semanticInput: draftSemanticInput }),
+        ...(draftSubmission.semanticInput === undefined ? {} : { semanticInput: draftSubmission.semanticInput }),
     }
     const taskSessionRef = useRef({ taskId, taskInstanceId, epoch: 0 })
     if (taskSessionRef.current.taskId !== taskId || taskSessionRef.current.taskInstanceId !== taskInstanceId) {
@@ -237,17 +216,16 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     currentTaskIdRef.current = taskId
     currentDraftRef.current = interactionDraft
     latestMessagesRef.current = messages
+    const { retire: retireComposer } = composer
     const clearOwnedDraft = useCallback(
         (settlement: AcceptedInteractionSettlement): void => {
             if (!canApplyAcceptedInteractionSettlement(currentTaskIdRef.current, currentDraftRef.current, settlement)) {
                 return
             }
-            setInputValue("")
-            setSelectedImages([])
-            setSelectedFiles([])
+            retireComposer()
             setActiveQuote(null)
         },
-        [setActiveQuote, setInputValue, setSelectedFiles, setSelectedImages],
+        [retireComposer, setActiveQuote],
     )
     // A rejected dispatch can restore only a still-empty draft in the same
     // mounted task session, unless feedback for that interaction has already
@@ -263,15 +241,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
             ) {
                 return
             }
-            setInputValue(settlement.draft.text)
-            // The restored text keeps what it held back, so an edit cannot turn a
+            // The restored draft keeps what it held back, so an edit cannot turn a
             // pasted fragment into a command (WS-041 AC-09).
-            commitPasteProvenance(provenanceForRecalledDraft(settlement.draft.text, settlement.draft.semanticInput))
-            setSelectedImages([...settlement.draft.images])
-            setSelectedFiles([...settlement.draft.files])
-            setActiveQuote(settlement.draft.activeQuote ?? null)
+            restoreDraft(settlement.draft)
         },
-        [commitPasteProvenance, setActiveQuote, setInputValue, setSelectedFiles, setSelectedImages],
+        [restoreDraft],
     )
     const retainSuccessorDraft = useCallback((transfer: PendingSuccessorDraftTransfer): void => {
         setPendingSuccessorDraft(transfer)
@@ -398,43 +372,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         [apiMetrics, selectedModelInfo.pricing?.currency],
     )
 
-    const selectFilesAndImages = useCallback(async () => {
-        try {
-            const response = await FileServiceClient.selectFiles(
-                BooleanRequest.create({
-                    value: selectedModelInfo.capabilities?.supportsImages ?? false,
-                }),
-            )
-            if (response?.values1 && response.values2 && (response.values1.length > 0 || response.values2.length > 0)) {
-                const currentTotal = selectedImages.length + selectedFiles.length
-                const availableSlots = MAX_IMAGES_AND_FILES_PER_MESSAGE - currentTotal
-
-                if (availableSlots > 0) {
-                    // Prioritize images first
-                    const imagesToAdd = Math.min(response.values1.length, availableSlots)
-                    if (imagesToAdd > 0) {
-                        setSelectedImages((prevImages) => [...prevImages, ...response.values1.slice(0, imagesToAdd)])
-                    }
-
-                    // Use remaining slots for files
-                    const remainingSlots = availableSlots - imagesToAdd
-                    if (remainingSlots > 0) {
-                        setSelectedFiles((prevFiles) => [...prevFiles, ...response.values2.slice(0, remainingSlots)])
-                    }
-                }
-            }
-        } catch (error) {
-            console.error("Error selecting images & files:", error)
-        }
-    }, [
-        selectedModelInfo.capabilities?.supportsImages,
-        setSelectedImages,
-        selectedImages.length,
-        setSelectedFiles,
-        selectedFiles.length,
-    ])
-
-    const shouldDisableFilesAndImages = selectedImages.length + selectedFiles.length >= MAX_IMAGES_AND_FILES_PER_MESSAGE
+    // The model's declared input media decide whether the file dialog offers images.
+    const imagesAllowed = useMemo(
+        () => [...resolveInputMediaTypes(selectedModelInfo)].some((mediaType) => mediaType.startsWith("image/")),
+        [selectedModelInfo],
+    )
 
     // Subscribe to show webview events from the backend
     useEffect(() => {
@@ -444,7 +386,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                 onResponse: (event) => {
                     // Only focus if not hidden and preserveEditorFocus is false
                     if (!isHidden && !event.preserveEditorFocus) {
-                        textAreaRef.current?.focus()
+                        composerRef.current?.focus()
                     }
                 },
                 onError: (error) => {
@@ -457,27 +399,30 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         )
 
         return cleanup
-    }, [isHidden, textAreaRef.current?.focus])
+    }, [composerRef, isHidden])
 
     // Set up addToInput subscription
+    const { engine: composerEngine } = composer
     useEffect(() => {
         const cleanup = UiServiceClient.subscribeToAddToInput(
             {},
             {
                 onResponse: (event) => {
                     if (event.value) {
-                        setInputValue((prevValue) => {
-                            const newText = event.value
-                            const newTextWithNewline = `${newText}\n`
-                            return prevValue ? `${prevValue}\n${newTextWithNewline}` : newTextWithNewline
+                        // The editor's "Add to Dline" text is appended on its own line. It stays typed text, as it
+                        // always was: its leading file mention keeps working and its code fence is opaque to the lexer.
+                        // A structured event carrying the mention and a literal selection needs a protocol change.
+                        const end = contentLength(composerEngine.getState().segments)
+                        composerEngine.apply({
+                            type: "insert_text",
+                            text: `${end > 0 ? "\n" : ""}${event.value}\n`,
+                            source: "typed",
+                            range: { start: end, end },
                         })
-                        // Add scroll to bottom after state update
-                        // Auto focus the input and start the cursor on a new line for easy typing
+                        // Focus the input with the caret on the new line, scrolled into view, for easy typing.
                         setTimeout(() => {
-                            if (textAreaRef.current) {
-                                textAreaRef.current.scrollTop = textAreaRef.current.scrollHeight
-                                textAreaRef.current.focus()
-                            }
+                            composerRef.current?.focus()
+                            composerRef.current?.revealCaret()
                         }, 0)
                     }
                 },
@@ -491,7 +436,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         )
 
         return cleanup
-    }, [setInputValue])
+    }, [composerEngine, composerRef])
 
     // Removed: useMount auto-focus and timer auto-focus.
     // Dline must not steal focus from the user's active input
@@ -628,12 +573,20 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         }
         const actionId = view.input.enterAction
         if (!actionId) return false
+        // The header button means compaction, so it sends the command node itself
+        // rather than text that only reads as the command under this catalog.
+        const atom = createCommandAtom(semanticCatalog, MANUAL_COMPACT_COMMAND_ID, MANUAL_COMPACT_COMMAND)
+        const segments: ComposerSegment[] = atom
+            ? [{ kind: "atom", atom }]
+            : [{ kind: "text", text: MANUAL_COMPACT_COMMAND, source: "typed" }]
+        const command = composeComposerSubmission(segments, { catalog: semanticCatalog, documentId: crypto.randomUUID() })
         const request = buildInteractionRequest(view, actionId, {
-            text: MANUAL_COMPACT_COMMAND,
+            text: command.text,
             images: [],
             files: [],
+            ...(command.semanticInput === undefined ? {} : { semanticInput: command.semanticInput }),
         })
-        if (request?.draft?.text !== MANUAL_COMPACT_COMMAND) return false
+        if (!request?.draft) return false
 
         compactCommandPendingRef.current = true
         setCompactCommandPending(true)
@@ -648,7 +601,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                 setCompactCommandPending(false)
             }
         }
-    }, [contextCompactionActive, taskInputEnabled, taskViewState])
+    }, [contextCompactionActive, semanticCatalog, taskInputEnabled, taskViewState])
     const submitForceTruncateTask = useCallback(async (): Promise<boolean> => {
         if (!taskViewState?.taskId || !taskInputEnabled || contextCompactionActive || forceTruncateTaskRpcPendingRef.current) {
             return false
@@ -685,16 +638,20 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                 return
             }
             const capturedDraft = captureInteractionDraft(currentDraftRef.current)
-            const trimmedText = capturedDraft.text.trim()
+            const segments = composer.engine.getState().segments
+            // An attachment still staging or failed would be lost, so the option
+            // is refused like any send of this draft, and the composer says why.
+            const block = composerSendBlock(segments)
+            if (block) {
+                composer.reportSendRefusal(block)
+                return
+            }
             // The option is model-authored text: it is held literal, and the user's
             // own text keeps whatever it still holds back (WS-041 AC-09).
-            const composed = composeSubmission({
-                text: capturedDraft.text,
-                spans: pasteProvenance.text === capturedDraft.text ? pasteProvenance.spans : [],
+            const composed = composeComposerSubmission(trimSegments(segments), {
                 catalog: semanticCatalog,
-                documentId: newComposerDocumentId(),
-                literalPrefix: trimmedText ? `${option}: ` : option,
-                trim: true,
+                documentId: composer.documentId,
+                literalPrefix: isBlankDraft(segments) ? option : `${option}: `,
             })
             const { semanticInput: _previous, ...plainDraft } = capturedDraft
             const responseDraft = {
@@ -708,7 +665,15 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
             clearOwnedDraft(settlement)
             await TaskServiceClient.dispatchInteraction(request)
         },
-        [clearOwnedDraft, interactionSynchronized, pasteProvenance, semanticCatalog, taskViewState],
+        [
+            clearOwnedDraft,
+            composer.documentId,
+            composer.engine,
+            composer.reportSendRefusal,
+            interactionSynchronized,
+            semanticCatalog,
+            taskViewState,
+        ],
     )
 
     const placeholderText = useMemo(() => {
@@ -809,6 +774,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                     clineAsk={visibleTask ? taskViewState?.activeInteraction?.taskAsk : undefined}
                     draft={interactionDraft}
                     enabled={visibleTask ? taskInputEnabled : undefined}
+                    imagesAllowed={imagesAllowed}
                     inputQueue={inputQueue.entries}
                     messageHandlers={messageHandlers}
                     onCancelQueuedInput={inputQueue.cancelEdit}
@@ -828,21 +794,17 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                     onToggleQueuedMode={inputQueue.toggleMode}
                     placeholderText={placeholderText}
                     scrollBehavior={scrollBehavior}
-                    selectFilesAndImages={selectFilesAndImages}
                     semanticCatalog={semanticCatalog}
-                    shouldDisableFilesAndImages={
-                        shouldDisableFilesAndImages ||
-                        Boolean(
-                            visibleTask &&
-                                (!taskViewState ||
-                                    !interactionSynchronized ||
-                                    Boolean(
-                                        taskViewState.activeInteraction &&
-                                            !taskViewState.input.acceptsImages &&
-                                            !taskViewState.input.acceptsFiles,
-                                    )),
-                        )
-                    }
+                    shouldDisableFilesAndImages={Boolean(
+                        visibleTask &&
+                            (!taskViewState ||
+                                !interactionSynchronized ||
+                                Boolean(
+                                    taskViewState.activeInteraction &&
+                                        !taskViewState.input.acceptsImages &&
+                                        !taskViewState.input.acceptsFiles,
+                                )),
+                    )}
                     submissionIdentity={
                         visibleTask
                             ? (taskViewState?.activeInteraction?.interactionId ??

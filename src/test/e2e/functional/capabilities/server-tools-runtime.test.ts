@@ -3,6 +3,7 @@ import * as path from "node:path"
 import type { MockApiConsumption, MockApiTarget } from "@e2e/fixtures/server"
 import { getE2EMockProviderBaseUrl } from "@e2e/fixtures/server/api"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerPlaceholder, expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskConversation, readTaskUiMessagesText, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
@@ -294,7 +295,7 @@ async function closeCurrentTask(sidebar: Frame): Promise<void> {
     const closeButton = sidebar.getByRole("button", { name: "Close Task", exact: true })
     await expect(closeButton).toBeVisible()
     await closeButton.click()
-    await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
+    await expectComposerPlaceholder(sidebar.getByTestId("chat-input"), "Type your task here...")
     await expect(closeButton).toHaveCount(0)
     await E2ETestHelper.dismissWhatsNewModal(sidebar)
 }
@@ -1846,7 +1847,7 @@ webFetchE2e(
             await input.fill(resumeDraft)
             await resumeButton.click()
 
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(opened.sidebar.getByText(/stale_interaction|stale interaction/i)).toHaveCount(0)
             await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length).toBe(6)

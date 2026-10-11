@@ -1,5 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { expect, type Frame } from "@playwright/test"
 import { E2ETestHelper } from "../utils/helpers"
 import { capabilityRow, toggleCapability } from "./scenarios/capabilities"
@@ -150,10 +151,10 @@ demo(
         await pace(400)
 
         await sidebar.getByRole("button", { name: "Hide Dline Rules & Workflows", exact: true }).first().click()
-        await expect(input).toHaveValue(TASK_TEXT)
+        await expectComposerText(input, TASK_TEXT)
         await focusCamera(input, STEP_SETTLE_MS)
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText(TASK_TEXT, { exact: false }).last()).toBeVisible({ timeout: 30_000 })
         const completion = sidebar.getByText(COMPLETION_TEXT, { exact: false }).last()
         await expect(completion).toBeVisible({ timeout: 60_000 })

@@ -1,5 +1,6 @@
 import { access, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
     pauseTaskBetweenTurns,
@@ -462,7 +463,7 @@ e2e(
         await expect(input).toBeEnabled()
         await input.fill("E2E_MISSING_QNA_CURRENT_INPUT")
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
 
         await expect
             .poll(

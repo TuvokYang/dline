@@ -3,8 +3,12 @@
  */
 
 import { UiAsk, UiMessage } from "@shared/ExtensionMessage"
+import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { ListRange, VirtuosoHandle } from "react-virtuoso"
 import type { InteractionDraft } from "../../../../task-interaction/types"
+import type { ComposerSegment } from "../../input/semantic-composer/model"
+import type { SemanticComposerEditorHandle } from "../../input/semantic-composer/SemanticComposerEditor"
+import type { ComposerDraft } from "../../input/semantic-composer/useComposerDraft"
 import type { ScrollRequest } from "../utils/scrollArbiter"
 
 /**
@@ -21,24 +25,19 @@ export interface ChatViewProps {
  * Chat state interface
  */
 export interface ChatState {
-    // State values
+    /** The semantic composer draft: the single authority for what the user is composing. */
+    composer: ComposerDraft
+    /** The draft's flat text, for emptiness and change checks only; never sent. */
     inputValue: string
-    setInputValue: React.Dispatch<React.SetStateAction<string>>
-    undoInputValue: () => string | undefined
-    redoInputValue: () => string | undefined
-    resetInputValue: (value?: string) => void
-    /** Pasted spans of `inputValue`; always describes exactly the current text. */
-    pasteProvenance: import("@/services/input-semantics/paste-provenance").PasteProvenance
-    /** Record the provenance of an edit the composer observed. */
-    commitPasteProvenance: (provenance: import("@/services/input-semantics/paste-provenance").PasteProvenance) => void
+    /**
+     * Plain-text adapter for callers that predate the semantic composer; it edits
+     * only the changed region, so atoms elsewhere in the draft survive.
+     */
+    setInputValue: (next: string | ((current: string) => string)) => void
     activeQuote: string | null
     setActiveQuote: React.Dispatch<React.SetStateAction<string | null>>
     isTextAreaFocused: boolean
     setIsTextAreaFocused: React.Dispatch<React.SetStateAction<boolean>>
-    selectedImages: string[]
-    setSelectedImages: React.Dispatch<React.SetStateAction<string[]>>
-    selectedFiles: string[]
-    setSelectedFiles: React.Dispatch<React.SetStateAction<string[]>>
     sendingDisabled: boolean
     setSendingDisabled: React.Dispatch<React.SetStateAction<boolean>>
     enableButtons: boolean
@@ -51,7 +50,7 @@ export interface ChatState {
     setExpandedRows: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
 
     // Refs
-    textAreaRef: React.RefObject<HTMLTextAreaElement>
+    composerRef: React.RefObject<SemanticComposerEditorHandle>
 
     // Derived presentation values
     lastMessage: UiMessage | undefined
@@ -69,18 +68,17 @@ export interface ChatState {
     pendingScrollToMessage?: number | null
 }
 
-/** What a new task needs to compose its structured input (WS-041 AC-09). */
+/** The frozen draft a new task is composed from (WS-041 AC-09). */
 export interface NewTaskComposition {
-    /** Pasted spans of the submitted text. */
-    readonly spans: readonly import("@/services/input-semantics/paste-provenance").TextSpan[]
-    readonly catalog: import("@shared/input-semantics/catalog").InputSemanticCatalog
+    readonly segments: readonly ComposerSegment[]
+    readonly catalog: InputSemanticCatalog
 }
 
 /**
  * Message handlers interface
  */
 export interface MessageHandlers {
-    handleSendMessage: (text: string, images: string[], files: string[], composition?: NewTaskComposition) => Promise<void>
+    handleSendMessage: (composition: NewTaskComposition) => Promise<void>
     handleTaskCloseButtonClick: () => Promise<void>
     startNewTask: () => Promise<void>
 }

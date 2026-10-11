@@ -14,7 +14,8 @@ import { openStagingStore, type StageOutcome, sameStagingTarget, stagingTargetOf
  * selection belongs to the composer they started from, not to whichever task
  * is active afterwards. Picker filters are advisory on some platforms, so an
  * image picked while the model cannot read images is rejected here rather than
- * trusted to the dialog.
+ * trusted to the dialog. The dialog cannot cap how many files are picked, so
+ * only as many as fit in the draft are staged; the rest are never copied.
  */
 export async function selectInputResources(
     controller: Controller,
@@ -22,12 +23,14 @@ export async function selectInputResources(
 ): Promise<InputResourceStageResults> {
     const target = stagingTargetOf(controller, request.draftId)
     if (!target.ok) return toStageResults([{ result: target }])
+    const maxCount = request.maxCount ?? Number.POSITIVE_INFINITY
+    if (maxCount <= 0) return toStageResults([])
 
     const extensions = request.imagesAllowed
         ? [...ATTACHABLE_IMAGE_EXTENSIONS, ...ATTACHABLE_FILE_EXTENSIONS]
         : [...ATTACHABLE_FILE_EXTENSIONS]
     const selection = await HostProvider.window.showOpenDialogue({
-        canSelectMany: true,
+        canSelectMany: maxCount > 1,
         openLabel: "Select",
         filters: { files: extensions },
     })
@@ -38,7 +41,7 @@ export async function selectInputResources(
             ? openStagingStore(target.value)
             : resourceFailed("semantic_input_resource_invalid", "the composer changed while files were being selected")
     const outcomes: StageOutcome[] = []
-    for (const filePath of selection.paths ?? []) {
+    for (const filePath of (selection.paths ?? []).slice(0, maxCount)) {
         const name = path.basename(filePath)
         if (!request.imagesAllowed && isAttachableImageName(name)) {
             outcomes.push({

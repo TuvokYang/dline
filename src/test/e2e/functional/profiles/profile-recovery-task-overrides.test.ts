@@ -1,6 +1,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerPlaceholder } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
@@ -430,7 +431,7 @@ e2e(
             expect(persistedRecoveryProfile?.openai?.serviceTier).toBeUndefined()
 
             await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
-            await expect(input).toHaveAttribute("placeholder", "Type your task here...")
+            await expectComposerPlaceholder(input, "Type your task here...")
             await expect(sidebar.getByRole("combobox", { name: "Task thinking override" })).toHaveCount(0)
             await expect(sidebar.getByRole("button", { name: "Task service tier" })).toHaveCount(0)
 

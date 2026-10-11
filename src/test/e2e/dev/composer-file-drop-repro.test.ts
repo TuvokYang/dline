@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { composerText } from "@e2e/utils/composer"
 import { e2e } from "@e2e/utils/helpers"
 import { expect } from "@playwright/test"
 
@@ -51,7 +52,7 @@ e2e("BUGFIX-122 repro - real OS clipboard file paste", async ({ helper, page, si
         () => (window as unknown as { __bugfix122Paste?: Record<string, unknown> }).__bugfix122Paste,
     )
     console.log(`[BUGFIX-122] clipboard paste observation ${JSON.stringify(observation)}`)
-    console.log(`[BUGFIX-122] input value after paste ${JSON.stringify(await input.inputValue())}`)
+    console.log(`[BUGFIX-122] input value after paste ${JSON.stringify(await composerText(input))}`)
     await expect(sidebar.getByTitle("clipboard-paste-report.pdf")).toBeVisible({ timeout: 15_000 })
     fs.rmSync(pdfPath, { force: true })
 })

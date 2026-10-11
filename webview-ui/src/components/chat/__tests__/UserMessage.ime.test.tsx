@@ -40,6 +40,7 @@ beforeAll(() => {
 
 import { useChatState } from "../chat-view/hooks/useChatState"
 import { runNewTaskSubmission } from "../chat-view/hooks/useMessageHandlers"
+import type { ComposerSegment } from "../input/semantic-composer/model"
 import { UsageBar } from "../UsageBar"
 import UserMessage from "../UserMessage"
 
@@ -182,19 +183,30 @@ describe("UsageBar", () => {
 })
 
 describe("task-owned chat drafts", () => {
-    it("clears a submitted welcome draft when the created task becomes active", () => {
+    const attachedFile: ComposerSegment = {
+        kind: "atom",
+        atom: {
+            kind: "resource",
+            entityId: "r-file",
+            nodeKind: "file",
+            fileOrigin: "uploaded_file",
+            displayName: "file.txt",
+            status: "staging",
+        },
+    }
+
+    it("clears a welcome draft with its resources when the created task becomes active", () => {
         const { result, rerender } = renderHook(({ taskId }: { taskId: string | undefined }) => useChatState([], taskId), {
-            initialProps: { taskId: undefined },
+            initialProps: { taskId: undefined as string | undefined },
         })
 
         act(() => {
-            result.current.setInputValue("submitted task")
-            result.current.setSelectedFiles(["file.txt"])
+            result.current.composer.load([{ kind: "text", text: "submitted task ", source: "typed" }, attachedFile])
         })
         rerender({ taskId: "task-1" })
 
         expect(result.current.inputValue).toBe("")
-        expect(result.current.selectedFiles).toEqual([])
+        expect(result.current.composer.state.segments).toEqual([])
     })
 
     it("does not carry a draft from one active task into another", () => {
@@ -203,13 +215,14 @@ describe("task-owned chat drafts", () => {
         })
 
         act(() => {
-            result.current.setInputValue("task one draft")
-            result.current.setSelectedImages(["image.png"])
+            result.current.composer.load([{ kind: "text", text: "task one draft ", source: "typed" }, attachedFile])
         })
+        const taskOneDraftId = result.current.composer.draftId
         rerender({ taskId: "task-2" })
 
-        expect(result.current.inputValue).toBe("")
-        expect(result.current.selectedImages).toEqual([])
+        expect(result.current.composer.state.segments).toEqual([])
+        expect(result.current.composer.draftId).not.toBe(taskOneDraftId)
+        expect(result.current.composer.engine.canUndo()).toBe(false)
     })
 })
 

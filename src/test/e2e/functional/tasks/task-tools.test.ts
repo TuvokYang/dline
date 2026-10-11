@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskActivities, readTaskConversationText } from "@e2e/utils/task-instance-store"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
@@ -397,14 +398,14 @@ e2e(
         const input = sidebar.getByTestId("chat-input")
         await input.click()
         await input.pressSequentially(unsentDraft, { delay: 20 })
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
 
         await expect(
             sidebar.getByTestId("completion-output-scroll").filter({ hasText: "E2E_UNSENT_DRAFT_FOREGROUND_DONE" }),
         ).toBeVisible({ timeout: 60_000 })
         await page.waitForTimeout(1_000)
 
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
         const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
         await expect(submittedFeedback).toHaveCount(0)
         expect(server.openAiRequestCount).toBe(2)
@@ -571,7 +572,7 @@ e2e(
         const input = sidebar.getByTestId("chat-input")
         await input.fill(guidance)
         await processAnyway.click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expectSingleUserFeedback(sidebar, guidance)
         await expect(sidebar.getByText("E2E_PROCESS_ANYWAY_PRESERVED_RESULTS_OK", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
@@ -620,7 +621,7 @@ e2e(
         await input.fill("E2E_READ_APPROVAL_NOTE")
         await approveButton.click()
 
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expectSingleUserFeedback(sidebar, "E2E_READ_APPROVAL_NOTE")
         await expect(sidebar.getByText("E2E_READ_APPROVAL_DRAFT_OK", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
@@ -660,7 +661,7 @@ e2e(
         await input.fill("E2E_READ_REJECT_FEEDBACK")
         await rejectButton.click()
 
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expectSingleUserFeedback(sidebar, "E2E_READ_REJECT_FEEDBACK")
         await expect(sidebar.getByText("E2E_READ_REJECTION_CONTINUED", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
@@ -810,14 +811,14 @@ e2e(
         await expectComposerSendReady(sidebar)
         await input.fill("E2E_ENTER_READ_FEEDBACK")
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expectSingleUserFeedback(sidebar, "E2E_ENTER_READ_FEEDBACK")
         await expect(sidebar.getByText(relativePath, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
         await expectComposerSendReady(sidebar)
         await input.fill("E2E_ENTER_WRITE_FEEDBACK")
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expectSingleUserFeedback(sidebar, "E2E_ENTER_WRITE_FEEDBACK")
         await expect(sidebar.getByRole("button", { name: "Copy command" }).last()).toBeVisible({ timeout: 60_000 })
         await expect
@@ -831,7 +832,7 @@ e2e(
         await expectComposerSendReady(sidebar)
         await input.fill("E2E_ENTER_COMMAND_FEEDBACK")
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expectSingleUserFeedback(sidebar, "E2E_ENTER_COMMAND_FEEDBACK")
         await expect(sidebar.getByText("E2E_ENTER_APPROVAL_REJECTION_OK", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
@@ -916,7 +917,7 @@ e2e(
         await expect(rejectButton).toBeVisible({ timeout: 60_000 })
         await input.fill("E2E_REPLACE_REJECT_FEEDBACK")
         await rejectButton.click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect.poll(async () => (await readFile(filePath, "utf8")).replaceAll("\r\n", "\n")).toBe("alpha\n")
         await expect(approveButton).toBeVisible({ timeout: 60_000 })
         await approveButton.click()
@@ -1394,7 +1395,7 @@ e2e(
         const input = sidebar.getByTestId("chat-input")
         await input.fill("E2E_BACKGROUND_COMMAND_CANCEL_FEEDBACK")
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText("E2E_BACKGROUND_COMMAND_CANCEL_OK", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
@@ -2108,7 +2109,7 @@ Remain active until cancelled.`,
         const input = sidebar.getByTestId("chat-input")
         await input.fill("E2E_BACKGROUND_SUBAGENT_CANCEL_FEEDBACK")
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText("E2E_BACKGROUND_SUBAGENT_CANCEL_OK", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })

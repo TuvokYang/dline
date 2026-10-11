@@ -2,38 +2,51 @@ import type { UiAsk } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { type ComponentProps, forwardRef, type ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
+import { SemanticComposerEngine } from "@/components/chat/input/semantic-composer/engine"
+import type { ComposerSendDraft } from "@/components/chat/input/semantic-composer/send-draft"
+import type { ComposerDraft } from "@/components/chat/input/semantic-composer/useComposerDraft"
 import type { InteractionDraft } from "@/task-interaction/types"
 import { InputSection } from "./InputSection"
 
-vi.mock("@/components/chat/ChatTextArea", () => ({
-    default: forwardRef<
-        HTMLTextAreaElement,
-        {
-            onSend: (draft: { text: string; images: string[]; files: string[] }) => void
-            onSendBlocked?: (draft: { text: string; images: string[]; files: string[] }) => void
-            sendingDisabled: boolean
-            clineAsk?: UiAsk
-        }
-    >((props, _ref) => (
-        <>
-            <output data-testid="cline-ask">{props.clineAsk}</output>
-            <button
-                onClick={() =>
-                    props.sendingDisabled
-                        ? props.onSendBlocked?.({ text: "captured", images: ["image"], files: ["file"] })
-                        : props.onSend({ text: "captured", images: ["image"], files: ["file"] })
-                }
-                type="button">
-                Submit
-            </button>
-            <button
-                onClick={() => props.onSend({ text: "mode switch", images: ["mode-image"], files: ["mode-file"] })}
-                type="button">
-                Complete Mode Switch
-            </button>
-        </>
-    )),
-}))
+// The text area captures one frozen draft per send; the same segments arrive
+// for every click, as they would until the composer re-renders.
+vi.mock("@/components/chat/ChatTextArea", () => {
+    const captured = {
+        segments: [{ kind: "text", text: "captured", source: "typed" }],
+        text: "captured",
+        images: ["image"],
+        files: ["file"],
+    } as unknown as ComposerSendDraft
+    const modeSwitch = {
+        segments: [{ kind: "text", text: "mode switch", source: "typed" }],
+        text: "mode switch",
+        images: ["mode-image"],
+        files: ["mode-file"],
+    } as unknown as ComposerSendDraft
+    return {
+        default: forwardRef<
+            HTMLDivElement,
+            {
+                onSend: (draft: ComposerSendDraft) => void
+                onSendBlocked?: (draft: ComposerSendDraft) => void
+                sendingDisabled: boolean
+                clineAsk?: UiAsk
+            }
+        >((props, _ref) => (
+            <>
+                <output data-testid="cline-ask">{props.clineAsk}</output>
+                <button
+                    onClick={() => (props.sendingDisabled ? props.onSendBlocked?.(captured) : props.onSend(captured))}
+                    type="button">
+                    Submit
+                </button>
+                <button onClick={() => props.onSend(modeSwitch)} type="button">
+                    Complete Mode Switch
+                </button>
+            </>
+        )),
+    }
+})
 vi.mock("@/components/chat/QuotedMessagePreview", () => ({ default: ({ children }: { children?: ReactNode }) => children }))
 
 const mocks = vi.hoisted(() => ({
@@ -53,36 +66,48 @@ async function settleEffects(): Promise<void> {
     }
 }
 
+/** A composer whose draft-changing calls are observable; the engine itself is real. */
+function composerStub(text: string): ComposerDraft {
+    const engine = new SemanticComposerEngine()
+    return {
+        engine,
+        state: engine.getState(),
+        draftId: "00000000-0000-4000-8000-000000000001",
+        documentId: "00000000-0000-4000-8000-000000000002",
+        flatText: text,
+        sendRefusal: undefined,
+        reportSendRefusal: vi.fn(),
+        load: vi.fn(),
+        clear: vi.fn(),
+        retire: vi.fn(),
+        setText: vi.fn(),
+    }
+}
+
 function props(currentDraft: InteractionDraft): ComponentProps<typeof InputSection> {
     return {
         // InputSection now receives the catalog it composes and recalls drafts against.
         semanticCatalog: { revision: 1, descriptors: [] },
         chatState: {
+            composer: composerStub(currentDraft.text),
+            composerRef: { current: null },
             activeQuote: null,
             setActiveQuote: vi.fn(),
             isTextAreaFocused: false,
             inputValue: currentDraft.text,
             setInputValue: vi.fn(),
             sendingDisabled: false,
-            selectedImages: currentDraft.images,
-            setSelectedImages: vi.fn(),
-            selectedFiles: currentDraft.files,
-            setSelectedFiles: vi.fn(),
-            textAreaRef: { current: null },
             handleFocusChange: vi.fn(),
-            // Paste provenance is part of the chat state contract since WS-041 AC-09.
-            pasteProvenance: { text: currentDraft.text, spans: [] },
-            commitPasteProvenance: vi.fn(),
             restoreDraft: vi.fn(),
         },
         messageHandlers: { handleSendMessage: vi.fn() },
         scrollBehavior: { isAtBottom: true, scrollToBottomAuto: vi.fn() },
         placeholderText: "Type a message...",
         shouldDisableFilesAndImages: false,
-        selectFilesAndImages: vi.fn(),
+        imagesAllowed: true,
         draft: currentDraft,
         onDraftAccepted: vi.fn(),
-    } as ComponentProps<typeof InputSection>
+    } as unknown as ComponentProps<typeof InputSection>
 }
 
 describe("InputSection deferred task submission", () => {
@@ -213,11 +238,7 @@ describe("InputSection deferred task submission", () => {
     // The queue panel owns the text once the entry is accepted. Leaving it in the
     // composer showed the same input twice and invited a duplicate send.
     it("clears the composer once a blocked draft is queued", async () => {
-        const setInputValue = vi.fn()
-        const setSelectedImages = vi.fn()
-        const setSelectedFiles = vi.fn()
         const current = props(draft("queue me"))
-        current.chatState = { ...current.chatState, setInputValue, setSelectedImages, setSelectedFiles }
         render(
             <InputSection
                 {...current}
@@ -231,9 +252,9 @@ describe("InputSection deferred task submission", () => {
         fireEvent.click(screen.getByRole("button", { name: "Submit" }))
         await settleEffects()
 
-        expect(setInputValue).toHaveBeenCalledWith("")
-        expect(setSelectedImages).toHaveBeenCalledWith([])
-        expect(setSelectedFiles).toHaveBeenCalledWith([])
+        // A queued draft was sent, so it stays one undo away like any other send.
+        expect(current.chatState.composer.retire).toHaveBeenCalledOnce()
+        expect(current.chatState.composer.clear).not.toHaveBeenCalled()
     })
 
     it("keeps a blocked draft visible until the durable enqueue is accepted", async () => {
@@ -244,9 +265,7 @@ describe("InputSection deferred task submission", () => {
                     acceptEnqueue = resolve
                 }),
         )
-        const setInputValue = vi.fn()
         const current = props(draft("queue me"))
-        current.chatState = { ...current.chatState, setInputValue }
         render(
             <InputSection
                 {...current}
@@ -258,11 +277,11 @@ describe("InputSection deferred task submission", () => {
         )
 
         fireEvent.click(screen.getByRole("button", { name: "Submit" }))
-        expect(setInputValue).not.toHaveBeenCalled()
+        expect(current.chatState.composer.retire).not.toHaveBeenCalled()
 
         acceptEnqueue(false)
         await settleEffects()
-        expect(setInputValue).not.toHaveBeenCalled()
+        expect(current.chatState.composer.retire).not.toHaveBeenCalled()
     })
 
     // Clearing the composer is a state update, so the text area still reports the
@@ -294,9 +313,7 @@ describe("InputSection deferred task submission", () => {
     // user believes the text was sent.
     it("does not queue a blocked draft when the task has no delivery point left", () => {
         const onEnqueue = vi.fn()
-        const setInputValue = vi.fn()
         const current = props(draft("keep me"))
-        current.chatState = { ...current.chatState, setInputValue }
         render(
             <InputSection
                 {...current}
@@ -312,19 +329,19 @@ describe("InputSection deferred task submission", () => {
 
         expect(onEnqueue).not.toHaveBeenCalled()
         // The draft stays where the user can still see and resend it.
-        expect(setInputValue).not.toHaveBeenCalled()
+        expect(current.chatState.composer.retire).not.toHaveBeenCalled()
+        expect(current.chatState.composer.clear).not.toHaveBeenCalled()
+        // ...and the refused send is explained instead of vanishing without a trace.
+        expect(current.chatState.composer.reportSendRefusal).toHaveBeenCalledWith("input_not_ready")
     })
 
     // `enabled` is undefined whenever the composer has no interaction to answer,
     // which is the common case while a task runs. The text area still blocks the
     // send and queues it, so the composer has to be cleared on this path too.
     it("clears the composer when the send was blocked without an explicit enabled flag", async () => {
-        const setInputValue = vi.fn()
-        const setSelectedImages = vi.fn()
-        const setSelectedFiles = vi.fn()
         const onEnqueue = vi.fn()
         const current = props(draft("queue me"))
-        current.chatState = { ...current.chatState, sendingDisabled: true, setInputValue, setSelectedImages, setSelectedFiles }
+        current.chatState = { ...current.chatState, sendingDisabled: true }
         render(
             <InputSection
                 {...current}
@@ -338,33 +355,26 @@ describe("InputSection deferred task submission", () => {
         await settleEffects()
 
         expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] })
-        expect(setInputValue).toHaveBeenCalledWith("")
-        expect(setSelectedImages).toHaveBeenCalledWith([])
-        expect(setSelectedFiles).toHaveBeenCalledWith([])
+        expect(current.chatState.composer.retire).toHaveBeenCalledOnce()
     })
 
     // The queue is the only place a blocked send can survive. Without a queue to
     // hand it to there is nothing to clear the composer for, and wiping it would
     // destroy what the user typed.
     it("keeps the draft in the composer when there is no queue to receive it", () => {
-        const setInputValue = vi.fn()
         const current = props(draft("keep me"))
-        current.chatState = { ...current.chatState, setInputValue }
         render(<InputSection {...current} enabled={false} onSubmit={vi.fn(async () => undefined)} submissionScope="task-1" />)
 
         fireEvent.click(screen.getByRole("button", { name: "Submit" }))
 
-        expect(setInputValue).not.toHaveBeenCalled()
+        expect(current.chatState.composer.retire).not.toHaveBeenCalled()
+        expect(current.chatState.composer.clear).not.toHaveBeenCalled()
     })
 
     // Editing pulls the entry back into the composer, because adding images or
     // file references is only possible there.
     it("loads a queue entry back into the composer when editing starts", () => {
-        const setInputValue = vi.fn()
-        const setSelectedImages = vi.fn()
-        const setSelectedFiles = vi.fn()
         const current = props(draft("current"))
-        current.chatState = { ...current.chatState, setInputValue, setSelectedImages, setSelectedFiles }
         render(
             <InputSection
                 {...current}
@@ -378,17 +388,19 @@ describe("InputSection deferred task submission", () => {
         fireEvent.click(screen.getByTestId("input-queue-toggle"))
         fireEvent.click(screen.getByTestId("input-queue-edit-entry-1"))
 
-        expect(setInputValue).toHaveBeenCalledWith("queued text")
-        expect(setSelectedImages).toHaveBeenCalledWith(["img"])
-        expect(setSelectedFiles).toHaveBeenCalledWith(["file"])
+        expect(current.chatState.restoreDraft).toHaveBeenCalledWith({
+            text: "queued text",
+            images: ["img"],
+            files: ["file"],
+            activeQuote: null,
+        })
     })
 
     // The composer now stands for the entry, so a quote left over from earlier
     // must go: committing would otherwise attach a quote the user never chose.
     it("clears a leftover quote when the edited entry carries none", () => {
-        const setActiveQuote = vi.fn()
         const current = props(draft("current"))
-        current.chatState = { ...current.chatState, activeQuote: "unrelated quote", setActiveQuote }
+        current.chatState = { ...current.chatState, activeQuote: "unrelated quote" }
         render(
             <InputSection
                 {...current}
@@ -402,7 +414,8 @@ describe("InputSection deferred task submission", () => {
         fireEvent.click(screen.getByTestId("input-queue-toggle"))
         fireEvent.click(screen.getByTestId("input-queue-edit-entry-1"))
 
-        expect(setActiveQuote).toHaveBeenCalledWith(null)
+        // Restoring the entry replaces the quote with the entry's own, which is none.
+        expect(current.chatState.restoreDraft).toHaveBeenCalledWith(expect.objectContaining({ activeQuote: null }))
     })
 
     // Editing must round-trip: the next blocked send commits the entry being

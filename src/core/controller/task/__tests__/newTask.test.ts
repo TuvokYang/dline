@@ -7,6 +7,9 @@ import type { Controller } from "../.."
 import { newTask } from "../newTask"
 
 const catalogState = vi.hoisted(() => ({ revision: 3 }))
+const preflight = vi.hoisted(() => vi.fn(async (_document: unknown) => {}))
+
+vi.mock("@core/input-semantics/OpeningDocumentBinding", () => ({ preflightOpeningDocument: preflight }))
 
 vi.mock("../../slash/input-semantic-catalog", () => ({
     inputSemanticCatalogService: () => ({
@@ -117,6 +120,17 @@ describe("newTask", () => {
             await expect(newTask(controller, pastedCompactRequest({ documentId: "" }))).rejects.toThrow(
                 "New task input was rejected",
             )
+            expect(initTask).not.toHaveBeenCalled()
+        })
+
+        it("refuses a document whose draft attachments could not be adopted, before the task starts", async () => {
+            catalogState.revision = 3
+            preflight.mockRejectedValueOnce(new Error("semantic_input_resource_changed"))
+            const initTask = vi.fn(async () => "task-never")
+            const controller = { initTask } as unknown as Controller
+
+            await expect(newTask(controller, pastedCompactRequest())).rejects.toThrow("semantic_input_resource_changed")
+            expect(preflight).toHaveBeenLastCalledWith(expect.objectContaining({ documentId: "doc-1" }))
             expect(initTask).not.toHaveBeenCalled()
         })
     })

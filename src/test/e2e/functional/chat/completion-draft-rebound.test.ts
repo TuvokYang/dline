@@ -1,3 +1,4 @@
+import { type ComposerTextReaderWindow, installComposerTextReader } from "@e2e/utils/composer"
 import { e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 
@@ -38,19 +39,23 @@ async function expectSingleUserFeedback(sidebar: Frame, text: string): Promise<v
  * the transient overlap as well.
  */
 async function startReboundObserver(sidebar: Frame, marker: string): Promise<void> {
+    await installComposerTextReader(sidebar)
     await sidebar.evaluate((submittedText) => {
-        const scope = window as typeof window & {
-            __dlineReboundSeen?: boolean
-            __dlineReboundObserver?: MutationObserver
-        }
+        const scope = window as typeof window &
+            ComposerTextReaderWindow & {
+                __dlineReboundSeen?: boolean
+                __dlineReboundObserver?: MutationObserver
+            }
+        const readDraft = scope.__dlineE2EComposerText
+        if (!readDraft) throw new Error("composer text reader is not installed")
         scope.__dlineReboundObserver?.disconnect()
         scope.__dlineReboundSeen = false
         const check = () => {
-            const input = document.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')
+            const input = document.querySelector('[data-testid="chat-input"]')
             const echoed = Array.from(
                 document.querySelectorAll('[data-testid="direct-user-input"], [data-testid="queued-user-input"]'),
             ).some((element) => element.textContent?.includes(submittedText))
-            if (echoed && input?.value.includes(submittedText)) {
+            if (echoed && input && readDraft(input).includes(submittedText)) {
                 scope.__dlineReboundSeen = true
             }
         }
@@ -63,13 +68,15 @@ async function startReboundObserver(sidebar: Frame, marker: string): Promise<voi
 
 async function stopReboundObserver(sidebar: Frame): Promise<{ inputValue: string; rebound: boolean }> {
     return sidebar.evaluate(() => {
-        const scope = window as typeof window & {
-            __dlineReboundSeen?: boolean
-            __dlineReboundObserver?: MutationObserver
-        }
+        const scope = window as typeof window &
+            ComposerTextReaderWindow & {
+                __dlineReboundSeen?: boolean
+                __dlineReboundObserver?: MutationObserver
+            }
         scope.__dlineReboundObserver?.disconnect()
+        const input = document.querySelector('[data-testid="chat-input"]')
         const result = {
-            inputValue: document.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')?.value ?? "",
+            inputValue: input && scope.__dlineE2EComposerText ? scope.__dlineE2EComposerText(input) : "",
             rebound: scope.__dlineReboundSeen === true,
         }
         delete scope.__dlineReboundObserver
@@ -89,7 +96,7 @@ async function stopReboundObserver(sidebar: Frame): Promise<{ inputValue: string
  */
 async function pressEnterTwiceWithoutYielding(sidebar: Frame): Promise<void> {
     await sidebar.evaluate(() => {
-        const input = document.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')
+        const input = document.querySelector<HTMLElement>('[data-testid="chat-input"]')
         if (!input) throw new Error("chat input not found")
         input.focus()
         const press = () =>

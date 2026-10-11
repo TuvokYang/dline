@@ -1,3 +1,5 @@
+import { isResourceNode, type SemanticInputDocument } from "@shared/input-semantics/document"
+import { displayTextOf } from "@shared/input-semantics/presentation"
 import { ChevronDownIcon, ChevronRightIcon, GripVerticalIcon, PencilIcon, RotateCcwIcon, SendIcon, XIcon } from "lucide-react"
 import { useState } from "react"
 import { UserInputMarkdownBody } from "@/components/chat/UserInputMarkdownBody"
@@ -18,7 +20,7 @@ export interface InputQueuePanelEntry {
     readonly files: readonly string[]
     readonly activeQuote?: string
     /** The entry's composed structure; recalled with it when the entry is edited. */
-    readonly semanticInput?: import("@shared/input-semantics/document").SemanticInputDocument
+    readonly semanticInput?: SemanticInputDocument
     readonly mode: InputQueuePanelMode
     readonly editing?: boolean
 }
@@ -35,10 +37,47 @@ export interface InputQueuePanelProps {
     onReorder: (id: string, targetIndex: number) => void
 }
 
-function attachmentSummary(entry: InputQueuePanelEntry): string | undefined {
-    const parts: string[] = []
-    if (entry.images.length > 0) parts.push(`${entry.images.length} image${entry.images.length > 1 ? "s" : ""}`)
-    if (entry.files.length > 0) parts.push(`${entry.files.length} file${entry.files.length > 1 ? "s" : ""}`)
+/** Display names of an entry's attachments, split by kind. */
+export interface QueuedAttachments {
+    readonly images: readonly string[]
+    readonly files: readonly string[]
+}
+
+const LEGACY_IMAGE_LABEL = "image"
+
+function baseNameOf(path: string): string {
+    return path.split(/[\\/]/).pop() || path
+}
+
+/**
+ * The attachments an entry will deliver.
+ *
+ * An entry whose document holds resource nodes carries its attachments there,
+ * and its flat `images`/`files` lists are only the delivery bridge Core
+ * derives from those nodes, so they are never read beside them. A document
+ * without resource nodes - an older text-only document, or no document at
+ * all - leaves the flat lists as the only record of the attachments.
+ */
+export function queuedAttachmentsOf(entry: Pick<InputQueuePanelEntry, "images" | "files" | "semanticInput">): QueuedAttachments {
+    const resources = entry.semanticInput?.nodes.filter(isResourceNode) ?? []
+    if (resources.length > 0) {
+        return {
+            images: resources.filter((node) => node.kind === "image").map((node) => node.displayName),
+            files: resources.filter((node) => node.kind === "file").map((node) => node.displayName),
+        }
+    }
+    return { images: entry.images.map(() => LEGACY_IMAGE_LABEL), files: entry.files.map(baseNameOf) }
+}
+
+function countLabel(count: number, noun: string): string | undefined {
+    if (count === 0) return undefined
+    return `${count} ${noun}${count > 1 ? "s" : ""}`
+}
+
+function attachmentSummary(attachments: QueuedAttachments): string | undefined {
+    const parts = [countLabel(attachments.images.length, "image"), countLabel(attachments.files.length, "file")].filter(
+        (part): part is string => part !== undefined,
+    )
     return parts.length > 0 ? parts.join(", ") : undefined
 }
 
@@ -94,7 +133,8 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                         maxHeight: "min(60vh, 480px, var(--radix-popover-content-available-height))",
                     }}>
                     {entries.map((entry, index) => {
-                        const attachments = attachmentSummary(entry)
+                        const attachments = queuedAttachmentsOf(entry)
+                        const summary = attachmentSummary(attachments)
                         return (
                             <div
                                 aria-selected={entry.mode === "steering"}
@@ -141,10 +181,18 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                     <GripVerticalIcon className="size-3 shrink-0 cursor-grab" />
                                     <span>{entry.mode === "steering" ? "Steering input" : "Queued input"}</span>
                                     {entry.editing ? <span className="normal-case">· Editing</span> : null}
-                                    {attachments ? <span className="ml-auto shrink-0 normal-case">{attachments}</span> : null}
+                                    {summary ? (
+                                        <span
+                                            className="ml-auto shrink-0 normal-case"
+                                            data-testid={`input-queue-attachments-${entry.id}`}
+                                            title={[...attachments.images, ...attachments.files].join(", ")}>
+                                            {summary}
+                                        </span>
+                                    ) : null}
                                 </header>
                                 <UserInputMarkdownBody
-                                    markdown={entry.text}
+                                    // The stored text names resources by stable id; a reader needs their names.
+                                    markdown={entry.semanticInput ? displayTextOf(entry.semanticInput) : entry.text}
                                     testId={`input-queue-markdown-${entry.id}`}
                                     variant="queued-pending"
                                 />

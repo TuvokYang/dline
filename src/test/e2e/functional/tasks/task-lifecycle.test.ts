@@ -1,6 +1,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { type ComposerTextReaderWindow, expectComposerText, installComposerTextReader } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskConversationText, readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import {
@@ -22,7 +23,7 @@ async function submitWithEnter(sidebar: Frame, text: string): Promise<void> {
     await expect(input).toBeEnabled()
     await input.fill(text)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expectSingleUserFeedback(sidebar, text)
 }
 
@@ -33,19 +34,23 @@ async function expectSingleUserFeedback(sidebar: Frame, text: string): Promise<v
 }
 
 async function startEchoOverlapObserver(sidebar: Frame, marker: string): Promise<void> {
+    await installComposerTextReader(sidebar)
     await sidebar.evaluate((submittedText) => {
-        const scope = window as typeof window & {
-            __dlineEchoOverlap?: boolean
-            __dlineEchoObserver?: MutationObserver
-        }
+        const scope = window as typeof window &
+            ComposerTextReaderWindow & {
+                __dlineEchoOverlap?: boolean
+                __dlineEchoObserver?: MutationObserver
+            }
+        const readDraft = scope.__dlineE2EComposerText
+        if (!readDraft) throw new Error("composer text reader is not installed")
         scope.__dlineEchoObserver?.disconnect()
         scope.__dlineEchoOverlap = false
         const checkForOverlap = () => {
-            const input = document.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')
+            const input = document.querySelector('[data-testid="chat-input"]')
             const echoedFeedback = Array.from(
                 document.querySelectorAll('[data-testid="direct-user-input"], [data-testid="queued-user-input"]'),
             ).some((element) => element.textContent?.includes(submittedText))
-            if (echoedFeedback && input?.value === submittedText) {
+            if (echoedFeedback && input && readDraft(input) === submittedText) {
                 scope.__dlineEchoOverlap = true
             }
         }
@@ -58,13 +63,15 @@ async function startEchoOverlapObserver(sidebar: Frame, marker: string): Promise
 
 async function stopEchoOverlapObserver(sidebar: Frame): Promise<{ inputValue: string; overlap: boolean }> {
     return sidebar.evaluate(() => {
-        const scope = window as typeof window & {
-            __dlineEchoOverlap?: boolean
-            __dlineEchoObserver?: MutationObserver
-        }
+        const scope = window as typeof window &
+            ComposerTextReaderWindow & {
+                __dlineEchoOverlap?: boolean
+                __dlineEchoObserver?: MutationObserver
+            }
         scope.__dlineEchoObserver?.disconnect()
+        const input = document.querySelector('[data-testid="chat-input"]')
         const result = {
-            inputValue: document.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')?.value ?? "",
+            inputValue: input && scope.__dlineE2EComposerText ? scope.__dlineE2EComposerText(input) : "",
             overlap: scope.__dlineEchoOverlap === true,
         }
         delete scope.__dlineEchoObserver
@@ -158,30 +165,30 @@ e2e(
         await input.pressSequentially(" beta", { delay: 20 })
 
         await input.press("Control+z")
-        await expect(input).toHaveValue("alpha")
+        await expectComposerText(input, "alpha")
         await input.press("Control+z")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await input.press("Control+y")
-        await expect(input).toHaveValue("alpha")
+        await expectComposerText(input, "alpha")
         await input.press("Control+y")
-        await expect(input).toHaveValue("alpha beta")
+        await expectComposerText(input, "alpha beta")
         expect(server.openAiRequestCount).toBe(0)
 
         await input.press("Control+z")
         await input.pressSequentially(" branch", { delay: 20 })
         await input.press("Control+y")
-        await expect(input).toHaveValue("alpha branch")
+        await expectComposerText(input, "alpha branch")
 
         await sidebar.getByTestId("send-button").click()
         await expect(sidebar.getByText("alpha branch", { exact: true }).first()).toBeVisible()
         await expect(sidebar.getByText("E2E_INPUT_HISTORY_SEND_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect.poll(() => server.openAiRequestCount).toBe(1)
 
         await input.press("Control+z")
-        await expect(input).toHaveValue("alpha branch")
+        await expectComposerText(input, "alpha branch")
         await input.press("Control+y")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await page.waitForTimeout(500)
         expect(server.openAiRequestCount).toBe(1)
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
@@ -218,14 +225,14 @@ e2e(
         const unsentDraft = "E2E_DRAFT_MUST_STAY_IN_INPUT"
         const input = sidebar.getByTestId("chat-input")
         await input.fill(unsentDraft)
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
 
         await expect(sidebar.getByText("E2E_UNSENT_DRAFT_TASK_DONE", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
         await page.waitForTimeout(1_000)
 
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
         const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
         await expect(submittedFeedback).toHaveCount(0)
         expect(server.openAiRequestCount).toBe(1)
@@ -321,14 +328,14 @@ e2e(
         const input = sidebar.getByTestId("chat-input")
         await input.click()
         await input.pressSequentially(unsentDraft, { delay: 20 })
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
 
         await expect(sidebar.getByText("E2E_UNSENT_DRAFT_STREAM_DONE", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
         await page.waitForTimeout(1_000)
 
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
         const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
         await expect(submittedFeedback).toHaveCount(0)
         expect(server.getRequestCount("deepseek-chat")).toBe(1)
@@ -391,15 +398,15 @@ e2e(
             await input.pressSequentially(prefix, { delay: 20 })
             const turnEndText = turn === 3 ? "E2E_HISTORY_RACE_COMPLETION_3" : `E2E_HISTORY_RACE_TURN_END_${turn}`
             await expect(sidebar.getByText(turnEndText, { exact: true })).toBeVisible({ timeout: 60_000 })
-            await expect(input).toHaveValue(prefix)
+            await expectComposerText(input, prefix)
             await input.pressSequentially(finalDraft.slice(splitIndex), { delay: 20 })
             await page.waitForTimeout(500)
 
-            await expect(input).toHaveValue(finalDraft)
+            await expectComposerText(input, finalDraft)
             expect(server.openAiRequestCount).toBe(expectedRequestCount)
             if (turn < 3) {
                 await input.press("Enter")
-                await expect(input).toHaveValue("")
+                await expectComposerText(input, "")
                 await expectSingleUserFeedback(sidebar, finalDraft)
                 submittedHistory.push(finalDraft)
             }
@@ -452,19 +459,19 @@ e2e(
         const input = sidebar.getByTestId("chat-input")
         await input.click()
         await input.pressSequentially(unsentDraft, { delay: 20 })
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
 
         await expect(sidebar.getByText("E2E_UNSENT_DRAFT_INTERMEDIATE_TURN", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
         await expect(sidebar.getByText("E2E_UNSENT_DRAFT_MULTI_TURN_DONE", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
         await page.waitForTimeout(1_000)
 
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
         const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
         await expect(submittedFeedback).toHaveCount(0)
         expect(server.openAiRequestCount).toBe(2)
@@ -542,12 +549,12 @@ for (const turnEndCase of waitingTurnEndDraftCases) {
             const input = sidebar.getByTestId("chat-input")
             await input.click()
             await input.pressSequentially(unsentDraft, { delay: 20 })
-            await expect(input).toHaveValue(unsentDraft)
+            await expectComposerText(input, unsentDraft)
 
             await expect(sidebar.getByText(turnEndCase.visibleText, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await page.waitForTimeout(1_000)
 
-            await expect(input).toHaveValue(unsentDraft)
+            await expectComposerText(input, unsentDraft)
             const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
             await expect(submittedFeedback).toHaveCount(0)
             expect(server.openAiRequestCount).toBe(1)
@@ -600,7 +607,7 @@ e2e(
         await expect(input).toBeEnabled()
         await input.fill("E2E_RESUME_DRAFT")
         await resumeButton.click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expectSingleUserFeedback(sidebar, "E2E_RESUME_DRAFT")
         await expect(sidebar.getByText("E2E_RESUME_CONTINUATION_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         await expect(sidebar.getByText("E2E_CANCELLED_RESPONSE_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
@@ -680,7 +687,7 @@ e2e(
         await expect(input).toBeEnabled()
         await input.fill("E2E_STREAM_CANCEL_RESUME_DRAFT")
         await resumeButton.click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expectSingleUserFeedback(sidebar, "E2E_STREAM_CANCEL_RESUME_DRAFT")
         await expect(sidebar.getByText("E2E_STREAM_CANCEL_RESUME_OK", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
@@ -815,7 +822,7 @@ e2e(
         const input = sidebar.getByTestId("chat-input")
         await input.fill("E2E_FOLLOWUP_DRAFT_NOTE")
         await selectedOption.click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText("E2E_FOLLOWUP_SELECTION_ACCEPTED", { exact: true })).toBeVisible({ timeout: 60_000 })
         await expectSingleUserFeedback(sidebar, "E2E_FOLLOWUP_OPTION_B: E2E_FOLLOWUP_DRAFT_NOTE")
         await expect(selectedOption).toHaveAttribute("aria-pressed", "true")
@@ -1037,13 +1044,13 @@ e2e(
         await expect(sidebar.getByRole("contentinfo").getByText("Acknowledge", { exact: true })).toBeVisible()
         await input.fill("E2E_STATUS_ACK_DRAFT")
         await sidebar.getByRole("contentinfo").getByText("Acknowledge", { exact: true }).click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText("E2E_STATUS_STOP", { exact: true })).toBeVisible({ timeout: 60_000 })
         await expectSingleUserFeedback(sidebar, "E2E_STATUS_ACK_DRAFT")
 
         await input.fill("E2E_STATUS_STOP_DRAFT")
         await sidebar.getByRole("contentinfo").getByText("Stop", { exact: true }).click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText("E2E_STATUS_STOP_ACCEPTED", { exact: true })).toBeVisible({ timeout: 60_000 })
         await expectSingleUserFeedback(sidebar, "E2E_STATUS_STOP_DRAFT")
         await submitWithEnter(sidebar, "E2E_STATUS_QNA_FEEDBACK")
@@ -1236,7 +1243,7 @@ e2e(
             const input = sidebar.getByTestId("chat-input")
             await input.fill(intermediateDraft)
             await resumeAfterCancel.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expectSingleUserFeedback(sidebar, intermediateDraft)
             await expect(sidebar.getByText(secondReasoning, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
@@ -1288,7 +1295,7 @@ e2e(
 
             await input.fill(finalDraft)
             await resumeAfterClose.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expectSingleUserFeedback(sidebar, finalDraft)
             await expect(sidebar.getByText("E2E_GPT56_HISTORY_RESUME_OK", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,

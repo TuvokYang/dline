@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { composerText, expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 
@@ -88,18 +89,18 @@ e2e.describe("An accepted turn-end with a delayed unary response", () => {
         await expect(historicalTask).toBeVisible({ timeout: 10_000 })
         await historicalTask.click()
         await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 10_000 })
-        await expect(input).toHaveValue("", { timeout: 10_000 })
+        await expectComposerText(input, "", { timeout: 10_000 })
         // The injected response is released after the 30-second Webview unary timeout.
         // This marker fences the old RPC settlement without a speculative wait.
         await expect.poll(() => marker(dlineDir, "dispatchInteraction"), { timeout: 45_000 }).toBe("released")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         const diagnostic = {
             backendAcceptedBeforeCloseAndResume: true,
             feedbackEchoCount: await sidebar
                 .getByTestId(/^(?:user|queued)-input-markdown-scroll$/)
                 .filter({ hasText: feedback })
                 .count(),
-            composerValue: await input.inputValue(),
+            composerValue: await composerText(input),
             unaryFault: await marker(dlineDir, "dispatchInteraction"),
             requests: server
                 .getMockConsumptions()

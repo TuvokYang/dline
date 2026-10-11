@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import type { MockApiTarget } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 
@@ -171,7 +172,7 @@ for (const protocolCase of PROTOCOL_CASES) {
             const input = sidebar.getByTestId("chat-input")
             await input.fill(feedback)
             await input.press("Enter")
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             const feedbackRow = sidebar.getByTestId("direct-user-input").filter({ hasText: feedback })
             await expect(feedbackRow).toHaveCount(1)
             await expect(feedbackRow).toHaveText(feedback)

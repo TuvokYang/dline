@@ -1,4 +1,10 @@
-import type { ResourceInputNode, SemanticInputDocument, SemanticInputNode, SemanticResourceRef } from "./document"
+import {
+    isResourceNode,
+    type ResourceInputNode,
+    type SemanticInputDocument,
+    type SemanticInputNode,
+    type SemanticResourceRef,
+} from "./document"
 
 /**
  * Stable text projection of one node.
@@ -25,6 +31,17 @@ export function presentationTextOfNode(node: SemanticInputNode): string {
 /** Stable text projection of the whole document, in node order. */
 export function presentationTextOf(document: SemanticInputDocument): string {
     return document.nodes.map(presentationTextOfNode).join("")
+}
+
+/**
+ * The text a person reads for the document.
+ *
+ * A resource shows its display name rather than its stable id, which means
+ * nothing to a reader. This is for display only: it changes when a label does,
+ * so Core never compares it against `rawText`.
+ */
+export function displayTextOf(document: SemanticInputDocument): string {
+    return document.nodes.map((node) => (isResourceNode(node) ? `[${node.displayName}]` : presentationTextOfNode(node))).join("")
 }
 
 /**

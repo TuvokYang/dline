@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { MAX_AUTO_RETRY_ATTEMPTS } from "@core/task/auto-retry-schedule"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readHistoryDisplay } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
@@ -173,7 +174,7 @@ e2e(
             })
             await input.fill(retryDraft)
             await retryButton.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 }).toBe(1)
 
             await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
@@ -203,7 +204,7 @@ e2e(
             })
             await input.fill(resumeDraft)
             await resumeButton.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
             expect(server.getRequestCount("openai-compatible-chat")).toBe(expectedFailureRequestCount)

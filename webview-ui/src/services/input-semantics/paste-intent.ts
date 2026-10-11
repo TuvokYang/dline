@@ -22,6 +22,11 @@ export interface PasteCapacity {
 export type PasteIntent =
     | { readonly kind: "url"; readonly url: string }
     | { readonly kind: "oversized_text"; readonly text: string }
+    /**
+     * Text too long to inline while no text resource can be added. WS-041
+     * AC-07 never inlines such text, so the paste is refused instead.
+     */
+    | { readonly kind: "refused_text" }
     | { readonly kind: "images"; readonly files: readonly File[] }
     | { readonly kind: "native" }
 
@@ -45,11 +50,14 @@ function pastedImages(items: readonly PasteClipboardItem[]): File[] {
  * raw text land in the composer and loses the pasted images.
  */
 export function classifyPaste(text: string, items: readonly PasteClipboardItem[], capacity: PasteCapacity): PasteIntent {
+    // The inline budget is checked first: a single over-budget "URL" (for
+    // example a data URL or a signed link) must not bypass AC-07 by being
+    // inlined as a URL token.
+    if (exceedsInlineTextBudget(text)) {
+        return capacity.attachmentsEnabled && capacity.hasFreeSlot ? { kind: "oversized_text", text } : { kind: "refused_text" }
+    }
     const trimmed = text.trim()
     if (URL_ONLY_PATTERN.test(trimmed)) return { kind: "url", url: trimmed }
-    if (capacity.attachmentsEnabled && capacity.hasFreeSlot && exceedsInlineTextBudget(text)) {
-        return { kind: "oversized_text", text }
-    }
     if (!capacity.attachmentsEnabled) return { kind: "native" }
     const files = pastedImages(items)
     return files.length > 0 ? { kind: "images", files } : { kind: "native" }

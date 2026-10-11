@@ -1,22 +1,24 @@
-import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
+import type { AdmittedInputPart, AdmittedResourcePart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ExplicitInstructionDeclaration } from "../explicit-instructions/types"
 import type { LifecycleCommand } from "../stores/payload/TaskPayloadEnvelopes"
 
 /**
- * A lifecycle command the user placed, with the text on either side of it.
+ * A lifecycle command the user placed, with the content on either side of it.
  *
- * `before` is still ordinary content for the turn; `premessage` is addressed to
- * the command itself, so whoever carries the command decides where it goes.
+ * The turn text is still ordinary content for the turn: everything before the
+ * command and every resource attached after it. `premessage` is the guidance
+ * addressed to the command itself, so whoever carries the command decides
+ * where it goes.
  */
 export interface AdmittedLifecycleBarrier {
     readonly commandId: string
     /** Identity of the barrier node in the admitted document. */
     readonly entityId: string
-    readonly before: string
-    /** The same projection as {@link before}, with resources kept where the user placed them. */
-    readonly partsBefore: readonly AdmittedInputPart[]
+    readonly turnText: string
+    /** The same projection as {@link turnText}, with resources kept where the user placed them. */
+    readonly turnParts: readonly AdmittedInputPart[]
     readonly premessage: string
     /** Authority from the commands before the barrier; what the turn keeps once the barrier is claimed. */
     readonly instructionsBefore: readonly ExplicitInstructionDeclaration[]
@@ -72,6 +74,10 @@ export interface LifecycleBarrierPort {
 export interface ReviewedReply {
     /** What the reply still says to the model. */
     readonly text: string
+    /** The reply's verified resources as image data URLs, for receivers that read no parts. */
+    readonly images: readonly string[]
+    /** The reply's verified resources as local copies, for receivers that read no parts. */
+    readonly files: readonly string[]
     /**
      * The structure of {@link text}: the submitted document cut before the
      * command. Stored instead of the whole document, so a later stage that
@@ -80,6 +86,25 @@ export interface ReviewedReply {
     readonly document: SemanticInputDocument
     /** Carry out the reply's command; call only after the reply was accepted. */
     commit(): void
+}
+
+/** Verified resources in the flat shape dialog receivers still read. */
+export interface LegacyResourceCarriers {
+    readonly images: readonly string[]
+    readonly files: readonly string[]
+}
+
+/**
+ * Projects verified resources onto the flat image and file lists that dialog
+ * receivers, their tool results and approval notes still read.
+ *
+ * Transitional: once receivers read admitted parts (WS-041 TASK-4106) it goes
+ * away. The projection loses where a resource sat in the text, never its
+ * content: it reads exactly the bytes admission verified, and refuses with
+ * {@link SemanticInputRejectedError} when they are gone or changed.
+ */
+export interface LegacyResourceCarrierPort {
+    project(documentId: string, parts: readonly AdmittedResourcePart[]): Promise<LegacyResourceCarriers>
 }
 
 export type TaskInputAdmissionResult =

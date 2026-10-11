@@ -131,7 +131,6 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
                 onToggleExpand={onToggleExpand}
                 reasoningContent={reasoningData.reasoning}
                 responseStarted={reasoningData.responseStarted}
-                sendMessageFromChatRow={messageHandlers.handleSendMessage}
             />
         </div>
     )

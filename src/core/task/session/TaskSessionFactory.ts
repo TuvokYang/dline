@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto"
+import { StoreLegacyResourceCarriers } from "@core/input-semantics/StoreLegacyResourceCarriers"
+import { openTaskInputResources } from "@core/input-semantics/TaskInputResourceStore"
 import { composeTask, type TaskCompositionOptions } from "../composition/TaskCompositionRoot"
 import { ActiveTaskSession, type ActiveTaskSessionReleasePort } from "./ActiveTaskSession"
 import { CanonicalInputQueueApplication } from "./CanonicalInputQueueApplication"
-import type { LifecycleBarrierPort, TaskInputAdmissionPort } from "./TaskInputAdmission"
+import type { LegacyResourceCarrierPort, LifecycleBarrierPort, TaskInputAdmissionPort } from "./TaskInputAdmission"
 import { type TaskInputIdentityPort, TaskInputMaterializer } from "./TaskInputMaterializer"
 import type { TaskSessionOwners } from "./TaskSessionOwners"
 
@@ -14,6 +16,8 @@ export interface OpenActiveTaskSessionOptions extends TaskCompositionOptions {
     readonly inputAdmission: TaskInputAdmissionPort
     /** Carries out lifecycle commands such as `/compact`; absent means they stay prose. */
     readonly lifecycleBarriers?: LifecycleBarrierPort
+    /** Hands verified resources to dialog receivers; defaults to the task's own resource store. */
+    readonly resourceCarriers?: LegacyResourceCarrierPort
     /** See {@link ActiveTaskSession.upgradeImportPending}. */
     readonly upgradeImportPending?: boolean
 }
@@ -34,6 +38,7 @@ export async function openActiveTaskSession(options: OpenActiveTaskSessionOption
         options.inputIdentity ?? createInputIdentity(options.taskId),
         options.inputAdmission,
         options.lifecycleBarriers,
+        options.resourceCarriers ?? new StoreLegacyResourceCarriers(() => openTaskInputResources(options.taskId)),
     )
     return new ActiveTaskSession({
         task: composed.task,

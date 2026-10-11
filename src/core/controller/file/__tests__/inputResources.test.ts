@@ -223,6 +223,40 @@ describe("typed input resource staging", () => {
         expect(stagedOf(results, 1).displayName).toBe("picked.txt")
     })
 
+    it("stages only as many picked files as fit in the draft", async () => {
+        const { selectInputResources, proto } = await handlers()
+        const picked = ["a.txt", "b.txt", "c.txt"].map((name) => path.join(sourceDir, `fit-${name}`))
+        await Promise.all(picked.map((file) => fs.writeFile(file, "picked")))
+        showOpenDialogue.mockResolvedValue({ paths: picked })
+
+        const results = await selectInputResources(
+            controllerWith("task-rpc-picker-fit"),
+            proto.SelectInputResourcesRequest.create({ imagesAllowed: true, maxCount: 2 }),
+        )
+
+        expect(showOpenDialogue).toHaveBeenCalledWith(expect.objectContaining({ canSelectMany: true }))
+        expect(results.results.map((result) => result.staged?.displayName)).toEqual(["fit-a.txt", "fit-b.txt"])
+    })
+
+    it("offers a single pick for one free slot and no dialog for none", async () => {
+        const { selectInputResources, proto } = await handlers()
+        showOpenDialogue.mockResolvedValue({ paths: [] })
+
+        await selectInputResources(
+            controllerWith("task-rpc-picker-one"),
+            proto.SelectInputResourcesRequest.create({ imagesAllowed: true, maxCount: 1 }),
+        )
+        expect(showOpenDialogue).toHaveBeenLastCalledWith(expect.objectContaining({ canSelectMany: false }))
+
+        showOpenDialogue.mockClear()
+        const none = await selectInputResources(
+            controllerWith("task-rpc-picker-none"),
+            proto.SelectInputResourcesRequest.create({ imagesAllowed: true, maxCount: 0 }),
+        )
+        expect(showOpenDialogue).not.toHaveBeenCalled()
+        expect(none.results).toEqual([])
+    })
+
     it("does not open the picker when nothing could own the selection", async () => {
         const { selectInputResources, proto } = await handlers()
 

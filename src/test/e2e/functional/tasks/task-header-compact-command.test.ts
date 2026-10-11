@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
@@ -63,7 +64,7 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
     await expect(input).toBeEnabled()
     await input.fill(text)
     await sidebar.getByTestId("send-button").click()
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()
 }
 
@@ -134,7 +135,7 @@ e2e(
             await expect(sidebar.getByText("E2E_TASK_HEADER_COMPACT_SUMMARY", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })
-            await expect(input).toHaveValue("E2E_TASK_HEADER_COMPACT_PRESERVED_DRAFT")
+            await expectComposerText(input, "E2E_TASK_HEADER_COMPACT_PRESERVED_DRAFT")
             await sidebar.locator('vscode-button[aria-label="Condense Conversation"]').click()
 
             const compactionPass = sidebar.getByTestId("compaction-pass").last()
@@ -156,7 +157,7 @@ e2e(
             expect(requests[1]).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
             expect(requests[1].contractError).toBeUndefined()
             expect(requests[2].contractError).toBeUndefined()
-            await expect(input).toHaveValue("E2E_TASK_HEADER_COMPACT_PRESERVED_DRAFT")
+            await expectComposerText(input, "E2E_TASK_HEADER_COMPACT_PRESERVED_DRAFT")
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await app.close()

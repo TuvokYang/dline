@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { pauseTaskBetweenTurns, seedTaskConversation } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page } from "@playwright/test"
@@ -275,7 +276,7 @@ async function submitText(sidebar: Frame, text: string): Promise<void> {
     await expect(input).toBeEnabled({ timeout: 60_000 })
     await input.fill(text)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
 }
 
 async function submitTurnEndFeedback(sidebar: Frame, scenario: TurnEndPairingScenario): Promise<void> {
@@ -288,7 +289,7 @@ async function submitTurnEndFeedback(sidebar: Frame, scenario: TurnEndPairingSce
         await expect(input).toBeEnabled({ timeout: 60_000 })
         await input.fill(scenario.feedback)
         await sidebar.locator('vscode-button[aria-label="Regenerate Context"]').click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         return
     }
     await submitText(sidebar, scenario.feedback)

@@ -1,5 +1,6 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { composerAtoms, expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Locator } from "@playwright/test"
 import { URI } from "vscode-uri"
@@ -60,7 +61,7 @@ e2e("Chat input - files dropped from the OS file manager become attachments", as
     await expect(sidebar.getByTitle("os-drop-report.pdf")).toBeVisible({ timeout: 15_000 })
     await expect(sidebar.getByTitle("os-drop-notes.txt")).toBeVisible({ timeout: 15_000 })
     await expect(sidebar.getByTitle("os-drop-main.rs")).toBeVisible({ timeout: 15_000 })
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 })
 
@@ -79,11 +80,16 @@ e2e(
         try {
             expect(await dispatchDrop(input, [], [URI.file(pdfPath).toString()])).toBe(false)
             await expect(sidebar.getByTitle("explorer-drop-report.pdf")).toBeVisible({ timeout: 15_000 })
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
 
             expect(await dispatchDrop(input, [], [URI.file(sourcePath).toString()])).toBe(false)
-            await expect(input).toHaveValue(/@\/explorer-drop-source\.ts/, { timeout: 15_000 })
-            await expect(sidebar.getByTitle("explorer-drop-source.ts")).toHaveCount(0)
+            await expectComposerText(input, /@\/explorer-drop-source\.ts/, { timeout: 15_000 })
+            // A readable source file becomes a mention chip, never a staged attachment.
+            const atoms = await composerAtoms(input)
+            expect(atoms).toContainEqual(expect.objectContaining({ kind: "mention", plainText: "@/explorer-drop-source.ts" }))
+            expect(atoms.filter((atom) => atom.kind === "resource").map((atom) => atom.label)).toEqual([
+                expect.stringContaining("explorer-drop-report.pdf"),
+            ])
         } finally {
             fs.rmSync(pdfPath, { force: true })
             fs.rmSync(sourcePath, { force: true })

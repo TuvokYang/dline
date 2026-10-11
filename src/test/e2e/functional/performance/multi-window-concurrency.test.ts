@@ -9,6 +9,7 @@ import {
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { openTab } from "@e2e/utils/common"
+import { composerPlaceholder, expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskConversationText, readTaskInteractionView } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
@@ -461,7 +462,7 @@ async function findVisibleStressTaskFrame(page: Page, marker: string): Promise<F
                     if (frame.isDetached() || !frame.url().startsWith("vscode-webview://")) continue
                     const input = frame.locator('[data-testid="chat-input"]:visible')
                     if (!(await input.isVisible())) continue
-                    if ((await input.getAttribute("placeholder")) !== "Type a message...") continue
+                    if ((await composerPlaceholder(input)) !== "Type a message...") continue
                     if ((await frame.getByText(`${marker}_TURN_0`, { exact: true }).count()) === 0) continue
                     resolved = frame
                     return true
@@ -585,7 +586,7 @@ e2e("Dline task panels preserve independent editor groups across window reload",
     const firstInput = firstPanel.getByTestId("chat-input")
     await firstInput.fill(firstTask)
     await firstInput.press("Enter")
-    await expect(firstInput).toHaveValue("")
+    await expectComposerText(firstInput, "")
     await expect(firstPanel.getByText("E2E_RELOAD_LAYOUT_PANEL_A_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
     const secondPanel = await createDlinePanelFromTitleAction(page)
@@ -593,7 +594,7 @@ e2e("Dline task panels preserve independent editor groups across window reload",
     const secondInput = secondPanel.getByTestId("chat-input")
     await secondInput.fill(secondTask)
     await secondInput.press("Enter")
-    await expect(secondInput).toHaveValue("")
+    await expectComposerText(secondInput, "")
     await expect(secondPanel.getByText("E2E_RELOAD_LAYOUT_PANEL_B_DONE", { exact: false }).last()).toBeVisible({
         timeout: 60_000,
     })
@@ -648,7 +649,7 @@ e2e(
         const input = panel.getByTestId("chat-input")
         await input.fill(task)
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 60_000 }).toBe(1)
 
         const taskIds = (await readdir(path.join(dlineDocsDir, "tasks"), { withFileTypes: true }))
@@ -781,10 +782,10 @@ e2e(
                 enqueueStressTurnResponses(plan.taskIndex, task, turnPlan)
                 const turnInput = `${task.marker}_TURN_${turn}`
                 await input.fill(turnInput)
-                await expect(input).toHaveValue(turnInput)
+                await expectComposerText(input, turnInput)
                 await expect(sendButton).not.toHaveClass(/\bdisabled\b/)
                 await sendButton.press("Enter")
-                await expect(input).toHaveValue("")
+                await expectComposerText(input, "")
 
                 // Serialize provider completion per task so the next feedback binds to the completed qna_respond interaction.
                 await expect
@@ -1127,7 +1128,7 @@ e2e(
         await panelA.getByTestId("chat-input").fill(panelATask)
         const panelASubmittedAtMs = Date.now()
         await panelA.getByTestId("send-button").click()
-        await expect(panelA.getByTestId("chat-input")).toHaveValue("")
+        await expectComposerText(panelA.getByTestId("chat-input"), "")
         await expect(panelA.getByText(panelATask, { exact: true }).first()).toBeVisible()
         await activateDlinePanelByFrame(dlineGroup, panelB)
         await expect(panelB.getByTestId("chat-input")).toBeVisible()
@@ -1135,7 +1136,7 @@ e2e(
         await panelB.getByTestId("chat-input").fill(panelBTask)
         const panelBSubmittedAtMs = Date.now()
         await clickInDlinePanel(dlineGroup, panelB, panelB.getByTestId("send-button"))
-        await expect(panelB.getByTestId("chat-input")).toHaveValue("")
+        await expectComposerText(panelB.getByTestId("chat-input"), "")
         await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeVisible()
 
         await Promise.all([
@@ -1216,7 +1217,7 @@ e2e(
         })
         const panelAInput = panelA.getByTestId("chat-input")
         await panelAInput.fill(panelAFollowUp)
-        await expect(panelAInput).toHaveValue(panelAFollowUp)
+        await expectComposerText(panelAInput, panelAFollowUp)
         await expect(panelAResume).toBeVisible()
         await panelAResume.click()
         await expect(panelA.getByText("E2E_CONCURRENT_PANEL_A_RESTORE_CONTINUES", { exact: false }).last()).toBeVisible({
@@ -1293,7 +1294,7 @@ e2e(
             const input = frame.getByTestId("chat-input")
             await input.fill(task.marker)
             await frame.getByTestId("send-button").click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 30_000 }).toBe(index + 1)
         }
         await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 }).toBe(3)
@@ -1327,7 +1328,7 @@ e2e(
             await expect(input).toBeEnabled()
             await input.fill(task.followUp)
             await input.press("Enter")
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             const feedback = task.frame.getByTestId(/^(?:user|queued)-input-markdown-scroll$/).filter({ hasText: task.followUp })
             await expect(feedback).toHaveCount(1)
             await expect(feedback).toHaveText(task.followUp)
@@ -1496,16 +1497,16 @@ e2e(
         const panelInput = panel.locator('[data-testid="chat-input"]:visible')
         await concurrentSidebarInput.fill(sidebarTurn)
         await panelInput.fill(panelTurn)
-        await expect(concurrentSidebarInput).toHaveValue(sidebarTurn)
-        await expect(panelInput).toHaveValue(panelTurn)
+        await expectComposerText(concurrentSidebarInput, sidebarTurn)
+        await expectComposerText(panelInput, panelTurn)
         await dismissExtensionsDisabledNotification(page)
         const submittedAtMs = Date.now()
         await Promise.all([
             sidebar.locator('[data-testid="send-button"]:visible').click(),
             panel.locator('[data-testid="send-button"]:visible').click(),
         ])
-        await expect(concurrentSidebarInput).toHaveValue("")
-        await expect(panelInput).toHaveValue("")
+        await expectComposerText(concurrentSidebarInput, "")
+        await expectComposerText(panelInput, "")
 
         await Promise.all([
             expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 10_000 }).toBe(1),

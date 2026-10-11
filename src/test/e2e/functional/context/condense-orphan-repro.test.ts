@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
@@ -104,7 +105,7 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
     await expect(input).toBeEnabled()
     await input.fill(text)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()
 }
 
@@ -458,7 +459,7 @@ e2e(
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
             await input.fill(restoredQnaReply)
             await input.press("Enter")
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
 
             await expect(sidebar.getByText("E2E_CONDENSE_ORPHAN_DONE", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
@@ -563,7 +564,7 @@ e2e(
             await attachScreenshot(app, "condense-input-summary-review")
 
             await confirmButton.click()
-            await expect(input).toHaveValue(continuationInput)
+            await expectComposerText(input, continuationInput)
             await expect(sidebar.getByText("E2E_CONDENSE_INPUT_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(3)
 
@@ -578,7 +579,7 @@ e2e(
             )
 
             await input.press("Enter")
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText("E2E_CONDENSE_INPUT_SENT", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(4)
             requests = server.getMockConsumptions("anthropic-messages")
@@ -805,7 +806,7 @@ e2e(
             const input = sidebar.getByTestId("chat-input")
             await input.fill("E2E_COMPACTION_RESTORE_AFTER_RESTORE")
             await resumeButton.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText("E2E_COMPACTION_RESTORE_RESUMED", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })
@@ -903,12 +904,12 @@ e2e(
             const input = sidebar.getByTestId("chat-input")
             await expect(regenerateButton).toBeVisible()
             await expect(confirmButton).toBeVisible()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(2)
             await attachScreenshot(app, "regenerate-empty-first-summary-review")
 
             await regenerateButton.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText(regeneratedSummary, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect(regenerateButton).toBeVisible()
             await expect(confirmButton).toBeVisible()
@@ -1044,7 +1045,7 @@ e2e(
             const input = sidebar.getByTestId("chat-input")
             await input.fill(feedback)
             await regenerateButton.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText(regeneratedSummary, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect(
                 sidebar.getByText("Error executing summarize_task: Current ask promise was ignored", { exact: false }),

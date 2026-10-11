@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { SemanticInputDocument } from "../document"
-import { documentMatchesPresentation, presentationTextOf } from "../presentation"
+import { displayTextOf, documentMatchesPresentation, presentationTextOf } from "../presentation"
 
 const nodes: SemanticInputDocument["nodes"] = [
     {
@@ -49,6 +49,14 @@ function document(rawText: string): SemanticInputDocument {
 }
 
 describe("semantic input presentation", () => {
+    it("shows resources to a reader by display name, never by id", () => {
+        const source = document("")
+        const names = source.nodes.flatMap((node) => (node.kind === "image" || node.kind === "file" ? [node.displayName] : []))
+
+        expect(displayTextOf(source)).toBe(`/compact compare [${names[0]}] with [${names[1]}]`)
+        expect(displayTextOf(source)).not.toContain("r1")
+    })
+
     it("projects nodes in order and addresses resources by stable id", () => {
         expect(presentationTextOf(document(""))).toBe("/compact compare [image:r1] with [file:r2]")
     })

@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { expect, type Frame } from "@playwright/test"
 import type { ClineApiServerMock } from "../../fixtures/server"
 import { E2E_PROFILE_NAMES } from "../../utils/api-profile"
@@ -126,7 +127,7 @@ export async function sendTask(sidebar: Frame, text: string): Promise<void> {
     await expect(input).toBeEnabled({ timeout: 30_000 })
     await input.fill(text)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
 }
 
 /**

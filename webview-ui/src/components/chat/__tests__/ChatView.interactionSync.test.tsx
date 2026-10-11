@@ -5,17 +5,31 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { AcceptedInteractionSettlement, InteractionDraft } from "@/task-interaction/types"
 
 const mocks = vi.hoisted(() => {
+    type TypedText = { kind: "text"; text: string; source: "typed" }
+    // A composer whose draft-changing calls are observable. ChatView reads the
+    // draft from `state.segments`, so a test sets it through `setDraft`.
+    const composer = {
+        engine: { getState: () => composer.state },
+        state: { segments: [] as TypedText[], selection: { anchor: 0, focus: 0 }, revision: 0 },
+        draftId: "00000000-0000-4000-8000-000000000001",
+        documentId: "00000000-0000-4000-8000-000000000002",
+        flatText: "",
+        sendRefusal: undefined,
+        reportSendRefusal: vi.fn(),
+        load: vi.fn(),
+        clear: vi.fn(),
+        retire: vi.fn(),
+        setText: vi.fn(),
+    }
     const chatState = {
-        inputValue: "draft",
+        composer,
+        composerRef: { current: null },
+        inputValue: "",
         setInputValue: vi.fn(),
         activeQuote: null as string | null,
         setActiveQuote: vi.fn(),
         isTextAreaFocused: false,
         setIsTextAreaFocused: vi.fn(),
-        selectedImages: [] as string[],
-        setSelectedImages: vi.fn(),
-        selectedFiles: [] as string[],
-        setSelectedFiles: vi.fn(),
         sendingDisabled: false,
         setSendingDisabled: vi.fn(),
         enableButtons: false,
@@ -26,17 +40,24 @@ const mocks = vi.hoisted(() => {
         setSecondaryButtonText: vi.fn(),
         expandedRows: {},
         setExpandedRows: vi.fn(),
-        textAreaRef: { current: null },
         handleFocusChange: vi.fn(),
         clearExpandedRows: vi.fn(),
         resetState: vi.fn(),
         restoreDraft: vi.fn(),
-        // ChatState owns paste provenance; an empty record keeps typed drafts on the legacy path.
-        pasteProvenance: { text: "", spans: [] as { start: number; end: number }[] },
-        commitPasteProvenance: vi.fn(),
+    }
+    /** Put typed text in the composer, keeping every projection ChatView reads in step. */
+    const setDraft = (text: string): void => {
+        composer.state = {
+            segments: text.length > 0 ? [{ kind: "text", text, source: "typed" }] : [],
+            selection: { anchor: text.length, focus: text.length },
+            revision: composer.state.revision + 1,
+        }
+        composer.flatText = text
+        chatState.inputValue = text
     }
     return {
         chatState,
+        setDraft,
         extensionState: {} as Record<string, unknown>,
         askResponse: vi.fn(async () => ({})),
         dispatchInteraction: vi.fn(async () => ({ accepted: true, result: "accepted" })),
@@ -285,15 +306,13 @@ describe("ChatView interaction anchor synchronization", () => {
         mocks.dispatchInteraction.mockReset()
         mocks.dispatchInteraction.mockResolvedValue({ accepted: true, result: "accepted" })
         mocks.useChatState.mockClear()
-        mocks.chatState.inputValue = "draft"
+        mocks.setDraft("draft")
         mocks.chatState.activeQuote = null
-        mocks.chatState.selectedImages = []
-        mocks.chatState.selectedFiles = []
         mocks.chatState.setInputValue.mockClear()
         mocks.chatState.setActiveQuote.mockClear()
-        mocks.chatState.setSelectedImages.mockClear()
-        mocks.chatState.setSelectedFiles.mockClear()
         mocks.chatState.restoreDraft.mockClear()
+        mocks.chatState.composer.retire.mockClear()
+        mocks.chatState.composer.clear.mockClear()
         mocks.closeTask.mockClear()
         mocks.closeButtonAction = undefined
         mocks.footerRejected = undefined
@@ -367,8 +386,6 @@ describe("ChatView interaction anchor synchronization", () => {
             enterAction: "reply",
         }
         mocks.chatState.activeQuote = "quoted context"
-        mocks.chatState.selectedImages = ["image.png"]
-        mocks.chatState.selectedFiles = ["file.txt"]
         renderChat([], view)
 
         expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
@@ -379,14 +396,13 @@ describe("ChatView interaction anchor synchronization", () => {
             expect.objectContaining({
                 responseType: "messageResponse",
                 text: "draft",
-                images: ["image.png"],
-                files: ["file.txt"],
+                // Attachments travel as resource nodes now; a reply has none to flatten.
+                images: [],
+                files: [],
             }),
         )
         expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
-        expect(mocks.chatState.setInputValue).toHaveBeenCalledWith("")
-        expect(mocks.chatState.setSelectedImages).toHaveBeenCalledWith([])
-        expect(mocks.chatState.setSelectedFiles).toHaveBeenCalledWith([])
+        expect(mocks.chatState.composer.retire).toHaveBeenCalledOnce()
         expect(mocks.chatState.setActiveQuote).toHaveBeenCalledWith(null)
     })
 
@@ -513,8 +529,6 @@ describe("ChatView interaction anchor synchronization", () => {
         const view = taskView()
         view.input.enterAction = "reject"
         mocks.chatState.activeQuote = "quoted context"
-        mocks.chatState.selectedImages = ["draft-image.png"]
-        mocks.chatState.selectedFiles = ["draft-file.txt"]
         renderChat([ASK], view)
 
         fireEvent.click(screen.getByRole("button", { name: "Compact task" }))
@@ -523,17 +537,31 @@ describe("ChatView interaction anchor synchronization", () => {
         expect(mocks.dispatchInteraction).toHaveBeenCalledWith(
             expect.objectContaining({
                 actionId: "reject",
-                draft: { text: "/cmd:compact", images: [], files: [] },
+                // The command travels as a confirmed command node, not as text to re-lex.
+                draft: expect.objectContaining({
+                    text: "/cmd:compact",
+                    images: [],
+                    files: [],
+                    semanticInput: expect.objectContaining({
+                        nodes: expect.arrayContaining([
+                            expect.objectContaining({
+                                slashCommand: expect.objectContaining({
+                                    commandId: "command.compact",
+                                    canonicalName: "compact",
+                                }),
+                            }),
+                        ]),
+                    }),
+                }),
                 interactionId: "interaction-1",
                 stateRevision: 8,
                 taskId: "task-1",
             }),
         )
         expect(mocks.compactTask).not.toHaveBeenCalled()
-        expect(mocks.chatState.setInputValue).not.toHaveBeenCalled()
+        expect(mocks.chatState.composer.retire).not.toHaveBeenCalled()
+        expect(mocks.chatState.composer.clear).not.toHaveBeenCalled()
         expect(mocks.chatState.setActiveQuote).not.toHaveBeenCalled()
-        expect(mocks.chatState.setSelectedImages).not.toHaveBeenCalled()
-        expect(mocks.chatState.setSelectedFiles).not.toHaveBeenCalled()
     })
 
     it("enables InputSection and submits Enter for the exact anchor", async () => {
@@ -597,7 +625,7 @@ describe("ChatView interaction anchor synchronization", () => {
             },
         ]
         const condenseAsk: UiMessage = { ...ASK, ask: "condense", text: "Summary preview" }
-        mocks.chatState.inputValue = "Keep the deployment details"
+        mocks.setDraft("Keep the deployment details")
 
         renderChat([condenseAsk], view)
         fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
@@ -609,7 +637,9 @@ describe("ChatView interaction anchor synchronization", () => {
                 draft: { text: "Keep the deployment details", images: [], files: [] },
             }),
         )
-        expect(mocks.chatState.setInputValue).toHaveBeenCalledWith("")
+        // Both the dispatch and its accepted settlement retire the draft; a second retire of an
+        // already empty draft is a no-op in the composer.
+        expect(mocks.chatState.composer.retire).toHaveBeenCalled()
     })
 
     it("clears the complete submitted draft before dispatch settles", async () => {
@@ -621,16 +651,12 @@ describe("ChatView interaction anchor synchronization", () => {
                 }),
         )
         mocks.chatState.activeQuote = "quoted context"
-        mocks.chatState.selectedImages = ["image.png"]
-        mocks.chatState.selectedFiles = ["file.txt"]
         renderChat([ASK])
 
         fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
 
         expect(mocks.dispatchInteraction).toHaveBeenCalledOnce()
-        expect(mocks.chatState.setInputValue).toHaveBeenCalledWith("")
-        expect(mocks.chatState.setSelectedImages).toHaveBeenCalledWith([])
-        expect(mocks.chatState.setSelectedFiles).toHaveBeenCalledWith([])
+        expect(mocks.chatState.composer.retire).toHaveBeenCalledOnce()
         expect(mocks.chatState.setActiveQuote).toHaveBeenCalledWith(null)
         await act(async () => resolveDispatch?.({ accepted: true, result: "accepted" }))
     })
@@ -642,8 +668,8 @@ describe("ChatView interaction anchor synchronization", () => {
         fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
         await waitFor(() => expect(mocks.dispatchInteraction).toHaveBeenCalledOnce())
 
-        expect(mocks.chatState.setInputValue).toHaveBeenCalledWith("")
-        expect(mocks.chatState.setInputValue).not.toHaveBeenCalledWith("draft")
+        expect(mocks.chatState.composer.retire).toHaveBeenCalledOnce()
+        expect(mocks.chatState.restoreDraft).not.toHaveBeenCalled()
     })
 
     it("restores a genuine rejection while the same task session still owns an empty composer", async () => {
@@ -657,12 +683,12 @@ describe("ChatView interaction anchor synchronization", () => {
         const rendered = renderChat([ASK])
 
         fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
-        mocks.chatState.inputValue = ""
+        mocks.setDraft("")
         rendered.rerender(chatView())
-        mocks.chatState.setInputValue.mockClear()
+        mocks.chatState.restoreDraft.mockClear()
 
         await act(async () => resolveDispatch({ accepted: false, result: "rejected" }))
-        expect(mocks.chatState.setInputValue).toHaveBeenCalledWith("draft")
+        expect(mocks.chatState.restoreDraft).toHaveBeenCalledWith(expect.objectContaining({ text: "draft" }))
     })
 
     it("does not restore an old rejected response after closing and resuming the same task", async () => {
@@ -676,12 +702,12 @@ describe("ChatView interaction anchor synchronization", () => {
         const rendered = renderChat([ASK])
 
         fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
-        mocks.chatState.inputValue = ""
+        mocks.setDraft("")
         closeAndResume(rendered)
-        mocks.chatState.setInputValue.mockClear()
+        mocks.chatState.restoreDraft.mockClear()
 
         await act(async () => resolveDispatch({ accepted: false, result: "rejected" }))
-        expect(mocks.chatState.setInputValue).not.toHaveBeenCalledWith("draft")
+        expect(mocks.chatState.restoreDraft).not.toHaveBeenCalled()
     })
 
     it("does not restore an acknowledged interaction when its RPC settles as rejected", async () => {
@@ -695,25 +721,25 @@ describe("ChatView interaction anchor synchronization", () => {
         const rendered = renderChat([ASK])
 
         fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
-        mocks.chatState.inputValue = ""
+        mocks.setDraft("")
         mocks.extensionState = {
             ...mocks.extensionState,
             clineMessages: [ASK, { ts: 200, type: "say", say: "user_feedback", interactionId: "interaction-1" }],
         }
         rendered.rerender(chatView())
-        mocks.chatState.setInputValue.mockClear()
+        mocks.chatState.restoreDraft.mockClear()
 
         await act(async () => resolveDispatch({ accepted: false, result: "rejected" }))
-        expect(mocks.chatState.setInputValue).not.toHaveBeenCalledWith("draft")
+        expect(mocks.chatState.restoreDraft).not.toHaveBeenCalled()
     })
 
     it("fences a footer rejection with the session that rendered its submission", () => {
         const rendered = renderChat([ASK])
         const rejectOldFooter = mocks.footerRejected
         expect(rejectOldFooter).toBeDefined()
-        mocks.chatState.inputValue = ""
+        mocks.setDraft("")
         closeAndResume(rendered)
-        mocks.chatState.setInputValue.mockClear()
+        mocks.chatState.restoreDraft.mockClear()
 
         act(() =>
             rejectOldFooter?.({
@@ -724,7 +750,7 @@ describe("ChatView interaction anchor synchronization", () => {
                 draft: { text: "draft", images: [], files: [] },
             }),
         )
-        expect(mocks.chatState.setInputValue).not.toHaveBeenCalledWith("draft")
+        expect(mocks.chatState.restoreDraft).not.toHaveBeenCalled()
     })
 
     it("does not clear a newer draft when the original dispatch settles", async () => {
@@ -739,13 +765,14 @@ describe("ChatView interaction anchor synchronization", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
         await waitFor(() => expect(mocks.dispatchInteraction).toHaveBeenCalledOnce())
-        expect(mocks.chatState.setInputValue).toHaveBeenCalledWith("")
-        mocks.chatState.setInputValue.mockClear()
-        mocks.chatState.inputValue = "new draft"
+        expect(mocks.chatState.composer.retire).toHaveBeenCalledOnce()
+        mocks.chatState.composer.retire.mockClear()
+        mocks.setDraft("new draft")
         rendered.rerender(chatView())
 
         expect(screen.getByRole("textbox", { name: "Task input" })).toHaveValue("new draft")
         await act(async () => resolveDispatch?.({ accepted: true, result: "accepted" }))
-        expect(mocks.chatState.setInputValue).not.toHaveBeenCalled()
+        expect(mocks.chatState.composer.retire).not.toHaveBeenCalled()
+        expect(mocks.chatState.composer.clear).not.toHaveBeenCalled()
     })
 })

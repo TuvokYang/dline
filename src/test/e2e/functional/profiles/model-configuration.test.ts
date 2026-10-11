@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { startSettingControlStabilityObserver, stopSettingControlStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
@@ -702,7 +703,7 @@ e2e(
             timeout: 60_000,
         })
         await expect(input).toBeEnabled()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(1)
         const planRequest = server.getMockConsumptions("openai-compatible-chat")[0]
         expect(planRequest).toMatchObject({

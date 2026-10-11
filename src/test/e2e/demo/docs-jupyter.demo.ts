@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { expect, type Locator, type Page } from "@playwright/test"
 import { demo } from "./utils/demo-fixture"
 import { dismissDemoNotifications } from "./utils/png-asset"
@@ -189,7 +190,7 @@ demo(
         const closeTask = sidebar.locator('[aria-label="Close Task"]')
         await focusCamera(closeTask, STEP_SETTLE_MS)
         await closeTask.click()
-        await expect(sidebar.getByTestId("chat-input")).toHaveValue("")
+        await expectComposerText(sidebar.getByTestId("chat-input"), "")
         await expect(explanation).toBeHidden({ timeout: 30_000 })
 
         await firstCell.click()

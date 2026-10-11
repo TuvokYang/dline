@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { expect } from "@playwright/test"
 import { E2E_PROFILE_NAMES } from "../utils/api-profile"
 import { E2ETestHelper } from "../utils/helpers"
@@ -101,7 +102,7 @@ demo(
             const input = sidebar.getByTestId("chat-input")
             await input.fill(PARENT_TASK)
             await input.press("Enter")
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
 
             const approveButton = sidebar.getByText("Approve", { exact: true })
             const childHeading = sidebar.getByRole("heading", { name: CHILD_TASK, exact: true }).last()

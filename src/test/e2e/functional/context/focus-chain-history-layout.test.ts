@@ -1,5 +1,6 @@
 import { readdir, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import { expectComposerPlaceholder } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Page } from "@playwright/test"
 
@@ -63,7 +64,7 @@ async function closeCurrentTask(sidebar: Frame): Promise<void> {
     const closeButton = sidebar.getByRole("button", { name: "Close Task", exact: true })
     await expect(closeButton).toBeVisible()
     await closeButton.click()
-    await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
+    await expectComposerPlaceholder(sidebar.getByTestId("chat-input"), "Type your task here...")
     await E2ETestHelper.dismissWhatsNewModal(sidebar)
 }
 

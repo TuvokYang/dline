@@ -295,6 +295,9 @@ message SelectInputResourcesRequest {
   Metadata metadata = 1;
   string draft_id = 2;
   bool images_allowed = 3;
+  // How many picked files fit in the draft; only the first ones are staged and
+  // the rest are never copied. Absent means no limit.
+  optional uint32 max_count = 4;
 }
 
 // What a staged resource is to the composer and the provider

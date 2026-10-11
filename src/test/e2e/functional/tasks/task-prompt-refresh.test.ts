@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 
@@ -109,7 +110,7 @@ Read only the files needed for the requested review.`,
         await expect(dialog.getByRole("heading", { name: "Refresh Prompt Cache", exact: true })).toBeVisible()
         await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
         await expect(sidebar.getByRole("heading", { name: "Refresh Prompt Cache", exact: true })).not.toBeVisible()
-        await expect(input).toHaveValue("E2E_PROMPT_REFRESH_DRAFT")
+        await expectComposerText(input, "E2E_PROMPT_REFRESH_DRAFT")
         const afterCancel = await readPromptContext(dlineDocsDir, taskId)
         expect(afterCancel.systemPrompt?.frozen?.refreshedAt).toBe(before.refreshedAt)
         expect(server.openAiRequestCount).toBe(requestCount)
@@ -130,13 +131,13 @@ Read only the files needed for the requested review.`,
         expect(refreshed.refreshedAt).toBeGreaterThan(before.refreshedAt)
         expect(refreshed.text).toContain(capabilityMarker)
         await expect(freshnessWarning).toHaveCount(0)
-        await expect(input).toHaveValue("E2E_PROMPT_REFRESH_DRAFT")
+        await expectComposerText(input, "E2E_PROMPT_REFRESH_DRAFT")
         await page.waitForTimeout(500)
         expect(server.openAiRequestCount).toBe(requestCount)
 
         await input.fill("E2E_PROMPT_REFRESH_FEEDBACK")
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText("E2E_PROMPT_REFRESH_APPLIED", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         await expect.poll(() => server.openAiRequestCount).toBe(3)
         expect(server.getMockConsumptions("openai-compatible-chat")[2].contractError).toBeUndefined()

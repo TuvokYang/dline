@@ -1,4 +1,5 @@
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Page } from "@playwright/test"
 
@@ -130,7 +131,7 @@ e2e(
         for (const panel of [firstPanel, secondPanel]) {
             const input = panel.getByTestId("chat-input")
             await input.fill("still responsive")
-            await expect(input).toHaveValue("still responsive")
+            await expectComposerText(input, "still responsive")
             await input.fill("")
         }
 

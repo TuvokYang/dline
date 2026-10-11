@@ -1,6 +1,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
     pauseTaskBetweenTurns,
@@ -419,7 +420,7 @@ async function submitTask(sidebar: Frame, text: string): Promise<void> {
     await expect(input).toBeEnabled()
     await input.fill(text)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
 }
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {
@@ -504,7 +505,7 @@ async function pastePngWithTrailingBytes(input: Locator, trailingBytes: number):
                 cancelable: true,
                 clipboardData,
             })
-            ;(element as HTMLTextAreaElement).dispatchEvent(pasteEvent)
+            element.dispatchEvent(pasteEvent)
         },
         { encodedPng: ONE_PIXEL_PNG_BASE64, trailingBytes },
     )

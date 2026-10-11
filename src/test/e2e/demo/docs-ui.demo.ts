@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { expect, type Frame, type Locator } from "@playwright/test"
 import { getE2EMockProviderBaseUrl } from "../fixtures/server/api"
 import { E2E_PROFILE_NAMES } from "../utils/api-profile"
@@ -256,7 +257,7 @@ demo("docs slash workflow", async ({ finishRecording, focusCamera, helper, pace,
     // Return to the input as soon as the menu closes so the spotlight never outlines empty space.
     await expect(menu).toBeHidden()
     await focusCamera(input, 0)
-    await expect(input).toHaveValue(new RegExp(`^/workflow:${WORKFLOW_NAME}\\s*$`))
+    await expectComposerText(input, new RegExp(`^/workflow:${WORKFLOW_NAME}\\s*$`))
     await pace(1_600)
     await finishRecording()
 })
@@ -488,7 +489,7 @@ demo(
         await focusCamera(input, STEP_SETTLE_MS)
         await input.fill(COMPACTION_CONTINUE_TEXT)
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
 
         const compactionPass = sidebar.getByTestId("compaction-pass").last()
         await expect(compactionPass).toBeVisible({ timeout: 60_000 })

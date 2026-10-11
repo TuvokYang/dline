@@ -1,5 +1,6 @@
 import { expect, type Frame } from "@playwright/test"
 import type { ClineApiServerMock } from "../../fixtures/server"
+import { expectComposerText } from "../../utils/composer"
 
 /**
  * Parallel subagent review scripted against the mock provider.
@@ -117,7 +118,7 @@ export async function startSubagentReview(sidebar: Frame, server: ClineApiServer
     const input = sidebar.getByTestId("chat-input")
     await input.fill(PARENT_TASK)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
 
     const approveButton = sidebar.getByText("Approve", { exact: true })
     const firstChildTask = sidebar.getByText(SUBAGENT_ITEMS[0].task, { exact: true }).last()

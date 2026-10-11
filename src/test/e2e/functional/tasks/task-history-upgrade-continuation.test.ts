@@ -1,5 +1,6 @@
 import { copyFile, mkdir } from "node:fs/promises"
 import * as path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Page } from "@playwright/test"
 
@@ -109,7 +110,7 @@ e2e(
             const input = sidebar.getByTestId("chat-input")
             await input.fill(FIRST_FOLLOW_UP)
             await resume.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText(FIRST_REPLY, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.openAiRequestCount, { timeout: 30_000 }).toBe(1)
 

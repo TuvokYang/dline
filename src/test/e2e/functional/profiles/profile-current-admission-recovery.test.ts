@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerPlaceholder } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskRuntimeState, readTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
@@ -281,7 +282,7 @@ e2e(
         if (!sourceProfile) throw new Error("Missing source OpenAI E2E Profile")
         const taskId = await onlyTaskId(dlineDocsDir)
         await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
-        await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
+        await expectComposerPlaceholder(sidebar.getByTestId("chat-input"), "Type your task here...")
         await awaitPersistedProfileInvalid(dlineDocsDir, taskId, sourceProfile, error)
 
         await setAzureIdentity(page, sidebar, dlineDir, profileName, false)

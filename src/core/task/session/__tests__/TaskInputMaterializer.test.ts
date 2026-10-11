@@ -6,6 +6,7 @@ import { decodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { LifecycleCommand, UserInputEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
 import {
     type AdmittedLifecycleBarrier,
+    type LegacyResourceCarrierPort,
     type LifecycleBarrierPort,
     SemanticInputRejectedError,
     type TaskInputAdmissionPort,
@@ -66,8 +67,8 @@ const barrierDocument: SemanticInputDocument = {
 const compactBarrier: AdmittedLifecycleBarrier = {
     commandId: "command.compact",
     entityId: "compact-1",
-    before: "<explain-instructions> then",
-    partsBefore: [{ kind: "text", text: "<explain-instructions> then" }],
+    turnText: "<explain-instructions> then",
+    turnParts: [{ kind: "text", text: "<explain-instructions> then" }],
     premessage: "keep the audit",
     instructionsBefore: [{ type: "skill", source: "skill_injection" }],
     toolsBefore: ["use_skill"],
@@ -227,17 +228,17 @@ describe("TaskInputMaterializer", () => {
             },
             displayName: "shot.png",
         }
-        const partsBefore = [{ kind: "text" as const, text: "see " }, image]
+        const turnParts = [{ kind: "text" as const, text: "see " }, image]
         const barrierWithImage: TaskInputAdmissionPort = {
             admit: async () => ({
                 ok: true,
                 admitted: {
                     document,
                     admittedText: "see [image] <compact-instructions>",
-                    parts: [...partsBefore, { kind: "text" as const, text: " <compact-instructions>" }],
+                    parts: [...turnParts, { kind: "text" as const, text: " <compact-instructions>" }],
                     authorizedTools: ["summarize_task"],
                     explicitInstructions: [],
-                    barrier: { ...compactBarrier, before: "see [image]", partsBefore, instructionsBefore: [], toolsBefore: [] },
+                    barrier: { ...compactBarrier, turnText: "see [image]", turnParts, instructionsBefore: [], toolsBefore: [] },
                 },
             }),
         }
@@ -246,7 +247,7 @@ describe("TaskInputMaterializer", () => {
 
         await materializer.materialize({ text: "see /compact" })
 
-        expect(store.lastEnvelope().admittedParts).toEqual(partsBefore)
+        expect(store.lastEnvelope().admittedParts).toEqual(turnParts)
         expect(store.lastEnvelope().lifecycle?.commandId).toBe("command.compact")
     })
 
@@ -316,7 +317,7 @@ describe("TaskInputMaterializer", () => {
             expect(barriers.requested).toEqual([])
         })
 
-        it("refuses a structured reply carrying a resource no reply renders yet", async () => {
+        it("refuses a structured reply carrying a resource when no carrier can hand it on", async () => {
             let admitted = 0
             const counting: TaskInputAdmissionPort = {
                 admit: async (input) => {
@@ -343,6 +344,145 @@ describe("TaskInputMaterializer", () => {
 
             await expect(reviewed).rejects.toMatchObject({ diagnostics: [{ code: "semantic_input_resource_invalid" }] })
             expect(admitted).toBe(0)
+        })
+
+        describe("with resources", () => {
+            const pasted = {
+                kind: "resource" as const,
+                entityId: "f-1",
+                nodeKind: "file" as const,
+                ref: {
+                    resourceId: "00000000-0000-4000-8000-000000000002",
+                    expectedContentHash: "b".repeat(64),
+                    mediaType: "text/plain",
+                    byteLength: 3,
+                    owner: { kind: "task" as const, taskId: "task-1" },
+                    generation: 1,
+                },
+                displayName: "input.txt",
+            }
+            const withFile: SemanticInputDocument = {
+                ...document,
+                rawText: "see input.txt",
+                nodes: [
+                    { kind: "text", text: "see " },
+                    {
+                        kind: "file",
+                        entityId: "f-1",
+                        resourceId: pasted.ref.resourceId,
+                        fileOrigin: "pasted_text",
+                        displayName: "input.txt",
+                    },
+                ],
+                resources: [pasted.ref],
+            }
+            const admittingFile: TaskInputAdmissionPort = {
+                admit: async () => ({
+                    ok: true,
+                    admitted: {
+                        document: withFile,
+                        admittedText: "see [input.txt]",
+                        parts: [{ kind: "text", text: "see " }, pasted],
+                        authorizedTools: [],
+                        explicitInstructions: [],
+                    },
+                }),
+            }
+            function recordingCarriers() {
+                const projected: unknown[] = []
+                const port: LegacyResourceCarrierPort = {
+                    project: async (documentId, parts) => {
+                        projected.push({ documentId, parts })
+                        return { images: [], files: parts.map((part) => `/task/${part.ref.resourceId}/input.txt`) }
+                    },
+                }
+                return { port, projected }
+            }
+
+            it("verifies them through admission and hands them on even without a command", async () => {
+                const carriers = recordingCarriers()
+                const materializer = new TaskInputMaterializer(
+                    recordingPayloads().payloads,
+                    identity,
+                    admittingFile,
+                    undefined,
+                    carriers.port,
+                )
+
+                const reviewed = await materializer.reviewReply({ text: "see input.txt", semanticInput: withFile })
+
+                expect(reviewed?.text).toBe("see input.txt")
+                expect(reviewed?.document).toBe(withFile)
+                expect(reviewed?.files).toEqual([`/task/${pasted.ref.resourceId}/input.txt`])
+                expect(reviewed?.images).toEqual([])
+                expect(carriers.projected).toEqual([{ documentId: "doc-1", parts: [pasted] }])
+                expect(() => reviewed?.commit()).not.toThrow()
+            })
+
+            it("refuses them when admission refuses, without handing anything on", async () => {
+                const carriers = recordingCarriers()
+                const materializer = new TaskInputMaterializer(
+                    recordingPayloads().payloads,
+                    identity,
+                    refusing,
+                    undefined,
+                    carriers.port,
+                )
+
+                await expect(materializer.reviewReply({ text: "see input.txt", semanticInput: withFile })).rejects.toBeInstanceOf(
+                    SemanticInputRejectedError,
+                )
+                expect(carriers.projected).toEqual([])
+            })
+
+            it("hands on only the resources before an owned command", async () => {
+                const carriers = recordingCarriers()
+                const barriers = recordingBarriers(true)
+                const before: SemanticInputDocument = {
+                    ...withFile,
+                    rawText: "see input.txt /compact",
+                    nodes: [
+                        ...withFile.nodes,
+                        { kind: "text", text: " " },
+                        ...(barrierDocument.nodes.filter(
+                            (node) => node.kind === "slash_command",
+                        ) as SemanticInputDocument["nodes"]),
+                    ],
+                }
+                const barrierAfterFile: TaskInputAdmissionPort = {
+                    admit: async () => ({
+                        ok: true,
+                        admitted: {
+                            document: before,
+                            admittedText: "see [input.txt] <compact-instructions>",
+                            parts: [{ kind: "text", text: "see " }, pasted, { kind: "text", text: " <compact-instructions>" }],
+                            authorizedTools: [],
+                            explicitInstructions: [],
+                            barrier: {
+                                ...compactBarrier,
+                                turnText: "see [input.txt]",
+                                turnParts: [{ kind: "text", text: "see " }, pasted],
+                                instructionsBefore: [],
+                                toolsBefore: [],
+                            },
+                        },
+                    }),
+                }
+                const materializer = new TaskInputMaterializer(
+                    recordingPayloads().payloads,
+                    identity,
+                    barrierAfterFile,
+                    barriers.port,
+                    carriers.port,
+                )
+
+                const reviewed = await materializer.reviewReply({ text: "see input.txt /compact", semanticInput: before })
+
+                expect(reviewed?.files).toEqual([`/task/${pasted.ref.resourceId}/input.txt`])
+                expect(barriers.requested).toEqual([])
+                reviewed?.commit()
+                expect(barriers.requested).toHaveLength(1)
+            })
         })
 
         it("reviews nothing in an assembly without a barrier owner", async () => {

@@ -1,0 +1,103 @@
+/* The semantic composer: a multi-line textbox whose inline chips are atoms of the draft. */
+.semantic-composer {
+    position: relative;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-y: auto;
+    outline: none;
+    cursor: text;
+}
+
+.semantic-composer[data-empty="true"]::before {
+    content: attr(data-placeholder);
+    position: absolute;
+    pointer-events: none;
+    color: var(--vscode-input-placeholderForeground);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: calc(100% - 16px);
+}
+
+.composer-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: 240px;
+    margin: 0 1px;
+    padding: 0 4px;
+    border-radius: 3px;
+    border: 1px solid var(--vscode-editorWidget-border, transparent);
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    font-size: 0.92em;
+    line-height: 1.5;
+    vertical-align: baseline;
+    user-select: none;
+    cursor: pointer;
+}
+
+.composer-chip--command,
+.composer-chip--mention {
+    background: color-mix(in srgb, var(--vscode-badge-foreground) 30%, transparent);
+    color: inherit;
+}
+
+.composer-chip--warning {
+    border-style: dashed;
+}
+
+.composer-chip--error {
+    border-color: var(--vscode-inputValidation-errorBorder);
+    background: var(--vscode-inputValidation-errorBackground);
+    color: var(--vscode-errorForeground);
+}
+
+.composer-chip--selected {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 1px;
+}
+
+.composer-chip__thumbnail {
+    width: 16px;
+    height: 16px;
+    object-fit: cover;
+    border-radius: 2px;
+}
+
+.composer-chip__icon {
+    font-size: 12px !important;
+}
+
+.composer-chip__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.composer-chip__badge {
+    padding: 0 3px;
+    border-radius: 2px;
+    font-size: 0.8em;
+    font-weight: 600;
+    background: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.composer-chip__action {
+    font-size: 11px !important;
+    opacity: 0.6;
+    cursor: pointer;
+}
+
+.composer-chip__action:hover {
+    opacity: 1;
+}
+
+.semantic-composer .mention-context-textarea-highlight {
+    border-radius: 3px;
+}
+
+.semantic-composer .composer-held-candidate {
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+}

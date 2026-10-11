@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises"
 import * as path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readStoredTaskHistoryItem, seedLegacyTaskHistory } from "@e2e/utils/task-history-store"
 import { expect, type Frame, type Page } from "@playwright/test"
@@ -35,7 +36,7 @@ async function submitFeedback(sidebar: Frame, text: string): Promise<void> {
     await expect(input).toBeEnabled({ timeout: 30_000 })
     await input.fill(text)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     // The submitted feedback is rendered as a direct user message row; assert on
     // that contract rather than on a styling class that the chat rows no longer carry.
     await expect(sidebar.getByTestId("direct-user-input").filter({ hasText: text })).toHaveCount(1, { timeout: 30_000 })

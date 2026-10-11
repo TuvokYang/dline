@@ -2,6 +2,12 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import {
+    type ComposerTextReaderWindow,
+    expectComposerPlaceholder,
+    expectComposerText,
+    installComposerTextReader,
+} from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
     readTaskConversationText,
@@ -230,20 +236,24 @@ async function sendTask(sidebar: Frame, text: string, readinessTimeout = 60_000)
         timeout: readinessTimeout,
     })
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()
 }
 
 async function startInputValueObserver(sidebar: Frame): Promise<void> {
+    await installComposerTextReader(sidebar)
     await sidebar.evaluate(() => {
-        const root = globalThis as typeof globalThis & {
-            __dlineModeSwitchInputObserver?: { timer: number; values: string[] }
-        }
+        const root = globalThis as typeof globalThis &
+            ComposerTextReaderWindow & {
+                __dlineModeSwitchInputObserver?: { timer: number; values: string[] }
+            }
+        const readDraft = root.__dlineE2EComposerText
+        if (!readDraft) throw new Error("composer text reader is not installed")
         if (root.__dlineModeSwitchInputObserver) window.clearInterval(root.__dlineModeSwitchInputObserver.timer)
         const values: string[] = []
         const read = () => {
-            const input = document.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')
-            if (input) values.push(input.value)
+            const input = document.querySelector('[data-testid="chat-input"]')
+            if (input) values.push(readDraft(input))
         }
         read()
         const timer = window.setInterval(read, 5)
@@ -583,13 +593,13 @@ e2e(
         await sidebar.getByTestId("mode-switch").click()
 
         await expectPlanMode(sidebar)
-        await expect(input).toHaveValue("E2E_WELCOME_MODE_DRAFT")
+        await expectComposerText(input, "E2E_WELCOME_MODE_DRAFT")
         expect(await taskDirectoryIds(dlineDocsDir)).toEqual([])
         expect(server.getRequestCount("openai-compatible-chat")).toBe(0)
         expect(server.getRequestCount("openai-compatible-responses")).toBe(0)
 
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText("E2E_WELCOME_MODE_DRAFT", { exact: true }).last()).toBeVisible()
         await expect(sidebar.getByText("E2E_WELCOME_MODE_ENTER_SENT", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
@@ -633,19 +643,19 @@ e2e(
 
         await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
         const input = sidebar.getByTestId("chat-input")
-        await expect(input).toHaveAttribute("placeholder", "Type your task here...")
+        await expectComposerPlaceholder(input, "Type your task here...")
         await E2ETestHelper.dismissWhatsNewModal(sidebar)
         await input.fill("E2E_WELCOME_AFTER_CLOSE_DRAFT")
         await sidebar.getByTestId("mode-switch").click()
 
         await expectPlanMode(sidebar)
-        await expect(input).toHaveValue("E2E_WELCOME_AFTER_CLOSE_DRAFT")
+        await expectComposerText(input, "E2E_WELCOME_AFTER_CLOSE_DRAFT")
         await sidebar.page().waitForTimeout(1_000)
         expect(await taskDirectoryIds(dlineDocsDir)).toHaveLength(1)
         expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
 
         await sidebar.getByTestId("send-button").click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText("E2E_WELCOME_AFTER_CLOSE_SENT", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
@@ -747,7 +757,7 @@ e2e(
 
             const input = sidebar.getByTestId("chat-input")
             await expect(input).toBeEnabled()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await startInputValueObserver(sidebar)
             await sidebar.getByTestId("mode-switch").evaluate((element) => element.click())
             await expect(sidebar.getByRole("switch", { name: "Act" })).toHaveAttribute("aria-checked", "true", {
@@ -758,7 +768,7 @@ e2e(
             expect.soft(observedValues).not.toContain(INTERNAL_MODE_RESPONSE)
             expect.soft(await sidebar.locator("body").innerText()).not.toContain(INTERNAL_MODE_RESPONSE)
             await expect(input).toBeEnabled()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText("E2E_AWAITING_PLAN_READY", { exact: false }).last()).toBeVisible()
             await expect(sidebar.getByText("E2E_AWAITING_PLAN_CONTINUED", { exact: false })).toHaveCount(0)
             expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
@@ -798,11 +808,11 @@ e2e(
 
             const input = sidebar.getByTestId("chat-input")
             await expect(input).toBeEnabled()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await sidebar.getByTestId("mode-switch").evaluate((element) => element.click())
             await expectPlanMode(sidebar)
             await expect(input).toBeEnabled()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText("E2E_AWAITING_ACT_QUESTION", { exact: false }).last()).toBeVisible()
             await expect(sidebar.getByText("E2E_AWAITING_ACT_PLAN_CONTINUED", { exact: false })).toHaveCount(0)
             expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
@@ -854,7 +864,7 @@ e2e(
             await input.fill("E2E_REVERSE_SWITCH_DRAFT")
             await sidebar.getByTestId("mode-switch").evaluate((element) => element.click())
             await expectPlanMode(sidebar)
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 20_000 }).toBe(2)
             await expect(sidebar.getByText("E2E_REVERSE_DRAFT_PLAN_READY", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
@@ -978,7 +988,7 @@ e2e(
             await expect(dialog).toHaveCount(0)
             await expect(sidebar.getByRole("switch", { name: "Act" })).toHaveAttribute("aria-checked", "true")
             await expect(sidebar.getByRole("switch", { name: "Plan" })).toHaveAttribute("aria-checked", "false")
-            await expect(input).toHaveValue("E2E_CANCEL_COMPACTION_DRAFT")
+            await expectComposerText(input, "E2E_CANCEL_COMPACTION_DRAFT")
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
             await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(0)
             await expectNoInternalCompactionEcho(sidebar)
@@ -1068,7 +1078,7 @@ e2e(
             ).toBeVisible()
             await expect(dialog.getByText("Target", { exact: true })).toBeVisible()
             await expect(dialog.getByText(`${E2E_PROFILE_NAMES.mockOpenAi} · 131,072 tokens`, { exact: true })).toBeVisible()
-            await expect(input).toHaveValue("E2E_SMALLER_TARGET_PLAN_DRAFT")
+            await expectComposerText(input, "E2E_SMALLER_TARGET_PLAN_DRAFT")
             await dialog.getByRole("button", { name: "Compact & Switch" }).click()
 
             await expectPlanMode(sidebar)
@@ -1210,7 +1220,7 @@ e2e(
             await expect(dialog.getByRole("heading", { name: "Switch not completed" })).toBeVisible({ timeout: 60_000 })
             await expect(dialog).toContainText("Mode switch compaction failed.")
             await expect(dialog).toContainText("remains active. The target settings were not adopted.")
-            await expect(input).toHaveValue("E2E_OVER_LIMIT_PLAN_DRAFT")
+            await expectComposerText(input, "E2E_OVER_LIMIT_PLAN_DRAFT")
             await dialog.getByRole("button", { name: "Retry", exact: true }).click()
             await expect(dialog.getByRole("heading", { name: "Compact context before switching?" })).toBeVisible({
                 timeout: 60_000,
@@ -1675,7 +1685,7 @@ e2e(
             await expect(compactButton).toBeVisible()
             await expect(compactButton).toHaveAttribute("aria-disabled", "true")
             await confirmManualCompaction(sidebar, "E2E_MANUAL_COMPACT_SUMMARY preserves the task and current intent.")
-            await expect(input).toHaveValue("E2E_MANUAL_COMPACT_PRESERVED_DRAFT")
+            await expectComposerText(input, "E2E_MANUAL_COMPACT_PRESERVED_DRAFT")
             await expect(sidebar.getByText("E2E_MANUAL_COMPACT_APPLIED", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })
@@ -1702,7 +1712,7 @@ e2e(
             await expectCompactionSummary(sidebar, "E2E_MANUAL_COMPACT_SUMMARY preserves the task and current intent.")
             await expect(sidebar.getByText("/compact", { exact: true })).toHaveCount(0)
             await expect.poll(async () => Number(await progress.getAttribute("aria-valuenow"))).toBeLessThan(beforeCompact)
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(compactButton).toBeVisible()
             await expect(compactButton).toHaveAttribute("aria-disabled", "false")
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
@@ -1789,7 +1799,7 @@ e2e(
             const input = sidebar.getByTestId("chat-input")
             await input.fill("E2E_MANUAL_FOLLOWUP_MESSAGE")
             await input.press("Enter")
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText("E2E_MANUAL_FOLLOWUP_MESSAGE", { exact: true }).last()).toBeVisible()
             await expect(sidebar.getByText("E2E_MANUAL_FOLLOWUP_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(5)

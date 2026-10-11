@@ -1,3 +1,4 @@
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { type ElectronApplication, expect } from "@playwright/test"
 
@@ -38,7 +39,7 @@ e2e(
 
         // The queue now owns the text. Leaving a copy in the composer shows the
         // same input twice and invites sending it a second time by hand.
-        await expect(input).toHaveValue("", { timeout: 30_000 })
+        await expectComposerText(input, "", { timeout: 30_000 })
 
         await toggle.click()
         const overlay = sidebar.getByTestId("input-queue-overlay")
@@ -240,6 +241,9 @@ e2e("Chat input queue - input after completion is sent, not queued", async ({ he
     // Cancel button is gone.
     await expect(sidebar.getByText("E2E_COMPLETED_FIRST").first()).toBeVisible({ timeout: 60_000 })
     await expect(sidebar.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0, { timeout: 30_000 })
+    // The completion result renders before Core opens the reply interaction;
+    // until then the composer refuses a send, so wait until it accepts one.
+    await expect(sidebar.getByTestId("send-button")).not.toHaveAttribute("aria-disabled", "true", { timeout: 30_000 })
 
     await input.fill("E2E_AFTER_COMPLETION_TEXT")
     await input.press("Enter")
@@ -248,7 +252,7 @@ e2e("Chat input queue - input after completion is sent, not queued", async ({ he
     // delivery point left to drain it.
     await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
     await expect(sidebar.getByTestId("input-queue-toggle")).toHaveCount(0)
-    await expect(input).toHaveValue("", { timeout: 30_000 })
+    await expectComposerText(input, "", { timeout: 30_000 })
     await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 })
 
@@ -326,7 +330,7 @@ e2e(
 
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
         await expect(sidebar.getByTestId("input-queue-toggle")).toHaveCount(0)
-        await expect(input).toHaveValue("", { timeout: 30_000 })
+        await expectComposerText(input, "", { timeout: 30_000 })
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
 )

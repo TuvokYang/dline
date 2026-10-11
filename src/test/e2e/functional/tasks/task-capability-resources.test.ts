@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { expectComposerPlaceholder, expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator } from "@playwright/test"
 import { parseTaskCapabilityToggles, type TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -296,12 +297,12 @@ e2e(
         )
 
         const sendButton = sidebar.getByTestId("send-button")
-        await expect(input).toHaveValue("Verify task-local capability resources.")
-        await expect(input).toHaveAttribute("placeholder", "Type your task here...")
+        await expectComposerText(input, "Verify task-local capability resources.")
+        await expectComposerPlaceholder(input, "Type your task here...")
         await expect(sendButton).toHaveCount(1)
         await expect(sendButton).not.toHaveClass(/disabled/)
         await sendButton.click()
-        await expect(input, `Webview errors: ${webviewErrors.join("\n")}`).toHaveValue("", { timeout: 5_000 })
+        await expectComposerText(input, "", { timeout: 5_000, message: `Webview errors: ${webviewErrors.join("\n")}` })
         await expect(sidebar.getByText("E2E_CAPABILITY_TASK_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         const taskId = await onlyTaskId(dlineDocsDir)
         const initialToggles = await waitForTaskCapabilityToggles(dlineDocsDir, taskId)
@@ -381,11 +382,11 @@ e2e(
         // Start New Task closes the current task and returns to the RECENT
         // welcome screen; the user then explicitly submits the next task.
         await startNewTask.click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         // Task termination can consume the full five-second backend fence before
         // the Webview receives the cleared Task state. Wait beyond that boundary
         // so the next submission cannot race the previous Task's shutdown.
-        await expect(input).toHaveAttribute("placeholder", "Type your task here...", { timeout: 30_000 })
+        await expectComposerPlaceholder(input, "Type your task here...", { timeout: 30_000 })
         await expect(input).toBeEnabled()
         await input.fill("E2E_CAPABILITY_WORKSPACE_DEFAULT_TASK")
         await input.press("Enter")

@@ -2,6 +2,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
     pauseTaskAfterToolResult,
@@ -105,7 +106,7 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
     await expect(input).toBeEnabled()
     await input.fill(text)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()
 }
 
@@ -162,7 +163,7 @@ async function replyToResume(sidebar: Frame, reply: string): Promise<void> {
     await expect(input).toBeEnabled()
     await input.fill(reply)
     await resumeButton.click()
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
 }
 
 function requestInputItems(consumption: MockApiConsumption | undefined): string[] {
@@ -366,7 +367,7 @@ e2e(
             await expect(input).toBeEnabled()
             await input.fill(followup)
             await resumeButton.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 120_000 }).toBe(4)
             await expect(resumed.sidebar.getByText(followup, { exact: true }).last()).toBeVisible({ timeout: 60_000 })
             await expect(resumed.sidebar.getByText("E2E_RECOVERED_TOOL_COMPACTION_OK", { exact: false }).last()).toBeVisible({
@@ -449,7 +450,7 @@ e2e(
             await expect(resumeButton).toBeVisible({ timeout: 30_000 })
             await input.fill(resumeDraft)
             await resumeButton.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
 
             await expect(resumed.sidebar.getByTestId("compaction-failure")).toBeVisible({
                 timeout: 120_000,

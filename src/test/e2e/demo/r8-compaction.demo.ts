@@ -1,5 +1,6 @@
 import { expect } from "@playwright/test"
 import { E2E_PROFILE_NAMES } from "../utils/api-profile"
+import { expectComposerText } from "../utils/composer"
 import { E2ETestHelper } from "../utils/helpers"
 import {
     COMPACT_INSTRUCTION_MARKER,
@@ -36,7 +37,7 @@ demo(
         await input.fill(CONTINUE_TEXT)
         await pace(500)
         await input.press("Enter")
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
 
         const compactionPass = sidebar.getByTestId("compaction-pass").last()
         await expect(compactionPass).toBeVisible({ timeout: 60_000 })

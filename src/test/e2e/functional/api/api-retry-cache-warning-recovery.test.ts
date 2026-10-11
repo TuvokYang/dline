@@ -1,3 +1,4 @@
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readBlankMessageRows } from "@e2e/utils/ui-stability"
 import { expect, type Frame } from "@playwright/test"
@@ -14,7 +15,7 @@ async function submitFeedback(sidebar: Frame, text: string): Promise<void> {
     await expect(input).toBeEnabled()
     await input.fill(text)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
 }
 
 e2e(

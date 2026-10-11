@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerPlaceholder } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame } from "@playwright/test"
 
@@ -93,7 +94,7 @@ async function closeCurrentTask(sidebar: Frame): Promise<void> {
     const closeTaskButton = sidebar.getByRole("button", { name: "Close Task", exact: true })
     await expect(closeTaskButton).toBeVisible({ timeout: 60_000 })
     await closeTaskButton.click()
-    await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
+    await expectComposerPlaceholder(sidebar.getByTestId("chat-input"), "Type your task here...")
 }
 
 async function selectResponsesProfile(sidebar: Frame): Promise<void> {

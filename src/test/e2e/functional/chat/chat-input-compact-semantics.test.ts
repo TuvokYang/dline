@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
@@ -65,7 +66,7 @@ async function sendText(sidebar: Frame, text: string): Promise<void> {
     await input.fill(text)
     await expect(sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false", { timeout: 60_000 })
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()
 }
 
@@ -294,21 +295,21 @@ e2e(
             const input = sidebar.getByTestId("chat-input")
             await input.fill(later)
             await input.press("Enter")
-            await expect(input).toHaveValue("", { timeout: 30_000 })
+            await expectComposerText(input, "", { timeout: 30_000 })
             const queueToggle = sidebar.getByTestId("input-queue-toggle")
             await expect(queueToggle).toContainText("Queue 1")
             await queueToggle.click()
             const queueOverlay = sidebar.getByTestId("input-queue-overlay")
             await expect(queueOverlay).toContainText(later)
             await queueOverlay.getByLabel("Edit queued input").click()
-            await expect(input).toHaveValue(later)
+            await expectComposerText(input, later)
             await input.fill(editedLater)
             await input.press("Enter")
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(queueToggle).toContainText("Queue 1")
 
             const confirmButton = await expectSummaryUnderReview(sidebar, summary)
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             expect(server.getRequestCount(PROVIDER)).toBe(2)
 
             await confirmButton.click()
@@ -338,10 +339,10 @@ e2e(
 )
 
 e2e(
-    // The pasted image lands in the legacy thumbnail tray, not as an inline node
-    // after the barrier (AC-10/AC-13, TASK-043/044). Once inline nodes exist, an
-    // image placed after the barrier belongs to its premessage and this changes.
-    "Compact barrier - a mention after /compact guides the summary and a legacy tray image reaches the next turn",
+    // The pasted image lands inline after the barrier. The words after /compact
+    // steer the summary, but an attachment there is still the user's attachment:
+    // it rides with the turn the command opens, never with the summary request.
+    "Compact barrier - a mention after /compact guides the summary and an image after it reaches the next turn",
     async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(210_000)
         await configureAnthropicManualCompact(dlineDir)
@@ -367,6 +368,7 @@ e2e(
                 name: "summarize_task",
                 arguments: { context: summary },
                 expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, "E2E_RESOURCE_TASK", guidance, fileMarker, trailing],
+                expectedRequestExcludes: [ONE_PIXEL_PNG_BASE64_PREFIX],
             },
             {
                 // The image is an attachment of the submission, not of the command,
@@ -391,10 +393,14 @@ e2e(
             const draft = `/compact ${guidance} @/${fileName} ${trailing}`
             await input.fill(draft)
             await pasteScreenshot(input)
-            await expect(sidebar.getByAltText("Thumbnail image-1")).toBeVisible()
-            await expect(input).toHaveValue(draft)
+            const chip = input.getByRole("group", { name: /^Image compact-premessage\.png, PNG/ })
+            await expect(chip).toBeVisible()
+            await expect(input.getByAltText("Thumbnail compact-premessage.png")).toBeVisible()
+            await expectComposerText(input, draft)
+            // A resource still being staged holds the send back; wait until it may go.
+            await expect(chip).toHaveAttribute("data-status", "ready", { timeout: 30_000 })
             await input.press("Enter")
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
 
             const confirmButton = await expectSummaryUnderReview(sidebar, summary)
             expect(server.getRequestCount(PROVIDER)).toBe(2)

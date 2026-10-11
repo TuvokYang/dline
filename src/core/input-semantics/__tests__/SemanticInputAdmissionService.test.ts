@@ -81,8 +81,8 @@ describe("SemanticInputAdmissionService", () => {
             commandId: "command.compact",
             // The barrier's own entity lets a reply carrier slice the document in front of it.
             entityId: "doc-1#1",
-            before: "<explain-changes-instructions> then",
-            partsBefore: [{ kind: "text", text: "<explain-changes-instructions> then" }],
+            turnText: "<explain-changes-instructions> then",
+            turnParts: [{ kind: "text", text: "<explain-changes-instructions> then" }],
             premessage: "keep the audit",
             // Claiming the barrier drops only its own authority, never an earlier command's.
             instructionsBefore: result.admitted.explicitInstructions.slice(0, 1),
@@ -351,10 +351,11 @@ describe("SemanticInputAdmissionService", () => {
             ])
         })
 
-        // A premessage travels with the lifecycle command as text only, so an
-        // attachment placed after the command would vanish instead of being sent.
-        it("refuses an attachment placed after a lifecycle command", async () => {
-            const before = lex("/compact keep ")
+        // The words after a lifecycle command steer the command, but an
+        // attachment there is still something the user attached: it stays with
+        // the turn the command opens instead of being folded into its guidance.
+        it("keeps an attachment placed after a lifecycle command with the turn, not the premessage", async () => {
+            const typed = lex("see /compact keep the audit ")
             const image = { kind: "image", entityId: "doc-1#img", resourceId, displayName: "shot.png" } as const
             const result = await new SemanticInputAdmissionService({
                 catalog: () => catalog,
@@ -362,15 +363,23 @@ describe("SemanticInputAdmissionService", () => {
                 mentions: { resolve: async () => "" },
                 resources: { verify: async () => [] },
             }).admit({
-                ...before,
-                rawText: `/compact keep [image:${resourceId}] now`,
-                nodes: [...before.nodes, image, ...lex(" now").nodes],
+                ...typed,
+                rawText: `see /compact keep the audit [image:${resourceId}]`,
+                nodes: [...typed.nodes, image],
                 resources: [ref],
             })
 
-            expect(result.ok).toBe(false)
-            if (result.ok) return
-            expect(result.diagnostics.map((d) => d.code)).toEqual(["semantic_input_lifecycle_barrier_invalid"])
+            expect(result.ok).toBe(true)
+            if (!result.ok) return
+            expect(result.admitted.barrier).toMatchObject({
+                commandId: "command.compact",
+                turnText: `see [image:${resourceId}]`,
+                turnParts: [
+                    { kind: "text", text: "see " },
+                    { kind: "resource", entityId: "doc-1#img", nodeKind: "image", ref, displayName: "shot.png" },
+                ],
+                premessage: "keep the audit",
+            })
         })
     })
 })

@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { startSettingControlStabilityObserver, stopSettingControlStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
@@ -183,7 +184,7 @@ async function expectShortcutTurn(
     const input = sidebar.getByTestId("chat-input")
     await input.fill(inputText)
     await input.press(wrongShortcut)
-    await expect(input).toHaveValue(`${inputText}\n`)
+    await expectComposerText(input, `${inputText}\n`)
     expect(server.openAiRequestCount).toBe(beforeRequests)
     await input.fill(inputText)
     await input.press(sendShortcut)

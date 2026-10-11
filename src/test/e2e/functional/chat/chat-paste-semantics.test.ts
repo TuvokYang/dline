@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText, placeComposerCaret } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
@@ -58,7 +59,7 @@ async function startTask(sidebar: Frame, text: string): Promise<Locator> {
     await expect(input).toBeEnabled()
     await input.fill(text)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()
     return input
 }
@@ -159,7 +160,7 @@ e2e(
 
             // AC-09: a pasted candidate is held and named without relying on color.
             await pasteFromClipboard(app, input, literal)
-            await expect(input).toHaveValue(literal)
+            await expectComposerText(input, literal)
             const notice = sidebar.getByTestId(PASTED_CANDIDATE_NOTICE)
             await expect(notice).toBeVisible()
             await expect(notice).toContainText("/compact")
@@ -167,7 +168,7 @@ e2e(
             await attachScreenshot(app, "paste-literal-held")
 
             await input.press("Enter")
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText("E2E_PASTE_LITERAL_ACK", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })
@@ -180,17 +181,13 @@ e2e(
             await expect(notice).toBeVisible()
             // The narrow sidebar wraps the draft, so a Home key would land on a visual
             // line rather than the command; place the caret after "/compact" directly.
-            const commandEnd = "/compact".length
-            await input.evaluate(
-                (element, offset) => (element as HTMLTextAreaElement).setSelectionRange(offset, offset),
-                commandEnd,
-            )
+            await placeComposerCaret(input, "/compact".length)
             await input.press("Backspace")
-            await expect(input).toHaveValue(`/compac ${guidance}`)
+            await expectComposerText(input, `/compac ${guidance}`)
             const menu = sidebar.getByTestId("slash-commands-menu")
             await expect(menu).toBeVisible()
             await menu.getByText("compact", { exact: true }).click()
-            await expect(input).toHaveValue(`/cmd:compact ${guidance}`)
+            await expectComposerText(input, `/cmd:compact ${guidance}`)
             await expect(notice).toHaveCount(0)
             await attachScreenshot(app, "paste-candidate-confirmed")
 
@@ -256,7 +253,7 @@ e2e(
             await expect(sidebar.getByText("E2E_MENTION_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
             await pasteFromClipboard(app, input, pasted)
-            await expect(input).toHaveValue(pasted)
+            await expectComposerText(input, pasted)
             const notice = sidebar.getByTestId(PASTED_CANDIDATE_NOTICE)
             await expect(notice).toBeVisible()
             await expect(notice).toContainText(mention)
@@ -312,7 +309,7 @@ e2e(
 
             await pasteFromClipboard(app, input, lines.join("\n"))
             await expect(sidebar.getByText(/^input_.+\.txt$/).first()).toBeVisible({ timeout: 30_000 })
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await attachScreenshot(app, "oversized-paste-resource")
 
             await sidebar.getByTestId("send-button").click()
@@ -367,14 +364,14 @@ e2e(
             const resourceChip = sidebar.getByText(/^input_.+\.txt$/)
 
             await pasteFromClipboard(app, input, inlineText)
-            await expect(input).toHaveValue(inlineText)
+            await expectComposerText(input, inlineText)
             await expect(resourceChip).toHaveCount(0)
 
             await input.fill("")
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await pasteFromClipboard(app, input, resourceText)
             await expect(resourceChip.first()).toBeVisible({ timeout: 30_000 })
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await attachScreenshot(app, "byte-boundary-paste-resource")
 
             await sidebar.getByTestId("send-button").click()

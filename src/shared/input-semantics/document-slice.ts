@@ -2,10 +2,12 @@ import { isResourceNode, type SemanticInputDocument, type SemanticInputNode } fr
 import { presentationTextOf } from "./presentation"
 
 /**
- * The part of a document the user placed before one of its entities.
+ * The part of a document its turn keeps once a lifecycle command is taken out.
  *
- * Used when a lifecycle command is taken out of a submission: what remains is
- * still the structure the user confirmed, so a later stage reads the same typed
+ * That is every node the user placed before the command, then each resource
+ * placed after it: a resource is something the user attached, while the text
+ * after the command is guidance the command consumes. What remains is still
+ * the structure the user confirmed, so a later stage reads the same typed
  * commands, mentions and resources instead of re-deriving them from text, and
  * the command itself is no longer there to act a second time. Edge whitespace
  * is trimmed like the kept text, and only the resources the remaining nodes
@@ -13,10 +15,10 @@ import { presentationTextOf } from "./presentation"
  *
  * Returns undefined when the document has no entity with that identity.
  */
-export function documentBeforeEntity(document: SemanticInputDocument, entityId: string): SemanticInputDocument | undefined {
-    const index = document.nodes.findIndex((node) => "entityId" in node && node.entityId === entityId)
+export function documentKeptByTurn(document: SemanticInputDocument, barrierEntityId: string): SemanticInputDocument | undefined {
+    const index = document.nodes.findIndex((node) => "entityId" in node && node.entityId === barrierEntityId)
     if (index === -1) return undefined
-    const nodes = trimEdgeText(document.nodes.slice(0, index))
+    const nodes = trimEdgeText([...document.nodes.slice(0, index), ...document.nodes.slice(index + 1).filter(isResourceNode)])
     const referenced = new Set(nodes.filter(isResourceNode).map((node) => node.resourceId))
     const prefix: SemanticInputDocument = {
         ...document,

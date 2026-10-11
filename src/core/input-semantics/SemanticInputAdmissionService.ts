@@ -1,9 +1,4 @@
-import {
-    type AdmittedInputPart,
-    appendAdmittedPart,
-    hasResourceParts,
-    trimAdmittedParts,
-} from "@shared/input-semantics/admitted-parts"
+import { type AdmittedInputPart, appendAdmittedPart, trimAdmittedParts } from "@shared/input-semantics/admitted-parts"
 import {
     authorizedTools,
     type CatalogConflict,
@@ -58,26 +53,28 @@ export interface SemanticResourceVerifierPort {
 }
 
 /**
- * The lifecycle barrier of one submission, with its text split around it.
+ * The lifecycle barrier of one submission, with its content split around it.
  *
  * A barrier changes the task rather than the turn, so whoever routes it needs
- * the projection before it (still ordinary content) apart from its premessage
- * (content addressed to the barrier itself), not one string where both blur.
+ * what the turn keeps (still ordinary content) apart from its premessage
+ * (guidance addressed to the command itself), not one string where both blur.
  */
 export interface AdmittedBarrier {
     readonly commandId: string
     /** Identity of the barrier node, so a carrier can cut the document where the command stood. */
     readonly entityId: string
-    /** Projection of every node before the barrier, in node order. */
-    readonly before: string
-    /** The same projection as {@link before}, with resources kept in place. */
-    readonly partsBefore: readonly AdmittedInputPart[]
     /**
-     * Projection of the barrier's premessage nodes, in node order.
+     * Projection of what the turn keeps once the command is taken out: every
+     * node before the barrier, then each resource placed after it.
      *
-     * Text only: no carrier of a lifecycle command renders resources yet, so a
-     * resource placed after the barrier is refused instead of silently dropped.
+     * A resource after the barrier is something the user attached, not words
+     * steering the command, so it reaches the model with the turn the command
+     * opens rather than with the command's own request.
      */
+    readonly turnText: string
+    /** The same projection as {@link turnText}, with resources kept in place. */
+    readonly turnParts: readonly AdmittedInputPart[]
+    /** Projection of the text, command and mention nodes after the barrier: the command's guidance. */
     readonly premessage: string
     /** Authority granted by the commands before the barrier, without the barrier's own. */
     readonly instructionsBefore: readonly ExplicitInstructionDeclaration[]
@@ -276,7 +273,7 @@ export class SemanticInputAdmissionService {
         const segments: ProjectedSegment[] = []
         const declarations: ExplicitInstructionDeclaration[] = []
         const unavailable: SemanticInputDiagnostic[] = []
-        // Index of the barrier's own segment; every later segment is its premessage.
+        // Index of the barrier's own segment; every later segment follows the command.
         let barrierSegment: number | undefined
         let declarationsBefore = 0
 
@@ -325,17 +322,9 @@ export class SemanticInputAdmissionService {
         const parts = partsOf(segments)
         const projection = { text: textOf(segments), parts, explicitInstructions: declarations }
         if (!plan.barrier || barrierSegment === undefined) return { ok: true, value: projection }
-        const before = segments.slice(0, barrierSegment)
-        const premessage = segments.slice(barrierSegment + 1)
-        if (hasResourceParts(partsOf(premessage))) {
-            return refuse(
-                semanticInputDiagnostic(
-                    "semantic_input_lifecycle_barrier_invalid",
-                    "attachments after a lifecycle command are not supported",
-                    { documentId: document.documentId, entityId: plan.barrier.entityId },
-                ),
-            )
-        }
+        const after = segments.slice(barrierSegment + 1)
+        const turn = [...segments.slice(0, barrierSegment), ...after.filter(isResourceSegment)]
+        const premessage = after.filter((segment) => !isResourceSegment(segment))
         return {
             ok: true,
             value: {
@@ -343,8 +332,8 @@ export class SemanticInputAdmissionService {
                 barrier: {
                     commandId: plan.barrier.commandId,
                     entityId: plan.barrier.entityId,
-                    before: textOf(before).trim(),
-                    partsBefore: trimAdmittedParts(partsOf(before)),
+                    turnText: textOf(turn).trim(),
+                    turnParts: trimAdmittedParts(partsOf(turn)),
                     premessage: textOf(premessage).trim(),
                     instructionsBefore: declarations.slice(0, declarationsBefore),
                 },
@@ -380,6 +369,10 @@ function resourceSegment(document: SemanticInputDocument, node: ResourceInputNod
         part: { kind: "resource", entityId: node.entityId, nodeKind: node.kind, ref, displayName: node.displayName },
         text: presentationTextOfNode(node),
     }
+}
+
+function isResourceSegment(segment: ProjectedSegment): boolean {
+    return segment.part.kind === "resource"
 }
 
 function textOf(segments: readonly ProjectedSegment[]): string {

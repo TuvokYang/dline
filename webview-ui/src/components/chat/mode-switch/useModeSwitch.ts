@@ -21,24 +21,29 @@ export interface ModeSwitchDraft {
     semanticInput?: SemanticInputDocument
 }
 
-interface PendingSwitch {
+interface PendingSwitch<TDraft extends ModeSwitchDraft> {
     requestId: number
     operationId?: string
     targetMode: Mode
     startRevision: number
-    draft: ModeSwitchDraft
+    draft: TDraft
     attachDraft: boolean
     submitDraftAfterSwitch: boolean
 }
 
-interface UseModeSwitchOptions {
+/**
+ * The draft type is the caller's: the switch only reads the fields of
+ * {@link ModeSwitchDraft} and hands the very draft it captured back to `onSend`,
+ * so whatever else the caller froze with it survives the switch.
+ */
+interface UseModeSwitchOptions<TDraft extends ModeSwitchDraft> {
     mode: Mode
     stateRevision: number
     modeSwitch?: ModeSwitchSnapshot
-    draft: ModeSwitchDraft
+    draft: TDraft
     attachDraft: boolean
     submitDraftAfterSwitch?: boolean
-    onSend: (draft: ModeSwitchDraft) => void | Promise<void>
+    onSend: (draft: TDraft) => void | Promise<void>
     clearDraft: () => void
 }
 
@@ -76,22 +81,20 @@ function toProtoMode(mode: Mode): PlanActMode {
     return mode === "plan" ? PlanActMode.PLAN : PlanActMode.ACT
 }
 
-/** Clone mutable draft arrays before retaining transaction ownership. */
-function cloneDraft(draft: ModeSwitchDraft): ModeSwitchDraft {
-    return {
-        text: draft.text,
-        images: [...draft.images],
-        files: [...draft.files],
-        // The document is immutable once composed, so the captured reference is
-        // already a stable snapshot of the structure.
-        ...(draft.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
-    }
+/**
+ * Clone mutable draft arrays before retaining transaction ownership.
+ *
+ * Everything else is kept by reference: the document is immutable once
+ * composed, so the captured reference is already a stable snapshot.
+ */
+function cloneDraft<TDraft extends ModeSwitchDraft>(draft: TDraft): TDraft {
+    return { ...draft, images: [...draft.images], files: [...draft.files] }
 }
 
 /** Coordinate Webview mode-switch RPCs from accepted backend transaction state. */
-export function useModeSwitch(options: UseModeSwitchOptions): UseModeSwitchResult {
+export function useModeSwitch<TDraft extends ModeSwitchDraft>(options: UseModeSwitchOptions<TDraft>): UseModeSwitchResult {
     const { mode, stateRevision, modeSwitch, draft, attachDraft, submitDraftAfterSwitch = true, onSend, clearDraft } = options
-    const [pending, setPending] = useState<PendingSwitch>()
+    const [pending, setPending] = useState<PendingSwitch<TDraft>>()
     const nextRequestId = useRef(0)
     const completedRequests = useRef(new Set<number>())
     const onSendRef = useRef(onSend)
@@ -161,7 +164,7 @@ export function useModeSwitch(options: UseModeSwitchOptions): UseModeSwitchResul
             if (isSwitchPending || targetMode === mode) return
             const capturedDraft = cloneDraft(draft)
             const requestId = ++nextRequestId.current
-            const nextPending: PendingSwitch = {
+            const nextPending: PendingSwitch<TDraft> = {
                 requestId,
                 targetMode,
                 startRevision: stateRevision,

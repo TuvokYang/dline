@@ -1,3 +1,4 @@
+import { preflightOpeningDocument } from "@core/input-semantics/OpeningDocumentBinding"
 import { String } from "@shared/proto/dline/common"
 import { PlanActMode } from "@shared/proto/dline/state"
 import { NewTaskRequest } from "@shared/proto/dline/task"
@@ -83,6 +84,9 @@ export async function newTask(controller: Controller, request: NewTaskRequest): 
         if (decoded.document.catalogRevision !== currentRevision) {
             throw new Error("New task input was rejected: semantic_input_catalog_stale")
         }
+        // The task starts in the background, past the point where a refused
+        // attachment could hand the draft back; check its resources now.
+        await preflightOpeningDocument(decoded.document)
         semanticInput = decoded.document
     }
     const taskId = await controller.initTask(request.text, request.images, request.files, undefined, filteredTaskSettings, {

@@ -6,6 +6,10 @@ import type { DialogDraftEnvelope } from "@core/task/stores/payload/TaskPayloadE
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { SemanticInputDocument as WireDocument, SemanticInputNode as WireNode } from "@shared/proto/dline/input"
 import { DispatchInteractionRequest } from "@shared/proto/dline/task"
+import {
+    decodeAdmissibleSemanticInputDocument,
+    toProtoSemanticInputDocument,
+} from "@shared/proto-conversions/input-semantics/document"
 import { describe, expect, it, vi } from "vitest"
 import { dispatchInteraction } from "../dispatchInteraction"
 
@@ -597,6 +601,49 @@ describe("dispatchInteraction", () => {
         const result = await dispatchInteraction(host.value as never, request)
 
         expect(result).toMatchObject({ accepted: false, result: "invalid_payload" })
+        expect(host.respond).not.toHaveBeenCalled()
+        expect(host.resolve).not.toHaveBeenCalled()
+    })
+
+    it("refuses a reply that names its attachments both as resource nodes and as flat lists", async () => {
+        const host = controller()
+        const withImage: SemanticInputDocument = {
+            schemaVersion: 1,
+            parserVersion: "1.0.0",
+            catalogRevision: "3",
+            documentId: "doc-img",
+            rawText: "look",
+            nodes: [
+                { kind: "text", text: "look" },
+                { kind: "image", entityId: "img-1", resourceId: "res-1", displayName: "shot.png" },
+            ],
+            resources: [
+                {
+                    resourceId: "res-1",
+                    expectedContentHash: "sha256:abc",
+                    mediaType: "image/png",
+                    byteLength: 3,
+                    owner: { kind: "task", taskId: "task-1" },
+                    generation: 1,
+                },
+            ],
+        } as SemanticInputDocument
+        // The document alone is admissible; only the duplicated flat list is refused.
+        expect(decodeAdmissibleSemanticInputDocument(toProtoSemanticInputDocument(withImage)).ok).toBe(true)
+        const request = DispatchInteractionRequest.create({
+            ...compactReply("look"),
+            draft: {
+                text: "look",
+                images: ["data:image/png;base64,AA=="],
+                files: [],
+                semanticInput: toProtoSemanticInputDocument(withImage),
+            },
+        })
+
+        const result = await dispatchInteraction(host.value as never, request)
+
+        expect(result).toMatchObject({ accepted: false, result: "invalid_payload" })
+        expect(host.put).not.toHaveBeenCalled()
         expect(host.respond).not.toHaveBeenCalled()
         expect(host.resolve).not.toHaveBeenCalled()
     })

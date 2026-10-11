@@ -1,5 +1,6 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { composerText, expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator } from "@playwright/test"
 
@@ -196,8 +197,8 @@ export async function selectWorkSlashCommand(
     for (const value of forbiddenText) await expect(menu).not.toContainText(value)
     await menu.getByText(resourceName, { exact: true }).click()
     const prefix = sectionName === "Workflows" ? `/workflow:${resourceName} ` : `/skills:${resourceName} `
-    if ((await input.inputValue()) !== prefix) await input.fill(prefix)
-    await expect(input).toHaveValue(prefix)
+    if ((await composerText(input)) !== prefix) await input.fill(prefix)
+    await expectComposerText(input, prefix)
     return input
 }
 

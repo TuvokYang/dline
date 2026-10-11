@@ -1,6 +1,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskApiRateMetrics } from "@e2e/utils/read-task-api-rate-metrics"
 import { readTaskUiMessages } from "@e2e/utils/task-instance-store"
@@ -411,14 +412,14 @@ e2e(
                 const input = surface.frame.locator('[data-testid="chat-input"]:visible')
                 await input.fill(surface.taskCase.marker)
                 await input.press("Enter")
-                await expect(input).toHaveValue("")
+                await expectComposerText(input, "")
             }
             const sidebarCase = taskCases[0]
             if (!sidebarCase) throw new Error("Missing sidebar rate metrics Task case")
             const sidebarInput = sidebar.locator('[data-testid="chat-input"]:visible')
             await sidebarInput.fill(sidebarCase.marker)
             await sidebarInput.press("Enter")
-            await expect(sidebarInput).toHaveValue("")
+            await expectComposerText(sidebarInput, "")
 
             await expect.poll(() => server.getMockConsumptions("openai-compatible-responses").length, { timeout: 20_000 }).toBe(4)
             const receivedAt = server

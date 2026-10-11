@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { prepareWorkSession, sendWorkMessage, setWorkAutoApproveAction } from "@e2e/utils/work/session"
 import { expect } from "@playwright/test"
@@ -229,7 +230,7 @@ e2e(
         const input = sidebar.getByTestId("chat-input")
         await input.fill(RESUME_NOTE)
         await resume.click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText(RESUME_NOTE, { exact: true }).last()).toBeVisible()
         await expect(sidebar.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible({
             timeout: 60_000,

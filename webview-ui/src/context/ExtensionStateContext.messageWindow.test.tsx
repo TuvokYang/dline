@@ -115,11 +115,8 @@ function InteractionProbe({
             {taskViewState ? (
                 <InteractionHost
                     dispatch={TaskServiceClient.dispatchInteraction}
-                    draft={{
-                        text: chatState.inputValue,
-                        images: chatState.selectedImages,
-                        files: chatState.selectedFiles,
-                    }}
+                    // Attachments are resource nodes of the composer draft now; a plain text probe has none.
+                    draft={{ text: chatState.inputValue, images: [], files: [] }}
                     messages={clineMessages}
                     showTimeline={showTimeline}
                     view={taskViewState}

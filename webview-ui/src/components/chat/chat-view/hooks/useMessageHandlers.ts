@@ -4,7 +4,8 @@ import { NewTaskRequest } from "@shared/proto/dline/task"
 import { toProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { useCallback, useRef } from "react"
 import { TaskServiceClient } from "@/services/grpc-client"
-import { composeSubmission, newComposerDocumentId } from "@/services/input-semantics/paste-provenance"
+import { isBlankDraft, trimSegments } from "../../input/semantic-composer/model"
+import { composeComposerSubmission } from "../../input/semantic-composer/projection"
 
 import type { ChatState, MessageHandlers, NewTaskComposition } from "../types/chatTypes"
 
@@ -35,15 +36,7 @@ export function useMessageHandlers(
     disableAutoScrollRef?: React.MutableRefObject<boolean>,
     taskId?: string,
 ): MessageHandlers {
-    const {
-        activeQuote,
-        setActiveQuote,
-        setEnableButtons,
-        setInputValue,
-        setSelectedFiles,
-        setSelectedImages,
-        setSendingDisabled,
-    } = chatState
+    const { activeQuote, composer, setActiveQuote, setEnableButtons, setSendingDisabled } = chatState
     const taskOwnershipRef = useRef({ taskId, revision: 0 })
     const latestMessagesRef = useRef(messages)
     if (taskOwnershipRef.current.taskId !== taskId) {
@@ -54,53 +47,44 @@ export function useMessageHandlers(
     }
     latestMessagesRef.current = messages
 
+    const { retire: retireComposer, load: loadComposer, documentId } = composer
     const handleSendMessage = useCallback(
-        async (text: string, images: string[], files: string[], composition?: NewTaskComposition) => {
-            const hasContent = text.trim().length > 0 || images.length > 0 || files.length > 0
-            if (!hasContent || taskId !== undefined) {
+        async ({ segments, catalog }: NewTaskComposition) => {
+            if (isBlankDraft(segments) || taskId !== undefined) {
                 return
             }
             // The quote is text the composer adds, never something the user typed,
-            // so it is held literal whether or not the user's own text needs a
+            // so it is a literal whether or not the user's own text needs a
             // document (WS-041 AC-09).
             const quotePrefix = activeQuote ? `[context] \n> ${activeQuote}\n[/context] \n\n` : ""
-            const submission = composition
-                ? composeSubmission({
-                      text,
-                      spans: composition.spans,
-                      catalog: composition.catalog,
-                      documentId: newComposerDocumentId(),
-                      literalPrefix: quotePrefix,
-                      trim: true,
-                  })
-                : { text: quotePrefix + text.trim(), semanticInput: undefined }
-            const messageToSend = submission.text
+            const submission = composeComposerSubmission(trimSegments(segments), {
+                catalog,
+                documentId,
+                literalPrefix: quotePrefix,
+            })
             const document = submission.semanticInput
             const submissionOwnerRevision = taskOwnershipRef.current.revision
             await runNewTaskSubmission(
                 () =>
                     TaskServiceClient.newTask(
                         NewTaskRequest.create({
-                            text: messageToSend,
-                            images,
-                            files,
+                            text: submission.text,
+                            images: [],
+                            files: [],
                             ...(document ? { semanticInput: toProtoSemanticInputDocument(document) } : {}),
                         }),
                     ),
                 () => {
-                    setInputValue("")
+                    retireComposer()
                     setActiveQuote(null)
                     setSendingDisabled(true)
-                    setSelectedImages([])
-                    setSelectedFiles([])
                     setEnableButtons(false)
                 },
                 () => {
-                    setInputValue(text)
+                    // The frozen segments come back whole: the same atoms, resources and held text.
+                    loadComposer(segments)
                     setActiveQuote(activeQuote)
                     setSendingDisabled(false)
-                    setSelectedImages(images)
-                    setSelectedFiles(files)
                     setEnableButtons(true)
                 },
                 () => taskOwnershipRef.current.revision === submissionOwnerRevision && latestMessagesRef.current.length === 0,
@@ -111,12 +95,12 @@ export function useMessageHandlers(
         },
         [
             activeQuote,
+            retireComposer,
             disableAutoScrollRef,
+            documentId,
+            loadComposer,
             setActiveQuote,
             setEnableButtons,
-            setInputValue,
-            setSelectedFiles,
-            setSelectedImages,
             setSendingDisabled,
             taskId,
         ],

@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect } from "@playwright/test"
 
@@ -42,7 +43,7 @@ e2e("Slash Skills show the skill name instead of its filesystem path", async ({ 
     const skillOption = menu.getByText(SKILL_NAME, { exact: true })
     await expect(skillOption).toBeVisible()
     await skillOption.click()
-    await expect(input).toHaveValue(`/skills:${SKILL_NAME} `)
+    await expectComposerText(input, `/skills:${SKILL_NAME} `)
 
     await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 })

@@ -3,6 +3,7 @@ import type { Dirent } from "node:fs"
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerPlaceholder, expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskUiMessagesText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
@@ -85,7 +86,7 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
     const input = sidebar.getByTestId("chat-input")
     await input.fill(text)
     await sidebar.getByTestId("send-button").click()
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(sidebar.getByText(text, { exact: true }).first()).toBeVisible()
 }
 
@@ -282,7 +283,7 @@ e2e(
             await closeTask.click()
             // The chat input exists on both views; a send before the home view renders targets the closing task.
             await expect(closeTask).toHaveCount(0)
-            await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
+            await expectComposerPlaceholder(sidebar.getByTestId("chat-input"), "Type your task here...")
             await sendTask(sidebar, approvedTask)
             await expect(pendingCard.getByText("Dline wants to generate an image", { exact: true })).toBeVisible({
                 timeout: 60_000,
@@ -591,7 +592,8 @@ e2e(
             await finalCard.getByRole("button", { name: "Keep image aspect ratio", exact: true }).click()
             await expect(finalImage).toHaveAttribute("data-display-mode", "fit")
             await finalCard.getByRole("button", { name: "Use as Reference", exact: true }).click()
-            await expect(sidebar.getByTestId("chat-input")).toHaveValue(
+            await expectComposerText(
+                sidebar.getByTestId("chat-input"),
                 /^Use image artifact image:sha256:[a-f0-9]{64} as a reference for the next image generation\.\s*$/,
             )
             const consumptions = server.getMockConsumptions("openai-compatible-responses")

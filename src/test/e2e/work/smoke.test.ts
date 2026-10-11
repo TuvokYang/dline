@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { composerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { prepareWorkSession, setWorkAutoApproveAction } from "@e2e/utils/work/session"
 import { expect, type Frame } from "@playwright/test"
@@ -218,7 +219,7 @@ e2e(
             const menu = sidebar.getByTestId("slash-commands-menu")
             await expect(menu).toBeVisible()
             await menu.getByText(SKILL_NAME, { exact: true }).click()
-            await input.fill(`${await input.inputValue()}${TASK_TEXT}`)
+            await input.fill(`${await composerText(input)}${TASK_TEXT}`)
             await sidebar.getByTestId("send-button").click()
 
             // A fully discovered per-tool grant may execute automatically. If discovery

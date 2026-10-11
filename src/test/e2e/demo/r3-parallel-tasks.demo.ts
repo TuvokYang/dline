@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { expect, type Frame, type Locator, type Page } from "@playwright/test"
 import { E2E_PROFILE_NAMES } from "../utils/api-profile"
 import { E2ETestHelper } from "../utils/helpers"
@@ -168,7 +169,7 @@ async function sendAndWait(frame: Frame, prompt: string, result: string): Promis
     await expect(input).toBeEnabled({ timeout: 60_000 })
     await input.fill(prompt)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(frame.getByText(result, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 }
 
@@ -177,7 +178,7 @@ async function sendPrompt(frame: Frame, prompt: string): Promise<void> {
     await expect(input).toBeEnabled({ timeout: 60_000 })
     await input.fill(prompt)
     await frame.getByTestId("send-button").click()
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
 }
 
 async function waitForReasoning(frame: Frame, reasoning: string): Promise<void> {

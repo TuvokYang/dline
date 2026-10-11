@@ -1,6 +1,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import * as path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskConversationText } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type Page } from "@playwright/test"
@@ -136,7 +137,7 @@ async function sendTask(frame: Frame, text: string): Promise<void> {
     await expect(input).toBeEnabled({ timeout: 60_000 })
     await input.fill(text)
     await input.press("Enter")
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(frame.getByText(text, { exact: true }).last()).toBeVisible()
 }
 
@@ -151,7 +152,7 @@ async function submitNewTaskFeedback(frame: Frame, text: string, action: "button
     } else {
         await input.press("Enter")
     }
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(frame.getByTestId(/^(?:user|queued)-input-markdown-scroll$/).filter({ hasText: text })).toHaveCount(1)
 }
 
@@ -273,7 +274,7 @@ e2e(
             await input.fill(unsentDraft)
             await sidebar.locator('vscode-button[aria-label="Start New Task"]').click()
             await expect(sidebar.getByText(successorReady, { exact: true })).toBeVisible({ timeout: 60_000 })
-            await expect(input).toHaveValue(unsentDraft)
+            await expectComposerText(input, unsentDraft)
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
 
             const successorTaskId = await E2ETestHelper.waitForValue(async () => {

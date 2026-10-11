@@ -4,6 +4,7 @@ import { MAX_AUTO_RETRY_ATTEMPTS } from "@core/task/auto-retry-schedule"
 import type { MockApiConsumption, MockTokenUsage } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
 import { addSelectedCodeToDline, openTab, toggleNotifications } from "@e2e/utils/common"
+import { expectComposerText, expectComposerTextNot } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { startFooterActionStabilityObserver, stopFooterActionStabilityObserver } from "@e2e/utils/ui-stability"
 import { expect, type Frame, type Page } from "@playwright/test"
@@ -147,7 +148,7 @@ async function submitInteractionFeedback(sidebar: Frame, text: string): Promise<
     await expect(input).toBeEnabled()
     await input.fill(text)
     await sidebar.getByTestId("send-button").click()
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()
 }
 
@@ -160,7 +161,7 @@ async function expectSingleUserFeedback(sidebar: Frame, text: string): Promise<v
 async function exerciseChatAndEditorSurface(page: Page, sidebar: Frame): Promise<void> {
     const input = sidebar.getByTestId("chat-input")
     await expect(input).toBeVisible()
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
 
     const actButton = sidebar.getByRole("switch", { name: "Act" })
     const planButton = sidebar.getByRole("switch", { name: "Plan" })
@@ -176,27 +177,34 @@ async function exerciseChatAndEditorSurface(page: Page, sidebar: Frame): Promise
         .getByRole("listbox", { name: "Slash commands" })
         .getByRole("option", { name: /^newtask\b/i })
         .click()
-    await expect(input).toHaveValue("/cmd:newtask ")
+    await expectComposerText(input, "/cmd:newtask ")
     await input.press("End")
     await input.pressSequentially("following text should be preserved", { delay: 10 })
-    await expect(input).toHaveValue("/cmd:newtask following text should be preserved")
+    await expectComposerText(input, "/cmd:newtask following text should be preserved")
 
     await input.fill("@prob")
     await sidebar.getByRole("listbox", { name: "Context mentions" }).getByRole("option", { name: "Problems" }).last().click()
-    await expect(input).toHaveValue("@problems ")
+    await expectComposerText(input, "@problems ")
     await input.press("End")
     await input.pressSequentially("following text should be preserved", { delay: 10 })
-    await expect(input).toHaveValue("@problems following text should be preserved")
+    await expectComposerText(input, "@problems following text should be preserved")
     await input.fill("")
 
     await input.click()
     await toggleNotifications(page)
-    await expect(input).toHaveValue("")
+    await expectComposerText(input, "")
     await openTab(page, "Explorer ")
     await page.getByRole("treeitem", { name: "index.html" }).locator("a").click()
     await expect(input).not.toBeFocused()
-    await addSelectedCodeToDline(page)
-    await expect(input).not.toHaveValue("")
+    // Opening index.html lazily activates the HTML language extension. When it
+    // finishes while the Code Action menu is open, VS Code refreshes the action
+    // list and discards the command behind the visible "Add to Dline" entry, so
+    // Enter reports "Actual command not found" and Dline never receives it.
+    // Retry until the observable effect, the inserted selection, appears.
+    await expect(async () => {
+        await addSelectedCodeToDline(page)
+        await expectComposerTextNot(input, "", { timeout: 3_000 })
+    }).toPass({ timeout: 30_000 })
     await expect(input).toBeFocused()
     await input.fill("")
 }
@@ -768,7 +776,7 @@ for (const status of [403, 429, 502] as const) {
             await expect(input).toBeEnabled()
             await input.fill(retryFeedback)
             await retryButton.click()
-            await expect(input).toHaveValue("")
+            await expectComposerText(input, "")
             await expect(sidebar.getByText(`E2E_HTTP_${status}_RETRY_OK`, { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })
@@ -811,14 +819,14 @@ e2e(
         const input = sidebar.getByTestId("chat-input")
         await input.click()
         await input.pressSequentially(unsentDraft, { delay: 20 })
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
 
         const attention = sidebar.getByTestId("error-message-box")
         await expect(attention.getByText("Task Needs Attention", { exact: true })).toBeVisible({ timeout: 60_000 })
         await expect(sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Process Anyway"]')).toBeVisible()
         await page.waitForTimeout(1_000)
 
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
         const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
         await expect(submittedFeedback).toHaveCount(0)
         expect(server.openAiRequestCount).toBe(3)
@@ -877,7 +885,7 @@ e2e(
         await expect(input).toBeEnabled()
         await input.fill("E2E_MISTAKE_LIMIT_FEEDBACK")
         await processAnyway.click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expectSingleUserFeedback(sidebar, "E2E_MISTAKE_LIMIT_FEEDBACK")
         await expect(sidebar.getByText("E2E_MISTAKE_LIMIT_RESET_OK", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
@@ -964,7 +972,7 @@ e2e(
         const input = sidebar.getByTestId("chat-input")
         await input.fill(feedback)
         await resumeButton.click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expectSingleUserFeedback(sidebar, feedback)
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(4)
 
@@ -1247,14 +1255,14 @@ e2e(
         await input.click()
         await expect(input).toBeFocused()
         await input.pressSequentially(unsentDraft, { delay: 20 })
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
 
         await expect(sidebar.getByText("E2E_UNSENT_DRAFT_AUTOMATIC_RETRY_DONE", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
         await page.waitForTimeout(1_000)
 
-        await expect(input).toHaveValue(unsentDraft)
+        await expectComposerText(input, unsentDraft)
         const submittedFeedback = sidebar.getByTestId(/^(?:direct|queued)-user-input$/).filter({ hasText: unsentDraft })
         await expect(submittedFeedback).toHaveCount(0)
         expect(server.getRequestCount("deepseek-chat")).toBe(2)

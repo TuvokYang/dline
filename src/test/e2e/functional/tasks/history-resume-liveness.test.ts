@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises"
 import * as path from "node:path"
+import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { rewriteTaskActivities } from "@e2e/utils/task-instance-store"
 import { expect, type Frame } from "@playwright/test"
@@ -190,7 +191,7 @@ e2e(
         const input = sidebar.getByTestId("chat-input")
         await input.fill("E2E_HISTORY_LIVENESS_DRAFT")
         await resumeButton.click()
-        await expect(input).toHaveValue("")
+        await expectComposerText(input, "")
         await expect(sidebar.getByText("E2E_HISTORY_LIVENESS_RESUMED", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         await expect.poll(() => server.openAiRequestCount).toBe(3)
         const continuation = server.getMockConsumptions("openai-compatible-chat")[2]

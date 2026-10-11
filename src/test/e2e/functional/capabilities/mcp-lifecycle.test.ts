@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import * as path from "node:path"
+import { expectComposerPlaceholder } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
@@ -92,7 +93,7 @@ e2e(
             await expect.poll(async () => countSpawns(await E2ETestHelper.readDlineOutput(userDataDir))).toBe(initialSpawnCount)
 
             await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
-            await expect(sidebar.getByTestId("chat-input")).toHaveAttribute("placeholder", "Type your task here...")
+            await expectComposerPlaceholder(sidebar.getByTestId("chat-input"), "Type your task here...")
             await waitForConnectedMcp(sidebar)
             await expect.poll(async () => countSpawns(await E2ETestHelper.readDlineOutput(userDataDir))).toBe(initialSpawnCount)
 
