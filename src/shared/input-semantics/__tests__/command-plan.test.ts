@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { planSemanticCommands } from "../command-plan"
+import { MAX_SEMANTIC_COMMAND_INVOCATIONS, planSemanticCommands } from "../command-plan"
 import type { SemanticInputDocument, SemanticInputNode, SlashCommandInputNode } from "../document"
 
 function command(overrides: Partial<SlashCommandInputNode> & { entityId: string }): SlashCommandInputNode {
@@ -81,5 +81,40 @@ describe("planSemanticCommands", () => {
 
         expect(plan.barrier).toBeUndefined()
         expect(plan.invocations.map((invocation) => invocation.entityId)).toEqual(["a"])
+    })
+
+    it("runs a command once and rejects its repetition instead of dropping it", () => {
+        const plan = planSemanticCommands(document([command({ entityId: "a" }), command({ entityId: "again" })]))
+
+        expect(plan.invocations.map((invocation) => invocation.entityId)).toEqual(["a"])
+        expect(plan.rejected).toEqual([{ entityId: "again", commandId: "command.deep_planning", reason: "duplicate_invocation" }])
+    })
+
+    it("rejects composable commands beyond the per-submission limit", () => {
+        const nodes = Array.from({ length: MAX_SEMANTIC_COMMAND_INVOCATIONS + 1 }, (_, index) =>
+            command({ entityId: `c${index}`, commandId: `command.skill.s${index}` }),
+        )
+
+        const plan = planSemanticCommands(document(nodes))
+
+        expect(plan.invocations).toHaveLength(MAX_SEMANTIC_COMMAND_INVOCATIONS)
+        expect(plan.rejected).toEqual([
+            {
+                entityId: `c${MAX_SEMANTIC_COMMAND_INVOCATIONS}`,
+                commandId: `command.skill.s${MAX_SEMANTIC_COMMAND_INVOCATIONS}`,
+                reason: "invocation_limit",
+            },
+        ])
+    })
+
+    it("still closes the sequence with a barrier after the limit is reached", () => {
+        const nodes = Array.from({ length: MAX_SEMANTIC_COMMAND_INVOCATIONS }, (_, index) =>
+            command({ entityId: `c${index}`, commandId: `command.skill.s${index}` }),
+        )
+
+        const plan = planSemanticCommands(document([...nodes, barrier]))
+
+        expect(plan.barrier?.entityId).toBe("barrier")
+        expect(plan.rejected).toEqual([])
     })
 })

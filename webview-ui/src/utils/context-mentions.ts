@@ -9,58 +9,6 @@ export interface SearchResult {
     workspaceName?: string
 }
 
-export function insertMention(
-    text: string,
-    position: number,
-    value: string,
-    partialQueryLength = 0,
-): { newValue: string; mentionIndex: number } {
-    const beforeCursor = text.slice(0, position)
-    const afterCursor = text.slice(position)
-
-    // Find the position of the last '@' symbol before the cursor
-    const lastAtIndex = beforeCursor.lastIndexOf("@")
-
-    // For file/folder paths that contain spaces, wrap them in quotes
-    let formattedValue = value
-    if (value.startsWith("/") && value.includes(" ")) {
-        formattedValue = `"${value}"`
-    }
-    let newValue: string
-    let mentionIndex: number
-
-    if (lastAtIndex !== -1) {
-        // If there's an '@' symbol, replace everything after it with the new mention
-        const beforeAt = text.substring(0, lastAtIndex + 1)
-        const afterPartialQuery = text.substring(lastAtIndex + 1 + partialQueryLength)
-
-        // replace the partial query with the full mention
-        newValue = beforeAt + formattedValue + (afterPartialQuery.startsWith(" ") ? afterPartialQuery : ` ${afterPartialQuery}`)
-        mentionIndex = lastAtIndex
-    } else {
-        // If there's no '@' symbol, insert the mention at the cursor position
-        newValue = `${beforeCursor}@${formattedValue} ${afterCursor}`
-        mentionIndex = position
-    }
-
-    return { newValue, mentionIndex }
-}
-
-export function insertMentionDirectly(text: string, position: number, value: string): { newValue: string; mentionIndex: number } {
-    const beforeCursor = text.slice(0, position)
-    const afterCursor = text.slice(position)
-
-    // For file/folder paths that contain spaces, wrap them in quotes
-    let formattedValue = value
-    if (value.startsWith("/") && value.includes(" ")) {
-        formattedValue = `"${value}"`
-    }
-
-    const newValue = `${beforeCursor}@${formattedValue} ${afterCursor}`
-    const mentionIndex = position
-    return { newValue, mentionIndex }
-}
-
 export function removeMention(text: string, position: number): { newText: string; newPosition: number } {
     const beforeCursor = text.slice(0, position)
     const afterCursor = text.slice(position)
@@ -276,35 +224,4 @@ export function getContextMenuOptions(
     }
 
     return [{ type: ContextMenuOptionType.NoResults }]
-}
-
-export function shouldShowContextMenu(text: string, position: number): boolean {
-    const beforeCursor = text.slice(0, position)
-    const atIndex = beforeCursor.lastIndexOf("@")
-
-    if (atIndex === -1) {
-        return false
-    }
-
-    const textAfterAt = beforeCursor.slice(atIndex + 1)
-
-    // Check if there's any whitespace after the '@'
-    if (/\s/.test(textAfterAt)) {
-        return false
-    }
-
-    // Don't show the menu if it's a URL
-    if (textAfterAt.toLowerCase().startsWith("http")) {
-        return false
-    }
-
-    // Don't show the menu if it's a problems or terminal
-    if (textAfterAt.toLowerCase().startsWith("problems") || textAfterAt.toLowerCase().startsWith("terminal")) {
-        return false
-    }
-
-    // NOTE: it's okay that menu shows when there's trailing punctuation since user could be inputting a path with marks
-
-    // Show the menu if there's just '@' or '@' followed by some text (but not a URL)
-    return true
 }

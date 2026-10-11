@@ -188,11 +188,105 @@ export const BUILTIN_INPUT_SEMANTICS: readonly InputSemanticDescriptor[] = [
     },
 ]
 
-/** Trigger prefixes that address a discovered capability by name. */
-export const DYNAMIC_SEMANTIC_PREFIXES: Readonly<Record<string, InputSemanticKind>> = {
-    "/skills:": "command",
-    "/workflow:": "command",
-    "/mcp:": "command",
+/**
+ * Characters a command trigger may contain after its sigil, as a regular
+ * expression character class body. The scanner builds its command token from
+ * this set, so a trigger outside it could be offered but never recognized.
+ */
+export const COMMAND_TRIGGER_CHARS = "a-zA-Z0-9_.:@-"
+
+const COMMAND_TRIGGER = new RegExp(`^/[${COMMAND_TRIGGER_CHARS}]+$`)
+
+/** True when the scanner can recognize the trigger as exactly one command token. */
+export function isCommandTrigger(trigger: string): boolean {
+    return COMMAND_TRIGGER.test(trigger)
+}
+
+/** Every trigger a command descriptor answers to: the canonical one first, then its aliases. */
+export function commandTriggersOf(descriptor: InputSemanticDescriptor): readonly string[] {
+    return descriptor.kind === "command" ? [descriptor.trigger, ...(descriptor.aliases ?? [])] : []
+}
+
+/**
+ * Resolve a typed command token to its descriptor.
+ *
+ * Matching is case-sensitive and covers the canonical trigger and its aliases;
+ * admission guarantees that at most one descriptor holds a given trigger.
+ */
+export function resolveCommandTrigger(catalog: InputSemanticCatalog, trigger: string): InputSemanticDescriptor | undefined {
+    return catalog.descriptors.find((descriptor) => commandTriggersOf(descriptor).includes(trigger))
+}
+
+/** The same resolution as {@link resolveCommandTrigger}, indexed once for resolving many tokens against one revision. */
+export function indexCommandTriggers(catalog: InputSemanticCatalog): ReadonlyMap<string, InputSemanticDescriptor> {
+    const index = new Map<string, InputSemanticDescriptor>()
+    for (const descriptor of catalog.descriptors) {
+        for (const trigger of commandTriggersOf(descriptor)) {
+            if (!index.has(trigger)) index.set(trigger, descriptor)
+        }
+    }
+    return index
+}
+
+/** Why a descriptor was refused a place in the catalog. */
+export interface CatalogConflict {
+    readonly code: "duplicate_id" | "duplicate_trigger" | "invalid_trigger"
+    /** The refused descriptor. */
+    readonly descriptorId: string
+    /** The descriptor that already holds the identity or trigger; absent when the trigger itself is invalid. */
+    readonly heldBy?: string
+    readonly trigger?: string
+}
+
+export interface AdmittedDescriptors {
+    readonly descriptors: readonly InputSemanticDescriptor[]
+    readonly conflicts: readonly CatalogConflict[]
+}
+
+/**
+ * Admit descriptors in order, refusing any whose identity or command trigger is
+ * already taken, or whose command trigger the scanner could never recognize.
+ *
+ * A typed command must resolve to exactly one descriptor, so a trigger or alias
+ * may belong to one command only; matching stays case-sensitive. Earlier
+ * descriptors win, which lets the built-ins listed first never be shadowed by a
+ * discovered capability. Mention descriptors share their sigil by design and
+ * resolve by identity, so only their identities must be unique.
+ */
+export function admitDescriptors(candidates: readonly InputSemanticDescriptor[]): AdmittedDescriptors {
+    const descriptors: InputSemanticDescriptor[] = []
+    const conflicts: CatalogConflict[] = []
+    const ids = new Set<string>()
+    const triggers = new Map<string, string>()
+
+    for (const descriptor of candidates) {
+        if (ids.has(descriptor.id)) {
+            conflicts.push({ code: "duplicate_id", descriptorId: descriptor.id, heldBy: descriptor.id })
+            continue
+        }
+        const commandTriggers = commandTriggersOf(descriptor)
+        // A capability named with spaces or punctuation would be offered by the
+        // menu and then sent as plain text, so it never enters the catalog.
+        const unrecognizable = commandTriggers.find((trigger) => !isCommandTrigger(trigger))
+        if (unrecognizable !== undefined) {
+            conflicts.push({ code: "invalid_trigger", descriptorId: descriptor.id, trigger: unrecognizable })
+            continue
+        }
+        const taken = commandTriggers.find((trigger) => triggers.has(trigger))
+        if (taken !== undefined) {
+            conflicts.push({
+                code: "duplicate_trigger",
+                descriptorId: descriptor.id,
+                heldBy: triggers.get(taken) ?? "",
+                trigger: taken,
+            })
+            continue
+        }
+        ids.add(descriptor.id)
+        for (const trigger of commandTriggers) triggers.set(trigger, descriptor.id)
+        descriptors.push(descriptor)
+    }
+    return { descriptors, conflicts }
 }
 
 export interface CatalogCompositionViolation {

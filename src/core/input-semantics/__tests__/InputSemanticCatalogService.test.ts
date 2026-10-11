@@ -22,6 +22,37 @@ function port(inventory: CapabilityInventory) {
 
 const empty: CapabilityInventory = { skills: [], workflows: [], mcpPrompts: [] }
 
+describe("InputSemanticCatalogService trigger uniqueness", () => {
+    it("publishes each discovered command once, so a typed trigger resolves to exactly one descriptor", async () => {
+        const service = new InputSemanticCatalogService(
+            port({ skills: ["use-e2e", "use-e2e"], workflows: [], mcpPrompts: [] }).port,
+        )
+
+        const catalog = await service.refresh()
+
+        const triggers = catalog.descriptors.filter((descriptor) => descriptor.trigger === "/skills:use-e2e")
+        expect(triggers).toHaveLength(1)
+        expect(catalog.descriptors).toHaveLength(BUILTIN_INPUT_SEMANTICS.length + 1)
+    })
+
+    it("reports the capabilities it left out, and forgets them once discovery no longer finds them", async () => {
+        const source = port({ skills: ["use-e2e", "use-e2e", "has space"], workflows: [], mcpPrompts: [] })
+        const service = new InputSemanticCatalogService(source.port)
+
+        await service.refresh()
+
+        expect(service.conflicts()).toEqual([
+            { code: "duplicate_id", descriptorId: "command.skill.use-e2e", heldBy: "command.skill.use-e2e" },
+            { code: "invalid_trigger", descriptorId: "command.skill.has space", trigger: "/skills:has space" },
+        ])
+
+        source.set(empty)
+        await service.refresh()
+
+        expect(service.conflicts()).toEqual([])
+    })
+})
+
 describe("InputSemanticCatalogService", () => {
     it("exposes the built-ins at revision 0 before discovery has run", () => {
         const service = new InputSemanticCatalogService(port(empty).port)

@@ -1,13 +1,37 @@
+import { BUILTIN_INPUT_SEMANTICS, type InputSemanticCatalog, type InputSemanticDescriptor } from "@shared/input-semantics/catalog"
 import type { McpServer } from "@shared/mcp"
 import { getBuiltInSlashCommands } from "@shared/slashCommands"
 import { describe, expect, it } from "vitest"
 import {
+    getAvailableSlashCommands,
     getMatchingSlashCommands,
     getMcpPromptCommands,
     getSkillCommands,
-    slashCommandRegex,
-    validateSlashCommand,
+    type SlashCommandSources,
+    slashCommandTrigger,
 } from "../slash-commands"
+
+/** The pre-discovery catalog: built-ins only. */
+const BUILTIN_CATALOG: InputSemanticCatalog = { revision: 0, descriptors: BUILTIN_INPUT_SEMANTICS }
+
+/** A discovered catalog that admits the given dynamic command triggers. */
+function catalogAdmitting(...triggers: string[]): InputSemanticCatalog {
+    const dynamic: InputSemanticDescriptor[] = triggers.map((trigger) => ({
+        id: `command.test.${trigger}`,
+        kind: "command",
+        trigger,
+        payload: "text",
+        composition: "combinable",
+        lifecycle: "turn",
+        dynamic: true,
+    }))
+    return { revision: 1, descriptors: [...BUILTIN_INPUT_SEMANTICS, ...dynamic] }
+}
+
+/** The commands the menu shows for a query, as the composer computes them. */
+function menu(query: string, sources: SlashCommandSources, catalog: InputSemanticCatalog) {
+    return getMatchingSlashCommands(query, getAvailableSlashCommands(sources, catalog)).map((entry) => entry.command)
+}
 
 // Helper to create a mock MCP server
 function createMockMcpServer(overrides: Partial<McpServer> = {}): McpServer {
@@ -26,13 +50,13 @@ function createMockMcpServer(overrides: Partial<McpServer> = {}): McpServer {
 describe("slash-commands", () => {
     describe("built-in command visibility", () => {
         it("shows the VS Code-only command above the fold without changing the default selection", () => {
-            const result = getMatchingSlashCommands("")
+            const result = menu("", {}, BUILTIN_CATALOG)
 
             expect(result.slice(0, 2).map((command) => command.name)).toEqual(["newtask", "explain-changes"])
         })
 
         it("matches the VS Code-only command by prefix", () => {
-            const result = getMatchingSlashCommands("explain")
+            const result = menu("explain", {}, BUILTIN_CATALOG)
 
             expect(result.map((command) => command.name)).toEqual(["explain-changes"])
         })
@@ -193,8 +217,10 @@ describe("slash-commands", () => {
             }),
         ]
 
+        const catalog = catalogAdmitting("/mcp:test-server:summarize", "/mcp:test-server:translate")
+
         it("should include MCP commands in results when no query", () => {
-            const result = getMatchingSlashCommands("", {}, {}, undefined, undefined, mcpServers)
+            const result = menu("", { mcpServers }, catalog)
             const mcpCommands = result.filter((cmd) => cmd.section === "mcp")
             expect(mcpCommands).toHaveLength(2)
             expect(mcpCommands[0].name).toBe("test-server:summarize")
@@ -202,72 +228,130 @@ describe("slash-commands", () => {
         })
 
         it("should filter MCP commands by query prefix", () => {
-            const result = getMatchingSlashCommands("test", {}, {}, undefined, undefined, mcpServers)
+            const result = menu("test", { mcpServers }, catalog)
             const mcpCommands = result.filter((cmd) => cmd.section === "mcp")
             expect(mcpCommands).toHaveLength(2)
         })
 
         it("should filter to specific MCP prompt", () => {
-            const result = getMatchingSlashCommands("test-server:sum", {}, {}, undefined, undefined, mcpServers)
+            const result = menu("test-server:sum", { mcpServers }, catalog)
             expect(result).toHaveLength(1)
             expect(result[0].name).toBe("test-server:summarize")
         })
 
         it("should return empty for non-matching MCP query", () => {
-            const result = getMatchingSlashCommands("nonexistent", {}, {}, undefined, undefined, mcpServers)
+            const result = menu("nonexistent", { mcpServers }, catalog)
             expect(result).toHaveLength(0)
         })
     })
 
-    describe("validateSlashCommand with MCP servers", () => {
+    describe("catalog projection", () => {
         const mcpServers = [
             createMockMcpServer({
-                name: "server",
-                prompts: [{ name: "prompt", description: "Test" }],
+                name: "test-server",
+                prompts: [
+                    { name: "summarize", description: "Summarize content" },
+                    { name: "translate", description: "Translate text" },
+                ],
             }),
         ]
 
-        it("should return full for exact MCP command match", () => {
-            const result = validateSlashCommand("server:prompt", {}, {}, undefined, undefined, mcpServers)
-            expect(result).toBe("full")
+        it("never offers a capability the catalog does not admit", () => {
+            const result = menu("", { mcpServers }, catalogAdmitting("/mcp:test-server:summarize"))
+
+            expect(result.filter((cmd) => cmd.section === "mcp").map((cmd) => cmd.name)).toEqual(["test-server:summarize"])
         })
 
-        it("should return partial for partial MCP command match", () => {
-            const result = validateSlashCommand("server:pro", {}, {}, undefined, undefined, mcpServers)
-            expect(result).toBe("partial")
+        it("offers no discovered capability before the backend catalog arrives", () => {
+            const result = menu("", { mcpServers, availableSkillCommands: [{ name: "lint" }] }, BUILTIN_CATALOG)
+
+            expect(result.every((cmd) => cmd.section === "default")).toBe(true)
         })
 
-        it("should return partial for server prefix only", () => {
-            const result = validateSlashCommand("serv", {}, {}, undefined, undefined, mcpServers)
-            expect(result).toBe("partial")
+        it("keeps every built-in reachable through the trigger the menu inserts", () => {
+            const builtIns = menu("", {}, BUILTIN_CATALOG)
+
+            expect(builtIns.map((cmd) => cmd.name)).toEqual(getBuiltInSlashCommands("vscode").map((cmd) => cmd.name))
         })
 
-        it("should return null for non-matching MCP command", () => {
-            const result = validateSlashCommand("unknown:cmd", {}, {}, undefined, undefined, mcpServers)
-            expect(result).toBe(null)
+        it("hides a built-in whose descriptor the catalog withdrew", () => {
+            const withoutCompact: InputSemanticCatalog = {
+                revision: 2,
+                descriptors: BUILTIN_INPUT_SEMANTICS.filter((descriptor) => descriptor.id !== "command.compact"),
+            }
+
+            const names = menu("", {}, withoutCompact).map((cmd) => cmd.name)
+
+            expect(names).not.toContain("compact")
+            expect(names).not.toContain("smol")
+            expect(names).toContain("newtask")
+        })
+
+        it("builds the inserted trigger from the section namespace", () => {
+            expect(slashCommandTrigger({ name: "newtask", section: "default" })).toBe("/cmd:newtask")
+            expect(slashCommandTrigger({ name: "review", section: "workflow" })).toBe("/workflow:review")
+            expect(slashCommandTrigger({ name: "lint", section: "skill" })).toBe("/skills:lint")
+            expect(slashCommandTrigger({ name: "s:p", section: "mcp" })).toBe("/mcp:s:p")
+            expect(slashCommandTrigger({ name: "plain" })).toBe("/plain")
         })
     })
 
-    describe("slashCommandRegex with MCP format", () => {
-        it("should match MCP command format with colons", () => {
-            const text = "/mcp:server:prompt"
-            const match = text.match(slashCommandRegex)
-            expect(match).not.toBeNull()
-            expect(match?.[2]).toBe("/mcp:server:prompt")
+    describe("menu entries", () => {
+        it("binds each row to the catalog identity its trigger resolves to", () => {
+            const entries = getAvailableSlashCommands(
+                { availableSkillCommands: [{ name: "lint" }] },
+                catalogAdmitting("/skills:lint"),
+            )
+
+            expect(entries.find((entry) => entry.trigger === "/cmd:newtask")?.commandId).toBe("command.new_task")
+            expect(entries.find((entry) => entry.trigger === "/cmd:smol")?.commandId).toBe("command.compact")
+            expect(entries.find((entry) => entry.trigger === "/skills:lint")).toMatchObject({
+                commandId: "command.test./skills:lint",
+                section: "skill",
+            })
         })
 
-        it("should match MCP command in middle of text", () => {
-            const text = "Please run /mcp:server:prompt now"
-            const match = text.match(slashCommandRegex)
-            expect(match).not.toBeNull()
-            expect(match?.[2]).toBe("/mcp:server:prompt")
+        it("lists a command that several sources report only once", () => {
+            const entries = getAvailableSlashCommands(
+                {
+                    localWorkflowToggles: { "/ws/.agents/workflows/release.md": true },
+                    remoteWorkflows: [{ name: "release", contents: "", alwaysEnabled: true }],
+                    remoteWorkflowToggles: {},
+                },
+                catalogAdmitting("/workflow:release"),
+            )
+
+            expect(entries.filter((entry) => entry.trigger === "/workflow:release")).toHaveLength(1)
         })
 
-        it("should not match MCP-like pattern in URL", () => {
-            const text = "http://example.com/mcp:test"
-            const match = text.match(slashCommandRegex)
-            // Should not match because / is not preceded by whitespace or start
-            expect(match).toBeNull()
+        it("orders rows by section, so the rendered list and keyboard navigation agree", () => {
+            const entries = getAvailableSlashCommands(
+                {
+                    mcpServers: [createMockMcpServer({ prompts: [{ name: "p" }] })],
+                    availableSkillCommands: [{ name: "lint" }],
+                    localWorkflowToggles: { "/ws/.agents/workflows/release.md": true },
+                },
+                catalogAdmitting("/mcp:test-server:p", "/skills:lint", "/workflow:release"),
+            )
+            const sections = entries.map((entry) => entry.section)
+
+            expect(sections.indexOf("workflow")).toBeGreaterThan(sections.lastIndexOf("default"))
+            expect(sections.indexOf("skill")).toBeGreaterThan(sections.lastIndexOf("workflow"))
+            expect(sections.indexOf("mcp")).toBeGreaterThan(sections.lastIndexOf("skill"))
+        })
+
+        it("matches a namespaced query as well as a bare name", () => {
+            const entries = getAvailableSlashCommands(
+                { availableSkillCommands: [{ name: "lint" }] },
+                catalogAdmitting("/skills:lint"),
+            )
+
+            expect(getMatchingSlashCommands("li", entries).map((entry) => entry.trigger)).toEqual(["/skills:lint"])
+            expect(getMatchingSlashCommands("skills:li", entries).map((entry) => entry.trigger)).toEqual(["/skills:lint"])
+            expect(getMatchingSlashCommands("cmd:new", entries).map((entry) => entry.trigger)).toEqual([
+                "/cmd:newtask",
+                "/cmd:newrule",
+            ])
         })
     })
 })

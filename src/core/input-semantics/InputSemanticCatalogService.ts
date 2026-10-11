@@ -1,4 +1,12 @@
-import { BUILTIN_INPUT_SEMANTICS, type InputSemanticCatalog, type InputSemanticDescriptor } from "@shared/input-semantics/catalog"
+import {
+    admitDescriptors,
+    BUILTIN_INPUT_SEMANTICS,
+    type CatalogConflict,
+    type InputSemanticCatalog,
+    type InputSemanticDescriptor,
+} from "@shared/input-semantics/catalog"
+import { type CapabilityCommandRef, capabilityCommandIdentity } from "@shared/input-semantics/command-namespace"
+import { Logger } from "@shared/services/Logger"
 
 /** Discovered workspace capabilities that extend the built-in semantic set. */
 export interface CapabilityInventory {
@@ -17,35 +25,33 @@ export interface CapabilityInventoryPort {
     readInventory(): Promise<CapabilityInventory>
 }
 
-function capabilityDescriptor(id: string, trigger: string, authorizes: string | undefined): InputSemanticDescriptor {
+function capabilityDescriptor(ref: CapabilityCommandRef): InputSemanticDescriptor {
     return {
-        id,
+        ...capabilityCommandIdentity(ref),
         kind: "command",
-        trigger,
         payload: "text",
         // A capability command contributes instructions to the turn rather than
         // replacing it, so it may accompany mentions and other capabilities.
         composition: "combinable",
         lifecycle: "turn",
-        authorizes,
         dynamic: true,
     }
 }
 
 function projectInventory(inventory: CapabilityInventory): readonly InputSemanticDescriptor[] {
     return [
-        ...inventory.skills.map((skill) => capabilityDescriptor(`command.skill.${skill}`, `/skills:${skill}`, undefined)),
-        ...inventory.workflows.map((workflow) =>
-            capabilityDescriptor(`command.workflow.${workflow}`, `/workflow:${workflow}`, undefined),
-        ),
+        ...inventory.skills.map((name) => capabilityDescriptor({ namespace: "skill", name })),
+        ...inventory.workflows.map((name) => capabilityDescriptor({ namespace: "workflow", name })),
         ...inventory.mcpPrompts.map((entry) =>
-            capabilityDescriptor(
-                `command.mcp.${entry.server}.${entry.prompt}`,
-                `/mcp:${entry.server}:${entry.prompt}`,
-                undefined,
-            ),
+            capabilityDescriptor({ namespace: "mcp", server: entry.server, prompt: entry.prompt }),
         ),
     ]
+}
+
+function describeConflict(conflict: CatalogConflict): string {
+    const trigger = conflict.trigger === undefined ? "" : ` trigger ${conflict.trigger}`
+    const holder = conflict.heldBy === undefined ? "" : ` held by ${conflict.heldBy}`
+    return `${conflict.descriptorId} (${conflict.code}${trigger}${holder})`
 }
 
 function sameDescriptors(left: readonly InputSemanticDescriptor[], right: readonly InputSemanticDescriptor[]): boolean {
@@ -73,10 +79,22 @@ export class InputSemanticCatalogService {
 
     private firstDiscovery?: Promise<InputSemanticCatalog>
 
+    private lastConflicts: readonly CatalogConflict[] = []
+
     constructor(private readonly port: CapabilityInventoryPort) {}
 
     current(): InputSemanticCatalog {
         return this.catalog
+    }
+
+    /**
+     * Capabilities the last discovery left out of the catalog, and why.
+     *
+     * A refused capability is never offered or admitted, so this is the only
+     * place a diagnostic surface can learn that it exists.
+     */
+    conflicts(): readonly CatalogConflict[] {
+        return this.lastConflicts
     }
 
     /**
@@ -105,7 +123,24 @@ export class InputSemanticCatalogService {
         return this.catalog
     }
 
+    /**
+     * Built-ins first, so a discovered capability can never take a built-in
+     * trigger; a capability whose identity or trigger is already taken is left
+     * out rather than made ambiguous.
+     */
     private async compose(): Promise<readonly InputSemanticDescriptor[]> {
-        return [...BUILTIN_INPUT_SEMANTICS, ...projectInventory(await this.port.readInventory())]
+        const admitted = admitDescriptors([...BUILTIN_INPUT_SEMANTICS, ...projectInventory(await this.port.readInventory())])
+        this.recordConflicts(admitted.conflicts)
+        return admitted.descriptors
+    }
+
+    /** Keep the latest refusals and report them once per change, not on every refresh. */
+    private recordConflicts(conflicts: readonly CatalogConflict[]): void {
+        const changed = JSON.stringify(conflicts) !== JSON.stringify(this.lastConflicts)
+        this.lastConflicts = conflicts
+        if (!changed || conflicts.length === 0) return
+        Logger.warn(
+            `[SemanticInput] catalog left out ${conflicts.length} capability command(s): ${conflicts.map(describeConflict).join(", ")}`,
+        )
     }
 }

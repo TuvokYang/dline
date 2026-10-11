@@ -1,4 +1,8 @@
+import { COMMAND_TRIGGER_CHARS, type InputSemanticCatalog, indexCommandTriggers } from "@shared/input-semantics/catalog"
+import { namespacedCommandTrigger } from "@shared/input-semantics/command-namespace"
+import type { SlashCommandNamespace } from "@shared/input-semantics/document"
 import type { McpServer } from "@shared/mcp"
+import type { GlobalInstructionsFile } from "@shared/remote-config/schema"
 import { PLATFORM_CONFIG, PlatformType } from "@/config/platform.config"
 import {
     getBuiltInSlashCommands,
@@ -9,23 +13,20 @@ import {
 
 export type { SlashCommand }
 
-/**
- * Map section to prefix used when inserting the command into the input.
- * "default" → "cmd", "workflow" → "workflow", "skill" → "skills", "mcp" → "mcp"
- */
-export function sectionToPrefix(section?: string): string {
-    switch (section) {
-        case "default":
-            return "cmd"
-        case "workflow":
-            return "workflow"
-        case "skill":
-            return "skills"
-        case "mcp":
-            return "mcp"
-        default:
-            return ""
-    }
+/** Menu sections in display order; keyboard navigation follows the same order. */
+export const SLASH_MENU_SECTIONS = ["default", "workflow", "skill", "mcp"] as const
+export type SlashMenuSection = (typeof SLASH_MENU_SECTIONS)[number]
+
+/** The command namespace each menu section writes its triggers in. */
+const SECTION_NAMESPACE: Readonly<Record<SlashMenuSection, SlashCommandNamespace>> = {
+    default: "cmd",
+    workflow: "workflow",
+    skill: "skill",
+    mcp: "mcp",
+}
+
+function sectionOf(command: SlashCommand): SlashMenuSection {
+    return SLASH_MENU_SECTIONS.find((section) => section === command.section) ?? "default"
 }
 
 export const DEFAULT_SLASH_COMMANDS: SlashCommand[] = getBuiltInSlashCommands(
@@ -183,15 +184,11 @@ export function getMcpPromptCommands(mcpServers: McpServer[] = []): SlashCommand
     return commands
 }
 
-// Regex for detecting slash commands in text
-// Must be at start of string OR preceded by whitespace to avoid matching URLs/paths
-// e.g., matches "/newtask" or "text /newtask" but not "http://example.com/newtask"
-// Note: Colons are allowed to support MCP prompt commands like /mcp:server:prompt
-export const slashCommandRegex = /(^|\s)(\/[a-zA-Z0-9_.:@-]+)(?=\s|$)/
-export const slashCommandRegexGlobal = new RegExp(slashCommandRegex.source, "g")
-// Regex for detecting a slash command at the end of text (for deletion)
-// Must be at start OR preceded by whitespace, captures the whole command including slash
-export const slashCommandDeleteRegex = /(^|\s)(\/[a-zA-Z0-9_.:@-]+)$/
+/**
+ * A whole command token ending at the caret, for deleting it in one keystroke.
+ * Built from the catalog's trigger alphabet so deletion and recognition agree.
+ */
+export const slashCommandDeleteRegex = new RegExp(`(^|\\s)(/[${COMMAND_TRIGGER_CHARS}]+)$`)
 
 /**
  * Removes a slash command at the cursor position
@@ -216,166 +213,93 @@ export function removeSlashCommand(text: string, position: number): { newText: s
     return { newText: text, newPosition: position }
 }
 
-/**
- * Determines whether the slash command menu should be displayed based on text input.
- * Only shows for the FIRST valid slash command position in the message - subsequent
- * slash commands won't trigger suggestions since only one is processed per message.
- */
-export function shouldShowSlashCommandsMenu(text: string, cursorPosition: number): boolean {
-    const beforeCursor = text.slice(0, cursorPosition)
-
-    // first check if there is a slash before the cursor
-    const slashIndex = beforeCursor.lastIndexOf("/")
-
-    if (slashIndex === -1) {
-        return false
-    }
-
-    // Check if slash is preceded by whitespace or is at the beginning
-    // This allows slash commands anywhere in the message, similar to @ mentions
-    const charBeforeSlash = slashIndex > 0 ? beforeCursor[slashIndex - 1] : null
-    if (charBeforeSlash !== null && !/\s/.test(charBeforeSlash)) {
-        return false
-    }
-
-    // potential partial or full command
-    const textAfterSlash = beforeCursor.slice(slashIndex + 1)
-
-    // don't show menu if there's whitespace after the slash but before the cursor
-    if (/\s/.test(textAfterSlash)) {
-        return false
-    }
-
-    // Only show suggestions for the FIRST slash command in the message.
-    // Check if there's already a valid slash command earlier in the text.
-    // A valid earlier slash command is one that: starts at beginning or after whitespace,
-    // and is followed by whitespace (meaning it's complete).
-    // Note: Colons are allowed to support MCP prompt commands like /mcp:server:prompt
-    const firstSlashCommandRegex = /(^|\s)\/[a-zA-Z0-9_.:@-]+\s/
-    const textBeforeCurrentSlash = text.slice(0, slashIndex)
-    if (firstSlashCommandRegex.test(textBeforeCurrentSlash)) {
-        return false
-    }
-
-    return true
+/** Capability state the slash menu reads its entries and labels from. */
+export interface SlashCommandSources {
+    readonly localWorkflowToggles?: Record<string, boolean>
+    readonly globalWorkflowToggles?: Record<string, boolean>
+    readonly remoteWorkflowToggles?: Record<string, boolean>
+    readonly remoteWorkflows?: GlobalInstructionsFile[]
+    readonly mcpServers?: McpServer[]
+    readonly localSkillsToggles?: Record<string, boolean>
+    readonly globalSkillsToggles?: Record<string, boolean>
+    readonly remoteSkills?: GlobalInstructionsFile[]
+    readonly remoteSkillsToggles?: Record<string, boolean>
+    readonly workflowDescriptions?: Record<string, string>
+    readonly availableSkillCommands?: SlashCommand[]
 }
 
 /**
- * Gets filtered slash commands that match the current input
+ * The trigger a menu row writes for a command, sigil included: the command's
+ * name in its section's namespace, spelled by the shared namespace rules.
  */
-export function getMatchingSlashCommands(
-    query: string,
-    localWorkflowToggles: Record<string, boolean> = {},
-    globalWorkflowToggles: Record<string, boolean> = {},
-    remoteWorkflowToggles?: Record<string, boolean>,
-    remoteWorkflows?: any[],
-    mcpServers: McpServer[] = [],
-    localSkillsToggles: Record<string, boolean> = {},
-    globalSkillsToggles: Record<string, boolean> = {},
-    remoteSkills?: any[],
-    remoteSkillsToggles?: Record<string, boolean>,
-    workflowDescriptions?: Record<string, string>,
-    availableSkillCommands?: SlashCommand[],
-): SlashCommand[] {
-    const workflowCommands = getWorkflowCommands(
-        localWorkflowToggles,
-        globalWorkflowToggles,
-        remoteWorkflowToggles,
-        remoteWorkflows,
-        workflowDescriptions,
-    )
-    const skillCommands = getSkillCommands(
-        localSkillsToggles,
-        globalSkillsToggles,
-        remoteSkills,
-        remoteSkillsToggles,
-        availableSkillCommands,
-    )
-    const mcpPromptCommands = getMcpPromptCommands(mcpServers)
-    const allCommands = [...DEFAULT_SLASH_COMMANDS, ...workflowCommands, ...skillCommands, ...mcpPromptCommands]
+export function slashCommandTrigger(command: SlashCommand): string {
+    return command.section === undefined
+        ? `/${command.name}`
+        : namespacedCommandTrigger(SECTION_NAMESPACE[sectionOf(command)], command.name)
+}
 
-    if (!query) {
-        return allCommands
-    }
-
-    // filter commands that start with the query (case insensitive)
-    return allCommands.filter((cmd) => cmd.name.toLowerCase().startsWith(query.toLowerCase()))
+/** One slash menu row: what it shows, and the catalog entity a pick asks for. */
+export interface SlashMenuEntry {
+    /** Label, description and section shown in the menu. */
+    readonly command: SlashCommand
+    readonly section: SlashMenuSection
+    /** Catalog identity of the command. */
+    readonly commandId: string
+    /** Spelling the pick writes; unique within the menu, so it also keys the row. */
+    readonly trigger: string
 }
 
 /**
- * Insert a slash command at position or replace partial command
+ * Every command the slash menu may offer, grouped by section in menu order.
+ *
+ * Capability toggles say what the user enabled and supply labels, but the
+ * catalog decides what exists: an entry whose trigger the catalog does not
+ * resolve would be inserted and then sent as plain text, so it is never
+ * offered. Sources that list the same command twice yield one row.
  */
-export function insertSlashCommand(
-    text: string,
-    commandName: string,
-    partialCommandLength: number,
-    cursorPosition: number,
-): { newValue: string; commandIndex: number } {
-    // Find the slash nearest to cursor (before cursor position)
-    const beforeCursor = text.slice(0, cursorPosition)
-    const slashIndex = beforeCursor.lastIndexOf("/")
-
-    const beforeSlash = text.substring(0, slashIndex + 1)
-    const afterPartialCommand = text.substring(slashIndex + 1 + partialCommandLength)
-
-    // replace the partial command with the full command
-    const newValue =
-        beforeSlash + commandName + (afterPartialCommand.startsWith(" ") ? afterPartialCommand : ` ${afterPartialCommand}`)
-
-    return { newValue, commandIndex: slashIndex }
+export function getAvailableSlashCommands(sources: SlashCommandSources, catalog: InputSemanticCatalog): SlashMenuEntry[] {
+    const candidates = [
+        ...DEFAULT_SLASH_COMMANDS,
+        ...getWorkflowCommands(
+            sources.localWorkflowToggles ?? {},
+            sources.globalWorkflowToggles ?? {},
+            sources.remoteWorkflowToggles,
+            sources.remoteWorkflows,
+            sources.workflowDescriptions,
+        ),
+        ...getSkillCommands(
+            sources.localSkillsToggles,
+            sources.globalSkillsToggles,
+            sources.remoteSkills,
+            sources.remoteSkillsToggles,
+            sources.availableSkillCommands,
+        ),
+        ...getMcpPromptCommands(sources.mcpServers),
+    ]
+    const triggers = indexCommandTriggers(catalog)
+    const entries = new Map<string, SlashMenuEntry>()
+    for (const command of candidates) {
+        const trigger = slashCommandTrigger(command)
+        const descriptor = triggers.get(trigger)
+        if (!descriptor || entries.has(trigger)) continue
+        entries.set(trigger, { command, section: sectionOf(command), commandId: descriptor.id, trigger })
+    }
+    const rank = (entry: SlashMenuEntry) => SLASH_MENU_SECTIONS.indexOf(entry.section)
+    return [...entries.values()].sort((left, right) => rank(left) - rank(right))
 }
 
 /**
- * Determines the validation state of a slash command
- * Returns partial if we have a partial match against valid commands, or full for full match
+ * Menu rows offered for a partial name, matched by case-insensitive prefix of
+ * the name or of the namespaced trigger, so `/li` and `/skills:li` both find
+ * `/skills:lint`.
+ *
+ * Matching is a search convenience only; the pick writes the row's exact
+ * trigger, so admission still sees the case-sensitive form.
  */
-export function validateSlashCommand(
-    command: string,
-    localWorkflowToggles: Record<string, boolean> = {},
-    globalWorkflowToggles: Record<string, boolean> = {},
-    remoteWorkflowToggles?: Record<string, boolean>,
-    remoteWorkflows?: any[],
-    mcpServers: McpServer[] = [],
-    localSkillsToggles: Record<string, boolean> = {},
-    globalSkillsToggles: Record<string, boolean> = {},
-    remoteSkills?: any[],
-    remoteSkillsToggles?: Record<string, boolean>,
-    workflowDescriptions?: Record<string, string>,
-    availableSkillCommands?: SlashCommand[],
-): "full" | "partial" | null {
-    if (!command) {
-        return null
-    }
-
-    const workflowCommands = getWorkflowCommands(
-        localWorkflowToggles,
-        globalWorkflowToggles,
-        remoteWorkflowToggles,
-        remoteWorkflows,
-        workflowDescriptions,
+export function getMatchingSlashCommands(query: string, entries: readonly SlashMenuEntry[]): SlashMenuEntry[] {
+    if (!query) return [...entries]
+    const needle = query.toLowerCase()
+    return entries.filter(
+        (entry) => entry.command.name.toLowerCase().startsWith(needle) || entry.trigger.slice(1).toLowerCase().startsWith(needle),
     )
-    const skillCommands = getSkillCommands(
-        localSkillsToggles,
-        globalSkillsToggles,
-        remoteSkills,
-        remoteSkillsToggles,
-        availableSkillCommands,
-    )
-    const mcpPromptCommands = getMcpPromptCommands(mcpServers)
-    const allCommands = [...DEFAULT_SLASH_COMMANDS, ...workflowCommands, ...skillCommands, ...mcpPromptCommands]
-
-    // case insensitive matching
-    const exactMatch = allCommands.some((cmd) => cmd.name.toLowerCase() === command.toLowerCase())
-
-    if (exactMatch) {
-        return "full"
-    }
-
-    const partialMatch = allCommands.some((cmd) => cmd.name.toLowerCase().startsWith(command.toLowerCase()))
-
-    if (partialMatch) {
-        return "partial"
-    }
-
-    return null // no match
 }

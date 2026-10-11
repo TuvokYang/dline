@@ -35,7 +35,6 @@ import { renderSemanticHighlightHtml } from "@/services/input-semantics/highligh
 import { classifyPaste } from "@/services/input-semantics/paste-intent"
 import {
     composeSubmission,
-    confirmRange,
     followNativePaste,
     heldPastedCandidates,
     newComposerDocumentId,
@@ -45,7 +44,9 @@ import {
     recordPaste,
 } from "@/services/input-semantics/paste-provenance"
 import { storeOversizedPaste } from "@/services/input-semantics/paste-resource"
+import { applySemanticEdit, type SemanticEditIntent, typedTriggerSpan } from "@/services/input-semantics/semantic-edit"
 import { shouldCompleteMenuSelection, shouldSendChatInput } from "@/utils/chat-input-shortcut"
+import { composerMenuQueryAt } from "@/utils/composer-menu"
 import {
     classifyTransferFiles,
     isDocumentAttachmentUri,
@@ -56,20 +57,17 @@ import {
     ContextMenuOptionType,
     getContextMenuOptionIndex,
     getContextMenuOptions,
-    insertMention,
-    insertMentionDirectly,
     removeMention,
     type SearchResult,
-    shouldShowContextMenu,
 } from "@/utils/context-mentions"
 import { useMetaKeyDetection, useShortcut } from "@/utils/hooks"
 import { isSafari } from "@/utils/platformUtils"
 import {
+    getAvailableSlashCommands,
     getMatchingSlashCommands,
-    insertSlashCommand,
     removeSlashCommand,
-    sectionToPrefix,
-    shouldShowSlashCommandsMenu,
+    type SlashCommandSources,
+    type SlashMenuEntry,
     slashCommandDeleteRegex,
 } from "@/utils/slash-commands"
 import ClineRulesToggleModal from "../agent-capabilities/ClineRulesToggleModal"
@@ -316,6 +314,45 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
         const [workflowDescriptions, setWorkflowDescriptions] = useState<Record<string, string>>({})
         const [availableSkillCommands, setAvailableSkillCommands] = useState<SlashCommand[] | undefined>(undefined)
         const slashCommandsMenuContainerRef = useRef<HTMLDivElement>(null)
+        const slashCommandSources = useMemo<SlashCommandSources>(
+            () => ({
+                localWorkflowToggles: effectiveLocalWorkflowToggles,
+                globalWorkflowToggles: effectiveGlobalWorkflowToggles,
+                remoteWorkflowToggles: effectiveRemoteWorkflowToggles,
+                remoteWorkflows: remoteConfigSettings?.remoteGlobalWorkflows,
+                mcpServers: effectiveMcpServers,
+                localSkillsToggles: effectiveLocalSkillsToggles,
+                globalSkillsToggles: effectiveGlobalSkillsToggles,
+                remoteSkills: remoteConfigSettings?.remoteGlobalSkills,
+                remoteSkillsToggles: effectiveRemoteSkillsToggles,
+                workflowDescriptions,
+                availableSkillCommands,
+            }),
+            [
+                effectiveLocalWorkflowToggles,
+                effectiveGlobalWorkflowToggles,
+                effectiveRemoteWorkflowToggles,
+                remoteConfigSettings?.remoteGlobalWorkflows,
+                effectiveMcpServers,
+                effectiveLocalSkillsToggles,
+                effectiveGlobalSkillsToggles,
+                remoteConfigSettings?.remoteGlobalSkills,
+                effectiveRemoteSkillsToggles,
+                workflowDescriptions,
+                availableSkillCommands,
+            ],
+        )
+        // The menu renders and the keyboard navigates this one list, so a selection index always names a shown row.
+        const slashMenuEntries = useMemo(
+            () => getMatchingSlashCommands(slashCommandsQuery, getAvailableSlashCommands(slashCommandSources, semanticCatalog)),
+            [slashCommandsQuery, slashCommandSources, semanticCatalog],
+        )
+        // The list can shrink without typing, e.g. when a capability is withdrawn; keep the selection on a row.
+        useEffect(() => {
+            if (selectedSlashCommandsIndex >= slashMenuEntries.length) {
+                setSelectedSlashCommandsIndex(Math.max(0, slashMenuEntries.length - 1))
+            }
+        }, [selectedSlashCommandsIndex, slashMenuEntries.length])
 
         const refreshSlashCommandMetadata = useCallback(async () => {
             const response = await SlashServiceClient.getAvailableSlashCommands(EmptyRequest.create({}))
@@ -376,7 +413,12 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
                     if (response.globalSkillsToggles?.toggles) {
                         setGlobalSkillsToggles(response.globalSkillsToggles.toggles)
                     }
-                    await refreshSlashCommandMetadata()
+                    // Rediscovery publishes a new catalog revision to the subscription when capabilities
+                    // changed, so a skill or workflow added since the last revision becomes pickable.
+                    await Promise.all([
+                        refreshSlashCommandMetadata(),
+                        SlashServiceClient.getInputSemanticCatalog(EmptyRequest.create({})),
+                    ])
                 })
                 .catch(() => {})
         }, [
@@ -513,6 +555,35 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
             }
         }, [showSlashCommandsMenu])
 
+        /**
+         * Write a menu pick as the entity it names, replacing what the user typed
+         * for it. Returns false, writing nothing, when the pick would not read
+         * back as that entity.
+         */
+        const applyMenuPick = useCallback(
+            (intent: SemanticEditIntent): boolean => {
+                const current = textAreaRef.current?.value
+                if (current === undefined) return false
+                const edit = applySemanticEdit(
+                    provenanceOf(current),
+                    typedTriggerSpan(current, cursorPosition, intent.kind),
+                    intent,
+                    semanticCatalog,
+                )
+                if (!edit.ok) {
+                    console.warn(`[ChatTextArea] menu pick refused: ${edit.reason}`)
+                    return false
+                }
+                // Picking from the menu is the user's confirmation (WS-041 AC-09).
+                commitPasteProvenance(edit.provenance)
+                setInputValue(edit.provenance.text)
+                setCursorPosition(edit.caret)
+                setIntendedCursorPosition(edit.caret)
+                return true
+            },
+            [cursorPosition, semanticCatalog, provenanceOf, commitPasteProvenance, setInputValue],
+        )
+
         const handleMentionSelect = useCallback(
             (type: ContextMenuOptionType, value?: string) => {
                 if (type === ContextMenuOptionType.NoResults) {
@@ -570,89 +641,34 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
                     }
                 }
 
+                let reference = value || ""
+                if (type === ContextMenuOptionType.Problems) {
+                    reference = "problems"
+                } else if (type === ContextMenuOptionType.Terminal) {
+                    reference = "terminal"
+                }
+                // A refused pick writes nothing and keeps the menu open, so it is never lost silently.
+                if (!applyMenuPick({ kind: "mention", reference })) return
                 setShowContextMenu(false)
                 setSelectedType(null)
-                const queryLength = searchQuery.length
                 setSearchQuery("")
-
-                if (textAreaRef.current) {
-                    let insertValue = value || ""
-                    if (type === ContextMenuOptionType.URL) {
-                        insertValue = value || ""
-                    } else if (type === ContextMenuOptionType.File || type === ContextMenuOptionType.Folder) {
-                        insertValue = value || ""
-                    } else if (type === ContextMenuOptionType.Problems) {
-                        insertValue = "problems"
-                    } else if (type === ContextMenuOptionType.Terminal) {
-                        insertValue = "terminal"
-                    } else if (type === ContextMenuOptionType.Git) {
-                        insertValue = value || ""
-                    }
-
-                    const { newValue, mentionIndex } = insertMention(
-                        textAreaRef.current.value,
-                        cursorPosition,
-                        insertValue,
-                        queryLength,
-                    )
-
-                    // Picking from the menu is the user's confirmation (WS-041 AC-09).
-                    const confirmedFrom = textAreaRef.current.value
-                    commitPasteProvenance(
-                        confirmRange(rebaseProvenance(provenanceOf(confirmedFrom), newValue), {
-                            start: mentionIndex,
-                            end: mentionIndex + 1 + insertValue.length,
-                        }),
-                    )
-                    setInputValue(newValue)
-                    const newCursorPosition = newValue.indexOf(" ", mentionIndex + insertValue.length) + 1
-                    setCursorPosition(newCursorPosition)
-                    setIntendedCursorPosition(newCursorPosition)
-                }
             },
-            [setInputValue, cursorPosition, searchQuery],
+            [applyMenuPick],
         )
 
         const handleSlashCommandsSelect = useCallback(
-            (command: SlashCommand) => {
+            (entry: SlashMenuEntry) => {
+                if (!applyMenuPick({ kind: "command", commandId: entry.commandId, trigger: entry.trigger })) return
                 setShowSlashCommandsMenu(false)
-                const queryLength = slashCommandsQuery.length
                 setSlashCommandsQuery("")
-
-                // Build prefixed name for insertion: "cmd:newtask", "workflow:xxx", "skills:xxx", "mcp:xxx"
-                const prefix = sectionToPrefix(command.section)
-                const fullName = prefix ? `${prefix}:${command.name}` : command.name
-
-                if (textAreaRef.current) {
-                    const { newValue, commandIndex } = insertSlashCommand(
-                        textAreaRef.current.value,
-                        fullName,
-                        queryLength,
-                        cursorPosition,
-                    )
-                    const newCursorPosition = newValue.indexOf(" ", commandIndex + 1 + fullName.length) + 1
-                    // Picking from the menu is the user's confirmation (WS-041 AC-09).
-                    const confirmedFrom = textAreaRef.current.value
-                    commitPasteProvenance(
-                        confirmRange(rebaseProvenance(provenanceOf(confirmedFrom), newValue), {
-                            start: commandIndex,
-                            end: commandIndex + 1 + fullName.length,
-                        }),
-                    )
-
-                    setInputValue(newValue)
-                    setCursorPosition(newCursorPosition)
-                    setIntendedCursorPosition(newCursorPosition)
-
-                    setTimeout(() => {
-                        if (textAreaRef.current) {
-                            textAreaRef.current.blur()
-                            textAreaRef.current.focus()
-                        }
-                    }, 0)
-                }
+                setTimeout(() => {
+                    if (textAreaRef.current) {
+                        textAreaRef.current.blur()
+                        textAreaRef.current.focus()
+                    }
+                }, 0)
             },
-            [setInputValue, slashCommandsQuery, cursorPosition],
+            [applyMenuPick],
         )
         const handleKeyDown = useCallback(
             (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -699,32 +715,12 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
                         event.preventDefault()
                         setSelectedSlashCommandsIndex((prevIndex) => {
                             const direction = event.key === "ArrowUp" ? -1 : 1
-                            // Get commands with workflow toggles
-                            const allCommands = getMatchingSlashCommands(
-                                slashCommandsQuery,
-                                effectiveLocalWorkflowToggles,
-                                effectiveGlobalWorkflowToggles,
-                                effectiveRemoteWorkflowToggles,
-                                remoteConfigSettings?.remoteGlobalWorkflows,
-                                effectiveMcpServers,
-                                effectiveLocalSkillsToggles,
-                                effectiveGlobalSkillsToggles,
-                                remoteConfigSettings?.remoteGlobalSkills,
-                                effectiveRemoteSkillsToggles,
-                                undefined,
-                                availableSkillCommands,
-                            )
-
-                            if (allCommands.length === 0) {
+                            const count = slashMenuEntries.length
+                            if (count === 0) {
                                 return prevIndex
                             }
-
-                            // Calculate total command count
-                            const totalCommandCount = allCommands.length
-
-                            // Create wraparound navigation - moves from last item to first and vice versa
-                            const newIndex = (prevIndex + direction + totalCommandCount) % totalCommandCount
-                            return newIndex
+                            // Wrap around from the last row to the first and back.
+                            return (Math.min(prevIndex, count - 1) + direction + count) % count
                         })
                         return
                     }
@@ -738,22 +734,9 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
                         selectedSlashCommandsIndex !== -1
                     ) {
                         event.preventDefault()
-                        const commands = getMatchingSlashCommands(
-                            slashCommandsQuery,
-                            effectiveLocalWorkflowToggles,
-                            effectiveGlobalWorkflowToggles,
-                            effectiveRemoteWorkflowToggles,
-                            remoteConfigSettings?.remoteGlobalWorkflows,
-                            effectiveMcpServers,
-                            effectiveLocalSkillsToggles,
-                            effectiveGlobalSkillsToggles,
-                            remoteConfigSettings?.remoteGlobalSkills,
-                            effectiveRemoteSkillsToggles,
-                            undefined,
-                            availableSkillCommands,
-                        )
-                        if (commands.length > 0) {
-                            handleSlashCommandsSelect(commands[selectedSlashCommandsIndex])
+                        const entry = slashMenuEntries[selectedSlashCommandsIndex]
+                        if (entry) {
+                            handleSlashCommandsSelect(entry)
                         }
                         return
                     }
@@ -918,23 +901,13 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
                 fileSearchResults,
                 showSlashCommandsMenu,
                 selectedSlashCommandsIndex,
-                slashCommandsQuery,
+                slashMenuEntries,
                 handleSlashCommandsSelect,
                 sendingDisabled,
                 selectedImages,
                 selectedFiles,
                 chatInputSendShortcut,
-                effectiveMcpServers,
-                remoteConfigSettings?.remoteGlobalSkills,
-                effectiveRemoteSkillsToggles,
-                effectiveRemoteWorkflowToggles,
-                effectiveLocalWorkflowToggles,
-                effectiveGlobalWorkflowToggles,
-                remoteConfigSettings?.remoteGlobalWorkflows,
-                effectiveLocalSkillsToggles,
                 justDeletedSpaceAfterSlashCommand,
-                effectiveGlobalSkillsToggles,
-                availableSkillCommands,
             ],
         )
 
@@ -951,22 +924,29 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
                 return
             }
 
-            const path = pendingInsertions[0]
+            const reference = pendingInsertions[0]
             const currentTextArea = textAreaRef.current
             const currentValue = currentTextArea.value
-            const currentCursorPos =
+            const caret =
                 intendedCursorPosition ??
                 (currentTextArea.selectionStart >= 0 ? currentTextArea.selectionStart : currentValue.length)
-
-            const { newValue, mentionIndex } = insertMentionDirectly(currentValue, currentCursorPos, path)
-
-            setInputValue(newValue)
-
-            const newCursorPosition = mentionIndex + path.length + 2
-            setIntendedCursorPosition(newCursorPosition)
-
             setPendingInsertions((prev) => prev.slice(1))
-        }, [pendingInsertions, setInputValue, intendedCursorPosition])
+
+            // An inserted path is the user's own action, so it lands as a confirmed mention or not at all.
+            const edit = applySemanticEdit(
+                provenanceOf(currentValue),
+                { start: caret, end: caret },
+                { kind: "mention", reference },
+                semanticCatalog,
+            )
+            if (!edit.ok) {
+                console.warn(`[ChatTextArea] mention insertion refused: ${edit.reason}`)
+                return
+            }
+            commitPasteProvenance(edit.provenance)
+            setInputValue(edit.provenance.text)
+            setIntendedCursorPosition(edit.caret)
+        }, [pendingInsertions, setInputValue, intendedCursorPosition, provenanceOf, semanticCatalog, commitPasteProvenance])
 
         const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -995,33 +975,17 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
                     setCursorPosition(newCursorPosition)
                     commitPasteProvenance(nextProvenance)
                 })
-                let showMenu = shouldShowContextMenu(newValue, newCursorPosition)
-                const showSlashCommandsMenu = shouldShowSlashCommandsMenu(newValue, newCursorPosition)
+                const menuQuery = composerMenuQueryAt(newValue, newCursorPosition)
+                const slashQuery = menuQuery?.menu === "slash" ? menuQuery.query : undefined
+                const mentionQuery = menuQuery?.menu === "mention" ? menuQuery.query : undefined
 
-                // we do not allow both menus to be shown at the same time
-                // the slash commands menu has precedence bc its a narrower component
-                if (showSlashCommandsMenu) {
-                    showMenu = false
-                }
+                setShowSlashCommandsMenu(slashQuery !== undefined)
+                setShowContextMenu(mentionQuery !== undefined)
+                setSlashCommandsQuery(slashQuery ?? "")
+                setSelectedSlashCommandsIndex(0)
 
-                setShowSlashCommandsMenu(showSlashCommandsMenu)
-                setShowContextMenu(showMenu)
-
-                if (showSlashCommandsMenu) {
-                    // Find the slash nearest to cursor (before cursor position)
-                    const beforeCursor = newValue.slice(0, newCursorPosition)
-                    const slashIndex = beforeCursor.lastIndexOf("/")
-                    const query = newValue.slice(slashIndex + 1, newCursorPosition)
-                    setSlashCommandsQuery(query)
-                    setSelectedSlashCommandsIndex(0)
-                } else {
-                    setSlashCommandsQuery("")
-                    setSelectedSlashCommandsIndex(0)
-                }
-
-                if (showMenu) {
-                    const lastAtIndex = newValue.lastIndexOf("@", newCursorPosition - 1)
-                    const query = newValue.slice(lastAtIndex + 1, newCursorPosition)
+                if (mentionQuery !== undefined) {
+                    const query = mentionQuery
                     setSearchQuery(query)
 
                     if (query.length > 0) {
@@ -1695,22 +1659,11 @@ const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
                     {showSlashCommandsMenu && (
                         <div ref={slashCommandsMenuContainerRef}>
                             <SlashCommandMenu
-                                availableSkillCommands={availableSkillCommands}
-                                globalSkillsToggles={effectiveGlobalSkillsToggles}
-                                globalWorkflowToggles={effectiveGlobalWorkflowToggles}
-                                localSkillsToggles={effectiveLocalSkillsToggles}
-                                localWorkflowToggles={effectiveLocalWorkflowToggles}
-                                mcpServers={effectiveMcpServers}
+                                entries={slashMenuEntries}
                                 onMouseDown={handleMenuMouseDown}
                                 onSelect={handleSlashCommandsSelect}
-                                query={slashCommandsQuery}
-                                remoteSkills={remoteConfigSettings?.remoteGlobalSkills}
-                                remoteSkillsToggles={effectiveRemoteSkillsToggles}
-                                remoteWorkflows={remoteConfigSettings?.remoteGlobalWorkflows}
-                                remoteWorkflowToggles={effectiveRemoteWorkflowToggles}
                                 selectedIndex={selectedSlashCommandsIndex}
                                 setSelectedIndex={setSelectedSlashCommandsIndex}
-                                workflowDescriptions={workflowDescriptions}
                             />
                         </div>
                     )}
