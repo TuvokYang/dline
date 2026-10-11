@@ -48,6 +48,90 @@ describe("ProviderJournalMessageMaterializer", () => {
         ])
     })
 
+    it("builds an input that carries resources from its ordered parts and the verified bytes", async () => {
+        const ref = {
+            resourceId: "00000000-0000-4000-8000-000000000001",
+            expectedContentHash: "a".repeat(64),
+            mediaType: "image/png",
+            byteLength: 4,
+            owner: { kind: "task" as const, taskId: "task-1" },
+            generation: 1,
+        }
+        const reads: string[] = []
+        const materializer = new ProviderJournalMessageMaterializer(
+            payloadStore({
+                "ref-1": encodeTaskPayload({
+                    kind: "user_input",
+                    text: "look here",
+                    admittedText: "look [image] here",
+                    admittedParts: [
+                        { kind: "text", text: "look " },
+                        { kind: "resource", entityId: "img-1", nodeKind: "image", ref, displayName: "shot.png" },
+                        { kind: "text", text: " here" },
+                    ],
+                }),
+            }),
+            {
+                readBytes: async (resourceRef) => {
+                    reads.push(resourceRef.resourceId)
+                    return { ok: true, value: { record: { mediaType: "image/png" }, bytes: Buffer.from([1, 2, 3, 4]) } }
+                },
+            },
+        )
+
+        const [message] = await materializer.materialize(["ref-1"])
+
+        expect(reads).toEqual([ref.resourceId])
+        expect(message?.content).toEqual([
+            { type: "text", text: "<user_message>\nlook " },
+            {
+                type: "image",
+                source: { type: "base64", media_type: "image/png", data: Buffer.from([1, 2, 3, 4]).toString("base64") },
+            },
+            { type: "text", text: " here\n</user_message>" },
+        ])
+    })
+
+    // A retained batch can merge an input that placed a resource with a legacy
+    // one that carried a flat attachment; neither may vanish from the request.
+    it("keeps a batch's flat attachments after the content of its ordered parts", async () => {
+        const ref = {
+            resourceId: "00000000-0000-4000-8000-000000000002",
+            expectedContentHash: "b".repeat(64),
+            mediaType: "image/png",
+            byteLength: 4,
+            owner: { kind: "task" as const, taskId: "task-1" },
+            generation: 1,
+        }
+        const materializer = new ProviderJournalMessageMaterializer(
+            payloadStore({
+                "ref-1": encodeTaskPayload({
+                    kind: "user_input",
+                    text: "look\n\nlegacy",
+                    admittedText: "look [image]\n\nlegacy",
+                    images: ["data:image/png;base64,TEdFR0FDWQ=="],
+                    admittedParts: [
+                        { kind: "text", text: "look " },
+                        { kind: "resource", entityId: "img-1", nodeKind: "image", ref, displayName: "shot.png" },
+                        { kind: "text", text: "\n\nlegacy" },
+                    ],
+                }),
+            }),
+            {
+                readBytes: async () => ({
+                    ok: true,
+                    value: { record: { mediaType: "image/png" }, bytes: Buffer.from([1, 2, 3, 4]) },
+                }),
+            },
+        )
+
+        const [message] = await materializer.materialize(["ref-1"])
+
+        const content = Array.isArray(message?.content) ? message.content : []
+        expect(content.map((block) => block.type)).toEqual(["text", "image", "text", "image"])
+        expect(content.at(-1)).toMatchObject({ type: "image", source: { data: "TEdFR0FDWQ==" } })
+    })
+
     it("ignores payloads that are not admitted user input", async () => {
         const materializer = new ProviderJournalMessageMaterializer(
             payloadStore({

@@ -1,7 +1,8 @@
 import { BUILTIN_INPUT_SEMANTICS, type InputSemanticCatalog } from "@shared/input-semantics/catalog"
+import { semanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { lexSemanticInput } from "@shared/input-semantics/lexer"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { SemanticInputAdmissionService } from "../SemanticInputAdmissionService"
 
 const catalog: InputSemanticCatalog = { revision: 4, descriptors: BUILTIN_INPUT_SEMANTICS }
@@ -10,8 +11,8 @@ function service(overrides?: { catalog?: InputSemanticCatalog }) {
     return new SemanticInputAdmissionService({
         catalog: () => overrides?.catalog ?? catalog,
         commands: {
-            expand: async (invocation) => ({
-                text: `<${invocation.canonicalName}-instructions>`,
+            expand: async (descriptor) => ({
+                text: `<${descriptor.trigger.slice(1)}-instructions>`,
                 explicitInstructions: [{ type: "summarize_task", source: "manual_compact_command" }],
             }),
         },
@@ -78,9 +79,10 @@ describe("SemanticInputAdmissionService", () => {
         expect(result.admitted.explicitInstructions).toHaveLength(2)
         expect(result.admitted.barrier).toEqual({
             commandId: "command.compact",
+            // The barrier's own entity lets a reply carrier slice the document in front of it.
+            entityId: "doc-1#1",
             before: "<explain-changes-instructions> then",
-            // A carrier without command authority, such as a dialog reply, keeps the typed form.
-            sourceBefore: "/explain-changes then",
+            partsBefore: [{ kind: "text", text: "<explain-changes-instructions> then" }],
             premessage: "keep the audit",
             // Claiming the barrier drops only its own authority, never an earlier command's.
             instructionsBefore: result.admitted.explicitInstructions.slice(0, 1),
@@ -208,5 +210,167 @@ describe("SemanticInputAdmissionService", () => {
         expect(result.ok).toBe(false)
         if (result.ok) return
         expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain("semantic_input_schema_unsupported")
+    })
+
+    it("refuses a mention whose typed identity disagrees with its visible text", async () => {
+        const lexed = lex("read @/src/index.ts")
+        const forged: SemanticInputDocument = {
+            ...lexed,
+            nodes: lexed.nodes.map((node) => (node.kind === "mention" ? { ...node, canonicalRef: "/.env" } : node)),
+        }
+        const resolve = vi.fn(async () => "resolved")
+
+        const result = await new SemanticInputAdmissionService({
+            catalog: () => catalog,
+            commands: { expand: async () => ({ text: "" }) },
+            mentions: { resolve },
+        }).admit(forged)
+
+        expect(result.ok).toBe(false)
+        if (result.ok) return
+        expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["semantic_input_source_mismatch"])
+        expect(resolve).not.toHaveBeenCalled()
+    })
+
+    it("refuses the whole submission when the plan rejects a command, naming the node", async () => {
+        const document = lex("/explain-changes and /explain-changes")
+
+        const result = await service().admit(document)
+
+        expect(result.ok).toBe(false)
+        if (result.ok) return
+        const repeated = document.nodes.filter((node) => node.kind === "slash_command")[1]
+        expect(result.diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.entityId])).toEqual([
+            ["semantic_input_lifecycle_barrier_invalid", repeated && "entityId" in repeated ? repeated.entityId : undefined],
+        ])
+    })
+
+    it("refuses a command whose capability is no longer available instead of sending its trigger", async () => {
+        const result = await new SemanticInputAdmissionService({
+            catalog: () => catalog,
+            commands: { expand: async () => undefined },
+            mentions: { resolve: async () => "" },
+        }).admit(lex("/compact"))
+
+        expect(result.ok).toBe(false)
+        if (result.ok) return
+        expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["semantic_input_command_disabled"])
+    })
+
+    it("explains an unknown command with the catalog conflict that withdrew it", async () => {
+        const result = await new SemanticInputAdmissionService({
+            catalog: () => ({ revision: 4, descriptors: BUILTIN_INPUT_SEMANTICS.filter((d) => d.id !== "command.compact") }),
+            commands: { expand: async () => ({ text: "" }) },
+            mentions: { resolve: async () => "" },
+            conflicts: () => [
+                {
+                    code: "duplicate_trigger",
+                    descriptorId: "command.compact",
+                    heldBy: "command.workflow.compact",
+                    trigger: "/compact",
+                },
+            ],
+        }).admit(lex("/compact"))
+
+        expect(result.ok).toBe(false)
+        if (result.ok) return
+        expect(result.diagnostics[0].code).toBe("semantic_input_command_unknown")
+        expect(result.diagnostics[0].message).toContain("command.workflow.compact")
+    })
+
+    describe("resources", () => {
+        const resourceId = "4f9c2b2e-8d3a-4c1e-9b6a-2f1e3d4c5b6a"
+        const ref = {
+            resourceId,
+            expectedContentHash: "a".repeat(64),
+            mediaType: "image/png",
+            byteLength: 3,
+            owner: { kind: "task", taskId: "task-1" },
+            generation: 1,
+        } as const
+
+        function withImage(): SemanticInputDocument {
+            const before = lex("see ")
+            const after = lex(" now")
+            const image = { kind: "image", entityId: "doc-1#img", resourceId, displayName: "shot.png" } as const
+            return {
+                ...before,
+                rawText: `see [image:${resourceId}] now`,
+                nodes: [...before.nodes, image, ...after.nodes],
+                resources: [ref],
+            }
+        }
+
+        it("refuses a resource when no verifier can check it", async () => {
+            const result = await service().admit(withImage())
+
+            expect(result.ok).toBe(false)
+            if (result.ok) return
+            expect(result.diagnostics.map((d) => [d.code, d.resourceId])).toEqual([
+                ["semantic_input_resource_invalid", resourceId],
+            ])
+        })
+
+        it("refuses with the verifier's located diagnostic", async () => {
+            const result = await new SemanticInputAdmissionService({
+                catalog: () => catalog,
+                commands: { expand: async () => ({ text: "" }) },
+                mentions: { resolve: async () => "" },
+                resources: {
+                    verify: async (document, node) => [
+                        semanticInputDiagnostic("semantic_input_resource_changed", "content changed", {
+                            documentId: document.documentId,
+                            entityId: node.entityId,
+                            resourceId: node.resourceId,
+                        }),
+                    ],
+                },
+            }).admit(withImage())
+
+            expect(result.ok).toBe(false)
+            if (result.ok) return
+            expect(result.diagnostics.map((d) => [d.code, d.entityId])).toEqual([
+                ["semantic_input_resource_changed", "doc-1#img"],
+            ])
+        })
+
+        it("keeps a verified resource as its own part, in place", async () => {
+            const result = await new SemanticInputAdmissionService({
+                catalog: () => catalog,
+                commands: { expand: async () => ({ text: "" }) },
+                mentions: { resolve: async () => "" },
+                resources: { verify: async () => [] },
+            }).admit(withImage())
+
+            expect(result.ok).toBe(true)
+            if (!result.ok) return
+            expect(result.admitted.parts).toEqual([
+                { kind: "text", text: "see " },
+                { kind: "resource", entityId: "doc-1#img", nodeKind: "image", ref, displayName: "shot.png" },
+                { kind: "text", text: " now" },
+            ])
+        })
+
+        // A premessage travels with the lifecycle command as text only, so an
+        // attachment placed after the command would vanish instead of being sent.
+        it("refuses an attachment placed after a lifecycle command", async () => {
+            const before = lex("/compact keep ")
+            const image = { kind: "image", entityId: "doc-1#img", resourceId, displayName: "shot.png" } as const
+            const result = await new SemanticInputAdmissionService({
+                catalog: () => catalog,
+                commands: { expand: async () => ({ text: "" }) },
+                mentions: { resolve: async () => "" },
+                resources: { verify: async () => [] },
+            }).admit({
+                ...before,
+                rawText: `/compact keep [image:${resourceId}] now`,
+                nodes: [...before.nodes, image, ...lex(" now").nodes],
+                resources: [ref],
+            })
+
+            expect(result.ok).toBe(false)
+            if (result.ok) return
+            expect(result.diagnostics.map((d) => d.code)).toEqual(["semantic_input_lifecycle_barrier_invalid"])
+        })
     })
 })

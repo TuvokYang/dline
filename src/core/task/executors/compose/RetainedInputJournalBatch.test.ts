@@ -45,6 +45,53 @@ describe("RetainedInputJournalBatch", () => {
         }
     })
 
+    it("keeps a retained input's resource in place and renders the batch exactly as its text form", async () => {
+        const payloads = new InMemoryTaskPayloadStore()
+        const journal = new InMemoryConversationJournal()
+        const image = {
+            kind: "resource" as const,
+            entityId: "img-1",
+            nodeKind: "image" as const,
+            ref: {
+                resourceId: "00000000-0000-4000-8000-000000000001",
+                expectedContentHash: "a".repeat(64),
+                mediaType: "image/png",
+                byteLength: 4,
+                owner: { kind: "task" as const, taskId: "task-1" },
+                generation: 1,
+            },
+            displayName: "shot.png",
+        }
+        const withImage: UserInputEnvelope = {
+            kind: "user_input",
+            text: "LOOK HERE",
+            admittedText: "LOOK [image] HERE",
+            admittedParts: [{ kind: "text", text: "LOOK " }, image, { kind: "text", text: " HERE" }],
+        }
+        const plain: UserInputEnvelope = { kind: "user_input", text: "PLAIN", admittedText: "PLAIN" }
+        const refs = await Promise.all([withImage, plain].map((payload) => payloads.put(encodeTaskPayload(payload))))
+        const entries = refs.map((payloadRef, index) => ({ entryId: `entry-${index}`, payloadRef }))
+        const receipt = await new RetainedInputJournalBatch(payloads, journal).stage({
+            deliveryId: "delivery-parts",
+            entries,
+            generation: 0,
+            signal: new AbortController().signal,
+        })
+
+        const batch = decodeTaskPayload<UserInputEnvelope>(await payloads.read(receipt.payloadRef))
+        const parts = batch.admittedParts ?? []
+        expect(parts.filter((part) => part.kind === "resource")).toEqual([image])
+        const asText = parts.map((part) => (part.kind === "text" ? part.text : "[image]")).join("")
+        expect(asText).toBe(batch.admittedText)
+    })
+
+    it("writes no parts for a batch whose inputs carry no resource", async () => {
+        const h = await harness()
+        const receipt = await h.batches.stage(h.stage)
+        const payload = decodeTaskPayload<UserInputEnvelope>(await h.payloads.read(receipt.payloadRef))
+        expect(payload.admittedParts).toBeUndefined()
+    })
+
     it("cannot leave a partial batch when a later payload fails to materialize", async () => {
         const h = await harness()
         const read = h.payloads.read.bind(h.payloads)

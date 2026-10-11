@@ -2,7 +2,7 @@ import type { CanonicalInputQueueMutation } from "@core/task/session/InputQueueA
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { InputQueueDraft as WireInputQueueDraft } from "@shared/proto/dline/task"
 import { MutateInputQueueRequest, MutateInputQueueResponse } from "@shared/proto/dline/task"
-import { fromProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
+import { decodeAdmissibleSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Logger } from "@shared/services/Logger"
 import { Controller } from ".."
 
@@ -18,17 +18,18 @@ interface DecodedDraft {
 /**
  * Decode the submitted structure at the transport boundary.
  *
- * An undecodable document is refused rather than reinterpreted as text: otherwise
- * inert pasted command nodes could be admitted as live command authority.
+ * An undecodable or structurally inadmissible document is refused rather than
+ * reinterpreted as text: otherwise inert pasted command nodes could be admitted
+ * as live command authority.
  */
 function toDraft(wire: WireInputQueueDraft | undefined): DecodedDraft | undefined {
     if (!wire) return undefined
     const { semanticInput: wireDocument, ...draft } = wire
     if (!wireDocument) return draft
 
-    const decoded = fromProtoSemanticInputDocument(wireDocument)
+    const decoded = decodeAdmissibleSemanticInputDocument(wireDocument)
     if (!decoded.ok) {
-        Logger.warn(`[inputQueue] Refusing undecodable semantic input: ${decoded.diagnostic.code}`)
+        Logger.warn(`[inputQueue] Refusing inadmissible semantic input: ${decoded.diagnostic.code}`)
         throw new Error("InvalidQueueSemanticInput")
     }
     return { ...draft, semanticInput: decoded.document }

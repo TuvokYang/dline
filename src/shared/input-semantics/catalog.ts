@@ -8,6 +8,8 @@
  * renamed trigger or a localized label can never change admission behavior.
  */
 
+import type { CapabilityCommandRef } from "./command-namespace"
+
 /** Which trigger family a descriptor belongs to. */
 export type InputSemanticKind = "command" | "mention"
 
@@ -57,6 +59,14 @@ export interface InputSemanticDescriptor {
     readonly authorizes?: string
     /** True when the descriptor comes from discovered workspace capabilities rather than the built-in set. */
     readonly dynamic?: boolean
+    /**
+     * The discovered capability a dynamic command expands, as Core recorded it.
+     *
+     * Core authors and consumes this; it is not projected to the Webview, which
+     * only needs the trigger. Expansion reads it instead of re-reading the
+     * trigger, so an MCP server or prompt name is never split out of text.
+     */
+    readonly capability?: CapabilityCommandRef
 }
 
 export interface InputSemanticCatalog {

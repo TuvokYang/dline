@@ -35,6 +35,7 @@ function capabilityDescriptor(ref: CapabilityCommandRef): InputSemanticDescripto
         composition: "combinable",
         lifecycle: "turn",
         dynamic: true,
+        capability: ref,
     }
 }
 

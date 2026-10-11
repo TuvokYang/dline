@@ -1,4 +1,5 @@
-import { renderRetainedInputs } from "../../continuation/RetainedInputContent"
+import { type AdmittedInputPart, hasResourceParts } from "@shared/input-semantics/admitted-parts"
+import { renderRetainedInputParts, renderRetainedInputs } from "../../continuation/RetainedInputContent"
 import type { JournalWatermark, QueuePayloadIdentity } from "../../kernel"
 import type { ConversationJournal, TaskPayloadStore } from "../../stores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
@@ -114,7 +115,8 @@ export class RetainedInputJournalBatch {
             kind: "user_input",
             retainedInputBatch: identity,
             text: payloads.map((payload) => payload.text ?? "").join("\n\n"),
-            admittedText: renderRetainedInputs(payloads.map((payload) => payload.admittedText ?? payload.text ?? "")),
+            admittedText: renderRetainedInputs(payloads.map(modelTextOf)),
+            ...retainedParts(payloads),
             images: payloads.flatMap((payload) => [...(payload.images ?? [])]),
             files: payloads.flatMap((payload) => [...(payload.files ?? [])]),
         }
@@ -141,4 +143,22 @@ export class RetainedInputJournalBatch {
         await this.journal.tombstone({ operationId: retractOperation(identity.deliveryId), target: evidence.receipt.watermark })
         return { kind: "retracted", receipt: evidence.receipt }
     }
+}
+
+function modelTextOf(payload: UserInputEnvelope): string {
+    return payload.admittedText ?? payload.text ?? ""
+}
+
+/**
+ * The batch's ordered parts, when one of its inputs placed a resource.
+ *
+ * Inputs without resources contribute their model text, so every input keeps
+ * its place and the batch reads exactly as the text rendering does.
+ */
+function retainedParts(payloads: readonly UserInputEnvelope[]): Pick<UserInputEnvelope, "admittedParts"> {
+    if (!payloads.some((payload) => payload.admittedParts && hasResourceParts(payload.admittedParts))) return {}
+    const inputs = payloads.map(
+        (payload): readonly AdmittedInputPart[] => payload.admittedParts ?? [{ kind: "text", text: modelTextOf(payload) }],
+    )
+    return { admittedParts: renderRetainedInputParts(inputs) }
 }

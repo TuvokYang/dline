@@ -1,5 +1,9 @@
 import { InMemoryToolApprovalFeedbackLedger } from "@core/task/executors/tool/ToolApprovalFeedbackLedger"
 import { createInitialTaskState, type TaskState } from "@core/task/kernel"
+import { SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
+import { decodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
+import type { DialogDraftEnvelope } from "@core/task/stores/payload/TaskPayloadEnvelopes"
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { SemanticInputDocument as WireDocument, SemanticInputNode as WireNode } from "@shared/proto/dline/input"
 import { DispatchInteractionRequest } from "@shared/proto/dline/task"
 import { describe, expect, it, vi } from "vitest"
@@ -29,12 +33,15 @@ function state(kind = "followup", actionId = "reply"): TaskState {
 
 interface ReviewedReplyFixture {
     readonly text: string
+    readonly document?: SemanticInputDocument
     readonly commit: () => void
 }
 
 interface ControllerOptions {
     /** What the input review claims from the reply; undefined means nothing. */
     readonly reviewed?: ReviewedReplyFixture
+    /** The input review refuses the reply, as it does for a structured reply admission rejects. */
+    readonly reviewRefused?: boolean
     readonly rejected?: boolean
     /** Make the chat-row write fail, as a broken message store would. */
     readonly rowWriteFails?: boolean
@@ -70,7 +77,10 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
     // A reply now passes through the session's input review, which may take a
     // lifecycle command out of it. Undefined means nothing was claimed, so the
     // reply stands exactly as typed - the behavior most cases assert.
-    const reviewReply = vi.fn(async (_reply: { readonly text?: string }) => options.reviewed)
+    const reviewReply = vi.fn(async (_reply: { readonly text?: string }) => {
+        if (options.reviewRefused) throw new SemanticInputRejectedError([])
+        return options.reviewed
+    })
     const clineMessages: Array<{ ts: number; say?: string; text?: string; interactionId?: string }> = [
         { ts: 100, say: "text", text: "earlier row" },
     ]
@@ -526,6 +536,38 @@ describe("dispatchInteraction", () => {
             expect.objectContaining({ draft: { text: "then continue", images: [], files: [] } }),
         )
         expect(host.resolve.mock.calls[0][1]).not.toHaveProperty("feedbackPresented")
+    })
+
+    it("stores only the structure in front of the claimed command so a later admission cannot run it again", async () => {
+        const kept: SemanticInputDocument = {
+            schemaVersion: 1,
+            parserVersion: "1.0.0",
+            catalogRevision: "3",
+            documentId: "doc-1",
+            rawText: "then continue",
+            nodes: [{ kind: "text", text: "then continue" }],
+            resources: [],
+        }
+        const host = controller(state(), { reviewed: { text: "then continue", document: kept, commit: vi.fn() } })
+
+        await dispatchInteraction(host.value as never, compactReply("then continue /compact"))
+
+        const stored = decodeTaskPayload<DialogDraftEnvelope>(host.put.mock.calls[0][0])
+        expect(stored.text).toBe("then continue")
+        expect(stored.semanticInput).toEqual(kept)
+        // The dialog's outcome carries the same kept structure the payload stores.
+        expect(host.resolve.mock.calls[0][1]).toMatchObject({ draft: { text: "then continue", semanticInput: kept } })
+    })
+
+    it("refuses a reply its input review refused before storing or answering anything", async () => {
+        const host = controller(state(), { reviewRefused: true })
+
+        const result = await dispatchInteraction(host.value as never, compactReply("then continue /compact"))
+
+        expect(result).toMatchObject({ accepted: false, result: "invalid_payload" })
+        expect(host.put).not.toHaveBeenCalled()
+        expect(host.respond).not.toHaveBeenCalled()
+        expect(host.resolve).not.toHaveBeenCalled()
     })
 
     it("shows nothing and runs no command when the runtime rejects the reply", async () => {

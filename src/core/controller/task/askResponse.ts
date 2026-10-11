@@ -1,7 +1,7 @@
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { Empty } from "@shared/proto/dline/common"
 import { AskResponseRequest, DispatchInteractionRequest } from "@shared/proto/dline/task"
-import { fromProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
+import { decodeAdmissibleSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Logger } from "@/shared/services/Logger"
 import { Controller } from ".."
 import { dispatchInteraction } from "./dispatchInteraction"
@@ -9,15 +9,16 @@ import { dispatchInteraction } from "./dispatchInteraction"
 /**
  * Decode the submitted structure, or report that this response is text only.
  *
- * An undecodable document is dropped and diagnosed: admission would reject it
- * anyway, and the user's text remains a valid response on its own.
+ * A document that was sent but cannot be admitted rejects the whole response.
+ * Falling back to the plain text would re-read entity syntax the user never
+ * selected, which is exactly what the structure exists to prevent; the
+ * rejection lets the composer restore the draft instead.
  */
 function decodeSemanticInput(request: AskResponseRequest): SemanticInputDocument | undefined {
     if (!request.semanticInput) return undefined
-    const decoded = fromProtoSemanticInputDocument(request.semanticInput)
+    const decoded = decodeAdmissibleSemanticInputDocument(request.semanticInput)
     if (decoded.ok) return decoded.document
-    Logger.warn(`askResponse: dropping undecodable semantic input (${decoded.diagnostic.code})`)
-    return undefined
+    throw new Error(`Response input was rejected: ${decoded.diagnostic.code}`)
 }
 
 function selectAction(responseType: string, actionIds: readonly string[]): string | undefined {

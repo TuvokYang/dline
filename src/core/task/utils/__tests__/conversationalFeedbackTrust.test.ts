@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { ClineStorageMessage, ClineUserToolResultContentBlock } from "@/shared/messages"
-import { parseSlashCommands } from "../../../slash-commands"
 import { isConversationalFeedbackResult } from "../conversationalFeedbackTrust"
-import { processUserContentTags } from "../processUserContentTags"
 
 const completionUse = {
     type: "tool_use",
@@ -51,34 +49,5 @@ describe("isConversationalFeedbackResult", () => {
     it("only consults the latest persisted assistant message", () => {
         const later = { ...completionUse, name: "read_file", function_id: "toolu_later", dline_tid: "dline_tid_later" }
         expect(isConversationalFeedbackResult(completionFeedback, [], history([completionUse], [later]))).toBe(false)
-    })
-
-    it("lets a trusted completion reply carry /cmd:newtask into explicit instructions", async () => {
-        expect(isConversationalFeedbackResult(completionFeedback, [], history([completionUse]))).toBe(true)
-        const declarations: unknown[] = []
-        const feedbackText = (completionFeedback.content as Array<{ text: string }>)[1].text
-
-        const processed = await processUserContentTags(feedbackText, async (userText) => {
-            const parsed = await parseSlashCommands(
-                userText,
-                {},
-                {},
-                "test-ulid",
-                undefined,
-                false,
-                undefined,
-                undefined,
-                undefined,
-                {
-                    trustedUserText: true,
-                },
-            )
-            declarations.push(...parsed.explicitInstructions)
-            return parsed.processedText
-        })
-
-        expect(processed).toContain('<explicit_instructions type="new_task">')
-        expect(processed).toContain("Start a follow-up task")
-        expect(declarations).toEqual([expect.objectContaining({ type: "new_task", source: "slash_command" })])
     })
 })

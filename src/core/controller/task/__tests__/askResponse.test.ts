@@ -1,5 +1,8 @@
 import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
+import { BUILTIN_INPUT_SEMANTICS } from "@shared/input-semantics/catalog"
+import { lexSemanticInput } from "@shared/input-semantics/lexer"
 import { AskResponseRequest } from "@shared/proto/dline/task"
+import { fromProtoSemanticInputDocument, toProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { describe, expect, it, vi } from "vitest"
 import { askResponse } from "../askResponse"
 
@@ -61,6 +64,38 @@ describe("askResponse legacy boundary", () => {
 
         expect(session.inputs.materialize).toHaveBeenCalledWith({ text: "interrupt", images: [], files: [] })
         expect(session.task.submitInput).toHaveBeenCalledTimes(1)
+    })
+
+    it("rejects a response whose document decodes but is structurally inadmissible", async () => {
+        vi.mocked(dispatchInteraction).mockClear()
+        const lexed = lexSemanticInput("@/a.ts hello", {
+            catalog: { revision: 1, descriptors: BUILTIN_INPUT_SEMANTICS },
+            documentId: "doc-dup",
+            activation: "auto",
+        })
+        // Repeating a node repeats its entity identity: the wire codec accepts
+        // it, only structural validation can refuse it.
+        const wire = toProtoSemanticInputDocument({ ...lexed, nodes: [...lexed.nodes, lexed.nodes[0]] })
+        expect(fromProtoSemanticInputDocument(wire).ok).toBe(true)
+
+        const idle = controller()
+        await expect(
+            askResponse(
+                idle.value as never,
+                AskResponseRequest.create({ responseType: "messageResponse", text: "@/a.ts hello", semanticInput: wire }),
+            ),
+        ).rejects.toThrow(/rejected/)
+        expect(idle.session.inputs.materialize).not.toHaveBeenCalled()
+        expect(idle.session.task.submitInput).not.toHaveBeenCalled()
+
+        const awaiting = controller({ interactionId: "interaction-1", turnId: "turn-1" })
+        await expect(
+            askResponse(
+                awaiting.value as never,
+                AskResponseRequest.create({ responseType: "messageResponse", text: "@/a.ts hello", semanticInput: wire }),
+            ),
+        ).rejects.toThrow(/rejected/)
+        expect(dispatchInteraction).not.toHaveBeenCalled()
     })
 
     it("stores nothing for a window that does not own the task", async () => {

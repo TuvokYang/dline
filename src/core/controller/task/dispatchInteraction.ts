@@ -1,10 +1,11 @@
 import type { InteractionOutcome } from "@core/task/interaction/InteractionProtocol"
 import type { MessageStateHandler } from "@core/task/message-state"
+import { type ReviewedReply, SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
 import { encodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
 import type { DialogDraftEnvelope, DialogSelectionEnvelope } from "@core/task/stores/payload/TaskPayloadEnvelopes"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { type DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
-import { fromProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
+import { decodeAdmissibleSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Logger } from "@shared/services/Logger"
 import type { Controller } from ".."
 import { describeDispatch } from "./describeInteractionDispatch"
@@ -27,7 +28,9 @@ function response(accepted: boolean, result: DispatchInteractionResult): Dispatc
 /**
  * Decode the structure submitted with a reply.
  *
- * `invalid` means a structure was sent but cannot be read. The reply is then
+ * `invalid` means a structure was sent but cannot be read or is structurally
+ * inadmissible (duplicate identities, forged resources, several lifecycle
+ * barriers). The reply is then
  * refused rather than downgraded to text: the structure is what held pasted
  * command text inert, and text alone would be re-read with every command live.
  */
@@ -37,9 +40,9 @@ function decodeDraftDocument(request: DispatchInteractionRequest): {
 } {
     const wire = request.draft?.semanticInput
     if (!wire) return {}
-    const decoded = fromProtoSemanticInputDocument(wire)
+    const decoded = decodeAdmissibleSemanticInputDocument(wire)
     if (decoded.ok) return { document: decoded.document }
-    Logger.warn(`dispatchInteraction: refusing a reply with undecodable semantic input (${decoded.diagnostic.code})`)
+    Logger.warn(`dispatchInteraction: refusing a reply with inadmissible semantic input (${decoded.diagnostic.code})`)
     return { invalid: true }
 }
 
@@ -162,15 +165,27 @@ export async function dispatchInteraction(
     // it acts instead of reaching the model as literal feedback. What remains is
     // the text the reply keeps once the command and its premessage are taken out;
     // the command itself only acts once the runtime accepted the reply below.
-    const reviewed = request.draft
-        ? await session.inputs.reviewReply({
-              text: request.draft.text,
-              images: [...request.draft.images],
-              files: [...request.draft.files],
-              ...(draftDocument === undefined ? {} : { semanticInput: draftDocument }),
-          })
-        : undefined
+    let reviewed: ReviewedReply | undefined
+    try {
+        reviewed = request.draft
+            ? await session.inputs.reviewReply({
+                  text: request.draft.text,
+                  images: [...request.draft.images],
+                  files: [...request.draft.files],
+                  ...(draftDocument === undefined ? {} : { semanticInput: draftDocument }),
+              })
+            : undefined
+    } catch (error) {
+        // A structured reply is read exactly as composed or not at all; nothing
+        // was written or answered yet, so the caller still owns the draft.
+        if (!(error instanceof SemanticInputRejectedError)) throw error
+        Logger.warn(`dispatchInteraction: reply to ${request.interactionId} was rejected: ${error.message}`)
+        return response(false, "invalid_payload")
+    }
     const draftText = request.draft ? (reviewed?.text ?? request.draft.text) : undefined
+    // Once a command was taken out, only the structure before it is the reply;
+    // storing the whole document would let a later admission act on it again.
+    const storedDocument = reviewed ? reviewed.document : draftDocument
     const draftRef = request.draft
         ? await session.payloads.put(
               encodeTaskPayload<DialogDraftEnvelope>({
@@ -178,7 +193,7 @@ export async function dispatchInteraction(
                   text: draftText ?? request.draft.text,
                   images: [...request.draft.images],
                   files: [...request.draft.files],
-                  ...(draftDocument === undefined ? {} : { semanticInput: draftDocument }),
+                  ...(storedDocument === undefined ? {} : { semanticInput: storedDocument }),
               }),
           )
         : undefined
@@ -289,7 +304,9 @@ export async function dispatchInteraction(
                   text: draftText ?? request.draft.text,
                   images: [...request.draft.images],
                   files: [...request.draft.files],
-                  ...(draftDocument === undefined ? {} : { semanticInput: draftDocument }),
+                  // The same structure the payload holds: a continuation that
+                  // re-admits the reply must not meet the claimed command again.
+                  ...(storedDocument === undefined ? {} : { semanticInput: storedDocument }),
               }
             : undefined,
         selection: request.selection ? { values: [...request.selection.values] } : undefined,

@@ -1,85 +1,53 @@
-import type { ApiProviderInfo } from "@core/api"
-import { type MentionPathAccessPolicy, parseMentions } from "@core/mentions"
-import { type McpPromptFetcher, parseSlashCommands, type SlashCommandCapabilityContext } from "@core/slash-commands"
-import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import type { ClineRulesToggles } from "@shared/cline-rules"
-import type { SemanticCommandInvocation } from "@shared/input-semantics/command-plan"
+import { type MentionResolutionEnvironment, resolveMention } from "@core/mentions"
+import { expandSlashCommand, type SlashCommandExpansionContext, slashCommandTargetOf } from "@core/slash-commands"
+import type { InputSemanticDescriptor } from "@shared/input-semantics/catalog"
 import type { MentionInputNode } from "@shared/input-semantics/document"
-import type { FileContextTracker } from "@/core/context/context-tracking/FileContextTracker"
-import type { UrlContentFetcher } from "@/services/browser/UrlContentFetcher"
 import type {
     SemanticCommandExpanderPort,
     SemanticCommandExpansion,
     SemanticMentionResolverPort,
 } from "./SemanticInputAdmissionService"
 
-export interface MentionResolutionContext {
-    readonly cwd: string
-    readonly urlContentFetcher: UrlContentFetcher
-    readonly fileContextTracker?: FileContextTracker
-    readonly workspaceManager?: WorkspaceRootManager
-    readonly pathAccessPolicy?: MentionPathAccessPolicy
-}
+export type MentionResolutionContext = MentionResolutionEnvironment
 
 /**
- * Resolves one already chosen mention.
+ * Resolves one already chosen mention from its typed identity.
  *
- * Only the node's own source text is passed to the resolver, so resolution can
- * never discover a second mention that the user did not confirm.
+ * The kind, reference and workspace come from the node; its source text is
+ * never read, so resolution cannot discover a second mention the user did not
+ * confirm, nor reinterpret the one they did.
  */
 export class TaskMentionResolver implements SemanticMentionResolverPort {
     constructor(private readonly context: () => MentionResolutionContext) {}
 
-    async resolve(node: MentionInputNode): Promise<string> {
-        const context = this.context()
-        return parseMentions(
-            node.sourceText,
-            context.cwd,
-            context.urlContentFetcher,
-            context.fileContextTracker,
-            context.workspaceManager,
-            context.pathAccessPolicy,
+    resolve(node: MentionInputNode): Promise<string> {
+        return resolveMention(
+            {
+                kind: node.mentionKind,
+                ref: node.canonicalRef,
+                ...(node.workspaceHint === undefined ? {} : { workspaceHint: node.workspaceHint }),
+            },
+            this.context(),
         )
     }
 }
 
-export interface CommandExpansionContext {
-    readonly localWorkflowToggles: ClineRulesToggles
-    readonly globalWorkflowToggles: ClineRulesToggles
-    /** Identity used to correlate the expansion with this task incarnation. */
-    readonly taskIncarnationId: string
-    readonly focusChainSettings?: { enabled: boolean }
-    readonly enableNativeToolCalls?: boolean
-    readonly providerInfo?: Readonly<ApiProviderInfo>
-    readonly mcpPromptFetcher?: McpPromptFetcher
-    readonly capabilityContext?: SlashCommandCapabilityContext
-}
+export type CommandExpansionContext = SlashCommandExpansionContext
 
 /**
- * Expands one already chosen command.
+ * Expands one already chosen command from the catalog descriptor it names.
  *
- * The command's own trigger text is the whole input, marked as trusted user text,
- * so expansion no longer depends on locating a user-content tag inside a larger
- * message. That coupling is what made a visible `/compact` fail to register its
- * authorization while the request was still sent as ordinary prose.
+ * The descriptor identity decides what runs; the trigger the user typed is not
+ * read again. A command whose capability has gone away since the catalog was
+ * published expands to nothing, and admission refuses the submission for it.
  */
 export class TaskCommandExpander implements SemanticCommandExpanderPort {
     constructor(private readonly context: () => CommandExpansionContext) {}
 
-    async expand(invocation: SemanticCommandInvocation): Promise<SemanticCommandExpansion> {
-        const context = this.context()
-        const parsed = await parseSlashCommands(
-            invocation.sourceText,
-            context.localWorkflowToggles,
-            context.globalWorkflowToggles,
-            context.taskIncarnationId,
-            context.focusChainSettings,
-            context.enableNativeToolCalls,
-            context.providerInfo,
-            context.mcpPromptFetcher,
-            context.capabilityContext,
-            { trustedUserText: true },
-        )
-        return { text: parsed.processedText, explicitInstructions: parsed.explicitInstructions }
+    async expand(descriptor: InputSemanticDescriptor): Promise<SemanticCommandExpansion | undefined> {
+        const target = slashCommandTargetOf(descriptor)
+        if (!target) return undefined
+        const expansion = await expandSlashCommand(target, this.context())
+        return expansion && { text: expansion.text, explicitInstructions: expansion.explicitInstructions }
     }
 }

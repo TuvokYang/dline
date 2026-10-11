@@ -45,16 +45,29 @@ const admitting: TaskInputAdmissionPort = {
         admitted: {
             document,
             admittedText: "<compact-instructions> please",
+            parts: [{ kind: "text", text: "<compact-instructions> please" }],
             authorizedTools: ["summarize_task"],
             explicitInstructions: [{ type: "summarize_task", source: "manual_compact_command" }],
         },
     }),
 }
 
+/** "/explain then /compact keep the audit", with the barrier as its own node. */
+const barrierDocument: SemanticInputDocument = {
+    ...document,
+    rawText: "/explain then /compact keep the audit",
+    nodes: [
+        { kind: "text", text: "/explain then " },
+        { kind: "slash_command", entityId: "compact-1", sourceText: "/compact" } as never,
+        { kind: "text", text: " keep the audit" },
+    ],
+}
+
 const compactBarrier: AdmittedLifecycleBarrier = {
     commandId: "command.compact",
+    entityId: "compact-1",
     before: "<explain-instructions> then",
-    sourceBefore: "/explain then",
+    partsBefore: [{ kind: "text", text: "<explain-instructions> then" }],
     premessage: "keep the audit",
     instructionsBefore: [{ type: "skill", source: "skill_injection" }],
     toolsBefore: ["use_skill"],
@@ -64,8 +77,9 @@ const admittingBarrier: TaskInputAdmissionPort = {
     admit: async () => ({
         ok: true,
         admitted: {
-            document,
+            document: barrierDocument,
             admittedText: "<explain-instructions> then <compact-instructions> keep the audit",
+            parts: [{ kind: "text", text: "<explain-instructions> then <compact-instructions> keep the audit" }],
             authorizedTools: ["use_skill", "summarize_task"],
             explicitInstructions: [
                 { type: "skill", source: "skill_injection" },
@@ -100,6 +114,7 @@ const admittingPlainText: TaskInputAdmissionPort = {
         admitted: {
             document: { ...document, rawText: input.text ?? "", nodes: [{ kind: "text", text: input.text ?? "" }] },
             admittedText: input.text ?? "",
+            parts: input.text ? [{ kind: "text", text: input.text }] : [],
             authorizedTools: [],
             explicitInstructions: [],
         },
@@ -158,6 +173,83 @@ describe("TaskInputMaterializer", () => {
         expect(barriers.requested).toEqual([])
     })
 
+    it("persists ordered parts only when the submission carries a resource", async () => {
+        const image = {
+            kind: "resource" as const,
+            entityId: "img-1",
+            nodeKind: "image" as const,
+            ref: {
+                resourceId: "00000000-0000-4000-8000-000000000001",
+                expectedContentHash: "a".repeat(64),
+                mediaType: "image/png",
+                byteLength: 4,
+                owner: { kind: "task" as const, taskId: "task-1" },
+                generation: 1,
+            },
+            displayName: "shot.png",
+        }
+        const parts = [{ kind: "text" as const, text: "look " }, image, { kind: "text" as const, text: " here" }]
+        const withResource: TaskInputAdmissionPort = {
+            admit: async () => ({
+                ok: true,
+                admitted: { document, admittedText: "look [image] here", parts, authorizedTools: [], explicitInstructions: [] },
+            }),
+        }
+        const store = recordingPayloads()
+
+        await new TaskInputMaterializer(store.payloads, identity, withResource).materialize({ text: "look here" })
+        expect(store.lastEnvelope().admittedParts).toEqual(parts)
+
+        await new TaskInputMaterializer(store.payloads, identity, admittingPlainText).materialize({ text: "hello" })
+        expect(store.lastEnvelope().admittedParts).toBeUndefined()
+
+        // A caller-supplied projection is text only, so it may not silently drop the image.
+        const override = new TaskInputMaterializer(store.payloads, identity, withResource).materialize({
+            text: "look here",
+            admittedText: "OVERRIDE",
+        })
+        await expect(override).rejects.toBeInstanceOf(SemanticInputRejectedError)
+        await expect(override).rejects.toMatchObject({ diagnostics: [{ code: "semantic_input_resource_invalid" }] })
+    })
+
+    it("keeps the parts before an owned barrier, resources included", async () => {
+        const image = {
+            kind: "resource" as const,
+            entityId: "img-1",
+            nodeKind: "image" as const,
+            ref: {
+                resourceId: "00000000-0000-4000-8000-000000000001",
+                expectedContentHash: "a".repeat(64),
+                mediaType: "image/png",
+                byteLength: 4,
+                owner: { kind: "task" as const, taskId: "task-1" },
+                generation: 1,
+            },
+            displayName: "shot.png",
+        }
+        const partsBefore = [{ kind: "text" as const, text: "see " }, image]
+        const barrierWithImage: TaskInputAdmissionPort = {
+            admit: async () => ({
+                ok: true,
+                admitted: {
+                    document,
+                    admittedText: "see [image] <compact-instructions>",
+                    parts: [...partsBefore, { kind: "text" as const, text: " <compact-instructions>" }],
+                    authorizedTools: ["summarize_task"],
+                    explicitInstructions: [],
+                    barrier: { ...compactBarrier, before: "see [image]", partsBefore, instructionsBefore: [], toolsBefore: [] },
+                },
+            }),
+        }
+        const store = recordingPayloads()
+        const materializer = new TaskInputMaterializer(store.payloads, identity, barrierWithImage, recordingBarriers(true).port)
+
+        await materializer.materialize({ text: "see /compact" })
+
+        expect(store.lastEnvelope().admittedParts).toEqual(partsBefore)
+        expect(store.lastEnvelope().lifecycle?.commandId).toBe("command.compact")
+    })
+
     it("keeps an unowned barrier as ordinary content", async () => {
         const store = recordingPayloads()
         const materializer = new TaskInputMaterializer(store.payloads, identity, admittingBarrier, recordingBarriers(false).port)
@@ -185,6 +277,9 @@ describe("TaskInputMaterializer", () => {
 
             // A reply grants no command authority, so the typed form is kept, not its expansion.
             expect(reviewed?.text).toBe("/explain then")
+            // The stored structure stops before the command, so admitting it again cannot repeat it.
+            expect(reviewed?.document.nodes).toEqual([{ kind: "text", text: "/explain then" }])
+            expect(reviewed?.document.rawText).toBe("/explain then")
             expect(barriers.requested).toEqual([])
             reviewed?.commit()
             expect(barriers.requested).toEqual([{ commandId: "command.compact", premessage: "keep the audit" }])
@@ -207,6 +302,47 @@ describe("TaskInputMaterializer", () => {
 
             expect(await materializer.reviewReply({ text: "/compact" })).toBeUndefined()
             expect(barriers.requested).toEqual([])
+        })
+
+        // A composed reply is read exactly as sent; degrading it to literal text
+        // would send something the user never saw in the composer.
+        it("refuses a structured reply that admission refused", async () => {
+            const barriers = recordingBarriers(true)
+            const materializer = new TaskInputMaterializer(recordingPayloads().payloads, identity, refusing, barriers.port)
+
+            await expect(materializer.reviewReply({ text: "/compact please", semanticInput: document })).rejects.toBeInstanceOf(
+                SemanticInputRejectedError,
+            )
+            expect(barriers.requested).toEqual([])
+        })
+
+        it("refuses a structured reply carrying a resource no reply renders yet", async () => {
+            let admitted = 0
+            const counting: TaskInputAdmissionPort = {
+                admit: async (input) => {
+                    admitted++
+                    return admittingBarrier.admit(input)
+                },
+            }
+            const materializer = new TaskInputMaterializer(
+                recordingPayloads().payloads,
+                identity,
+                counting,
+                recordingBarriers(true).port,
+            )
+            const withFile: SemanticInputDocument = {
+                ...document,
+                rawText: "see input.txt",
+                nodes: [
+                    { kind: "text", text: "see " },
+                    { kind: "file", entityId: "f-1", resourceId: "r-1", fileOrigin: "pasted_text", displayName: "input.txt" },
+                ],
+            }
+
+            const reviewed = materializer.reviewReply({ text: "see input.txt", semanticInput: withFile })
+
+            await expect(reviewed).rejects.toMatchObject({ diagnostics: [{ code: "semantic_input_resource_invalid" }] })
+            expect(admitted).toBe(0)
         })
 
         it("reviews nothing in an assembly without a barrier owner", async () => {

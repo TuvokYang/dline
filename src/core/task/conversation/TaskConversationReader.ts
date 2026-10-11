@@ -1,3 +1,4 @@
+import { openTaskInputResources } from "@core/input-semantics/TaskInputResourceStore"
 import { getSavedApiConversationHistory } from "@core/storage/disk"
 import { resolveInstanceLayout } from "@core/storage/instance"
 import type { ClineStorageMessage } from "@shared/messages/content"
@@ -13,5 +14,5 @@ import { readJournalConversation } from "./JournalConversationReader"
  */
 export async function readTaskConversation(taskId: string): Promise<ClineStorageMessage[]> {
     const layout = await resolveInstanceLayout({ taskId })
-    return (await readJournalConversation(layout)) ?? getSavedApiConversationHistory(taskId)
+    return (await readJournalConversation(layout, openTaskInputResources(taskId))) ?? getSavedApiConversationHistory(taskId)
 }

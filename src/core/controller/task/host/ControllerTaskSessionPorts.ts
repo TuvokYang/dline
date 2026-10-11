@@ -62,6 +62,7 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
         this.semanticCatalog = {
             current: () => semanticCatalog.current(),
             discovered: () => semanticCatalog.discovered(),
+            conflicts: () => semanticCatalog.conflicts(),
         }
         this.successor = {
             start: async (sourceTaskId, handoff) => {

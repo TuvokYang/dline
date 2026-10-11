@@ -49,16 +49,19 @@ function expander() {
 describe("TaskCommandExpander", () => {
     it("injects the skill instructions for a command the document already named", async () => {
         const expansion = await expander().expand({
-            entityId: "doc-1#0",
-            commandId: `command.skill.${SKILL_NAME}`,
-            canonicalName: SKILL_NAME,
-            namespace: "skill",
-            sourceText: `/skills:${SKILL_NAME}`,
+            id: `command.skill.${SKILL_NAME}`,
+            kind: "command",
+            trigger: `/skills:${SKILL_NAME}`,
+            payload: "text",
+            composition: "combinable",
+            lifecycle: "turn",
+            dynamic: true,
+            capability: { namespace: "skill", name: SKILL_NAME },
         })
 
-        expect(expansion.text).toContain(SKILL_MARKER)
-        expect(expansion.text).not.toContain(`/skills:${SKILL_NAME}`)
-        expect(expansion.explicitInstructions).toEqual([
+        expect(expansion?.text).toContain(SKILL_MARKER)
+        expect(expansion?.text).not.toContain(`/skills:${SKILL_NAME}`)
+        expect(expansion?.explicitInstructions).toEqual([
             { type: "skill", source: "skill_injection", metadata: { name: SKILL_NAME } },
         ])
     })

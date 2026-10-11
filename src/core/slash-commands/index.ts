@@ -1,6 +1,8 @@
 import type { ApiProviderInfo } from "@core/api"
 import type { ExplicitInstructionDeclaration } from "@core/task/explicit-instructions/types"
 import { ClineRulesToggles } from "@shared/cline-rules"
+import type { InputSemanticDescriptor } from "@shared/input-semantics/catalog"
+import type { CapabilityCommandRef } from "@shared/input-semantics/command-namespace"
 import { McpPromptResponse } from "@shared/mcp"
 import type { GlobalInstructionsFile } from "@shared/remote-config/schema"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
@@ -41,52 +43,49 @@ type RemoteWorkflow = {
 
 type Workflow = FileBasedWorkflow | RemoteWorkflow
 
-const USER_CONTENT_TAG_PATTERNS = [
-    /<task>([\s\S]*?)<\/task>/i,
-    /<feedback>([\s\S]*?)<\/feedback>/i,
-    /<answer>([\s\S]*?)<\/answer>/i,
-    /<user_message>([\s\S]*?)<\/user_message>/i,
-]
-const SLASH_COMMAND_IN_TEXT_REGEX = /(^|\s)\/([a-zA-Z0-9_.:@-]+)(?=\s|$)/
-
-function parsePrefixedCommand(commandName: string): { prefix: string | null; name: string } {
-    const colonIndex = commandName.indexOf(":")
-    if (colonIndex === -1) {
-        return { prefix: null, name: commandName }
-    }
-    return {
-        prefix: commandName.substring(0, colonIndex),
-        name: commandName.substring(colonIndex + 1),
-    }
-}
+/** Built-in commands Core expands itself, by the name their instructions are keyed under. */
+export type BuiltinCommandName = "newtask" | "smol" | "compact" | "newrule" | "reportbug" | "deep-planning" | "explain-changes"
 
 /**
- * Detect whether the first slash command in user-authored tagged content explicitly requests manual compaction.
+ * The built-in command each built-in descriptor identity expands to.
  *
- * @param text Text block that may contain one user-content tag.
- * @returns True for /compact, /smol, /cmd:compact, or /cmd:smol when it is the first command parsed.
+ * Keyed by the stable descriptor identity, never by what the user typed, so an
+ * alias such as `/smol` and the canonical `/compact` expand identically.
  */
-export function hasManualCompactionCommand(text: string): boolean {
-    for (const pattern of USER_CONTENT_TAG_PATTERNS) {
-        const tagMatch = new RegExp(pattern.source, pattern.flags).exec(text)
-        if (!tagMatch) continue
-
-        const slashMatch = SLASH_COMMAND_IN_TEXT_REGEX.exec(tagMatch[1])
-        if (!slashMatch) continue
-
-        const commandName = slashMatch[2]
-        const { prefix, name } = parsePrefixedCommand(commandName)
-        const builtInName = prefix === "cmd" ? name : prefix === null ? commandName : undefined
-        return builtInName === "compact" || builtInName === "smol"
-    }
-
-    return false
+const BUILTIN_COMMAND_BY_DESCRIPTOR: Readonly<Record<string, BuiltinCommandName>> = {
+    "command.compact": "compact",
+    "command.new_task": "newtask",
+    "command.new_rule": "newrule",
+    "command.report_bug": "reportbug",
+    "command.deep_planning": "deep-planning",
+    "command.explain_changes": "explain-changes",
 }
 
-export interface SlashCommandParseResult {
-    processedText: string
-    needsClinerulesFileCheck: boolean
-    explicitInstructions: readonly ExplicitInstructionDeclaration[]
+/** What a command expands to, named by identity rather than by the text that triggered it. */
+export type SlashCommandTarget =
+    | { readonly kind: "builtin"; readonly name: BuiltinCommandName }
+    | { readonly kind: "capability"; readonly capability: CapabilityCommandRef }
+
+/**
+ * The expansion target a catalog descriptor names, when Core can expand it.
+ *
+ * Discovered descriptors carry their capability reference; built-in ones are
+ * matched by identity. A descriptor with neither is not a command Core knows
+ * how to expand.
+ */
+export function slashCommandTargetOf(descriptor: InputSemanticDescriptor): SlashCommandTarget | undefined {
+    if (descriptor.kind !== "command") return undefined
+    if (descriptor.capability) return { kind: "capability", capability: descriptor.capability }
+    const name = BUILTIN_COMMAND_BY_DESCRIPTOR[descriptor.id]
+    return name ? { kind: "builtin", name } : undefined
+}
+
+export interface SlashCommandExpansion {
+    /** Instructions that replace the command in the provider projection. */
+    readonly text: string
+    readonly needsClinerulesFileCheck: boolean
+    /** One-shot tool authority the command grants for its turn. */
+    readonly explicitInstructions: readonly ExplicitInstructionDeclaration[]
 }
 
 const BUILTIN_EXPLICIT_INSTRUCTIONS: Readonly<Record<string, ExplicitInstructionDeclaration | undefined>> = {
@@ -110,329 +109,166 @@ export interface SlashCommandCapabilityContext {
     remoteWorkflows: GlobalInstructionsFile[]
 }
 
-export interface SlashCommandParseOptions {
-    /** The caller has already isolated text from a trusted user-content tag. */
-    trustedUserText?: boolean
+export interface SlashCommandExpansionContext {
+    readonly localWorkflowToggles: ClineRulesToggles
+    readonly globalWorkflowToggles: ClineRulesToggles
+    /** Identity used to correlate the expansion with this task incarnation in telemetry. */
+    readonly taskIncarnationId: string
+    readonly focusChainSettings?: { enabled: boolean }
+    readonly enableNativeToolCalls?: boolean
+    readonly providerInfo?: Readonly<ApiProviderInfo>
+    readonly mcpPromptFetcher?: McpPromptFetcher
+    readonly capabilityContext?: SlashCommandCapabilityContext
 }
 
 /**
- * Processes text for slash commands and transforms them with appropriate instructions
- * This is called after parseMentions() to process any slash commands in the user's message
+ * Expand one command the user already chose.
+ *
+ * The command is named by its catalog identity, so nothing here reads user
+ * text: a command cannot be discovered, renamed or widened by what surrounds
+ * it. Returns `undefined` when the capability behind the command is no longer
+ * available - disabled, removed, or unreadable - so admission can refuse the
+ * submission instead of sending the trigger as if it had run.
  */
-export async function parseSlashCommands(
-    text: string,
-    localWorkflowToggles: ClineRulesToggles,
-    globalWorkflowToggles: ClineRulesToggles,
-    ulid: string,
-    focusChainSettings?: { enabled: boolean },
-    enableNativeToolCalls?: boolean,
-    providerInfo?: Readonly<ApiProviderInfo>,
-    mcpPromptFetcher?: McpPromptFetcher,
-    capabilityContext?: SlashCommandCapabilityContext,
-    options?: SlashCommandParseOptions,
-): Promise<SlashCommandParseResult> {
-    const SUPPORTED_DEFAULT_COMMANDS = ["newtask", "smol", "compact", "newrule", "reportbug", "deep-planning", "explain-changes"]
+export async function expandSlashCommand(
+    target: SlashCommandTarget,
+    context: SlashCommandExpansionContext,
+): Promise<SlashCommandExpansion | undefined> {
+    if (target.kind === "builtin") return expandBuiltinCommand(target.name, context)
+    const capability = target.capability
+    switch (capability.namespace) {
+        case "mcp":
+            return expandMcpPrompt(capability.server, capability.prompt, context)
+        case "skill":
+            return expandSkill(capability.name, context)
+        case "workflow":
+            return expandWorkflow(capability.name, context)
+    }
+}
+
+function expandBuiltinCommand(name: BuiltinCommandName, context: SlashCommandExpansionContext): SlashCommandExpansion {
     const promptProfile = resolvePromptProfile({
-        modelId: providerInfo?.model.id,
-        contextWindow: providerInfo?.model.info.capabilities?.contextWindow,
+        modelId: context.providerInfo?.model.id,
+        contextWindow: context.providerInfo?.model.info.capabilities?.contextWindow,
     })
-    const commandFocusChainSettings = promptProfile === "standard" ? focusChainSettings : undefined
-
-    const commandReplacements: Record<string, string> = {
-        newtask: newTaskToolResponse(),
-        smol: "",
-        compact: "",
-        newrule: newRuleToolResponse(),
-        reportbug: reportBugToolResponse(),
-        "deep-planning": deepPlanningToolResponse(promptProfile, commandFocusChainSettings, providerInfo, enableNativeToolCalls),
-        "explain-changes": explainChangesToolResponse(),
+    const commandFocusChainSettings = promptProfile === "standard" ? context.focusChainSettings : undefined
+    const replacements: Readonly<Record<BuiltinCommandName, () => string>> = {
+        newtask: newTaskToolResponse,
+        smol: () => "",
+        compact: () => "",
+        newrule: newRuleToolResponse,
+        reportbug: reportBugToolResponse,
+        "deep-planning": () =>
+            deepPlanningToolResponse(
+                promptProfile,
+                commandFocusChainSettings,
+                context.providerInfo,
+                context.enableNativeToolCalls,
+            ),
+        "explain-changes": explainChangesToolResponse,
     }
-
-    const tagPatterns = options?.trustedUserText
-        ? [{ regex: /^([\s\S]*)$/ }]
-        : USER_CONTENT_TAG_PATTERNS.map((regex) => ({ regex }))
-
-    // Regex to find slash commands anywhere in text (not just at the beginning).
-    // This mirrors how @ mentions work - they can appear anywhere in a message.
-    //
-    // Pattern breakdown: /(^|\s)\/([a-zA-Z0-9_.:@-]+)(?=\s|$)/
-    //   - (^|\s)  : Must be at start of string OR preceded by whitespace
-    //   - \/      : The literal slash character
-    //   - ([a-zA-Z0-9_.:@-]+) : The command name (letters, numbers, underscore, dot, hyphen, colon, @)
-    //   - (?=\s|$): Must be followed by whitespace or end of string (lookahead)
-    //
-    // This safely avoids false matches in:
-    //   - URLs: "http://example.com/newtask" - slash not preceded by whitespace
-    //   - File paths: "some/path/newtask" - same reason
-    //   - Partial words: "foo/bar" - same reason
-    //
-    // Only ONE slash command per message is processed (first match found).
-    // Note: Colons are allowed to support prefix namespacing (cmd:, skills:, workflow:, mcp:)
-    const slashCommandInTextRegex = SLASH_COMMAND_IN_TEXT_REGEX
-
-    // Helper function to calculate positions and remove slash command from text
-    const removeSlashCommand = (
-        fullText: string,
-        _tagContent: string, // kept for clarity about the context
-        contentStartIndex: number,
-        slashMatch: RegExpExecArray,
-    ): string => {
-        // slashMatch.index is where the match starts (could include whitespace before /)
-        // slashMatch[1] is the whitespace or empty string before the slash
-        // slashMatch[2] is the command name
-        const slashPositionInContent = slashMatch.index + slashMatch[1].length
-        const slashPositionInFullText = contentStartIndex + slashPositionInContent
-        const commandText = `/${slashMatch[2]}`
-        const commandEndPosition = slashPositionInFullText + commandText.length
-
-        return fullText.substring(0, slashPositionInFullText) + fullText.substring(commandEndPosition)
+    telemetryService.captureSlashCommandUsed(context.taskIncarnationId, name, "builtin")
+    const declaration = BUILTIN_EXPLICIT_INSTRUCTIONS[name]
+    return {
+        text: replacements[name](),
+        needsClinerulesFileCheck: name === "newrule",
+        explicitInstructions: declaration ? [declaration] : [],
     }
+}
 
-    // if we find a valid match, we will return inside that block
-    for (const { regex } of tagPatterns) {
-        const regexObj = new RegExp(regex.source, regex.flags)
-        const tagMatch = regexObj.exec(text)
-
-        if (tagMatch) {
-            const tagContent = tagMatch[1]
-            const tagStartIndex = tagMatch.index
-            const contentStartIndex = text.indexOf(tagContent, tagStartIndex)
-
-            // Find slash command within the tag content
-            const slashMatch = slashCommandInTextRegex.exec(tagContent)
-
-            if (!slashMatch) {
-                continue
-            }
-
-            // slashMatch[1] is the whitespace or empty string before the slash
-            // slashMatch[2] is the command name (may include prefix like "cmd:newtask")
-            const commandName = slashMatch[2] // casing matters
-            const { prefix, name } = parsePrefixedCommand(commandName)
-
-            // ── Route by prefix ──────────────────────────────────────────────
-            if (prefix === "cmd" || (prefix === null && SUPPORTED_DEFAULT_COMMANDS.includes(commandName))) {
-                // Prefixed format: /cmd:newtask
-                // Legacy format:  /newtask (backward compatibility)
-                const cmdName = prefix === "cmd" ? name : commandName
-                if (SUPPORTED_DEFAULT_COMMANDS.includes(cmdName)) {
-                    const textWithoutSlashCommand = removeSlashCommand(text, tagContent, contentStartIndex, slashMatch)
-                    const processedText = commandReplacements[cmdName] + textWithoutSlashCommand
-
-                    telemetryService.captureSlashCommandUsed(ulid, cmdName, "builtin")
-
-                    return {
-                        processedText,
-                        needsClinerulesFileCheck: cmdName === "newrule",
-                        explicitInstructions: BUILTIN_EXPLICIT_INSTRUCTIONS[cmdName]
-                            ? [BUILTIN_EXPLICIT_INSTRUCTIONS[cmdName]]
-                            : [],
-                    }
-                }
-            }
-
-            // Check for MCP prompt commands (format: mcp:<server>:<prompt>)
-            if (prefix === "mcp" && mcpPromptFetcher) {
-                // name part may contain more colons: server:prompt
-                const mcpParts = name.split(":")
-                if (mcpParts.length >= 2) {
-                    const serverName = mcpParts[0]
-                    const promptName = mcpParts.slice(1).join(":")
-                    if (capabilityContext?.capabilityToggles.mcpServers[serverName] !== true) {
-                        return { processedText: text, needsClinerulesFileCheck: false, explicitInstructions: [] }
-                    }
-
-                    try {
-                        const promptResponse = await mcpPromptFetcher(serverName, promptName)
-                        if (promptResponse) {
-                            const promptContent = formatMcpPromptResponse(promptResponse)
-
-                            const textWithoutSlashCommand = removeSlashCommand(text, tagContent, contentStartIndex, slashMatch)
-                            const processedText =
-                                `<mcp_prompt server="${serverName}" prompt="${promptName}">\n${promptContent}\n</mcp_prompt>\n` +
-                                textWithoutSlashCommand
-
-                            telemetryService.captureSlashCommandUsed(ulid, commandName, "mcp_prompt")
-
-                            return { processedText, needsClinerulesFileCheck: false, explicitInstructions: [] }
-                        }
-                        Logger.debug(`MCP prompt not found: ${commandName} (server: ${serverName}, prompt: ${promptName})`)
-                    } catch (error) {
-                        Logger.error(`Error fetching MCP prompt ${commandName}: ${error}`)
-                    }
-                }
-            }
-
-            // ── Skill matching (prefix: skills:) ─────────────────────────────
-            // Injects Skill instructions directly without creating a load_skill tool call.
-            if (prefix === "skills") {
-                const skillName = name
-                if (skillName) {
-                    const { discoverAvailableSkills, getSkillContent } = await import(
-                        "@core/context/instructions/user-instructions/skills"
-                    )
-                    const stateManager = capabilityContext ? undefined : StateManager.get()
-                    const remoteSkillEntries =
-                        capabilityContext?.remoteSkills ?? stateManager?.getRemoteConfigSettings().remoteGlobalSkills ?? []
-                    const availableSkills = await discoverAvailableSkills(capabilityContext?.cwd ?? "", {
-                        remoteSkillEntries,
-                        globalSkillsToggles:
-                            capabilityContext?.capabilityToggles.globalSkillsToggles ??
-                            stateManager?.getGlobalSettingsKey("globalSkillsToggles") ??
-                            {},
-                        localSkillsToggles:
-                            capabilityContext?.capabilityToggles.localSkillsToggles ??
-                            (stateManager ? mergeScopedToggles(readScopedToggles(stateManager, "skills")) : {}),
-                        remoteSkillsToggles:
-                            capabilityContext?.capabilityToggles.remoteSkillsToggles ??
-                            stateManager?.getGlobalStateKey("remoteSkillsToggles") ??
-                            {},
-                    })
-
-                    const skillContent = await getSkillContent(skillName, availableSkills, remoteSkillEntries)
-                    if (skillContent) {
-                        const textWithoutSlashCommand = removeSlashCommand(text, tagContent, contentStartIndex, slashMatch)
-                        const processedText =
-                            `<explicit_instructions type="skill" name="${skillName}" desc="${SLASH_TYPE_DESC.skill}">\n${skillContent.instructions}\n</explicit_instructions>\n` +
-                            textWithoutSlashCommand
-
-                        telemetryService.captureSlashCommandUsed(ulid, commandName, "skill")
-
-                        return {
-                            processedText,
-                            needsClinerulesFileCheck: false,
-                            explicitInstructions: [{ type: "skill", source: "skill_injection", metadata: { name: skillName } }],
-                        }
-                    }
-                }
-            }
-
-            // ── Workflow matching (prefix: workflow: or legacy bare name) ────
-            // Build workflow list (same as before but fileName uses pathToCommandName for strip .md)
-            const globalWorkflows: Workflow[] = Object.entries(globalWorkflowToggles)
-                .filter(([_, enabled]) => enabled)
-                .map(([filePath, _]) => ({
-                    fullPath: filePath,
-                    fileName: pathToCommandName(filePath),
-                    isRemote: false,
-                }))
-
-            const localWorkflows: Workflow[] = Object.entries(localWorkflowToggles)
-                .filter(([_, enabled]) => enabled)
-                .map(([filePath, _]) => ({
-                    fullPath: filePath,
-                    fileName: pathToCommandName(filePath),
-                    isRemote: false,
-                }))
-
-            const stateManager = capabilityContext ? undefined : StateManager.get()
-            const remoteWorkflows =
-                capabilityContext?.remoteWorkflows ?? stateManager?.getRemoteConfigSettings().remoteGlobalWorkflows ?? []
-            const remoteWorkflowToggles =
-                capabilityContext?.capabilityToggles.remoteWorkflowToggles ??
-                stateManager?.getGlobalStateKey("remoteWorkflowToggles") ??
-                {}
-
-            const enabledRemoteWorkflows: Workflow[] = remoteWorkflows
-                .filter((workflow) => {
-                    return workflow.alwaysEnabled || remoteWorkflowToggles[workflow.name] !== false
-                })
-                .map((workflow) => ({
-                    fullPath: "",
-                    fileName: workflow.name,
-                    isRemote: true,
-                    contents: workflow.contents,
-                }))
-
-            const enabledWorkflows: Workflow[] = [...localWorkflows, ...globalWorkflows, ...enabledRemoteWorkflows]
-
-            // Match by name: prefixed "/workflow:xxx" or legacy "/xxx"
-            const searchName = prefix === "workflow" ? name : commandName
-            const matchingWorkflow = enabledWorkflows.find((workflow) => workflow.fileName === searchName)
-
-            if (matchingWorkflow) {
-                try {
-                    let workflowContent: string
-                    if (matchingWorkflow.isRemote) {
-                        workflowContent = matchingWorkflow.contents.trim()
-                    } else {
-                        workflowContent = (await fs.readFile(matchingWorkflow.fullPath, "utf8")).trim()
-                    }
-
-                    const textWithoutSlashCommand = removeSlashCommand(text, tagContent, contentStartIndex, slashMatch)
-                    const processedText =
-                        `<explicit_instructions type="workflow" name="${matchingWorkflow.fileName}" desc="${SLASH_TYPE_DESC.workflow}">\n${workflowContent}\n</explicit_instructions>\n` +
-                        textWithoutSlashCommand
-
-                    telemetryService.captureSlashCommandUsed(ulid, commandName, "workflow")
-
-                    return {
-                        processedText,
-                        needsClinerulesFileCheck: false,
-                        explicitInstructions: [
-                            { type: "workflow", source: "workflow_injection", metadata: { name: matchingWorkflow.fileName } },
-                        ],
-                    }
-                } catch (error) {
-                    Logger.error(`Error reading workflow file ${matchingWorkflow.fullPath}: ${error}`)
-                }
-            }
-
-            // ── Legacy fallback: bare command name matching workflow (with .md still on file name) ──
-            // This handles old-style commands like /git-branch-analysis.md
-            if (prefix === null) {
-                const legacyWorkflows: Workflow[] = Object.entries(globalWorkflowToggles)
-                    .filter(([_, enabled]) => enabled)
-                    .map(([filePath, _]) => ({
-                        fullPath: filePath,
-                        fileName: filePath.replace(/^.*[/\\]/, ""), // keep .md for legacy
-                        isRemote: false,
-                    }))
-                const legacyLocalWorkflows: Workflow[] = Object.entries(localWorkflowToggles)
-                    .filter(([_, enabled]) => enabled)
-                    .map(([filePath, _]) => ({
-                        fullPath: filePath,
-                        fileName: filePath.replace(/^.*[/\\]/, ""),
-                        isRemote: false,
-                    }))
-                const legacyEnabledWorkflows = [...legacyLocalWorkflows, ...legacyWorkflows, ...enabledRemoteWorkflows]
-                const legacyMatch = legacyEnabledWorkflows.find((wf) => wf.fileName === commandName)
-                if (legacyMatch) {
-                    try {
-                        let workflowContent: string
-                        if (legacyMatch.isRemote) {
-                            workflowContent = legacyMatch.contents.trim()
-                        } else {
-                            workflowContent = (await fs.readFile(legacyMatch.fullPath, "utf8")).trim()
-                        }
-                        const textWithoutSlashCommand = removeSlashCommand(text, tagContent, contentStartIndex, slashMatch)
-                        const processedText =
-                            `<explicit_instructions type="workflow" name="${pathToCommandName(legacyMatch.fileName)}" desc="${SLASH_TYPE_DESC.workflow}">\n${workflowContent}\n</explicit_instructions>\n` +
-                            textWithoutSlashCommand
-
-                        telemetryService.captureSlashCommandUsed(ulid, commandName, "workflow")
-
-                        return {
-                            processedText,
-                            needsClinerulesFileCheck: false,
-                            explicitInstructions: [
-                                {
-                                    type: "workflow",
-                                    source: "workflow_injection",
-                                    metadata: { name: pathToCommandName(legacyMatch.fileName) },
-                                },
-                            ],
-                        }
-                    } catch (error) {
-                        Logger.error(`Error reading workflow file ${legacyMatch.fullPath}: ${error}`)
-                    }
-                }
-            }
+async function expandMcpPrompt(
+    serverName: string,
+    promptName: string,
+    context: SlashCommandExpansionContext,
+): Promise<SlashCommandExpansion | undefined> {
+    const commandName = `mcp:${serverName}:${promptName}`
+    if (!context.mcpPromptFetcher) return undefined
+    if (context.capabilityContext?.capabilityToggles.mcpServers[serverName] !== true) return undefined
+    try {
+        const promptResponse = await context.mcpPromptFetcher(serverName, promptName)
+        if (!promptResponse) {
+            Logger.debug(`MCP prompt not found: ${commandName}`)
+            return undefined
         }
+        telemetryService.captureSlashCommandUsed(context.taskIncarnationId, commandName, "mcp_prompt")
+        return {
+            text: `<mcp_prompt server="${serverName}" prompt="${promptName}">\n${formatMcpPromptResponse(promptResponse)}\n</mcp_prompt>\n`,
+            needsClinerulesFileCheck: false,
+            explicitInstructions: [],
+        }
+    } catch (error) {
+        Logger.error(`Error fetching MCP prompt ${commandName}: ${error}`)
+        return undefined
     }
+}
 
-    // if no supported commands are found, return the original text
-    return { processedText: text, needsClinerulesFileCheck: false, explicitInstructions: [] }
+async function expandSkill(skillName: string, context: SlashCommandExpansionContext): Promise<SlashCommandExpansion | undefined> {
+    const { discoverAvailableSkills, getSkillContent } = await import("@core/context/instructions/user-instructions/skills")
+    const capabilityContext = context.capabilityContext
+    const stateManager = capabilityContext ? undefined : StateManager.get()
+    const remoteSkillEntries = capabilityContext?.remoteSkills ?? stateManager?.getRemoteConfigSettings().remoteGlobalSkills ?? []
+    const availableSkills = await discoverAvailableSkills(capabilityContext?.cwd ?? "", {
+        remoteSkillEntries,
+        globalSkillsToggles:
+            capabilityContext?.capabilityToggles.globalSkillsToggles ??
+            stateManager?.getGlobalSettingsKey("globalSkillsToggles") ??
+            {},
+        localSkillsToggles:
+            capabilityContext?.capabilityToggles.localSkillsToggles ??
+            (stateManager ? mergeScopedToggles(readScopedToggles(stateManager, "skills")) : {}),
+        remoteSkillsToggles:
+            capabilityContext?.capabilityToggles.remoteSkillsToggles ??
+            stateManager?.getGlobalStateKey("remoteSkillsToggles") ??
+            {},
+    })
+    const skillContent = await getSkillContent(skillName, availableSkills, remoteSkillEntries)
+    if (!skillContent) return undefined
+    telemetryService.captureSlashCommandUsed(context.taskIncarnationId, `skills:${skillName}`, "skill")
+    return {
+        text: `<explicit_instructions type="skill" name="${skillName}" desc="${SLASH_TYPE_DESC.skill}">\n${skillContent.instructions}\n</explicit_instructions>\n`,
+        needsClinerulesFileCheck: false,
+        explicitInstructions: [{ type: "skill", source: "skill_injection", metadata: { name: skillName } }],
+    }
+}
+
+/** Every workflow the task may run, named the way the catalog names them. */
+function enabledWorkflows(context: SlashCommandExpansionContext): readonly Workflow[] {
+    const fromToggles = (toggles: ClineRulesToggles): Workflow[] =>
+        Object.entries(toggles)
+            .filter(([_, enabled]) => enabled)
+            .map(([filePath]) => ({ fullPath: filePath, fileName: pathToCommandName(filePath), isRemote: false }))
+
+    const capabilityContext = context.capabilityContext
+    const stateManager = capabilityContext ? undefined : StateManager.get()
+    const remoteWorkflows =
+        capabilityContext?.remoteWorkflows ?? stateManager?.getRemoteConfigSettings().remoteGlobalWorkflows ?? []
+    const remoteWorkflowToggles =
+        capabilityContext?.capabilityToggles.remoteWorkflowToggles ??
+        stateManager?.getGlobalStateKey("remoteWorkflowToggles") ??
+        {}
+    const remote: Workflow[] = remoteWorkflows
+        .filter((workflow) => workflow.alwaysEnabled || remoteWorkflowToggles[workflow.name] !== false)
+        .map((workflow) => ({ fullPath: "", fileName: workflow.name, isRemote: true, contents: workflow.contents }))
+
+    return [...fromToggles(context.localWorkflowToggles), ...fromToggles(context.globalWorkflowToggles), ...remote]
+}
+
+async function expandWorkflow(name: string, context: SlashCommandExpansionContext): Promise<SlashCommandExpansion | undefined> {
+    const workflow = enabledWorkflows(context).find((candidate) => candidate.fileName === name)
+    if (!workflow) return undefined
+    try {
+        const content = workflow.isRemote ? workflow.contents.trim() : (await fs.readFile(workflow.fullPath, "utf8")).trim()
+        telemetryService.captureSlashCommandUsed(context.taskIncarnationId, `workflow:${name}`, "workflow")
+        return {
+            text: `<explicit_instructions type="workflow" name="${workflow.fileName}" desc="${SLASH_TYPE_DESC.workflow}">\n${content}\n</explicit_instructions>\n`,
+            needsClinerulesFileCheck: false,
+            explicitInstructions: [{ type: "workflow", source: "workflow_injection", metadata: { name: workflow.fileName } }],
+        }
+    } catch (error) {
+        // The path is local configuration; name the workflow, not where it lives.
+        Logger.error(`Error reading workflow ${name}: ${error instanceof Error ? error.name : "unknown error"}`)
+        return undefined
+    }
 }
 
 /**

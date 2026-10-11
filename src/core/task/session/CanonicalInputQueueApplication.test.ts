@@ -31,6 +31,7 @@ const admittingPlainText: TaskInputAdmissionPort = {
                 resources: [],
             },
             admittedText: input.text ?? "",
+            parts: input.text ? [{ kind: "text", text: input.text }] : [],
             authorizedTools: [],
             explicitInstructions: [],
         },

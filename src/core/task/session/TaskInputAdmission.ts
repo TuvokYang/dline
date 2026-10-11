@@ -1,3 +1,4 @@
+import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ExplicitInstructionDeclaration } from "../explicit-instructions/types"
@@ -11,9 +12,11 @@ import type { LifecycleCommand } from "../stores/payload/TaskPayloadEnvelopes"
  */
 export interface AdmittedLifecycleBarrier {
     readonly commandId: string
+    /** Identity of the barrier node in the admitted document. */
+    readonly entityId: string
     readonly before: string
-    /** What the user typed before the barrier; kept by carriers that grant no command authority. */
-    readonly sourceBefore: string
+    /** The same projection as {@link before}, with resources kept where the user placed them. */
+    readonly partsBefore: readonly AdmittedInputPart[]
     readonly premessage: string
     /** Authority from the commands before the barrier; what the turn keeps once the barrier is claimed. */
     readonly instructionsBefore: readonly ExplicitInstructionDeclaration[]
@@ -26,6 +29,8 @@ export interface AdmittedTaskInput {
     readonly document: SemanticInputDocument
     /** Ordered projection for the provider; the raw text stays untouched for the UI. */
     readonly admittedText: string
+    /** The same projection as {@link admittedText}, with every resource kept as its own part. */
+    readonly parts: readonly AdmittedInputPart[]
     readonly authorizedTools: readonly string[]
     /** One-shot authority the named commands grant for the turn they open. */
     readonly explicitInstructions: readonly ExplicitInstructionDeclaration[]
@@ -67,6 +72,12 @@ export interface LifecycleBarrierPort {
 export interface ReviewedReply {
     /** What the reply still says to the model. */
     readonly text: string
+    /**
+     * The structure of {@link text}: the submitted document cut before the
+     * command. Stored instead of the whole document, so a later stage that
+     * admits the reply again finds no command left to act a second time.
+     */
+    readonly document: SemanticInputDocument
     /** Carry out the reply's command; call only after the reply was accepted. */
     commit(): void
 }

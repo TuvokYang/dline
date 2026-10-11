@@ -1,3 +1,4 @@
+import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ClineAssistantContent, ClineStorageMessage, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import type { ClineMessageModelInfo } from "@shared/messages/metrics"
@@ -35,6 +36,15 @@ export interface UserInputEnvelope {
     readonly semanticInput?: SemanticInputDocument
     /** The admitted ordered projection sent to the provider, when admission ran. */
     readonly admittedText?: string
+    /**
+     * The admitted projection with each resource kept where the user placed it.
+     *
+     * Written only when the submission carries resources, which text cannot
+     * represent; the provider then builds content from these parts and reads the
+     * exact bytes admission verified. `admittedText` stays the text-only view
+     * for consumers that render text.
+     */
+    readonly admittedParts?: readonly AdmittedInputPart[]
     /** Tools the user authorized by naming a command. */
     readonly authorizedTools?: readonly string[]
     /** Declarations the provider request registers before an authorized tool may run. */

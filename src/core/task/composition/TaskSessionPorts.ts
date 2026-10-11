@@ -2,7 +2,7 @@ import type { TokenIncrement } from "@core/account-usage/daily-token-ledger"
 import type { SystemPromptContext } from "@core/prompts/system-prompt"
 import type { ClineRulesToggles } from "@shared/cline-rules"
 import type { UiMessage } from "@shared/ExtensionMessage"
-import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
+import type { CatalogConflict, InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import type { GetHostVersionResponse } from "@shared/proto/dline/host/env"
 import type { TaskCollaborationRuntime } from "../collaboration/TaskCollaborationRuntime"
 import type { NewTaskHandoff } from "../new-task/new-task-handoff"
@@ -68,6 +68,8 @@ export interface TaskSessionPresentationPort {
 export interface TaskSessionSemanticCatalogPort {
     current(): InputSemanticCatalog
     discovered(): Promise<InputSemanticCatalog>
+    /** Descriptors the last discovery refused, so admission can say why a command is unknown. */
+    conflicts(): readonly CatalogConflict[]
 }
 
 /** Starts a successor only after the source task was durably consumed. */

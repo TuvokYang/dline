@@ -21,6 +21,7 @@ import type {
     TurnContinuationEnvelope,
     UserInputEnvelope,
 } from "../../../stores/payload/TaskPayloadEnvelopes"
+import { type AdmittedResourceReader, buildAdmittedInputContent } from "../../../utils/admittedInputContent"
 import {
     buildTaskOpeningContent,
     buildToolApprovalFeedbackContent,
@@ -87,7 +88,15 @@ export interface MaterializedPayload {
 
 /** Rebuilds the provider conversation exclusively from the append-only journal payload sequence. */
 export class ProviderJournalMessageMaterializer {
-    constructor(private readonly payloads: TaskPayloadStore) {}
+    constructor(
+        private readonly payloads: TaskPayloadStore,
+        /**
+         * Reads the verified bytes of resources an admitted input placed. Absent
+         * means none can be read: such a resource renders as an explicit
+         * unavailable marker rather than disappearing.
+         */
+        private readonly resources?: AdmittedResourceReader,
+    ) {}
 
     /**
      * Collect the one-shot authority the admitted inputs of this turn granted.
@@ -157,6 +166,21 @@ export class ProviderJournalMessageMaterializer {
         switch (payload.kind) {
             case "user_input": {
                 const input = payload as UserInputEnvelope
+                if (input.admittedParts) {
+                    const content = await buildAdmittedInputContent(
+                        { parts: input.admittedParts, context: input.context, opensTask: input.opensTask === true },
+                        this.resources,
+                    )
+                    // One admitted input never carries both, but a retained batch can
+                    // merge an input with parts and a legacy one with flat attachments;
+                    // those keep their legacy place after the text instead of vanishing.
+                    const flat = await buildUserFeedbackContent(
+                        undefined,
+                        input.images === undefined ? undefined : [...input.images],
+                        input.files === undefined ? undefined : [...input.files],
+                    )
+                    return { role: "user", content: [...content, ...flat], ts: Date.now() }
+                }
                 const content = input.opensTask
                     ? await buildTaskOpeningContent(
                           input.admittedText ?? input.text,

@@ -1,4 +1,3 @@
-import { hasManualCompactionCommand } from "@core/slash-commands"
 import type { ClineContent } from "@/shared/messages/content"
 import { shouldCompactProjectedUsage } from "./context-window-utils"
 
@@ -41,32 +40,6 @@ export function estimateCurrentTokens(userContent: ClineContent[]): number {
  */
 export function hasToolResult(userContent: ClineContent[]): boolean {
     return userContent.some((block) => block.type === "tool_result")
-}
-
-/**
- * Detect an explicit manual compaction command in current-turn text, including nested tool-result feedback.
- *
- * @param userContent Pending current-turn content.
- * @returns True when user-authored tagged content requests /compact or /smol.
- */
-export function hasManualCompactionIntent(
-    userContent: ClineContent[],
-    isTrustedUserFeedback: (block: Extract<ClineContent, { type: "tool_result" }>) => boolean = () => false,
-): boolean {
-    return userContent.some((block) => {
-        if (block.type === "text") {
-            return hasManualCompactionCommand(block.text)
-        }
-        if (block.type !== "tool_result" || !isTrustedUserFeedback(block)) {
-            return false
-        }
-        if (typeof block.content === "string") {
-            return hasManualCompactionCommand(block.content)
-        }
-        return block.content?.some((contentBlock) =>
-            contentBlock.type === "text" ? hasManualCompactionCommand(contentBlock.text) : false,
-        )
-    })
 }
 
 /**

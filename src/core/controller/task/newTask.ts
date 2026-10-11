@@ -1,8 +1,7 @@
-import { validateSemanticInputDocument } from "@shared/input-semantics/validation"
 import { String } from "@shared/proto/dline/common"
 import { PlanActMode } from "@shared/proto/dline/state"
 import { NewTaskRequest } from "@shared/proto/dline/task"
-import { fromProtoSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
+import { decodeAdmissibleSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Settings } from "@shared/storage/state-keys"
 import { DEFAULT_BROWSER_SETTINGS } from "../../../shared/BrowserSettings"
 import { Controller } from ".."
@@ -74,13 +73,11 @@ export async function newTask(controller: Controller, request: NewTaskRequest): 
     // because the legacy reading is exactly what the document was sent to prevent.
     let semanticInput: import("@shared/input-semantics/document").SemanticInputDocument | undefined
     if (request.semanticInput) {
-        const decoded = fromProtoSemanticInputDocument(request.semanticInput)
-        if (!decoded.ok) throw new Error(`New task input was rejected: ${decoded.diagnostic.code}`)
         // Admission itself runs in the background task, where a refusal could no
         // longer hand the draft back. Refuse here what it would certainly refuse,
         // so the caller still owns the draft and can restore it.
-        const structural = validateSemanticInputDocument(decoded.document)
-        if (structural.length > 0) throw new Error(`New task input was rejected: ${structural[0].code}`)
+        const decoded = decodeAdmissibleSemanticInputDocument(request.semanticInput)
+        if (!decoded.ok) throw new Error(`New task input was rejected: ${decoded.diagnostic.code}`)
         // `String` here is the proto message type, so the revision is formatted directly.
         const currentRevision = `${inputSemanticCatalogService(controller).current().revision}`
         if (decoded.document.catalogRevision !== currentRevision) {
