@@ -3,6 +3,7 @@ import type { UiAsk, UiMessage } from "@shared/ExtensionMessage"
 import { Logger } from "@shared/services/Logger"
 import { createCanonicalAskRow } from "../ask-row"
 import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
+import { type DraftAttachmentPort, resolveDraftForReceiver } from "../interaction/DraftAttachments"
 import type { InteractionKind } from "../interaction/Interaction"
 import { InteractionCancellationError } from "../interaction/InteractionCancellationError"
 import type { CompleteInteractionRequest, InteractionOutcome, OpenInteractionRequest } from "../interaction/InteractionProtocol"
@@ -82,6 +83,11 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         if (this.session) throw new Error("Task interaction owner is already bound")
         this.session = session
         this.retainedPresentation = new RetainedInputPresenter(this.payloads, this.messages, () => this.nextRowTs())
+    }
+
+    /** Resolves a delivered draft's parts for receivers that read flat attachments. */
+    private get draftAttachments(): DraftAttachmentPort | undefined {
+        return this.session?.draftAttachments
     }
 
     /**
@@ -370,6 +376,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
                     images: [...draft.images],
                     files: [...draft.files],
                     ...(draft.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }),
+                    ...(draft.admittedParts === undefined ? {} : { admittedParts: draft.admittedParts }),
                 },
             })
         } catch (error) {
@@ -401,6 +408,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
                 images: [...delivery.modelDraft.images],
                 files: [...delivery.modelDraft.files],
                 ...(delivery.modelDraft.semanticInput === undefined ? {} : { semanticInput: delivery.modelDraft.semanticInput }),
+                ...(delivery.modelDraft.admittedParts === undefined ? {} : { admittedParts: delivery.modelDraft.admittedParts }),
             }),
         )
         const actionId = getInteraction(delivery.interaction.kind).input.enterAction ?? "reply"
@@ -455,6 +463,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
                 images: [...delivery.modelDraft.images],
                 files: [...delivery.modelDraft.files],
                 ...(delivery.modelDraft.semanticInput === undefined ? {} : { semanticInput: delivery.modelDraft.semanticInput }),
+                ...(delivery.modelDraft.admittedParts === undefined ? {} : { admittedParts: delivery.modelDraft.admittedParts }),
             },
         })
         return "accepted"
@@ -528,7 +537,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
      * retiring it anyway would record a consumed answer the task never acted on
      * and remove the only control the user has left.
      */
-    private async settleUnowned(interactionId: string, kind: string, outcome: InteractionOutcome): Promise<void> {
+    private async settleUnowned(interactionId: string, kind: string, answered: InteractionOutcome): Promise<void> {
         const session = this.session
         const generation = session?.state().generation
         const isCurrent = () =>
@@ -537,6 +546,11 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             session.state().generation === generation &&
             session.state().halt.status === "idle"
         const queuedInput = session?.state().dialog.primary?.acceptedResponse?.queuedInput
+        const currentBeforeResolve = isCurrent()
+        const outcome = await this.forReceiver(answered)
+        // Resolving the reply's resources reads files; a task that moved on
+        // meanwhile must not be continued with an answer meant for its past.
+        if (currentBeforeResolve && !isCurrent()) return
         const resolution: UnownedDialogResolution = {
             interactionId,
             kind,
@@ -667,7 +681,20 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             )
             throw new Error(`${result.reason}: ${rejectionMessage}`)
         }
-        return outcome
+        return outcome.then((answered) => this.forReceiver(answered))
+    }
+
+    /**
+     * The outcome as every receiver reads it: a draft's admitted resource parts
+     * resolved into the flat attachments handlers consume.
+     *
+     * This is the one place a receiver's draft is resolved, so neither a live
+     * handler nor a restored continuation can be handed parts it ignores, and a
+     * persisted draft never holds the resolved bytes or paths.
+     */
+    private async forReceiver(outcome: InteractionOutcome): Promise<InteractionOutcome> {
+        if (!outcome.draft) return outcome
+        return { ...outcome, draft: await resolveDraftForReceiver(outcome.draft, this.draftAttachments) }
     }
 
     private requireSession(): ActiveTaskSession {

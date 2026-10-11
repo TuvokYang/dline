@@ -21,7 +21,11 @@ import type {
     TurnContinuationEnvelope,
     UserInputEnvelope,
 } from "../../../stores/payload/TaskPayloadEnvelopes"
-import { type AdmittedResourceReader, buildAdmittedInputContent } from "../../../utils/admittedInputContent"
+import {
+    type AdmittedResourceReader,
+    buildAdmittedInputContent,
+    buildAdmittedToolApprovalFeedbackContent,
+} from "../../../utils/admittedInputContent"
 import {
     buildTaskOpeningContent,
     buildToolApprovalFeedbackContent,
@@ -201,7 +205,16 @@ export class ProviderJournalMessageMaterializer {
             }
             case "dialog_draft": {
                 const draft = payload as DialogDraftEnvelope
-                const content = await buildUserFeedbackContent(draft.text, [...draft.images], [...draft.files])
+                if (!draft.admittedParts) {
+                    const content = await buildUserFeedbackContent(draft.text, [...draft.images], [...draft.files])
+                    return content.length === 0 ? undefined : { role: "user", content, ts: Date.now() }
+                }
+                // dispatchInteraction refuses a reply that mixes both carriers, so the
+                // flat lists are normally empty; any that are present keep their legacy
+                // place after the parts rather than vanishing, as for user input.
+                const parts = await buildAdmittedInputContent({ parts: draft.admittedParts, opensTask: false }, this.resources)
+                const flat = await buildUserFeedbackContent(undefined, [...draft.images], [...draft.files])
+                const content = [...parts, ...flat]
                 return content.length === 0 ? undefined : { role: "user", content, ts: Date.now() }
             }
             case "dialog_selection":
@@ -282,6 +295,7 @@ export class ProviderJournalMessageMaterializer {
         if (!result.feedbackRef) return { blocks: [], documents: [] }
         const feedback = decodeTaskPayload<DialogDraftEnvelope>(await this.payloads.read(result.feedbackRef))
         if (feedback.kind !== "dialog_draft") throw new Error(`InvalidToolApprovalFeedback:${result.blockId}`)
+        if (feedback.admittedParts) return buildAdmittedToolApprovalFeedbackContent(feedback.admittedParts, this.resources)
         return buildToolApprovalFeedbackContent(feedback.text, [...feedback.images], [...feedback.files])
     }
 }

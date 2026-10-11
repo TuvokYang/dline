@@ -8,6 +8,7 @@ import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { PresentationIdSequence } from "./PresentationIdSequence"
+import { userInputRowText } from "./UserInputRowText"
 
 /** Projects only user-authored content; model guidance never belongs in this row. */
 export class RetainedInputPresenter implements RetainedInputPresentationPort {
@@ -29,7 +30,7 @@ export class RetainedInputPresenter implements RetainedInputPresentationPort {
             ts: this.nextPresentationId(),
             type: "say" as const,
             say: "user_feedback" as const,
-            text: payloads.map((payload) => payload.text ?? "").join("\n\n"),
+            text: payloads.map(userInputRowText).join("\n\n"),
             images: payloads.flatMap((payload) => [...(payload.images ?? [])]),
             files: payloads.flatMap((payload) => [...(payload.files ?? [])]),
             interactionId: input.deliveryId,

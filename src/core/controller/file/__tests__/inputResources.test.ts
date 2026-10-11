@@ -189,7 +189,7 @@ describe("typed input resource staging", () => {
         expect(results.results[0]?.error?.displayName).toBe("huge.bin")
     })
 
-    it("stages a copy of a dropped local file and refuses a non-file URI", async () => {
+    it("links a dropped local file and refuses a non-file URI", async () => {
         const { stageInputUris, proto } = await handlers()
         const source = path.join(sourceDir, "notes.md")
         await fs.writeFile(source, "# notes\n")
@@ -223,7 +223,7 @@ describe("typed input resource staging", () => {
         expect(stagedOf(results, 1).displayName).toBe("picked.txt")
     })
 
-    it("stages only as many picked files as fit in the draft", async () => {
+    it("links only as many picked files as fit in the draft", async () => {
         const { selectInputResources, proto } = await handlers()
         const picked = ["a.txt", "b.txt", "c.txt"].map((name) => path.join(sourceDir, `fit-${name}`))
         await Promise.all(picked.map((file) => fs.writeFile(file, "picked")))
@@ -299,12 +299,12 @@ describe("typed input resource staging", () => {
             controllerWith("task-rpc-5"),
             proto.StageInputTextRequest.create({ text: "payload text" }),
         )
-        const copied = await stageInputUris(
+        const linked = await stageInputUris(
             controllerWith("task-rpc-5"),
             proto.StageInputUrisRequest.create({ uris: [pathToFileURL(source).href] }),
         )
 
-        const serialized = JSON.stringify([staged, copied])
+        const serialized = JSON.stringify([staged, linked])
         expect(serialized).not.toContain(documentsDir.replace(/\\/g, "\\\\"))
         expect(serialized).not.toContain(sourceDir.replace(/\\/g, "\\\\"))
         expect(serialized).not.toContain("payload text")

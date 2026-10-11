@@ -92,6 +92,8 @@ async function persistApprovalFeedback(options: ProductionToolAdapterOptions, co
         text: feedback.text ?? "",
         images: [...(feedback.images ?? [])],
         files: [...(feedback.files ?? [])],
+        // A structured note keeps its resources by reference, resolved when the result is built.
+        ...(feedback.admittedParts === undefined ? {} : { admittedParts: feedback.admittedParts }),
     }
     await options.journal.append({
         operationId: `tool.approval_feedback:${command.commandId}`,

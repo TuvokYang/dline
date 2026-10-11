@@ -6,7 +6,6 @@ import { decodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { LifecycleCommand, UserInputEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
 import {
     type AdmittedLifecycleBarrier,
-    type LegacyResourceCarrierPort,
     type LifecycleBarrierPort,
     SemanticInputRejectedError,
     type TaskInputAdmissionPort,
@@ -317,35 +316,6 @@ describe("TaskInputMaterializer", () => {
             expect(barriers.requested).toEqual([])
         })
 
-        it("refuses a structured reply carrying a resource when no carrier can hand it on", async () => {
-            let admitted = 0
-            const counting: TaskInputAdmissionPort = {
-                admit: async (input) => {
-                    admitted++
-                    return admittingBarrier.admit(input)
-                },
-            }
-            const materializer = new TaskInputMaterializer(
-                recordingPayloads().payloads,
-                identity,
-                counting,
-                recordingBarriers(true).port,
-            )
-            const withFile: SemanticInputDocument = {
-                ...document,
-                rawText: "see input.txt",
-                nodes: [
-                    { kind: "text", text: "see " },
-                    { kind: "file", entityId: "f-1", resourceId: "r-1", fileOrigin: "pasted_text", displayName: "input.txt" },
-                ],
-            }
-
-            const reviewed = materializer.reviewReply({ text: "see input.txt", semanticInput: withFile })
-
-            await expect(reviewed).rejects.toMatchObject({ diagnostics: [{ code: "semantic_input_resource_invalid" }] })
-            expect(admitted).toBe(0)
-        })
-
         describe("with resources", () => {
             const pasted = {
                 kind: "resource" as const,
@@ -388,55 +358,47 @@ describe("TaskInputMaterializer", () => {
                     },
                 }),
             }
-            function recordingCarriers() {
-                const projected: unknown[] = []
-                const port: LegacyResourceCarrierPort = {
-                    project: async (documentId, parts) => {
-                        projected.push({ documentId, parts })
-                        return { images: [], files: parts.map((part) => `/task/${part.ref.resourceId}/input.txt`) }
-                    },
-                }
-                return { port, projected }
-            }
-
-            it("verifies them through admission and hands them on even without a command", async () => {
-                const carriers = recordingCarriers()
-                const materializer = new TaskInputMaterializer(
-                    recordingPayloads().payloads,
-                    identity,
-                    admittingFile,
-                    undefined,
-                    carriers.port,
-                )
+            it("verifies them through admission and hands them on in place even without a command", async () => {
+                const materializer = new TaskInputMaterializer(recordingPayloads().payloads, identity, admittingFile)
 
                 const reviewed = await materializer.reviewReply({ text: "see input.txt", semanticInput: withFile })
 
                 expect(reviewed?.text).toBe("see input.txt")
                 expect(reviewed?.document).toBe(withFile)
-                expect(reviewed?.files).toEqual([`/task/${pasted.ref.resourceId}/input.txt`])
-                expect(reviewed?.images).toEqual([])
-                expect(carriers.projected).toEqual([{ documentId: "doc-1", parts: [pasted] }])
+                // The typed text stays the source; the resource is the reference admission verified.
+                expect(reviewed?.parts).toEqual([{ kind: "text", text: "see " }, pasted])
                 expect(() => reviewed?.commit()).not.toThrow()
             })
 
-            it("refuses them when admission refuses, without handing anything on", async () => {
-                const carriers = recordingCarriers()
-                const materializer = new TaskInputMaterializer(
-                    recordingPayloads().payloads,
-                    identity,
-                    refusing,
-                    undefined,
-                    carriers.port,
-                )
+            it("refuses them when admission refuses", async () => {
+                const materializer = new TaskInputMaterializer(recordingPayloads().payloads, identity, refusing)
 
                 await expect(materializer.reviewReply({ text: "see input.txt", semanticInput: withFile })).rejects.toBeInstanceOf(
                     SemanticInputRejectedError,
                 )
-                expect(carriers.projected).toEqual([])
+            })
+
+            it("refuses a resource admission did not verify instead of dropping it", async () => {
+                const unverified: TaskInputAdmissionPort = {
+                    admit: async () => ({
+                        ok: true,
+                        admitted: {
+                            document: withFile,
+                            admittedText: "see [input.txt]",
+                            parts: [{ kind: "text", text: "see [input.txt]" }],
+                            authorizedTools: [],
+                            explicitInstructions: [],
+                        },
+                    }),
+                }
+                const materializer = new TaskInputMaterializer(recordingPayloads().payloads, identity, unverified)
+
+                await expect(materializer.reviewReply({ text: "see input.txt", semanticInput: withFile })).rejects.toBeInstanceOf(
+                    SemanticInputRejectedError,
+                )
             })
 
             it("hands on only the resources before an owned command", async () => {
-                const carriers = recordingCarriers()
                 const barriers = recordingBarriers(true)
                 const before: SemanticInputDocument = {
                     ...withFile,
@@ -473,12 +435,12 @@ describe("TaskInputMaterializer", () => {
                     identity,
                     barrierAfterFile,
                     barriers.port,
-                    carriers.port,
                 )
 
                 const reviewed = await materializer.reviewReply({ text: "see input.txt /compact", semanticInput: before })
 
-                expect(reviewed?.files).toEqual([`/task/${pasted.ref.resourceId}/input.txt`])
+                expect(reviewed?.parts.filter((part) => part.kind === "resource")).toEqual([pasted])
+                expect(reviewed?.parts.map((part) => (part.kind === "text" ? part.text : "")).join("")).not.toContain("compact")
                 expect(barriers.requested).toEqual([])
                 reviewed?.commit()
                 expect(barriers.requested).toHaveLength(1)

@@ -1,5 +1,6 @@
 import { Logger } from "@shared/services/Logger"
 import { renderRetainedInputs } from "../continuation/RetainedInputContent"
+import { retainedInputPartsOf } from "../continuation/RetainedInputParts"
 import { retainedQueueDeliveryEntries } from "../kernel/machines/intake"
 import type { RejectReason } from "../kernel/types"
 import type { RuntimeFacade, RuntimeRejection } from "../runtime"
@@ -202,17 +203,19 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
         const payloads = await Promise.all(entries.map((entry) => this.readPayload(entry.payloadRef)))
         const modelText = renderRetainedInputs(payloads.map((payload) => payload.admittedText ?? payload.text ?? ""))
         const presentationText = payloads.map((payload) => payload.text ?? "").join("\n\n")
-        // A dialog receiver reads flat lists only, so each entry's verified
-        // resources are carried alongside its legacy attachments, in entry order.
-        const carried = await Promise.all(payloads.map((payload) => this.carriersOf(payload)))
-        const images = payloads.flatMap((payload, index) => [...(payload.images ?? []), ...carried[index].images])
-        const files = payloads.flatMap((payload, index) => [...(payload.files ?? []), ...carried[index].files])
+        // Legacy entries keep their flat lists; an entry with resources contributes
+        // its admitted parts, so the batch persists each resource by reference in
+        // entry order and a receiver resolves them only when it consumes the draft.
+        const images = payloads.flatMap((payload) => [...(payload.images ?? [])])
+        const files = payloads.flatMap((payload) => [...(payload.files ?? [])])
+        const admittedParts = retainedInputPartsOf(payloads)
         const singleDocument = payloads.length === 1 ? payloads[0]?.semanticInput : undefined
         const draft = (text: string): CanonicalInputQueueDraft => ({
             text,
             images,
             files,
             ...(singleDocument === undefined ? {} : { semanticInput: singleDocument }),
+            ...(admittedParts === undefined ? {} : { admittedParts }),
         })
         return {
             deliveryId,
@@ -223,11 +226,6 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
             modelDraft: draft(modelText),
             presentationDraft: draft(presentationText),
         }
-    }
-
-    private async carriersOf(payload: UserInputEnvelope): Promise<{ images: readonly string[]; files: readonly string[] }> {
-        if (!payload.semanticInput || !payload.admittedParts) return { images: [], files: [] }
-        return this.inputs.carry(payload.semanticInput, payload.admittedParts)
     }
 
     private async readPayload(payloadRef: string): Promise<UserInputEnvelope> {

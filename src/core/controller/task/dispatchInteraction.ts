@@ -1,8 +1,11 @@
+import type { DraftAttachmentPort, DraftAttachments } from "@core/task/interaction/DraftAttachments"
 import type { InteractionOutcome } from "@core/task/interaction/InteractionProtocol"
 import type { MessageStateHandler } from "@core/task/message-state"
 import { type ReviewedReply, SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
+import { userInputRowText } from "@core/task/session/UserInputRowText"
 import { encodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
 import type { DialogDraftEnvelope, DialogSelectionEnvelope } from "@core/task/stores/payload/TaskPayloadEnvelopes"
+import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import { isResourceNode, type SemanticInputDocument } from "@shared/input-semantics/document"
 import { type DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
 import { decodeAdmissibleSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
@@ -74,11 +77,12 @@ async function showConsumedReply(
     messages: MessageStateHandler,
     nextPresentationId: (() => number) | undefined,
     request: DispatchInteractionRequest,
-    carried: ReplyCarriers,
+    /** What the user reads for the reply; see {@link userInputRowText}. */
+    rowText: string,
+    shown: Pick<DraftAttachments, "images" | "files">,
 ): Promise<void> {
-    const draft = request.draft
     const rowId = `reply:${request.interactionId}`
-    if (!draft?.text || messages.clineMessages.some((row) => row.interactionId === rowId)) return
+    if (!rowText || messages.clineMessages.some((row) => row.interactionId === rowId)) return
     // Rows are ordered by the session's shared sequence; drawing from it keeps
     // the reply ahead of the summary and the turn it causes.
     const lastTs = messages.clineMessages.at(-1)?.ts ?? 0
@@ -87,25 +91,37 @@ async function showConsumedReply(
         ts,
         type: "say",
         say: "user_feedback",
-        text: draft.text,
-        images: [...carried.images],
-        files: [...carried.files],
+        text: rowText,
+        images: [...shown.images],
+        files: [...shown.files],
         interactionId: rowId,
     })
     await registered.persistence
 }
 
-/** The flat attachments a reply hands on: what the request sent plus its verified resources. */
-interface ReplyCarriers {
+/**
+ * What a reply persists as its attachments.
+ *
+ * A structured reply's resources are its admitted parts; flat lists remain only
+ * for a legacy reply, which never carries both (see {@link mixesResourceCarriers}).
+ */
+interface ReplyAttachments {
     readonly images: readonly string[]
     readonly files: readonly string[]
+    readonly admittedParts: readonly AdmittedInputPart[]
 }
 
-function replyCarriersOf(draft: DispatchInteractionRequest["draft"], reviewed: ReviewedReply | undefined): ReplyCarriers {
+function replyAttachmentsOf(draft: DispatchInteractionRequest["draft"], reviewed: ReviewedReply | undefined): ReplyAttachments {
     return {
-        images: [...(draft?.images ?? []), ...(reviewed?.images ?? [])],
-        files: [...(draft?.files ?? []), ...(reviewed?.files ?? [])],
+        images: [...(draft?.images ?? [])],
+        files: [...(draft?.files ?? [])],
+        admittedParts: reviewed?.parts ?? [],
     }
+}
+
+/** The parts field a persisted draft carries; omitted when the reply holds no resource. */
+function partsFieldOf(attachments: ReplyAttachments): { readonly admittedParts?: readonly AdmittedInputPart[] } {
+    return attachments.admittedParts.length > 0 ? { admittedParts: attachments.admittedParts } : {}
 }
 
 /** The dialog action that abandons the task for a fresh one instead of answering it. */
@@ -212,9 +228,9 @@ export async function dispatchInteraction(
         return response(false, "invalid_payload")
     }
     const draftText = request.draft ? (reviewed?.text ?? request.draft.text) : undefined
-    // A structured reply sends its attachments as resources; receivers still read
-    // flat lists, so its verified resources join whatever the request carried.
-    const carried = replyCarriersOf(request.draft, reviewed)
+    // A structured reply persists its verified resources as parts; a receiver that
+    // reads flat lists resolves them only when it consumes the draft.
+    const attachments = replyAttachmentsOf(request.draft, reviewed)
     // Once a command was taken out, only the structure before it is the reply;
     // storing the whole document would let a later admission act on it again.
     const storedDocument = reviewed ? reviewed.document : draftDocument
@@ -223,9 +239,10 @@ export async function dispatchInteraction(
               encodeTaskPayload<DialogDraftEnvelope>({
                   kind: "dialog_draft",
                   text: draftText ?? request.draft.text,
-                  images: [...carried.images],
-                  files: [...carried.files],
+                  images: [...attachments.images],
+                  files: [...attachments.files],
                   ...(storedDocument === undefined ? {} : { semanticInput: storedDocument }),
+                  ...partsFieldOf(attachments),
               }),
           )
         : undefined
@@ -234,6 +251,15 @@ export async function dispatchInteraction(
               encodeTaskPayload<DialogSelectionEnvelope>({ kind: "dialog_selection", values: [...request.selection.values] }),
           )
         : undefined
+    const replyConsumed = Boolean(reviewed && !reviewed.text && request.draft?.text)
+    // An approval's note reaches the model only through the block's result, never
+    // as intake, so no other path shows the user the note they sent with it.
+    const approvalNote = Boolean(approvalEntry && hasDraftContent(request.draft, attachments))
+    const showsReply = replyConsumed || approvalNote
+    // Resolved before the response is submitted: reading the reply's files is
+    // the only slow step, and once the runtime has accepted the reply nothing
+    // may stand between its durability and the row, the command and the dialog.
+    const shown = showsReply ? await shownAttachmentsOf(attachments, session.draftAttachments) : attachments
     // An approval is planned from the turn, so its draft is not an intake entry.
     // Recording it against the block is the only route into the next provider
     // request; without it a note typed while approving is silently discarded.
@@ -244,8 +270,9 @@ export async function dispatchInteraction(
     if (feedbackBlockId && request.draft) {
         session.approvalFeedback.record(feedbackBlockId, {
             text: draftText ?? request.draft.text,
-            images: [...carried.images],
-            files: [...carried.files],
+            images: [...attachments.images],
+            files: [...attachments.files],
+            ...partsFieldOf(attachments),
         })
     }
     const result = approvalEntry
@@ -313,18 +340,19 @@ export async function dispatchInteraction(
     // answered dialog goes on to produce, but it is presentation: the runtime
     // already accepted the reply, so its command and receiver settle first and
     // a failed or slow write cannot strand either of them.
-    const replyConsumed = Boolean(reviewed && !reviewed.text && request.draft?.text)
-    // An approval's note reaches the model only through the block's result, never
-    // as intake, so no other path shows the user the note they sent with it.
-    const approvalNote = Boolean(approvalEntry && hasDraftContent(request.draft, carried))
-    const consumedRow =
-        replyConsumed || approvalNote
-            ? showConsumedReply(session.messages, session.owners.nextPresentationId, request, carried).catch((error: unknown) => {
-                  Logger.warn(
-                      `dispatchInteraction: could not show the reply for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
-                  )
-              })
-            : undefined
+    const consumedRow = showsReply
+        ? showConsumedReply(
+              session.messages,
+              session.owners.nextPresentationId,
+              request,
+              userInputRowText({ text: request.draft?.text, semanticInput: draftDocument }),
+              shown,
+          ).catch((error: unknown) => {
+              Logger.warn(
+                  `dispatchInteraction: could not show the reply for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
+              )
+          })
+        : undefined
     reviewed?.commit()
     const outcome: InteractionOutcome = {
         actionId: request.actionId as InteractionOutcome["actionId"],
@@ -334,11 +362,12 @@ export async function dispatchInteraction(
         draft: request.draft
             ? {
                   text: draftText ?? request.draft.text,
-                  images: [...carried.images],
-                  files: [...carried.files],
+                  images: [...attachments.images],
+                  files: [...attachments.files],
                   // The same structure the payload holds: a continuation that
                   // re-admits the reply must not meet the claimed command again.
                   ...(storedDocument === undefined ? {} : { semanticInput: storedDocument }),
+                  ...partsFieldOf(attachments),
               }
             : undefined,
         selection: request.selection ? { values: [...request.selection.values] } : undefined,
@@ -356,6 +385,35 @@ export async function dispatchInteraction(
     return response(true, "accepted")
 }
 
-function hasDraftContent(draft: DispatchInteractionRequest["draft"], carried: ReplyCarriers): boolean {
-    return Boolean(draft && (draft.text.trim().length > 0 || carried.images.length > 0 || carried.files.length > 0))
+function hasDraftContent(draft: DispatchInteractionRequest["draft"], attachments: ReplyAttachments): boolean {
+    return Boolean(
+        draft &&
+            (draft.text.trim().length > 0 ||
+                attachments.images.length > 0 ||
+                attachments.files.length > 0 ||
+                attachments.admittedParts.some((part) => part.kind === "resource")),
+    )
+}
+
+/**
+ * What the reply's chat row shows: its legacy lists plus its resolved parts.
+ *
+ * Presentation only; the row is never read back as the reply's attachments,
+ * so a resolution that fails shows the row without them rather than holding
+ * back the reply the runtime already accepted.
+ */
+async function shownAttachmentsOf(
+    attachments: ReplyAttachments,
+    port: DraftAttachmentPort | undefined,
+): Promise<Pick<DraftAttachments, "images" | "files">> {
+    if (!port || !attachments.admittedParts.some((part) => part.kind === "resource")) return attachments
+    try {
+        const resolved = await port.resolve(attachments.admittedParts)
+        return { images: [...attachments.images, ...resolved.images], files: [...attachments.files, ...resolved.files] }
+    } catch (error) {
+        Logger.warn(
+            `dispatchInteraction: could not resolve the reply's attachments: ${error instanceof Error ? error.name : "unknown"}`,
+        )
+        return attachments
+    }
 }

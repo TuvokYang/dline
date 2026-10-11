@@ -56,4 +56,27 @@ describe("hasApprovalFeedback", () => {
         expect(hasApprovalFeedback({ files: ["file-1"] })).toBe(true)
         expect(hasApprovalFeedback({})).toBe(false)
     })
+
+    it("counts a note whose only content is a resource the user placed in it", () => {
+        const resource = {
+            kind: "resource",
+            entityId: "image-1",
+            nodeKind: "image",
+            ref: {
+                resourceId: "res-1",
+                expectedContentHash: "sha256:00",
+                mediaType: "image/png",
+                byteLength: 1,
+                owner: { kind: "task", taskId: "task-1" },
+                generation: 1,
+            },
+            displayName: "shot.png",
+        } as const
+        const ledger = new InMemoryToolApprovalFeedbackLedger()
+
+        ledger.record("block-1", { text: "", admittedParts: [resource] })
+
+        expect(hasApprovalFeedback({ text: "", admittedParts: [{ kind: "text", text: "  " }] })).toBe(false)
+        expect(ledger.take("block-1")?.admittedParts).toEqual([resource])
+    })
 })

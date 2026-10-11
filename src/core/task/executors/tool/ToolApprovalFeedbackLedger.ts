@@ -1,8 +1,13 @@
+import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
+
 /** Feedback the user typed while approving or rejecting one tool block. */
 export interface ToolApprovalFeedback {
     readonly text?: string
+    /** Legacy flat attachments; a structured note carries its resources as {@link admittedParts}. */
     readonly images?: readonly string[]
     readonly files?: readonly string[]
+    /** The note with each verified resource where the user placed it; resolved when the block's result is built. */
+    readonly admittedParts?: readonly AdmittedInputPart[]
 }
 
 /**
@@ -26,7 +31,12 @@ export interface ToolApprovalFeedbackLedger {
 
 /** Whether the user actually contributed something worth sending. */
 export function hasApprovalFeedback(feedback: ToolApprovalFeedback): boolean {
-    return Boolean(feedback.text?.trim() || feedback.images?.length || feedback.files?.length)
+    return Boolean(
+        feedback.text?.trim() ||
+            feedback.images?.length ||
+            feedback.files?.length ||
+            feedback.admittedParts?.some((part) => part.kind === "resource" || part.text.trim()),
+    )
 }
 
 /** Task-scoped in-memory ledger; feedback lives only until its block reports a result. */

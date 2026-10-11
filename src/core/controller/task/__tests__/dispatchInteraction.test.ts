@@ -1,8 +1,10 @@
 import { InMemoryToolApprovalFeedbackLedger } from "@core/task/executors/tool/ToolApprovalFeedbackLedger"
+import type { DraftAttachmentPort } from "@core/task/interaction/DraftAttachments"
 import { createInitialTaskState, type TaskState } from "@core/task/kernel"
 import { SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
 import { decodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
 import type { DialogDraftEnvelope } from "@core/task/stores/payload/TaskPayloadEnvelopes"
+import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { SemanticInputDocument as WireDocument, SemanticInputNode as WireNode } from "@shared/proto/dline/input"
 import { DispatchInteractionRequest } from "@shared/proto/dline/task"
@@ -38,6 +40,7 @@ function state(kind = "followup", actionId = "reply"): TaskState {
 interface ReviewedReplyFixture {
     readonly text: string
     readonly document?: SemanticInputDocument
+    readonly parts?: readonly AdmittedInputPart[]
     readonly commit: () => void
 }
 
@@ -55,6 +58,8 @@ interface ControllerOptions {
     readonly holdResponseWrite?: boolean
     /** False for a window that shows the task while another window owns it. */
     readonly writable?: boolean
+    /** Resolves a reply's resource parts for its chat row. */
+    readonly draftAttachments?: DraftAttachmentPort
 }
 
 function controller(taskState: TaskState = state(), options: ControllerOptions = {}) {
@@ -83,7 +88,7 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
     // reply stands exactly as typed - the behavior most cases assert.
     const reviewReply = vi.fn(async (_reply: { readonly text?: string }) => {
         if (options.reviewRefused) throw new SemanticInputRejectedError([])
-        return options.reviewed
+        return options.reviewed ? { parts: [], ...options.reviewed } : undefined
     })
     const clineMessages: Array<{ ts: number; say?: string; text?: string; interactionId?: string }> = [
         { ts: 100, say: "text", text: "earlier row" },
@@ -116,6 +121,7 @@ function controller(taskState: TaskState = state(), options: ControllerOptions =
                 approvalFeedback,
                 messages: { clineMessages, beginDurableClineMessage },
                 owners: { interactions: { resolve }, toolExecution: { presentDenial } },
+                draftAttachments: options.draftAttachments,
             },
         },
         respond,
@@ -561,6 +567,55 @@ describe("dispatchInteraction", () => {
         expect(stored.semanticInput).toEqual(kept)
         // The dialog's outcome carries the same kept structure the payload stores.
         expect(host.resolve.mock.calls[0][1]).toMatchObject({ draft: { text: "then continue", semanticInput: kept } })
+    })
+
+    describe("a reply whose resources were admitted as parts", () => {
+        const image: AdmittedInputPart = {
+            kind: "resource",
+            entityId: "img-1",
+            nodeKind: "image",
+            displayName: "shot.png",
+            ref: {
+                resourceId: "00000000-0000-4000-8000-000000000004",
+                expectedContentHash: "e".repeat(64),
+                mediaType: "image/png",
+                byteLength: 4,
+                owner: { kind: "task", taskId: "task-1" },
+                generation: 1,
+            },
+        }
+        const parts: readonly AdmittedInputPart[] = [{ kind: "text", text: "like " }, image]
+
+        it("persists the parts by reference and hands the receiver the same parts", async () => {
+            const host = controller(state(), { reviewed: { text: "like this", parts, commit: vi.fn() } })
+
+            await dispatchInteraction(host.value as never, compactReply("like this"))
+
+            const stored = decodeTaskPayload<DialogDraftEnvelope>(host.put.mock.calls[0][0])
+            expect(stored.admittedParts).toEqual(parts)
+            expect(stored.images).toEqual([])
+            expect(stored.files).toEqual([])
+            expect(host.resolve.mock.calls[0][1]).toMatchObject({
+                draft: { text: "like this", images: [], admittedParts: parts },
+            })
+        })
+
+        it("shows the consumed reply's row with the resources its parts resolve to", async () => {
+            const host = controller(state(), {
+                reviewed: { text: "", parts, commit: vi.fn() },
+                draftAttachments: {
+                    resolve: async () => ({ images: ["data:image/png;base64,AQ=="], files: [], notices: [] }),
+                },
+            })
+
+            await dispatchInteraction(host.value as never, compactReply())
+
+            expect(host.beginDurableClineMessage).toHaveBeenCalledWith(
+                expect.objectContaining({ say: "user_feedback", images: ["data:image/png;base64,AQ=="] }),
+            )
+            // The resolved bytes are presentation only; the stored reply keeps the reference.
+            expect(decodeTaskPayload<DialogDraftEnvelope>(host.put.mock.calls[0][0]).images).toEqual([])
+        })
     })
 
     it("refuses a reply its input review refused before storing or answering anything", async () => {

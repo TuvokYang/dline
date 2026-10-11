@@ -1,5 +1,6 @@
 import type { CompactionConversationPort, ContextTruncationPort } from "../compaction/JournalCompactionConversation"
 import type { ToolApprovalFeedbackLedger } from "../executors/tool/ToolApprovalFeedbackLedger"
+import type { DraftAttachmentPort } from "../interaction/DraftAttachments"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { Task } from "../shell/Task"
@@ -37,6 +38,8 @@ export interface ActiveTaskSessionOptions {
     readonly payloads: TaskPayloadStore
     readonly inputs: TaskInputMaterializer
     readonly inputQueue: InputQueueApplicationPort
+    /** Resolves a draft's persisted resource parts when a receiver that reads flat attachments consumes it. */
+    readonly draftAttachments?: DraftAttachmentPort
     readonly owners: TaskSessionOwners
     /** Where an approval response records the feedback its tool block must carry. */
     readonly approvalFeedback: ToolApprovalFeedbackLedger
@@ -56,6 +59,7 @@ export class ActiveTaskSession {
     readonly payloads: TaskPayloadStore
     readonly inputs: TaskInputMaterializer
     readonly inputQueue: InputQueueApplicationPort
+    readonly draftAttachments: DraftAttachmentPort | undefined
     readonly messages: MessageStateHandler
     readonly owners: TaskSessionOwners
     readonly approvalFeedback: ToolApprovalFeedbackLedger
@@ -84,6 +88,7 @@ export class ActiveTaskSession {
         this.payloads = options.payloads
         this.inputs = options.inputs
         this.inputQueue = options.inputQueue
+        this.draftAttachments = options.draftAttachments
         this.owners = options.owners
         this.messages = options.owners.messages
         this.approvalFeedback = options.approvalFeedback

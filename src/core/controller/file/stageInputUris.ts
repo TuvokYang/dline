@@ -6,10 +6,10 @@ import { Controller } from ".."
 import { type StageOutcome, stagingStoreFor, toStageResults } from "./input-resources"
 
 /**
- * Stages copies of dropped or pasted file URIs.
+ * Links dropped or pasted file URIs by their local paths.
  *
- * The copy, not the source path, becomes the input: a later edit or deletion of
- * the source cannot change what this input carries.
+ * A local file is read from its path whenever the input is used, as an attached
+ * path always was; the Webview only ever receives the resource identity.
  */
 export async function stageInputUris(controller: Controller, request: StageInputUrisRequest): Promise<InputResourceStageResults> {
     const store = stagingStoreFor(controller, request.draftId)
@@ -20,7 +20,7 @@ export async function stageInputUris(controller: Controller, request: StageInput
             outcomes.push({ result: resourceFailed("semantic_input_resource_invalid", "a dropped item is not a local file") })
             continue
         }
-        const result = store.ok ? await store.value.stageFile(filePath) : store
+        const result = store.ok ? await store.value.linkFile(filePath) : store
         outcomes.push({ result, requestedName: path.basename(filePath) })
     }
     return toStageResults(outcomes)

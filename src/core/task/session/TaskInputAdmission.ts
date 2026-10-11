@@ -1,4 +1,4 @@
-import type { AdmittedInputPart, AdmittedResourcePart } from "@shared/input-semantics/admitted-parts"
+import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ExplicitInstructionDeclaration } from "../explicit-instructions/types"
@@ -74,10 +74,14 @@ export interface LifecycleBarrierPort {
 export interface ReviewedReply {
     /** What the reply still says to the model. */
     readonly text: string
-    /** The reply's verified resources as image data URLs, for receivers that read no parts. */
-    readonly images: readonly string[]
-    /** The reply's verified resources as local copies, for receivers that read no parts. */
-    readonly files: readonly string[]
+    /**
+     * The reply as typed, with each verified resource where the user placed it.
+     *
+     * Empty when the reply carries no resource: text alone then represents it.
+     * The parts are what a dialog draft persists; a receiver that reads flat
+     * attachments resolves them when it consumes the draft, never earlier.
+     */
+    readonly parts: readonly AdmittedInputPart[]
     /**
      * The structure of {@link text}: the submitted document cut before the
      * command. Stored instead of the whole document, so a later stage that
@@ -86,25 +90,6 @@ export interface ReviewedReply {
     readonly document: SemanticInputDocument
     /** Carry out the reply's command; call only after the reply was accepted. */
     commit(): void
-}
-
-/** Verified resources in the flat shape dialog receivers still read. */
-export interface LegacyResourceCarriers {
-    readonly images: readonly string[]
-    readonly files: readonly string[]
-}
-
-/**
- * Projects verified resources onto the flat image and file lists that dialog
- * receivers, their tool results and approval notes still read.
- *
- * Transitional: once receivers read admitted parts (WS-041 TASK-4106) it goes
- * away. The projection loses where a resource sat in the text, never its
- * content: it reads exactly the bytes admission verified, and refuses with
- * {@link SemanticInputRejectedError} when they are gone or changed.
- */
-export interface LegacyResourceCarrierPort {
-    project(documentId: string, parts: readonly AdmittedResourcePart[]): Promise<LegacyResourceCarriers>
 }
 
 export type TaskInputAdmissionResult =

@@ -1,5 +1,6 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
+import type { DraftAttachmentPort } from "../../interaction/DraftAttachments"
 import { createInitialTaskState, hydrate, type TaskEvent, type TaskState, transition } from "../../kernel"
 import type { MessageStateHandler } from "../../message-state"
 import type { EventSubmissionResult } from "../../runtime"
@@ -19,13 +20,23 @@ const cases = [
     ["completion", "attempt_completion", "reply"],
 ] as const
 
-async function harness(kind: string, toolName: string, actionId: string) {
+interface HarnessOptions {
+    readonly draft?: DialogDraftEnvelope
+    readonly draftAttachments?: DraftAttachmentPort
+}
+
+async function harness(kind: string, toolName: string, actionId: string, options: HarnessOptions = {}) {
     const payloads = new InMemoryTaskPayloadStore()
     const journal = new InMemoryConversationJournal()
     const rawRef = await payloads.put(
         encodeTaskPayload({ kind: "user_input", text: "RAW_QUEUE_INPUT", admittedText: "ADMITTED_INPUT" }),
     )
-    const draft: DialogDraftEnvelope = { kind: "dialog_draft", text: "MODEL_GUIDANCE\nADMITTED_INPUT", images: [], files: [] }
+    const draft: DialogDraftEnvelope = options.draft ?? {
+        kind: "dialog_draft",
+        text: "MODEL_GUIDANCE\nADMITTED_INPUT",
+        images: [],
+        files: [],
+    }
     const draftRef = await payloads.put(encodeTaskPayload(draft))
     const invocation: ToolInvocationEnvelope = {
         kind: "tool_invocation",
@@ -149,6 +160,7 @@ async function harness(kind: string, toolName: string, actionId: string) {
         assembly: { runtime },
         owners: { nextPresentationId: () => ts++ },
         inputQueue: { onTurnEndAwaiting },
+        draftAttachments: options.draftAttachments,
     } as unknown as ActiveTaskSession)
     const boundary = { turnId: "turn-1", interactionId: "block-1", kind }
     return {
@@ -257,6 +269,49 @@ describe("queued response restart continuation", () => {
             "ORIGINAL_DURABLE_RESULT",
         )
         expect(h.resumption.submit).toHaveBeenCalledOnce()
+    })
+
+    // The durable draft keeps a resource by reference only; the restored receiver
+    // must still be handed it, resolved the same way a live receiver is.
+    it("hands the restored receiver the draft's resources resolved from their parts", async () => {
+        const image = {
+            kind: "resource" as const,
+            entityId: "img-1",
+            nodeKind: "image" as const,
+            displayName: "shot.png",
+            ref: {
+                resourceId: "00000000-0000-4000-8000-000000000009",
+                expectedContentHash: "d".repeat(64),
+                mediaType: "image/png",
+                byteLength: 4,
+                owner: { kind: "task" as const, taskId: "task-1" },
+                generation: 1,
+            },
+        }
+        const resolved: unknown[] = []
+        const h = await harness(...cases[0], {
+            draft: {
+                kind: "dialog_draft",
+                text: "MODEL_GUIDANCE\nADMITTED_INPUT",
+                images: [],
+                files: [],
+                admittedParts: [{ kind: "text", text: "ADMITTED_INPUT " }, image],
+            },
+            draftAttachments: {
+                resolve: async (parts) => {
+                    resolved.push(parts)
+                    return { images: [], files: [], notices: ["RESOLVED_FROM_PARTS"] }
+                },
+            },
+        })
+
+        await h.owner.awaiting(h.boundary)
+
+        expect(resolved).toEqual([[{ kind: "text", text: "ADMITTED_INPUT " }, image]])
+        const [entry] = await h.journal.read()
+        if (!entry?.payloadRef) throw new Error("expected the restored tool result to be journaled")
+        const result = decodeTaskPayload<ToolResultEnvelope>(await h.payloads.read(entry.payloadRef))
+        expect(result.content).toContain("RESOLVED_FROM_PARTS")
     })
 
     it("leaves a failed result append recoverable and does not dispatch a fresh response", async () => {

@@ -4,6 +4,7 @@ import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { PresentationIdSequence } from "./PresentationIdSequence"
+import { userInputRowText } from "./UserInputRowText"
 
 /**
  * Shows the input the runtime accepted as the user's own chat row.
@@ -28,7 +29,8 @@ export class TaskInputPresenter implements TaskInputPresentationPort {
         // Recovery sometimes needs an intake event only to start the next round.
         // Its actual user reply is already shown by the restored tool interaction,
         // so rendering the empty continuation as feedback leaves a blank chat row.
-        const hasVisibleContent = Boolean(payload.text?.trim() || payload.images?.length || payload.files?.length)
+        const text = userInputRowText(payload)
+        const hasVisibleContent = Boolean(text.trim() || payload.images?.length || payload.files?.length)
         if (!hasVisibleContent) return { commit: async () => {} }
         // Stamped from the session's shared sequence, and before submission. Rows
         // are ordered by this id, and the submission begins allocating its own
@@ -40,7 +42,7 @@ export class TaskInputPresenter implements TaskInputPresentationPort {
             say: rows.some((candidate) => candidate.type === "say" && candidate.say === "task")
                 ? ("user_feedback" as const)
                 : ("task" as const),
-            text: payload.text ?? "",
+            text,
             ...(payload.images === undefined ? {} : { images: [...payload.images] }),
             ...(payload.files === undefined ? {} : { files: [...payload.files] }),
             interactionId: input.entryId,

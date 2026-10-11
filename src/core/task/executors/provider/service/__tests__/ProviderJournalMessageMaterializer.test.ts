@@ -332,6 +332,121 @@ describe("ProviderJournalMessageMaterializer", () => {
         ])
     })
 
+    describe("a structured reply's resources", () => {
+        const imageRef = {
+            resourceId: "00000000-0000-4000-8000-000000000003",
+            expectedContentHash: "c".repeat(64),
+            mediaType: "image/png",
+            byteLength: 4,
+            owner: { kind: "task" as const, taskId: "task-1" },
+            generation: 1,
+        }
+        const imagePart = {
+            kind: "resource" as const,
+            entityId: "img-1",
+            nodeKind: "image" as const,
+            ref: imageRef,
+            displayName: "shot.png",
+        }
+        const imageBlock = {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: Buffer.from([5, 6, 7, 8]).toString("base64") },
+        }
+        const readsImage = {
+            readBytes: async () => ({
+                ok: true as const,
+                value: { record: { mediaType: "image/png" }, bytes: Buffer.from([5, 6, 7, 8]) },
+            }),
+        }
+
+        it("places a dialog reply's image where the user put it, read from its verified bytes", async () => {
+            const materializer = new ProviderJournalMessageMaterializer(
+                payloadStore({
+                    draft: encodeTaskPayload({
+                        kind: "dialog_draft",
+                        text: "like this one",
+                        images: [],
+                        files: [],
+                        admittedParts: [{ kind: "text", text: "like " }, imagePart, { kind: "text", text: " this one" }],
+                    }),
+                }),
+                readsImage,
+            )
+
+            const [message] = await materializer.materialize(["draft"])
+
+            expect(message?.content).toEqual([
+                { type: "text", text: "<user_message>\nlike " },
+                imageBlock,
+                { type: "text", text: " this one\n</user_message>" },
+            ])
+        })
+
+        it("keeps approval feedback's image inside the result of the call it answered", async () => {
+            const denied = { ...refused, content: [{ type: "text" as const, text: "The user denied this operation." }] }
+            const materializer = new ProviderJournalMessageMaterializer(
+                payloadStore({
+                    manifest: encodeTaskPayload({
+                        kind: "tool_terminal_manifest",
+                        turnId: "turn-1",
+                        results: [
+                            {
+                                blockId: "dline_tid_01",
+                                phase: "rejected",
+                                content: serializeDurableToolResult(denied),
+                                failed: true,
+                                feedbackRef: "feedback",
+                            },
+                        ],
+                        supersededPayloadRefs: [],
+                    }),
+                    feedback: encodeTaskPayload({
+                        kind: "dialog_draft",
+                        text: "match this",
+                        images: [],
+                        files: [],
+                        admittedParts: [{ kind: "text", text: "match " }, imagePart],
+                    }),
+                }),
+                readsImage,
+            )
+
+            const [message] = await materializer.materialize(["manifest"])
+
+            expect(message?.content).toEqual([
+                {
+                    ...denied,
+                    content: [
+                        ...denied.content,
+                        { type: "text", text: "The user provided the following feedback:\n<feedback>\nmatch " },
+                        imageBlock,
+                        { type: "text", text: "\n</feedback>" },
+                    ],
+                },
+            ])
+        })
+
+        it("names a reply resource that can no longer be read instead of dropping it", async () => {
+            const materializer = new ProviderJournalMessageMaterializer(
+                payloadStore({
+                    draft: encodeTaskPayload({
+                        kind: "dialog_draft",
+                        text: "",
+                        images: [],
+                        files: [],
+                        admittedParts: [imagePart],
+                    }),
+                }),
+                { readBytes: async () => ({ ok: false as const, failure: { code: "semantic_input_resource_missing" } }) },
+            )
+
+            const [message] = await materializer.materialize(["draft"])
+
+            expect(JSON.stringify(message?.content)).toContain("semantic_input_resource_missing")
+            expect(JSON.stringify(message?.content)).toContain("shot.png")
+        })
+    })
+
     // A tool result holds only text and images, so a PDF the user attached to an
     // answer travels as its own payload and reaches the model after the result.
     it("places the documents attached to a raw result after that result", async () => {

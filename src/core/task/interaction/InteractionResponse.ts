@@ -1,3 +1,4 @@
+import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { InteractionActionType } from "./Interaction"
 
@@ -13,6 +14,14 @@ export interface InteractionDraft {
      * rediscovering commands and mentions in `text`.
      */
     semanticInput?: SemanticInputDocument
+    /**
+     * The draft with each verified resource where the user placed it.
+     *
+     * The authority for a structured draft's attachments: such a draft keeps
+     * `images` and `files` empty when it is persisted, and a receiver that reads
+     * flat attachments resolves these parts when it consumes the draft.
+     */
+    admittedParts?: readonly AdmittedInputPart[]
 }
 
 /** Selection values submitted by selection-aware interactions. */

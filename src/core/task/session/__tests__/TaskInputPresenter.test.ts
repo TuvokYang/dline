@@ -113,6 +113,36 @@ describe("TaskInputPresenter", () => {
         expect(ids()).toBe(1001)
     })
 
+    // The raw text of a structured input addresses each resource by its stable
+    // id; the row is what a person reads, so it names the resource instead, and
+    // an input holding nothing but a resource still gets its row.
+    it("shows a structured input's resources by name where the user placed them", async () => {
+        const state = messageState()
+        const resourceId = "00000000-0000-4000-8000-000000000005"
+        const semanticInput = {
+            schemaVersion: 1,
+            parserVersion: "1.0.0",
+            catalogRevision: "1",
+            documentId: "doc-1",
+            rawText: `look [image:${resourceId}]`,
+            nodes: [
+                { kind: "text", text: "look " },
+                { kind: "image", entityId: "img-1", resourceId, displayName: "shot.png" },
+            ],
+            resources: [],
+        }
+        const presenter = new TaskInputPresenter(
+            payloadStore({ text: semanticInput.rawText, semanticInput: semanticInput as never }),
+            state.messages,
+            sequence(),
+        )
+
+        await present(presenter, "entry-1")
+
+        expect(state.rows).toEqual([expect.objectContaining({ say: "task", text: "look [shot.png]" })])
+        expect(JSON.stringify(state.rows)).not.toContain(resourceId)
+    })
+
     it("still renders an attachment-only submission", async () => {
         const state = messageState()
         const presenter = new TaskInputPresenter(payloadStore({ text: "", files: ["context.txt"] }), state.messages, sequence())

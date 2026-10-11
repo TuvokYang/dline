@@ -1,7 +1,13 @@
-import { type AdmittedInputPart, type AdmittedResourcePart, hasResourceParts } from "@shared/input-semantics/admitted-parts"
+import {
+    type AdmittedInputPart,
+    type AdmittedResourcePart,
+    appendAdmittedPart,
+    hasResourceParts,
+} from "@shared/input-semantics/admitted-parts"
 import { semanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import { isResourceNode, type SemanticInputDocument } from "@shared/input-semantics/document"
 import { documentKeptByTurn } from "@shared/input-semantics/document-slice"
+import { presentationTextOfNode } from "@shared/input-semantics/presentation"
 import type { TaskInput } from "../shell/TaskShell"
 import type { TaskPayloadStore } from "../stores"
 import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
@@ -9,8 +15,6 @@ import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import {
     type AdmittedLifecycleBarrier,
     type AdmittedTaskInput,
-    type LegacyResourceCarrierPort,
-    type LegacyResourceCarriers,
     type LifecycleBarrierPort,
     type ReviewedReply,
     SemanticInputRejectedError,
@@ -35,8 +39,6 @@ export class TaskInputMaterializer {
         private readonly admission: TaskInputAdmissionPort,
         /** Takes over lifecycle commands such as `/compact`; absent means they stay prose. */
         private readonly barriers?: LifecycleBarrierPort,
-        /** Carries verified resources to dialog receivers; absent means replies refuse attachments. */
-        private readonly carriers?: LegacyResourceCarrierPort,
     ) {}
 
     async materialize(envelope: Omit<UserInputEnvelope, "kind">, mode: TaskInput["mode"] = "queued"): Promise<TaskInput> {
@@ -101,17 +103,15 @@ export class TaskInputMaterializer {
      * question, and dropping that answer would be worse than sending it as is.
      * A structured reply is different: it was composed to be read exactly as
      * sent, so a refusal throws {@link SemanticInputRejectedError} instead of
-     * degrading it, and so does a resource that fails verification or that no
-     * carrier can hand to the receiver.
+     * degrading it, and so does a resource that fails verification.
      *
      * A reply with resources is always reviewed, even without a command: its
      * resources are verified by the same admission as a submission and handed
-     * on as {@link ReviewedReply.images} and {@link ReviewedReply.files}.
+     * on in place as {@link ReviewedReply.parts}.
      */
     async reviewReply(reply: Omit<UserInputEnvelope, "kind">): Promise<ReviewedReply | undefined> {
         const structured = reply.semanticInput
         const resourceDocument = structured?.nodes.some(isResourceNode) ? structured : undefined
-        if (resourceDocument && !this.carriers) throw new SemanticInputRejectedError([unrenderedResources(resourceDocument)])
         if (!resourceDocument && (!this.barriers || !reply.text)) return undefined
         const result = await this.admission.admit(reply)
         if (!result.ok) {
@@ -122,27 +122,16 @@ export class TaskInputMaterializer {
         if (!owned) {
             if (!resourceDocument) return undefined
             // Nothing was taken out, so the reply and its structure stand as sent.
-            const carried = await this.carry(resourceDocument, result.admitted.parts)
-            return { text: reply.text ?? "", document: resourceDocument, ...carried, commit: () => {} }
+            const parts = replyPartsOf(resourceDocument, result.admitted.parts)
+            return { text: reply.text ?? "", document: resourceDocument, parts, commit: () => {} }
         }
         const document = documentKeptByTurn(result.admitted.document, owned.entityId)
         // Admission named this barrier from this document, so it must be found;
         // forwarding the whole document instead would let the command act twice.
         if (!document) throw new Error(`InconsistentReplyBarrier:${owned.entityId}`)
-        const carried = await this.carry(document, owned.turnParts)
+        const parts = replyPartsOf(document, owned.turnParts)
         const command = { commandId: owned.commandId, premessage: owned.premessage }
-        return { text: document.rawText, document, ...carried, commit: () => this.barriers?.request(command) }
-    }
-
-    /**
-     * The flat carriers of the resources a retained input holds, for a receiver
-     * that reads no parts, such as a dialog answered by queued input.
-     */
-    async carry(document: SemanticInputDocument, parts: readonly AdmittedInputPart[]): Promise<LegacyResourceCarriers> {
-        const resources = parts.filter((part): part is AdmittedResourcePart => part.kind === "resource")
-        if (resources.length === 0) return { images: [], files: [] }
-        if (!this.carriers) throw new SemanticInputRejectedError([unrenderedResources(document)])
-        return this.carriers.project(document.documentId, resources)
+        return { text: document.rawText, document, parts, commit: () => this.barriers?.request(command) }
     }
 
     private ownedBarrier(admitted: AdmittedTaskInput): AdmittedLifecycleBarrier | undefined {
@@ -161,6 +150,35 @@ function unrenderedResources(document: SemanticInputDocument) {
     return semanticInputDiagnostic("semantic_input_resource_invalid", "this input cannot carry attachments yet", {
         documentId: document.documentId,
     })
+}
+
+/**
+ * The reply as the user typed it, with each verified resource in its place.
+ *
+ * A reply grants no command authority, so its text stays the typed source
+ * rather than the admitted expansion; only its resources come from admission,
+ * matched by entity so the verified reference is the one persisted. Empty when
+ * the reply holds no resource, because text alone represents it then.
+ */
+function replyPartsOf(document: SemanticInputDocument, admitted: readonly AdmittedInputPart[]): readonly AdmittedInputPart[] {
+    // Decided by the document, not by what admission returned: a resource the
+    // user placed but admission did not verify must refuse, never vanish.
+    if (!document.nodes.some(isResourceNode)) return []
+    const verified = new Map(
+        admitted.filter((part): part is AdmittedResourcePart => part.kind === "resource").map((part) => [part.entityId, part]),
+    )
+    const parts: AdmittedInputPart[] = []
+    for (const node of document.nodes) {
+        if (!isResourceNode(node)) {
+            appendAdmittedPart(parts, { kind: "text", text: presentationTextOfNode(node) })
+            continue
+        }
+        const part = verified.get(node.entityId)
+        // Admission verified every resource of this document, so one it did not is an inconsistency, not a choice.
+        if (!part) throw new SemanticInputRejectedError([unrenderedResources(document)])
+        appendAdmittedPart(parts, part)
+    }
+    return parts
 }
 
 /** Parts are persisted only when text alone cannot carry the submission, which keeps text-only payloads unchanged. */

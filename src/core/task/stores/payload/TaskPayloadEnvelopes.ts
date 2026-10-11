@@ -72,6 +72,14 @@ export interface DialogDraftEnvelope {
      * user confirmed instead of re-deriving commands and mentions from `text`.
      */
     readonly semanticInput?: SemanticInputDocument
+    /**
+     * The draft with each verified resource where the user placed it.
+     *
+     * Written instead of flat attachments when the draft carries resources, so
+     * the journal never holds image data or local paths as their authority. A
+     * draft without it is legacy and keeps its flat `images` and `files`.
+     */
+    readonly admittedParts?: readonly AdmittedInputPart[]
 }
 
 export interface DialogSelectionEnvelope {

@@ -1,5 +1,5 @@
-import { type AdmittedInputPart, hasResourceParts } from "@shared/input-semantics/admitted-parts"
-import { renderRetainedInputParts, renderRetainedInputs } from "../../continuation/RetainedInputContent"
+import { renderRetainedInputs } from "../../continuation/RetainedInputContent"
+import { retainedInputPartsOf } from "../../continuation/RetainedInputParts"
 import type { JournalWatermark, QueuePayloadIdentity } from "../../kernel"
 import type { ConversationJournal, TaskPayloadStore } from "../../stores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
@@ -156,9 +156,6 @@ function modelTextOf(payload: UserInputEnvelope): string {
  * its place and the batch reads exactly as the text rendering does.
  */
 function retainedParts(payloads: readonly UserInputEnvelope[]): Pick<UserInputEnvelope, "admittedParts"> {
-    if (!payloads.some((payload) => payload.admittedParts && hasResourceParts(payload.admittedParts))) return {}
-    const inputs = payloads.map(
-        (payload): readonly AdmittedInputPart[] => payload.admittedParts ?? [{ kind: "text", text: modelTextOf(payload) }],
-    )
-    return { admittedParts: renderRetainedInputParts(inputs) }
+    const admittedParts = retainedInputPartsOf(payloads)
+    return admittedParts === undefined ? {} : { admittedParts }
 }

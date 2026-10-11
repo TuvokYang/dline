@@ -10,6 +10,7 @@ import {
 } from "@shared/input-semantics/media-types"
 import type { ClineImageContentBlock, ClineTextContentBlock, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
+import { type ToolApprovalFeedbackContent, toolApprovalFeedbackText } from "./buildUserFeedbackContent"
 
 type UserContentBlock = ClineTextContentBlock | ClineImageContentBlock | ClineUserAttachedDocumentBlock
 
@@ -18,11 +19,20 @@ const _INLINE_IMAGES_FIT_IMAGE_BLOCK: readonly Extract<ClineImageContentBlock["s
     INLINE_IMAGE_MEDIA_TYPES
 
 /**
- * Reads the bytes admission verified for one resource.
+ * Reads the bytes of one admitted resource.
  *
  * Declared here, by the consumer, so the projection depends on nothing but the
- * guarantee it needs: the bytes returned are exactly the ones whose identity,
- * owner and hash were checked, together with the media type recorded for them.
+ * guarantee it needs. The reference's identity, owner and generation are always
+ * checked; what the bytes are depends on how the resource was admitted:
+ *
+ * - a captured resource (pasted content, kept in task tmp) returns exactly the
+ *   bytes whose hash was frozen at admission;
+ * - a linked resource (a picked or dropped local file) returns what the file
+ *   holds now, refused as changed if it no longer has the media type recorded
+ *   for it or no longer resolves to the file it was linked to.
+ *
+ * A linked resource therefore makes a replayed request follow later edits of
+ * the file; that is the user's chosen semantics for local paths, not a lapse.
  */
 export interface AdmittedResourceReader {
     readBytes(ref: SemanticResourceRef): Promise<
@@ -61,14 +71,52 @@ export async function buildAdmittedInputContent(
     const context = input.context?.trim()
     const blocks: UserContentBlock[] = []
     appendText(blocks, `<${tag}>\n`)
-    for (const part of input.parts) {
-        if (part.kind === "text") appendText(blocks, part.text)
-        else for (const block of await resourceBlocks(part, resources)) appendBlock(blocks, block)
-    }
+    await appendParts(blocks, input.parts, resources)
     if (context && !input.opensTask) appendText(blocks, `\n\n${context}`)
     appendText(blocks, `\n</${tag}>`)
     if (context && input.opensTask) blocks.push({ type: "text", text: `<context>\n${context}\n</context>` })
     return blocks
+}
+
+/**
+ * Builds what an admitted approval note adds to the result of the tool call it answered.
+ *
+ * The note keeps the order the user composed it in, as a submission does, but
+ * reads as feedback on that call. A PDF cannot travel inside a tool result, so
+ * its native document follows the results, as a legacy attached PDF does.
+ */
+export async function buildAdmittedToolApprovalFeedbackContent(
+    parts: readonly AdmittedInputPart[],
+    resources: AdmittedResourceReader | undefined,
+): Promise<ToolApprovalFeedbackContent> {
+    const rendered: UserContentBlock[] = []
+    await appendParts(rendered, parts, resources)
+    if (rendered.length === 0) return { blocks: [], documents: [] }
+    const typed = parts.some((part) => part.kind === "text" && part.text.trim().length > 0)
+    const blocks: Array<ClineTextContentBlock | ClineImageContentBlock> = []
+    const documents: ClineUserAttachedDocumentBlock[] = []
+    appendText(
+        blocks,
+        typed ? "The user provided the following feedback:\n<feedback>\n" : `${toolApprovalFeedbackText(undefined)}\n`,
+    )
+    for (const block of rendered) {
+        if (block.type === "attached_document") documents.push(block)
+        else appendBlock(blocks, block)
+    }
+    if (typed) appendText(blocks, "\n</feedback>")
+    return { blocks, documents }
+}
+
+/** Appends each part where the user placed it: text as typed, each resource as the blocks its bytes read as. */
+async function appendParts(
+    blocks: UserContentBlock[],
+    parts: readonly AdmittedInputPart[],
+    resources: AdmittedResourceReader | undefined,
+): Promise<void> {
+    for (const part of parts) {
+        if (part.kind === "text") appendText(blocks, part.text)
+        else for (const block of await resourceBlocks(part, resources)) appendBlock(blocks, block)
+    }
 }
 
 async function resourceBlocks(
@@ -171,12 +219,12 @@ function errorName(error: unknown): string {
 }
 
 /** Merge adjacent text so the interleaving adds no empty seams between blocks. */
-function appendText(blocks: UserContentBlock[], text: string): void {
+function appendText<Block extends UserContentBlock>(blocks: Block[], text: string): void {
     if (text.length === 0) return
-    appendBlock(blocks, { type: "text", text })
+    appendBlock(blocks, { type: "text", text } as Block)
 }
 
-function appendBlock(blocks: UserContentBlock[], block: UserContentBlock): void {
+function appendBlock<Block extends UserContentBlock>(blocks: Block[], block: Block): void {
     const last = blocks.at(-1)
     if (block.type === "text" && last?.type === "text") {
         blocks[blocks.length - 1] = { ...last, text: last.text + block.text }

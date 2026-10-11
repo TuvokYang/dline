@@ -70,7 +70,17 @@ export interface InputResourceRoot {
     onVerifiedAccess?(resourceId: string): Promise<void>
 }
 
-/** The persisted authority for one input resource. */
+/**
+ * The persisted authority for one input resource.
+ *
+ * A resource is either captured or linked. A captured resource (pasted text,
+ * pasted or dropped bytes) keeps its content file beside the record, frozen by
+ * hash. A linked resource is a local file the user picked or dropped: only the
+ * record is stored, naming the file by absolute path, and its content is read
+ * from that path whenever it is used, so the input follows later edits of the
+ * file the way an attached path always did. Its size and hash describe the file
+ * when it was linked; its media type must still hold when it is read.
+ */
 export interface InputResourceRecord {
     readonly schemaVersion: typeof INPUT_RESOURCE_RECORD_SCHEMA_VERSION
     readonly resourceId: string
@@ -81,11 +91,13 @@ export interface InputResourceRecord {
     readonly mediaType: string
     /** Name shown to the user and the model. */
     readonly displayName: string
-    /** Name of the content file inside the resource directory. */
+    /** Name of the content file inside the resource directory; a linked resource has no content file. */
     readonly fileName: string
     readonly byteLength: number
     readonly lineCount?: number
     readonly contentHash: string
+    /** Absolute path of the local file a linked resource reads; absent for a captured resource. */
+    readonly linkedPath?: string
 }
 
 /** A verified resource and the local copy only the Host may open. */
@@ -111,12 +123,17 @@ export interface InputResourceRemoval {
     readonly removed: boolean
 }
 
+/** What a resource being committed holds: its own bytes, or a link to a local file described at link time. */
+type PendingContent =
+    | { readonly kind: "captured"; readonly bytes: Uint8Array }
+    | { readonly kind: "linked"; readonly path: string; readonly byteLength: number; readonly contentHash: string }
+
 interface PendingResource {
     readonly resourceId: string
     readonly generation: number
     readonly displayName: string
     readonly classification: InputResourceClassification
-    readonly bytes: Uint8Array
+    readonly content: PendingContent
 }
 
 /** The reference a semantic input document carries for this record. */
@@ -167,7 +184,7 @@ export class InputResourceStore {
                 generation: FIRST_GENERATION,
                 displayName: pastedTextName(resourceId, options.extension),
                 classification: classified.value,
-                bytes,
+                content: { kind: "captured", bytes },
             },
             "semantic_input_resource_stage_failed",
         )
@@ -184,29 +201,46 @@ export class InputResourceStore {
     /** Stage a copy of a local file, so later edits of the source cannot change the input. */
     async stageFile(sourcePath: string): Promise<InputResourceResult<InputResourceRecord>> {
         const displayName = displayNameOf(path.basename(sourcePath))
-        let size: number
-        try {
-            const stats = await fs.stat(sourcePath)
-            if (!stats.isFile()) return resourceFailed("semantic_input_resource_invalid", `${displayName} is not a file`)
-            size = stats.size
-        } catch (error) {
-            return sourceReadFailure(displayName, error)
-        }
-        // Checked before reading so an oversized file is never loaded into memory.
-        if (size > maxAttachmentBytes(displayName)) {
-            return resourceFailed(
-                "semantic_input_resource_too_large",
-                `${displayName} exceeds the ${formatAttachmentLimit(displayName)} attachment limit`,
-            )
-        }
+        const read = await readLocalFile(sourcePath, displayName)
+        if (!read.ok) return read
+        return this.stageNamedBytes(displayName, read.value)
+    }
 
-        let bytes: Buffer
+    /**
+     * Link a local file by its path instead of copying it.
+     *
+     * The file is read once to classify it and to describe it; afterwards the
+     * input reads whatever the file holds when it is used. The link records the
+     * file's real path, so a symbolic link that is later pointed elsewhere is
+     * reported as changed instead of being followed to another file.
+     */
+    async linkFile(sourcePath: string): Promise<InputResourceResult<InputResourceRecord>> {
+        const displayName = displayNameOf(path.basename(sourcePath))
+        let absolutePath: string
         try {
-            bytes = await fs.readFile(sourcePath)
+            absolutePath = await fs.realpath(path.resolve(sourcePath))
         } catch (error) {
             return sourceReadFailure(displayName, error)
         }
-        return this.stageNamedBytes(displayName, bytes)
+        const read = await readLocalFile(absolutePath, displayName)
+        if (!read.ok) return read
+        const classified = await classifyInputFile(displayName, read.value)
+        if (!classified.ok) return classified
+        return this.commit(
+            {
+                resourceId: randomUUID(),
+                generation: FIRST_GENERATION,
+                displayName,
+                classification: classified.value,
+                content: {
+                    kind: "linked",
+                    path: absolutePath,
+                    byteLength: read.value.byteLength,
+                    contentHash: sha256(read.value),
+                },
+            },
+            "semantic_input_resource_stage_failed",
+        )
     }
 
     /** Verify a reference and return the local copy the Host may open. */
@@ -310,6 +344,15 @@ export class InputResourceStore {
         if (!loaded.ok) return loaded
         const { record: sourceRecord, bytes } = loaded.value
         const target = { ...referenceOf(sourceRecord), owner: this.root.owner, generation: sourceRecord.generation + 1 }
+        // A linked resource moves as its link: the file it names is the content, not a copy of it.
+        const content: PendingContent = sourceRecord.linkedPath
+            ? {
+                  kind: "linked",
+                  path: sourceRecord.linkedPath,
+                  byteLength: sourceRecord.byteLength,
+                  contentHash: sourceRecord.contentHash,
+              }
+            : { kind: "captured", bytes }
 
         const existing = await this.load(target)
         if (existing.ok) return resourceSucceeded({ record: existing.value.record, reused: true })
@@ -327,7 +370,7 @@ export class InputResourceStore {
                 generation: target.generation,
                 displayName: sourceRecord.displayName,
                 classification: classificationOf(sourceRecord),
-                bytes,
+                content,
             },
             "semantic_input_resource_adopt_failed",
         )
@@ -378,7 +421,13 @@ export class InputResourceStore {
         const classified = await classifyInputFile(displayName, bytes)
         if (!classified.ok) return classified
         return this.commit(
-            { resourceId: randomUUID(), generation: FIRST_GENERATION, displayName, classification: classified.value, bytes },
+            {
+                resourceId: randomUUID(),
+                generation: FIRST_GENERATION,
+                displayName,
+                classification: classified.value,
+                content: { kind: "captured", bytes },
+            },
             "semantic_input_resource_stage_failed",
         )
     }
@@ -394,6 +443,7 @@ export class InputResourceStore {
         const directory = addressed.value
         const staging = `${directory}.${randomUUID()}${STAGING_SUFFIX}`
 
+        const content = pending.content
         const record: InputResourceRecord = {
             schemaVersion: INPUT_RESOURCE_RECORD_SCHEMA_VERSION,
             resourceId,
@@ -403,14 +453,17 @@ export class InputResourceStore {
             mediaType: pending.classification.mediaType,
             displayName: pending.displayName,
             fileName: contentFileNameOf(pending.displayName),
-            byteLength: pending.bytes.byteLength,
+            byteLength: content.kind === "captured" ? content.bytes.byteLength : content.byteLength,
             ...(pending.classification.lineCount === undefined ? {} : { lineCount: pending.classification.lineCount }),
-            contentHash: sha256(pending.bytes),
+            contentHash: content.kind === "captured" ? sha256(content.bytes) : content.contentHash,
+            ...(content.kind === "linked" ? { linkedPath: content.path } : {}),
         }
         try {
             await fs.mkdir(path.dirname(directory), { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
             await fs.mkdir(staging, { mode: PRIVATE_DIRECTORY_MODE })
-            await fs.writeFile(path.join(staging, record.fileName), pending.bytes, { flag: "wx", mode: PRIVATE_FILE_MODE })
+            if (content.kind === "captured") {
+                await fs.writeFile(path.join(staging, record.fileName), content.bytes, { flag: "wx", mode: PRIVATE_FILE_MODE })
+            }
             await writeJsonAtomic(path.join(staging, INPUT_RESOURCE_RECORD_FILE), record, { mode: PRIVATE_FILE_MODE })
             // A published resource directory is never empty, so the rename cannot replace one.
             await renameWithRetry(staging, directory)
@@ -447,6 +500,14 @@ export class InputResourceStore {
         const record = stored.value
         const claimMismatch = claimMismatchOf(ref, record, this.root.owner)
         if (claimMismatch) return claimMismatch
+        if (record.linkedPath) {
+            const recordFile = await isDirectChild(realDirectory, path.join(directory, INPUT_RESOURCE_RECORD_FILE))
+            if (!recordFile.ok) return recordFile
+            const linked = await readLinkedContent(record, record.linkedPath)
+            if (!linked.ok) return linked
+            await this.root.onVerifiedAccess?.(resourceId).catch(() => undefined)
+            return resourceSucceeded({ record, contentPath: record.linkedPath, bytes: linked.value })
+        }
 
         if (!isPlainFileName(record.fileName)) {
             return resourceFailed(
@@ -484,6 +545,98 @@ export class InputResourceStore {
         await this.root.onVerifiedAccess?.(resourceId).catch(() => undefined)
         return resourceSucceeded({ record, contentPath, bytes })
     }
+}
+
+/**
+ * Read a local file within its attachment limit, for staging or linking.
+ *
+ * The size is checked before reading so an oversized file is never loaded into
+ * memory, and the read itself is bounded by the size the open file reported: a
+ * file that grows while it is read is refused rather than read past its limit.
+ */
+async function readLocalFile(filePath: string, displayName: string): Promise<InputResourceResult<Buffer>> {
+    const limit = maxAttachmentBytes(displayName)
+    try {
+        const stats = await fs.stat(filePath)
+        if (!stats.isFile()) return resourceFailed("semantic_input_resource_invalid", `${displayName} is not a file`)
+        if (stats.size > limit) return attachmentTooLarge(displayName)
+    } catch (error) {
+        return sourceReadFailure(displayName, error)
+    }
+    let handle: fs.FileHandle
+    try {
+        handle = await fs.open(filePath, "r")
+    } catch (error) {
+        return sourceReadFailure(displayName, error)
+    }
+    try {
+        // The open file is checked again: the path may name another file than the one stat saw.
+        const stats = await handle.stat()
+        if (!stats.isFile()) return resourceFailed("semantic_input_resource_invalid", `${displayName} is not a file`)
+        if (stats.size > limit) return attachmentTooLarge(displayName)
+        // One byte of headroom shows whether the file grew after it was measured.
+        const buffer = Buffer.alloc(stats.size + 1)
+        let total = 0
+        while (total < buffer.length) {
+            const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total)
+            if (bytesRead === 0) break
+            total += bytesRead
+        }
+        if (total > stats.size) {
+            return resourceFailed("semantic_input_resource_stage_failed", `${displayName} changed while it was being read`)
+        }
+        return resourceSucceeded(buffer.subarray(0, total))
+    } catch (error) {
+        return sourceReadFailure(displayName, error)
+    } finally {
+        await handle.close().catch(() => undefined)
+    }
+}
+
+function attachmentTooLarge(displayName: string): InputResourceResult<never> {
+    return resourceFailed(
+        "semantic_input_resource_too_large",
+        `${displayName} exceeds the ${formatAttachmentLimit(displayName)} attachment limit`,
+    )
+}
+
+/**
+ * Read what a linked file holds now.
+ *
+ * Its content may have changed since it was linked; its kind may not. A file
+ * that now classifies as another media type would be sent as something the
+ * input never claimed, so it is reported as changed instead.
+ */
+async function readLinkedContent(record: InputResourceRecord, linkedPath: string): Promise<InputResourceResult<Buffer>> {
+    const resourceId = record.resourceId
+    let realPath: string | undefined
+    try {
+        realPath = await fs.realpath(linkedPath)
+    } catch {
+        // A missing file is reported by the read below with its own code.
+    }
+    if (realPath !== undefined && !samePath(realPath, linkedPath)) {
+        return resourceFailed(
+            "semantic_input_resource_changed",
+            `linked resource ${resourceId} no longer resolves to the file it was linked to`,
+            resourceId,
+        )
+    }
+    const read = await readLocalFile(linkedPath, record.displayName)
+    if (!read.ok) {
+        const code =
+            read.failure.code === "semantic_input_resource_stage_failed" ? "semantic_input_resource_invalid" : read.failure.code
+        return resourceFailed(code, `linked resource ${resourceId}: ${read.failure.message}`, resourceId)
+    }
+    const classified = await classifyInputFile(record.displayName, read.value)
+    if (!classified.ok || classified.value.mediaType !== record.mediaType) {
+        return resourceFailed(
+            "semantic_input_resource_changed",
+            `linked resource ${resourceId} is no longer of the media type it was linked as`,
+            resourceId,
+        )
+    }
+    return read
 }
 
 /** The first claim a reference makes that its record contradicts, if any. */
@@ -603,7 +756,8 @@ async function readRecord(directory: string, resourceId: string): Promise<InputR
 function parseRecord(value: unknown): InputResourceRecord {
     if (!isObject(value)) throw new Error("input resource record is not an object")
     const owner = parseOwner(value.owner)
-    const { resourceId, kind, mediaType, displayName, fileName, contentHash, generation, byteLength, lineCount } = value
+    const { resourceId, kind, mediaType, displayName, fileName, contentHash, generation, byteLength, lineCount, linkedPath } =
+        value
     if (value.schemaVersion !== INPUT_RESOURCE_RECORD_SCHEMA_VERSION) throw new Error("unsupported input resource record version")
     if (typeof resourceId !== "string" || !isResourceId(resourceId)) throw new Error("invalid resource id")
     if (typeof kind !== "string" || !INPUT_RESOURCE_KINDS.includes(kind as InputResourceKind)) throw new Error("invalid kind")
@@ -614,6 +768,9 @@ function parseRecord(value: unknown): InputResourceRecord {
     if (!isCount(generation) || generation < FIRST_GENERATION) throw new Error("invalid generation")
     if (!isCount(byteLength)) throw new Error("invalid byte length")
     if (lineCount !== undefined && !isCount(lineCount)) throw new Error("invalid line count")
+    if (linkedPath !== undefined && (typeof linkedPath !== "string" || !path.isAbsolute(linkedPath))) {
+        throw new Error("invalid linked path")
+    }
     return {
         schemaVersion: INPUT_RESOURCE_RECORD_SCHEMA_VERSION,
         resourceId,
@@ -626,6 +783,7 @@ function parseRecord(value: unknown): InputResourceRecord {
         byteLength,
         ...(lineCount === undefined ? {} : { lineCount }),
         contentHash,
+        ...(linkedPath === undefined ? {} : { linkedPath }),
     }
 }
 

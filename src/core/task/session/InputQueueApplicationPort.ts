@@ -1,4 +1,5 @@
 import type { QueuedInputEntry } from "@shared/InputQueue"
+import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { InteractionKind } from "../interaction/Interaction"
 import type { QueuePayloadIdentity } from "../kernel"
@@ -9,6 +10,8 @@ export interface CanonicalInputQueueDraft {
     readonly files: readonly string[]
     readonly activeQuote?: string
     readonly semanticInput?: SemanticInputDocument
+    /** Each entry's resources by reference, in entry order; resolved only when a receiver consumes the draft. */
+    readonly admittedParts?: readonly AdmittedInputPart[]
 }
 
 export type CanonicalInputQueueMutation =
