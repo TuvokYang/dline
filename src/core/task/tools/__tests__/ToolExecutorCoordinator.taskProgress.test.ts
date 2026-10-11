@@ -1,16 +1,16 @@
 import type { ToolUse } from "@core/assistant-message"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 
-function block(name: ClineDefaultTool, params: ToolUse["params"] = {}): ToolUse {
+function block(name: DlineDefaultTool, params: ToolUse["params"] = {}): ToolUse {
     return { type: "tool_use", name, params, partial: false } as ToolUse
 }
 
 /** A handler that records when it ran, so ordering against the report is observable. */
-function orderedHandler(name: ClineDefaultTool, log: string[]) {
+function orderedHandler(name: DlineDefaultTool, log: string[]) {
     const handler: IToolHandler = {
         name,
         getDescription: () => `[${name}]`,
@@ -22,7 +22,7 @@ function orderedHandler(name: ClineDefaultTool, log: string[]) {
     return handler
 }
 
-function harness(name: ClineDefaultTool) {
+function harness(name: DlineDefaultTool) {
     const log: string[] = []
     const updateFCListFromToolResponse = vi.fn(async () => {
         log.push("report")
@@ -38,9 +38,9 @@ function harness(name: ClineDefaultTool) {
 
 describe("ToolExecutorCoordinator task_progress", () => {
     it("applies the checklist a tool call carries", async () => {
-        const { coordinator, config, updateFCListFromToolResponse } = harness(ClineDefaultTool.LIST_FILES)
+        const { coordinator, config, updateFCListFromToolResponse } = harness(DlineDefaultTool.LIST_FILES)
 
-        await coordinator.execute(config, block(ClineDefaultTool.LIST_FILES, { task_progress: "- [ ] Inspect the tree" }))
+        await coordinator.execute(config, block(DlineDefaultTool.LIST_FILES, { task_progress: "- [ ] Inspect the tree" }))
 
         expect(updateFCListFromToolResponse).toHaveBeenCalledWith("- [ ] Inspect the tree")
     })
@@ -48,9 +48,9 @@ describe("ToolExecutorCoordinator task_progress", () => {
     // The parameter rides on every tool, so the central path must not be tied to
     // one family of tools.
     it.each([
-        ClineDefaultTool.FILE_EDIT,
-        ClineDefaultTool.MCP_USE,
-        ClineDefaultTool.ATTEMPT,
+        DlineDefaultTool.FILE_EDIT,
+        DlineDefaultTool.MCP_USE,
+        DlineDefaultTool.ATTEMPT,
     ])("applies it for %s as well", async (tool) => {
         const { coordinator, config, updateFCListFromToolResponse } = harness(tool)
 
@@ -64,19 +64,19 @@ describe("ToolExecutorCoordinator task_progress", () => {
     // report emitted first therefore carries a lower id than the row that
     // follows it, and the list stops rendering at that point.
     it("reports after the handler, so the rows stay in order", async () => {
-        const { coordinator, config, log } = harness(ClineDefaultTool.LIST_FILES)
+        const { coordinator, config, log } = harness(DlineDefaultTool.LIST_FILES)
 
-        await coordinator.execute(config, block(ClineDefaultTool.LIST_FILES, { task_progress: "- [ ] First" }))
+        await coordinator.execute(config, block(DlineDefaultTool.LIST_FILES, { task_progress: "- [ ] First" }))
 
         expect(log).toEqual(["handler", "report"])
     })
 
     it.each([undefined, "", "   \n\t"])("treats %j as carrying no checklist", async (progress) => {
-        const { coordinator, config, updateFCListFromToolResponse } = harness(ClineDefaultTool.LIST_FILES)
+        const { coordinator, config, updateFCListFromToolResponse } = harness(DlineDefaultTool.LIST_FILES)
 
         await coordinator.execute(
             config,
-            block(ClineDefaultTool.LIST_FILES, progress === undefined ? {} : { task_progress: progress }),
+            block(DlineDefaultTool.LIST_FILES, progress === undefined ? {} : { task_progress: progress }),
         )
 
         expect(updateFCListFromToolResponse).not.toHaveBeenCalled()
@@ -85,7 +85,7 @@ describe("ToolExecutorCoordinator task_progress", () => {
     it("still runs the handler when applying the checklist fails", async () => {
         const log: string[] = []
         const coordinator = new ToolExecutorCoordinator()
-        coordinator.register(orderedHandler(ClineDefaultTool.LIST_FILES, log))
+        coordinator.register(orderedHandler(DlineDefaultTool.LIST_FILES, log))
         const config = {
             callbacks: {
                 updateFCListFromToolResponse: vi.fn(async () => {
@@ -99,7 +99,7 @@ describe("ToolExecutorCoordinator task_progress", () => {
         // for it. Letting the failure escape would turn an unwritable checklist
         // into a refused tool.
         await expect(
-            coordinator.execute(config, block(ClineDefaultTool.LIST_FILES, { task_progress: "- [ ] First" })),
+            coordinator.execute(config, block(DlineDefaultTool.LIST_FILES, { task_progress: "- [ ] First" })),
         ).resolves.toBe("done")
         expect(log).toEqual(["handler"])
     })
@@ -107,9 +107,9 @@ describe("ToolExecutorCoordinator task_progress", () => {
 
 describe("ToolExecutorCoordinator checkpoint commit", () => {
     it("commits a restore point after a tool that may have changed the workspace", async () => {
-        const { coordinator, config, saveCheckpoint, log } = harness(ClineDefaultTool.FILE_EDIT)
+        const { coordinator, config, saveCheckpoint, log } = harness(DlineDefaultTool.FILE_EDIT)
 
-        await coordinator.execute(config, block(ClineDefaultTool.FILE_EDIT))
+        await coordinator.execute(config, block(DlineDefaultTool.FILE_EDIT))
 
         // After, not before: the restore point must capture the state the call
         // produced, and a checkpoint taken first would record the state the user
@@ -119,21 +119,60 @@ describe("ToolExecutorCoordinator checkpoint commit", () => {
     })
 
     it.each([
-        ClineDefaultTool.BASH,
-        ClineDefaultTool.MCP_USE,
-        ClineDefaultTool.APPLY_PATCH,
-    ])("commits for %s, whose effects are not limited to named paths", async (tool) => {
+        DlineDefaultTool.BASH,
+        DlineDefaultTool.MCP_USE,
+        DlineDefaultTool.APPLY_PATCH,
+    ])("commits per call for %s when the surface has no round boundary", async (tool) => {
         const { coordinator, config, saveCheckpoint } = harness(tool)
 
         await coordinator.execute(config, block(tool))
 
+        // Without a round to settle the debt, deferring would leave the change
+        // without any restore point at all.
         expect(saveCheckpoint).toHaveBeenCalledOnce()
     })
 
     it.each([
-        ClineDefaultTool.LIST_FILES,
-        ClineDefaultTool.FILE_READ,
-        ClineDefaultTool.SEARCH,
+        DlineDefaultTool.BASH,
+        DlineDefaultTool.MCP_USE,
+        DlineDefaultTool.MCP_ACCESS,
+    ])("defers %s to the round's single restore point", async (tool) => {
+        const log: string[] = []
+        const coordinator = new ToolExecutorCoordinator()
+        coordinator.register(orderedHandler(tool, log))
+        const saveCheckpoint = vi.fn(async () => {})
+        const deferCheckpoint = vi.fn(() => {
+            log.push("deferred")
+        })
+        const config = { callbacks: { saveCheckpoint, deferCheckpoint } } as unknown as TaskConfig
+
+        await coordinator.execute(config, block(tool))
+
+        expect(log).toEqual(["handler", "deferred"])
+        expect(saveCheckpoint).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        DlineDefaultTool.FILE_NEW,
+        DlineDefaultTool.FILE_EDIT,
+        DlineDefaultTool.APPLY_PATCH,
+    ])("still commits %s per call when the round can settle a debt", async (tool) => {
+        const coordinator = new ToolExecutorCoordinator()
+        coordinator.register(orderedHandler(tool, []))
+        const saveCheckpoint = vi.fn(async () => {})
+        const deferCheckpoint = vi.fn()
+        const config = { callbacks: { saveCheckpoint, deferCheckpoint } } as unknown as TaskConfig
+
+        await coordinator.execute(config, block(tool))
+
+        expect(saveCheckpoint).toHaveBeenCalledOnce()
+        expect(deferCheckpoint).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        DlineDefaultTool.LIST_FILES,
+        DlineDefaultTool.FILE_READ,
+        DlineDefaultTool.SEARCH,
     ])("skips %s, which leaves nothing to restore", async (tool) => {
         const { coordinator, config, saveCheckpoint } = harness(tool)
 
@@ -145,9 +184,9 @@ describe("ToolExecutorCoordinator checkpoint commit", () => {
     // attempt_completion commits against the completion row it publishes itself.
     // Committing here as well would attach a second checkpoint to the same state.
     it.each([
-        ClineDefaultTool.ATTEMPT,
-        ClineDefaultTool.QNA_RESPOND,
-        ClineDefaultTool.MAKE_PLAN,
+        DlineDefaultTool.ATTEMPT,
+        DlineDefaultTool.QNA_RESPOND,
+        DlineDefaultTool.MAKE_PLAN,
     ])("leaves %s to its own completion checkpoint", async (tool) => {
         const { coordinator, config, saveCheckpoint } = harness(tool)
 
@@ -162,18 +201,18 @@ describe("ToolExecutorCoordinator checkpoint commit", () => {
         // to supply stubs for effects it does not have.
         const log: string[] = []
         const coordinator = new ToolExecutorCoordinator()
-        coordinator.register(orderedHandler(ClineDefaultTool.FILE_EDIT, log))
+        coordinator.register(orderedHandler(DlineDefaultTool.FILE_EDIT, log))
         const config = { callbacks: {} } as unknown as TaskConfig
 
         await expect(
-            coordinator.execute(config, block(ClineDefaultTool.FILE_EDIT, { task_progress: "- [ ] ignored" })),
+            coordinator.execute(config, block(DlineDefaultTool.FILE_EDIT, { task_progress: "- [ ] ignored" })),
         ).resolves.toBe("done")
         expect(log).toEqual(["handler"])
     })
 
     it("returns the handler's result when the checkpoint cannot be saved", async () => {
         const coordinator = new ToolExecutorCoordinator()
-        coordinator.register(orderedHandler(ClineDefaultTool.FILE_EDIT, []))
+        coordinator.register(orderedHandler(DlineDefaultTool.FILE_EDIT, []))
         const config = {
             callbacks: {
                 updateFCListFromToolResponse: vi.fn(async () => {}),
@@ -183,6 +222,6 @@ describe("ToolExecutorCoordinator checkpoint commit", () => {
             },
         } as unknown as TaskConfig
 
-        await expect(coordinator.execute(config, block(ClineDefaultTool.FILE_EDIT))).resolves.toBe("done")
+        await expect(coordinator.execute(config, block(DlineDefaultTool.FILE_EDIT))).resolves.toBe("done")
     })
 })

@@ -28,16 +28,16 @@ describe("kernel purity", () => {
         const { decideAdmission } = await import("../pool-admission")
         const { resolveApprovalKind } = await import("../approval-kind")
         const { DEFAULT_AUTO_APPROVAL_SETTINGS } = await import("@shared/AutoApprovalSettings")
-        const { ClineDefaultTool } = await import("@shared/tools")
+        const { DlineDefaultTool } = await import("@shared/tools")
 
-        const lanes = resolveToolLanes(ClineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/a.ts"] })
+        const lanes = resolveToolLanes(DlineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/a.ts"] })
         const admission = decideAdmission({
             pending: [{ dlineTid: "a", index: 0, lanes, isTurnEnding: false }],
             running: [],
             limit: 2,
         })
         const approval = resolveApprovalKind({
-            toolName: ClineDefaultTool.FILE_EDIT,
+            toolName: DlineDefaultTool.FILE_EDIT,
             settings: DEFAULT_AUTO_APPROVAL_SETTINGS,
         })
 

@@ -2,7 +2,6 @@ import { createRuntimeContract } from "../../helpers/create-contract"
 import { defineLegacyModule } from "../../helpers/define-legacy-module"
 
 import accessMcpResource from "./accessMcpResource"
-import actModeRespond from "./actModeRespond"
 import applyPatch from "./applyPatch"
 import askFollowupQuestion from "./askFollowupQuestion"
 import attemptCompletion from "./attemptCompletion"
@@ -20,6 +19,7 @@ import loadMcpDocumentation from "./loadMcpDocumentation"
 import loadMcpDocumentationTool from "./loadMcpDocumentationTool"
 import makePlan from "./makePlan"
 import newTask from "./newTask"
+import phaseReport from "./phaseReport"
 import qnaRespond from "./qnaRespond"
 import readFile from "./readFile"
 import rename from "./rename"
@@ -27,18 +27,17 @@ import replaceInFile from "./replaceInFile"
 import replaceText from "./replaceText"
 import searchFiles from "./searchFiles"
 import spawnTask from "./spawnTask"
-import statusUpdate from "./statusUpdate"
 import subagent from "./subagent"
 import toolHandlers from "./toolHandlers"
 import useMcpTool from "./useMcpTool"
 import webFetch from "./webFetch"
 import webSearch from "./webSearch"
+import workingRespond from "./workingRespond"
 import writeToFile from "./writeToFile"
 import xmlProjection from "./xmlProjection"
 
 export const toolPromptModules = [
     defineLegacyModule("accessMcpResource", "tools", accessMcpResource),
-    defineLegacyModule("actModeRespond", "tools", actModeRespond),
     defineLegacyModule("applyPatch", "tools", applyPatch, {
         description: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
     }),
@@ -132,7 +131,7 @@ export const toolPromptModules = [
         pathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
     }),
     defineLegacyModule("spawnTask", "tools", spawnTask),
-    defineLegacyModule("statusUpdate", "tools", statusUpdate),
+    defineLegacyModule("phaseReport", "tools", phaseReport),
     defineLegacyModule("subagent", "tools", subagent, {
         timeoutInstruction: createRuntimeContract("SUBAGENT_TIMEOUT_SECONDS"),
         description: createRuntimeContract("MAX_SUBAGENTS_PER_BATCH"),
@@ -159,6 +158,7 @@ export const toolPromptModules = [
     }),
     defineLegacyModule("webFetch", "tools", webFetch),
     defineLegacyModule("webSearch", "tools", webSearch),
+    defineLegacyModule("workingRespond", "tools", workingRespond),
     defineLegacyModule("xmlProjection", "tools", xmlProjection, {
         parameterLine: createRuntimeContract("NAME", "REQUIREMENT", "INSTRUCTION"),
         toolHeading: createRuntimeContract("NAME"),

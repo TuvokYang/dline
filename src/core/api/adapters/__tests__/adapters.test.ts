@@ -2,12 +2,12 @@ import { describe, it } from "vitest"
 import "should"
 import type { ClineAssistantToolUseBlock } from "@/shared/messages/content"
 import { normalizeLegacyConversation } from "@/shared/messages/legacy-identity-migration"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { transformToolCallMessages as transformCanonicalToolCallMessages } from ".."
 
 type ClineStorageMessage = any
 
-function transformToolCallMessages(messages: unknown[], tools: ClineDefaultTool[]) {
+function transformToolCallMessages(messages: unknown[], tools: DlineDefaultTool[]) {
     return transformCanonicalToolCallMessages(normalizeLegacyConversation(messages), tools)
 }
 
@@ -399,7 +399,7 @@ EOF`,
         testCases.forEach((testCase) => {
             it(testCase.name, () => {
                 // When native tools are FILE_EDIT/FILE_NEW and messages use apply_patch, convert FROM apply_patch
-                const result = transformToolCallMessages(testCase.input, [ClineDefaultTool.FILE_EDIT, ClineDefaultTool.FILE_NEW])
+                const result = transformToolCallMessages(testCase.input, [DlineDefaultTool.FILE_EDIT, DlineDefaultTool.FILE_NEW])
                 // Find all tool_use blocks in the result
                 const toolUseBlocks: ClineAssistantToolUseBlock[] = []
                 for (const message of result) {
@@ -482,7 +482,7 @@ EOF`,
 
             // Native tools are FILE_EDIT/FILE_NEW, messages use apply_patch → convert FROM apply_patch
             // Native tools are FILE_EDIT/FILE_NEW, messages use apply_patch → convert FROM apply_patch
-            const result = transformToolCallMessages(input, [ClineDefaultTool.FILE_EDIT, ClineDefaultTool.FILE_NEW])
+            const result = transformToolCallMessages(input, [DlineDefaultTool.FILE_EDIT, DlineDefaultTool.FILE_NEW])
 
             // Find the tool_result block
             let foundToolResult = false
@@ -534,7 +534,7 @@ EOF`,
             ]
 
             // Native tools are FILE_EDIT/FILE_NEW, messages use apply_patch → convert FROM apply_patch
-            const result = transformToolCallMessages(input, [ClineDefaultTool.FILE_EDIT, ClineDefaultTool.FILE_NEW])
+            const result = transformToolCallMessages(input, [DlineDefaultTool.FILE_EDIT, DlineDefaultTool.FILE_NEW])
 
             // Find and verify the reconstructed tool_result
             let reconstructedContent = ""
@@ -587,7 +587,7 @@ EOF`,
             ]
 
             // Native tools are FILE_EDIT/FILE_NEW, messages use apply_patch → convert FROM apply_patch
-            const result = transformToolCallMessages(input, [ClineDefaultTool.FILE_EDIT, ClineDefaultTool.FILE_NEW])
+            const result = transformToolCallMessages(input, [DlineDefaultTool.FILE_EDIT, DlineDefaultTool.FILE_NEW])
 
             // Find and verify the reconstructed tool_result
             let reconstructedContent = ""
@@ -640,7 +640,7 @@ EOF`,
             ]
 
             // Native tools are FILE_EDIT/FILE_NEW, messages use apply_patch → convert FROM apply_patch
-            const result = transformToolCallMessages(input, [ClineDefaultTool.FILE_EDIT, ClineDefaultTool.FILE_NEW])
+            const result = transformToolCallMessages(input, [DlineDefaultTool.FILE_EDIT, DlineDefaultTool.FILE_NEW])
 
             // Find the tool_result and verify it kept original content
             let foundContent = ""
@@ -685,7 +685,7 @@ EOF`,
             ]
 
             // Native tools are FILE_EDIT/FILE_NEW, messages use apply_patch → convert FROM apply_patch
-            const result = transformToolCallMessages(input, [ClineDefaultTool.FILE_EDIT, ClineDefaultTool.FILE_NEW])
+            const result = transformToolCallMessages(input, [DlineDefaultTool.FILE_EDIT, DlineDefaultTool.FILE_NEW])
 
             // Extract the diff from the converted tool
             let diffContent = ""
@@ -909,7 +909,7 @@ EOF`,
         testCases.forEach((testCase) => {
             it(testCase.name, () => {
                 // Native tools are APPLY_PATCH, messages use write_to_file/replace_in_file → convert TO apply_patch
-                const result = transformToolCallMessages(testCase.input, [ClineDefaultTool.APPLY_PATCH])
+                const result = transformToolCallMessages(testCase.input, [DlineDefaultTool.APPLY_PATCH])
 
                 // Find all tool_use blocks in the result
                 const toolUseBlocks: ClineAssistantToolUseBlock[] = []
@@ -959,7 +959,7 @@ EOF`,
                 },
             ]
 
-            const result = transformToolCallMessages(input, [ClineDefaultTool.APPLY_PATCH])
+            const result = transformToolCallMessages(input, [DlineDefaultTool.APPLY_PATCH])
             const toolBlock = result
                 .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
                 .find((block) => block.type === "tool_use")
@@ -1000,7 +1000,7 @@ EOF`,
             ]
 
             // Native tools are APPLY_PATCH, messages use write_to_file/replace_in_file → convert TO apply_patch
-            const result = transformToolCallMessages(input, [ClineDefaultTool.APPLY_PATCH])
+            const result = transformToolCallMessages(input, [DlineDefaultTool.APPLY_PATCH])
 
             // Find the tool_use block to verify the generated patch
             let toolUseBlock: any = null
@@ -1061,7 +1061,7 @@ export function bar(foo: string): Foo {
             ]
 
             // Native tools are APPLY_PATCH, messages use write_to_file/replace_in_file → convert TO apply_patch
-            const result = transformToolCallMessages(input, [ClineDefaultTool.APPLY_PATCH])
+            const result = transformToolCallMessages(input, [DlineDefaultTool.APPLY_PATCH])
 
             // Find the tool_use block to verify the generated patch
             let toolUseBlock: any = null
@@ -1114,7 +1114,7 @@ export function bar(foo: string): Foo {
             ]
 
             // Native tools are APPLY_PATCH, messages use write_to_file/replace_in_file → convert TO apply_patch
-            const result = transformToolCallMessages(input, [ClineDefaultTool.APPLY_PATCH])
+            const result = transformToolCallMessages(input, [DlineDefaultTool.APPLY_PATCH])
 
             // Find the tool_result
             let foundContent = ""

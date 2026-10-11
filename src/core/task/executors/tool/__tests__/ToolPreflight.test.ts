@@ -1,5 +1,5 @@
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { admitToolCall, rejectToolCall, type ToolPreflightInput } from "../ToolPreflight"
 
@@ -29,7 +29,7 @@ function settings(actions: Partial<AutoApprovalSettings["actions"]> = {}, versio
 
 /** Preflight input for one workspace file read. */
 function readInput(overrides: Partial<ToolPreflightInput> = {}): ToolPreflightInput {
-    return { toolName: ClineDefaultTool.FILE_READ, settings: settings(), ...overrides }
+    return { toolName: DlineDefaultTool.FILE_READ, settings: settings(), ...overrides }
 }
 
 describe("ToolPreflight admission", () => {
@@ -71,7 +71,7 @@ describe("ToolPreflight admission", () => {
     it("declares one lane per write path so a multi-file edit protects every file", () => {
         const admission = admitToolCall(
             {
-                toolName: ClineDefaultTool.APPLY_PATCH,
+                toolName: DlineDefaultTool.APPLY_PATCH,
                 settings: settings({ editFiles: true }),
                 lanes: { canonicalWritePaths: ["/w/a.ts", "/w/b.ts"] },
             },

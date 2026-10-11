@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { serializeDurableToolResult } from "../../../../DurableToolResult"
 import type { TaskPayloadStore } from "../../../../stores"
@@ -33,7 +33,7 @@ describe("ProviderJournalMessageMaterializer", () => {
                         {
                             type: "summarize_task",
                             source: "manual_compact_command",
-                            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
                         },
                     ],
                 }),
@@ -44,7 +44,7 @@ describe("ProviderJournalMessageMaterializer", () => {
         const declarations = await materializer.collectAuthority(["ref-1", "ref-2"])
 
         expect(declarations).toEqual([
-            { type: "summarize_task", source: "manual_compact_command", targetTool: ClineDefaultTool.SUMMARIZE_TASK },
+            { type: "summarize_task", source: "manual_compact_command", targetTool: DlineDefaultTool.SUMMARIZE_TASK },
         ])
     })
 

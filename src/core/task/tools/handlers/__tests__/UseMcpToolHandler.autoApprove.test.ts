@@ -1,5 +1,5 @@
 import type { ToolParamName, ToolUse } from "@core/assistant-message"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { TaskConfig } from "../../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../../types/UIHelpers"
@@ -11,7 +11,7 @@ vi.mock("../../utils/ToolHookUtils", () => ({ ToolHookUtils: { runPreToolUseIfEn
 
 const block: ToolUse = {
     type: "tool_use",
-    name: ClineDefaultTool.MCP_USE,
+    name: DlineDefaultTool.MCP_USE,
     params: { server_name: "docs", tool_name: "search", arguments: "{}" },
     partial: false,
     ts: 42,

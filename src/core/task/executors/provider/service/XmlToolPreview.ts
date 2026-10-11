@@ -1,6 +1,6 @@
 import { parseAssistantMessage, type ToolUse } from "@core/assistant-message"
 import type { ParseTsRegistry } from "@core/assistant-message/parse-assistant-message"
-import { ClineDefaultTool, getToolUseNames } from "@shared/tools"
+import { DlineDefaultTool, getToolUseNames } from "@shared/tools"
 import { isExplicitOnlyTool } from "../../../explicit-instructions/policy"
 
 type AssistantBlocks = ReturnType<typeof parseAssistantMessage>
@@ -132,7 +132,7 @@ function parsePreview(text: string): { blocks: AssistantBlocks; toolKeys: string
  * of a call the task may refuse.
  */
 export function mayPreviewToolCall(tool: string): boolean {
-    return tool !== ClineDefaultTool.CONDENSE && !isExplicitOnlyTool(tool as ClineDefaultTool)
+    return tool !== DlineDefaultTool.CONDENSE && !isExplicitOnlyTool(tool as DlineDefaultTool)
 }
 
 /**

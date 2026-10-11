@@ -23,7 +23,7 @@ import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/pat
 import { applyPatch } from "diff"
 import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
@@ -43,7 +43,7 @@ import { applyModelContentFixes } from "../utils/ModelContentProcessor"
 import { resolveToolPathParam } from "../utils/tool-path-params"
 
 export class WriteToFileToolHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.FILE_NEW // This handler supports write_to_file, replace_in_file, and new_rule
+    readonly name = DlineDefaultTool.FILE_NEW // This handler supports write_to_file, replace_in_file, and new_rule
 
     /** Cache for diff error from validateAndPrepareFileOperation to return via execute(). */
     private _lastDiffError: string | null = null

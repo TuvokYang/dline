@@ -3,7 +3,7 @@ import fs from "fs/promises"
 import os from "os"
 import * as path from "path"
 import { afterEach, describe, it } from "vitest"
-import { ClineDefaultTool, getToolUseNames } from "@/shared/tools"
+import { DlineDefaultTool, getToolUseNames } from "@/shared/tools"
 import {
     AGENTS_CONFIG_DIRECTORY_NAME,
     AgentConfigLoader,
@@ -44,7 +44,7 @@ You are a code reviewer.`
         assert.equal((parsed as { profile?: string }).profile, "subagent-reviewer")
         assert.equal(parsed.maxOutputTokens, 0.05)
         assert.equal("modelId" in parsed, false)
-        assert.deepEqual(parsed.tools, [ClineDefaultTool.FILE_READ, ClineDefaultTool.LIST_FILES, ClineDefaultTool.SEARCH])
+        assert.deepEqual(parsed.tools, [DlineDefaultTool.FILE_READ, DlineDefaultTool.LIST_FILES, DlineDefaultTool.SEARCH])
         assert.equal(parsed.systemPrompt, "You are a code reviewer.")
     })
 
@@ -60,7 +60,7 @@ You are a code reviewer.`
         const parsed = parseAgentConfigFromYaml(content)
 
         // Only the readable tool survives; the run would stall on any of the rest.
-        assert.deepEqual(parsed.tools, [ClineDefaultTool.FILE_READ])
+        assert.deepEqual(parsed.tools, [DlineDefaultTool.FILE_READ])
     })
 
     it("keeps attempt_completion when the config names it explicitly", () => {
@@ -74,7 +74,7 @@ You are a code reviewer.`
 
         const parsed = parseAgentConfigFromYaml(content)
 
-        assert.deepEqual(parsed.tools, [ClineDefaultTool.FILE_READ, ClineDefaultTool.ATTEMPT])
+        assert.deepEqual(parsed.tools, [DlineDefaultTool.FILE_READ, DlineDefaultTool.ATTEMPT])
     })
 
     it("marks a config whose tools were all rejected, so it is not mistaken for an absent list", () => {
@@ -148,7 +148,7 @@ profile: cli-profile
 Prompt body`
 
         const parsed = parseAgentConfigFromYaml(content)
-        assert.deepEqual(parsed.tools, [ClineDefaultTool.FILE_READ, ClineDefaultTool.LIST_FILES])
+        assert.deepEqual(parsed.tools, [DlineDefaultTool.FILE_READ, DlineDefaultTool.LIST_FILES])
     })
 
     it("migrates the retired use_skill tool id to load_skill", () => {
@@ -162,7 +162,7 @@ Prompt body`
 
         const parsed = parseAgentConfigFromYaml(content)
 
-        assert.deepEqual(parsed.tools, [ClineDefaultTool.LOAD_SKILL])
+        assert.deepEqual(parsed.tools, [DlineDefaultTool.LOAD_SKILL])
     })
 
     it("ignores deprecated modelId frontmatter", () => {
@@ -270,10 +270,10 @@ Reviewer prompt`,
         const localAgent = loader.getCachedConfig("local-agent")
         const reviewer = loader.getCachedConfig("reviewer")
         assert.equal(localAgent?.name, "local-agent")
-        assert.deepEqual(localAgent?.tools, [ClineDefaultTool.FILE_READ])
+        assert.deepEqual(localAgent?.tools, [DlineDefaultTool.FILE_READ])
         assert.equal(localAgent?.systemPrompt, "Prompt body")
         assert.equal(reviewer?.name, "reviewer")
-        assert.deepEqual(reviewer?.tools, [ClineDefaultTool.LIST_FILES])
+        assert.deepEqual(reviewer?.tools, [DlineDefaultTool.LIST_FILES])
         assert.equal(loader.getAllCachedConfigs().size, 2)
     })
 
@@ -348,8 +348,8 @@ Reviewer prompt`,
         assert.deepEqual(loader.getAllCachedConfigsWithToolNames(), [])
         assert.equal(loader.resolveSubagentNameForTool("use_subagent_code_reviewer"), undefined)
         assert.equal(loader.isDynamicSubagentTool("use_subagent_code_reviewer"), false)
-        assert.ok(getToolUseNames().includes(ClineDefaultTool.USE_SUBAGENT))
-        assert.ok(getToolUseNames().includes(ClineDefaultTool.USE_SUBAGENTS))
+        assert.ok(getToolUseNames().includes(DlineDefaultTool.USE_SUBAGENT))
+        assert.ok(getToolUseNames().includes(DlineDefaultTool.USE_SUBAGENTS))
         assert.equal(
             getToolUseNames().some((toolName) => toolName.startsWith("use_subagent_")),
             false,

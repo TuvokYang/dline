@@ -1,13 +1,13 @@
 import type { ToolUse } from "@core/assistant-message"
 import { loadMcpDocumentation } from "@core/prompts/loadMcpDocumentation"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
 export class LoadMcpDocumentationHandler implements IToolHandler, IPartialBlockHandler {
-    readonly name = ClineDefaultTool.MCP_DOCS
+    readonly name = DlineDefaultTool.MCP_DOCS
 
     getDescription(block: ToolUse): string {
         return `[${block.name}]`

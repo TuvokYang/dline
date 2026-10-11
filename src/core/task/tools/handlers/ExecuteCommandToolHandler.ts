@@ -8,7 +8,7 @@ import type { CommandExecutionOutcome } from "@integrations/terminal"
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS, MIN_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
 import { arePathsEqual } from "@utils/path"
 import { telemetryService } from "@/services/telemetry"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { isApprovalRowOf } from "../approval-interaction"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
@@ -36,10 +36,10 @@ export function commandResultForModel(outcome: CommandExecutionOutcome, muteStdo
 }
 
 export class ExecuteCommandToolHandler implements IFullyManagedTool {
-    constructor(readonly name: ClineDefaultTool.BASH | ClineDefaultTool.KILL_COMMAND = ClineDefaultTool.BASH) {}
+    constructor(readonly name: DlineDefaultTool.BASH | DlineDefaultTool.KILL_COMMAND = DlineDefaultTool.BASH) {}
 
     getDescription(block: ToolUse): string {
-        if (block.name === ClineDefaultTool.KILL_COMMAND) {
+        if (block.name === DlineDefaultTool.KILL_COMMAND) {
             return `[${block.name} for '${block.params.function_id}']`
         }
         const workdirectory = block.params.workdirectory ? ` in '${block.params.workdirectory}'` : ""
@@ -58,7 +58,7 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
      * most recent one can belong to a sibling that is still running.
      */
     async presentDenial(config: TaskConfig, block: ToolUse): Promise<void> {
-        if (block.name === ClineDefaultTool.KILL_COMMAND) return
+        if (block.name === DlineDefaultTool.KILL_COMMAND) return
         const dlineTid = block.dline_tid
         if (!dlineTid) return
         const messages = config.messageState.clineMessages
@@ -73,7 +73,7 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
     }
 
     async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-        if (block.name === ClineDefaultTool.KILL_COMMAND) return
+        if (block.name === DlineDefaultTool.KILL_COMMAND) return
         const command = block.params.command
         if (uiHelpers.getConfig().isSubagentExecution) {
             return
@@ -90,7 +90,7 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
     }
 
     async execute(config: TaskConfig, block: ToolUse): Promise<ToolResponse> {
-        if (block.name === ClineDefaultTool.KILL_COMMAND) {
+        if (block.name === DlineDefaultTool.KILL_COMMAND) {
             return this.executeKillCommand(config, block)
         }
 

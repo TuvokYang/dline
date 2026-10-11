@@ -712,6 +712,9 @@ export class TaskSessionCompositionService {
             retainedInputPresentation: new RetainedInputPresenter(persistence.payloads, messages, nextPresentationId),
             // A refused call reports what the refusal left behind, which only its handler knows.
             toolDenial: { describe: (invocationRef) => toolExecution.describeDenial(invocationRef) },
+            // User input or a refused call between two calls means the second does not follow
+            // the first, so guards that compare consecutive calls must start over.
+            toolSequence: { interrupt: () => toolState.interruptToolSequence() },
             // A round that would overflow the window waits for the summary first,
             // so the request it sends is the one that fits. It guards compose
             // rather than submission because the kernel also opens rounds on its

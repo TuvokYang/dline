@@ -8,7 +8,7 @@ import { MAX_SUBAGENTS_PER_BATCH } from "@shared/concurrency-limits"
 import { UiSubagentUsageInfo } from "@shared/ExtensionMessage"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { TaskActivityEventInput } from "@shared/task-activity"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { expect } from "chai"
 import { afterEach, describe, it, vi, expect as vitestExpect } from "vitest"
 import { TaskActivityStore } from "../../../activity/TaskActivityStore"
@@ -249,7 +249,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {},
             partial: false,
             ts: Date.now(),
@@ -266,7 +266,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([{ task: "one", context: "ctx one" }]),
             },
@@ -288,7 +288,7 @@ describe("SubagentToolHandler", () => {
         await handler.handlePartialBlock(
             {
                 type: "tool_use",
-                name: ClineDefaultTool.USE_SUBAGENTS,
+                name: DlineDefaultTool.USE_SUBAGENTS,
                 params: {
                     subagents: JSON.stringify([
                         { task: "first", context: "ctx first" },
@@ -327,7 +327,7 @@ describe("SubagentToolHandler", () => {
         await handler.handlePartialBlock(
             {
                 type: "tool_use",
-                name: ClineDefaultTool.USE_SUBAGENTS,
+                name: DlineDefaultTool.USE_SUBAGENTS,
                 params: {
                     subagents: JSON.stringify([
                         { task: "first", context: "ctx first" },
@@ -379,7 +379,7 @@ describe("SubagentToolHandler", () => {
         const handler = new UseSubagentsToolHandler()
         await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([{ task: "one", context: "ctx one" }]),
             },
@@ -438,7 +438,7 @@ describe("SubagentToolHandler", () => {
         const handler = new UseSubagentsToolHandler()
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([
                     { task: "one", context: "ctx one" },
@@ -516,7 +516,7 @@ describe("SubagentToolHandler", () => {
         const handler = new UseSubagentsToolHandler()
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([
                     { task: "succeed", context: "ctx succeed" },
@@ -572,7 +572,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await new UseSubagentsToolHandler().execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([
                     { task: "stable", context: "ctx" },
@@ -625,7 +625,7 @@ describe("SubagentToolHandler", () => {
         const handler = new UseSubagentsToolHandler()
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([
                     { task: "one", context: "ctx one" },
@@ -672,7 +672,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENT,
+            name: DlineDefaultTool.USE_SUBAGENT,
             params: { task: "review this PR", context: "check quality" },
             partial: false,
             ts: Date.now(),
@@ -742,7 +742,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENT,
+            name: DlineDefaultTool.USE_SUBAGENT,
             params: { task: "review", context: "ctx" },
             partial: false,
             ts: Date.now(),
@@ -810,7 +810,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENT,
+            name: DlineDefaultTool.USE_SUBAGENT,
             params: { task: "review", context: "ctx" },
             partial: false,
             ts: Date.now(),
@@ -906,7 +906,7 @@ describe("SubagentToolHandler", () => {
         const handler = new UseSubagentsToolHandler()
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([
                     { agent_name: "reviewer", task: "runs", context: "ctx runs" },
@@ -971,7 +971,7 @@ describe("SubagentToolHandler", () => {
         const handler = new UseSubagentsToolHandler()
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([
                     { agent_name: "reviewer", task: "runs", context: "ctx runs" },
@@ -1030,7 +1030,7 @@ describe("SubagentToolHandler", () => {
         const handler = new UseSubagentsToolHandler()
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([
                     { agent_name: "reviewer", task: "runs", context: "ctx runs", profile: "fast-reviewer" },
@@ -1058,7 +1058,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENT,
+            name: DlineDefaultTool.USE_SUBAGENT,
             params: { agent_name: "missing", task: "review", context: "ctx" },
             partial: false,
             ts: Date.now(),
@@ -1105,7 +1105,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENT,
+            name: DlineDefaultTool.USE_SUBAGENT,
             params: { agent_name: "code-reviewer", task: "review this PR", context: "check quality" },
             partial: false,
             ts: Date.now(),
@@ -1147,7 +1147,7 @@ describe("SubagentToolHandler", () => {
 
         const execution = handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENT,
+            name: DlineDefaultTool.USE_SUBAGENT,
             params: { task: "review", context: "ctx" },
             partial: false,
             ts: Date.now(),
@@ -1163,7 +1163,7 @@ describe("SubagentToolHandler", () => {
 
         const second = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENT,
+            name: DlineDefaultTool.USE_SUBAGENT,
             params: { task: "second review", context: "ctx", background: "true" },
             partial: false,
             ts: Date.now() + 1,
@@ -1220,7 +1220,7 @@ describe("SubagentToolHandler", () => {
         const handler = new UseSubagentsToolHandler()
         const execution = handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([
                     { task: "first", context: "ctx-1" },
@@ -1327,7 +1327,7 @@ describe("SubagentToolHandler", () => {
 
         const response = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENT,
+            name: DlineDefaultTool.USE_SUBAGENT,
             params: { task: "review", context: "ctx", background: "true" },
             partial: false,
             ts: Date.now(),
@@ -1564,7 +1564,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENT,
+            name: DlineDefaultTool.USE_SUBAGENT,
             params: { agent_name: "code-reviewer", task: "review", context: "ctx", background: "true" },
             partial: false,
             ts: Date.now(),
@@ -1590,7 +1590,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: { subagents: JSON.stringify([{ task: "do something", context: "ctx" }]) },
             partial: false,
             ts: blockTs,
@@ -1641,7 +1641,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: { subagents: JSON.stringify([{ task: "fast", context: "ctx" }]), background: "true" },
             partial: false,
             ts: Date.now(),
@@ -1681,7 +1681,7 @@ describe("SubagentToolHandler", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify(
                     Array.from({ length: MAX_SUBAGENTS_PER_BATCH }, (_unused, index) => ({
@@ -1713,7 +1713,7 @@ describe("SubagentToolHandler", () => {
         const handler = new UseSubagentsToolHandler()
         await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([
                     { agent_name: "missing-one", task: "never runs", context: "ctx one" },
@@ -1767,7 +1767,7 @@ describe("SubagentToolHandler", () => {
         const handler = new UseSubagentsToolHandler()
         await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.USE_SUBAGENTS,
+            name: DlineDefaultTool.USE_SUBAGENTS,
             params: {
                 subagents: JSON.stringify([
                     { agent_name: "reviewer", task: "bound", context: "ctx bound", profile: "fast-reviewer" },

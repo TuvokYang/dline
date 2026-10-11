@@ -1,11 +1,11 @@
 import path from "node:path"
 import type { ToolUse } from "@core/assistant-message"
 import type { ScopedAgentsResolution } from "@core/prompts/prompt-input-monitor/ScopedAgentsResolver"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { TaskScopedAgentsService } from "./TaskScopedAgentsService"
 
-function tool(name: ClineDefaultTool, params: ToolUse["params"], tid: string): ToolUse {
+function tool(name: DlineDefaultTool, params: ToolUse["params"], tid: string): ToolUse {
     return { type: "tool_use", name, params, partial: false, ts: 1, function_id: `fn-${tid}`, dline_tid: tid }
 }
 
@@ -44,8 +44,8 @@ describe("TaskScopedAgentsService", () => {
             resolve,
         })
         const tools = [
-            tool(ClineDefaultTool.FILE_READ, { path: "packages/a.ts" }, "a"),
-            tool(ClineDefaultTool.FILE_READ, { path: "packages/b.ts" }, "b"),
+            tool(DlineDefaultTool.FILE_READ, { path: "packages/a.ts" }, "a"),
+            tool(DlineDefaultTool.FILE_READ, { path: "packages/b.ts" }, "b"),
         ]
 
         const first = await service.resolveTurn("turn:a", tools)
@@ -107,7 +107,7 @@ describe("TaskScopedAgentsService", () => {
         })
 
         expect(
-            await service.resolveTurn("turn:new", [tool(ClineDefaultTool.FILE_READ, { path: "pkg/file.ts" }, "new")]),
+            await service.resolveTurn("turn:new", [tool(DlineDefaultTool.FILE_READ, { path: "pkg/file.ts" }, "new")]),
         ).toBeUndefined()
     })
 })

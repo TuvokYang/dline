@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { type AdmissionBlock, decideAdmission, poolHasDrained } from "../pool-admission"
 import { LANE_DIFF_EDITOR, resolveToolLanes } from "../tool-lanes"
@@ -90,8 +90,8 @@ describe("pool admission", () => {
 
     describe("lanes", () => {
         it("refuses a block whose lane a running execution holds", () => {
-            const editLanes = resolveToolLanes(ClineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/a.ts"] })
-            const writeLanes = resolveToolLanes(ClineDefaultTool.FILE_NEW, { canonicalWritePaths: ["/repo/b.ts"] })
+            const editLanes = resolveToolLanes(DlineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/a.ts"] })
+            const writeLanes = resolveToolLanes(DlineDefaultTool.FILE_NEW, { canonicalWritePaths: ["/repo/b.ts"] })
 
             const result = decideAdmission({
                 pending: [block({ dlineTid: "pending-write", index: 1, lanes: writeLanes })],
@@ -104,7 +104,7 @@ describe("pool admission", () => {
         })
 
         it("refuses the second of two pending blocks that share a lane", () => {
-            const lanes = resolveToolLanes(ClineDefaultTool.BROWSER)
+            const lanes = resolveToolLanes(DlineDefaultTool.BROWSER)
 
             const result = decideAdmission({
                 pending: [block({ dlineTid: "a", index: 0, lanes }), block({ dlineTid: "b", index: 1, lanes })],
@@ -122,9 +122,9 @@ describe("pool admission", () => {
         it("lets unrelated lanes run together", () => {
             const result = decideAdmission({
                 pending: [
-                    block({ dlineTid: "browser", index: 0, lanes: resolveToolLanes(ClineDefaultTool.BROWSER) }),
-                    block({ dlineTid: "command", index: 1, lanes: resolveToolLanes(ClineDefaultTool.BASH) }),
-                    block({ dlineTid: "read", index: 2, lanes: resolveToolLanes(ClineDefaultTool.FILE_READ) }),
+                    block({ dlineTid: "browser", index: 0, lanes: resolveToolLanes(DlineDefaultTool.BROWSER) }),
+                    block({ dlineTid: "command", index: 1, lanes: resolveToolLanes(DlineDefaultTool.BASH) }),
+                    block({ dlineTid: "read", index: 2, lanes: resolveToolLanes(DlineDefaultTool.FILE_READ) }),
                 ],
                 running: [],
                 limit: 8,
@@ -135,7 +135,7 @@ describe("pool admission", () => {
         })
 
         it("keeps a blocked lane blocked for later candidates", () => {
-            const lanes = resolveToolLanes(ClineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/a.ts"] })
+            const lanes = resolveToolLanes(DlineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/a.ts"] })
 
             const result = decideAdmission({
                 pending: [block({ dlineTid: "second", index: 1, lanes }), block({ dlineTid: "third", index: 2, lanes })],
@@ -180,7 +180,7 @@ describe("pool admission", () => {
         })
 
         it("does not let an unrestricted block overtake an older lane-blocked one", () => {
-            const editLanes = resolveToolLanes(ClineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/a.ts"] })
+            const editLanes = resolveToolLanes(DlineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/a.ts"] })
 
             const result = decideAdmission({
                 pending: [

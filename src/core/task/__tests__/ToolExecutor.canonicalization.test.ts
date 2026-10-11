@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, it } from "vitest"
 import type { ToolUse } from "../../assistant-message"
 import { canonicalizeAttemptCompletionParams } from "../tools/attempt-completion-params"
@@ -10,7 +10,7 @@ describe("ToolExecutor canonicalization", () => {
             type: "tool_use",
             function_id: "test_attempt_response",
             dline_tid: "test_attempt_response_tid",
-            name: ClineDefaultTool.ATTEMPT,
+            name: DlineDefaultTool.ATTEMPT,
             params: {
                 response: "final answer from response field",
                 task_progress: "- [x] done",
@@ -31,7 +31,7 @@ describe("ToolExecutor canonicalization", () => {
             type: "tool_use",
             function_id: "test_attempt_result",
             dline_tid: "test_attempt_result_tid",
-            name: ClineDefaultTool.ATTEMPT,
+            name: DlineDefaultTool.ATTEMPT,
             params: {
                 result: "already canonical",
                 response: "extra text",
@@ -49,11 +49,11 @@ describe("ToolExecutor canonicalization", () => {
     it("does not canonicalize non-attempt tools", () => {
         const block: ToolUse = {
             type: "tool_use",
-            function_id: "test_act_mode",
-            dline_tid: "test_act_mode_tid",
-            name: ClineDefaultTool.ACT_MODE,
+            function_id: "test_status_update",
+            dline_tid: "test_status_update_tid",
+            name: DlineDefaultTool.PHASE_REPORT,
             params: {
-                response: "act mode response",
+                response: "status update response",
             },
             partial: false,
             ts: Date.now(),

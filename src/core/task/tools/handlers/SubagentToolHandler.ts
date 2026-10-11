@@ -8,7 +8,7 @@ import { SubagentStatusItem, UiAskUseSubagents, UiSaySubagentStatus, UiSubagentU
 import { telemetryService } from "@/services/telemetry"
 import { calculateApiUsageStatistics } from "@/shared/api-usage"
 import { Logger } from "@/shared/services/Logger"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { BackgroundHandoffResult } from "../../activity/TaskActivityStore"
 import { formatBackgroundSubagentDelivery, formatBackgroundSubagentResult } from "../../background/BackgroundContextInjector"
 import {
@@ -666,7 +666,7 @@ function formatSummary(entries: SubagentStatusItem[]): string {
  */
 function captureToolTelemetry(
     config: TaskConfig,
-    toolName: ClineDefaultTool,
+    toolName: DlineDefaultTool,
     provider: string | undefined,
     autoApproved: boolean,
     approved: boolean,
@@ -688,7 +688,7 @@ function captureToolTelemetry(
 async function presentSubagentUse(
     config: TaskConfig,
     block: ToolUse,
-    toolName: ClineDefaultTool,
+    toolName: DlineDefaultTool,
     approvalBody: string,
 ): Promise<void> {
     const apiConfig = config.services.stateManager.getApiConfiguration()
@@ -853,7 +853,7 @@ function preparedExecutionKey(block: ToolUse): string {
 }
 
 export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToolHandler {
-    readonly name = ClineDefaultTool.USE_SUBAGENT
+    readonly name = DlineDefaultTool.USE_SUBAGENT
     private readonly preparedExecutions = new Map<string, PreparedSingleSubagentExecution>()
 
     /**
@@ -1217,7 +1217,7 @@ export class UseSubagentToolHandler implements IFullyManagedTool, IPreparableToo
 }
 
 export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableToolHandler {
-    readonly name = ClineDefaultTool.USE_SUBAGENTS
+    readonly name = DlineDefaultTool.USE_SUBAGENTS
     private readonly preparedExecutions = new Map<string, PreparedBatchSubagentExecution>()
 
     /**

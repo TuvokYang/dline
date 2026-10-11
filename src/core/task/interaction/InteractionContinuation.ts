@@ -9,7 +9,7 @@ import type {
     ClineUserAttachedDocumentBlock,
     ClineUserToolResultContentBlock,
 } from "@shared/messages/content"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { ToolResultUtils } from "../tools/utils/ToolResultUtils"
 import type { InteractionKind } from "./Interaction"
 
@@ -26,17 +26,19 @@ export interface InteractionContinuationInput {
 /** Map a conversational tool name to the interaction contract that formats its continuation. */
 export function interactionKindForToolName(name: string): InteractionKind | undefined {
     switch (name) {
-        case ClineDefaultTool.ASK:
+        case DlineDefaultTool.ASK:
             return "followup"
-        case ClineDefaultTool.MAKE_PLAN:
+        case DlineDefaultTool.MAKE_PLAN:
             return "make_plan"
-        case ClineDefaultTool.QNA_RESPOND:
+        case DlineDefaultTool.QNA_RESPOND:
             return "qna_response"
-        case ClineDefaultTool.GENERATE_REPORT:
+        case DlineDefaultTool.GENERATE_REPORT:
             return "generate_report"
-        case ClineDefaultTool.STATUS_UPDATE:
+        case DlineDefaultTool.PHASE_REPORT:
+        // Restored dialogs recorded before the rename carry the former name.
+        case DlineDefaultTool.LEGACY_STATUS_UPDATE:
             return "status_acknowledgment"
-        case ClineDefaultTool.ATTEMPT:
+        case DlineDefaultTool.ATTEMPT:
             return "completion"
         default:
             return undefined
@@ -89,12 +91,12 @@ function projectResponseContent(input: InteractionContinuationInput, fileContent
         }
         case "status_acknowledgment": {
             const feedback = statusFeedbackText(text)
-            // Worded exactly as StatusUpdateHandler answers a live dialog, so a
+            // Worded exactly as PhaseReportHandler answers a live dialog, so a
             // restored answer reads the same to the model.
             const message =
                 input.actionId === "stop"
-                    ? `[STATUS_UPDATE] User chose to stop.${feedback} Wait for further instructions.`
-                    : `[STATUS_UPDATE] User acknowledged.${feedback} Continue with your next tool call.`
+                    ? `[PHASE_REPORT] User chose to stop.${feedback} Wait for further instructions.`
+                    : `[PHASE_REPORT] User acknowledged.${feedback} Continue with your next tool call.`
             return formatResponse.toolResult(message, images, fileContent)
         }
         case "completion": {

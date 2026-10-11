@@ -1,6 +1,6 @@
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { hasChecklistTitle, hasValidTodoItem } from "../../focus-chain/file-utils"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
@@ -11,7 +11,7 @@ import type { TaskConfig } from "../types/TaskConfig"
  * Allows AI to request plan changes with user approval.
  */
 export class FocusChainHandler implements IToolHandler {
-    readonly name = ClineDefaultTool.CHANGE_TODO_LIST
+    readonly name = DlineDefaultTool.CHANGE_TODO_LIST
 
     getDescription(block: ToolUse): string {
         return `[${block.name}] Request TODO list change`

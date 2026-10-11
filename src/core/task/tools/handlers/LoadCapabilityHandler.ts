@@ -6,7 +6,7 @@ import {
     type LoadCapabilityPayload,
 } from "@shared/load-capabilities"
 import type { ClineToolResponseContent } from "@shared/messages/content"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { LoadCapabilityService } from "../load-capabilities/LoadCapabilityService"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
@@ -25,7 +25,7 @@ export class LoadCapabilityHandler {
      * @param service Optional service override for tests.
      */
     constructor(
-        readonly name: ClineDefaultTool,
+        readonly name: DlineDefaultTool,
         private readonly kind: LoadCapabilityKind,
         service = new LoadCapabilityService(),
     ) {

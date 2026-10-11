@@ -5,7 +5,7 @@ import type {
     ClineStorageMessage,
     ClineUserToolResultContentBlock,
 } from "@shared/messages/content"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 
 /** Stable handler-owned marker for one New Task feedback tool result. */
 export const NEW_TASK_FEEDBACK_CONTINUATION_MARKER = "<!-- dline:new-task-feedback:v1 -->"
@@ -51,7 +51,7 @@ export function deriveNewTaskFeedbackContinuation(
         (block) =>
             block.type === "tool_use" &&
             block.partial !== true &&
-            block.name === ClineDefaultTool.NEW_TASK &&
+            block.name === DlineDefaultTool.NEW_TASK &&
             block.function_id === result.function_id &&
             block.dline_tid === result.dline_tid,
     )
@@ -60,7 +60,7 @@ export function deriveNewTaskFeedbackContinuation(
     return {
         type: "new_task",
         source: "internal_continuation",
-        targetTool: ClineDefaultTool.NEW_TASK,
+        targetTool: DlineDefaultTool.NEW_TASK,
         operationId: `new-task-feedback:${result.dline_tid}`,
         metadata: {
             functionId: result.function_id,

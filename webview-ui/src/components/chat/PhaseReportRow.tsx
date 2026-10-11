@@ -4,13 +4,14 @@ import { CopyButton } from "@/components/common/CopyButton"
 import MarkdownBlock from "@/components/common/MarkdownBlock"
 import { cn } from "@/lib/utils"
 
-interface StatusUpdateProps {
+interface PhaseReportProps {
     text: string
     headClassNames?: string
     title?: string
 }
 
-const StatusUpdateRow = memo(({ text, headClassNames, title = "Status Update" }: StatusUpdateProps) => {
+/** A phase_report message, also shown while it waits for the user's acknowledgment. */
+const PhaseReportRow = memo(({ text, headClassNames, title = "Status Update" }: PhaseReportProps) => {
     return (
         <div className="rounded-sm border border-blue-300/30 dark:border-blue-700/30 overflow-visible bg-blue-100/20 dark:bg-blue-900/10 p-2 pt-3 relative">
             <div className="absolute top-2 right-2 z-10">
@@ -33,6 +34,6 @@ const StatusUpdateRow = memo(({ text, headClassNames, title = "Status Update" }:
     )
 })
 
-StatusUpdateRow.displayName = "StatusUpdateRow"
+PhaseReportRow.displayName = "PhaseReportRow"
 
-export default StatusUpdateRow
+export default PhaseReportRow

@@ -2,7 +2,7 @@ import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { showSystemNotification } from "@integrations/notifications"
 import { findLastIndex, parsePartialArrayString } from "@shared/array"
 import { UiAsk, UiAskQuestion } from "@shared/ExtensionMessage"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { telemetryService } from "@/services/telemetry"
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
@@ -14,7 +14,7 @@ import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlockHandler {
-    readonly name = ClineDefaultTool.ASK
+    readonly name = DlineDefaultTool.ASK
 
     getDescription(block: ToolUse): string {
         return `[${block.name} for '${block.params.question}']`

@@ -1,10 +1,10 @@
 import { strict as assert } from "node:assert"
 import type { AssistantMessageContent, ToolUse } from "@core/assistant-message"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, it } from "vitest"
 import { isTurnEndingToolName, orderTurnEndingContentBlocks, orderTurnEndingNativeToolBlocks } from "../assistant-message-order"
 
-const tool = (name: ClineDefaultTool, functionId = `function-${name}`): ToolUse => ({
+const tool = (name: DlineDefaultTool, functionId = `function-${name}`): ToolUse => ({
     type: "tool_use",
     name,
     params: {},
@@ -16,8 +16,8 @@ const tool = (name: ClineDefaultTool, functionId = `function-${name}`): ToolUse 
 
 describe("assistant message tool ordering", () => {
     it("moves attempt_completion after regular tool uses", () => {
-        const write = tool(ClineDefaultTool.FILE_NEW)
-        const attempt = tool(ClineDefaultTool.ATTEMPT)
+        const write = tool(DlineDefaultTool.FILE_NEW)
+        const attempt = tool(DlineDefaultTool.ATTEMPT)
 
         const ordered = orderTurnEndingContentBlocks([attempt, write])
 
@@ -25,8 +25,8 @@ describe("assistant message tool ordering", () => {
     })
 
     it("moves ask_followup_question after regular tool uses", () => {
-        const ask = tool(ClineDefaultTool.ASK)
-        const read = tool(ClineDefaultTool.FILE_READ)
+        const ask = tool(DlineDefaultTool.ASK)
+        const read = tool(DlineDefaultTool.FILE_READ)
 
         const ordered = orderTurnEndingContentBlocks([ask, read])
 
@@ -35,10 +35,10 @@ describe("assistant message tool ordering", () => {
 
     it("moves make_plan with needs_more_exploration after regular tool uses", () => {
         const plan = {
-            ...tool(ClineDefaultTool.MAKE_PLAN),
+            ...tool(DlineDefaultTool.MAKE_PLAN),
             params: { needs_more_exploration: "true" },
         } satisfies ToolUse
-        const search = tool(ClineDefaultTool.SEARCH)
+        const search = tool(DlineDefaultTool.SEARCH)
 
         const ordered = orderTurnEndingContentBlocks([plan, search])
 
@@ -47,8 +47,8 @@ describe("assistant message tool ordering", () => {
 
     it("keeps content unchanged when no turn-ending tool is followed by more content", () => {
         const text = { type: "text", content: "Done", partial: false, ts: Date.now() } satisfies AssistantMessageContent
-        const read = tool(ClineDefaultTool.FILE_READ)
-        const attempt = tool(ClineDefaultTool.ATTEMPT)
+        const read = tool(DlineDefaultTool.FILE_READ)
+        const attempt = tool(DlineDefaultTool.ATTEMPT)
         const blocks = [text, read, attempt]
 
         const ordered = orderTurnEndingContentBlocks(blocks)
@@ -61,14 +61,14 @@ describe("assistant message tool ordering", () => {
             type: "tool_use",
             function_id: "call-attempt",
             dline_tid: "tid-attempt",
-            name: ClineDefaultTool.ATTEMPT,
+            name: DlineDefaultTool.ATTEMPT,
             input: {},
         } as const
         const write = {
             type: "tool_use",
             function_id: "call-write",
             dline_tid: "tid-write",
-            name: ClineDefaultTool.FILE_NEW,
+            name: DlineDefaultTool.FILE_NEW,
             input: {},
         } as const
 
@@ -81,10 +81,10 @@ describe("assistant message tool ordering", () => {
     })
 
     it("recognizes all turn-ending tool names", () => {
-        assert.equal(isTurnEndingToolName(ClineDefaultTool.ATTEMPT), true)
-        assert.equal(isTurnEndingToolName(ClineDefaultTool.ASK), true)
-        assert.equal(isTurnEndingToolName(ClineDefaultTool.MAKE_PLAN), true)
-        assert.equal(isTurnEndingToolName(ClineDefaultTool.NEW_TASK), true)
-        assert.equal(isTurnEndingToolName(ClineDefaultTool.FILE_READ), false)
+        assert.equal(isTurnEndingToolName(DlineDefaultTool.ATTEMPT), true)
+        assert.equal(isTurnEndingToolName(DlineDefaultTool.ASK), true)
+        assert.equal(isTurnEndingToolName(DlineDefaultTool.MAKE_PLAN), true)
+        assert.equal(isTurnEndingToolName(DlineDefaultTool.NEW_TASK), true)
+        assert.equal(isTurnEndingToolName(DlineDefaultTool.FILE_READ), false)
     })
 })

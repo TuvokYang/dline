@@ -4,7 +4,7 @@ import type {
     ChatCompletionFunctionTool as OpenAIFunctionTool,
     ChatCompletionTool as OpenAITool,
 } from "openai/resources/chat/completions"
-import type { ClineDefaultTool, ClineTool } from "../../../shared/tools"
+import type { ClineTool, DlineDefaultTool } from "../../../shared/tools"
 import type { SystemPromptContext } from "../system-prompt/context"
 import { type ProfileToolParam, type ProfileToolSpec, resolveProfilePromptText, type ToolParamType } from "./profile-tool-set"
 
@@ -26,7 +26,7 @@ const GOOGLE_TYPES: Readonly<Record<ToolParamType, GoogleType>> = {
 function enabledParams(
     spec: ProfileToolSpec,
     context: SystemPromptContext,
-    enabledToolIds: ReadonlySet<ClineDefaultTool>,
+    enabledToolIds: ReadonlySet<DlineDefaultTool>,
 ): readonly ProfileToolParam[] {
     return (spec.parameters ?? []).filter((parameter) => {
         if (parameter.dependencies && parameter.dependencies.some((dependency) => !enabledToolIds.has(dependency))) {
@@ -40,7 +40,7 @@ function enabledParams(
 function buildSchema(
     spec: ProfileToolSpec,
     context: SystemPromptContext,
-    enabledToolIds: ReadonlySet<ClineDefaultTool>,
+    enabledToolIds: ReadonlySet<DlineDefaultTool>,
 ): JsonSchemaObject {
     if (spec.inputSchema) {
         return spec.inputSchema as JsonSchemaObject
@@ -62,7 +62,7 @@ function buildSchema(
 function toOpenAI(
     spec: ProfileToolSpec,
     context: SystemPromptContext,
-    enabledToolIds: ReadonlySet<ClineDefaultTool>,
+    enabledToolIds: ReadonlySet<DlineDefaultTool>,
 ): OpenAITool {
     const parameters = buildSchema(spec, context, enabledToolIds) as NonNullable<OpenAIFunctionTool["function"]["parameters"]>
     return {
@@ -80,7 +80,7 @@ function toOpenAI(
 function toAnthropic(
     spec: ProfileToolSpec,
     context: SystemPromptContext,
-    enabledToolIds: ReadonlySet<ClineDefaultTool>,
+    enabledToolIds: ReadonlySet<DlineDefaultTool>,
 ): AnthropicTool {
     const inputSchema = buildSchema(spec, context, enabledToolIds) as AnthropicTool["input_schema"]
     return {
@@ -113,7 +113,7 @@ function toGoogleSchema(value: JsonSchemaValue): JsonSchemaValue {
 function toGoogle(
     spec: ProfileToolSpec,
     context: SystemPromptContext,
-    enabledToolIds: ReadonlySet<ClineDefaultTool>,
+    enabledToolIds: ReadonlySet<DlineDefaultTool>,
 ): GoogleTool {
     const parameters = toGoogleSchema(buildSchema(spec, context, enabledToolIds)) as NonNullable<GoogleTool["parameters"]>
     return {
@@ -137,7 +137,7 @@ const ANTHROPIC_PROTOCOL_PROVIDERS: ReadonlySet<string> = new Set(["anthropic", 
 export function projectTool(
     spec: ProfileToolSpec,
     context: SystemPromptContext,
-    enabledToolIds: ReadonlySet<ClineDefaultTool>,
+    enabledToolIds: ReadonlySet<DlineDefaultTool>,
 ): ClineTool {
     const providerId = context.providerInfo.providerId
     if (ANTHROPIC_PROTOCOL_PROVIDERS.has(providerId)) {

@@ -1,5 +1,5 @@
 import { CLINE_MCP_TOOL_IDENTIFIER, type McpServer } from "../../../shared/mcp"
-import { ClineDefaultTool } from "../../../shared/tools"
+import { DlineDefaultTool } from "../../../shared/tools"
 import type { PromptProfile } from "../profiles/types"
 import type { ProfileToolSpec } from "./profile-tool-set"
 
@@ -18,7 +18,7 @@ export function createMcpToolSpecs(profile: PromptProfile, server: McpServer): r
             {
                 profile,
                 transport: "native",
-                id: ClineDefaultTool.MCP_USE,
+                id: DlineDefaultTool.MCP_USE,
                 name,
                 description: `${server.name}: ${tool.description ?? tool.name}`,
                 inputSchema,

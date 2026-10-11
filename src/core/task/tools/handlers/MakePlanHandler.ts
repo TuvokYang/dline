@@ -5,7 +5,7 @@ import { findLast } from "@shared/array"
 import { telemetryService } from "@/services/telemetry"
 import type { UiMakePlanResponse } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
@@ -17,7 +17,7 @@ import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackU
 const MAKE_PLAN_ASK = "make_plan" as const
 
 export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
-    public readonly name = ClineDefaultTool.MAKE_PLAN
+    public readonly name = DlineDefaultTool.MAKE_PLAN
 
     getDescription(block: ToolUse): string {
         return `[${block.name}]`

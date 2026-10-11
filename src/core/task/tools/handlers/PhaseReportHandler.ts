@@ -1,11 +1,19 @@
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
+
+/**
+ * Persisted chat-row key of phase_report messages.
+ *
+ * Rows written under the former status_update name carry this value, so new and recorded
+ * reports keep sharing one renderer only while the key stays unchanged.
+ */
+const PHASE_REPORT_ROW_KEY = "statusUpdate"
 
 /** The note typed with Acknowledge or Stop, framed for the tool result; empty when there is none. */
 function feedbackNote(text?: string): string {
@@ -13,8 +21,14 @@ function feedbackNote(text?: string): string {
     return trimmed ? `\n<feedback>\n${trimmed}\n</feedback>` : ""
 }
 
-export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
-    readonly name = ClineDefaultTool.STATUS_UPDATE
+/**
+ * Reports a completed phase to the user, in Plan and Act modes alike.
+ *
+ * The report never ends the turn. With requires_acknowledgment it waits only until the user
+ * has read it, and the Acknowledge or Stop answer becomes the call's result.
+ */
+export class PhaseReportHandler implements IToolHandler, IPartialBlockHandler {
+    readonly name = DlineDefaultTool.PHASE_REPORT
 
     getDescription(block: ToolUse): string {
         return `[${block.name}]`
@@ -27,7 +41,7 @@ export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
             await uiHelpers.say("text", message, undefined, undefined, true, block.ts).catch(() => {})
             return
         }
-        const toolMsg = JSON.stringify({ tool: "statusUpdate", content: message })
+        const toolMsg = JSON.stringify({ tool: PHASE_REPORT_ROW_KEY, content: message })
         await uiHelpers.say("tool", toolMsg, undefined, undefined, true, block.ts).catch(() => {})
     }
 
@@ -35,10 +49,11 @@ export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
         const response: string | undefined = (block.params as Record<string, string>).response
         const requiresAck: boolean = (block.params as Record<string, string>).requires_acknowledgment === "true"
 
-        // Block consecutive status_update calls to prevent narration loops
-        if (config.taskState.lastToolName === ClineDefaultTool.STATUS_UPDATE) {
+        // Two reports with nothing between them are narration, not progress. User input or a
+        // refused call clears lastToolName, so a report after either is never blocked.
+        if (isPhaseReport(config.taskState.lastToolName)) {
             return formatResponse.toolResult(
-                `[BLOCKED] You cannot call status_update consecutively. ` +
+                `[BLOCKED] You cannot call phase_report consecutively. ` +
                     `Your next action MUST be a different tool that performs actual work: ` +
                     `read_file, replace_in_file, write_to_file, execute_command, list_files, search_files, etc. ` +
                     `Stop announcing and start doing.`,
@@ -77,21 +92,25 @@ export class StatusUpdateHandler implements IToolHandler, IPartialBlockHandler {
             const note = feedbackNote(outcome.draft?.text)
             const message =
                 outcome.actionId === "stop"
-                    ? `[STATUS_UPDATE] User chose to stop.${note} Wait for further instructions.`
-                    : `[STATUS_UPDATE] User acknowledged.${note} Continue with your next tool call.`
+                    ? `[PHASE_REPORT] User chose to stop.${note} Wait for further instructions.`
+                    : `[PHASE_REPORT] User acknowledged.${note} Continue with your next tool call.`
             return withToolDocuments(
                 formatResponse.toolResult(message, outcome.draft?.images, attachments.text),
                 attachments.documents,
             )
         }
 
-        const toolMsg = JSON.stringify({ tool: "statusUpdate", content: response })
+        const toolMsg = JSON.stringify({ tool: PHASE_REPORT_ROW_KEY, content: response })
         await config.interactions.say({ taskSay: "tool", presentation: toolMsg, existingTs: block.ts })
 
         return formatResponse.toolResult(
             `[Message displayed. Now proceed with your next tool call - ` +
                 `it must be a different tool (read_file, replace_in_file, execute_command, etc.), ` +
-                `not status_update again.]`,
+                `not phase_report again.]`,
         )
     }
+}
+
+function isPhaseReport(toolName: string | undefined): boolean {
+    return toolName === DlineDefaultTool.PHASE_REPORT || toolName === DlineDefaultTool.LEGACY_STATUS_UPDATE
 }

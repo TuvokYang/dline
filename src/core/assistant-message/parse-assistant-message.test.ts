@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import type { ParseTsRegistry } from "./parse-assistant-message"
 import { parseAssistantMessage } from "./parse-assistant-message"
@@ -37,7 +37,7 @@ describe("parseAssistantMessage summarize_task context", () => {
         expect(blocks).toHaveLength(1)
         expect(blocks[0]).toMatchObject({
             type: "tool_use",
-            name: ClineDefaultTool.SUMMARIZE_TASK,
+            name: DlineDefaultTool.SUMMARIZE_TASK,
             partial: false,
             params: { context: summary },
         })
@@ -51,7 +51,7 @@ describe("parseAssistantMessage summarize_task context", () => {
         expect(blocks).toHaveLength(1)
         expect(blocks[0]).toMatchObject({
             type: "tool_use",
-            name: ClineDefaultTool.SUMMARIZE_TASK,
+            name: DlineDefaultTool.SUMMARIZE_TASK,
             partial: true,
             params: { context: partialSummary },
         })
@@ -68,7 +68,7 @@ describe("parseAssistantMessage summarize_task context", () => {
         expect(blocks).toHaveLength(1)
         expect(blocks[0]).toMatchObject({
             type: "tool_use",
-            name: ClineDefaultTool.SUMMARIZE_TASK,
+            name: DlineDefaultTool.SUMMARIZE_TASK,
             partial: false,
             params: { context: summary, task_progress: taskProgress },
         })
@@ -82,7 +82,7 @@ describe("parseAssistantMessage summarize_task context", () => {
         expect(blocks).toHaveLength(1)
         expect(blocks[0]).toMatchObject({
             type: "tool_use",
-            name: ClineDefaultTool.SUMMARIZE_TASK,
+            name: DlineDefaultTool.SUMMARIZE_TASK,
             partial: false,
             params: { context: summary },
         })
@@ -100,7 +100,7 @@ describe("parseAssistantMessage summarize_task context", () => {
         expect(blocks).toHaveLength(1)
         expect(blocks[0]).toMatchObject({
             type: "tool_use",
-            name: ClineDefaultTool.SUMMARIZE_TASK,
+            name: DlineDefaultTool.SUMMARIZE_TASK,
             partial: false,
             params: { context: summary, task_progress: taskProgress },
         })

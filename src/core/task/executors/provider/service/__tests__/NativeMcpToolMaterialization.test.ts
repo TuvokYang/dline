@@ -1,5 +1,5 @@
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@shared/mcp"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { materializeNativeToolCall } from "../DefaultProductionProviderService"
 
@@ -12,7 +12,7 @@ describe("native MCP tool materialization", () => {
         )
 
         expect(tool).toEqual({
-            name: ClineDefaultTool.MCP_USE,
+            name: DlineDefaultTool.MCP_USE,
             params: {
                 server_name: "docs",
                 tool_name: "search_docs",

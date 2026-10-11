@@ -4,7 +4,7 @@ import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { resolveWorkspacePath } from "@core/workspace"
 import { getReadablePath } from "@utils/path"
 import { HostProvider } from "@/hosts/host-provider"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -12,7 +12,7 @@ import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { describeLanguageFailure } from "./language-tool-failure"
 
 export class RenameSymbolHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.RENAME
+    readonly name = DlineDefaultTool.RENAME
 
     getDescription(block: ToolUse): string {
         return `[rename] ${(block.params as any)?.new_name || "?"}`

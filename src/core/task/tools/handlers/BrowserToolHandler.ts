@@ -1,5 +1,5 @@
 import { BrowserAction, BrowserActionResult, browserActions, UiSayBrowserAction } from "@shared/ExtensionMessage"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { ToolUse } from "../../../assistant-message"
 import { formatResponse } from "../../../prompts/responses"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
@@ -8,7 +8,7 @@ import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
 export class BrowserToolHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.BROWSER
+    readonly name = DlineDefaultTool.BROWSER
 
     getDescription(block: ToolUse): string {
         return `[${block.name} for '${block.params.action}']`

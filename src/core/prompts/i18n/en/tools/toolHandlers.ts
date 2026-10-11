@@ -9,7 +9,7 @@ const prompts: Record<string, string> = {
 
 # Next Steps
 
-If the previous response was intended as a non-blocking user-visible message and execution should continue, resend it with \`act_mode_respond\` in ACT MODE or \`status_update\` with acknowledgment disabled, then follow it with an actual work tool in the same turn.
+If the previous response was intended as a non-blocking user-visible message and execution should continue, resend it with \`working_respond\`, or with \`phase_report\` when it reports a completed phase, then follow it with an actual work tool in the same turn.
 If the user asked a question or requested clarification and your response should hand control back to the user, answer with the TURN-END \`qna_respond\` tool.
 If the entire user task is complete after comparing the result with the latest request and Objective, use \`attempt_completion\`. A completed phase checklist alone is not enough.
 If progress requires information or a decision only the user can provide, use \`ask_followup_question\`.

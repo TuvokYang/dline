@@ -55,7 +55,7 @@ if (applied) {
 ### 2a. Add enum value
 File: `src/shared/tools.ts`
 ```typescript
-export enum ClineDefaultTool {
+export enum DlineDefaultTool {
     // ... existing
     MY_NEW_TOOL = "my_new_tool",
 }
@@ -64,7 +64,7 @@ export enum ClineDefaultTool {
 ### 2b. Add to READ_ONLY_TOOLS (if read-only)
 ```typescript
 export const READ_ONLY_TOOLS = [
-    ClineDefaultTool.MY_NEW_TOOL,  // only if tool does NOT modify files
+    DlineDefaultTool.MY_NEW_TOOL,  // only if tool does NOT modify files
 ] as const
 ```
 
@@ -120,7 +120,7 @@ The executor checks partial support structurally, so do not add partial UI or ap
 
 ```typescript
 export class MyNewToolHandler implements IToolHandler, IPartialBlockHandler {
-    readonly name = ClineDefaultTool.MY_NEW_TOOL
+    readonly name = DlineDefaultTool.MY_NEW_TOOL
 
     getDescription(block: ToolUse): string {
         return `Run my new tool for ${block.params.required_param}`
@@ -173,7 +173,7 @@ import { MyNewToolHandler } from "./handlers/MyNewToolHandler"
 
 ### 7b. Add to toolHandlersMap
 ```typescript
-[ClineDefaultTool.MY_NEW_TOOL]: (_v: ToolValidator) => new MyNewToolHandler(),
+[DlineDefaultTool.MY_NEW_TOOL]: (_v: ToolValidator) => new MyNewToolHandler(),
 ```
 
 ---

@@ -1,10 +1,15 @@
 import * as path from "node:path"
 import type { ApiHandler, buildApiHandler } from "@core/api"
 import { recordProviderAdapterInput, recordProviderAdapterOutput } from "@core/api/debug/api-conversation-log"
-import { disableWebFetchRoute, disableWebSearchRoute, type WebSearchRoutingPlan } from "@core/api/server-tools"
+import {
+    disableWebFetchRoute,
+    disableWebSearchRoute,
+    localizeHostedWebRoutes,
+    type WebSearchRoutingPlan,
+} from "@core/api/server-tools"
 import { isOutputLimitExceededError } from "@core/api/stream/OutputLimitExceededError"
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
-import type { ApiProviderStreamChunk } from "@core/api/transform/stream"
+import type { ApiProviderStreamChunk, ApiStopReason } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
 import { ApiUsageAccumulator } from "@core/api/transform/usage-accumulator"
 import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_support"
@@ -13,6 +18,14 @@ import { discoverAvailableSkills } from "@core/context/instructions/user-instruc
 import { createImageProfileResolverForProfile } from "@core/image-generation/runtime"
 import { formatResponse } from "@core/prompts/responses"
 import { getSystemPrompt, type SystemPromptContext } from "@core/prompts/system-prompt"
+import {
+    buildTurnFailureFeedback,
+    ConsecutiveTurnFailures,
+    classifyToollessTurn,
+    describeTurnFailure,
+    type TurnFailure,
+    type TurnFailureKind,
+} from "@core/prompts/turn-diagnosis"
 import type { ProviderRequestRoundAdmission } from "@core/task/performance/provider-request-round-port"
 import { resolveRequestWebSearchRoutingPlan } from "@core/task/RequestApiScope"
 import { StreamResponseHandler } from "@core/task/StreamResponseHandler"
@@ -28,7 +41,7 @@ import {
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import { Logger } from "@shared/services/Logger"
-import { ClineDefaultTool, ClineTool } from "@shared/tools"
+import { ClineTool, DlineDefaultTool } from "@shared/tools"
 import { ContextManager } from "@/core/context/context-management/ContextManager"
 import { ContextBudgetLedger } from "@/core/context/context-management/context-budget-ledger"
 import { checkContextWindowExceededError } from "@/core/context/context-management/context-error-handling"
@@ -59,7 +72,6 @@ import { SUBAGENT_COMPLETION_CONTRACT, SubagentBuilder } from "./SubagentBuilder
 import { buildContextBudgetSection, resolveFinalResultTokens } from "./SubagentContextBudget"
 import {
     buildContextUsageSection,
-    buildSalvagedConvergenceResult,
     describeConvergenceTrigger,
     exceedsContextConvergenceThreshold,
 } from "./SubagentConvergenceGate"
@@ -70,17 +82,15 @@ import {
     truncateTextToSubagentOutputBudget,
 } from "./SubagentOutputBudget"
 
-const MAX_EMPTY_ASSISTANT_RETRIES = 3
-const MAX_INVALID_COMPLETION_RETRIES = 3
 /**
- * How many turns a converging run may keep calling non-completion tools.
+ * Failed responses in a row after which a run stops with an error.
  *
- * Kept separate from `MAX_INVALID_COMPLETION_RETRIES`: an empty
- * `attempt_completion` is a malformed call, while ignoring the convergence
- * order is a steering failure whose remedy is to salvage what was collected
- * rather than to fail the run.
+ * Empty, reasoning-only, text-only and malformed responses, empty completions
+ * and ignored finish orders all count against this one limit, and any tool that
+ * executes successfully clears it. Separate per-kind limits let a run spin
+ * indefinitely by alternating between failure kinds.
  */
-const MAX_CONVERGENCE_REJECTIONS = 2
+const MAX_CONSECUTIVE_TURN_FAILURES = 5
 /**
  * How many times one run may hand a hosted-tool stream failure back to the model.
  *
@@ -154,16 +164,43 @@ function formatApiFormat(apiFormat: ApiFormat | undefined): string | undefined {
     return ApiFormat[apiFormat]?.toLowerCase()
 }
 
-function buildCompletionRequiredReminder(usingNativeToolCalls: boolean): string {
-    return `${formatResponse.noToolsUsed(usingNativeToolCalls)}\n\n${SUBAGENT_COMPLETION_CONTRACT}\n\n${SUBAGENT_COMPLETION_CALL_EXAMPLE}`
+/**
+ * Explain why a run stopped after repeated failed responses.
+ *
+ * The main task decides what to do with a failed subagent, so it gets every
+ * diagnosis in order rather than a generic protocol error, plus whatever the run
+ * had already reasoned out so that work is not silently discarded.
+ */
+function buildConsecutiveFailureError(
+    failures: readonly TurnFailure[],
+    usesNativeToolCalls: boolean,
+    partialFindings: string,
+): string {
+    const lines = [
+        `Subagent stopped after ${failures.length} consecutive responses without a usable tool call:`,
+        ...failures.map((failure, index) => `${index + 1}. ${describeTurnFailure(failure, usesNativeToolCalls)}`),
+    ]
+    const findings = partialFindings.trim()
+    if (findings) lines.push("", "Partial findings recovered from the run (incomplete and unverified):", findings)
+    return lines.join("\n")
 }
 
-function buildMissingCompletionResultReminder(): string {
-    return `The attempt_completion call was rejected because it did not include a non-empty result.\n\n${SUBAGENT_COMPLETION_CONTRACT}\n\n${SUBAGENT_COMPLETION_CALL_EXAMPLE}`
-}
-
-function buildCompletionRequiredFailure(): string {
-    return `Subagent did not complete through the required protocol.\n\n${SUBAGENT_COMPLETION_CONTRACT}\n\n${SUBAGENT_COMPLETION_CALL_EXAMPLE}`
+/**
+ * Hand runtime feedback to the model without inventing an assistant turn.
+ *
+ * When the response produced nothing worth storing, the transcript still ends
+ * in a user message, and the feedback joins it; otherwise it opens the next user
+ * turn. Either way the user/assistant alternation providers require holds.
+ */
+function appendUserFeedback(conversation: ClineStorageMessage[], text: string): void {
+    const block = { type: "text", text } as ClineTextContentBlock
+    const lastIndex = conversation.length - 1
+    const lastMessage = conversation[lastIndex]
+    if (lastMessage?.role === "user" && Array.isArray(lastMessage.content)) {
+        conversation[lastIndex] = { ...lastMessage, content: [...lastMessage.content, block] }
+        return
+    }
+    conversation.push({ role: "user", content: [block] })
 }
 
 /** One provider-hosted call that reached a failed terminal state this round. */
@@ -221,10 +258,6 @@ export function appendHostedServerToolFailureNotice(
     const notice = { type: "text", text: buildHostedServerToolFailureNotice(failures) } as ClineTextContentBlock
     conversation[lastIndex] = { ...lastMessage, content: [...lastMessage.content, notice] }
     return true
-}
-
-function buildInvalidCompletionFailure(): string {
-    return `Subagent repeatedly called attempt_completion without a non-empty result.\n\n${SUBAGENT_COMPLETION_CONTRACT}\n\n${SUBAGENT_COMPLETION_CALL_EXAMPLE}`
 }
 
 /**
@@ -512,7 +545,7 @@ class SubagentToolInterruptedError extends Error {
 export class SubagentRunner {
     private readonly agent: SubagentBuilder
     private readonly apiHandler: ApiHandler
-    private readonly allowedTools: ClineDefaultTool[]
+    private readonly allowedTools: DlineDefaultTool[]
     private readonly identityFactory = createIdentityFactory()
     private activeApiAbort: (() => void) | undefined
     private activeRetryAbortController: AbortController | undefined
@@ -810,9 +843,7 @@ export class SubagentRunner {
             if (this.activeToolState !== state) return
             void this.abort().catch((error) => Logger.error("[SubagentRunner] Failed to cancel inherited operation scope", error))
         }
-        let emptyAssistantResponseRetries = 0
-        let invalidCompletionRetries = 0
-        let convergenceRejections = 0
+        const turnFailures = new ConsecutiveTurnFailures(MAX_CONSECUTIVE_TURN_FAILURES)
         // Latest narrative text produced by the run, used to salvage findings if
         // the model never converts them into an attempt_completion result.
         let latestAssistantNarrative = ""
@@ -848,7 +879,7 @@ export class SubagentRunner {
                 }),
             )
             const outputBudget = resolveSubagentOutputBudget(this.baseConfig, this.agent.getConfiguredMaxOutputTokens())
-            const promptWithBudget = buildSubagentOutputBudgetPrompt(prompt, outputBudget.outputTokens)
+            const promptWithBudget = buildSubagentOutputBudgetPrompt(prompt)
             // The subagent's own tool results fill its own context, so they share
             // what is left of its window the way the main task's results share the task's.
             // The same W its compaction trigger uses: the user's Maximum context bounds both.
@@ -879,7 +910,6 @@ export class SubagentRunner {
             const webToolsEnabled =
                 this.baseConfig.webToolsEnabled ??
                 this.baseConfig.services.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true
-            const webSearchRoutingPlan = this.resolveAllowedWebRoutingPlan(api, webToolsEnabled)
             stats.contextWindow = providerInfo.model.info.capabilities?.contextWindow || 0
             stats.currency = providerInfo.model.info.pricing?.currency || "USD"
             const apiFormat = providerInfo.model.info.apiFormats?.[0]
@@ -888,6 +918,28 @@ export class SubagentRunner {
                 apiFormat === ApiFormat.OPENAI_RESPONSES_WEBSOCKET_MODE ||
                 !!this.baseConfig.services.stateManager.getGlobalStateKey("nativeToolCallEnabled")
             const useNativeToolCalls = isNativeToolCallingConfig(providerInfo, nativeToolCallsRequested)
+            const webSearchRoutingPlan = this.resolveAllowedWebRoutingPlan(api, webToolsEnabled, useNativeToolCalls)
+            const turnFailureFeedback = (failure: TurnFailure): string => {
+                const feedback = buildTurnFailureFeedback(failure, {
+                    usesNativeToolCalls: useNativeToolCalls,
+                    availableTools: this.completionOnly ? [DlineDefaultTool.ATTEMPT] : this.allowedTools,
+                    finishing: this.completionOnly,
+                    consecutiveFailures: turnFailures.count,
+                    maxConsecutiveFailures: turnFailures.limit,
+                })
+                // A subagent that answered in prose believes it is done; restate how a run ends.
+                const completionMisunderstood = failure.kind === "text_only" || failure.kind === "missing_completion_result"
+                return completionMisunderstood ? `${feedback}\n\n${SUBAGENT_COMPLETION_CONTRACT}` : feedback
+            }
+            const failAfterConsecutiveTurnFailures = (): SubagentRunResult => {
+                const partialFindings = truncateTextToSubagentOutputBudget(
+                    latestAssistantNarrative,
+                    resolveFinalResultTokens(outputBudget.outputTokens, this.activeBudget),
+                )
+                const error = buildConsecutiveFailureError(turnFailures.list(), useNativeToolCalls, partialFindings)
+                onProgress({ status: "failed", error, stats: { ...stats } })
+                return { status: "failed", error, stats }
+            }
             const reasoning = this.agent.getReasoningConfig()
             onProgress({
                 status: "running",
@@ -941,7 +993,7 @@ export class SubagentRunner {
                 enableNativeToolCalls: useNativeToolCalls,
                 enableParallelToolCalling: false,
                 isSubagentRun: true,
-                disableTools: Object.values(ClineDefaultTool).filter((tool) => !allowedTools.has(tool)),
+                disableTools: Object.values(DlineDefaultTool).filter((tool) => !allowedTools.has(tool)),
                 clineWebToolsEnabled: webToolsEnabled,
                 webSearchRoutingPlan,
                 imageGenerationAvailable: imageGenerationService.hasAvailableProfile(),
@@ -955,10 +1007,10 @@ export class SubagentRunner {
             const systemPrompt = this.agent.buildSystemPrompt(generated.systemPrompt)
             const nativeTools = generated.tools?.filter((tool) => {
                 if ("function" in tool) {
-                    return allowedTools.has(tool.function.name as ClineDefaultTool)
+                    return allowedTools.has(tool.function.name as DlineDefaultTool)
                 }
                 if ("name" in tool && typeof tool.name === "string") {
-                    return allowedTools.has(tool.name as ClineDefaultTool)
+                    return allowedTools.has(tool.name as DlineDefaultTool)
                 }
                 return false
             })
@@ -1147,6 +1199,7 @@ export class SubagentRunner {
                 let roundThoughtsTokens = 0
                 let roundThoughtsReported = false
                 let roundTotalCost: number | undefined
+                let roundStopReason: ApiStopReason | undefined
                 // This request carries every tool result produced so far.
                 toolBudget.clearStaged()
                 const providerStream = this.createMessageWithInitialChunkRetry(
@@ -1208,6 +1261,7 @@ export class SubagentRunner {
                                 if (chunk.totalCost !== undefined && Number.isFinite(chunk.totalCost) && chunk.totalCost >= 0) {
                                     roundTotalCost = Math.max(roundTotalCost ?? 0, chunk.totalCost)
                                 }
+                                if (chunk.stopReason) roundStopReason = chunk.stopReason
                                 stats.inputTokens += usageDelta.inputTokens
                                 stats.outputTokens += usageDelta.outputTokens
                                 stats.cacheWriteTokens += usageDelta.cacheWriteTokens
@@ -1405,7 +1459,7 @@ export class SubagentRunner {
                 providerExecution.setToolCount(finalizedToolCalls.length)
                 if (this.finishRequested && !this.completionOnly) {
                     const validCompletion = finalizedToolCalls.some((call) => {
-                        if (call.name !== ClineDefaultTool.ATTEMPT) return false
+                        if (call.name !== DlineDefaultTool.ATTEMPT) return false
                         return Boolean(toToolUseParams(call.input).result?.trim())
                     })
                     if (!validCompletion) {
@@ -1446,14 +1500,15 @@ export class SubagentRunner {
                 if (useNativeToolCalls) {
                     assistantContent.push(...finalizedToolCalls.map(toAssistantToolUseBlock))
                 }
-                if (finalizedToolCalls.length === 0 && !assistantContent.some((block) => block.type === "text")) {
-                    assistantContent.push({
-                        type: "text",
-                        text: "Failure: I did not provide a response.",
-                    })
-                }
+                // Reasoning alone is not a turn worth storing: replaying it gives the
+                // model nothing it can act on, and inventing visible text in its name
+                // would teach it a failure it never wrote. The runtime feedback below
+                // explains what happened instead.
+                const hasStorableTurn =
+                    finalizedToolCalls.length > 0 ||
+                    assistantContent.some((block) => block.type !== "thinking" && block.type !== "redacted_thinking")
 
-                if (assistantContent.length > 0) {
+                if (hasStorableTurn) {
                     conversation.push({
                         role: "assistant",
                         content: assistantContent,
@@ -1462,32 +1517,50 @@ export class SubagentRunner {
                 }
 
                 if (finalizedToolCalls.length === 0) {
-                    emptyAssistantResponseRetries += 1
-                    if (emptyAssistantResponseRetries > MAX_EMPTY_ASSISTANT_RETRIES) {
-                        const error = buildCompletionRequiredFailure()
-                        onProgress({ status: "failed", error, stats: { ...stats } })
-                        return { status: "failed", error, stats }
-                    }
-
-                    // Mirror the main loop's no-tools-used nudge so empty/blank model turns
-                    // can recover without surfacing an immediate hard failure in subagent UI.
-                    conversation.push({
-                        role: "user",
-                        content: [
-                            {
-                                type: "text",
-                                text: buildCompletionRequiredReminder(useNativeToolCalls),
-                            },
-                        ],
-                    })
+                    const failure = classifyToollessTurn(
+                        {
+                            visibleText: assistantText,
+                            reasoningPresent: assistantContent.some(
+                                (block) => block.type === "thinking" || block.type === "redacted_thinking",
+                            ),
+                            outputTokens: requestUsage.outputTokens,
+                            stopReason: roundStopReason,
+                        },
+                        this.allowedTools,
+                    )
+                    turnFailures.record(failure)
+                    // Shape only, never content: enough to tell a truncated, reasoning-only,
+                    // or malformed response apart when a run misbehaves in the field.
+                    Logger.warn(
+                        `[SubagentRunner] Response without a tool call: kind=${failure.kind} stopReason=${roundStopReason ?? "unreported"} textChars=${assistantText.trim().length} reasoning=${assistantContent.some((block) => block.type === "thinking" || block.type === "redacted_thinking")} outputTokens=${requestUsage.outputTokens} nativeTools=${useNativeToolCalls} consecutive=${turnFailures.count}/${turnFailures.limit}`,
+                    )
+                    if (turnFailures.exhausted) return failAfterConsecutiveTurnFailures()
+                    appendUserFeedback(conversation, turnFailureFeedback(failure))
                     await Promise.resolve()
                     continue
                 }
-                emptyAssistantResponseRetries = 0
+
+                // One response is one failed attempt, however many of its calls were rejected.
+                let responseFailureRecorded = false
+                const recordResponseFailure = (kind: TurnFailureKind): string | undefined => {
+                    if (responseFailureRecorded) return undefined
+                    responseFailureRecorded = true
+                    const failure: TurnFailure =
+                        kind === "convergence_violation"
+                            ? {
+                                  kind,
+                                  rejectedTools: finalizedToolCalls
+                                      .map((call) => call.name)
+                                      .filter((name) => name !== DlineDefaultTool.ATTEMPT),
+                              }
+                            : { kind }
+                    turnFailures.record(failure)
+                    return turnFailureFeedback(failure)
+                }
 
                 const toolResultBlocks = [] as ClineUserContent[]
                 for (const call of finalizedToolCalls) {
-                    const toolName = call.name as ClineDefaultTool
+                    const toolName = call.name as DlineDefaultTool
                     const toolCallParams = toToolUseParams(call.input)
                     const toolCallBlock: ToolUse = {
                         type: "tool_use",
@@ -1502,39 +1575,31 @@ export class SubagentRunner {
                     }
                     canonicalizeAttemptCompletionParams(toolCallBlock)
 
-                    if (this.completionOnly && toolName !== ClineDefaultTool.ATTEMPT) {
+                    if (this.completionOnly && toolName !== DlineDefaultTool.ATTEMPT) {
                         providerExecution.failTool()
-                        convergenceRejections += 1
-                        if (convergenceRejections > MAX_CONVERGENCE_REJECTIONS) {
-                            // Failing here would throw away everything the run collected,
-                            // which is the opposite of what convergence is for.
-                            const salvaged = truncateTextToSubagentOutputBudget(
-                                buildSalvagedConvergenceResult(this.finishRequested ?? "user", latestAssistantNarrative),
-                                resolveFinalResultTokens(outputBudget.outputTokens, this.activeBudget),
-                            )
-                            onProgress({ status: "completed", result: salvaged, stats: { ...stats } })
-                            return { status: "completed", result: salvaged, stats }
-                        }
+                        const feedback = recordResponseFailure("convergence_violation")
+                        if (turnFailures.exhausted) return failAfterConsecutiveTurnFailures()
                         pushSubagentToolResultBlock(
                             toolResultBlocks,
                             call,
                             toolName,
-                            buildFinishReminder(this.finishRequested ?? "user"),
+                            feedback ?? "Rejected: only attempt_completion is accepted now.",
                         )
                         continue
                     }
 
-                    if (toolName === ClineDefaultTool.ATTEMPT) {
+                    if (toolName === DlineDefaultTool.ATTEMPT) {
                         const completionResult = toolCallParams.result?.trim()
                         if (!completionResult) {
                             providerExecution.failTool()
-                            invalidCompletionRetries += 1
-                            if (invalidCompletionRetries > MAX_INVALID_COMPLETION_RETRIES) {
-                                const error = buildInvalidCompletionFailure()
-                                onProgress({ status: "failed", error, stats: { ...stats } })
-                                return { status: "failed", error, stats }
-                            }
-                            pushSubagentToolResultBlock(toolResultBlocks, call, toolName, buildMissingCompletionResultReminder())
+                            const feedback = recordResponseFailure("missing_completion_result")
+                            if (turnFailures.exhausted) return failAfterConsecutiveTurnFailures()
+                            pushSubagentToolResultBlock(
+                                toolResultBlocks,
+                                call,
+                                toolName,
+                                feedback ?? "Rejected: attempt_completion needs a non-empty result.",
+                            )
                             continue
                         }
 
@@ -1647,8 +1712,12 @@ export class SubagentRunner {
                     stats.toolCalls += 1
                     onProgress({ stats: { ...stats } })
 
-                    if (toolError) providerExecution.failTool()
-                    else providerExecution.completeTool()
+                    if (toolError) {
+                        providerExecution.failTool()
+                    } else {
+                        providerExecution.completeTool()
+                        turnFailures.reset()
+                    }
                     const serializedToolResult = serializeToolResult(toolResult)
                     const boundedToolResult = boundToolText(
                         { body: serializedToolResult },
@@ -1739,11 +1808,21 @@ export class SubagentRunner {
      * filter and tool admission, so each web tool the allowlist omits is withdrawn
      * from the plan here. Either allowed tool keeps the plan live, so a fetch-only
      * subagent still fetches.
+     *
+     * With XML tools the hosted routes are moved to the local executor first: an
+     * XML-prompted model cannot call a native hosted tool, and the hosted route
+     * would also withhold the local XML tool it can call. Localizing before the
+     * allowlist withdrawals keeps the local fallback the withdrawals clear.
      */
-    private resolveAllowedWebRoutingPlan(api: ApiHandler, webToolsEnabled: boolean): WebSearchRoutingPlan {
-        const searchAllowed = this.allowedTools.includes(ClineDefaultTool.WEB_SEARCH)
-        const fetchAllowed = this.allowedTools.includes(ClineDefaultTool.WEB_FETCH)
-        const resolved = resolveRequestWebSearchRoutingPlan(api, webToolsEnabled && (searchAllowed || fetchAllowed))
+    private resolveAllowedWebRoutingPlan(
+        api: ApiHandler,
+        webToolsEnabled: boolean,
+        useNativeToolCalls: boolean,
+    ): WebSearchRoutingPlan {
+        const searchAllowed = this.allowedTools.includes(DlineDefaultTool.WEB_SEARCH)
+        const fetchAllowed = this.allowedTools.includes(DlineDefaultTool.WEB_FETCH)
+        const requested = resolveRequestWebSearchRoutingPlan(api, webToolsEnabled && (searchAllowed || fetchAllowed))
+        const resolved = useNativeToolCalls ? requested : localizeHostedWebRoutes(requested)
         const withSearch = searchAllowed ? resolved : disableWebSearchRoute(resolved)
         return fetchAllowed ? withSearch : disableWebFetchRoute(withSearch)
     }

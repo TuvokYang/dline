@@ -19,7 +19,7 @@ import type { FocusChainSettings } from "@shared/FocusChainSettings"
 import type { ClineContent, ClineToolResponseContent } from "@shared/messages/content"
 import type { Mode } from "@shared/storage/types"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
-import type { ClineDefaultTool } from "@shared/tools"
+import type { DlineDefaultTool } from "@shared/tools"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
 import { WorkspaceRootManager } from "@/core/workspace"
 import type { ContextManager } from "../../../context/context-management/ContextManager"
@@ -231,7 +231,7 @@ export interface TaskCallbacks {
     awaitInitialCheckpoint?: () => Promise<void>
 
     sayAndCreateMissingParamError: (
-        toolName: ClineDefaultTool,
+        toolName: DlineDefaultTool,
         paramName: string,
         relPath?: string,
         existingTs?: number,

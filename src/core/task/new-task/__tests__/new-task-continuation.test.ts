@@ -2,7 +2,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { ExplicitInstructionRegistry } from "@core/task/explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
 import type { ClineContent, ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages/content"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import {
     deriveNewTaskFeedbackContinuation,
@@ -14,7 +14,7 @@ import {
 function newTaskTool(overrides: Partial<ToolUse> = {}): ToolUse {
     return {
         type: "tool_use",
-        name: ClineDefaultTool.NEW_TASK,
+        name: DlineDefaultTool.NEW_TASK,
         params: { context: "Candidate successor context" },
         partial: false,
         ts: 100,
@@ -98,7 +98,7 @@ describe("New Task feedback continuation", () => {
         expect(declaration).toEqual({
             type: "new_task",
             source: "internal_continuation",
-            targetTool: ClineDefaultTool.NEW_TASK,
+            targetTool: DlineDefaultTool.NEW_TASK,
             operationId: "new-task-feedback:tid-new-task",
             metadata: {
                 functionId: "function-new-task",
@@ -111,8 +111,8 @@ describe("New Task feedback continuation", () => {
         scope.register(declaration!)
         const port = scope.createConsumePort()
 
-        expect(port.consumeTool(ClineDefaultTool.NEW_TASK)).toMatchObject({ ok: true })
-        expect(port.consumeTool(ClineDefaultTool.NEW_TASK)).toEqual({
+        expect(port.consumeTool(DlineDefaultTool.NEW_TASK)).toMatchObject({ ok: true })
+        expect(port.consumeTool(DlineDefaultTool.NEW_TASK)).toEqual({
             ok: false,
             code: "explicit_instruction_already_consumed",
         })
@@ -128,7 +128,7 @@ describe("New Task feedback continuation", () => {
         {
             name: "wrong assistant tool",
             userContent: [feedbackResult()],
-            assistantContent: [newTaskTool({ name: ClineDefaultTool.QNA_RESPOND })],
+            assistantContent: [newTaskTool({ name: DlineDefaultTool.QNA_RESPOND })],
             persistedRequest: false,
         },
         {

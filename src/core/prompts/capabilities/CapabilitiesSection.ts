@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { getPrompt } from "../i18n"
 import { PromptProfile } from "../profiles/types"
 import { assemblePromptFragments } from "../system-prompt/assembly/prompt-fragment-assembler"
@@ -135,7 +135,7 @@ export function renderCapabilityGroups(
 interface CapabilityPromptContext {
     readonly profile: PromptProfile
     readonly subagentsEnabled?: boolean
-    readonly disableTools?: readonly ClineDefaultTool[]
+    readonly disableTools?: readonly DlineDefaultTool[]
 }
 
 /** Render only capability groups whose invocation tools are available in the current prompt context. */
@@ -153,13 +153,13 @@ export function renderCapabilityGroupsForContext(
         exclude.push("skills", "subagents")
     } else {
         const disabled = new Set(context.disableTools ?? [])
-        if (disabled.has(ClineDefaultTool.LOAD_SKILL)) exclude.push("skills")
-        if (disabled.has(ClineDefaultTool.LOAD_WORKFLOW)) exclude.push("workflows")
-        if (disabled.has(ClineDefaultTool.LOAD_MCP) || disabled.has(ClineDefaultTool.MCP_USE)) exclude.push("mcp")
+        if (disabled.has(DlineDefaultTool.LOAD_SKILL)) exclude.push("skills")
+        if (disabled.has(DlineDefaultTool.LOAD_WORKFLOW)) exclude.push("workflows")
+        if (disabled.has(DlineDefaultTool.LOAD_MCP) || disabled.has(DlineDefaultTool.MCP_USE)) exclude.push("mcp")
         if (
             context.subagentsEnabled !== true ||
-            disabled.has(ClineDefaultTool.USE_SUBAGENT) ||
-            disabled.has(ClineDefaultTool.USE_SUBAGENTS)
+            disabled.has(DlineDefaultTool.USE_SUBAGENT) ||
+            disabled.has(DlineDefaultTool.USE_SUBAGENTS)
         ) {
             exclude.push("subagents")
         }

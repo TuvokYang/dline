@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { TaskTurnAuthority } from "../TurnAuthority"
 import type { ExplicitInstructionDeclaration } from "../types"
@@ -6,7 +6,7 @@ import type { ExplicitInstructionDeclaration } from "../types"
 const manualCompact: ExplicitInstructionDeclaration = {
     type: "summarize_task",
     source: "manual_compact_command",
-    targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+    targetTool: DlineDefaultTool.SUMMARIZE_TASK,
 }
 
 describe("TaskTurnAuthority", () => {
@@ -16,7 +16,7 @@ describe("TaskTurnAuthority", () => {
         const granted = authority.grant("turn-1", [manualCompact])
 
         expect(granted?.turnId).toBe("turn-1")
-        expect(authority.read("turn-1")?.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)).toMatchObject({
+        expect(authority.read("turn-1")?.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)).toMatchObject({
             type: "summarize_task",
             source: "manual_compact_command",
             state: "pending",
@@ -45,7 +45,7 @@ describe("TaskTurnAuthority", () => {
         authority.grant("turn-2", [])
 
         expect(authority.read("turn-1")).toBeUndefined()
-        expect(first?.port.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)).toBeUndefined()
+        expect(first?.port.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)).toBeUndefined()
     })
 
     it("withdraws authority when the turn that granted it is abandoned", () => {
@@ -55,7 +55,7 @@ describe("TaskTurnAuthority", () => {
         granted?.cancel()
 
         expect(authority.read("turn-1")).toBeUndefined()
-        expect(granted?.port.consumeTool(ClineDefaultTool.SUMMARIZE_TASK)).toEqual({
+        expect(granted?.port.consumeTool(DlineDefaultTool.SUMMARIZE_TASK)).toEqual({
             ok: false,
             code: "explicit_instruction_cancelled",
         })
@@ -73,7 +73,7 @@ describe("TaskTurnAuthority", () => {
         ])
 
         expect(granted?.turnId).toBe("turn-1")
-        expect(authority.read("turn-1")?.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)).toBeDefined()
+        expect(authority.read("turn-1")?.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)).toBeDefined()
     })
 
     it("keeps a behavior declaration that authorizes no tool", () => {
@@ -82,6 +82,6 @@ describe("TaskTurnAuthority", () => {
         const granted = authority.grant("turn-1", [{ type: "workflow", source: "workflow_injection" }])
 
         expect(granted).toBeDefined()
-        expect(authority.read("turn-1")?.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)).toBeUndefined()
+        expect(authority.read("turn-1")?.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)).toBeUndefined()
     })
 })

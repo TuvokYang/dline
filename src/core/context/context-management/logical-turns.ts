@@ -1,6 +1,6 @@
 import { USER_CONTENT_TAGS } from "@shared/messages/constants"
 import type { ClineAssistantToolUseBlock, ClineStorageMessage, ClineUserToolResultContentBlock } from "@shared/messages/content"
-import { ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES } from "@shared/tools"
+import { CONVERSATIONAL_TOOL_NAMES, DlineDefaultTool } from "@shared/tools"
 
 export type LogicalTurnIssueKind = "orphan_tool_result" | "unpaired_tool_use"
 
@@ -101,7 +101,7 @@ export function indexLogicalTurns(history: readonly ClineStorageMessage[]): Logi
             const matchingUse = openToolUses.get(result.function_id)
             return (
                 matchingUse !== undefined &&
-                CONVERSATIONAL_TOOL_NAMES.has(matchingUse.toolName as ClineDefaultTool) &&
+                CONVERSATIONAL_TOOL_NAMES.has(matchingUse.toolName as DlineDefaultTool) &&
                 hasTaggedUserFeedback(result)
             )
         })

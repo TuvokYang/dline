@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import * as pathUtils from "@utils/path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 // sinon import removed: using vitest globals
@@ -117,7 +117,7 @@ function makeBlock(relPath?: string) {
         type: "tool_use" as const,
         function_id: "test_read_file",
         dline_tid: "test_tid_read_file",
-        name: ClineDefaultTool.FILE_READ,
+        name: DlineDefaultTool.FILE_READ,
         params: relPath !== undefined ? { path: relPath } : {},
         partial: false,
         ts: Date.now(),
@@ -129,7 +129,7 @@ function makeBlockWithRange(relPath: string, startLine?: string, endLine?: strin
         type: "tool_use" as const,
         function_id: "test_read_file_range",
         dline_tid: "test_tid_read_file_range",
-        name: ClineDefaultTool.FILE_READ,
+        name: DlineDefaultTool.FILE_READ,
         params: {
             path: relPath,
             ...(startLine !== undefined ? { start_line: startLine } : {}),

@@ -1,5 +1,5 @@
 import { ClineStorageMessage } from "@/shared/messages/content"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { convertApplyPatchToolCalls, convertWriteToFileToolCalls } from "./diff-editors"
 
 /**
@@ -12,7 +12,7 @@ import { convertApplyPatchToolCalls, convertWriteToFileToolCalls } from "./diff-
  */
 export function transformToolCallMessages(
     clineMessages: ClineStorageMessage[],
-    nativeTools?: ClineDefaultTool[],
+    nativeTools?: DlineDefaultTool[],
 ): ClineStorageMessage[] {
     // Early return if no messages or native tools provided
     if (!clineMessages?.length || !nativeTools?.length) {
@@ -40,11 +40,11 @@ export function transformToolCallMessages(
     }
 
     // Determine which conversion to apply
-    const hasApplyPatchNative = nativeToolSet.has(ClineDefaultTool.APPLY_PATCH)
-    const hasFileEditNative = nativeToolSet.has(ClineDefaultTool.FILE_EDIT) || nativeToolSet.has(ClineDefaultTool.FILE_NEW)
+    const hasApplyPatchNative = nativeToolSet.has(DlineDefaultTool.APPLY_PATCH)
+    const hasFileEditNative = nativeToolSet.has(DlineDefaultTool.FILE_EDIT) || nativeToolSet.has(DlineDefaultTool.FILE_NEW)
 
-    const hasApplyPatchUsed = usedToolSet.has(ClineDefaultTool.APPLY_PATCH)
-    const hasFileEditUsed = usedToolSet.has(ClineDefaultTool.FILE_EDIT) || usedToolSet.has(ClineDefaultTool.FILE_NEW)
+    const hasApplyPatchUsed = usedToolSet.has(DlineDefaultTool.APPLY_PATCH)
+    const hasFileEditUsed = usedToolSet.has(DlineDefaultTool.FILE_EDIT) || usedToolSet.has(DlineDefaultTool.FILE_NEW)
 
     // Convert write_to_file/replace_in_file → apply_patch
     if (hasApplyPatchNative && hasFileEditUsed) {

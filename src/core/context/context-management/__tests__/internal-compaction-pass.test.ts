@@ -2,7 +2,7 @@ import type { ApiHandler } from "@core/api"
 import type { ApiStream } from "@core/api/transform/stream"
 import { ExplicitInstructionRegistry } from "@core/task/explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { runInternalCompactionPass } from "../internal-compaction-pass"
 
@@ -38,7 +38,7 @@ describe("internal compaction Pass", () => {
         instructions.register({
             type: "summarize_task",
             source: "auto_compaction",
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             operationId: "operation-chat",
         })
 
@@ -62,7 +62,7 @@ describe("internal compaction Pass", () => {
             cacheReadTokens: 0,
             totalTokens: 120,
         })
-        expect(instructions.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)).toBeUndefined()
+        expect(instructions.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)).toBeUndefined()
     })
 
     it("binds the Provider attempt and attaches exact usage only after the stream reaches terminal", async () => {
@@ -80,7 +80,7 @@ describe("internal compaction Pass", () => {
         instructions.register({
             type: "summarize_task",
             source: "auto_compaction",
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             operationId: "operation-observed",
         })
 
@@ -129,7 +129,7 @@ describe("internal compaction Pass", () => {
         instructions.register({
             type: "summarize_task",
             source: "auto_compaction",
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             operationId: "operation-1",
         })
 
@@ -153,7 +153,7 @@ describe("internal compaction Pass", () => {
             cacheReadTokens: 0,
             totalTokens: 120,
         })
-        expect(instructions.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)).toBeUndefined()
+        expect(instructions.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)).toBeUndefined()
     })
 
     it("coalesces summary updates so a slow presentation never replays stale snapshots after the stream ends", async () => {
@@ -176,7 +176,7 @@ describe("internal compaction Pass", () => {
         instructions.register({
             type: "summarize_task",
             source: "auto_compaction",
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             operationId: "operation-coalesce",
         })
         const updates: string[] = []

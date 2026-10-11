@@ -1,18 +1,21 @@
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { resolveApprovalKind } from "../../kernel/turn/approval-kind"
 
 const CONVERSATIONAL_TOOLS = [
-    ClineDefaultTool.ATTEMPT,
-    ClineDefaultTool.QNA_RESPOND,
-    ClineDefaultTool.MAKE_PLAN,
-    ClineDefaultTool.ACT_MODE,
-    ClineDefaultTool.ASK,
-    ClineDefaultTool.GENERATE_REPORT,
-    ClineDefaultTool.STATUS_UPDATE,
+    DlineDefaultTool.ATTEMPT,
+    DlineDefaultTool.QNA_RESPOND,
+    DlineDefaultTool.MAKE_PLAN,
+    DlineDefaultTool.WORKING_RESPOND,
+    // Recorded calls under the former name must not reach the outer approval slot either.
+    DlineDefaultTool.LEGACY_ACT_MODE_RESPOND,
+    DlineDefaultTool.ASK,
+    DlineDefaultTool.GENERATE_REPORT,
+    DlineDefaultTool.PHASE_REPORT,
+    DlineDefaultTool.LEGACY_STATUS_UPDATE,
     // Handing the conversation to a successor is always the user's choice.
-    ClineDefaultTool.NEW_TASK,
+    DlineDefaultTool.NEW_TASK,
 ] as const
 
 describe("canonical conversational approval", () => {
@@ -32,7 +35,7 @@ describe("canonical conversational approval", () => {
             actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, readFiles: true, readFilesExternally: true },
         }
 
-        expect(resolveApprovalKind({ toolName: ClineDefaultTool.NEW_TASK, settings })).toMatchObject({
+        expect(resolveApprovalKind({ toolName: DlineDefaultTool.NEW_TASK, settings })).toMatchObject({
             kind: "none",
             scope: "conversational",
         })

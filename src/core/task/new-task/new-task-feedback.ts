@@ -8,7 +8,7 @@ import {
     type ClineUserToolResultContentBlock,
     imageSourceToUrl,
 } from "@shared/messages/content"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "./new-task-continuation"
 import type { NewTaskConsumedState, NewTaskFeedback } from "./new-task-handoff"
 
@@ -95,7 +95,7 @@ function matchingNewTaskToolCount(
         for (const block of message.content) {
             if (
                 block.type === "tool_use" &&
-                block.name === ClineDefaultTool.NEW_TASK &&
+                block.name === DlineDefaultTool.NEW_TASK &&
                 block.function_id === result.function_id &&
                 block.dline_tid === result.dline_tid
             ) {
@@ -119,7 +119,7 @@ export function findLatestNewTaskFeedback(history: NewTaskFeedbackHistory): NewT
         const matches = message.content.filter(
             (block) =>
                 block.type === "tool_use" &&
-                block.name === ClineDefaultTool.NEW_TASK &&
+                block.name === DlineDefaultTool.NEW_TASK &&
                 block.function_id === history.approvedSource.functionId &&
                 block.dline_tid === history.approvedSource.dlineTid,
         )

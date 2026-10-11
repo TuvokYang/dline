@@ -3,7 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import type { ToolUse } from "@core/assistant-message"
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { resolvePermissionScope } from "../../../kernel/turn/approval-kind"
 import { GenerateImageToolHandler } from "../../../tools/handlers/GenerateImageToolHandler"
@@ -30,7 +30,7 @@ function snapshot(overrides: Partial<ToolAdmissionSnapshot> = {}): ToolAdmission
     }
 }
 
-function block(name: ClineDefaultTool, params: ToolUse["params"]): ToolUse {
+function block(name: DlineDefaultTool, params: ToolUse["params"]): ToolUse {
     return {
         type: "tool_use",
         name,
@@ -46,8 +46,8 @@ describe("ToolAdmissionRegistry", () => {
     it("returns an unstarted effect with declarative approval data", async () => {
         const run = vi.fn(async () => undefined)
         const admission = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.FILE_READ,
-            block: block(ClineDefaultTool.FILE_READ, { path: "src/a.ts" }),
+            canonicalToolName: DlineDefaultTool.FILE_READ,
+            block: block(DlineDefaultTool.FILE_READ, { path: "src/a.ts" }),
             description: "read src/a.ts",
             snapshot: snapshot(),
             run,
@@ -66,7 +66,7 @@ describe("ToolAdmissionRegistry", () => {
         const coordinator = new ToolExecutorCoordinator()
         coordinator.register(new GenerateImageToolHandler())
         const result = coordinator.prepareAdmission(
-            block(ClineDefaultTool.GENERATE_IMAGE, { prompt: "A blue owl", count: "2" }),
+            block(DlineDefaultTool.GENERATE_IMAGE, { prompt: "A blue owl", count: "2" }),
             snapshot({
                 settings: {
                     ...snapshot().settings,
@@ -84,7 +84,7 @@ describe("ToolAdmissionRegistry", () => {
             imageGeneration: {
                 schemaVersion: 1,
                 status: "awaiting_approval",
-                requestId: `dline-${ClineDefaultTool.GENERATE_IMAGE}`,
+                requestId: `dline-${DlineDefaultTool.GENERATE_IMAGE}`,
                 prompt: "A blue owl",
                 count: 2,
             },
@@ -94,8 +94,8 @@ describe("ToolAdmissionRegistry", () => {
     it("rejects invalid parameters without constructing or running an effect", () => {
         const run = vi.fn(async () => undefined)
         const result = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.SEARCH,
-            block: block(ClineDefaultTool.SEARCH, { path: "src" }),
+            canonicalToolName: DlineDefaultTool.SEARCH,
+            block: block(DlineDefaultTool.SEARCH, { path: "src" }),
             description: "search src",
             snapshot: snapshot(),
             run,
@@ -114,7 +114,7 @@ describe("ToolAdmissionRegistry", () => {
     it("rejects an unregistered tool at the coordinator boundary", () => {
         const coordinator = new ToolExecutorCoordinator()
         const run = vi.fn(async () => undefined)
-        const result = coordinator.prepareAdmission(block(ClineDefaultTool.FILE_READ, { path: "a.ts" }), snapshot(), run)
+        const result = coordinator.prepareAdmission(block(DlineDefaultTool.FILE_READ, { path: "a.ts" }), snapshot(), run)
 
         expect(result).toEqual({
             outcome: "rejected",
@@ -125,8 +125,8 @@ describe("ToolAdmissionRegistry", () => {
 
     it("classifies paths lexically without reading the target", () => {
         const result = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.FILE_READ,
-            block: block(ClineDefaultTool.FILE_READ, { path: "../outside.txt" }),
+            canonicalToolName: DlineDefaultTool.FILE_READ,
+            block: block(DlineDefaultTool.FILE_READ, { path: "../outside.txt" }),
             description: "read outside",
             snapshot: snapshot({
                 settings: {
@@ -147,8 +147,8 @@ describe("ToolAdmissionRegistry", () => {
         const secondaryRoot = path.resolve("/workspace/secondary")
         const run = vi.fn(async () => undefined)
         const result = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.FILE_READ,
-            block: block(ClineDefaultTool.FILE_READ, { path: "@missing:../outside/secret.txt" }),
+            canonicalToolName: DlineDefaultTool.FILE_READ,
+            block: block(DlineDefaultTool.FILE_READ, { path: "@missing:../outside/secret.txt" }),
             description: "read unknown workspace hint",
             snapshot: snapshot({
                 cwd: primaryRoot,
@@ -187,8 +187,8 @@ describe("ToolAdmissionRegistry", () => {
             await fs.symlink(externalDir, linkedDir, process.platform === "win32" ? "junction" : "dir")
             const run = vi.fn(async () => undefined)
             const result = prepareRegisteredToolAdmission({
-                canonicalToolName: ClineDefaultTool.FILE_NEW,
-                block: block(ClineDefaultTool.FILE_NEW, {
+                canonicalToolName: DlineDefaultTool.FILE_NEW,
+                block: block(DlineDefaultTool.FILE_NEW, {
                     path: path.relative(workspaceDir, path.join(linkedDir, "proof.txt")),
                     content: "proof",
                 }),
@@ -224,8 +224,8 @@ describe("ToolAdmissionRegistry", () => {
             await fs.writeFile(path.join(workspaceDir, "src", "target.ts"), "const oldName = 1\n", "utf8")
             const run = vi.fn(async () => undefined)
             const result = prepareRegisteredToolAdmission({
-                canonicalToolName: ClineDefaultTool.REPLACE_TEXT,
-                block: block(ClineDefaultTool.REPLACE_TEXT, {
+                canonicalToolName: DlineDefaultTool.REPLACE_TEXT,
+                block: block(DlineDefaultTool.REPLACE_TEXT, {
                     file_pattern: "src/*.ts",
                     find: "oldName",
                     replace: "newName",
@@ -265,8 +265,8 @@ describe("ToolAdmissionRegistry", () => {
             await fs.symlink(externalDir, linkedDir, process.platform === "win32" ? "junction" : "dir")
             const run = vi.fn(async () => undefined)
             const result = prepareRegisteredToolAdmission({
-                canonicalToolName: ClineDefaultTool.REPLACE_TEXT,
-                block: block(ClineDefaultTool.REPLACE_TEXT, {
+                canonicalToolName: DlineDefaultTool.REPLACE_TEXT,
+                block: block(DlineDefaultTool.REPLACE_TEXT, {
                     file_pattern: "linked-outside/*.ts",
                     find: "oldName",
                     replace: "newName",
@@ -298,8 +298,8 @@ describe("ToolAdmissionRegistry", () => {
     it("classifies every apply_patch target before exposing the retained effect", async () => {
         const run = vi.fn(async () => undefined)
         const result = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.APPLY_PATCH,
-            block: block(ClineDefaultTool.APPLY_PATCH, {
+            canonicalToolName: DlineDefaultTool.APPLY_PATCH,
+            block: block(DlineDefaultTool.APPLY_PATCH, {
                 input: [
                     "*** Begin Patch",
                     "*** Update File: src/in-workspace.ts",
@@ -350,8 +350,8 @@ describe("ToolAdmissionRegistry", () => {
     ] as const)("does not drop the apply_patch %s from scope classification", async (_caseName, input) => {
         const run = vi.fn(async () => undefined)
         const result = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.APPLY_PATCH,
-            block: block(ClineDefaultTool.APPLY_PATCH, { input }),
+            canonicalToolName: DlineDefaultTool.APPLY_PATCH,
+            block: block(DlineDefaultTool.APPLY_PATCH, { input }),
             description: "apply external patch target",
             snapshot: snapshot({
                 settings: {
@@ -372,17 +372,17 @@ describe("ToolAdmissionRegistry", () => {
     })
 
     it("classifies every remaining tool by the resource class it reaches", () => {
-        expect(resolvePermissionScope(ClineDefaultTool.FIND_REFERENCES)).toBe("read_workspace")
-        expect(resolvePermissionScope(ClineDefaultTool.RENAME)).toBe("edit_workspace")
-        expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND)).toBe("terminate_command")
-        expect(resolvePermissionScope(ClineDefaultTool.MCP_DOCS)).toBe("mcp")
-        expect(resolvePermissionScope(ClineDefaultTool.LOAD_MCP)).toBe("mcp")
-        expect(resolvePermissionScope(ClineDefaultTool.LOAD_SKILL)).toBe("read_workspace")
-        expect(resolvePermissionScope(ClineDefaultTool.LOAD_WORKFLOW)).toBe("read_workspace")
-        expect(resolvePermissionScope(ClineDefaultTool.GENERATE_EXPLANATION)).toBe("read_workspace")
-        expect(resolvePermissionScope(ClineDefaultTool.SUMMARIZE_TASK)).toBe("read_workspace")
-        expect(resolvePermissionScope(ClineDefaultTool.SPAWN_TASK)).toBe("subagent")
-        expect(resolvePermissionScope(ClineDefaultTool.REPORT_BUG)).toBe("web")
+        expect(resolvePermissionScope(DlineDefaultTool.FIND_REFERENCES)).toBe("read_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.RENAME)).toBe("edit_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.KILL_COMMAND)).toBe("terminate_command")
+        expect(resolvePermissionScope(DlineDefaultTool.MCP_DOCS)).toBe("mcp")
+        expect(resolvePermissionScope(DlineDefaultTool.LOAD_MCP)).toBe("mcp")
+        expect(resolvePermissionScope(DlineDefaultTool.LOAD_SKILL)).toBe("read_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.LOAD_WORKFLOW)).toBe("read_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.GENERATE_EXPLANATION)).toBe("read_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.SUMMARIZE_TASK)).toBe("read_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.SPAWN_TASK)).toBe("subagent")
+        expect(resolvePermissionScope(DlineDefaultTool.REPORT_BUG)).toBe("web")
     })
 
     // The workspace toggle the user granted has to reach a symbol tool aimed at
@@ -390,8 +390,8 @@ describe("ToolAdmissionRegistry", () => {
     // nothing, because the language server's result set was never what the
     // approval gated.
     it.each([
-        [ClineDefaultTool.FIND_REFERENCES, { file_path: "src/a.ts", line: "1", character: "1" }, "read_workspace"],
-        [ClineDefaultTool.RENAME, { file_path: "src/a.ts", line: "1", character: "1", new_name: "renamed" }, "edit_workspace"],
+        [DlineDefaultTool.FIND_REFERENCES, { file_path: "src/a.ts", line: "1", character: "1" }, "read_workspace"],
+        [DlineDefaultTool.RENAME, { file_path: "src/a.ts", line: "1", character: "1", new_name: "renamed" }, "edit_workspace"],
     ] as const)("admits %s under the workspace permission its target belongs to", async (toolName, params, scope) => {
         const run = vi.fn(async () => undefined)
         const result = prepareRegisteredToolAdmission({
@@ -421,8 +421,8 @@ describe("ToolAdmissionRegistry", () => {
     })
 
     it.each([
-        [ClineDefaultTool.FIND_REFERENCES, { file_path: "src/a.ts", line: "1", character: "1" }, "read_workspace"],
-        [ClineDefaultTool.RENAME, { file_path: "src/a.ts", line: "1", character: "1", new_name: "renamed" }, "edit_workspace"],
+        [DlineDefaultTool.FIND_REFERENCES, { file_path: "src/a.ts", line: "1", character: "1" }, "read_workspace"],
+        [DlineDefaultTool.RENAME, { file_path: "src/a.ts", line: "1", character: "1", new_name: "renamed" }, "edit_workspace"],
     ] as const)("keeps %s behind a ceiling configured on the scope it resolves to", (toolName, params, scope) => {
         const run = vi.fn(async () => undefined)
         const result = prepareRegisteredToolAdmission({
@@ -457,8 +457,8 @@ describe("ToolAdmissionRegistry", () => {
             },
         })
         const result = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.BASH,
-            block: block(ClineDefaultTool.BASH, {
+            canonicalToolName: DlineDefaultTool.BASH,
+            block: block(DlineDefaultTool.BASH, {
                 command: "echo ok",
                 requires_approval: "true",
                 workdirectory: "commands",
@@ -480,22 +480,22 @@ describe("ToolAdmissionRegistry", () => {
             actions: { ...snapshot().settings.actions, useMcp: true },
         }
         const unresolvedTool = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.MCP_USE,
-            block: block(ClineDefaultTool.MCP_USE, { server_name: "docs", tool_name: "search" }),
+            canonicalToolName: DlineDefaultTool.MCP_USE,
+            block: block(DlineDefaultTool.MCP_USE, { server_name: "docs", tool_name: "search" }),
             description: "use MCP",
             snapshot: snapshot({ settings }),
             run: async () => undefined,
         })
         const disabledTool = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.MCP_USE,
-            block: block(ClineDefaultTool.MCP_USE, { server_name: "docs", tool_name: "search" }),
+            canonicalToolName: DlineDefaultTool.MCP_USE,
+            block: block(DlineDefaultTool.MCP_USE, { server_name: "docs", tool_name: "search" }),
             description: "use MCP",
             snapshot: snapshot({ settings, mcpToolAutoApprove: false }),
             run: async () => undefined,
         })
         const blanket = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.MCP_USE,
-            block: block(ClineDefaultTool.MCP_USE, { server_name: "docs", tool_name: "search" }),
+            canonicalToolName: DlineDefaultTool.MCP_USE,
+            block: block(DlineDefaultTool.MCP_USE, { server_name: "docs", tool_name: "search" }),
             description: "use MCP",
             snapshot: snapshot({ settings, mcpToolAutoApprove: false, blanket: { approveAll: true } }),
             run: async () => undefined,
@@ -511,23 +511,23 @@ describe("ToolAdmissionRegistry", () => {
             ...snapshot().settings,
             actions: { ...snapshot().settings.actions, readFiles: true },
         }
-        const spawnBlock = () => block(ClineDefaultTool.SPAWN_TASK, { task: "Investigate", mode: "plan" })
+        const spawnBlock = () => block(DlineDefaultTool.SPAWN_TASK, { task: "Investigate", mode: "plan" })
         const scoped = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.SPAWN_TASK,
+            canonicalToolName: DlineDefaultTool.SPAWN_TASK,
             block: spawnBlock(),
             description: "spawn task",
             snapshot: snapshot({ settings }),
             run: async () => undefined,
         })
         const subagent = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.USE_SUBAGENT,
-            block: block(ClineDefaultTool.USE_SUBAGENT, { task: "Investigate", context: "Read only" }),
+            canonicalToolName: DlineDefaultTool.USE_SUBAGENT,
+            block: block(DlineDefaultTool.USE_SUBAGENT, { task: "Investigate", context: "Read only" }),
             description: "use subagent",
             snapshot: snapshot({ settings }),
             run: async () => undefined,
         })
         const blanket = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.SPAWN_TASK,
+            canonicalToolName: DlineDefaultTool.SPAWN_TASK,
             block: spawnBlock(),
             description: "spawn task",
             snapshot: snapshot({ settings, blanket: { approveAll: true } }),
@@ -541,22 +541,22 @@ describe("ToolAdmissionRegistry", () => {
 
     it("validates action-dependent browser parameters and corrected tool schemas", () => {
         const invalidBrowser = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.BROWSER,
-            block: block(ClineDefaultTool.BROWSER, { action: "click" }),
+            canonicalToolName: DlineDefaultTool.BROWSER,
+            block: block(DlineDefaultTool.BROWSER, { action: "click" }),
             description: "click",
             snapshot: snapshot(),
             run: async () => undefined,
         })
         const validBatch = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.USE_SUBAGENTS,
-            block: block(ClineDefaultTool.USE_SUBAGENTS, { subagents: "[]" }),
+            canonicalToolName: DlineDefaultTool.USE_SUBAGENTS,
+            block: block(DlineDefaultTool.USE_SUBAGENTS, { subagents: "[]" }),
             description: "subagents",
             snapshot: snapshot(),
             run: async () => undefined,
         })
         const validTodo = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.CHANGE_TODO_LIST,
-            block: block(ClineDefaultTool.CHANGE_TODO_LIST, { new_plan: "# Plan\n- [ ] Item" }),
+            canonicalToolName: DlineDefaultTool.CHANGE_TODO_LIST,
+            block: block(DlineDefaultTool.CHANGE_TODO_LIST, { new_plan: "# Plan\n- [ ] Item" }),
             description: "change todo",
             snapshot: snapshot(),
             run: async () => undefined,

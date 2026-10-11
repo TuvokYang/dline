@@ -2,7 +2,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import type { UiQnaResponse } from "@shared/ExtensionMessage"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
@@ -18,7 +18,7 @@ import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackU
  * execute uses ask() to finalize content, save checkpoint, and block for user input.
  */
 export class QnaRespondHandler implements IToolHandler, IPartialBlockHandler {
-    readonly name = ClineDefaultTool.QNA_RESPOND
+    readonly name = DlineDefaultTool.QNA_RESPOND
 
     getDescription(block: ToolUse): string {
         return `[${block.name}]`

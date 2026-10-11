@@ -1,6 +1,6 @@
 import { parseYamlFrontmatter } from "@core/context/instructions/user-instructions/frontmatter"
 import { Logger } from "@shared/services/Logger"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import chokidar, { type FSWatcher } from "chokidar"
 import fs from "fs/promises"
 import * as path from "path"
@@ -22,7 +22,7 @@ const SubagentOutputTokensSchema = z
 const AgentBaseConfigSchema = z.object({
     name: z.string().trim().min(1),
     description: z.string().trim().min(1),
-    tools: z.array(z.nativeEnum(ClineDefaultTool)).default([]),
+    tools: z.array(z.nativeEnum(DlineDefaultTool)).default([]),
     // Set when the author wrote a tool list and policy rejected all of it.
     // Without this, the resulting empty list is indistinguishable from "no
     // tools field", and a request to narrow would be read as a request to
@@ -61,19 +61,19 @@ export interface ResolveAgentConfigOptions {
     globalSubagentToggles?: Record<string, boolean>
 }
 
-function normalizeToolName(toolName: string): ClineDefaultTool {
+function normalizeToolName(toolName: string): DlineDefaultTool {
     const trimmed = toolName.trim()
     if (!trimmed) {
         throw new Error("Tool name cannot be empty.")
     }
     if (trimmed === "use_skill") {
-        return ClineDefaultTool.LOAD_SKILL
+        return DlineDefaultTool.LOAD_SKILL
     }
-    const asDefaultTool = trimmed as ClineDefaultTool
-    if (Object.values(ClineDefaultTool).includes(asDefaultTool)) {
+    const asDefaultTool = trimmed as DlineDefaultTool
+    if (Object.values(DlineDefaultTool).includes(asDefaultTool)) {
         return asDefaultTool
     }
-    throw new Error(`Unknown tool '${trimmed}'. Expected a ClineDefaultTool value.`)
+    throw new Error(`Unknown tool '${trimmed}'. Expected a DlineDefaultTool value.`)
 }
 
 /**
@@ -86,7 +86,7 @@ function normalizeToolName(toolName: string): ClineDefaultTool {
  * allowlist", so the required tool is granted when that list is resolved.
  */
 function parseTools(tools: string | string[] | undefined): {
-    tools: ClineDefaultTool[]
+    tools: DlineDefaultTool[]
     explicitlyNarrowed: boolean
 } {
     if (!tools) return { tools: [], explicitlyNarrowed: false }

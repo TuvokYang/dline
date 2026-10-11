@@ -8,7 +8,7 @@ import type { ExplicitInstructionRequestScope } from "@core/task/explicit-instru
 import type { ProviderRequestRoundAdmission } from "@core/task/performance/provider-request-round-port"
 import { TaskRequestUsageTracker } from "@core/task/TaskRequestUsageTracker"
 import type { CompactionSummaryFailureKind } from "@shared/context-compaction-failure"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import cloneDeep from "clone-deep"
 import {
     type CompactionAttemptDiagnostics,
@@ -315,7 +315,7 @@ export async function runInternalCompactionPass(input: RunInternalCompactionPass
         throw failure
     }
 
-    const consumed = consumePort.consumeTool(ClineDefaultTool.SUMMARIZE_TASK)
+    const consumed = consumePort.consumeTool(DlineDefaultTool.SUMMARIZE_TASK)
     if (!consumed.ok) {
         reportAttempt({ outcome: "failed", failureKind: "authorization_failed" })
         throw new CompactionAuthorizationError(consumed.code)
@@ -478,7 +478,7 @@ function isOpenAiMaxOutputFailure(error: unknown): boolean {
     )
 }
 
-const SUMMARIZE_TASK_CLOSE_TAG = `</${ClineDefaultTool.SUMMARIZE_TASK}>`
+const SUMMARIZE_TASK_CLOSE_TAG = `</${DlineDefaultTool.SUMMARIZE_TASK}>`
 
 /** Parse every summarize_task explicit-instruction call in the reply with the standard tool parser. */
 function parseSummarizeTaskCalls(text: string): ToolUse[] {
@@ -492,7 +492,7 @@ function parseSummarizeTaskCalls(text: string): ToolUse[] {
             dline_tid: identities.nextTraceId(),
         }),
     })
-    return blocks.filter((block): block is ToolUse => block.type === "tool_use" && block.name === ClineDefaultTool.SUMMARIZE_TASK)
+    return blocks.filter((block): block is ToolUse => block.type === "tool_use" && block.name === DlineDefaultTool.SUMMARIZE_TASK)
 }
 
 interface ClosedSummarizeTaskCall {

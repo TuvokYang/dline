@@ -1,11 +1,11 @@
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { resolveApprovalKind } from "../../kernel/turn/approval-kind"
 
 function decision(generateImages?: boolean) {
     return resolveApprovalKind({
-        toolName: ClineDefaultTool.GENERATE_IMAGE,
+        toolName: DlineDefaultTool.GENERATE_IMAGE,
         settings: {
             ...DEFAULT_AUTO_APPROVAL_SETTINGS,
             actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, generateImages },

@@ -1,16 +1,16 @@
 import type { ToolUse } from "@core/assistant-message"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { TaskTurnAuthority } from "../../explicit-instructions/TurnAuthority"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
 
-function block(name: ClineDefaultTool): ToolUse {
+function block(name: DlineDefaultTool): ToolUse {
     return { type: "tool_use", name, params: {}, partial: false } as ToolUse
 }
 
-function recordingHandler(name: ClineDefaultTool) {
+function recordingHandler(name: DlineDefaultTool) {
     const seen: TaskConfig[] = []
     const handler: IToolHandler = {
         name,
@@ -33,17 +33,17 @@ describe("ToolExecutorCoordinator explicit authority", () => {
     it("hands the handler one consumed authorization when the turn granted it", async () => {
         const authority = new TaskTurnAuthority()
         authority.grant("turn-1", [
-            { type: "summarize_task", source: "manual_compact_command", targetTool: ClineDefaultTool.SUMMARIZE_TASK },
+            { type: "summarize_task", source: "manual_compact_command", targetTool: DlineDefaultTool.SUMMARIZE_TASK },
         ])
-        const recording = recordingHandler(ClineDefaultTool.SUMMARIZE_TASK)
+        const recording = recordingHandler(DlineDefaultTool.SUMMARIZE_TASK)
         const coordinator = coordinatorWith(recording.handler)
         const config = { explicitInstructions: authority.read("turn-1") } as TaskConfig
 
-        await coordinator.execute(config, block(ClineDefaultTool.SUMMARIZE_TASK))
+        await coordinator.execute(config, block(DlineDefaultTool.SUMMARIZE_TASK))
 
         expect(recording.lastConfig().explicitInstructionAuthorization).toMatchObject({
             type: "summarize_task",
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             state: "consumed",
         })
     })
@@ -51,14 +51,14 @@ describe("ToolExecutorCoordinator explicit authority", () => {
     it("consumes the authority once, so a second call is refused before its handler runs", async () => {
         const authority = new TaskTurnAuthority()
         authority.grant("turn-1", [
-            { type: "summarize_task", source: "manual_compact_command", targetTool: ClineDefaultTool.SUMMARIZE_TASK },
+            { type: "summarize_task", source: "manual_compact_command", targetTool: DlineDefaultTool.SUMMARIZE_TASK },
         ])
-        const recording = recordingHandler(ClineDefaultTool.SUMMARIZE_TASK)
+        const recording = recordingHandler(DlineDefaultTool.SUMMARIZE_TASK)
         const coordinator = coordinatorWith(recording.handler)
         const config = { explicitInstructions: authority.read("turn-1") } as TaskConfig
 
-        await coordinator.execute(config, block(ClineDefaultTool.SUMMARIZE_TASK))
-        const second = await coordinator.execute(config, block(ClineDefaultTool.SUMMARIZE_TASK))
+        await coordinator.execute(config, block(DlineDefaultTool.SUMMARIZE_TASK))
+        const second = await coordinator.execute(config, block(DlineDefaultTool.SUMMARIZE_TASK))
 
         expect(recording.calls()).toBe(1)
         expect(JSON.stringify(second)).toMatch(/explicit_instruction_(already_consumed|missing)/)
@@ -67,10 +67,10 @@ describe("ToolExecutorCoordinator explicit authority", () => {
     // WS-013: an explicit-only tool nobody authorized is refused centrally with a
     // code the model reads back, and none of its effects run.
     it("refuses an explicit-only tool without granted authority and never runs its handler", async () => {
-        const recording = recordingHandler(ClineDefaultTool.SUMMARIZE_TASK)
+        const recording = recordingHandler(DlineDefaultTool.SUMMARIZE_TASK)
         const coordinator = coordinatorWith(recording.handler)
 
-        const result = await coordinator.execute({} as TaskConfig, block(ClineDefaultTool.SUMMARIZE_TASK))
+        const result = await coordinator.execute({} as TaskConfig, block(DlineDefaultTool.SUMMARIZE_TASK))
 
         expect(recording.calls()).toBe(0)
         expect(JSON.stringify(result)).toContain("explicit_instruction_missing")
@@ -81,7 +81,7 @@ describe("ToolExecutorCoordinator explicit authority", () => {
     it("refuses an unauthorized handler-less summarize_task with the explicit gate code", async () => {
         const coordinator = new ToolExecutorCoordinator()
 
-        const result = await coordinator.execute({} as TaskConfig, block(ClineDefaultTool.SUMMARIZE_TASK))
+        const result = await coordinator.execute({} as TaskConfig, block(DlineDefaultTool.SUMMARIZE_TASK))
 
         expect(JSON.stringify(result)).toContain(
             "Explicit-only tool 'summarize_task' was rejected: explicit_instruction_missing.",
@@ -92,7 +92,7 @@ describe("ToolExecutorCoordinator explicit authority", () => {
     it("refuses the retired condense tool with the retirement code", async () => {
         const coordinator = new ToolExecutorCoordinator()
 
-        const result = await coordinator.execute({} as TaskConfig, block(ClineDefaultTool.CONDENSE))
+        const result = await coordinator.execute({} as TaskConfig, block(DlineDefaultTool.CONDENSE))
 
         expect(JSON.stringify(result)).toContain("explicit_instruction_retired")
     })
@@ -100,21 +100,21 @@ describe("ToolExecutorCoordinator explicit authority", () => {
     it("leaves pending authority unconsumed when a handler-less explicit tool is called", async () => {
         const authority = new TaskTurnAuthority()
         authority.grant("turn-1", [
-            { type: "summarize_task", source: "manual_compact_command", targetTool: ClineDefaultTool.SUMMARIZE_TASK },
+            { type: "summarize_task", source: "manual_compact_command", targetTool: DlineDefaultTool.SUMMARIZE_TASK },
         ])
         const coordinator = new ToolExecutorCoordinator()
         const config = { explicitInstructions: authority.read("turn-1") } as TaskConfig
 
-        await expect(coordinator.execute(config, block(ClineDefaultTool.SUMMARIZE_TASK))).rejects.toThrow(
+        await expect(coordinator.execute(config, block(DlineDefaultTool.SUMMARIZE_TASK))).rejects.toThrow(
             "No handler registered for tool: summarize_task",
         )
-        expect(authority.read("turn-1")?.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)).toBeDefined()
+        expect(authority.read("turn-1")?.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)).toBeDefined()
     })
 
     it("keeps a missing handler an ordinary failure for tools outside the explicit gate", async () => {
         const coordinator = new ToolExecutorCoordinator()
 
-        await expect(coordinator.execute({} as TaskConfig, block(ClineDefaultTool.FILE_READ))).rejects.toThrow(
+        await expect(coordinator.execute({} as TaskConfig, block(DlineDefaultTool.FILE_READ))).rejects.toThrow(
             "No handler registered for tool: read_file",
         )
     })
@@ -122,15 +122,15 @@ describe("ToolExecutorCoordinator explicit authority", () => {
     it("does not touch a tool that needs no explicit authority", async () => {
         const authority = new TaskTurnAuthority()
         authority.grant("turn-1", [
-            { type: "summarize_task", source: "manual_compact_command", targetTool: ClineDefaultTool.SUMMARIZE_TASK },
+            { type: "summarize_task", source: "manual_compact_command", targetTool: DlineDefaultTool.SUMMARIZE_TASK },
         ])
-        const recording = recordingHandler(ClineDefaultTool.FILE_READ)
+        const recording = recordingHandler(DlineDefaultTool.FILE_READ)
         const coordinator = coordinatorWith(recording.handler)
         const config = { explicitInstructions: authority.read("turn-1") } as TaskConfig
 
-        await coordinator.execute(config, block(ClineDefaultTool.FILE_READ))
+        await coordinator.execute(config, block(DlineDefaultTool.FILE_READ))
 
         expect(recording.lastConfig().explicitInstructionAuthorization).toBeUndefined()
-        expect(authority.read("turn-1")?.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)).toBeDefined()
+        expect(authority.read("turn-1")?.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)).toBeDefined()
     })
 })

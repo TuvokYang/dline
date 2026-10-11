@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, it, vi } from "vitest"
 import type { ToolUse } from "../../../../assistant-message"
 import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
@@ -84,7 +84,7 @@ function createBlock(): ToolUse {
     return {
         type: "tool_use",
         function_id: "completion-function-1",
-        name: ClineDefaultTool.ATTEMPT,
+        name: DlineDefaultTool.ATTEMPT,
         params: { result: "done" },
         partial: false,
         ts: 123,

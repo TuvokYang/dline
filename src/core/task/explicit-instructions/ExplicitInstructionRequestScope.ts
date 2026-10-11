@@ -1,4 +1,4 @@
-import type { ClineDefaultTool } from "@shared/tools"
+import type { DlineDefaultTool } from "@shared/tools"
 import type { ExplicitInstructionRegistry } from "./ExplicitInstructionRegistry"
 import { getExplicitInstructionPolicy } from "./policy"
 import type {
@@ -50,9 +50,9 @@ export class ExplicitInstructionRequestScope {
         const identity = Object.freeze({ ...this.identity })
         return Object.freeze({
             identity,
-            getPendingToolAuthorization: (targetTool: ClineDefaultTool): ExplicitInstructionAuthorization | undefined =>
+            getPendingToolAuthorization: (targetTool: DlineDefaultTool): ExplicitInstructionAuthorization | undefined =>
                 this.registry.findPendingTool(identity, targetTool),
-            consumeTool: (targetTool: ClineDefaultTool): ConsumeExplicitInstructionResult =>
+            consumeTool: (targetTool: DlineDefaultTool): ConsumeExplicitInstructionResult =>
                 this.registry.consumeTool({ ...identity, targetTool }),
         })
     }
@@ -108,7 +108,7 @@ export class ExplicitInstructionRequestScope {
         this.identity = Object.freeze({ requestId: previousIdentity.requestId, attemptId })
     }
 
-    getPendingToolAuthorization(targetTool: ClineDefaultTool): ExplicitInstructionAuthorization | undefined {
+    getPendingToolAuthorization(targetTool: DlineDefaultTool): ExplicitInstructionAuthorization | undefined {
         return this.registry.findPendingTool(this.identity, targetTool)
     }
 

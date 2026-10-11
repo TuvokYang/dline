@@ -2,7 +2,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { UiSayTool } from "@shared/ExtensionMessage"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ToolValidator } from "../../ToolValidator"
 import type { TaskConfig } from "../../types/TaskConfig"
@@ -70,7 +70,7 @@ describe("WriteToFileToolHandler missing replace_in_file target", () => {
 
         const result = await handler.execute(config, {
             type: "tool_use",
-            name: ClineDefaultTool.FILE_EDIT,
+            name: DlineDefaultTool.FILE_EDIT,
             partial: false,
             ts: 7,
             params: { path: relPath, diff: DIFF },

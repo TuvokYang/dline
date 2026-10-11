@@ -10,7 +10,7 @@ import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/pat
 import { telemetryService } from "@/services/telemetry"
 import { MAX_TOOL_RESULT_TEXT_BYTES, TRUNCATION_MARKER_PREFIX } from "@/shared/content-limits"
 import { UiSayTool } from "@/shared/ExtensionMessage"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
@@ -285,7 +285,7 @@ async function emitReadFileToolUiComplete(
 }
 
 export class ReadFileToolHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.FILE_READ
+    readonly name = DlineDefaultTool.FILE_READ
 
     constructor(private validator: ToolValidator) {}
 

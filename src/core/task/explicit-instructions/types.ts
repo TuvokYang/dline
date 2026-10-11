@@ -1,4 +1,4 @@
-import type { ClineDefaultTool } from "@shared/tools"
+import type { DlineDefaultTool } from "@shared/tools"
 
 export type ExplicitInstructionType =
     | "summarize_task"
@@ -31,7 +31,7 @@ export interface ExplicitInstructionAuthorization {
     readonly operationId?: string
     readonly type: ExplicitInstructionType
     readonly source: ExplicitInstructionSource
-    readonly targetTool?: ClineDefaultTool
+    readonly targetTool?: DlineDefaultTool
     readonly metadata?: Readonly<Record<string, string>>
     readonly state: ExplicitInstructionState
 }
@@ -39,7 +39,7 @@ export interface ExplicitInstructionAuthorization {
 export interface ExplicitInstructionDeclaration {
     readonly type: ExplicitInstructionType
     readonly source: ExplicitInstructionSource
-    readonly targetTool?: ClineDefaultTool
+    readonly targetTool?: DlineDefaultTool
     readonly operationId?: string
     readonly metadata?: Readonly<Record<string, string>>
 }
@@ -55,18 +55,18 @@ export interface RegisterExplicitInstructionInput {
     readonly operationId?: string
     readonly type: ExplicitInstructionType
     readonly source: ExplicitInstructionSource
-    readonly targetTool?: ClineDefaultTool
+    readonly targetTool?: DlineDefaultTool
     readonly metadata?: Readonly<Record<string, string>>
 }
 
 export interface ConsumeExplicitToolInput extends ExplicitInstructionRequestIdentity {
-    readonly targetTool: ClineDefaultTool
+    readonly targetTool: DlineDefaultTool
 }
 
 export interface ExplicitInstructionConsumePort {
     readonly identity: ExplicitInstructionRequestIdentity
-    getPendingToolAuthorization(targetTool: ClineDefaultTool): ExplicitInstructionAuthorization | undefined
-    consumeTool(targetTool: ClineDefaultTool): ConsumeExplicitInstructionResult
+    getPendingToolAuthorization(targetTool: DlineDefaultTool): ExplicitInstructionAuthorization | undefined
+    consumeTool(targetTool: DlineDefaultTool): ConsumeExplicitInstructionResult
 }
 
 export interface ConsumeExplicitInstructionInput {
@@ -75,7 +75,7 @@ export interface ConsumeExplicitInstructionInput {
     readonly attemptId: string
     readonly type: ExplicitInstructionType
     readonly source: ExplicitInstructionSource
-    readonly targetTool: ClineDefaultTool
+    readonly targetTool: DlineDefaultTool
 }
 
 export type ExplicitInstructionFailureCode =
@@ -97,7 +97,7 @@ export type ConsumeExplicitInstructionResult =
 export interface ExplicitInstructionPolicy {
     readonly type: ExplicitInstructionType
     readonly authorizesTool: boolean
-    readonly targetTool?: ClineDefaultTool
+    readonly targetTool?: DlineDefaultTool
     readonly allowRetry: boolean
     readonly allowPartialPresentation: boolean
 }

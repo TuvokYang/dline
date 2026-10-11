@@ -1,6 +1,6 @@
 import type { ToolUse } from "@core/assistant-message"
 import type { LoadCapabilityPayload } from "@shared/load-capabilities"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { LoadCapabilityService } from "../../load-capabilities/LoadCapabilityService"
 import { LoadCapabilityHandler } from "../LoadCapabilityHandler"
@@ -40,7 +40,7 @@ function createBlock(name?: string): ToolUse {
         type: "tool_use",
         function_id: "test_load_capability",
         dline_tid: "test_load_capability_tid",
-        name: ClineDefaultTool.LOAD_SKILL,
+        name: DlineDefaultTool.LOAD_SKILL,
         params: name === undefined ? {} : { name },
         partial: false,
         ts: 123,
@@ -50,12 +50,12 @@ function createBlock(name?: string): ToolUse {
 describe("LoadCapabilityHandler", () => {
     it("returns a missing parameter error when name is absent", async () => {
         const { config, callbacks } = createConfig()
-        const handler = new LoadCapabilityHandler(ClineDefaultTool.LOAD_SKILL, "skill")
+        const handler = new LoadCapabilityHandler(DlineDefaultTool.LOAD_SKILL, "skill")
 
         const result = await handler.execute(config, createBlock())
 
         expect(result).toBe("missing")
-        expect(callbacks.sayAndCreateMissingParamError).toHaveBeenCalledWith(ClineDefaultTool.LOAD_SKILL, "name", undefined, 123)
+        expect(callbacks.sayAndCreateMissingParamError).toHaveBeenCalledWith(DlineDefaultTool.LOAD_SKILL, "name", undefined, 123)
         expect(config.taskState.consecutiveMistakeCount).toBe(1)
     })
 
@@ -75,7 +75,7 @@ describe("LoadCapabilityHandler", () => {
         const service = {
             load: vi.fn().mockResolvedValue(payload),
         } as unknown as LoadCapabilityService
-        const handler = new LoadCapabilityHandler(ClineDefaultTool.LOAD_SKILL, "skill", service)
+        const handler = new LoadCapabilityHandler(DlineDefaultTool.LOAD_SKILL, "skill", service)
 
         const result = await handler.execute(config, createBlock("review-code"))
 

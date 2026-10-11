@@ -1,6 +1,6 @@
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@shared/mcp"
 import { hashStableJson } from "@shared/stable-json"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
@@ -103,7 +103,7 @@ describe("collectCapabilities", () => {
                     ),
                     // An empty list inherits the default allowlist, minus the command
                     // tool the built-in default never receives.
-                    tools: DEFAULT_SUBAGENT_ALLOWED_TOOLS.filter((tool) => tool !== ClineDefaultTool.BASH),
+                    tools: DEFAULT_SUBAGENT_ALLOWED_TOOLS.filter((tool) => tool !== DlineDefaultTool.BASH),
                 },
                 {
                     name: "reviewer",
@@ -223,7 +223,7 @@ describe("collectCapabilities", () => {
                 {
                     name: "default",
                     description: "Built-in readonly research subagent",
-                    tools: DEFAULT_SUBAGENT_ALLOWED_TOOLS.filter((tool) => tool !== ClineDefaultTool.BASH),
+                    tools: DEFAULT_SUBAGENT_ALLOWED_TOOLS.filter((tool) => tool !== DlineDefaultTool.BASH),
                 },
             ])
         } finally {
@@ -248,7 +248,7 @@ describe("collectCapabilities", () => {
             // entry: normalisation rebuilds every entry, so a renderer-level test
             // cannot prove the list survives collection.
             const reviewer = snapshot.subagents.find((entry) => entry.name === "reviewer")
-            expect(reviewer?.tools).toEqual([ClineDefaultTool.FILE_READ, ClineDefaultTool.SEARCH, ClineDefaultTool.ATTEMPT])
+            expect(reviewer?.tools).toEqual([DlineDefaultTool.FILE_READ, DlineDefaultTool.SEARCH, DlineDefaultTool.ATTEMPT])
         } finally {
             await fs.rm(cwd, { recursive: true, force: true })
         }

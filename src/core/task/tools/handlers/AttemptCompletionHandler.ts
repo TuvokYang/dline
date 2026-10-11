@@ -9,7 +9,7 @@ import { showSystemNotification } from "@integrations/notifications"
 import { telemetryService } from "@services/telemetry"
 import { findLastIndex } from "@shared/array"
 import { Logger } from "@shared/services/Logger"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { commitCompletion } from "../../completion/CompletionCommit"
 import { isAllItemsCompleted } from "../../focus-chain/file-utils"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
@@ -50,7 +50,7 @@ function readUnfinishedFocusChecklist(config: TaskConfig): string | undefined {
 }
 
 export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHandler {
-    readonly name = ClineDefaultTool.ATTEMPT
+    readonly name = DlineDefaultTool.ATTEMPT
 
     getDescription(block: ToolUse): string {
         return `[${block.name}]`

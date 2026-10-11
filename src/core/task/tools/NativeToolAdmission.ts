@@ -1,11 +1,11 @@
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@shared/mcp"
-import { ClineDefaultTool, type ClineTool } from "@shared/tools"
+import { type ClineTool, DlineDefaultTool } from "@shared/tools"
 
 const INTERNAL_NATIVE_TOOL_NAMES: ReadonlySet<string> = new Set(["task_progress"])
 
 /** Return the runtime name used to admit a provider-native tool call. */
 export function normalizeNativeToolName(toolName: string): string {
-    return toolName.includes(CLINE_MCP_TOOL_IDENTIFIER) ? ClineDefaultTool.MCP_USE : toolName
+    return toolName.includes(CLINE_MCP_TOOL_IDENTIFIER) ? DlineDefaultTool.MCP_USE : toolName
 }
 
 /** Internal native calls are protocol helpers, not ordinary user-facing tools. */

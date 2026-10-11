@@ -13,7 +13,7 @@ import { telemetryService } from "@/services/telemetry"
 import { boundToolText } from "@/shared/content-limits"
 import { UiSayTool } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
@@ -101,7 +101,7 @@ function aggregateSearchStats(stats: SearchStats[]): SearchStats {
 }
 
 export class SearchFilesToolHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.SEARCH
+    readonly name = DlineDefaultTool.SEARCH
 
     constructor(private validator: ToolValidator) {}
 

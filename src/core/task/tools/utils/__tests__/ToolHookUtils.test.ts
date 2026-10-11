@@ -3,7 +3,7 @@ import "should"
 import type { ToolUse } from "@core/assistant-message"
 import * as HookExecutor from "@core/hooks/hook-executor"
 import { DefaultToolHandlerState } from "@core/task/tools/state/ToolHandlerState"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 // sinon import removed
 import { ToolHookUtils } from "../ToolHookUtils"
 
@@ -30,7 +30,7 @@ describe("ToolHookUtils", () => {
                 type: "tool_use",
                 function_id: "test_hook_disabled",
                 dline_tid: "test_hook_disabled_tid",
-                name: ClineDefaultTool.FILE_READ,
+                name: DlineDefaultTool.FILE_READ,
                 params: { path: "src/index.ts" },
                 partial: false,
                 ts: Date.now(),
@@ -79,7 +79,7 @@ describe("ToolHookUtils", () => {
                 type: "tool_use",
                 function_id: "test_hook_enabled",
                 dline_tid: "test_hook_enabled_tid",
-                name: ClineDefaultTool.BASH,
+                name: DlineDefaultTool.BASH,
                 params: { command: "echo hello", requires_approval: "false" },
                 partial: false,
                 ts: Date.now(),

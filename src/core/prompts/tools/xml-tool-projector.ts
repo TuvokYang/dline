@@ -1,4 +1,4 @@
-import type { ClineDefaultTool } from "../../../shared/tools"
+import type { DlineDefaultTool } from "../../../shared/tools"
 import { getPrompt } from "../i18n"
 import { assemblePromptFragments } from "../system-prompt/assembly/prompt-fragment-assembler"
 import type { SystemPromptContext } from "../system-prompt/context"
@@ -8,7 +8,7 @@ import { type ProfileToolParam, type ProfileToolSpec, resolveProfilePromptText }
 function enabledParams(
     spec: ProfileToolSpec,
     context: SystemPromptContext,
-    enabledToolIds: ReadonlySet<ClineDefaultTool>,
+    enabledToolIds: ReadonlySet<DlineDefaultTool>,
 ): readonly ProfileToolParam[] {
     return (spec.parameters ?? []).filter((parameter) => {
         if (parameter.dependencies && parameter.dependencies.some((dependency) => !enabledToolIds.has(dependency))) {
@@ -49,7 +49,7 @@ function usageSection(toolName: string, params: readonly ProfileToolParam[]): st
 export function projectXmlTool(
     spec: ProfileToolSpec,
     context: SystemPromptContext,
-    enabledToolIds: ReadonlySet<ClineDefaultTool>,
+    enabledToolIds: ReadonlySet<DlineDefaultTool>,
 ): string {
     const params = enabledParams(spec, context, enabledToolIds)
     return [

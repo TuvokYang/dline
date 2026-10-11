@@ -9,7 +9,7 @@ import {
     imageSourceToUrl,
 } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
-import { type ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES } from "@shared/tools"
+import { CONVERSATIONAL_TOOL_NAMES, type DlineDefaultTool } from "@shared/tools"
 import type { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import type { ConversationJournal, JournalEntry, JournalWatermark, TaskPayloadStore } from "../stores"
 import { encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
@@ -190,7 +190,7 @@ function isFileAttachment(text: string): boolean {
 function userReplies(message: ClineStorageMessage, names: ToolNames): ClineUserToolResultContentBlock[] {
     return toolResults(message).filter((block) => {
         const name = names.get(block.function_id)
-        if (!name || !CONVERSATIONAL_TOOL_NAMES.has(name as ClineDefaultTool)) return false
+        if (!name || !CONVERSATIONAL_TOOL_NAMES.has(name as DlineDefaultTool)) return false
         return resultParts(block).some(
             (part) => part.type === "image" || hasUserContentTag(part.text) || isFileAttachment(part.text),
         )

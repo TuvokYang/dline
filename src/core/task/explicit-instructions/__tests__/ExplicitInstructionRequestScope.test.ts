@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { ExplicitInstructionRegistry } from "../ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "../ExplicitInstructionRequestScope"
@@ -9,7 +9,7 @@ function registerSummary(scope: ExplicitInstructionRequestScope) {
     return scope.register({
         type: "summarize_task",
         source: "auto_compaction",
-        targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+        targetTool: DlineDefaultTool.SUMMARIZE_TASK,
     })
 }
 
@@ -22,14 +22,14 @@ describe("ExplicitInstructionRequestScope", () => {
 
         expect(authorization).toMatchObject(FIRST_ATTEMPT)
         expect(port.identity).toEqual(FIRST_ATTEMPT)
-        expect(port.consumeTool(ClineDefaultTool.SUMMARIZE_TASK)).toEqual({
+        expect(port.consumeTool(DlineDefaultTool.SUMMARIZE_TASK)).toEqual({
             ok: true,
             authorization: expect.objectContaining({
                 instructionId: authorization.instructionId,
                 state: "consumed",
             }),
         })
-        expect(port.consumeTool(ClineDefaultTool.SUMMARIZE_TASK)).toEqual({
+        expect(port.consumeTool(DlineDefaultTool.SUMMARIZE_TASK)).toEqual({
             ok: false,
             code: "explicit_instruction_already_consumed",
         })
@@ -41,15 +41,15 @@ describe("ExplicitInstructionRequestScope", () => {
         const first = registerSummary(scope)
         const oldPort = scope.createConsumePort()
         scope.beginRetryAttempt("attempt-2")
-        const current = scope.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)
+        const current = scope.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)
         const currentPort = scope.createConsumePort()
 
         expect(current).toMatchObject({ requestId: "request-1", attemptId: "attempt-2", state: "pending" })
-        expect(oldPort.consumeTool(ClineDefaultTool.SUMMARIZE_TASK)).toEqual({
+        expect(oldPort.consumeTool(DlineDefaultTool.SUMMARIZE_TASK)).toEqual({
             ok: false,
             code: "explicit_instruction_expired",
         })
-        expect(currentPort.consumeTool(ClineDefaultTool.SUMMARIZE_TASK).ok).toBe(true)
+        expect(currentPort.consumeTool(DlineDefaultTool.SUMMARIZE_TASK).ok).toBe(true)
     })
 
     it("registers authority without changing the model-visible instruction text", () => {
@@ -61,7 +61,7 @@ describe("ExplicitInstructionRequestScope", () => {
         const registered = scope.registerInstruction(template, {
             type: "new_task",
             source: "slash_command",
-            targetTool: ClineDefaultTool.NEW_TASK,
+            targetTool: DlineDefaultTool.NEW_TASK,
         })
 
         expect(registered.text).toBe(template)
@@ -82,7 +82,7 @@ describe("ExplicitInstructionRequestScope", () => {
         expect(registry.get(skill.instructionId)?.state).toBe("consumed")
 
         expect(scope.beginProviderAttempt("attempt-2")).toBeUndefined()
-        const current = scope.getPendingToolAuthorization(ClineDefaultTool.SUMMARIZE_TASK)
+        const current = scope.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)
         expect(current).toMatchObject({ attemptId: "attempt-2", state: "pending" })
     })
 
@@ -94,7 +94,7 @@ describe("ExplicitInstructionRequestScope", () => {
 
         scope.close()
 
-        expect(port.consumeTool(ClineDefaultTool.SUMMARIZE_TASK)).toEqual({
+        expect(port.consumeTool(DlineDefaultTool.SUMMARIZE_TASK)).toEqual({
             ok: false,
             code: "explicit_instruction_expired",
         })
@@ -113,7 +113,7 @@ describe("ExplicitInstructionRequestScope", () => {
         expect(scope.consumeBehaviorInstructions()).toEqual([
             expect.objectContaining({ instructionId: skill.instructionId, state: "consumed" }),
         ])
-        expect(scope.createConsumePort().consumeTool(ClineDefaultTool.SUMMARIZE_TASK)).toEqual({
+        expect(scope.createConsumePort().consumeTool(DlineDefaultTool.SUMMARIZE_TASK)).toEqual({
             ok: false,
             code: "explicit_instruction_missing",
         })

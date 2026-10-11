@@ -1,4 +1,4 @@
-import { ClineDefaultTool, type ClineTool } from "../../../shared/tools"
+import { type ClineTool, DlineDefaultTool } from "../../../shared/tools"
 import type { PromptProfile } from "../profiles/types"
 import type { SystemPromptContext } from "../system-prompt/context"
 import { createSystemPromptConfig, prepareSystemRuntimeEnv } from "../system-prompt/pipeline"
@@ -20,7 +20,7 @@ const TOOL_RUNTIME_KEYS = [
     "TERMINAL_COMMAND_TIMEOUT_SECONDS",
 ] as const
 const TOOL_RUNTIME_RULE = { stages: ["runtime"] as const, required: true }
-const RETIRED_DEFAULT_TOOL_NAMES = new Set<string>([ClineDefaultTool.SUMMARIZE_TASK, "use_skill"])
+const RETIRED_DEFAULT_TOOL_NAMES = new Set<string>([DlineDefaultTool.SUMMARIZE_TASK, "use_skill"])
 const TOOL_PROJECTION_CONTRACT: PromptContract = {
     variables: Object.fromEntries(TOOL_RUNTIME_KEYS.map((key) => [key, TOOL_RUNTIME_RULE])),
 }
@@ -96,7 +96,7 @@ export class ToolPromptGenerator {
             enabledSpecs.map((spec) => projectTool(spec, projectionContext, enabledToolIds)),
             projectionContext,
         )
-        if (profile === "lite" || projectionContext.disableTools?.includes(ClineDefaultTool.MCP_USE)) {
+        if (profile === "lite" || projectionContext.disableTools?.includes(DlineDefaultTool.MCP_USE)) {
             return builtInTools
         }
         const mcpTools = (projectionContext.mcpHub?.getServers() ?? [])

@@ -74,7 +74,7 @@ describe("ContextTransition architecture", () => {
             "task/tools/handlers/GenerateReportHandler.ts",
             "task/tools/handlers/MakePlanHandler.ts",
             "task/tools/handlers/QnaRespondHandler.ts",
-            "task/tools/handlers/StatusUpdateHandler.ts",
+            "task/tools/handlers/PhaseReportHandler.ts",
         ]
         const sources = await Promise.all(paths.map(read))
 

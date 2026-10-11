@@ -4,7 +4,7 @@ import { readApiProfiles } from "@core/controller/file/getApiProfiles"
 import { resolveProfileReference } from "@core/profiles/profile-binding"
 import type { ApiProfile } from "@shared/proto/dline/profile"
 import { resolveProfileReasoningConfig } from "@shared/task-reasoning"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { AgentBaseConfig } from "./AgentConfigLoader"
 import { DEFAULT_SUBAGENT_ALLOWED_TOOLS, isDefaultSubagentName } from "./DefaultSubagentConfig"
@@ -40,7 +40,7 @@ ${SUBAGENT_COMPLETION_CONTRACT}`
 
 export class SubagentBuilder {
     private readonly agentConfig: AgentConfig = {}
-    private readonly allowedTools: ClineDefaultTool[]
+    private readonly allowedTools: DlineDefaultTool[]
     private readonly apiHandler: ReturnType<typeof buildApiHandler>
     private readonly profileId: string | undefined
     private readonly profileName: string | undefined
@@ -65,7 +65,7 @@ export class SubagentBuilder {
             this.agentConfig.profile,
             apiConfiguration.actModeProfileId ?? apiConfiguration.actModeProfile,
             apiConfiguration.actModeProfile,
-            this.agentConfig.tools?.includes(ClineDefaultTool.GENERATE_IMAGE) === true,
+            this.agentConfig.tools?.includes(DlineDefaultTool.GENERATE_IMAGE) === true,
         )
         this.profileName = profileSelection.profileName
         this.profileId = profileSelection.profileId
@@ -89,7 +89,7 @@ export class SubagentBuilder {
         return this.apiHandler
     }
 
-    getAllowedTools(): ClineDefaultTool[] {
+    getAllowedTools(): DlineDefaultTool[] {
         return this.allowedTools
     }
 
@@ -191,10 +191,10 @@ export class SubagentBuilder {
      * @returns De-duplicated tool allowlist with the subagent tool policy applied.
      */
     private resolveAllowedTools(
-        configuredTools: ClineDefaultTool[] | undefined,
+        configuredTools: DlineDefaultTool[] | undefined,
         builtInDefault: boolean,
         explicitlyNarrowed: boolean,
-    ): ClineDefaultTool[] {
+    ): DlineDefaultTool[] {
         return sanitizeSubagentTools(configuredTools, { builtInDefault, explicitlyNarrowed })
     }
 

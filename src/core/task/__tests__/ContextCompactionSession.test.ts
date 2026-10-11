@@ -9,7 +9,7 @@ import type { CompactionProviderInput } from "@core/task/compaction/CompactionPr
 import { ExplicitInstructionRegistry } from "@core/task/explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
 import type { ClineStorageMessage } from "@shared/messages/content"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { ContextCompactionSession, type ContextCompactionSessionPorts } from "../ContextCompactionSession"
 
@@ -55,7 +55,7 @@ function createPorts(): ContextCompactionSessionPorts {
             explicitInstructions.register({
                 type: "summarize_task",
                 source: "auto_compaction",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
                 operationId: state.operationId,
             })
             return {
@@ -72,7 +72,7 @@ function createPorts(): ContextCompactionSessionPorts {
             explicitInstructions.register({
                 type: "summarize_task",
                 source: "auto_compaction",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
                 operationId: state.operationId,
             })
             return {
@@ -239,7 +239,7 @@ describe("ContextCompactionSession", () => {
             explicitInstructions.register({
                 type: "summarize_task",
                 source: "auto_compaction",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
                 operationId: state.operationId,
             })
             return {
@@ -316,7 +316,7 @@ describe("ContextCompactionSession", () => {
             explicitInstructions.register({
                 type: "summarize_task",
                 source: "auto_compaction",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
                 operationId: state.operationId,
             })
             return {
@@ -333,7 +333,7 @@ describe("ContextCompactionSession", () => {
             explicitInstructions.register({
                 type: "summarize_task",
                 source: "auto_compaction",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
                 operationId: state.operationId,
             })
             return {
@@ -412,7 +412,7 @@ describe("ContextCompactionSession", () => {
             explicitInstructions.register({
                 type: "summarize_task",
                 source: "manual_compact_command",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
                 operationId: state.operationId,
             })
             return {
@@ -680,7 +680,7 @@ describe("ContextCompactionSession", () => {
             explicitInstructions.register({
                 type: "summarize_task",
                 source: "manual_compact_command",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
                 operationId: state.operationId,
             })
             buildCount += 1

@@ -3,14 +3,14 @@ import path from "node:path"
 import { getTaskArtifactDirectory } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { prepareRegisteredToolAdmission } from "../../executors/tool/ToolAdmissionRegistry"
 
 function decision(
     taskId: string,
     workspaceDirectory: string,
-    toolName: ClineDefaultTool,
+    toolName: DlineDefaultTool,
     target: string,
     options: { actions?: Partial<typeof DEFAULT_AUTO_APPROVAL_SETTINGS.actions>; params?: Record<string, string> } = {},
 ) {
@@ -58,11 +58,11 @@ describe("canonical task read scope", () => {
         const taskHistoryPath = path.join(taskDirectory, "ui_messages.jsonl")
         const otherTaskArtifactPath = path.join(getTaskArtifactDirectory("another-task"), "artifacts", "images", "generated.png")
 
-        expect(decision(taskId, workspaceDirectory, ClineDefaultTool.FILE_READ, artifactPath).kind).toBe("automatic")
-        expect(decision(taskId, workspaceDirectory, ClineDefaultTool.FILE_READ, previewPath).kind).toBe("automatic")
-        expect(decision(taskId, workspaceDirectory, ClineDefaultTool.FILE_READ, taskHistoryPath).kind).toBe("manual")
-        expect(decision(taskId, workspaceDirectory, ClineDefaultTool.FILE_READ, otherTaskArtifactPath).kind).toBe("manual")
-        expect(decision(taskId, workspaceDirectory, ClineDefaultTool.LIST_FILES, artifactPath).kind).toBe("manual")
+        expect(decision(taskId, workspaceDirectory, DlineDefaultTool.FILE_READ, artifactPath).kind).toBe("automatic")
+        expect(decision(taskId, workspaceDirectory, DlineDefaultTool.FILE_READ, previewPath).kind).toBe("automatic")
+        expect(decision(taskId, workspaceDirectory, DlineDefaultTool.FILE_READ, taskHistoryPath).kind).toBe("manual")
+        expect(decision(taskId, workspaceDirectory, DlineDefaultTool.FILE_READ, otherTaskArtifactPath).kind).toBe("manual")
+        expect(decision(taskId, workspaceDirectory, DlineDefaultTool.LIST_FILES, artifactPath).kind).toBe("manual")
     })
 
     it("treats the current task temp directory as project files for every path tool", () => {
@@ -78,18 +78,18 @@ describe("canonical task read scope", () => {
         )
         const projectEdits = { actions: { editFiles: true, editFilesExternally: false }, params: { content: "log" } }
 
-        expect(decision(taskId, workspaceDirectory, ClineDefaultTool.LIST_FILES, tempDirectory)).toMatchObject({
+        expect(decision(taskId, workspaceDirectory, DlineDefaultTool.LIST_FILES, tempDirectory)).toMatchObject({
             kind: "automatic",
             scope: "read_workspace",
         })
         expect(
-            decision(taskId, workspaceDirectory, ClineDefaultTool.SEARCH, tempDirectory, { params: { regex: "error" } }).kind,
+            decision(taskId, workspaceDirectory, DlineDefaultTool.SEARCH, tempDirectory, { params: { regex: "error" } }).kind,
         ).toBe("automatic")
-        expect(decision(taskId, workspaceDirectory, ClineDefaultTool.FILE_NEW, commandLog, projectEdits)).toMatchObject({
+        expect(decision(taskId, workspaceDirectory, DlineDefaultTool.FILE_NEW, commandLog, projectEdits)).toMatchObject({
             kind: "automatic",
             scope: "edit_workspace",
         })
-        expect(decision(taskId, workspaceDirectory, ClineDefaultTool.LIST_FILES, otherTaskTemp).kind).toBe("manual")
-        expect(decision(taskId, workspaceDirectory, ClineDefaultTool.FILE_NEW, artifactPath, projectEdits).kind).toBe("manual")
+        expect(decision(taskId, workspaceDirectory, DlineDefaultTool.LIST_FILES, otherTaskTemp).kind).toBe("manual")
+        expect(decision(taskId, workspaceDirectory, DlineDefaultTool.FILE_NEW, artifactPath, projectEdits).kind).toBe("manual")
     })
 })

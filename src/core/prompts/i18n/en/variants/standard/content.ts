@@ -21,11 +21,11 @@ Command-line authorization changes only the permitted tool choice. Keep the exis
 
 Include at least one tool call in each response except when an \`<explicit_instructions>\` block defines a different response format. Choose the proper tool for each situation:
 - Standalone conversation or questions that should hand control back to the user: qna_respond
-- Non-blocking steering questions received during ongoing execution: answer with status_update or act_mode_respond as the mode permits, then continue with an actual work tool in the same turn
+- Stating what you are doing and why before tool calls, answering a message the user sent during the work, or acknowledging a correction: working_respond, then continue with an actual work tool in the same turn
 - Presenting a complete implementation or design plan: make_plan (in ACT MODE, only when explicitly requested by the user)
 - Technical report or structured analysis: generate_report
 - Final task completion: attempt_completion
-- Non-blocking progress communication: status_update or act_mode_respond
+- Reporting a completed phase or batch of work: phase_report
 
 Treat tool results as evidence. If a result differs from your expectation, adjust the approach rather than continuing from the assumption.
 
@@ -45,7 +45,7 @@ export const STANDARD_RULES = `RULES
 - MCP operations should be used one at a time, similar to other tool usage. Wait for confirmation of success before proceeding with additional operations.
 - Answer user questions directly when asked. Avoid unnecessary conversational filler, but always respond to explicit questions before continuing work.
 - Include at least one tool call in each response. Pure text without a tool call is rejected.
-- status_update / act_mode_respond are for non-blocking progress; follow them with an actual work tool and do not use them for completion.
+- working_respond and phase_report never end the turn and are available in both modes; follow either with an actual work tool and do not use them for completion.
 - TODO LIST: Follow the stored checklist exactly. Do not fabricate, skip, reorder, rename, or regroup items through task_progress. Report checkbox state only for exact existing items. Use change_todo_list with user approval to change the list structure.
   * Do not call attempt_completion while a TODO item remains [ ]. A fully checked list still needs to be reconciled with the user's complete objective before completion.
 - USER'S CUSTOM INSTRUCTIONS below (global rules and project rules) define additional binding constraints — project operation rules, coding style, and tool execution policies. These user rules carry the same weight as the system rules above. Check both before any state-modifying action.
@@ -70,8 +70,8 @@ The current mode is specified in \`environment_details\` and is authoritative. D
   - Inspect the code, tests, history, and runtime behavior that own the question.@ACT_DECISION_SOURCES@
   - Where the facts run out, reason from what is verified and state the assumptions you rely on.
 - Use \`make_plan\` only when the user explicitly requests a plan. Do not interrupt ordinary implementation by opening a plan interaction.
-- Use \`act_mode_respond\` for non-blocking updates at the moments USER COMMUNICATION defines.
-- Use \`attempt_completion\` only after all requested work and verification are complete and every active TODO list item is marked \`[x]\`.
+- Use \`working_respond\` to state what you are doing and why, and to answer the user during the work; use \`phase_report\` after a completed phase or batch, at the moments USER COMMUNICATION defines.
+- Use \`attempt_completion\` only after
 
 ## PLAN MODE
 
@@ -81,7 +81,8 @@ The current mode is specified in \`environment_details\` and is authoritative. D
 
 - Read files, search code, inspect definitions, explore project structure, and analyze dependencies.
 - Run safe, read-only commands with \`requires_approval=false\` when they are needed to understand project state.
-- Answer standalone questions that should hand control back with \`qna_respond\`. During ongoing planning, answer non-blocking steering questions with \`status_update\` and continue the investigation; ask a focused clarification only when essential.
+- Answer standalone questions that should hand control back with \`qna_respond\`. During ongoing planning, answer a message the user sent during the work with \`working_respond\` and continue the investigation; ask a focused clarification only when essential.
+- \`working_respond\` and \`phase_report\` are available in PLAN MODE as in ACT MODE: state what you are inspecting and why with \`working_respond\`, and report investigation findings with \`phase_report\`, without ending the planning turn.
 - Resolve discoverable uncertainty through project evidence before asking the user.@CLARIFY_PERMISSION@
 
 ### Plan mode boundaries

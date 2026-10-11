@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import type { ClineDefaultTool } from "@shared/tools"
+import type { DlineDefaultTool } from "@shared/tools"
 import { ExplicitInstructionRegistry } from "./ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "./ExplicitInstructionRequestScope"
 import { getExplicitInstructionPolicy } from "./policy"
@@ -86,7 +86,7 @@ function grantableDeclarations(
     declarations: readonly ExplicitInstructionDeclaration[],
 ): readonly ExplicitInstructionDeclaration[] {
     const grantable: ExplicitInstructionDeclaration[] = []
-    const claimed = new Set<ClineDefaultTool>()
+    const claimed = new Set<DlineDefaultTool>()
     for (const declaration of declarations) {
         const policy = getExplicitInstructionPolicy(declaration.type)
         if (!policy) continue

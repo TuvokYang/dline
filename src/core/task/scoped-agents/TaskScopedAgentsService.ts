@@ -7,7 +7,7 @@ import {
     type ScopedAgentsTarget,
 } from "@core/prompts/prompt-input-monitor/ScopedAgentsResolver"
 import type { ClineStorageMessage, ClineUserAgentsInstructionsContentBlock } from "@shared/messages"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 
 interface WorkspaceRootEntry {
     readonly path: string
@@ -72,24 +72,24 @@ export function projectToolScopedAgentsTargets(
 
     for (const tool of tools) {
         const params = tool.params as Record<string, string | undefined>
-        if (tool.name === ClineDefaultTool.APPLY_PATCH) {
+        if (tool.name === DlineDefaultTool.APPLY_PATCH) {
             for (const candidate of parsePatchPaths(params.input)) add(candidate, "file")
             continue
         }
-        if (tool.name === ClineDefaultTool.BASH) {
+        if (tool.name === DlineDefaultTool.BASH) {
             add(params.workdirectory ?? cwd, "directory")
             continue
         }
-        if (tool.name === ClineDefaultTool.REPLACE_TEXT && params.file_pattern) {
+        if (tool.name === DlineDefaultTool.REPLACE_TEXT && params.file_pattern) {
             add(staticPatternBase(params.file_pattern), "directory")
             continue
         }
         const candidate = params.path ?? params.file_path
         if (!candidate) continue
         const directoryTool =
-            tool.name === ClineDefaultTool.LIST_FILES ||
-            tool.name === ClineDefaultTool.SEARCH ||
-            tool.name === ClineDefaultTool.LIST_CODE_DEF
+            tool.name === DlineDefaultTool.LIST_FILES ||
+            tool.name === DlineDefaultTool.SEARCH ||
+            tool.name === DlineDefaultTool.LIST_CODE_DEF
         add(candidate, directoryTool ? "directory" : "file")
     }
     return [...targets.values()]

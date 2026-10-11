@@ -33,7 +33,7 @@ Also update: `src/shared/api.ts`, `src/shared/providers/providers.json`, `src/co
 For Responses API providers: add to `isNextGenModelProvider()` in `src/utils/model-utils.ts` and set `apiFormat: ApiFormat.OPENAI_RESPONSES` on models.
 
 ## Adding Tools to System Prompt (5+ file chain)
-1. Add enum to `ClineDefaultTool` in `src/shared/tools.ts`.
+1. Add enum to `DlineDefaultTool` in `src/shared/tools.ts`.
 2. Create definition in `src/core/prompts/system-prompt/tools/` (export `[GENERIC]` minimum).
 3. Register in `src/core/prompts/system-prompt/tools/init.ts`.
 4. Whitelist in `src/core/prompts/system-prompt/variants/*/config.ts` for each model family.

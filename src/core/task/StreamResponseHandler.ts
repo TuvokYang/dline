@@ -12,7 +12,7 @@ import {
 } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import { Session } from "@/shared/services/Session"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { EncryptedReasoningAccumulator, type EncryptedReasoningPhase } from "./reasoning-retention"
 import { parsePartialToolInput } from "./tools/partial-tool-input"
 
@@ -216,7 +216,7 @@ class ToolUseHandler {
                 const [key, toolName] = pending.name.split(CLINE_MCP_TOOL_IDENTIFIER)
                 results.push({
                     type: "tool_use",
-                    name: ClineDefaultTool.MCP_USE,
+                    name: DlineDefaultTool.MCP_USE,
                     params: {
                         server_name: McpHub.getMcpServerByKey(key),
                         tool_name: toolName,
@@ -238,7 +238,7 @@ class ToolUseHandler {
                 }
                 results.push({
                     type: "tool_use",
-                    name: pending.name as ClineDefaultTool,
+                    name: pending.name as DlineDefaultTool,
                     params: params as any,
                     partial: true,
                     ts: pending.ts,

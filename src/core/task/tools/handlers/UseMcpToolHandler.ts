@@ -5,7 +5,7 @@ import { UiAskUseMcpServer, UiSayMcpServerResponse } from "@shared/ExtensionMess
 import { telemetryService } from "@/services/telemetry"
 import { boundToolText } from "@/shared/content-limits"
 import { Logger } from "@/shared/services/Logger"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { ToolHandlerResult } from "../ToolExecutionResult"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
@@ -22,7 +22,7 @@ function failed(
 }
 
 export class UseMcpToolHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.MCP_USE
+    readonly name = DlineDefaultTool.MCP_USE
 
     getDescription(block: ToolUse): string {
         return `[${block.name} for '${block.params.server_name}']`

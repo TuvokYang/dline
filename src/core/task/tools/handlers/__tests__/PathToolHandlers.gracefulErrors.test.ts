@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { AGENT_IGNORE_FILE, type IgnoreController } from "@core/ignore/IgnoreController"
 import { RipgrepSearchTimeoutError } from "@services/ripgrep"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import * as pathUtils from "@utils/path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 // sinon import removed: using vitest globals
@@ -137,7 +137,7 @@ describe("ListCodeDefinitionNamesToolHandler.execute – error recovery", () => 
             type: "tool_use" as const,
             function_id: "test_list_code_def",
             dline_tid: "test_tid_list_code_def",
-            name: ClineDefaultTool.LIST_CODE_DEF,
+            name: DlineDefaultTool.LIST_CODE_DEF,
             params: relPath !== undefined ? { path: relPath } : {},
             partial: false,
             ts: Date.now(),
@@ -289,7 +289,7 @@ describe("ListFilesToolHandler.execute – error recovery", () => {
             type: "tool_use" as const,
             function_id: "test_list_files",
             dline_tid: "test_tid_list_files",
-            name: ClineDefaultTool.LIST_FILES,
+            name: DlineDefaultTool.LIST_FILES,
             params,
             partial: false,
             ts: Date.now(),
@@ -429,7 +429,7 @@ describe("SearchFilesToolHandler.execute – error recovery", () => {
             type: "tool_use" as const,
             function_id: "test_search_files",
             dline_tid: "test_tid_search_files",
-            name: ClineDefaultTool.SEARCH,
+            name: DlineDefaultTool.SEARCH,
             params,
             partial: false,
             ts: Date.now(),

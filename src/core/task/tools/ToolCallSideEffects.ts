@@ -1,6 +1,6 @@
 import type { ToolUse } from "@core/assistant-message"
 import { Logger } from "@/shared/services/Logger"
-import { ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES, READ_ONLY_TOOLS } from "@/shared/tools"
+import { CONVERSATIONAL_TOOL_NAMES, DlineDefaultTool, READ_ONLY_TOOLS } from "@/shared/tools"
 import type { TaskConfig } from "./types/TaskConfig"
 
 /**
@@ -23,6 +23,11 @@ export interface ToolCallSideEffectPort {
     /** Commit a restore point, for a surface that tracks workspace history. */
     readonly commitCheckpoint?: () => Promise<void>
     /**
+     * Record that the round owes a restore point, for a surface whose round
+     * boundary commits one restore point for the whole round.
+     */
+    readonly deferCheckpoint?: () => void
+    /**
      * Wait until the task's baseline restore point exists, for a surface that
      * builds one while the first request is in flight.
      */
@@ -37,13 +42,31 @@ export interface ToolCallSideEffectPort {
  * row it publishes, so committing again here would attach a second one to the
  * same state.
  */
-export function toolMayChangeWorkspace(tool: ClineDefaultTool): boolean {
-    if ((READ_ONLY_TOOLS as readonly ClineDefaultTool[]).includes(tool)) return false
-    // MCP calls may mutate external systems, but a Dline workspace checkpoint
-    // cannot restore those side effects. Emitting one after every response only
-    // creates misleading restore rows and duplicates the call/result presentation.
-    if (tool === ClineDefaultTool.MCP_USE || tool === ClineDefaultTool.MCP_ACCESS) return false
+export function toolMayChangeWorkspace(tool: DlineDefaultTool): boolean {
+    if ((READ_ONLY_TOOLS as readonly DlineDefaultTool[]).includes(tool)) return false
     return !CONVERSATIONAL_TOOL_NAMES.has(tool)
+}
+
+/** Tools whose whole effect is a change to files they name. */
+const NAMED_FILE_EDIT_TOOLS: ReadonlySet<DlineDefaultTool> = new Set([
+    DlineDefaultTool.FILE_NEW,
+    DlineDefaultTool.FILE_EDIT,
+    DlineDefaultTool.APPLY_PATCH,
+    DlineDefaultTool.REPLACE_TEXT,
+    DlineDefaultTool.RENAME,
+    DlineDefaultTool.NEW_RULE,
+])
+
+/**
+ * Whether a tool earns a restore point of its own.
+ *
+ * A file edit is a step a user may want to undo by itself, so it commits per
+ * call. Every other tool that may change the workspace, such as a command or an
+ * MCP call, shares the one restore point its round owes, so a round of many
+ * commands does not flood the history with indistinguishable restore rows.
+ */
+export function toolEditsNamedFiles(tool: DlineDefaultTool): boolean {
+    return NAMED_FILE_EDIT_TOOLS.has(tool)
 }
 
 /**
@@ -60,6 +83,7 @@ export function resolveToolCallSideEffects(config: TaskConfig): ToolCallSideEffe
             ? {}
             : { reportProgress: (progress: string) => callbacks.updateFCListFromToolResponse!(progress) }),
         ...(callbacks?.saveCheckpoint === undefined ? {} : { commitCheckpoint: () => callbacks.saveCheckpoint!() }),
+        ...(callbacks?.deferCheckpoint === undefined ? {} : { deferCheckpoint: () => callbacks.deferCheckpoint!() }),
         ...(callbacks?.awaitInitialCheckpoint === undefined
             ? {}
             : { awaitInitialCheckpoint: () => callbacks.awaitInitialCheckpoint!() }),
@@ -75,8 +99,8 @@ export function resolveToolCallSideEffects(config: TaskConfig): ToolCallSideEffe
  * includes `attempt_completion`, whose own checkpoint would otherwise build the
  * baseline between showing the result and offering the next step.
  */
-export async function awaitToolCallPreconditions(port: ToolCallSideEffectPort, tool: ClineDefaultTool): Promise<void> {
-    if (!port.awaitInitialCheckpoint || (READ_ONLY_TOOLS as readonly ClineDefaultTool[]).includes(tool)) return
+export async function awaitToolCallPreconditions(port: ToolCallSideEffectPort, tool: DlineDefaultTool): Promise<void> {
+    if (!port.awaitInitialCheckpoint || (READ_ONLY_TOOLS as readonly DlineDefaultTool[]).includes(tool)) return
     try {
         await port.awaitInitialCheckpoint()
     } catch (error) {
@@ -97,11 +121,15 @@ export async function awaitToolCallPreconditions(port: ToolCallSideEffectPort, t
  * Failures are contained. These are bookkeeping beside the call, not
  * preconditions for it, so an unwritable checklist or an unavailable shadow
  * repository must not turn into a refused tool.
+ *
+ * A tool that does not edit named files only records the debt when the surface
+ * settles it at the round boundary. A surface without that boundary commits
+ * per call instead, so no workspace change is ever left without a restore point.
  */
 export async function applyToolCallSideEffects(
     port: ToolCallSideEffectPort,
     block: ToolUse,
-    tool: ClineDefaultTool,
+    tool: DlineDefaultTool,
 ): Promise<void> {
     const progress = block.params.task_progress
     if (port.reportProgress && progress?.trim()) {
@@ -112,7 +140,12 @@ export async function applyToolCallSideEffects(
         }
     }
 
-    if (port.commitCheckpoint && toolMayChangeWorkspace(tool)) {
+    if (!toolMayChangeWorkspace(tool)) return
+    if (port.deferCheckpoint && !toolEditsNamedFiles(tool)) {
+        port.deferCheckpoint()
+        return
+    }
+    if (port.commitCheckpoint) {
         try {
             await port.commitCheckpoint()
         } catch (error) {

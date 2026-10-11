@@ -1,16 +1,16 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import type { AgentBaseConfig } from "./AgentConfigLoader"
 
 export const DEFAULT_SUBAGENT_NAME = "default"
 export const DEFAULT_SUBAGENT_FILE_NAME = "default.yml"
 
-export const DEFAULT_SUBAGENT_ALLOWED_TOOLS: ClineDefaultTool[] = [
-    ClineDefaultTool.FILE_READ,
-    ClineDefaultTool.LIST_FILES,
-    ClineDefaultTool.SEARCH,
-    ClineDefaultTool.LIST_CODE_DEF,
-    ClineDefaultTool.LOAD_SKILL,
-    ClineDefaultTool.ATTEMPT,
+export const DEFAULT_SUBAGENT_ALLOWED_TOOLS: DlineDefaultTool[] = [
+    DlineDefaultTool.FILE_READ,
+    DlineDefaultTool.LIST_FILES,
+    DlineDefaultTool.SEARCH,
+    DlineDefaultTool.LIST_CODE_DEF,
+    DlineDefaultTool.LOAD_SKILL,
+    DlineDefaultTool.ATTEMPT,
 ]
 
 export const DEFAULT_SUBAGENT_CONFIG: AgentBaseConfig = {

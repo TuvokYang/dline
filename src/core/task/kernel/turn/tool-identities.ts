@@ -15,7 +15,9 @@ export const KernelToolId = {
     MCP_DOCS: "load_mcp_documentation",
     NEW_TASK: "new_task",
     MAKE_PLAN: "make_plan",
-    ACT_MODE: "act_mode_respond",
+    WORKING_RESPOND: "working_respond",
+    /** Former name of working_respond, kept so recorded calls keep their lane and approval. */
+    LEGACY_ACT_MODE_RESPOND: "act_mode_respond",
     QNA_RESPOND: "qna_respond",
     GENERATE_REPORT: "generate_report",
     TODO: "focus_chain",
@@ -37,7 +39,9 @@ export const KernelToolId = {
     FIND_REFERENCES: "find_references",
     RENAME: "rename",
     REPLACE_TEXT: "replace_text",
-    STATUS_UPDATE: "status_update",
+    PHASE_REPORT: "phase_report",
+    /** Former name of phase_report, kept so recorded calls keep their lane and approval. */
+    LEGACY_STATUS_UPDATE: "status_update",
     GENERATE_IMAGE: "generate_image",
 } as const
 
@@ -47,7 +51,8 @@ export const KERNEL_CONVERSATIONAL_TOOL_IDS: ReadonlySet<string> = new Set([
     KernelToolId.ATTEMPT,
     KernelToolId.QNA_RESPOND,
     KernelToolId.MAKE_PLAN,
-    KernelToolId.ACT_MODE,
+    KernelToolId.WORKING_RESPOND,
+    KernelToolId.LEGACY_ACT_MODE_RESPOND,
     KernelToolId.ASK,
     KernelToolId.GENERATE_REPORT,
     // The Start New Task / Regenerate Context choice is the interaction itself.

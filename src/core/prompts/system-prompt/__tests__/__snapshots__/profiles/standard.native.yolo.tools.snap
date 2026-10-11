@@ -238,7 +238,7 @@
     "type": "function",
     "function": {
       "name": "qna_respond",
-      "description": "[TURN-END] Use this tool to answer a question only when the response should hand control back to the user: for standalone Q&A, when the user requested an explanation instead of continued execution, or when continuing genuinely depends on the user's next response. During ongoing PLAN or ACT execution, do NOT use qna_respond merely because a steering message contains a question; answer non-blocking questions with status_update or act_mode_respond as the mode permits, then continue with an actual work tool in the same turn. Do NOT use attempt_completion or make_plan to answer questions; make_plan is for presenting implementation or design plans and, in ACT MODE, only when the user explicitly requests one. Available in both PLAN and ACT modes.",
+      "description": "[TURN-END] Use this tool to answer a question only when the response should hand control back to the user: for standalone Q&A, when the user requested an explanation instead of continued execution, or when continuing genuinely depends on the user's next response. During ongoing PLAN or ACT execution, do NOT use qna_respond merely because a steering message contains a question; answer it with working_respond, then continue with an actual work tool in the same turn. Do NOT use attempt_completion or make_plan to answer questions; make_plan is for presenting implementation or design plans and, in ACT MODE, only when the user explicitly requests one. Available in both PLAN and ACT modes.",
       "strict": false,
       "parameters": {
         "type": "object",
@@ -258,15 +258,15 @@
   {
     "type": "function",
     "function": {
-      "name": "act_mode_respond",
-      "description": "Provide a brief user-visible preamble or progress update during ACT MODE without ending the turn. After displaying the message, execution continues automatically so you can proceed with the next work tool immediately.\n\nSend updates at the moments USER COMMUNICATION defines. An update informs the user; it never asks a question or requests approval.\n\nKeep the update brief and conversational. Always follow it with an actual work tool in the same turn. Do not call act_mode_respond consecutively; after using it, the next call must perform work. Do not use it for final completion; use attempt_completion instead.",
+      "name": "working_respond",
+      "description": "Reply to the user while you keep working, in PLAN or ACT MODE, without ending the turn. It is the alignment channel between you and the user:\n- Before tool calls, state what you are doing now and why.\n- When a user message arrives during the work (a question, correction, or added detail), answer it, then continue.\n- When the user corrects you, acknowledge the correction and say how your direction changes.\n\nThe message is displayed and work continues automatically. Always follow it with an actual work tool in the same turn. A reply never asks a question or requests approval; hand control back with a TURN-END tool only for a major decision, information only the user can provide, or a request to stop.\n\nDo not use it for phase summaries; report a completed phase with phase_report. Do not call working_respond consecutively; after using it, the next call must perform work. Do not use it for final completion; use attempt_completion instead.",
       "strict": false,
       "parameters": {
         "type": "object",
         "properties": {
           "response": {
             "type": "string",
-            "description": "The brief user-visible message explaining the planned change, current progress, completed phase, correction, or relevant rationale."
+            "description": "The brief user-visible reply: what you are doing now and why, or your answer to the message the user sent during the work."
           },
           "task_progress": {
             "type": "string",
@@ -893,19 +893,19 @@
   {
     "type": "function",
     "function": {
-      "name": "status_update",
-      "description": "Provide a brief user-visible preamble, progress statement, or correction during task execution without ending the turn. By default, execution continues immediately so you can proceed with the next work tool without waiting.\n\nUse it at the moments USER COMMUNICATION defines, including acknowledging a correction received during execution.\n\nSet requires_acknowledgment to true ONLY when the user should read this message before you continue — this displays Acknowledge and Stop buttons. Acknowledgment confirms only that the user has seen the message; it is not permission or a decision. Request permission or a decision with ask_followup_question. Otherwise leave it false and continue with actual work in the same turn.\n\nDo not call status_update consecutively; the next call must perform work. Do not use it for final completion — use attempt_completion. Do not use it merely to update task_progress; checklist-only updates are silent.",
+      "name": "phase_report",
+      "description": "Report a completed phase to the user without ending the turn, in PLAN or ACT MODE: what was completed, what verification showed, and what comes next. By default, work continues immediately so you can proceed with the next tool without waiting.\n\nUse it after a coherent phase or batch of changes or checks, at the moments USER COMMUNICATION defines. The purpose of an individual tool call and replies to messages the user sends during the work belong in working_respond, not here.\n\nSet requires_acknowledgment to true ONLY when the user should read this report before you continue — this displays Acknowledge and Stop buttons. Acknowledgment confirms only that the user has seen the report; it is not permission or a decision. Request permission or a decision with ask_followup_question. Otherwise leave it false and continue with actual work in the same turn.\n\nDo not call phase_report consecutively; the next call must perform work. Do not use it for final completion — use attempt_completion. Do not use it merely to update task_progress; checklist-only updates are silent.",
       "strict": false,
       "parameters": {
         "type": "object",
         "properties": {
           "response": {
             "type": "string",
-            "description": "The brief user-visible message explaining the planned change, current progress, completed phase, correction, or relevant rationale."
+            "description": "The brief user-visible phase report: what was completed, what verification showed, and what comes next."
           },
           "requires_acknowledgment": {
             "type": "boolean",
-            "description": "Set to true only when the user should read the message before you continue; acknowledgment is not permission. Defaults to false — execution continues immediately."
+            "description": "Set to true only when the user should read the report before you continue; acknowledgment is not permission. Defaults to false — work continues immediately."
           },
           "task_progress": {
             "type": "string",

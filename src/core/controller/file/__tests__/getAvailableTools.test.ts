@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { getAvailableTools } from "../getAvailableTools"
 
@@ -9,7 +9,7 @@ describe("getAvailableTools", () => {
 
         expect(writeGroup?.tools).toContainEqual(
             expect.objectContaining({
-                name: ClineDefaultTool.GENERATE_IMAGE,
+                name: DlineDefaultTool.GENERATE_IMAGE,
                 isReadOnly: false,
             }),
         )

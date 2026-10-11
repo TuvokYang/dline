@@ -4,7 +4,7 @@ import { formatResponse } from "@core/prompts/responses"
 import { UiAskUseMcpServer, UiSayMcpServerResponse } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
 import { boundToolText } from "@/shared/content-limits"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -12,7 +12,7 @@ import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { resolveSelfBoundResultBytes } from "../utils/tool-result-budget"
 
 export class AccessMcpResourceHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.MCP_ACCESS
+    readonly name = DlineDefaultTool.MCP_ACCESS
 
     getDescription(block: ToolUse): string {
         return `[${block.name} for '${block.params.server_name}']`
@@ -46,7 +46,7 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
         if (!server_name) {
             config.taskState.consecutiveMistakeCount++
             return await config.callbacks.sayAndCreateMissingParamError(
-                ClineDefaultTool.MCP_ACCESS,
+                DlineDefaultTool.MCP_ACCESS,
                 "server_name",
                 undefined,
                 block.ts,
@@ -55,7 +55,7 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
 
         if (!uri) {
             config.taskState.consecutiveMistakeCount++
-            return await config.callbacks.sayAndCreateMissingParamError(ClineDefaultTool.MCP_ACCESS, "uri", undefined, block.ts)
+            return await config.callbacks.sayAndCreateMissingParamError(DlineDefaultTool.MCP_ACCESS, "uri", undefined, block.ts)
         }
 
         if (config.capabilityToggles.mcpServers[server_name] !== true) {

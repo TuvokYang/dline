@@ -6,7 +6,7 @@ import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limit
 import type { UiSayTool } from "@shared/ExtensionMessage"
 import type { ClineToolResponseContent, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { serializeDurableToolResult, toolResultReplayOf } from "../../../DurableToolResult"
 import { LOOP_DETECTION_SOFT_THRESHOLD, recordToolCall, toolCallSignature } from "../../../loop-detection"
 import { ToolExecutionObservation, type ToolFailureObservation } from "../../../observability/tool-execution-observation"
@@ -62,7 +62,7 @@ function canFallbackUnadvertisedWebSearch(config: TaskConfig): boolean {
         plan?.mode === WebToolsMode.WEB_TOOLS_MODE_AUTO &&
         plan.route === "hosted" &&
         plan.localFallbackAvailable &&
-        config.coordinator.has(ClineDefaultTool.WEB_SEARCH)
+        config.coordinator.has(DlineDefaultTool.WEB_SEARCH)
     )
 }
 
@@ -175,7 +175,7 @@ function measureTextBytes(content: ClineToolResponseContent): number {
  * minutes of work, so when the conversation has no room left it waits for
  * compaction instead of being cut to a notice.
  */
-const DEFERRABLE_TOOLS: ReadonlySet<string> = new Set([ClineDefaultTool.USE_SUBAGENT, ClineDefaultTool.USE_SUBAGENTS])
+const DEFERRABLE_TOOLS: ReadonlySet<string> = new Set([DlineDefaultTool.USE_SUBAGENT, DlineDefaultTool.USE_SUBAGENTS])
 
 /** What the model receives in place of a result that waits for room; it pairs the call and lets the task go on. */
 export function deferredResultNotice(description: string): string {
@@ -288,7 +288,7 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
         const description = ToolDisplayUtils.getToolDescription(block, this.options.runtime.coordinator)
         if (
             input.invocation.isNativeToolCall &&
-            input.invocation.toolName === ClineDefaultTool.WEB_SEARCH &&
+            input.invocation.toolName === DlineDefaultTool.WEB_SEARCH &&
             config.webSearchRoutingPlan?.route === "hosted"
         ) {
             const fallback = canFallbackUnadvertisedWebSearch(config)
@@ -346,7 +346,7 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
         if (!lease.snapshot().mustYield) return response
         await config.backgroundResults.publish({
             entryId: `background:subagent-deferred:${invocation.dlineTid}:attempt:1`,
-            producerKind: block.name === ClineDefaultTool.USE_SUBAGENTS ? "subagent_batch" : "subagent",
+            producerKind: block.name === DlineDefaultTool.USE_SUBAGENTS ? "subagent_batch" : "subagent",
             producerId: invocation.dlineTid,
             attempt: 1,
             // The same bound an inline result has: a fan-out's combined results

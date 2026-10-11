@@ -1,6 +1,6 @@
 import { MAX_SUBAGENTS_PER_BATCH } from "../../../shared/concurrency-limits"
 import { GPT_IMAGE_1_MODEL_ID, GPT_IMAGE_2_MODEL_ID, GPT_IMAGE_2_SUBSCRIPTION_MODEL_ID } from "../../../shared/image-generation"
-import { ClineDefaultTool } from "../../../shared/tools"
+import { DlineDefaultTool } from "../../../shared/tools"
 import { getPrompt } from "../i18n"
 import { PromptProfile } from "../profiles/types"
 import type { SystemPromptContext } from "../system-prompt/context"
@@ -108,7 +108,7 @@ const imageSizingFragments: readonly ProfilePromptFragment[] = [
 
 /** Creates the canonical Standard descriptor for one built-in tool. */
 function spec(
-    id: ClineDefaultTool,
+    id: DlineDefaultTool,
     description: string,
     parameters: readonly ProfileToolParam[] = [],
     contextRequirements?: (context: SystemPromptContext) => boolean,
@@ -119,7 +119,7 @@ function spec(
 
 /** Creates a provider-native-only canonical tool descriptor. */
 function nativeSpec(
-    id: ClineDefaultTool,
+    id: DlineDefaultTool,
     description: string,
     parameters: readonly ProfileToolParam[] = [],
     contextRequirements?: (context: SystemPromptContext) => boolean,
@@ -180,18 +180,18 @@ const SUBAGENTS_INPUT_SCHEMA = {
 }
 
 export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = [
-    spec(ClineDefaultTool.FILE_NEW, getPrompt("writeToFile", "description"), [
+    spec(DlineDefaultTool.FILE_NEW, getPrompt("writeToFile", "description"), [
         param("path", true, getPrompt("writeToFile", "pathInstruction")),
         param("content", true, getPrompt("writeToFile", "standardContentInstruction")),
         taskProgress,
     ]),
-    spec(ClineDefaultTool.FILE_EDIT, getPrompt("replaceInFile", "description"), [
+    spec(DlineDefaultTool.FILE_EDIT, getPrompt("replaceInFile", "description"), [
         param("path", true, getPrompt("replaceInFile", "pathInstruction")),
         param("diff", true, getPrompt("replaceInFile", "baseDiffInstructions")),
         taskProgress,
     ]),
     spec(
-        ClineDefaultTool.FILE_READ,
+        DlineDefaultTool.FILE_READ,
         `${getPrompt("readFile", "description")}${readFileImageSupportDescription}`,
         [
             param("path", true, getPrompt("readFile", "pathInstruction")),
@@ -202,24 +202,24 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         undefined,
         [fragment(readFileImageSupportDescription, whenImageSupportDisabled)],
     ),
-    spec(ClineDefaultTool.SEARCH, getPrompt("searchFiles", "description"), [
+    spec(DlineDefaultTool.SEARCH, getPrompt("searchFiles", "description"), [
         param("path", true, getPrompt("searchFiles", "pathInstruction")),
         param("regex", true, getPrompt("searchFiles", "regexInstruction")),
         param("file_pattern", false, getPrompt("searchFiles", "filePatternInstruction")),
         taskProgress,
     ]),
-    spec(ClineDefaultTool.LIST_FILES, getPrompt("listFiles", "description"), [
+    spec(DlineDefaultTool.LIST_FILES, getPrompt("listFiles", "description"), [
         param("path", true, getPrompt("listFiles", "standardPathInstruction")),
         param("recursive", false, getPrompt("listFiles", "recursiveInstruction"), "boolean"),
         param("show_metadata", false, getPrompt("listFiles", "showMetadataInstruction"), "boolean"),
         taskProgress,
     ]),
-    spec(ClineDefaultTool.LIST_CODE_DEF, getPrompt("listCodeDefinitionNames", "description"), [
+    spec(DlineDefaultTool.LIST_CODE_DEF, getPrompt("listCodeDefinitionNames", "description"), [
         param("path", true, getPrompt("listCodeDefinitionNames", "pathInstruction")),
         taskProgress,
     ]),
     spec(
-        ClineDefaultTool.ASK,
+        DlineDefaultTool.ASK,
         getPrompt("askFollowupQuestion", "standardDescription"),
         [
             param("question", true, getPrompt("askFollowupQuestion", "standardQuestionInstruction")),
@@ -229,14 +229,14 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         isInteractive,
     ),
     spec(
-        ClineDefaultTool.ATTEMPT,
+        DlineDefaultTool.ATTEMPT,
         getPrompt("attemptCompletion", "standardDescription"),
         [param("result", true, getPrompt("attemptCompletion", "standardResultInstruction"))],
         undefined,
         [fragment(getPrompt("attemptCompletion", "focusOmissionChecklistSentence"), whenFocusTrackingDisabled)],
     ),
     spec(
-        ClineDefaultTool.MAKE_PLAN,
+        DlineDefaultTool.MAKE_PLAN,
         getPrompt("makePlan", "description"),
         [
             param("response", true, getPrompt("makePlan", "standardResponseInstruction")),
@@ -246,14 +246,14 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         undefined,
         [fragment(getPrompt("makePlan", "focusOmissionDescriptionClause"), whenFocusTrackingDisabled)],
     ),
-    spec(ClineDefaultTool.QNA_RESPOND, getPrompt("qnaRespond", "standardDescription"), [
+    spec(DlineDefaultTool.QNA_RESPOND, getPrompt("qnaRespond", "standardDescription"), [
         param("response", true, getPrompt("qnaRespond", "standardResponseInstruction")),
     ]),
-    spec(ClineDefaultTool.ACT_MODE, getPrompt("actModeRespond", "description"), [
-        param("response", true, getPrompt("actModeRespond", "responseInstruction")),
+    spec(DlineDefaultTool.WORKING_RESPOND, getPrompt("workingRespond", "description"), [
+        param("response", true, getPrompt("workingRespond", "responseInstruction")),
         taskProgress,
     ]),
-    spec(ClineDefaultTool.BASH, getPrompt("executeCommand", "standardDescription"), [
+    spec(DlineDefaultTool.BASH, getPrompt("executeCommand", "standardDescription"), [
         param("command", true, getPrompt("executeCommand", "standardCommandInstruction")),
         param("workdirectory", false, getPrompt("executeCommand", "standardWorkdirectoryInstruction")),
         param("requires_approval", true, getPrompt("executeCommand", "standardRequiresApprovalInstruction"), "boolean"),
@@ -262,11 +262,11 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         param("timeout", false, getPrompt("executeCommand", "standardTimeoutInstruction"), "integer"),
         param("mute_stdout", false, getPrompt("executeCommand", "standardMuteStdoutInstruction"), "boolean"),
     ]),
-    spec(ClineDefaultTool.KILL_COMMAND, getPrompt("killCommand", "standardDescription"), [
+    spec(DlineDefaultTool.KILL_COMMAND, getPrompt("killCommand", "standardDescription"), [
         param("function_id", true, getPrompt("killCommand", "standardFunctionIdInstruction")),
     ]),
     spec(
-        ClineDefaultTool.BROWSER,
+        DlineDefaultTool.BROWSER,
         getPrompt("browserAction", "description"),
         [
             param("action", true, getPrompt("browserAction", "standardActionInstruction")),
@@ -277,7 +277,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         hasBrowser,
     ),
     spec(
-        ClineDefaultTool.WEB_FETCH,
+        DlineDefaultTool.WEB_FETCH,
         getPrompt("webFetch", "standardDescription"),
         [
             param("url", true, getPrompt("webFetch", "urlInstruction")),
@@ -287,7 +287,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         hasLocalWebFetch,
     ),
     spec(
-        ClineDefaultTool.WEB_SEARCH,
+        DlineDefaultTool.WEB_SEARCH,
         getPrompt("webSearch", "standardDescription"),
         [
             param("query", true, getPrompt("webSearch", "queryInstruction")),
@@ -298,7 +298,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         hasLocalWebSearch,
     ),
     spec(
-        ClineDefaultTool.MCP_USE,
+        DlineDefaultTool.MCP_USE,
         getPrompt("useMcpTool", "description"),
         [
             param("server_name", true, getPrompt("useMcpTool", "serverNameInstruction")),
@@ -309,7 +309,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         hasMcp,
     ),
     spec(
-        ClineDefaultTool.MCP_ACCESS,
+        DlineDefaultTool.MCP_ACCESS,
         getPrompt("accessMcpResource", "standardDescription"),
         [
             param("server_name", true, getPrompt("accessMcpResource", "serverNameInstruction")),
@@ -318,17 +318,17 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         ],
         hasMcp,
     ),
-    spec(ClineDefaultTool.MCP_DOCS, getPrompt("loadMcpDocumentationTool", "description"), [], hasMcp),
-    spec(ClineDefaultTool.LOAD_MCP, getPrompt("loadCapability", "mcpDescription"), LOAD_MCP_PARAMS, hasMcp),
-    spec(ClineDefaultTool.LOAD_SKILL, getPrompt("loadCapability", "skillDescription"), LOAD_SKILL_PARAMS, hasSkills),
-    spec(ClineDefaultTool.LOAD_WORKFLOW, getPrompt("loadCapability", "workflowDescription"), LOAD_WORKFLOW_PARAMS),
-    spec(ClineDefaultTool.FIND_REFERENCES, getPrompt("findReferences", "standardDescription"), [
+    spec(DlineDefaultTool.MCP_DOCS, getPrompt("loadMcpDocumentationTool", "description"), [], hasMcp),
+    spec(DlineDefaultTool.LOAD_MCP, getPrompt("loadCapability", "mcpDescription"), LOAD_MCP_PARAMS, hasMcp),
+    spec(DlineDefaultTool.LOAD_SKILL, getPrompt("loadCapability", "skillDescription"), LOAD_SKILL_PARAMS, hasSkills),
+    spec(DlineDefaultTool.LOAD_WORKFLOW, getPrompt("loadCapability", "workflowDescription"), LOAD_WORKFLOW_PARAMS),
+    spec(DlineDefaultTool.FIND_REFERENCES, getPrompt("findReferences", "standardDescription"), [
         param("file_path", true, getPrompt("findReferences", "filePathInstruction")),
         param("line", true, getPrompt("findReferences", "lineInstruction"), "integer"),
         param("character", true, getPrompt("findReferences", "characterInstruction"), "integer"),
         taskProgress,
     ]),
-    spec(ClineDefaultTool.RENAME, getPrompt("rename", "standardDescription"), [
+    spec(DlineDefaultTool.RENAME, getPrompt("rename", "standardDescription"), [
         param("file_path", true, getPrompt("rename", "filePathInstruction")),
         param("line", true, getPrompt("rename", "lineInstruction"), "integer"),
         param("character", true, getPrompt("rename", "characterInstruction"), "integer"),
@@ -336,7 +336,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         param("dry_run", false, getPrompt("rename", "dryRunInstruction"), "boolean"),
         taskProgress,
     ]),
-    spec(ClineDefaultTool.REPLACE_TEXT, getPrompt("replaceText", "standardDescription"), [
+    spec(DlineDefaultTool.REPLACE_TEXT, getPrompt("replaceText", "standardDescription"), [
         param("find", true, getPrompt("replaceText", "findInstruction")),
         param("replace", true, getPrompt("replaceText", "replaceInstruction")),
         param("file_pattern", true, getPrompt("replaceText", "filePatternInstruction")),
@@ -344,12 +344,12 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         param("literal", false, getPrompt("replaceText", "literalInstruction"), "boolean"),
         taskProgress,
     ]),
-    spec(ClineDefaultTool.APPLY_PATCH, getPrompt("applyPatch", "description"), [
+    spec(DlineDefaultTool.APPLY_PATCH, getPrompt("applyPatch", "description"), [
         param("input", true, getPrompt("applyPatch", "inputInstruction")),
         taskProgress,
     ]),
     spec(
-        ClineDefaultTool.SPAWN_TASK,
+        DlineDefaultTool.SPAWN_TASK,
         getPrompt("spawnTask", "description"),
         [
             param("task", true, getPrompt("spawnTask", "taskInstruction")),
@@ -359,7 +359,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         canSpawnTask,
     ),
     spec(
-        ClineDefaultTool.CHANGE_TODO_LIST,
+        DlineDefaultTool.CHANGE_TODO_LIST,
         getPrompt("focusChain", "focusChainChangeToolDescription"),
         [
             param("new_plan", true, getPrompt("focusChain", "focusChainChangeNewPlanNativeInstruction")),
@@ -367,24 +367,24 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         ],
         whenFocusTracking,
     ),
-    spec(ClineDefaultTool.USE_SUBAGENT, getPrompt("subagent", "singleDescription"), SINGLE_SUBAGENT_PARAMS, hasSubagents),
+    spec(DlineDefaultTool.USE_SUBAGENT, getPrompt("subagent", "singleDescription"), SINGLE_SUBAGENT_PARAMS, hasSubagents),
     {
-        ...spec(ClineDefaultTool.USE_SUBAGENTS, getPrompt("subagent", "description"), SUBAGENT_PARAMS, hasSubagents),
+        ...spec(DlineDefaultTool.USE_SUBAGENTS, getPrompt("subagent", "description"), SUBAGENT_PARAMS, hasSubagents),
         inputSchema: SUBAGENTS_INPUT_SCHEMA,
     },
     spec(
-        ClineDefaultTool.STATUS_UPDATE,
-        getPrompt("statusUpdate", "standardDescription"),
+        DlineDefaultTool.PHASE_REPORT,
+        getPrompt("phaseReport", "standardDescription"),
         [
-            param("response", true, getPrompt("statusUpdate", "responseInstruction")),
-            param("requires_acknowledgment", false, getPrompt("statusUpdate", "requiresAcknowledgmentInstruction"), "boolean"),
+            param("response", true, getPrompt("phaseReport", "responseInstruction")),
+            param("requires_acknowledgment", false, getPrompt("phaseReport", "requiresAcknowledgmentInstruction"), "boolean"),
             taskProgress,
         ],
         undefined,
-        [fragment(getPrompt("statusUpdate", "focusOmissionDescriptionSentence"), whenFocusTrackingDisabled)],
+        [fragment(getPrompt("phaseReport", "focusOmissionDescriptionSentence"), whenFocusTrackingDisabled)],
     ),
     spec(
-        ClineDefaultTool.GENERATE_IMAGE,
+        DlineDefaultTool.GENERATE_IMAGE,
         generateImageDescription,
         [
             param("prompt", true, getPrompt("generateImage", "promptInstruction")),
@@ -405,7 +405,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         imageSizingFragments,
     ),
     spec(
-        ClineDefaultTool.GENERATE_EXPLANATION,
+        DlineDefaultTool.GENERATE_EXPLANATION,
         getPrompt("generateExplanation", "description"),
         [
             param("title", true, getPrompt("generateExplanation", "titleInstruction")),
@@ -414,7 +414,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
         ],
         (context) => context.isCliEnvironment !== true,
     ),
-    spec(ClineDefaultTool.GENERATE_REPORT, getPrompt("generateReport", "standardDescription"), [
+    spec(DlineDefaultTool.GENERATE_REPORT, getPrompt("generateReport", "standardDescription"), [
         param("title", true, getPrompt("generateReport", "titleInstruction")),
         param("content", true, getPrompt("generateReport", "contentInstruction")),
         taskProgress,

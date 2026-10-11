@@ -6,7 +6,7 @@ import { resolveWorkspacePath } from "@core/workspace"
 import { listFiles } from "@services/glob/list-files"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { telemetryService } from "@/services/telemetry"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
@@ -14,7 +14,7 @@ import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
 export class ListFilesToolHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.LIST_FILES
+    readonly name = DlineDefaultTool.LIST_FILES
 
     constructor(private validator: ToolValidator) {}
 

@@ -1,5 +1,5 @@
 import { OutputLimitExceededError } from "@core/api/stream/OutputLimitExceededError"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import type { CompactionAttemptDiagnostics } from "../compaction-attempt-diagnostics"
 import { CompactionAuthorizationError, CompactionSummaryRejectedError } from "../compaction-attempt-failure"
@@ -63,7 +63,7 @@ describe("internal compaction Pass reply tolerance", () => {
         ])
 
         await expect(result).resolves.toMatchObject({ summary: SUMMARY })
-        expect(consumeTool).toHaveBeenCalledWith(ClineDefaultTool.SUMMARIZE_TASK)
+        expect(consumeTool).toHaveBeenCalledWith(DlineDefaultTool.SUMMARIZE_TASK)
         expect(settled).toEqual([
             expect.objectContaining({ outcome: "accepted", trailingChars: trailing.length, stopReason: "end_turn" }),
         ])
@@ -205,7 +205,7 @@ describe("internal compaction Pass reply tolerance", () => {
                 type: "tool_calls",
                 function_id: "call_1",
                 tool_call: {
-                    function: { name: ClineDefaultTool.SUMMARIZE_TASK, arguments: JSON.stringify({ context: SUMMARY }) },
+                    function: { name: DlineDefaultTool.SUMMARIZE_TASK, arguments: JSON.stringify({ context: SUMMARY }) },
                 },
             },
             usageChunk(),

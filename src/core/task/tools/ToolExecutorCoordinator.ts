@@ -1,7 +1,7 @@
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@/shared/mcp"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
 import type { ToolApprovalPresentation, ToolPreflightResult, ToolSideEffect } from "../executors/tool/ToolPreflight"
 import { rejectToolCall } from "../executors/tool/ToolPreflight"
@@ -12,7 +12,6 @@ import {
 } from "../explicit-instructions/explicit-tool-gate"
 import type { ExplicitInstructionFailureCode } from "../explicit-instructions/types"
 import { AccessMcpResourceHandler } from "./handlers/AccessMcpResourceHandler"
-import { ActModeRespondHandler } from "./handlers/ActModeRespondHandler"
 import { ApplyPatchHandler } from "./handlers/ApplyPatchHandler"
 import { AskFollowupQuestionToolHandler } from "./handlers/AskFollowupQuestionToolHandler"
 import { AttemptCompletionHandler } from "./handlers/AttemptCompletionHandler"
@@ -29,6 +28,7 @@ import { LoadCapabilityHandler } from "./handlers/LoadCapabilityHandler"
 import { LoadMcpDocumentationHandler } from "./handlers/LoadMcpDocumentationHandler"
 import { MakePlanHandler } from "./handlers/MakePlanHandler"
 import { NewTaskHandler } from "./handlers/NewTaskHandler"
+import { PhaseReportHandler } from "./handlers/PhaseReportHandler"
 import { QnaRespondHandler } from "./handlers/QnaRespondHandler"
 import { ReadFileToolHandler } from "./handlers/ReadFileToolHandler"
 import { RenameSymbolHandler } from "./handlers/RenameSymbolHandler"
@@ -36,11 +36,11 @@ import { ReplaceTextHandler } from "./handlers/ReplaceTextHandler"
 import { ReportBugHandler } from "./handlers/ReportBugHandler"
 import { SearchFilesToolHandler } from "./handlers/SearchFilesToolHandler"
 import { SpawnTaskHandler } from "./handlers/SpawnTaskHandler"
-import { StatusUpdateHandler } from "./handlers/StatusUpdateHandler"
 import { restoreSubagentActivityRetry, UseSubagentsToolHandler, UseSubagentToolHandler } from "./handlers/SubagentToolHandler"
 import { UseMcpToolHandler } from "./handlers/UseMcpToolHandler"
 import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
+import { WorkingRespondHandler } from "./handlers/WorkingRespondHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
 import { applyToolCallSideEffects, awaitToolCallPreconditions, resolveToolCallSideEffects } from "./ToolCallSideEffects"
 import type { ToolHandlerResult } from "./ToolExecutionResult"
@@ -49,7 +49,7 @@ import type { TaskConfig } from "./types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "./types/UIHelpers"
 
 export interface IToolHandler {
-    readonly name: ClineDefaultTool
+    readonly name: DlineDefaultTool
     execute(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult>
     getDescription(block: ToolUse): string
 }
@@ -107,7 +107,7 @@ export interface IFullyManagedTool extends IToolHandler, IPartialBlockHandler {
  */
 export class SharedToolHandler implements IFullyManagedTool {
     constructor(
-        public readonly name: ClineDefaultTool,
+        public readonly name: DlineDefaultTool,
         private baseHandler: IFullyManagedTool,
     ) {}
 
@@ -176,51 +176,55 @@ export class ToolExecutorCoordinator {
     private handlers = new Map<string, IToolHandler>()
     private readonly preparedHandlers = new Map<string, { handler: IPreparableToolHandler; block: ToolUse }>()
 
-    private readonly toolHandlersMap: Record<ClineDefaultTool, (v: ToolValidator) => IToolHandler | undefined> = {
-        [ClineDefaultTool.ASK]: (_v: ToolValidator) => new AskFollowupQuestionToolHandler(),
-        [ClineDefaultTool.ATTEMPT]: (_v: ToolValidator) => new AttemptCompletionHandler(),
-        [ClineDefaultTool.BASH]: (_v: ToolValidator) => new ExecuteCommandToolHandler(),
-        [ClineDefaultTool.KILL_COMMAND]: (_v: ToolValidator) => new ExecuteCommandToolHandler(ClineDefaultTool.KILL_COMMAND),
-        [ClineDefaultTool.FILE_EDIT]: (v: ToolValidator) =>
-            new SharedToolHandler(ClineDefaultTool.FILE_EDIT, new WriteToFileToolHandler(v)),
-        [ClineDefaultTool.FILE_READ]: (v: ToolValidator) => new ReadFileToolHandler(v),
-        [ClineDefaultTool.FILE_NEW]: (v: ToolValidator) => new WriteToFileToolHandler(v),
-        [ClineDefaultTool.SEARCH]: (v: ToolValidator) => new SearchFilesToolHandler(v),
-        [ClineDefaultTool.LIST_FILES]: (v: ToolValidator) => new ListFilesToolHandler(v),
-        [ClineDefaultTool.LIST_CODE_DEF]: (v: ToolValidator) => new ListCodeDefinitionNamesToolHandler(v),
-        [ClineDefaultTool.BROWSER]: (_v: ToolValidator) => new BrowserToolHandler(),
-        [ClineDefaultTool.MCP_USE]: (_v: ToolValidator) => new UseMcpToolHandler(),
-        [ClineDefaultTool.MCP_ACCESS]: (_v: ToolValidator) => new AccessMcpResourceHandler(),
-        [ClineDefaultTool.MCP_DOCS]: (_v: ToolValidator) => new LoadMcpDocumentationHandler(),
-        [ClineDefaultTool.LOAD_MCP]: (_v: ToolValidator) => new LoadCapabilityHandler(ClineDefaultTool.LOAD_MCP, "mcp"),
-        [ClineDefaultTool.LOAD_SKILL]: (_v: ToolValidator) => new LoadCapabilityHandler(ClineDefaultTool.LOAD_SKILL, "skill"),
-        [ClineDefaultTool.LOAD_WORKFLOW]: (_v: ToolValidator) =>
-            new LoadCapabilityHandler(ClineDefaultTool.LOAD_WORKFLOW, "workflow"),
-        [ClineDefaultTool.NEW_TASK]: (_v: ToolValidator) => new NewTaskHandler(),
-        [ClineDefaultTool.MAKE_PLAN]: (_v: ToolValidator) => new MakePlanHandler(),
-        [ClineDefaultTool.ACT_MODE]: (_v: ToolValidator) => new ActModeRespondHandler(),
-        [ClineDefaultTool.QNA_RESPOND]: (_v: ToolValidator) => new QnaRespondHandler(),
-        [ClineDefaultTool.TODO]: (_v: ToolValidator) => undefined,
-        [ClineDefaultTool.WEB_FETCH]: (_v: ToolValidator) => new WebFetchToolHandler(),
-        [ClineDefaultTool.WEB_SEARCH]: (_v: ToolValidator) => new WebSearchToolHandler(),
-        [ClineDefaultTool.CONDENSE]: (_v: ToolValidator) => undefined,
+    private readonly toolHandlersMap: Record<DlineDefaultTool, (v: ToolValidator) => IToolHandler | undefined> = {
+        [DlineDefaultTool.ASK]: (_v: ToolValidator) => new AskFollowupQuestionToolHandler(),
+        [DlineDefaultTool.ATTEMPT]: (_v: ToolValidator) => new AttemptCompletionHandler(),
+        [DlineDefaultTool.BASH]: (_v: ToolValidator) => new ExecuteCommandToolHandler(),
+        [DlineDefaultTool.KILL_COMMAND]: (_v: ToolValidator) => new ExecuteCommandToolHandler(DlineDefaultTool.KILL_COMMAND),
+        [DlineDefaultTool.FILE_EDIT]: (v: ToolValidator) =>
+            new SharedToolHandler(DlineDefaultTool.FILE_EDIT, new WriteToFileToolHandler(v)),
+        [DlineDefaultTool.FILE_READ]: (v: ToolValidator) => new ReadFileToolHandler(v),
+        [DlineDefaultTool.FILE_NEW]: (v: ToolValidator) => new WriteToFileToolHandler(v),
+        [DlineDefaultTool.SEARCH]: (v: ToolValidator) => new SearchFilesToolHandler(v),
+        [DlineDefaultTool.LIST_FILES]: (v: ToolValidator) => new ListFilesToolHandler(v),
+        [DlineDefaultTool.LIST_CODE_DEF]: (v: ToolValidator) => new ListCodeDefinitionNamesToolHandler(v),
+        [DlineDefaultTool.BROWSER]: (_v: ToolValidator) => new BrowserToolHandler(),
+        [DlineDefaultTool.MCP_USE]: (_v: ToolValidator) => new UseMcpToolHandler(),
+        [DlineDefaultTool.MCP_ACCESS]: (_v: ToolValidator) => new AccessMcpResourceHandler(),
+        [DlineDefaultTool.MCP_DOCS]: (_v: ToolValidator) => new LoadMcpDocumentationHandler(),
+        [DlineDefaultTool.LOAD_MCP]: (_v: ToolValidator) => new LoadCapabilityHandler(DlineDefaultTool.LOAD_MCP, "mcp"),
+        [DlineDefaultTool.LOAD_SKILL]: (_v: ToolValidator) => new LoadCapabilityHandler(DlineDefaultTool.LOAD_SKILL, "skill"),
+        [DlineDefaultTool.LOAD_WORKFLOW]: (_v: ToolValidator) =>
+            new LoadCapabilityHandler(DlineDefaultTool.LOAD_WORKFLOW, "workflow"),
+        [DlineDefaultTool.NEW_TASK]: (_v: ToolValidator) => new NewTaskHandler(),
+        [DlineDefaultTool.MAKE_PLAN]: (_v: ToolValidator) => new MakePlanHandler(),
+        [DlineDefaultTool.WORKING_RESPOND]: (_v: ToolValidator) => new WorkingRespondHandler(),
+        // Former name; canonicalToolName() routes recorded calls to working_respond.
+        [DlineDefaultTool.LEGACY_ACT_MODE_RESPOND]: (_v: ToolValidator) => undefined,
+        [DlineDefaultTool.QNA_RESPOND]: (_v: ToolValidator) => new QnaRespondHandler(),
+        [DlineDefaultTool.TODO]: (_v: ToolValidator) => undefined,
+        [DlineDefaultTool.WEB_FETCH]: (_v: ToolValidator) => new WebFetchToolHandler(),
+        [DlineDefaultTool.WEB_SEARCH]: (_v: ToolValidator) => new WebSearchToolHandler(),
+        [DlineDefaultTool.CONDENSE]: (_v: ToolValidator) => undefined,
         // Compaction summaries arrive as explicit-instruction text owned by ContextCompactionSession, never as a tool call.
-        [ClineDefaultTool.SUMMARIZE_TASK]: (_v: ToolValidator) => undefined,
-        [ClineDefaultTool.REPORT_BUG]: (_v: ToolValidator) => new ReportBugHandler(),
-        [ClineDefaultTool.NEW_RULE]: (v: ToolValidator) =>
-            new SharedToolHandler(ClineDefaultTool.NEW_RULE, new WriteToFileToolHandler(v)),
-        [ClineDefaultTool.APPLY_PATCH]: (_v: ToolValidator) => new ApplyPatchHandler(_v),
-        [ClineDefaultTool.GENERATE_EXPLANATION]: (_v: ToolValidator) => new GenerateExplanationToolHandler(),
-        [ClineDefaultTool.GENERATE_IMAGE]: (_v: ToolValidator) => new GenerateImageToolHandler(),
-        [ClineDefaultTool.USE_SUBAGENT]: (_v: ToolValidator) => new UseSubagentToolHandler(),
-        [ClineDefaultTool.USE_SUBAGENTS]: (_v: ToolValidator) => new UseSubagentsToolHandler(),
-        [ClineDefaultTool.SPAWN_TASK]: (_v: ToolValidator) => new SpawnTaskHandler(),
-        [ClineDefaultTool.GENERATE_REPORT]: (_v: ToolValidator) => new GenerateReportHandler(),
-        [ClineDefaultTool.CHANGE_TODO_LIST]: (_v: ToolValidator) => new FocusChainHandler(),
-        [ClineDefaultTool.FIND_REFERENCES]: (_v: ToolValidator) => new FindReferencesHandler(),
-        [ClineDefaultTool.RENAME]: (_v: ToolValidator) => new RenameSymbolHandler(),
-        [ClineDefaultTool.REPLACE_TEXT]: (_v: ToolValidator) => new ReplaceTextHandler(),
-        [ClineDefaultTool.STATUS_UPDATE]: (_v: ToolValidator) => new StatusUpdateHandler(),
+        [DlineDefaultTool.SUMMARIZE_TASK]: (_v: ToolValidator) => undefined,
+        [DlineDefaultTool.REPORT_BUG]: (_v: ToolValidator) => new ReportBugHandler(),
+        [DlineDefaultTool.NEW_RULE]: (v: ToolValidator) =>
+            new SharedToolHandler(DlineDefaultTool.NEW_RULE, new WriteToFileToolHandler(v)),
+        [DlineDefaultTool.APPLY_PATCH]: (_v: ToolValidator) => new ApplyPatchHandler(_v),
+        [DlineDefaultTool.GENERATE_EXPLANATION]: (_v: ToolValidator) => new GenerateExplanationToolHandler(),
+        [DlineDefaultTool.GENERATE_IMAGE]: (_v: ToolValidator) => new GenerateImageToolHandler(),
+        [DlineDefaultTool.USE_SUBAGENT]: (_v: ToolValidator) => new UseSubagentToolHandler(),
+        [DlineDefaultTool.USE_SUBAGENTS]: (_v: ToolValidator) => new UseSubagentsToolHandler(),
+        [DlineDefaultTool.SPAWN_TASK]: (_v: ToolValidator) => new SpawnTaskHandler(),
+        [DlineDefaultTool.GENERATE_REPORT]: (_v: ToolValidator) => new GenerateReportHandler(),
+        [DlineDefaultTool.CHANGE_TODO_LIST]: (_v: ToolValidator) => new FocusChainHandler(),
+        [DlineDefaultTool.FIND_REFERENCES]: (_v: ToolValidator) => new FindReferencesHandler(),
+        [DlineDefaultTool.RENAME]: (_v: ToolValidator) => new RenameSymbolHandler(),
+        [DlineDefaultTool.REPLACE_TEXT]: (_v: ToolValidator) => new ReplaceTextHandler(),
+        [DlineDefaultTool.PHASE_REPORT]: (_v: ToolValidator) => new PhaseReportHandler(),
+        // Former name; canonicalToolName() routes recorded calls to phase_report.
+        [DlineDefaultTool.LEGACY_STATUS_UPDATE]: (_v: ToolValidator) => undefined,
     }
 
     /**
@@ -234,7 +238,7 @@ export class ToolExecutorCoordinator {
         return restoreSubagentActivityRetry(config, activityId)
     }
 
-    registerByName(toolName: ClineDefaultTool, validator: ToolValidator): void {
+    registerByName(toolName: DlineDefaultTool, validator: ToolValidator): void {
         const handler = this.toolHandlersMap[toolName]?.(validator)
         if (handler) {
             this.register(handler)
@@ -290,7 +294,7 @@ export class ToolExecutorCoordinator {
                   )
                 : undefined
         return prepareRegisteredToolAdmission({
-            canonicalToolName: canonicalToolName as ClineDefaultTool,
+            canonicalToolName: canonicalToolName as DlineDefaultTool,
             block,
             description: handler.getDescription(block),
             snapshot,
@@ -323,7 +327,13 @@ export class ToolExecutorCoordinator {
     }
 
     private canonicalToolName(toolName: string): string {
-        return toolName.includes(CLINE_MCP_TOOL_IDENTIFIER) ? ClineDefaultTool.MCP_USE : toolName
+        if (toolName.includes(CLINE_MCP_TOOL_IDENTIFIER)) return DlineDefaultTool.MCP_USE
+        // act_mode_respond was renamed to working_respond; calls recorded under the old name
+        // (history replay, restored turns, XML output) keep the same non-blocking behavior.
+        if (toolName === DlineDefaultTool.LEGACY_ACT_MODE_RESPOND) return DlineDefaultTool.WORKING_RESPOND
+        // status_update was renamed to phase_report in the same way.
+        if (toolName === DlineDefaultTool.LEGACY_STATUS_UPDATE) return DlineDefaultTool.PHASE_REPORT
+        return toolName
     }
 
     /**
@@ -363,7 +373,7 @@ export class ToolExecutorCoordinator {
      */
     private authorize(
         config: TaskConfig,
-        tool: ClineDefaultTool,
+        tool: DlineDefaultTool,
     ):
         | { readonly ok: true; readonly config: TaskConfig }
         | { readonly ok: false; readonly code: ExplicitInstructionFailureCode } {

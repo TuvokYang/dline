@@ -7,7 +7,6 @@ import { englishPromptGroups, englishPrompts } from "../en"
 
 const EXPECTED_NAMESPACES = [
     "accessMcpResource",
-    "actModeRespond",
     "agentRole",
     "applyPatch",
     "askFollowupQuestion",
@@ -39,6 +38,7 @@ const EXPECTED_NAMESPACES = [
     "mcp",
     "newTask",
     "objective",
+    "phaseReport",
     "qnaRespond",
     "readFile",
     "rename",
@@ -51,7 +51,6 @@ const EXPECTED_NAMESPACES = [
     "searchFiles",
     "skills",
     "spawnTask",
-    "statusUpdate",
     "subagent",
     "systemInfo",
     "taskProgress",
@@ -70,6 +69,7 @@ const EXPECTED_NAMESPACES = [
     "webFetch",
     "webSearch",
     "workflows",
+    "workingRespond",
     "writeToFile",
     "xmlProjection",
 ] as const
@@ -197,7 +197,6 @@ describe("prompt asset inventory", () => {
     it("provides tool prompt modules from the tools domain", async () => {
         const toolEntries = [
             "accessMcpResource.ts",
-            "actModeRespond.ts",
             "applyPatch.ts",
             "askFollowupQuestion.ts",
             "attemptCompletion.ts",
@@ -213,6 +212,7 @@ describe("prompt asset inventory", () => {
             "loadMcpDocumentationTool.ts",
             "makePlan.ts",
             "newTask.ts",
+            "phaseReport.ts",
             "qnaRespond.ts",
             "readFile.ts",
             "rename.ts",
@@ -220,12 +220,12 @@ describe("prompt asset inventory", () => {
             "replaceText.ts",
             "searchFiles.ts",
             "spawnTask.ts",
-            "statusUpdate.ts",
             "subagent.ts",
             "toolHandlers.ts",
             "useMcpTool.ts",
             "webFetch.ts",
             "webSearch.ts",
+            "workingRespond.ts",
             "writeToFile.ts",
         ]
 

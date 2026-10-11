@@ -40,7 +40,7 @@ import { HostProvider } from "@/hosts/host-provider"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { Logger } from "@/shared/services/Logger"
 import { createTaskCapabilityToggles } from "@/shared/TaskCapabilityToggles"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { GenerateImageToolHandler } from "../../handlers/GenerateImageToolHandler"
 import { ListCodeDefinitionNamesToolHandler } from "../../handlers/ListCodeDefinitionNamesToolHandler"
 import { ListFilesToolHandler } from "../../handlers/ListFilesToolHandler"
@@ -223,8 +223,8 @@ function createTaskConfig(nativeToolCallEnabled: boolean, options: TaskConfigOpt
             runUserPromptSubmitHook: vi.fn().mockResolvedValue({}),
         },
         coordinator: {
-            getHandler: vi.fn().mockImplementation((toolName: ClineDefaultTool) => {
-                if (toolName === ClineDefaultTool.LIST_FILES)
+            getHandler: vi.fn().mockImplementation((toolName: DlineDefaultTool) => {
+                if (toolName === DlineDefaultTool.LIST_FILES)
                     return {
                         execute: vi.fn().mockResolvedValue("ok"),
                         getDescription: vi.fn().mockReturnValue("list_files"),
@@ -236,18 +236,20 @@ function createTaskConfig(nativeToolCallEnabled: boolean, options: TaskConfigOpt
 }
 
 /** Stubs the stable profile facade used by subagent tests. */
-function stubSystemPrompt(native: boolean, inspectContext?: (context: SystemPromptContext) => void): ReturnType<typeof vi.spyOn> {
+/** Native tools a hosted-web subagent declares: its allowlist has no local tool besides completion. */
+const HOSTED_WEB_NATIVE_TOOLS = [DlineDefaultTool.ATTEMPT]
+
+function stubSystemPrompt(
+    native: boolean,
+    inspectContext?: (context: SystemPromptContext) => void,
+    nativeToolNames: readonly string[] = [DlineDefaultTool.LIST_FILES],
+): ReturnType<typeof vi.spyOn> {
     return vi.spyOn(systemPromptFacade, "getSystemPrompt").mockImplementation(async (context) => {
         inspectContext?.(context)
         return {
             systemPrompt: "system prompt",
             tools: native
-                ? [
-                      {
-                          type: "function",
-                          function: { name: ClineDefaultTool.LIST_FILES, description: "List files" },
-                      },
-                  ]
+                ? nativeToolNames.map((name) => ({ type: "function", function: { name, description: name } }))
                 : undefined,
             profile: PromptProfile.Standard,
             warnings: [],
@@ -284,6 +286,23 @@ function stubApiHandler(
         }),
         createMessage,
     } as never)
+}
+
+/**
+ * Asserts that every provider request after the first one reused the first request's system
+ * prompt and native tool list, which is the finish-request contract: converge by reminder, not
+ * by swapping the prompt or narrowing the declared tools.
+ */
+function assertFinishTurnReusesRequestShape(createMessage: ReturnType<typeof vi.fn>, expectedTools: readonly string[]) {
+    const [firstPrompt, , firstTools] = createMessage.mock.calls[0] as [string, unknown, Array<{ function: { name: string } }>]
+    assert.deepEqual(
+        firstTools.map((tool) => tool.function.name),
+        expectedTools,
+    )
+    for (const [systemPrompt, , tools] of createMessage.mock.calls.slice(1)) {
+        assert.equal(systemPrompt, firstPrompt)
+        assert.deepEqual(tools, firstTools)
+    }
 }
 
 /** Stubs a handler whose model declares and whose adapter carries the given hosted tools. */
@@ -356,7 +375,7 @@ describe("SubagentRunner", () => {
                 function_id: requestRound === 1 ? "generate-image" : "complete",
                 tool_call: {
                     function: {
-                        name: requestRound === 1 ? ClineDefaultTool.GENERATE_IMAGE : ClineDefaultTool.ATTEMPT,
+                        name: requestRound === 1 ? DlineDefaultTool.GENERATE_IMAGE : DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify(requestRound === 1 ? { prompt: "Draw a fox" } : { result: "done" }),
                     },
                 },
@@ -388,7 +407,7 @@ describe("SubagentRunner", () => {
             name: "image-agent",
             description: "image subagent",
             profile: "subagent-images",
-            tools: [ClineDefaultTool.GENERATE_IMAGE],
+            tools: [DlineDefaultTool.GENERATE_IMAGE],
             systemPrompt: "",
         })
 
@@ -397,7 +416,7 @@ describe("SubagentRunner", () => {
         expect(result.status).toBe("completed")
         expect(withProfileResolver).toHaveBeenCalledOnce()
         expect(promptContext?.imageGenerationAvailable).toBe(true)
-        expect(promptContext?.disableTools).not.toContain(ClineDefaultTool.GENERATE_IMAGE)
+        expect(promptContext?.disableTools).not.toContain(DlineDefaultTool.GENERATE_IMAGE)
         expect(executeGenerateImage).toHaveBeenCalledOnce()
     })
 
@@ -410,7 +429,7 @@ describe("SubagentRunner", () => {
                 function_id: requestRound === 1 ? "read-external" : "complete-after-denial",
                 tool_call: {
                     function: {
-                        name: requestRound === 1 ? ClineDefaultTool.FILE_READ : ClineDefaultTool.ATTEMPT,
+                        name: requestRound === 1 ? DlineDefaultTool.FILE_READ : DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify(requestRound === 1 ? { path: "../outside.txt" } : { result: "done" }),
                     },
                 },
@@ -436,7 +455,7 @@ describe("SubagentRunner", () => {
         const runner = new SubagentRunner(config, "policy-agent", {
             name: "policy-agent",
             description: "Exercises inherited tool admission.",
-            tools: [ClineDefaultTool.FILE_READ, ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.FILE_READ, DlineDefaultTool.ATTEMPT],
             systemPrompt: "",
         })
 
@@ -457,7 +476,7 @@ describe("SubagentRunner", () => {
                 function_id: "profile-complete",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -516,7 +535,7 @@ describe("SubagentRunner", () => {
             yield {
                 type: "tool_calls",
                 function_id: `${label}-complete`,
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: label }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: label }) } },
             }
         })
         stubSystemPrompt(false)
@@ -556,7 +575,7 @@ describe("SubagentRunner", () => {
             yield {
                 type: "tool_calls",
                 function_id: "after-failure-complete",
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "recovered" }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "recovered" }) } },
             }
         })
         stubSystemPrompt(false)
@@ -580,7 +599,7 @@ describe("SubagentRunner", () => {
             yield {
                 type: "tool_calls",
                 function_id: "restored-activity-complete",
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "restored" }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "restored" }) } },
             }
         })
         stubSystemPrompt(false)
@@ -608,7 +627,7 @@ describe("SubagentRunner", () => {
                 function_id: "complete-without-search",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -636,23 +655,23 @@ describe("SubagentRunner", () => {
                 function_id: "complete-with-frozen-search",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
             }
         })
-        stubSystemPrompt(false)
+        stubSystemPrompt(true, undefined, HOSTED_WEB_NATIVE_TOOLS)
         vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
         vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
         stubApiHandler(createMessage, 200_000, true)
         initializeHostProvider()
-        const config = createTaskConfig(false, { clineWebToolsEnabled: false, webToolsEnabled: true })
+        const config = createTaskConfig(true, { clineWebToolsEnabled: false, webToolsEnabled: true })
 
         const result = await new SubagentRunner(config, "web-researcher", {
             name: "web-researcher",
             description: "Researches current information on the web.",
-            tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.WEB_SEARCH, DlineDefaultTool.ATTEMPT],
             systemPrompt: "",
         }).run("Use the frozen request gate", () => {})
 
@@ -684,24 +703,24 @@ describe("SubagentRunner", () => {
                 function_id: "complete-after-search",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
             }
         })
-        stubSystemPrompt(false)
+        stubSystemPrompt(true, undefined, HOSTED_WEB_NATIVE_TOOLS)
         vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
         vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
         stubApiHandler(createMessage, 200_000, true)
         initializeHostProvider()
-        const config = createTaskConfig(false, { clineWebToolsEnabled: true })
+        const config = createTaskConfig(true, { clineWebToolsEnabled: true })
         const progress = vi.fn()
 
         const result = await new SubagentRunner(config, "web-researcher", {
             name: "web-researcher",
             description: "Researches current information on the web.",
-            tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.WEB_SEARCH, DlineDefaultTool.ATTEMPT],
             systemPrompt: "",
         }).run("Search remotely", progress)
 
@@ -717,7 +736,37 @@ describe("SubagentRunner", () => {
         assert.equal(hostedEvents[0].kind, "tool_call")
         assert.equal(hostedEvents[1].kind, "tool_result")
         assert.equal(hostedEvents[1].toolStatus, "completed")
-        expect(config.coordinator.getHandler).not.toHaveBeenCalledWith(ClineDefaultTool.WEB_SEARCH)
+        expect(config.coordinator.getHandler).not.toHaveBeenCalledWith(DlineDefaultTool.WEB_SEARCH)
+    })
+
+    it("routes Web Search to the local XML tool when tools are offered as XML", async () => {
+        const createMessage = vi.fn().mockImplementation(async function* () {
+            yield {
+                type: "tool_calls",
+                function_id: "complete-xml",
+                tool_call: {
+                    function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) },
+                },
+            }
+        })
+        const contexts: SystemPromptContext[] = []
+        stubSystemPrompt(false, (context) => contexts.push(context))
+        vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+        vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+        stubApiHandler(createMessage, 200_000, true)
+        initializeHostProvider()
+
+        const result = await new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
+            name: "web-researcher",
+            description: "Researches current information on the web.",
+            tools: [DlineDefaultTool.WEB_SEARCH, DlineDefaultTool.ATTEMPT],
+            systemPrompt: "",
+        }).run("Search with XML tools", vi.fn())
+
+        assert.equal(result.status, "completed", result.error)
+        // The model-hosted search would be declared natively, which an XML prompt never teaches.
+        expect(createMessage.mock.calls[0][3]).toMatchObject({ serverTools: [] })
+        expect(contexts[0]).toMatchObject({ webSearchRoutingPlan: { route: "local", localToolEnabled: true } })
     })
 
     describe("hosted tool replay", () => {
@@ -757,7 +806,7 @@ describe("SubagentRunner", () => {
                         type: "tool_calls",
                         function_id: "complete-after-replay",
                         tool_call: {
-                            function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) },
+                            function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) },
                         },
                     }
                 })
@@ -793,7 +842,7 @@ describe("SubagentRunner", () => {
             return new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
                 name: "web-researcher",
                 description: "Researches current information on the web.",
-                tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+                tools: [DlineDefaultTool.WEB_SEARCH, DlineDefaultTool.ATTEMPT],
                 systemPrompt: "",
             }).run("Search remotely", () => {})
         }
@@ -840,12 +889,12 @@ describe("SubagentRunner", () => {
             const listFiles = {
                 type: "tool_calls",
                 function_id: "toolu_list",
-                tool_call: { function: { name: ClineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: "." }) } },
+                tool_call: { function: { name: DlineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: "." }) } },
             }
             const complete = {
                 type: "tool_calls",
                 function_id: "toolu_complete",
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
             }
 
             async function* deferSearchBehind(clientTool: object) {
@@ -894,7 +943,7 @@ describe("SubagentRunner", () => {
                     {
                         name: "web-researcher",
                         description: "Researches current information on the web.",
-                        tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.LIST_FILES, ClineDefaultTool.ATTEMPT],
+                        tools: [DlineDefaultTool.WEB_SEARCH, DlineDefaultTool.LIST_FILES, DlineDefaultTool.ATTEMPT],
                         systemPrompt: "",
                     },
                 ).run("Search and list", progress)
@@ -980,8 +1029,8 @@ describe("SubagentRunner", () => {
     })
 
     it.each([
-        { allowed: [ClineDefaultTool.WEB_FETCH], serverTools: [ServerTool.WEB_FETCH] },
-        { allowed: [ClineDefaultTool.WEB_SEARCH], serverTools: [ServerTool.WEB_SEARCH] },
+        { allowed: [DlineDefaultTool.WEB_FETCH], serverTools: [ServerTool.WEB_FETCH] },
+        { allowed: [DlineDefaultTool.WEB_SEARCH], serverTools: [ServerTool.WEB_SEARCH] },
     ])("declares only the hosted web tools in the allowlist $allowed", async ({ allowed, serverTools }) => {
         const createMessage = vi.fn().mockImplementation(async function* () {
             yield {
@@ -989,22 +1038,22 @@ describe("SubagentRunner", () => {
                 function_id: "complete-with-allowed-web-tools",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
             }
         })
-        stubSystemPrompt(false)
+        stubSystemPrompt(true, undefined, HOSTED_WEB_NATIVE_TOOLS)
         vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
         vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
         stubHostedToolsApiHandler(createMessage, [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH])
         initializeHostProvider()
 
-        const result = await new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
+        const result = await new SubagentRunner(createTaskConfig(true, { clineWebToolsEnabled: true }), "web-researcher", {
             name: "web-researcher",
             description: "Researches current information on the web.",
-            tools: [...allowed, ClineDefaultTool.ATTEMPT],
+            tools: [...allowed, DlineDefaultTool.ATTEMPT],
             systemPrompt: "",
         }).run("Use only the allowed web tool", () => {})
 
@@ -1021,18 +1070,18 @@ describe("SubagentRunner", () => {
                 function_id: "complete-without-hosted-web",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
             }
         })
-        stubSystemPrompt(false)
+        stubSystemPrompt(true, undefined, HOSTED_WEB_NATIVE_TOOLS)
         vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
         vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
         stubHostedToolsApiHandler(createMessage, [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH])
         initializeHostProvider()
-        const config = createTaskConfig(false, { clineWebToolsEnabled: true })
+        const config = createTaskConfig(true, { clineWebToolsEnabled: true })
         config.autoApprovalSettings = {
             ...DEFAULT_AUTO_APPROVAL_SETTINGS,
             actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, useWeb: true },
@@ -1042,7 +1091,7 @@ describe("SubagentRunner", () => {
         const result = await new SubagentRunner(config, "web-researcher", {
             name: "web-researcher",
             description: "Researches current information on the web.",
-            tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.WEB_FETCH, ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.WEB_SEARCH, DlineDefaultTool.WEB_FETCH, DlineDefaultTool.ATTEMPT],
             systemPrompt: "",
         }).run("Use the allowed hosted web tools", () => {})
 
@@ -1086,7 +1135,7 @@ describe("SubagentRunner", () => {
                 function_id: "toolu_cancel_after_result",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.LIST_FILES,
+                        name: DlineDefaultTool.LIST_FILES,
                         arguments: JSON.stringify({ path: ".", recursive: false }),
                     },
                 },
@@ -1115,7 +1164,7 @@ describe("SubagentRunner", () => {
                 function_id: "facade-complete",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1137,16 +1186,10 @@ describe("SubagentRunner", () => {
 
         const result = await new SubagentRunner(createTaskConfig(false)).run("Use facade", () => {})
 
-        assert.equal(facade.mock.calls.length, 2)
-        const [ordinaryContext] = facade.mock.calls[0]
-        const [completionContext] = facade.mock.calls[1]
-        assert.equal(ordinaryContext.isSubagentRun, true)
-        assert.equal(completionContext.isSubagentRun, true)
-        assert.equal(completionContext.clineWebToolsEnabled, false)
-        assert.equal(completionContext.disableTools?.includes(ClineDefaultTool.ATTEMPT), false)
-        for (const tool of Object.values(ClineDefaultTool)) {
-            if (tool !== ClineDefaultTool.ATTEMPT) assert.equal(completionContext.disableTools?.includes(tool), true)
-        }
+        // A finish request reuses this one prompt, so the run builds it exactly once.
+        assert.equal(facade.mock.calls.length, 1)
+        const [context] = facade.mock.calls[0]
+        assert.equal(context.isSubagentRun, true)
         assert.equal(result.status, "completed")
         assert.equal(result.result, "done")
     })
@@ -1162,7 +1205,7 @@ describe("SubagentRunner", () => {
                 function_id: "yaml-prompt-complete",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1182,7 +1225,7 @@ describe("SubagentRunner", () => {
         const result = await new SubagentRunner(createTaskConfig(false), "local-reviewer", {
             name: "local-reviewer",
             description: "Local reviewer",
-            tools: [ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.ATTEMPT],
             systemPrompt: "Local YAML system prompt.",
         }).run("Use local config", () => {})
 
@@ -1200,7 +1243,7 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.LIST_FILES,
+                        name: DlineDefaultTool.LIST_FILES,
                         arguments: JSON.stringify({ path: ".", recursive: false }),
                     },
                 },
@@ -1229,7 +1272,7 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1252,8 +1295,8 @@ describe("SubagentRunner", () => {
         assert.deepEqual(
             completedToolEvents.map((event) => ({ toolName: event.toolName, summary: event.summary })),
             [
-                { toolName: ClineDefaultTool.LIST_FILES, summary: "list_files(path=., recursive=false)" },
-                { toolName: ClineDefaultTool.ATTEMPT, summary: "attempt_completion(result=done)" },
+                { toolName: DlineDefaultTool.LIST_FILES, summary: "list_files(path=., recursive=false)" },
+                { toolName: DlineDefaultTool.ATTEMPT, summary: "attempt_completion(result=done)" },
             ],
         )
         assert.equal(new Set(completedToolEvents.map((event) => event.toolCallId)).size, 2)
@@ -1272,7 +1315,7 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.LIST_FILES,
+                        name: DlineDefaultTool.LIST_FILES,
                         arguments: JSON.stringify({ path: ".", recursive: false }),
                     },
                 },
@@ -1286,7 +1329,7 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1344,7 +1387,7 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.LIST_FILES,
+                        name: DlineDefaultTool.LIST_FILES,
                         arguments: JSON.stringify({ path: ".", recursive: false }),
                     },
                 },
@@ -1358,7 +1401,7 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1391,7 +1434,7 @@ describe("SubagentRunner", () => {
         assert.equal(assistant.provider_metadata?.response_id, "successful-reasoning")
     })
 
-    it("adds a text follower when a provider turn contains reasoning only", async () => {
+    it("diagnoses a reasoning-only turn as user feedback without inventing an assistant turn", async () => {
         const createMessage = vi.fn()
         let nextRoundConversation: unknown[] = []
         createMessage.mockImplementationOnce(async function* () {
@@ -1405,7 +1448,7 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1420,12 +1463,16 @@ describe("SubagentRunner", () => {
         const result = await new SubagentRunner(createTaskConfig(true)).run("Inspect files", () => {})
 
         assert.equal(result.status, "completed", result.error)
-        const assistant = nextRoundConversation[1] as { content: Array<Record<string, unknown>> }
-        assert.equal(assistant.content[0]?.type, "thinking")
-        assert.deepEqual(assistant.content[1], {
-            type: "text",
-            text: "Failure: I did not provide a response.",
-        })
+        // Reasoning alone is not stored, so the transcript still ends in the user turn,
+        // which now carries the diagnosis and the next step.
+        assert.equal(nextRoundConversation.length, 1)
+        const user = nextRoundConversation[0] as { role: string; content: Array<{ type: string; text?: string }> }
+        assert.equal(user.role, "user")
+        const feedback = user.content.map((block) => block.text ?? "").join("\n")
+        assert.match(feedback, /contained only internal reasoning/)
+        assert.match(feedback, /Consecutive failed responses: 1 of 5/)
+        assert.match(feedback, /Do not restart or repeat earlier analysis/)
+        assert.doesNotMatch(JSON.stringify(nextRoundConversation), /I did not provide a response/)
     })
 
     it("records structured tool calls received while non-native mode is enabled", async () => {
@@ -1439,7 +1486,7 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.LIST_FILES,
+                        name: DlineDefaultTool.LIST_FILES,
                         arguments: JSON.stringify({ path: ".", recursive: false }),
                     },
                 },
@@ -1453,7 +1500,7 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1526,13 +1573,13 @@ describe("SubagentRunner", () => {
                 type: "tool_calls",
                 function_id: "toolu_completion_boundary",
                 tool_index: 0,
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
             }
             yield {
                 type: "tool_calls",
                 function_id: "toolu_after_completion",
                 tool_index: 1,
-                tool_call: { function: { name: ClineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: "." }) } },
+                tool_call: { function: { name: DlineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: "." }) } },
             }
         })
         stubSystemPrompt(true)
@@ -1554,11 +1601,11 @@ describe("SubagentRunner", () => {
             .filter((event) => event?.kind === "tool_call" && event.toolStatus === "completed")
         assert.deepEqual(
             completedTools.map((event) => event.toolName),
-            [ClineDefaultTool.ATTEMPT],
+            [DlineDefaultTool.ATTEMPT],
         )
     })
 
-    it("switches a timeout finish request to an attempt_completion-only next turn", async () => {
+    it("keeps the prompt and tools on a timeout finish turn and only appends a reminder", async () => {
         let runner: SubagentRunner
         const abort = vi.fn()
         const createMessage = vi.fn()
@@ -1566,22 +1613,18 @@ describe("SubagentRunner", () => {
             await runner.requestFinish("timeout")
             yield { type: "text", text: "partial findings" }
         })
-        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, conversation: unknown[], tools: unknown[]) {
+        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, conversation: unknown[]) {
             const reminder = conversation.at(-1) as { role: string; content: Array<{ type: string; text?: string }> }
             assert.equal(reminder.role, "user")
             assert.match(reminder.content[0]?.text || "", /time limit/i)
             assert.match(reminder.content[0]?.text || "", /Do not call any other tool/i)
-            assert.deepEqual(
-                (tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name),
-                [ClineDefaultTool.ATTEMPT],
-            )
             yield {
                 type: "tool_calls",
                 function_id: "toolu_timeout_complete",
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "finished after timeout reminder" }),
                     },
                 },
@@ -1590,8 +1633,8 @@ describe("SubagentRunner", () => {
         vi.spyOn(systemPromptFacade, "getSystemPrompt").mockResolvedValue({
             systemPrompt: "system prompt",
             tools: [
-                { type: "function", function: { name: ClineDefaultTool.LIST_FILES, description: "List files" } },
-                { type: "function", function: { name: ClineDefaultTool.ATTEMPT, description: "Complete" } },
+                { type: "function", function: { name: DlineDefaultTool.LIST_FILES, description: "List files" } },
+                { type: "function", function: { name: DlineDefaultTool.ATTEMPT, description: "Complete" } },
             ] as never,
             profile: PromptProfile.Standard,
             warnings: [],
@@ -1608,6 +1651,7 @@ describe("SubagentRunner", () => {
         assert.equal(result.result, "finished after timeout reminder")
         assert.equal(createMessage.mock.calls.length, 2)
         assert.equal(abort.mock.calls.length, 1)
+        assertFinishTurnReusesRequestShape(createMessage, [DlineDefaultTool.LIST_FILES, DlineDefaultTool.ATTEMPT])
     })
 
     it("reports the effective runtime configuration before the first provider request", async () => {
@@ -1617,7 +1661,7 @@ describe("SubagentRunner", () => {
                 function_id: "runtime-config-complete",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1634,7 +1678,7 @@ describe("SubagentRunner", () => {
             name: "reviewer",
             description: "Review code",
             profile: "anthropic",
-            tools: [ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.ATTEMPT],
             systemPrompt: "Review carefully.",
         }).run("Review", progress)
 
@@ -1647,7 +1691,7 @@ describe("SubagentRunner", () => {
         })
     })
 
-    it("switches a manual finish request to an attempt_completion-only next turn", async () => {
+    it("keeps the prompt and tools on a manual finish turn and rejects non-completion tools", async () => {
         let runner: SubagentRunner
         const createMessage = vi.fn()
         createMessage.mockImplementationOnce(async function* () {
@@ -1657,28 +1701,47 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.LIST_FILES,
+                        name: DlineDefaultTool.LIST_FILES,
                         arguments: JSON.stringify({ path: ".", recursive: false }),
                     },
                 },
             }
         })
-        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, conversation: unknown[], tools: unknown[]) {
+        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, conversation: unknown[]) {
             const reminder = conversation.at(-1) as { role: string; content: Array<{ type: string; text?: string }> }
             assert.equal(reminder.role, "user")
             assert.match(reminder.content[0]?.text || "", /user requested/i)
             assert.match(reminder.content[0]?.text || "", /Do not call any other tool/i)
-            assert.deepEqual(
-                (tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name),
-                [ClineDefaultTool.ATTEMPT],
-            )
+            // The tool is still declared, so the model may call it; the runner must refuse it.
+            yield {
+                type: "tool_calls",
+                function_id: "toolu_finish_list_again",
+                tool_index: 0,
+                tool_call: {
+                    function: {
+                        name: DlineDefaultTool.LIST_FILES,
+                        arguments: JSON.stringify({ path: ".", recursive: false }),
+                    },
+                },
+            }
+        })
+        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, conversation: unknown[]) {
+            const rejection = conversation.at(-1) as {
+                role: string
+                content: Array<{ type: string; tool_use_id?: string; content?: unknown }>
+            }
+            assert.equal(rejection.role, "user")
+            const rejectionText = JSON.stringify(rejection.content)
+            assert.match(rejectionText, /called list_files after you were told to finish/)
+            assert.match(rejectionText, /Consecutive failed responses: 1 of 5/)
+            assert.match(rejectionText, /Call attempt_completion now/)
             yield {
                 type: "tool_calls",
                 function_id: "toolu_finish_complete",
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "finished with current findings" }),
                     },
                 },
@@ -1687,8 +1750,8 @@ describe("SubagentRunner", () => {
         vi.spyOn(systemPromptFacade, "getSystemPrompt").mockResolvedValue({
             systemPrompt: "system prompt",
             tools: [
-                { type: "function", function: { name: ClineDefaultTool.LIST_FILES, description: "List files" } },
-                { type: "function", function: { name: ClineDefaultTool.ATTEMPT, description: "Complete" } },
+                { type: "function", function: { name: DlineDefaultTool.LIST_FILES, description: "List files" } },
+                { type: "function", function: { name: DlineDefaultTool.ATTEMPT, description: "Complete" } },
             ] as never,
             profile: PromptProfile.Standard,
             warnings: [],
@@ -1708,7 +1771,10 @@ describe("SubagentRunner", () => {
 
         assert.equal(result.status, "completed", result.error)
         assert.equal(result.result, "finished with current findings")
-        assert.equal(createMessage.mock.calls.length, 2)
+        assert.equal(createMessage.mock.calls.length, 3)
+        // Only the pre-finish call ran; the finishing turn's list_files was refused.
+        assert.equal(vi.mocked(ListFilesToolHandler.prototype.execute).mock.calls.length, 1)
+        assertFinishTurnReusesRequestShape(createMessage, [DlineDefaultTool.LIST_FILES, DlineDefaultTool.ATTEMPT])
     })
 
     it("passes prior request token totals into the next-turn compaction check", async () => {
@@ -1726,7 +1792,7 @@ describe("SubagentRunner", () => {
                 function_id: "toolu_subagent_previous_tokens_1",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.LIST_FILES,
+                        name: DlineDefaultTool.LIST_FILES,
                         arguments: JSON.stringify({ path: ".", recursive: false }),
                     },
                 },
@@ -1738,7 +1804,7 @@ describe("SubagentRunner", () => {
                 function_id: "toolu_subagent_previous_tokens_complete_1",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1763,7 +1829,7 @@ describe("SubagentRunner", () => {
         assert.equal(scs.mock.calls.length, 1)
     })
 
-    it("uses the absolute cap with the shared 2K trigger tolerance", () => {
+    it("measures the trigger against the absolute cap with the shared 2K trigger tolerance", () => {
         stubApiHandler(vi.fn(), 1_000_000)
         const runner = new SubagentRunner(
             createTaskConfig(true, {
@@ -1783,8 +1849,9 @@ describe("SubagentRunner", () => {
         }
         const api = createContextApi(1_000_000)
 
-        assert.equal(probe.shouldCompactBeforeNextRequest(494_499, api, "gpt-5.4-mini"), false)
-        assert.equal(probe.shouldCompactBeforeNextRequest(494_500, api, "gpt-5.4-mini"), true)
+        // W = 500K, reserve = 40% clamped to 30K: T = 500K - 30K - 5.5K = 464.5K.
+        assert.equal(probe.shouldCompactBeforeNextRequest(464_499, api, "gpt-5.4-mini"), false)
+        assert.equal(probe.shouldCompactBeforeNextRequest(464_500, api, "gpt-5.4-mini"), true)
     })
 
     it("uses the reserve pair when the context window equals the absolute cap", () => {
@@ -1835,7 +1902,7 @@ describe("SubagentRunner", () => {
                 function_id: "toolu_subagent_2",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.LIST_FILES,
+                        name: DlineDefaultTool.LIST_FILES,
                         arguments: JSON.stringify({ path: ".", recursive: false }),
                     },
                 },
@@ -1850,7 +1917,7 @@ describe("SubagentRunner", () => {
                 function_id: "toolu_subagent_complete_2",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1876,15 +1943,15 @@ describe("SubagentRunner", () => {
         createMessage.mockImplementationOnce(async function* (_systemPrompt: string, conversation: unknown[]) {
             const reminder = conversation.at(-1) as { role: string; content: Array<{ type: string; text?: string }> }
             assert.equal(reminder.role, "user")
+            assert.match(reminder.content[0]?.text || "", /contained text but no tool call/)
+            assert.match(reminder.content[0]?.text || "", /Consecutive failed responses: 1 of 5/)
             assert.match(reminder.content[0]?.text || "", /Plain assistant text cannot complete a subagent run/)
-            assert.match(reminder.content[0]?.text || "", /attempt_completion/)
-            assert.match(reminder.content[0]?.text || "", /result/)
             yield {
                 type: "tool_calls",
                 function_id: "toolu_subagent_plain_text_complete",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1910,7 +1977,7 @@ describe("SubagentRunner", () => {
                 function_id: "toolu_subagent_legacy_response",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ response: "legacy done" }),
                     },
                 },
@@ -1937,7 +2004,7 @@ describe("SubagentRunner", () => {
                 function_id: "toolu_subagent_missing_result",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({}),
                     },
                 },
@@ -1953,7 +2020,7 @@ describe("SubagentRunner", () => {
                 function_id: "toolu_subagent_retry_result",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -1978,7 +2045,7 @@ describe("SubagentRunner", () => {
                 function_id: "toolu_subagent_missing_result_loop",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({}),
                     },
                 },
@@ -1993,8 +2060,9 @@ describe("SubagentRunner", () => {
         const result = await new SubagentRunner(createTaskConfig(false)).run("Review files", () => {})
 
         assert.equal(result.status, "failed")
-        assert.match(result.error || "", /repeatedly called attempt_completion/)
-        assert.equal(createMessage.mock.calls.length, 4)
+        assert.match(result.error || "", /Subagent stopped after 5 consecutive responses/)
+        assert.match(result.error || "", /5\. attempt_completion was called without a non-empty result/)
+        assert.equal(createMessage.mock.calls.length, 5)
     })
 
     it("reports the required completion protocol after repeated plain responses", async () => {
@@ -2010,30 +2078,76 @@ describe("SubagentRunner", () => {
         const result = await new SubagentRunner(createTaskConfig(false)).run("Review files", () => {})
 
         assert.equal(result.status, "failed")
-        assert.match(result.error || "", /Plain assistant text cannot complete a subagent run/)
-        assert.match(result.error || "", /attempt_completion/)
-        assert.match(result.error || "", /result/)
+        assert.equal(createMessage.mock.calls.length, 5)
+        assert.match(result.error || "", /Subagent stopped after 5 consecutive responses/)
+        assert.match(result.error || "", /1\. The previous response contained text but no tool call/)
+        // The run's own reasoning is handed back rather than discarded.
+        assert.match(result.error || "", /Partial findings recovered from the run[\s\S]*I am finished\./)
     })
 
-    it("retries empty assistant turns with a no-tools-used nudge before failing", async () => {
+    it("resets the consecutive failure count after a tool executes successfully", async () => {
+        const createMessage = vi.fn()
+        // Four plain responses, one successful tool, four more: never five in a row.
+        for (let round = 0; round < 4; round += 1) {
+            createMessage.mockImplementationOnce(async function* () {
+                yield { type: "text", text: "thinking out loud" }
+            })
+        }
+        createMessage.mockImplementationOnce(async function* () {
+            yield {
+                type: "tool_calls",
+                function_id: "toolu_subagent_reset_list",
+                tool_call: {
+                    function: { name: DlineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: ".", recursive: false }) },
+                },
+            }
+        })
+        for (let round = 0; round < 4; round += 1) {
+            createMessage.mockImplementationOnce(async function* () {
+                yield { type: "text", text: "still thinking" }
+            })
+        }
+        createMessage.mockImplementationOnce(async function* (_s: string, c: unknown[]) {
+            const last = c.at(-1) as TestConversationMessage
+            assert.match(JSON.stringify(last.content), /Consecutive failed responses: 4 of 5/)
+            yield {
+                type: "tool_calls",
+                function_id: "toolu_subagent_reset_complete",
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+            }
+        })
+        stubSystemPrompt(false)
+        vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+        vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+        stubApiHandler(createMessage)
+        initializeHostProvider()
+
+        const result = await new SubagentRunner(createTaskConfig(false)).run("Review files", () => {})
+
+        assert.equal(result.status, "completed", result.error)
+        assert.equal(result.result, "done")
+        assert.equal(createMessage.mock.calls.length, 10)
+    })
+
+    it("diagnoses an empty turn as user feedback before failing", async () => {
         const createMessage = vi.fn()
         createMessage.mockImplementationOnce(async function* () {
             yield* []
         })
         createMessage.mockImplementationOnce(async function* (_s: string, c: unknown[]) {
-            const la = c[1] as TestConversationMessage
-            assert.equal(la.role, "assistant")
-            assert.equal(la.content[0]?.type, "text")
-            assert.equal(la.content[0]?.text, "Failure: I did not provide a response.")
-            const lu = c[2] as TestConversationMessage
+            // No assistant turn is invented; the diagnosis joins the existing user turn.
+            assert.equal(c.length, 1)
+            const lu = c[0] as TestConversationMessage
             assert.equal(lu.role, "user")
-            assert.match(lu.content[0]?.text || "", /You did not use a tool/)
+            const feedback = lu.content.map((block) => block.text ?? "").join("\n")
+            assert.match(feedback, /The previous response was empty/)
+            assert.match(feedback, /Consecutive failed responses: 1 of 5/)
             yield {
                 type: "tool_calls",
                 function_id: "toolu_subagent_complete_3",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -2296,7 +2410,7 @@ describe("SubagentRunner", () => {
             yield {
                 type: "tool_calls",
                 function_id: "usage-prefix-complete",
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
             }
         })
         vi.spyOn(global, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void) => {
@@ -2333,7 +2447,7 @@ describe("SubagentRunner", () => {
             yield {
                 type: "tool_calls",
                 function_id: "anthropic-usage-prefix-complete",
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
             }
         })
         vi.spyOn(global, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void) => {
@@ -2459,7 +2573,7 @@ describe("SubagentRunner", () => {
             yield {
                 type: "tool_calls",
                 function_id: "responses-server-error-complete",
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
             }
         })
         vi.spyOn(global, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void) => {
@@ -2494,7 +2608,7 @@ describe("SubagentRunner", () => {
             yield {
                 type: "tool_calls",
                 function_id: "network-cause-complete",
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
             }
         })
         vi.spyOn(global, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void) => {
@@ -2527,7 +2641,7 @@ describe("SubagentRunner", () => {
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -2618,7 +2732,7 @@ describe("SubagentRunner", () => {
             yield {
                 type: "tool_calls",
                 function_id: "usage-once-complete",
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
             }
         })
         stubSystemPrompt(false)
@@ -2656,27 +2770,23 @@ describe("SubagentRunner", () => {
         assert.equal(createMessage.mock.calls.length, 1)
     })
 
-    it("finishes a pending retry wait through an attempt_completion-only next turn", async () => {
+    it("finishes a pending retry wait through a reminder on the unchanged prompt and tools", async () => {
         const createMessage = vi.fn()
         createMessage.mockImplementationOnce(async function* () {
             yield* []
             throw new Error('{"code":"stream_initialization_failed","message":"Temporary provider failure"}')
         })
-        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, conversation: unknown[], tools: unknown[]) {
+        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, conversation: unknown[]) {
             const reminder = conversation.at(-1) as { role: string; content: Array<{ type: string; text?: string }> }
             assert.equal(reminder.role, "user")
             assert.match(reminder.content[0]?.text || "", /user requested/i)
-            assert.deepEqual(
-                (tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name),
-                [ClineDefaultTool.ATTEMPT],
-            )
             yield {
                 type: "tool_calls",
                 function_id: "toolu_retry_finish_complete",
                 tool_index: 0,
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "finished after retry interruption" }),
                     },
                 },
@@ -2685,8 +2795,8 @@ describe("SubagentRunner", () => {
         vi.spyOn(systemPromptFacade, "getSystemPrompt").mockResolvedValue({
             systemPrompt: "system prompt",
             tools: [
-                { type: "function", function: { name: ClineDefaultTool.LIST_FILES, description: "List files" } },
-                { type: "function", function: { name: ClineDefaultTool.ATTEMPT, description: "Complete" } },
+                { type: "function", function: { name: DlineDefaultTool.LIST_FILES, description: "List files" } },
+                { type: "function", function: { name: DlineDefaultTool.ATTEMPT, description: "Complete" } },
             ] as never,
             profile: PromptProfile.Standard,
             warnings: [],
@@ -2705,6 +2815,7 @@ describe("SubagentRunner", () => {
         assert.equal(result.status, "completed", result.error)
         assert.equal(result.result, "finished after retry interruption")
         assert.equal(createMessage.mock.calls.length, 2)
+        assertFinishTurnReusesRequestShape(createMessage, [DlineDefaultTool.LIST_FILES, DlineDefaultTool.ATTEMPT])
     })
 
     it("cancels a pending retry wait without issuing another API request", async () => {
@@ -2742,7 +2853,7 @@ describe("SubagentRunner", () => {
             yield {
                 type: "tool_calls",
                 function_id: "cancellable-tool",
-                tool_call: { function: { name: ClineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: "." }) } },
+                tool_call: { function: { name: DlineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: "." }) } },
             }
         })
         stubSystemPrompt(true)
@@ -2807,7 +2918,7 @@ describe("SubagentRunner", () => {
             yield {
                 type: "tool_calls",
                 function_id: "independent-completion",
-                tool_call: { function: { name: ClineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
             }
         })
         const abort = vi.fn()
@@ -2845,7 +2956,7 @@ describe("SubagentRunner", () => {
                 function_id: `retry-call-${createMessage.mock.calls.length}`,
                 tool_call: {
                     function: {
-                        name: completion ? ClineDefaultTool.ATTEMPT : ClineDefaultTool.LIST_FILES,
+                        name: completion ? DlineDefaultTool.ATTEMPT : DlineDefaultTool.LIST_FILES,
                         arguments: JSON.stringify(completion ? { result: "done" } : { path: "." }),
                     },
                 },
@@ -2890,7 +3001,7 @@ describe("SubagentRunner", () => {
                 function_id: "toolu_hung_tool",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.LIST_CODE_DEF,
+                        name: DlineDefaultTool.LIST_CODE_DEF,
                         arguments: JSON.stringify({ path: "." }),
                     },
                 },
@@ -2946,16 +3057,16 @@ describe("SubagentRunner", () => {
                 tool_call: { function: { name: "attempt_completion", arguments: '{"result":"Reported the failure."}' } },
             }
         })
-        stubSystemPrompt(false)
+        stubSystemPrompt(true, undefined, HOSTED_WEB_NATIVE_TOOLS)
         vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
         vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
         stubApiHandler(createMessage, 200_000, true)
         initializeHostProvider()
         const progress = vi.fn()
-        const runner = new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
+        const runner = new SubagentRunner(createTaskConfig(true, { clineWebToolsEnabled: true }), "web-researcher", {
             name: "web-researcher",
             description: "Researches current information on the web.",
-            tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.WEB_SEARCH, DlineDefaultTool.ATTEMPT],
             systemPrompt: "",
         })
 
@@ -2993,15 +3104,15 @@ describe("SubagentRunner", () => {
                 },
             }
         })
-        stubSystemPrompt(false)
+        stubSystemPrompt(true, undefined, HOSTED_WEB_NATIVE_TOOLS)
         vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
         vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
         stubApiHandler(createMessage, 200_000, true)
         initializeHostProvider()
-        const runner = new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
+        const runner = new SubagentRunner(createTaskConfig(true, { clineWebToolsEnabled: true }), "web-researcher", {
             name: "web-researcher",
             description: "Researches current information on the web.",
-            tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.WEB_SEARCH, DlineDefaultTool.ATTEMPT],
             systemPrompt: "",
         })
 
@@ -3028,15 +3139,15 @@ describe("SubagentRunner", () => {
             throw new Error("stream failed after hosted search started")
         }
         const createMessage = vi.fn().mockImplementation(failingTurn)
-        stubSystemPrompt(false)
+        stubSystemPrompt(true, undefined, HOSTED_WEB_NATIVE_TOOLS)
         vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
         vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
         stubApiHandler(createMessage, 200_000, true)
         initializeHostProvider()
-        const runner = new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
+        const runner = new SubagentRunner(createTaskConfig(true, { clineWebToolsEnabled: true }), "web-researcher", {
             name: "web-researcher",
             description: "Researches current information on the web.",
-            tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.WEB_SEARCH, DlineDefaultTool.ATTEMPT],
             systemPrompt: "",
         })
 
@@ -3062,7 +3173,7 @@ describe("SubagentRunner", () => {
         const runner = new SubagentRunner(createTaskConfig(false, { clineWebToolsEnabled: true }), "web-researcher", {
             name: "web-researcher",
             description: "Researches current information on the web.",
-            tools: [ClineDefaultTool.WEB_SEARCH, ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.WEB_SEARCH, DlineDefaultTool.ATTEMPT],
             systemPrompt: "",
         })
 
@@ -3099,7 +3210,7 @@ describe("SubagentRunner", () => {
                 function_id: "t1",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -3123,7 +3234,7 @@ describe("SubagentRunner", () => {
                 function_id: "tsf1",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -3155,7 +3266,7 @@ describe("SubagentRunner", () => {
                 function_id: "frozen-skill-toggle",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -3195,7 +3306,7 @@ describe("SubagentRunner", () => {
                 function_id: "tsu1",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -3227,7 +3338,7 @@ describe("SubagentRunner", () => {
                 function_id: "tsm1",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -3264,7 +3375,7 @@ describe("SubagentRunner", () => {
                 function_id: "trs1",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },
@@ -3335,14 +3446,16 @@ describe("SubagentRunner", () => {
                 .map((block) => block.text ?? "")
                 .join("\n")
             // Above MIN_SUBAGENT_OUTPUT_TOKENS so the configured value, not the
-            // floor, is the effective budget under test.
-            assert.match(initialText, /within 1,024 tokens/)
+            // floor, is the effective budget under test. The figure appears once,
+            // in the per-request Context Budget tail, never as a second static limit.
+            assert.match(initialText, /# Context Budget\nYour final result may use about 1,024 tokens\./)
+            assert.equal(initialText.match(/1,024 tokens/g)?.length, 1)
             yield {
                 type: "tool_calls",
                 function_id: "budget-complete",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: longResult }),
                     },
                 },
@@ -3357,7 +3470,7 @@ describe("SubagentRunner", () => {
         const result = await new SubagentRunner(createTaskConfig(false), "budget-agent", {
             name: "budget-agent",
             description: "Budget test agent",
-            tools: [ClineDefaultTool.ATTEMPT],
+            tools: [DlineDefaultTool.ATTEMPT],
             maxOutputTokens: 1_024,
             systemPrompt: "",
         }).run("Return a detailed report", () => {})
@@ -3384,7 +3497,7 @@ describe("SubagentRunner", () => {
                 function_id: "tww1",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.LIST_FILES,
+                        name: DlineDefaultTool.LIST_FILES,
                         arguments: JSON.stringify({ path: ".", recursive: false }),
                     },
                 },
@@ -3406,7 +3519,7 @@ describe("SubagentRunner", () => {
                 function_id: "twwc1",
                 tool_call: {
                     function: {
-                        name: ClineDefaultTool.ATTEMPT,
+                        name: DlineDefaultTool.ATTEMPT,
                         arguments: JSON.stringify({ result: "done" }),
                     },
                 },

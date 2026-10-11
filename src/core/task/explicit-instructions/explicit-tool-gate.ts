@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { isExplicitOnlyTool } from "./policy"
 import type { ExplicitInstructionAuthorization, ExplicitInstructionConsumePort, ExplicitInstructionFailureCode } from "./types"
 
@@ -8,10 +8,10 @@ export type ExplicitToolGateResult =
 
 /** Consume one request-scoped authorization before an explicit-only handler can execute. */
 export function authorizeExplicitToolExecution(
-    tool: ClineDefaultTool,
+    tool: DlineDefaultTool,
     port: ExplicitInstructionConsumePort | undefined,
 ): ExplicitToolGateResult {
-    if (tool === ClineDefaultTool.CONDENSE) return { ok: false, code: "explicit_instruction_retired" }
+    if (tool === DlineDefaultTool.CONDENSE) return { ok: false, code: "explicit_instruction_retired" }
     if (!isExplicitOnlyTool(tool)) return { ok: true }
     if (!port) return { ok: false, code: "explicit_instruction_missing" }
     return port.consumeTool(tool)
@@ -33,9 +33,9 @@ export function findHandlerlessExplicitRefusal(
     tool: string,
     port: ExplicitInstructionConsumePort | undefined,
 ): ExplicitInstructionFailureCode | undefined {
-    const gated = tool as ClineDefaultTool
+    const gated = tool as DlineDefaultTool
     // Ordinary tools never reach the explicit gate, so a missing handler stays an ordinary failure for them.
-    if (gated !== ClineDefaultTool.CONDENSE && !isExplicitOnlyTool(gated)) return undefined
+    if (gated !== DlineDefaultTool.CONDENSE && !isExplicitOnlyTool(gated)) return undefined
     if (port?.getPendingToolAuthorization(gated) !== undefined) return undefined
     // Nothing is pending, so the gate cannot consume authority here; it only names the refusal.
     const refusal = authorizeExplicitToolExecution(gated, port)

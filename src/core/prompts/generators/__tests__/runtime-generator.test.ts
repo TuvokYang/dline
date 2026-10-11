@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 
 import { englishTemplateStore } from "../../i18n/en"
@@ -120,12 +120,12 @@ describe("ToolPromptGenerator", () => {
                   : [],
         )
 
-        expect(names).not.toContain(ClineDefaultTool.SUMMARIZE_TASK)
-        expect(names).not.toContain(ClineDefaultTool.NEW_TASK)
-        expect(names).not.toContain(ClineDefaultTool.CONDENSE)
-        expect(names).not.toContain(ClineDefaultTool.NEW_RULE)
-        expect(names).not.toContain(ClineDefaultTool.REPORT_BUG)
-        expect(names).not.toContain(ClineDefaultTool.GENERATE_EXPLANATION)
+        expect(names).not.toContain(DlineDefaultTool.SUMMARIZE_TASK)
+        expect(names).not.toContain(DlineDefaultTool.NEW_TASK)
+        expect(names).not.toContain(DlineDefaultTool.CONDENSE)
+        expect(names).not.toContain(DlineDefaultTool.NEW_RULE)
+        expect(names).not.toContain(DlineDefaultTool.REPORT_BUG)
+        expect(names).not.toContain(DlineDefaultTool.GENERATE_EXPLANATION)
     })
 
     it("exposes load_skill as the only Skill loading tool in Standard native projections", () => {
@@ -150,14 +150,14 @@ describe("ToolPromptGenerator", () => {
         const defaultTools = generator.generate(PromptProfile.Standard, context) ?? []
         const staleTools = [
             ...defaultTools,
-            { type: "function", function: { name: ClineDefaultTool.SUMMARIZE_TASK } },
+            { type: "function", function: { name: DlineDefaultTool.SUMMARIZE_TASK } },
         ] as typeof defaultTools
         const compactRequestTools = generator.generateToolsForRequest(PromptProfile.Standard, context, staleTools)
 
         expect(compactRequestTools).toEqual(defaultTools)
         expect(compactRequestTools).not.toEqual(
             expect.arrayContaining([
-                expect.objectContaining({ function: expect.objectContaining({ name: ClineDefaultTool.SUMMARIZE_TASK }) }),
+                expect.objectContaining({ function: expect.objectContaining({ name: DlineDefaultTool.SUMMARIZE_TASK }) }),
             ]),
         )
     })
@@ -166,7 +166,7 @@ describe("ToolPromptGenerator", () => {
         const generator = new ToolPromptGenerator()
         const staleTools = [
             { type: "function", function: { name: "use_skill" } },
-            { type: "function", function: { name: ClineDefaultTool.LOAD_SKILL } },
+            { type: "function", function: { name: DlineDefaultTool.LOAD_SKILL } },
         ] as NonNullable<ReturnType<ToolPromptGenerator["generate"]>>
 
         const selected = generator.generateToolsForRequest(PromptProfile.Standard, context, staleTools)
@@ -178,7 +178,7 @@ describe("ToolPromptGenerator", () => {
                   : [],
         )
 
-        expect(names).toEqual([ClineDefaultTool.LOAD_SKILL])
+        expect(names).toEqual([DlineDefaultTool.LOAD_SKILL])
     })
 })
 

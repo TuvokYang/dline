@@ -15,7 +15,7 @@ import path from "path"
 import simpleGit from "simple-git"
 import type { UiSayGenerateExplanation } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -39,7 +39,7 @@ function createExplanationMessage(
 }
 
 export class GenerateExplanationToolHandler implements IToolHandler, IPartialBlockHandler {
-    readonly name = ClineDefaultTool.GENERATE_EXPLANATION
+    readonly name = DlineDefaultTool.GENERATE_EXPLANATION
 
     getDescription(block: ToolUse): string {
         const title = block.params.title || "code changes"

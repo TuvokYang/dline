@@ -3,7 +3,7 @@ import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { resolveWorkspacePath } from "@core/workspace"
 import { getReadablePath } from "@utils/path"
 import { HostProvider } from "@/hosts/host-provider"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -19,7 +19,7 @@ interface RefEntry {
 }
 
 export class FindReferencesHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.FIND_REFERENCES
+    readonly name = DlineDefaultTool.FIND_REFERENCES
 
     getDescription(block: ToolUse): string {
         const params = block.params as Record<string, unknown> | undefined

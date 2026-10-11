@@ -2,14 +2,14 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { ToolUse } from "@core/assistant-message"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
-import { ActModeRespondHandler } from "../../tools/handlers/ActModeRespondHandler"
 import { ExecuteCommandToolHandler } from "../../tools/handlers/ExecuteCommandToolHandler"
 import { FocusChainHandler } from "../../tools/handlers/FocusChainHandler"
+import { PhaseReportHandler } from "../../tools/handlers/PhaseReportHandler"
 import { QnaRespondHandler } from "../../tools/handlers/QnaRespondHandler"
 import { SpawnTaskHandler } from "../../tools/handlers/SpawnTaskHandler"
-import { StatusUpdateHandler } from "../../tools/handlers/StatusUpdateHandler"
+import { WorkingRespondHandler } from "../../tools/handlers/WorkingRespondHandler"
 import { DefaultToolHandlerState } from "../../tools/state/ToolHandlerState"
 import type { TaskConfig } from "../../tools/types/TaskConfig"
 
@@ -36,7 +36,7 @@ vi.mock("../../tools/utils/ToolHookUtils", () => ({
 }))
 
 /** Create one stable tool-use block. */
-function block(name: ClineDefaultTool, params: Record<string, string>): ToolUse {
+function block(name: DlineDefaultTool, params: Record<string, string>): ToolUse {
     return {
         type: "tool_use",
         name,
@@ -67,7 +67,7 @@ function config(
         interactions: { open, complete: open, say: vi.fn(async () => undefined) },
         admissionOutcomes: new Map([
             [
-                `tid-${ClineDefaultTool.CHANGE_TODO_LIST}`,
+                `tid-${DlineDefaultTool.CHANGE_TODO_LIST}`,
                 {
                     actionId: outcome.actionId,
                     draft: { text: outcome.text ?? "", images: [], files: [] },
@@ -92,19 +92,19 @@ function config(
 describe("handler interaction matrix", () => {
     it("opens Q&A as qna_response", async () => {
         const taskConfig = config()
-        await new QnaRespondHandler().execute(taskConfig, block(ClineDefaultTool.QNA_RESPOND, { response: "Answer" }))
+        await new QnaRespondHandler().execute(taskConfig, block(DlineDefaultTool.QNA_RESPOND, { response: "Answer" }))
         expect(taskConfig.interactions.open).toHaveBeenCalledWith(
             expect.objectContaining({ kind: "qna_response", presentation: JSON.stringify({ response: "Answer" }) }),
         )
     })
 
-    it("leaves act_mode_respond task_progress updates to the central executor", async () => {
+    it("leaves working_respond task_progress updates to the central executor", async () => {
         const taskConfig = config()
         taskConfig.callbacks.updateFCListFromToolResponse = vi.fn(async () => undefined)
 
-        await new ActModeRespondHandler().execute(
+        await new WorkingRespondHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.ACT_MODE, {
+            block(DlineDefaultTool.WORKING_RESPOND, {
                 response: "Starting implementation",
                 task_progress: "# Plan\n- [ ] Implement",
             }),
@@ -115,9 +115,9 @@ describe("handler interaction matrix", () => {
 
     it("opens acknowledged status as status_acknowledgment", async () => {
         const taskConfig = config({ actionId: "acknowledge", text: "ok" })
-        await new StatusUpdateHandler().execute(
+        await new PhaseReportHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.STATUS_UPDATE, { response: "Checkpoint", requires_acknowledgment: "true" }),
+            block(DlineDefaultTool.PHASE_REPORT, { response: "Checkpoint", requires_acknowledgment: "true" }),
         )
         expect(taskConfig.interactions.open).toHaveBeenCalledWith(
             expect.objectContaining({ kind: "status_acknowledgment", presentation: "Checkpoint" }),
@@ -126,9 +126,9 @@ describe("handler interaction matrix", () => {
 
     it("presents non-acknowledged status as say only", async () => {
         const taskConfig = config()
-        await new StatusUpdateHandler().execute(
+        await new PhaseReportHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.STATUS_UPDATE, { response: "Working", requires_acknowledgment: "false" }),
+            block(DlineDefaultTool.PHASE_REPORT, { response: "Working", requires_acknowledgment: "false" }),
         )
         expect(taskConfig.interactions.say).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -143,7 +143,7 @@ describe("handler interaction matrix", () => {
         const taskConfig = config({ actionId: "reject" })
         await new SpawnTaskHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.SPAWN_TASK, { task: "Child", mode: "plan", context: "Context" }),
+            block(DlineDefaultTool.SPAWN_TASK, { task: "Child", mode: "plan", context: "Context" }),
         )
         expect(taskConfig.interactions.open).not.toHaveBeenCalled()
     })
@@ -175,7 +175,7 @@ describe("handler interaction matrix", () => {
 
         await new ExecuteCommandToolHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.BASH, { command: "echo ok", requires_approval: "true" }),
+            block(DlineDefaultTool.BASH, { command: "echo ok", requires_approval: "true" }),
         )
 
         expect(taskConfig.interactions.open).not.toHaveBeenCalled()
@@ -217,7 +217,7 @@ describe("handler interaction matrix", () => {
 
             await new ExecuteCommandToolHandler().execute(
                 taskConfig,
-                block(ClineDefaultTool.BASH, {
+                block(DlineDefaultTool.BASH, {
                     command: "echo ok",
                     requires_approval: "false",
                     workdirectory: externalDirectory,
@@ -265,12 +265,12 @@ describe("handler interaction matrix", () => {
 
         await new ExecuteCommandToolHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.BASH, { command: "echo first", requires_approval: "false" }),
+            block(DlineDefaultTool.BASH, { command: "echo first", requires_approval: "false" }),
         )
         configuredTimeout = 3600
         await new ExecuteCommandToolHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.BASH, { command: "echo second", requires_approval: "false", synchronous: "true" }),
+            block(DlineDefaultTool.BASH, { command: "echo second", requires_approval: "false", synchronous: "true" }),
         )
 
         expect(taskConfig.callbacks.executeCommandTool).toHaveBeenNthCalledWith(
@@ -295,9 +295,9 @@ describe("handler interaction matrix", () => {
             command: "npm install",
         }))
 
-        await new ExecuteCommandToolHandler(ClineDefaultTool.KILL_COMMAND).execute(
+        await new ExecuteCommandToolHandler(DlineDefaultTool.KILL_COMMAND).execute(
             taskConfig,
-            block(ClineDefaultTool.KILL_COMMAND, { function_id: "function-execute-command" }),
+            block(DlineDefaultTool.KILL_COMMAND, { function_id: "function-execute-command" }),
         )
 
         expect(taskConfig.callbacks.killCommandTool).toHaveBeenCalledWith("function-execute-command")
@@ -318,7 +318,7 @@ describe("handler interaction matrix", () => {
 
     it("rejects interaction opening without canonical dline identity", async () => {
         const taskConfig = config()
-        const missingIdentity = block(ClineDefaultTool.QNA_RESPOND, { response: "Answer" })
+        const missingIdentity = block(DlineDefaultTool.QNA_RESPOND, { response: "Answer" })
         delete (missingIdentity as Partial<typeof missingIdentity>).dline_tid
 
         await expect(new QnaRespondHandler().execute(taskConfig, missingIdentity)).rejects.toThrow(
@@ -331,7 +331,7 @@ describe("handler interaction matrix", () => {
         const taskConfig = config()
         const result = await new FocusChainHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.CHANGE_TODO_LIST, { new_plan: "# Empty plan\n## Phase", reason: "Change" }),
+            block(DlineDefaultTool.CHANGE_TODO_LIST, { new_plan: "# Empty plan\n## Phase", reason: "Change" }),
         )
 
         expect(result).toBe("prompt")
@@ -343,7 +343,7 @@ describe("handler interaction matrix", () => {
         const taskConfig = config()
         const result = await new FocusChainHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.CHANGE_TODO_LIST, { new_plan: "## Phase\n- [ ] First", reason: "Change" }),
+            block(DlineDefaultTool.CHANGE_TODO_LIST, { new_plan: "## Phase\n- [ ] First", reason: "Change" }),
         )
 
         expect(result).toBe("prompt")
@@ -355,7 +355,7 @@ describe("handler interaction matrix", () => {
         const taskConfig = config({ actionId: "approve", selection: [] })
         const result = await new FocusChainHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.CHANGE_TODO_LIST, { new_plan: "# Plan\n- [ ] First", reason: "Change" }),
+            block(DlineDefaultTool.CHANGE_TODO_LIST, { new_plan: "# Plan\n- [ ] First", reason: "Change" }),
         )
 
         expect(result).toBe("prompt")
@@ -367,7 +367,7 @@ describe("handler interaction matrix", () => {
         const focusChainForceUpdate = taskConfig.callbacks.focusChainForceUpdate
         await new FocusChainHandler().execute(
             taskConfig,
-            block(ClineDefaultTool.CHANGE_TODO_LIST, { new_plan: "# Plan\n- [ ] First\n- [ ] Second", reason: "Change" }),
+            block(DlineDefaultTool.CHANGE_TODO_LIST, { new_plan: "# Plan\n- [ ] First\n- [ ] Second", reason: "Change" }),
         )
         expect(taskConfig.interactions.open).not.toHaveBeenCalled()
         expect(focusChainForceUpdate).toHaveBeenCalledWith("# Plan\n- [ ] Second")

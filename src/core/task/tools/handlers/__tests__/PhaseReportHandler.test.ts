@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { normalizeToolExecutionResult } from "../../ToolExecutionResult"
-import { StatusUpdateHandler } from "../StatusUpdateHandler"
+import { PhaseReportHandler } from "../PhaseReportHandler"
 
 const IMAGE_DATA = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 const PDF_DATA = "JVBERi0xLjQKJSVFT0YK"
@@ -33,16 +33,20 @@ function textOf(content: unknown): string {
 }
 
 /**
- * Create a minimal task config for status update handler tests.
+ * Create a minimal task config for phase report handler tests.
  * @param askResult Result returned by the mocked ask callback.
+ * @param lastToolName The previous tool the task recorded.
  * @returns TaskConfig-compatible test double.
  */
-function createConfig(askResult: {
-    response: "yesButtonClicked" | "noButtonClicked"
-    text?: string
-    images?: string[]
-    files?: string[]
-}) {
+function createConfig(
+    askResult: {
+        response: "yesButtonClicked" | "noButtonClicked"
+        text?: string
+        images?: string[]
+        files?: string[]
+    },
+    lastToolName = "read_file",
+) {
     const open = vi.fn(async () => ({
         actionId: askResult.response === "noButtonClicked" ? ("stop" as const) : ("acknowledge" as const),
         draft: {
@@ -54,7 +58,7 @@ function createConfig(askResult: {
     return {
         taskState: {
             consecutiveMistakeCount: 0,
-            lastToolName: "read_file",
+            lastToolName,
             userMessageContent: [] as unknown[],
         },
         interactions: {
@@ -70,15 +74,15 @@ function createConfig(askResult: {
     } as any
 }
 
-describe("StatusUpdateHandler", () => {
-    const handler = new StatusUpdateHandler()
+describe("PhaseReportHandler", () => {
+    const handler = new PhaseReportHandler()
 
-    it("streams a non-blocking update with the same tool row shape as its final presentation", async () => {
+    it("streams a non-blocking report with the same tool row shape as its final presentation", async () => {
         const say = vi.fn(async () => undefined)
 
         await handler.handlePartialBlock(
             {
-                name: ClineDefaultTool.STATUS_UPDATE,
+                name: DlineDefaultTool.PHASE_REPORT,
                 ts: 101,
                 params: { response: "Still working", requires_acknowledgment: "false" },
             } as any,
@@ -95,12 +99,12 @@ describe("StatusUpdateHandler", () => {
         )
     })
 
-    it("keeps an acknowledged update as text until the interaction owns its final row", async () => {
+    it("keeps an acknowledged report as text until the interaction owns its final row", async () => {
         const say = vi.fn(async () => undefined)
 
         await handler.handlePartialBlock(
             {
-                name: ClineDefaultTool.STATUS_UPDATE,
+                name: DlineDefaultTool.PHASE_REPORT,
                 ts: 102,
                 params: { response: "Please confirm", requires_acknowledgment: "true" },
             } as any,
@@ -110,16 +114,16 @@ describe("StatusUpdateHandler", () => {
         expect(say).toHaveBeenCalledWith("text", "Please confirm", undefined, undefined, true, 102)
     })
 
-    it("uses noButtonClicked as stop response for acknowledged status update", async () => {
+    it("uses noButtonClicked as stop response for an acknowledged report", async () => {
         const config = createConfig({ response: "noButtonClicked", text: "先停止，我要调整方向" })
 
         const result = await handler.execute(config, {
-            name: ClineDefaultTool.STATUS_UPDATE,
+            name: DlineDefaultTool.PHASE_REPORT,
             dline_tid: "tid-status-stop",
             params: { response: "请确认", requires_acknowledgment: "true" },
         } as any)
 
-        expect(result).toContain("User chose to stop")
+        expect(result).toContain("[PHASE_REPORT] User chose to stop")
         expect(result).toContain("<feedback>\n先停止，我要调整方向\n</feedback>")
     })
 
@@ -133,7 +137,7 @@ describe("StatusUpdateHandler", () => {
 
         const { response: result, documents } = normalizeToolExecutionResult(
             await handler.execute(config, {
-                name: ClineDefaultTool.STATUS_UPDATE,
+                name: DlineDefaultTool.PHASE_REPORT,
                 dline_tid: "tid-status-acknowledge",
                 params: { response: "请确认", requires_acknowledgment: "true" },
             } as any),
@@ -158,5 +162,20 @@ describe("StatusUpdateHandler", () => {
         // nothing is left in a buffer the runtime never drains.
         expect(documents).toEqual([pdfDocument])
         expect(config.taskState.userMessageContent).toEqual([])
+    })
+
+    it.each([
+        DlineDefaultTool.PHASE_REPORT,
+        DlineDefaultTool.LEGACY_STATUS_UPDATE,
+    ])("blocks a report that directly follows %s", async (previous) => {
+        const config = createConfig({ response: "yesButtonClicked" }, previous)
+
+        const result = await handler.execute(config, {
+            name: DlineDefaultTool.PHASE_REPORT,
+            params: { response: "Again", requires_acknowledgment: "false" },
+        } as any)
+
+        expect(String(result)).toContain("[BLOCKED]")
+        expect(config.interactions.say).not.toHaveBeenCalled()
     })
 })

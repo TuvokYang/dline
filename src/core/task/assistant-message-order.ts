@@ -1,6 +1,6 @@
 import type { AssistantMessageContent, ToolUse } from "@core/assistant-message"
 import type { ClineAssistantToolUseBlock } from "@/shared/messages"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 
 /**
  * Single source of turn-ending tool identity.
@@ -11,12 +11,12 @@ import { ClineDefaultTool } from "@/shared/tools"
  * a second literal list is how the selection UI drifted from execution.
  */
 export const TURN_ENDING_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
-    ClineDefaultTool.ATTEMPT,
-    ClineDefaultTool.ASK,
-    ClineDefaultTool.MAKE_PLAN,
-    ClineDefaultTool.QNA_RESPOND,
-    ClineDefaultTool.GENERATE_REPORT,
-    ClineDefaultTool.NEW_TASK,
+    DlineDefaultTool.ATTEMPT,
+    DlineDefaultTool.ASK,
+    DlineDefaultTool.MAKE_PLAN,
+    DlineDefaultTool.QNA_RESPOND,
+    DlineDefaultTool.GENERATE_REPORT,
+    DlineDefaultTool.NEW_TASK,
 ])
 
 export function isTurnEndingToolName(name?: string): boolean {

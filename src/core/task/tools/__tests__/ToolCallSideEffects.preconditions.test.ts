@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { awaitToolCallPreconditions } from "../ToolCallSideEffects"
 
 function pendingBaseline() {
@@ -17,9 +17,9 @@ async function settlesBeforeRelease(promise: Promise<void>): Promise<boolean> {
 
 describe("awaitToolCallPreconditions", () => {
     it.each([
-        ClineDefaultTool.FILE_NEW,
-        ClineDefaultTool.BASH,
-        ClineDefaultTool.ATTEMPT,
+        DlineDefaultTool.FILE_NEW,
+        DlineDefaultTool.BASH,
+        DlineDefaultTool.ATTEMPT,
     ])("holds %s until the baseline exists", async (tool) => {
         const port = pendingBaseline()
 
@@ -34,7 +34,7 @@ describe("awaitToolCallPreconditions", () => {
     it("lets a read-only tool overlap the baseline", async () => {
         const port = pendingBaseline()
 
-        await expect(awaitToolCallPreconditions(port, ClineDefaultTool.FILE_READ)).resolves.toBeUndefined()
+        await expect(awaitToolCallPreconditions(port, DlineDefaultTool.FILE_READ)).resolves.toBeUndefined()
 
         expect(port.awaitInitialCheckpoint).not.toHaveBeenCalled()
     })
@@ -42,10 +42,10 @@ describe("awaitToolCallPreconditions", () => {
     it("runs the tool when the baseline failed", async () => {
         const port = { awaitInitialCheckpoint: vi.fn(async () => Promise.reject(new Error("shadow repository unavailable"))) }
 
-        await expect(awaitToolCallPreconditions(port, ClineDefaultTool.FILE_NEW)).resolves.toBeUndefined()
+        await expect(awaitToolCallPreconditions(port, DlineDefaultTool.FILE_NEW)).resolves.toBeUndefined()
     })
 
     it("does nothing on a surface without workspace history", async () => {
-        await expect(awaitToolCallPreconditions({}, ClineDefaultTool.FILE_NEW)).resolves.toBeUndefined()
+        await expect(awaitToolCallPreconditions({}, DlineDefaultTool.FILE_NEW)).resolves.toBeUndefined()
     })
 })

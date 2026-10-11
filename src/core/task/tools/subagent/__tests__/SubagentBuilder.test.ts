@@ -5,7 +5,7 @@ import type { TaskConfig } from "@core/task/tools/types/TaskConfig"
 import type { ApiConfiguration } from "@shared/api"
 import { afterEach, describe, it, vi } from "vitest"
 // sinon import removed: using vitest globals
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { AgentConfigLoader } from "../AgentConfigLoader"
 import { SUBAGENT_DEFAULT_ALLOWED_TOOLS, SUBAGENT_SYSTEM_SUFFIX, SubagentBuilder } from "../SubagentBuilder"
 
@@ -59,7 +59,7 @@ describe("SubagentBuilder", () => {
         const agentConfig = {
             name: "cached-agent",
             description: "cached description",
-            tools: [ClineDefaultTool.LIST_FILES],
+            tools: [DlineDefaultTool.LIST_FILES],
             profile: "subagent-profile",
             systemPrompt: "cached system prompt",
         }
@@ -80,7 +80,7 @@ describe("SubagentBuilder", () => {
         assert.equal((effectiveApiConfig as Record<string, unknown>).planModeProfile, "act-default-profile")
         assert.equal(builder.getProfileName(), "subagent-profile")
 
-        assert.deepEqual(builder.getAllowedTools(), [ClineDefaultTool.LIST_FILES, ClineDefaultTool.ATTEMPT])
+        assert.deepEqual(builder.getAllowedTools(), [DlineDefaultTool.LIST_FILES, DlineDefaultTool.ATTEMPT])
         const prompt = builder.buildSystemPrompt("generated system prompt")
         assert.match(prompt, /^generated system prompt/)
         assert.match(prompt, /# Subagent Custom Instructions/)
@@ -97,7 +97,7 @@ describe("SubagentBuilder", () => {
         const agentConfig = {
             name: "reviewer",
             description: "Reviews with an independent Profile",
-            tools: [ClineDefaultTool.LIST_FILES],
+            tools: [DlineDefaultTool.LIST_FILES],
             profile: "subagent-profile",
             systemPrompt: "Review carefully.",
         }
@@ -147,7 +147,7 @@ describe("SubagentBuilder", () => {
         const agentConfig = {
             name: "budget-reviewer",
             description: "Reviews with a fixed child budget",
-            tools: [ClineDefaultTool.LIST_FILES],
+            tools: [DlineDefaultTool.LIST_FILES],
             profile: "budget-profile",
             systemPrompt: "Review within the configured budget.",
         }
@@ -284,7 +284,7 @@ describe("SubagentBuilder", () => {
         const agentConfig = {
             name: "ambiguous-agent",
             description: "ambiguous child Profile",
-            tools: [ClineDefaultTool.FILE_READ],
+            tools: [DlineDefaultTool.FILE_READ],
             profile: "duplicate-child",
             systemPrompt: "fallback system",
         }
@@ -320,7 +320,7 @@ describe("SubagentBuilder", () => {
         const agentConfig = {
             name: "missing-profile-agent",
             description: "missing profile agent",
-            tools: [ClineDefaultTool.FILE_READ],
+            tools: [DlineDefaultTool.FILE_READ],
             profile: "deleted-profile",
             systemPrompt: "fallback system",
         }
@@ -348,7 +348,7 @@ describe("SubagentBuilder", () => {
         const agentConfig = {
             name: "invalid-profile-agent",
             description: "invalid profile agent",
-            tools: [ClineDefaultTool.FILE_READ],
+            tools: [DlineDefaultTool.FILE_READ],
             profile: configuredProfile,
             systemPrompt: "fallback system",
         }
@@ -387,7 +387,7 @@ describe("SubagentBuilder", () => {
                     name: "image-agent",
                     description: "image agent",
                     profile,
-                    tools: [ClineDefaultTool.GENERATE_IMAGE],
+                    tools: [DlineDefaultTool.GENERATE_IMAGE],
                     systemPrompt: "",
                 }),
         ).toThrow(/generate_image require an explicit API Profile|unavailable or not enabled for subagents/)
@@ -397,35 +397,35 @@ describe("SubagentBuilder", () => {
         const agentConfig = {
             name: "default",
             description: "legacy default",
-            tools: [ClineDefaultTool.FILE_READ, ClineDefaultTool.BASH],
+            tools: [DlineDefaultTool.FILE_READ, DlineDefaultTool.BASH],
             systemPrompt: "legacy prompt",
         }
         vi.spyOn(api, "buildApiHandler").mockReturnValue({ getModel: vi.fn(), createMessage: vi.fn() } as never)
 
         const builder = new SubagentBuilder(createTaskConfig("act", "anthropic"), "default", agentConfig)
 
-        assert.deepEqual(builder.getAllowedTools(), [ClineDefaultTool.FILE_READ, ClineDefaultTool.ATTEMPT])
+        assert.deepEqual(builder.getAllowedTools(), [DlineDefaultTool.FILE_READ, DlineDefaultTool.ATTEMPT])
     })
 
     it("preserves explicitly configured execute_command for a named custom subagent", () => {
         const agentConfig = {
             name: "ops-reviewer",
             description: "custom reviewer",
-            tools: [ClineDefaultTool.BASH],
+            tools: [DlineDefaultTool.BASH],
             systemPrompt: "custom prompt",
         }
         vi.spyOn(api, "buildApiHandler").mockReturnValue({ getModel: vi.fn(), createMessage: vi.fn() } as never)
 
         const builder = new SubagentBuilder(createTaskConfig("act", "anthropic"), "ops-reviewer", agentConfig)
 
-        assert.deepEqual(builder.getAllowedTools(), [ClineDefaultTool.BASH, ClineDefaultTool.ATTEMPT])
+        assert.deepEqual(builder.getAllowedTools(), [DlineDefaultTool.BASH, DlineDefaultTool.ATTEMPT])
     })
 
     it("exposes the exact configured allowlist for facade filtering", () => {
         const agentConfig = {
             name: "tools-agent",
             description: "tool-limited",
-            tools: [ClineDefaultTool.LIST_FILES],
+            tools: [DlineDefaultTool.LIST_FILES],
             profile: "tool-profile",
             systemPrompt: "tool prompt",
         }
@@ -433,7 +433,7 @@ describe("SubagentBuilder", () => {
 
         const builder = new SubagentBuilder(createTaskConfig("act", "anthropic"), "tools-agent", agentConfig)
 
-        assert.deepEqual(builder.getAllowedTools(), [ClineDefaultTool.LIST_FILES, ClineDefaultTool.ATTEMPT])
+        assert.deepEqual(builder.getAllowedTools(), [DlineDefaultTool.LIST_FILES, DlineDefaultTool.ATTEMPT])
     })
 
     it("degrades to the reporting tool when every configured tool was rejected", () => {
@@ -451,7 +451,7 @@ describe("SubagentBuilder", () => {
 
         // Inheriting the default allowlist here would grant read_file,
         // list_files, search_files and more to an author who asked for less.
-        assert.deepEqual(builder.getAllowedTools(), [ClineDefaultTool.ATTEMPT])
+        assert.deepEqual(builder.getAllowedTools(), [DlineDefaultTool.ATTEMPT])
     })
 
     it("still inherits the default allowlist when no tools were configured at all", () => {
@@ -466,12 +466,12 @@ describe("SubagentBuilder", () => {
         const builder = new SubagentBuilder(createTaskConfig("act", "anthropic"), "inheriting-agent", agentConfig)
 
         assert.deepEqual(builder.getAllowedTools(), [
-            ClineDefaultTool.FILE_READ,
-            ClineDefaultTool.LIST_FILES,
-            ClineDefaultTool.SEARCH,
-            ClineDefaultTool.LIST_CODE_DEF,
-            ClineDefaultTool.LOAD_SKILL,
-            ClineDefaultTool.ATTEMPT,
+            DlineDefaultTool.FILE_READ,
+            DlineDefaultTool.LIST_FILES,
+            DlineDefaultTool.SEARCH,
+            DlineDefaultTool.LIST_CODE_DEF,
+            DlineDefaultTool.LOAD_SKILL,
+            DlineDefaultTool.ATTEMPT,
         ])
     })
 })

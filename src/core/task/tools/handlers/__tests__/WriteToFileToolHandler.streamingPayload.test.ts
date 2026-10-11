@@ -1,5 +1,5 @@
 import type { UiSayTool } from "@shared/ExtensionMessage"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { ToolValidator } from "../../ToolValidator"
 import type { TaskConfig } from "../../types/TaskConfig"
@@ -99,7 +99,7 @@ async function streamPartialEdit(diff: string, originalContent = ORIGINAL_CONTEN
     await handler.handlePartialBlock(
         {
             type: "tool_use",
-            name: ClineDefaultTool.FILE_EDIT,
+            name: DlineDefaultTool.FILE_EDIT,
             partial: true,
             ts: 4242,
             params: { path: "src/sample.ts", diff },

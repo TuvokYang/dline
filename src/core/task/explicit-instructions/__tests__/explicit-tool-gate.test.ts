@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { authorizeExplicitToolExecution } from "../explicit-tool-gate"
 import type { ExplicitInstructionConsumePort } from "../types"
@@ -15,16 +15,16 @@ describe("authorizeExplicitToolExecution", () => {
     it("allows ordinary tools without consuming explicit authority", () => {
         const port = createPort({ ok: false, code: "explicit_instruction_missing" })
 
-        expect(authorizeExplicitToolExecution(ClineDefaultTool.FILE_READ, port)).toEqual({ ok: true })
+        expect(authorizeExplicitToolExecution(DlineDefaultTool.FILE_READ, port)).toEqual({ ok: true })
         expect(port.consumeTool).not.toHaveBeenCalled()
     })
 
     it.each([
-        ClineDefaultTool.SUMMARIZE_TASK,
-        ClineDefaultTool.NEW_TASK,
-        ClineDefaultTool.NEW_RULE,
-        ClineDefaultTool.REPORT_BUG,
-        ClineDefaultTool.GENERATE_EXPLANATION,
+        DlineDefaultTool.SUMMARIZE_TASK,
+        DlineDefaultTool.NEW_TASK,
+        DlineDefaultTool.NEW_RULE,
+        DlineDefaultTool.REPORT_BUG,
+        DlineDefaultTool.GENERATE_EXPLANATION,
     ])("rejects explicit-only tool %s when no request authority exists", (tool) => {
         const port = createPort({ ok: false, code: "explicit_instruction_missing" })
 
@@ -38,7 +38,7 @@ describe("authorizeExplicitToolExecution", () => {
     it("permanently rejects retired condense without consulting request authority", () => {
         const port = createPort({ ok: true, authorization: {} as never })
 
-        expect(authorizeExplicitToolExecution(ClineDefaultTool.CONDENSE, port)).toEqual({
+        expect(authorizeExplicitToolExecution(DlineDefaultTool.CONDENSE, port)).toEqual({
             ok: false,
             code: "explicit_instruction_retired",
         })
@@ -52,12 +52,12 @@ describe("authorizeExplicitToolExecution", () => {
             attemptId: "attempt-1",
             type: "summarize_task" as const,
             source: "task_header" as const,
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             state: "consumed" as const,
         }
         const port = createPort({ ok: true, authorization })
 
-        expect(authorizeExplicitToolExecution(ClineDefaultTool.SUMMARIZE_TASK, port)).toEqual({
+        expect(authorizeExplicitToolExecution(DlineDefaultTool.SUMMARIZE_TASK, port)).toEqual({
             ok: true,
             authorization,
         })
@@ -66,7 +66,7 @@ describe("authorizeExplicitToolExecution", () => {
     it("rejects replay with the registry failure code", () => {
         const port = createPort({ ok: false, code: "explicit_instruction_already_consumed" })
 
-        expect(authorizeExplicitToolExecution(ClineDefaultTool.SUMMARIZE_TASK, port)).toEqual({
+        expect(authorizeExplicitToolExecution(DlineDefaultTool.SUMMARIZE_TASK, port)).toEqual({
             ok: false,
             code: "explicit_instruction_already_consumed",
         })

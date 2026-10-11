@@ -1,7 +1,7 @@
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
@@ -10,7 +10,7 @@ import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class GenerateReportHandler implements IToolHandler, IPartialBlockHandler {
-    readonly name = ClineDefaultTool.GENERATE_REPORT
+    readonly name = DlineDefaultTool.GENERATE_REPORT
 
     getDescription(block: ToolUse): string {
         return `[${block.name}] ${(block.params as Record<string, string>).title || ""}`

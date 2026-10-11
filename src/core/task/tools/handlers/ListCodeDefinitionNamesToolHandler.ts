@@ -5,7 +5,7 @@ import { parseSourceCodeForDefinitionsTopLevel } from "@services/tree-sitter"
 import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { formatResponse } from "@/core/prompts/responses"
 import { telemetryService } from "@/services/telemetry"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
@@ -13,7 +13,7 @@ import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
 export class ListCodeDefinitionNamesToolHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.LIST_CODE_DEF
+    readonly name = DlineDefaultTool.LIST_CODE_DEF
 
     constructor(private validator: ToolValidator) {}
 

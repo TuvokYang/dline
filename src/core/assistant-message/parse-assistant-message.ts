@@ -1,4 +1,4 @@
-import { ClineDefaultTool, getToolUseNames } from "@shared/tools"
+import { DlineDefaultTool, getToolUseNames } from "@shared/tools"
 import { AssistantMessageContent, TextStreamContent, ToolParamName, ToolUse, toolParamNames } from "."
 
 /**
@@ -7,7 +7,7 @@ import { AssistantMessageContent, TextStreamContent, ToolParamName, ToolUse, too
 // Summary text may quote the tool's XML example verbatim. Walk backward from
 // the actual response tail so quoted closing payloads cannot become boundaries.
 function findTerminalSummarizeContextClose(assistantMessage: string): number | undefined {
-    const toolCloseTag = `</${ClineDefaultTool.SUMMARIZE_TASK}>`
+    const toolCloseTag = `</${DlineDefaultTool.SUMMARIZE_TASK}>`
     let tailStart = assistantMessage.trimEnd().length - toolCloseTag.length
     if (tailStart < 0 || !assistantMessage.startsWith(toolCloseTag, tailStart)) {
         return undefined
@@ -96,7 +96,7 @@ export function parseAssistantMessage(assistantMessage: string, registry: ParseT
             const foundCloseTag = currentCharIndex >= closeTag.length - 1 && assistantMessage.startsWith(closeTag, closeTagStart)
             const foundTerminalParamClose =
                 foundCloseTag &&
-                (currentToolUse.name !== ClineDefaultTool.SUMMARIZE_TASK ||
+                (currentToolUse.name !== DlineDefaultTool.SUMMARIZE_TASK ||
                     currentParamName !== "context" ||
                     closeTagStart === terminalSummarizeContextClose)
             if (foundTerminalParamClose) {
@@ -182,7 +182,7 @@ export function parseAssistantMessage(assistantMessage: string, registry: ParseT
                     const identity = registry.getOrCreateToolIdentityForBlock(`tool:${toolOpenTagStart}`)
                     currentToolUse = {
                         type: "tool_use",
-                        name: toolName as ClineDefaultTool,
+                        name: toolName as DlineDefaultTool,
                         params: {},
                         partial: true,
                         ts: getTs(`tool:${toolOpenTagStart}`),

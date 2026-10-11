@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import {
     hasDeclaredLaneAssignment,
@@ -38,9 +38,9 @@ function registeredToolNames(): string[] {
 
     const body = source.slice(mapStart, mapEnd)
     const names: string[] = []
-    for (const match of body.matchAll(/\[ClineDefaultTool\.([A-Z_]+)\]:/g)) {
-        const key = match[1] as keyof typeof ClineDefaultTool
-        const value = ClineDefaultTool[key]
+    for (const match of body.matchAll(/\[DlineDefaultTool\.([A-Z_]+)\]:/g)) {
+        const key = match[1] as keyof typeof DlineDefaultTool
+        const value = DlineDefaultTool[key]
         if (value) names.push(value)
     }
     return names
@@ -67,7 +67,7 @@ describe("tool lanes", () => {
 
             const missing = registeredToolNames().filter((name) => {
                 const lanes = resolveToolLanes(name, contextByTool[name] ?? {})
-                return lanes.length === 0 && !UNRESTRICTED_TOOLS.has(name as ClineDefaultTool)
+                return lanes.length === 0 && !UNRESTRICTED_TOOLS.has(name as DlineDefaultTool)
             })
 
             expect(missing).toEqual([])
@@ -76,8 +76,8 @@ describe("tool lanes", () => {
 
     describe("shared resource lanes", () => {
         it("puts two file-writing tools on the diff-editor lane even for different paths", () => {
-            const write = resolveToolLanes(ClineDefaultTool.FILE_NEW, { canonicalWritePaths: ["/repo/a.ts"] })
-            const edit = resolveToolLanes(ClineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/b.ts"] })
+            const write = resolveToolLanes(DlineDefaultTool.FILE_NEW, { canonicalWritePaths: ["/repo/a.ts"] })
+            const edit = resolveToolLanes(DlineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/b.ts"] })
 
             expect(write).toContain(LANE_DIFF_EDITOR)
             expect(edit).toContain(LANE_DIFF_EDITOR)
@@ -87,8 +87,8 @@ describe("tool lanes", () => {
         })
 
         it("separates two edits of the same path by write path as well", () => {
-            const first = resolveToolLanes(ClineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/a.ts"] })
-            const second = resolveToolLanes(ClineDefaultTool.APPLY_PATCH, { canonicalWritePaths: ["/repo/a.ts"] })
+            const first = resolveToolLanes(DlineDefaultTool.FILE_EDIT, { canonicalWritePaths: ["/repo/a.ts"] })
+            const second = resolveToolLanes(DlineDefaultTool.APPLY_PATCH, { canonicalWritePaths: ["/repo/a.ts"] })
 
             expect(first).toContain(writePathLane("/repo/a.ts"))
             expect(second).toContain(writePathLane("/repo/a.ts"))
@@ -99,22 +99,22 @@ describe("tool lanes", () => {
             // apply_patch, replace_text and rename each modify several files in
             // one invocation, so a single path would leave the second and later
             // files unprotected.
-            const patch = resolveToolLanes(ClineDefaultTool.APPLY_PATCH, {
+            const patch = resolveToolLanes(DlineDefaultTool.APPLY_PATCH, {
                 canonicalWritePaths: ["/repo/a.ts", "/repo/b.ts"],
             })
 
             expect(patch).toContain(writePathLane("/repo/a.ts"))
             expect(patch).toContain(writePathLane("/repo/b.ts"))
 
-            const overlapsSecondFileOnly = resolveToolLanes(ClineDefaultTool.REPLACE_TEXT, {
+            const overlapsSecondFileOnly = resolveToolLanes(DlineDefaultTool.REPLACE_TEXT, {
                 canonicalWritePaths: ["/repo/b.ts"],
             })
             expect(lanesAreCompatible(patch, overlapsSecondFileOnly)).toBe(false)
         })
 
         it("keeps subagent entry points off each other, because both own one flag", () => {
-            const single = resolveToolLanes(ClineDefaultTool.USE_SUBAGENT)
-            const batch = resolveToolLanes(ClineDefaultTool.USE_SUBAGENTS)
+            const single = resolveToolLanes(DlineDefaultTool.USE_SUBAGENT)
+            const batch = resolveToolLanes(DlineDefaultTool.USE_SUBAGENTS)
 
             expect(single).toContain(LANE_SUBAGENT_EXECUTION)
             expect(batch).toContain(LANE_SUBAGENT_EXECUTION)
@@ -124,19 +124,19 @@ describe("tool lanes", () => {
         })
 
         it("serialises file reads because they share the read accounting cache", () => {
-            const first = resolveToolLanes(ClineDefaultTool.FILE_READ)
-            const second = resolveToolLanes(ClineDefaultTool.FILE_READ)
+            const first = resolveToolLanes(DlineDefaultTool.FILE_READ)
+            const second = resolveToolLanes(DlineDefaultTool.FILE_READ)
 
             expect(first).toEqual([LANE_FILE_READ_ACCOUNTING])
             expect(lanesAreCompatible(first, second)).toBe(false)
             // A search is unaffected; it does not touch that cache.
-            expect(lanesAreCompatible(first, resolveToolLanes(ClineDefaultTool.SEARCH))).toBe(true)
+            expect(lanesAreCompatible(first, resolveToolLanes(DlineDefaultTool.SEARCH))).toBe(true)
         })
 
         it("shares a browser lane that excludes unrelated tools", () => {
-            const browser = resolveToolLanes(ClineDefaultTool.BROWSER)
-            const otherBrowser = resolveToolLanes(ClineDefaultTool.BROWSER)
-            const read = resolveToolLanes(ClineDefaultTool.FILE_READ)
+            const browser = resolveToolLanes(DlineDefaultTool.BROWSER)
+            const otherBrowser = resolveToolLanes(DlineDefaultTool.BROWSER)
+            const read = resolveToolLanes(DlineDefaultTool.FILE_READ)
 
             expect(browser).toEqual([LANE_BROWSER_SESSION])
             expect(lanesAreCompatible(browser, otherBrowser)).toBe(false)
@@ -144,17 +144,17 @@ describe("tool lanes", () => {
         })
 
         it("separates commands by the foreground terminal", () => {
-            const run = resolveToolLanes(ClineDefaultTool.BASH)
-            const kill = resolveToolLanes(ClineDefaultTool.KILL_COMMAND)
+            const run = resolveToolLanes(DlineDefaultTool.BASH)
+            const kill = resolveToolLanes(DlineDefaultTool.KILL_COMMAND)
 
             expect(run).toContain(LANE_FOREGROUND_TERMINAL)
             expect(lanesAreCompatible(run, kill)).toBe(false)
         })
 
         it("separates MCP calls per server", () => {
-            const serverA = resolveToolLanes(ClineDefaultTool.MCP_ACCESS, { mcpServerName: "alpha" })
-            const alsoServerA = resolveToolLanes(ClineDefaultTool.MCP_ACCESS, { mcpServerName: "alpha" })
-            const serverB = resolveToolLanes(ClineDefaultTool.MCP_ACCESS, { mcpServerName: "beta" })
+            const serverA = resolveToolLanes(DlineDefaultTool.MCP_ACCESS, { mcpServerName: "alpha" })
+            const alsoServerA = resolveToolLanes(DlineDefaultTool.MCP_ACCESS, { mcpServerName: "alpha" })
+            const serverB = resolveToolLanes(DlineDefaultTool.MCP_ACCESS, { mcpServerName: "beta" })
 
             expect(serverA).toEqual([mcpServerLane("alpha")])
             expect(lanesAreCompatible(serverA, alsoServerA)).toBe(false)
@@ -164,8 +164,8 @@ describe("tool lanes", () => {
         })
 
         it("serialises notification-draining MCP calls across different servers", () => {
-            const serverA = resolveToolLanes(ClineDefaultTool.MCP_USE, { mcpServerName: "alpha" })
-            const serverB = resolveToolLanes(ClineDefaultTool.MCP_USE, { mcpServerName: "beta" })
+            const serverA = resolveToolLanes(DlineDefaultTool.MCP_USE, { mcpServerName: "alpha" })
+            const serverB = resolveToolLanes(DlineDefaultTool.MCP_USE, { mcpServerName: "beta" })
 
             expect(serverA).toContain(LANE_MCP_NOTIFICATIONS)
             expect(serverA).toContain(mcpServerLane("alpha"))
@@ -175,8 +175,8 @@ describe("tool lanes", () => {
         })
 
         it("serialises tools that speak to the user", () => {
-            const attempt = resolveToolLanes(ClineDefaultTool.ATTEMPT)
-            const ask = resolveToolLanes(ClineDefaultTool.ASK)
+            const attempt = resolveToolLanes(DlineDefaultTool.ATTEMPT)
+            const ask = resolveToolLanes(DlineDefaultTool.ASK)
 
             expect(attempt).toEqual([LANE_USER_INTERACTION])
             expect(lanesAreCompatible(attempt, ask)).toBe(false)
@@ -186,10 +186,10 @@ describe("tool lanes", () => {
     describe("free concurrency", () => {
         it("gives read-only tools no lane", () => {
             for (const tool of [
-                ClineDefaultTool.SEARCH,
-                ClineDefaultTool.LIST_FILES,
-                ClineDefaultTool.LIST_CODE_DEF,
-                ClineDefaultTool.FIND_REFERENCES,
+                DlineDefaultTool.SEARCH,
+                DlineDefaultTool.LIST_FILES,
+                DlineDefaultTool.LIST_CODE_DEF,
+                DlineDefaultTool.FIND_REFERENCES,
             ]) {
                 expect(resolveToolLanes(tool), `${tool} should be unrestricted`).toEqual([])
             }
@@ -204,15 +204,15 @@ describe("tool lanes", () => {
     describe("purity", () => {
         it("returns an equal lane set for the same input", () => {
             const context = { canonicalWritePaths: ["/repo/a.ts"] }
-            expect(resolveToolLanes(ClineDefaultTool.FILE_EDIT, context)).toEqual(
-                resolveToolLanes(ClineDefaultTool.FILE_EDIT, context),
+            expect(resolveToolLanes(DlineDefaultTool.FILE_EDIT, context)).toEqual(
+                resolveToolLanes(DlineDefaultTool.FILE_EDIT, context),
             )
         })
 
         it("does not mutate the supplied context", () => {
             const context = { mcpServerName: "alpha", canonicalWritePaths: ["/repo/a.ts"] }
             const snapshot = { mcpServerName: "alpha", canonicalWritePaths: ["/repo/a.ts"] }
-            resolveToolLanes(ClineDefaultTool.MCP_USE, context)
+            resolveToolLanes(DlineDefaultTool.MCP_USE, context)
             expect(context).toEqual(snapshot)
         })
 

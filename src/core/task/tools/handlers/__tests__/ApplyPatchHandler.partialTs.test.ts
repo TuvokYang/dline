@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { ToolValidator } from "../../ToolValidator"
 import type { TaskConfig } from "../../types/TaskConfig"
@@ -108,7 +108,7 @@ describe("ApplyPatchHandler partial rendering", () => {
         await handler.handlePartialBlock(
             {
                 type: "tool_use",
-                name: ClineDefaultTool.APPLY_PATCH,
+                name: DlineDefaultTool.APPLY_PATCH,
                 partial: true,
                 ts: blockTs,
                 params: {

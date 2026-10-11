@@ -16,7 +16,7 @@ import { projectInternalMessagesForProvider } from "@shared/messages/content"
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import { Logger } from "@shared/services/Logger"
 import { ClineError } from "@/services/error"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { isTurnEndingToolName } from "../../../assistant-message-order"
 import { isRetryableProviderError, type ProviderIdentity, waitRetryDelayUnlessAborted } from "../../../auto-retry"
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry-schedule"
@@ -338,7 +338,7 @@ export function materializeNativeToolCall(
     const serverKey = name.slice(0, marker)
     const toolName = name.slice(marker + CLINE_MCP_TOOL_IDENTIFIER.length)
     return {
-        name: ClineDefaultTool.MCP_USE,
+        name: DlineDefaultTool.MCP_USE,
         params: {
             server_name: resolveServerName(serverKey),
             tool_name: toolName,
@@ -359,7 +359,7 @@ export function materializePartialNativeToolCall(
     const serverKey = name.slice(0, marker)
     const toolName = name.slice(marker + CLINE_MCP_TOOL_IDENTIFIER.length)
     return {
-        name: ClineDefaultTool.MCP_USE,
+        name: DlineDefaultTool.MCP_USE,
         params: {
             server_name: resolveServerName(serverKey),
             tool_name: toolName,

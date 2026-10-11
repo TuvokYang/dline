@@ -3,7 +3,7 @@ import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import type { Mode } from "@shared/storage/types"
 
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -20,7 +20,7 @@ function isSpawnTaskMode(value: string | undefined): value is Mode {
  * servers, and rules, then starts independently in the background.
  */
 export class SpawnTaskHandler implements IToolHandler {
-    readonly name = ClineDefaultTool.SPAWN_TASK
+    readonly name = DlineDefaultTool.SPAWN_TASK
 
     getDescription(_block: ToolUse): string {
         return `[spawn_task]`

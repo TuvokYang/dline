@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import type { TextLineRange } from "@integrations/misc/read-text-line-range"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, it } from "vitest"
 import {
     DEFAULT_MAX_LINES,
@@ -14,7 +14,7 @@ describe("getReadToolDisplayedLineRange", () => {
         type: "tool_use" as const,
         function_id: "test_read_range",
         dline_tid: "test_read_range_tid",
-        name: ClineDefaultTool.FILE_READ,
+        name: DlineDefaultTool.FILE_READ,
         params: {
             path: "f.txt",
             ...(start !== undefined ? { start_line: start } : {}),

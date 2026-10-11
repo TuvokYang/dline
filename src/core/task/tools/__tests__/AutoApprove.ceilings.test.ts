@@ -7,7 +7,7 @@ import {
     type ConfigurablePermissionScope,
     DEFAULT_AUTO_APPROVAL_SETTINGS,
 } from "@shared/AutoApprovalSettings"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { type PermissionScopeContext, resolveApprovalKind } from "../../kernel/turn/approval-kind"
 
@@ -21,8 +21,8 @@ interface Options {
 }
 
 interface CanonicalApprovalProbe {
-    shouldAutoApproveTool(toolName: ClineDefaultTool): boolean | [boolean, boolean]
-    shouldAutoApproveToolWithPath(toolName: ClineDefaultTool, candidate: string | undefined): Promise<boolean>
+    shouldAutoApproveTool(toolName: DlineDefaultTool): boolean | [boolean, boolean]
+    shouldAutoApproveToolWithPath(toolName: DlineDefaultTool, candidate: string | undefined): Promise<boolean>
 }
 
 /** Exercise the canonical resolver while retaining the legacy test matrix shape. */
@@ -32,7 +32,7 @@ function autoApprove(options: Options = {}): CanonicalApprovalProbe {
         actions: { ...DEFAULT_AUTO_APPROVAL_SETTINGS.actions, ...options.actions },
         ceilings: options.ceilings,
     }
-    const granted = (toolName: ClineDefaultTool, context: PermissionScopeContext = {}) => {
+    const granted = (toolName: DlineDefaultTool, context: PermissionScopeContext = {}) => {
         const decision = resolveApprovalKind({
             toolName,
             settings,
@@ -45,14 +45,14 @@ function autoApprove(options: Options = {}): CanonicalApprovalProbe {
     return {
         shouldAutoApproveTool(toolName) {
             if (
-                toolName === ClineDefaultTool.FILE_READ ||
-                toolName === ClineDefaultTool.FILE_NEW ||
-                toolName === ClineDefaultTool.USE_SUBAGENT ||
-                toolName === ClineDefaultTool.USE_SUBAGENTS
+                toolName === DlineDefaultTool.FILE_READ ||
+                toolName === DlineDefaultTool.FILE_NEW ||
+                toolName === DlineDefaultTool.USE_SUBAGENT ||
+                toolName === DlineDefaultTool.USE_SUBAGENTS
             ) {
                 return [granted(toolName), granted(toolName, { isExternalPath: true })]
             }
-            if (toolName === ClineDefaultTool.BASH) {
+            if (toolName === DlineDefaultTool.BASH) {
                 return [granted(toolName, { isSafeCommand: true }), granted(toolName, { isSafeCommand: false })]
             }
             return granted(toolName)
@@ -96,13 +96,13 @@ describe("Canonical approval ceilings — default compatibility", () => {
         })
 
         // Introducing ceilings must not change any existing user's outcome.
-        expect(enabled.shouldAutoApproveTool(ClineDefaultTool.FILE_READ)).toEqual([true, true])
-        expect(enabled.shouldAutoApproveTool(ClineDefaultTool.FILE_NEW)).toEqual([true, true])
-        expect(enabled.shouldAutoApproveTool(ClineDefaultTool.BASH)).toEqual([true, true])
-        expect(enabled.shouldAutoApproveTool(ClineDefaultTool.BROWSER)).toBe(true)
-        expect(enabled.shouldAutoApproveTool(ClineDefaultTool.WEB_FETCH)).toBe(true)
-        expect(enabled.shouldAutoApproveTool(ClineDefaultTool.MCP_USE)).toBe(true)
-        expect(enabled.shouldAutoApproveTool(ClineDefaultTool.GENERATE_IMAGE)).toBe(true)
+        expect(enabled.shouldAutoApproveTool(DlineDefaultTool.FILE_READ)).toEqual([true, true])
+        expect(enabled.shouldAutoApproveTool(DlineDefaultTool.FILE_NEW)).toEqual([true, true])
+        expect(enabled.shouldAutoApproveTool(DlineDefaultTool.BASH)).toEqual([true, true])
+        expect(enabled.shouldAutoApproveTool(DlineDefaultTool.BROWSER)).toBe(true)
+        expect(enabled.shouldAutoApproveTool(DlineDefaultTool.WEB_FETCH)).toBe(true)
+        expect(enabled.shouldAutoApproveTool(DlineDefaultTool.MCP_USE)).toBe(true)
+        expect(enabled.shouldAutoApproveTool(DlineDefaultTool.GENERATE_IMAGE)).toBe(true)
     })
 
     it("keeps every tool manual when the toggles are off and no ceiling is set", () => {
@@ -121,9 +121,9 @@ describe("Canonical approval ceilings — default compatibility", () => {
             },
         })
 
-        expect(local(disabled.shouldAutoApproveTool(ClineDefaultTool.FILE_READ))).toBe(false)
-        expect(local(disabled.shouldAutoApproveTool(ClineDefaultTool.BASH))).toBe(false)
-        expect(disabled.shouldAutoApproveTool(ClineDefaultTool.MCP_USE)).toBe(false)
+        expect(local(disabled.shouldAutoApproveTool(DlineDefaultTool.FILE_READ))).toBe(false)
+        expect(local(disabled.shouldAutoApproveTool(DlineDefaultTool.BASH))).toBe(false)
+        expect(disabled.shouldAutoApproveTool(DlineDefaultTool.MCP_USE)).toBe(false)
     })
 })
 
@@ -134,7 +134,7 @@ describe("Canonical approval ceilings — enforcement", () => {
             ceilings: { edit_external: "manual_only" },
         })
 
-        const result = approver.shouldAutoApproveTool(ClineDefaultTool.FILE_NEW)
+        const result = approver.shouldAutoApproveTool(DlineDefaultTool.FILE_NEW)
 
         // The in-workspace case is untouched; only the ceilinged scope is clamped.
         expect(local(result)).toBe(true)
@@ -147,7 +147,7 @@ describe("Canonical approval ceilings — enforcement", () => {
             ceilings: { edit_external: "manual_only" },
         })
 
-        expect(external(approver.shouldAutoApproveTool(ClineDefaultTool.FILE_NEW))).toBe(false)
+        expect(external(approver.shouldAutoApproveTool(DlineDefaultTool.FILE_NEW))).toBe(false)
     })
 
     it("outranks the yolo blanket switch", () => {
@@ -156,15 +156,15 @@ describe("Canonical approval ceilings — enforcement", () => {
             ceilings: { edit_external: "manual_only" },
         })
 
-        expect(external(approver.shouldAutoApproveTool(ClineDefaultTool.FILE_NEW))).toBe(false)
+        expect(external(approver.shouldAutoApproveTool(DlineDefaultTool.FILE_NEW))).toBe(false)
     })
 
     it("clamps a single-scope tool under a blanket switch", () => {
         const approver = autoApprove({ yolo: true, ceilings: { mcp: "manual_only" } })
 
-        expect(approver.shouldAutoApproveTool(ClineDefaultTool.MCP_USE)).toBe(false)
+        expect(approver.shouldAutoApproveTool(DlineDefaultTool.MCP_USE)).toBe(false)
         // An unrelated scope keeps the blanket grant.
-        expect(approver.shouldAutoApproveTool(ClineDefaultTool.BROWSER)).toBe(true)
+        expect(approver.shouldAutoApproveTool(DlineDefaultTool.BROWSER)).toBe(true)
     })
 
     it("clamps both command classes independently", () => {
@@ -173,7 +173,7 @@ describe("Canonical approval ceilings — enforcement", () => {
             ceilings: { command_all: "manual_only" },
         })
 
-        const result = approver.shouldAutoApproveTool(ClineDefaultTool.BASH)
+        const result = approver.shouldAutoApproveTool(DlineDefaultTool.BASH)
 
         expect(local(result)).toBe(true)
         expect(external(result)).toBe(false)
@@ -187,7 +187,7 @@ describe("Canonical approval ceilings — enforcement", () => {
 
         // The ceiling permits automation up to the AI approver, so an enabled
         // toggle still grants it; only manual_only withdraws automation.
-        expect(local(approver.shouldAutoApproveTool(ClineDefaultTool.FILE_READ))).toBe(true)
+        expect(local(approver.shouldAutoApproveTool(DlineDefaultTool.FILE_READ))).toBe(true)
     })
 })
 
@@ -206,14 +206,14 @@ describe("Canonical approval ceilings — path-based approval", () => {
             ceilings: { edit_workspace: "manual_only", edit_external: "manual_only" },
         })
 
-        await expect(approver.shouldAutoApproveToolWithPath(ClineDefaultTool.FILE_NEW, "src/a.ts")).resolves.toBe(false)
+        await expect(approver.shouldAutoApproveToolWithPath(DlineDefaultTool.FILE_NEW, "src/a.ts")).resolves.toBe(false)
     })
 
     it("keeps the blanket grant when the scope has no manual_only ceiling", async () => {
         stubWorkspace()
         const approver = autoApprove({ approveAll: true, ceilings: { mcp: "manual_only" } })
 
-        await expect(approver.shouldAutoApproveToolWithPath(ClineDefaultTool.FILE_NEW, "src/a.ts")).resolves.toBe(true)
+        await expect(approver.shouldAutoApproveToolWithPath(DlineDefaultTool.FILE_NEW, "src/a.ts")).resolves.toBe(true)
     })
 
     it("applies the ceiling of the half that governs the path, not the permissive one", async () => {
@@ -228,7 +228,7 @@ describe("Canonical approval ceilings — path-based approval", () => {
         })
 
         await expect(
-            approver.shouldAutoApproveToolWithPath(ClineDefaultTool.FILE_NEW, path.join(os.tmpdir(), "outside", "a.ts")),
+            approver.shouldAutoApproveToolWithPath(DlineDefaultTool.FILE_NEW, path.join(os.tmpdir(), "outside", "a.ts")),
         ).resolves.toBe(false)
     })
 
@@ -241,7 +241,7 @@ describe("Canonical approval ceilings — path-based approval", () => {
 
         await expect(
             approver.shouldAutoApproveToolWithPath(
-                ClineDefaultTool.FILE_NEW,
+                DlineDefaultTool.FILE_NEW,
                 path.join(os.tmpdir(), "dline-ceiling-scope", "a.ts"),
             ),
         ).resolves.toBe(true)

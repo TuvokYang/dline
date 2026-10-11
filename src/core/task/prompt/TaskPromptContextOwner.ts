@@ -27,7 +27,7 @@ import {
     type TaskCapabilityToggles,
 } from "@shared/TaskCapabilityToggles"
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { ClineClient } from "@/shared/cline"
@@ -261,9 +261,8 @@ export class TaskPromptContextOwner {
             subagents: refreshedSubagents.globalSubagents.length + refreshedSubagents.localSubagents.length,
         })
 
-        const disableTools: ClineDefaultTool[] = []
-        if (providerInfo.mode === "plan") disableTools.push(ClineDefaultTool.ACT_MODE)
-        if (await this.options.runtime.getParentTaskId()) disableTools.push(ClineDefaultTool.SPAWN_TASK)
+        const disableTools: DlineDefaultTool[] = []
+        if (await this.options.runtime.getParentTaskId()) disableTools.push(DlineDefaultTool.SPAWN_TASK)
 
         const boundImageModelId = resolveAvailableImageModelId(this.options.stateManager, {
             taskId: this.options.identity.taskId,

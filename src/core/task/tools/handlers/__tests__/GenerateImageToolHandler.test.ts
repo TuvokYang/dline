@@ -2,7 +2,7 @@ import { resolveTaskArtifactPath } from "@core/artifacts/runtime"
 import type { ImageArtifact } from "@core/artifacts/TaskArtifactStore"
 import type { ToolUse } from "@core/assistant-message"
 import { ImageGenerationError } from "@core/image-generation/contracts"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { GenerateImageToolHandler } from "../GenerateImageToolHandler"
@@ -23,7 +23,7 @@ const artifact: ImageArtifact = {
 
 const block: ToolUse = {
     type: "tool_use",
-    name: ClineDefaultTool.GENERATE_IMAGE,
+    name: DlineDefaultTool.GENERATE_IMAGE,
     params: {
         prompt: "A blue owl",
         profile: "OpenAI Images",

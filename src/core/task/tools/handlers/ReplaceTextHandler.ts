@@ -3,7 +3,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { getReadablePath } from "@utils/path"
 import { normalizeLineEndings } from "@/shared/string"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -23,7 +23,7 @@ interface MatchRecord {
  * Two-phase rendering: partial shows header, execute updates content with match details.
  */
 export class ReplaceTextHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.REPLACE_TEXT
+    readonly name = DlineDefaultTool.REPLACE_TEXT
 
     getDescription(block: ToolUse): string {
         const params = block.params as Record<string, unknown> | undefined

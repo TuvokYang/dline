@@ -1,6 +1,6 @@
 import { getPrompt } from "@core/prompts/i18n"
 import { UiSayTool } from "@shared/ExtensionMessage"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { telemetryService } from "@/services/telemetry"
 import { BrowserWebFetchProvider, type LocalWebFetchProvider } from "@/services/web-fetch/LocalWebFetchProvider"
 import { ToolUse } from "../../../assistant-message"
@@ -22,7 +22,7 @@ function throwIfCancelled(signal: AbortSignal): void {
 }
 
 export class WebFetchToolHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.WEB_FETCH
+    readonly name = DlineDefaultTool.WEB_FETCH
 
     constructor(private readonly provider: LocalWebFetchProvider = new BrowserWebFetchProvider()) {}
 

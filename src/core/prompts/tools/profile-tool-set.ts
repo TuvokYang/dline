@@ -1,4 +1,4 @@
-import type { ClineDefaultTool } from "../../../shared/tools"
+import type { DlineDefaultTool } from "../../../shared/tools"
 import type { PromptProfile } from "../profiles/types"
 import type { SystemPromptContext } from "../system-prompt/context"
 
@@ -17,14 +17,14 @@ export interface ProfileToolParam {
     readonly instruction: string
     readonly type?: ToolParamType
     readonly enumValues?: readonly string[]
-    readonly dependencies?: readonly ClineDefaultTool[]
+    readonly dependencies?: readonly DlineDefaultTool[]
     readonly contextRequirements?: (context: SystemPromptContext) => boolean
 }
 
 export interface ProfileToolSpec {
     readonly profile: PromptProfile
     readonly transport: ToolTransport
-    readonly id: ClineDefaultTool
+    readonly id: DlineDefaultTool
     readonly name: string
     readonly description: string
     readonly descriptionFragments?: readonly ProfilePromptFragment[]
@@ -56,7 +56,7 @@ export class ProfileToolError extends Error {
     public constructor(
         public readonly reason: ProfileToolErrorReason,
         public readonly profile: PromptProfile,
-        public readonly toolId: ClineDefaultTool,
+        public readonly toolId: DlineDefaultTool,
     ) {
         super(`Profile tool ${reason} profile=${profile} tool=${toolId}`)
         this.name = "ProfileToolError"
@@ -65,11 +65,11 @@ export class ProfileToolError extends Error {
 
 /** Stores tool descriptors under exact Standard/Lite profile keys. */
 export class ProfileToolSet {
-    private readonly profiles = new Map<PromptProfile, Map<ClineDefaultTool, ProfileToolSpec>>()
+    private readonly profiles = new Map<PromptProfile, Map<DlineDefaultTool, ProfileToolSpec>>()
 
     /** Registers one exact profile tool descriptor. */
     public register(spec: ProfileToolSpec): void {
-        const tools = this.profiles.get(spec.profile) ?? new Map<ClineDefaultTool, ProfileToolSpec>()
+        const tools = this.profiles.get(spec.profile) ?? new Map<DlineDefaultTool, ProfileToolSpec>()
         if (tools.has(spec.id)) {
             throw new ProfileToolError("duplicate-tool", spec.profile, spec.id)
         }
@@ -78,7 +78,7 @@ export class ProfileToolSet {
     }
 
     /** Resolves one tool without profile fallback. */
-    public get(profile: PromptProfile, id: ClineDefaultTool): ProfileToolSpec {
+    public get(profile: PromptProfile, id: DlineDefaultTool): ProfileToolSpec {
         const spec = this.profiles.get(profile)?.get(id)
         if (!spec) {
             throw new ProfileToolError("missing-tool", profile, id)
@@ -87,7 +87,7 @@ export class ProfileToolSet {
     }
 
     /** Resolves an ordered exact-profile tool list. */
-    public list(profile: PromptProfile, ids: readonly ClineDefaultTool[]): readonly ProfileToolSpec[] {
+    public list(profile: PromptProfile, ids: readonly DlineDefaultTool[]): readonly ProfileToolSpec[] {
         return ids.map((id) => this.get(profile, id))
     }
 }

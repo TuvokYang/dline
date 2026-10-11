@@ -14,6 +14,12 @@ export interface ToolAttemptState {
     didAlreadyUseTool: boolean
     didEditFile: boolean
     resetMistakeLimitState(): void
+    /**
+     * Forget the previous call because something other than the model's own tool results came
+     * after it: user input, a refused call, or a call that did not complete. The next call then
+     * starts a new sequence, so it is neither a repeat nor a consecutive user message.
+     */
+    interruptToolSequence(): void
 }
 
 export interface ToolConversationState {
@@ -141,6 +147,10 @@ export class DefaultToolHandlerState implements ToolHandlerState {
 
     resetMistakeLimitState(): void {
         this.consecutiveMistakeCount = 0
+        this.interruptToolSequence()
+    }
+
+    interruptToolSequence(): void {
         this.consecutiveIdenticalToolCount = 0
         this.lastToolName = ""
         this.lastToolParams = ""

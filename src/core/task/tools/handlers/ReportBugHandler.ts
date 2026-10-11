@@ -6,14 +6,14 @@ import * as os from "os"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
 import { Logger } from "@/shared/services/Logger"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
 export class ReportBugHandler implements IToolHandler, IPartialBlockHandler {
-    readonly name = ClineDefaultTool.REPORT_BUG
+    readonly name = DlineDefaultTool.REPORT_BUG
 
     getDescription(block: ToolUse): string {
         return `[${block.name}]`

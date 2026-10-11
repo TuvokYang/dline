@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import "should"
 import type { ToolUse } from "@core/assistant-message"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { SpawnTaskHandler } from "../SpawnTaskHandler"
@@ -24,7 +24,7 @@ describe("SpawnTaskHandler", () => {
 
     describe("basic properties", () => {
         it("should have name SPAWN_TASK", () => {
-            handler.name.should.equal(ClineDefaultTool.SPAWN_TASK)
+            handler.name.should.equal(DlineDefaultTool.SPAWN_TASK)
         })
 
         it("should return description with spawn_task tag", () => {

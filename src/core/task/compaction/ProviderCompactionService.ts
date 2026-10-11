@@ -23,7 +23,7 @@ import type { TargetWindowFittingState } from "@core/context/context-management/
 import { buildCompactionPassHistory, buildTargetCandidateHistory } from "@core/context/context-management/target-window-fitting"
 import { resolveTokenPerByte } from "@core/context/context-management/token-estimation"
 import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../auto-retry-schedule"
 import type {
     ContextCompactionIndicatorProjection,
@@ -417,7 +417,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
         scope.register({
             type: "summarize_task",
             source: input.trigger,
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             operationId: input.operationId,
         })
         try {

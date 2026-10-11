@@ -27,6 +27,7 @@ const baseProps = {
     onToggleExpand: vi.fn(),
 }
 
+/** A working_respond row as persisted; the row key predates the tool's rename. */
 function respondMessage(text: string, partial: boolean) {
     return {
         ts: 101,
@@ -37,7 +38,7 @@ function respondMessage(text: string, partial: boolean) {
     }
 }
 
-describe("ChatRow act mode response lifecycle", () => {
+describe("ChatRow working_respond lifecycle", () => {
     it("keeps the same progress-update renderer from partial through final", () => {
         const { rerender } = render(<ChatRowContent {...baseProps} message={respondMessage("Working", true)} />)
         const heading = screen.getByText("Progress Update", { exact: true })

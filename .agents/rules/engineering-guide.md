@@ -103,7 +103,7 @@ Do not create `system-prompt/tools/<tool>.ts` model-family variants or edit gene
 
 For a new tool, load `add-new-tool`. The change may include:
 
-- `ClineDefaultTool` and read-only classification;
+- `DlineDefaultTool` and read-only classification;
 - i18n prompt module registration;
 - canonical descriptor and Standard/Lite membership;
 - handler and executor coordination;

@@ -1,5 +1,5 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import type { ToolUse } from "../../../../assistant-message"
 import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
@@ -88,7 +88,7 @@ function createBlock(): ToolUse {
     return {
         type: "tool_use",
         function_id: "completion-function-1",
-        name: ClineDefaultTool.ATTEMPT,
+        name: DlineDefaultTool.ATTEMPT,
         params: { result: "done" },
         partial: false,
         ts: COMPLETION_TS,

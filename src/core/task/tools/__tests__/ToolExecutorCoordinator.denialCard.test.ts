@@ -1,6 +1,6 @@
 import type { ToolUse } from "@core/assistant-message"
 import type { UiMessage } from "@shared/ExtensionMessage"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
 import { presentToolDenial } from "../ToolExecutorCoordinator"
@@ -9,7 +9,7 @@ import type { TaskConfig } from "../types/TaskConfig"
 const CARD_TS = 1_700_000_000_000
 
 function refusedCall(): ToolUse {
-    return { type: "tool_use", name: ClineDefaultTool.FILE_NEW, params: {}, partial: false, ts: CARD_TS } as ToolUse
+    return { type: "tool_use", name: DlineDefaultTool.FILE_NEW, params: {}, partial: false, ts: CARD_TS } as ToolUse
 }
 
 function card(partial: boolean): UiMessage {
@@ -23,7 +23,7 @@ function harness(rows: UiMessage[]) {
 }
 
 const plainHandler: IToolHandler = {
-    name: ClineDefaultTool.FILE_NEW,
+    name: DlineDefaultTool.FILE_NEW,
     getDescription: () => "[write_to_file]",
     execute: async () => "done",
 }

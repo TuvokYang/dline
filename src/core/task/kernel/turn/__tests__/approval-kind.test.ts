@@ -1,5 +1,5 @@
 import { type AutoApprovalSettings, DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
-import { ClineDefaultTool, READ_ONLY_TOOLS } from "@shared/tools"
+import { DlineDefaultTool, READ_ONLY_TOOLS } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { type ConfigurableCeilings, resolveApprovalCeiling, resolveApprovalKind, resolvePermissionScope } from "../approval-kind"
 
@@ -49,27 +49,27 @@ function noneApproved(version = 1): AutoApprovalSettings {
 
 describe("permission scope", () => {
     it("separates workspace and external reads", () => {
-        expect(resolvePermissionScope(ClineDefaultTool.FILE_READ)).toBe("read_workspace")
-        expect(resolvePermissionScope(ClineDefaultTool.FILE_READ, { isExternalPath: true })).toBe("read_external")
+        expect(resolvePermissionScope(DlineDefaultTool.FILE_READ)).toBe("read_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.FILE_READ, { isExternalPath: true })).toBe("read_external")
     })
 
     it("separates workspace and external edits", () => {
-        expect(resolvePermissionScope(ClineDefaultTool.FILE_EDIT)).toBe("edit_workspace")
-        expect(resolvePermissionScope(ClineDefaultTool.REPLACE_TEXT)).toBe("edit_workspace")
-        expect(resolvePermissionScope(ClineDefaultTool.APPLY_PATCH, { isExternalPath: true })).toBe("edit_external")
-        expect(resolvePermissionScope(ClineDefaultTool.REPLACE_TEXT, { isExternalPath: true })).toBe("edit_external")
+        expect(resolvePermissionScope(DlineDefaultTool.FILE_EDIT)).toBe("edit_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.REPLACE_TEXT)).toBe("edit_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.APPLY_PATCH, { isExternalPath: true })).toBe("edit_external")
+        expect(resolvePermissionScope(DlineDefaultTool.REPLACE_TEXT, { isExternalPath: true })).toBe("edit_external")
     })
 
     it("separates safe and unclassified commands", () => {
-        expect(resolvePermissionScope(ClineDefaultTool.BASH, { isSafeCommand: true })).toBe("command_safe")
-        expect(resolvePermissionScope(ClineDefaultTool.BASH)).toBe("command_all")
+        expect(resolvePermissionScope(DlineDefaultTool.BASH, { isSafeCommand: true })).toBe("command_safe")
+        expect(resolvePermissionScope(DlineDefaultTool.BASH)).toBe("command_all")
     })
 
     it("maps resource tools onto their own scopes", () => {
-        expect(resolvePermissionScope(ClineDefaultTool.BROWSER)).toBe("browser")
-        expect(resolvePermissionScope(ClineDefaultTool.MCP_USE)).toBe("mcp")
-        expect(resolvePermissionScope(ClineDefaultTool.WEB_FETCH)).toBe("web")
-        expect(resolvePermissionScope(ClineDefaultTool.USE_SUBAGENTS)).toBe("subagent")
+        expect(resolvePermissionScope(DlineDefaultTool.BROWSER)).toBe("browser")
+        expect(resolvePermissionScope(DlineDefaultTool.MCP_USE)).toBe("mcp")
+        expect(resolvePermissionScope(DlineDefaultTool.WEB_FETCH)).toBe("web")
+        expect(resolvePermissionScope(DlineDefaultTool.USE_SUBAGENTS)).toBe("subagent")
     })
 
     // A symbol tool is classified by the file the call actually names, like
@@ -79,13 +79,13 @@ describe("permission scope", () => {
     // file the user had already permitted, and no ceiling on the workspace
     // scope could ever apply to it.
     it("classifies symbol tools by their declared target, not by their result fan-out", () => {
-        expect(resolvePermissionScope(ClineDefaultTool.FIND_REFERENCES)).toBe("read_workspace")
-        expect(resolvePermissionScope(ClineDefaultTool.RENAME)).toBe("edit_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.FIND_REFERENCES)).toBe("read_workspace")
+        expect(resolvePermissionScope(DlineDefaultTool.RENAME)).toBe("edit_workspace")
     })
 
     it("still charges symbol tools to the external scope when their target is outside the workspace", () => {
-        expect(resolvePermissionScope(ClineDefaultTool.FIND_REFERENCES, { isExternalPath: true })).toBe("read_external")
-        expect(resolvePermissionScope(ClineDefaultTool.RENAME, { isExternalPath: true })).toBe("edit_external")
+        expect(resolvePermissionScope(DlineDefaultTool.FIND_REFERENCES, { isExternalPath: true })).toBe("read_external")
+        expect(resolvePermissionScope(DlineDefaultTool.RENAME, { isExternalPath: true })).toBe("edit_external")
     })
 
     // Two independent classifications of the same tool cannot disagree about
@@ -134,7 +134,7 @@ describe("approval kind", () => {
     describe("the ceiling is an upper bound, not another switch", () => {
         it("requires manual approval under manual_only with every toggle on", () => {
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.FILE_EDIT,
+                toolName: DlineDefaultTool.FILE_EDIT,
                 settings: allApproved(),
                 ceilings: { edit_workspace: "manual_only" },
             })
@@ -150,7 +150,7 @@ describe("approval kind", () => {
             // a ceiling.
             for (const blanket of [{ approveAll: true }, { yoloMode: true }, { approveAll: true, yoloMode: true }]) {
                 const decision = resolveApprovalKind({
-                    toolName: ClineDefaultTool.FILE_EDIT,
+                    toolName: DlineDefaultTool.FILE_EDIT,
                     settings: allApproved(),
                     ceilings: { edit_workspace: "manual_only" },
                     blanket,
@@ -162,7 +162,7 @@ describe("approval kind", () => {
 
         it("lets a blanket switch approve a scope whose own toggle is off", () => {
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.FILE_EDIT,
+                toolName: DlineDefaultTool.FILE_EDIT,
                 settings: noneApproved(),
                 blanket: { approveAll: true },
             })
@@ -172,7 +172,7 @@ describe("approval kind", () => {
 
         it("requires manual approval for external writes once that ceiling is configured", () => {
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.FILE_NEW,
+                toolName: DlineDefaultTool.FILE_NEW,
                 settings: allApproved(),
                 ceilings: { edit_external: "manual_only" },
                 context: { isExternalPath: true },
@@ -187,7 +187,7 @@ describe("approval kind", () => {
             // the user configures a ceiling, editFilesExternally still decides,
             // which is what the build did before ceilings existed.
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.FILE_NEW,
+                toolName: DlineDefaultTool.FILE_NEW,
                 settings: allApproved(),
                 context: { isExternalPath: true },
             })
@@ -198,7 +198,7 @@ describe("approval kind", () => {
 
         it("routes an ai_approvable scope to the approver when its toggle is off", () => {
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.BROWSER,
+                toolName: DlineDefaultTool.BROWSER,
                 settings: noneApproved(),
                 ceilings: { browser: "ai_approvable" },
             })
@@ -210,7 +210,7 @@ describe("approval kind", () => {
 
         it("prefers the user's own approval over the approver", () => {
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.BROWSER,
+                toolName: DlineDefaultTool.BROWSER,
                 settings: allApproved(),
                 ceilings: { browser: "ai_approvable" },
             })
@@ -219,13 +219,13 @@ describe("approval kind", () => {
         })
 
         it("follows the toggle for an auto scope", () => {
-            expect(resolveApprovalKind({ toolName: ClineDefaultTool.FILE_READ, settings: allApproved() }).kind).toBe("automatic")
-            expect(resolveApprovalKind({ toolName: ClineDefaultTool.FILE_READ, settings: noneApproved() }).kind).toBe("manual")
+            expect(resolveApprovalKind({ toolName: DlineDefaultTool.FILE_READ, settings: allApproved() }).kind).toBe("automatic")
+            expect(resolveApprovalKind({ toolName: DlineDefaultTool.FILE_READ, settings: noneApproved() }).kind).toBe("manual")
         })
 
         it("never routes an auto scope with its toggle off to the approver", () => {
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.FILE_EDIT,
+                toolName: DlineDefaultTool.FILE_EDIT,
                 settings: noneApproved(),
             })
 
@@ -242,22 +242,22 @@ describe("approval kind", () => {
             const settings = noneApproved()
             settings.actions.readFiles = true
 
-            expect(resolveApprovalKind({ toolName: ClineDefaultTool.FIND_REFERENCES, settings }).kind).toBe("automatic")
+            expect(resolveApprovalKind({ toolName: DlineDefaultTool.FIND_REFERENCES, settings }).kind).toBe("automatic")
         })
 
         it("stay manual for a workspace rename until the edit toggle is granted", () => {
             const settings = noneApproved()
             settings.actions.readFiles = true
 
-            expect(resolveApprovalKind({ toolName: ClineDefaultTool.RENAME, settings }).kind).toBe("manual")
+            expect(resolveApprovalKind({ toolName: DlineDefaultTool.RENAME, settings }).kind).toBe("manual")
 
             settings.actions.editFiles = true
-            expect(resolveApprovalKind({ toolName: ClineDefaultTool.RENAME, settings }).kind).toBe("automatic")
+            expect(resolveApprovalKind({ toolName: DlineDefaultTool.RENAME, settings }).kind).toBe("automatic")
         })
 
         it("remain constrained by the ceiling on the scope they resolve to", () => {
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.FIND_REFERENCES,
+                toolName: DlineDefaultTool.FIND_REFERENCES,
                 settings: allApproved(),
                 ceilings: { read_workspace: "manual_only" },
             })
@@ -271,7 +271,7 @@ describe("approval kind", () => {
 
             expect(
                 resolveApprovalKind({
-                    toolName: ClineDefaultTool.FIND_REFERENCES,
+                    toolName: DlineDefaultTool.FIND_REFERENCES,
                     settings,
                     context: { isExternalPath: true },
                 }).kind,
@@ -285,7 +285,7 @@ describe("approval kind", () => {
             settings.actions.executeAllCommands = true
 
             expect(
-                resolveApprovalKind({ toolName: ClineDefaultTool.BASH, settings, context: { isSafeCommand: true } }).kind,
+                resolveApprovalKind({ toolName: DlineDefaultTool.BASH, settings, context: { isSafeCommand: true } }).kind,
             ).toBe("automatic")
         })
 
@@ -293,7 +293,7 @@ describe("approval kind", () => {
             const settings = noneApproved()
             settings.actions.executeSafeCommands = true
 
-            expect(resolveApprovalKind({ toolName: ClineDefaultTool.BASH, settings }).kind).toBe("manual")
+            expect(resolveApprovalKind({ toolName: DlineDefaultTool.BASH, settings }).kind).toBe("manual")
         })
     })
 
@@ -304,7 +304,7 @@ describe("approval kind", () => {
             // reach. Sharing the command scopes made stopping harder to
             // authorize than starting, which is backwards.
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.KILL_COMMAND,
+                toolName: DlineDefaultTool.KILL_COMMAND,
                 settings: noneApproved(),
             })
 
@@ -312,14 +312,14 @@ describe("approval kind", () => {
         })
 
         it("no longer borrows the scope of the command it stops", () => {
-            expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND)).toBe("terminate_command")
+            expect(resolvePermissionScope(DlineDefaultTool.KILL_COMMAND)).toBe("terminate_command")
             // The classifier for safe commands does not apply to it at all.
-            expect(resolvePermissionScope(ClineDefaultTool.KILL_COMMAND, { isSafeCommand: true })).toBe("terminate_command")
+            expect(resolvePermissionScope(DlineDefaultTool.KILL_COMMAND, { isSafeCommand: true })).toBe("terminate_command")
         })
 
         it("cannot be restricted by a ceiling on the commands it stops", () => {
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.KILL_COMMAND,
+                toolName: DlineDefaultTool.KILL_COMMAND,
                 settings: noneApproved(),
                 ceilings: { command_all: "manual_only", command_safe: "manual_only" },
             })
@@ -333,17 +333,17 @@ describe("approval kind", () => {
             // The current AutoApprovalPolicy governs use_subagent(s) with the
             // read toggles. Naming the scope separately must not silently change
             // that to "never automatic" before a dedicated setting exists.
-            expect(resolveApprovalKind({ toolName: ClineDefaultTool.USE_SUBAGENTS, settings: allApproved() }).kind).toBe(
+            expect(resolveApprovalKind({ toolName: DlineDefaultTool.USE_SUBAGENTS, settings: allApproved() }).kind).toBe(
                 "automatic",
             )
-            expect(resolveApprovalKind({ toolName: ClineDefaultTool.USE_SUBAGENT, settings: noneApproved() }).kind).toBe("manual")
+            expect(resolveApprovalKind({ toolName: DlineDefaultTool.USE_SUBAGENT, settings: noneApproved() }).kind).toBe("manual")
         })
     })
 
     describe("tools that own their interaction", () => {
         it("returns no approval stage", () => {
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.ATTEMPT,
+                toolName: DlineDefaultTool.ATTEMPT,
                 settings: noneApproved(),
             })
 
@@ -355,7 +355,7 @@ describe("approval kind", () => {
         it("derives that from the tool, not from a caller-supplied flag", () => {
             // status_update likewise owns whether to block, which is the same
             // rule the existing runtime applies.
-            for (const tool of [ClineDefaultTool.ASK, ClineDefaultTool.MAKE_PLAN, ClineDefaultTool.STATUS_UPDATE]) {
+            for (const tool of [DlineDefaultTool.ASK, DlineDefaultTool.MAKE_PLAN, DlineDefaultTool.PHASE_REPORT]) {
                 expect(resolveApprovalKind({ toolName: tool, settings: noneApproved() }).kind, tool).toBe("none")
             }
         })
@@ -365,7 +365,7 @@ describe("approval kind", () => {
             // subagent-scope approval would either skip that choice or ask twice.
             for (const settings of [allApproved(), noneApproved()]) {
                 const decision = resolveApprovalKind({
-                    toolName: ClineDefaultTool.NEW_TASK,
+                    toolName: DlineDefaultTool.NEW_TASK,
                     settings,
                     ceilings: { subagent: "manual_only" },
                 })
@@ -379,7 +379,7 @@ describe("approval kind", () => {
             // has not been allowed to present would deadlock, so its ceiling is
             // fixed rather than configurable.
             const decision = resolveApprovalKind({
-                toolName: ClineDefaultTool.ATTEMPT,
+                toolName: DlineDefaultTool.ATTEMPT,
                 settings: noneApproved(),
                 ceilings: { conversational: "manual_only" },
             })
@@ -391,7 +391,7 @@ describe("approval kind", () => {
 
     describe("purity", () => {
         it("returns an equal decision for the same input", () => {
-            const input = { toolName: ClineDefaultTool.FILE_EDIT, settings: allApproved() }
+            const input = { toolName: DlineDefaultTool.FILE_EDIT, settings: allApproved() }
             expect(resolveApprovalKind(input)).toEqual(resolveApprovalKind(input))
         })
     })

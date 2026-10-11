@@ -2,7 +2,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { prepareRegisteredToolAdmission } from "../../../executors/tool/ToolAdmissionRegistry"
 
@@ -26,10 +26,10 @@ describe("write admission target side effects", () => {
         })
 
         const admission = prepareRegisteredToolAdmission({
-            canonicalToolName: ClineDefaultTool.FILE_NEW,
+            canonicalToolName: DlineDefaultTool.FILE_NEW,
             block: {
                 type: "tool_use",
-                name: ClineDefaultTool.FILE_NEW,
+                name: DlineDefaultTool.FILE_NEW,
                 params: { path: externalRelativePath, content: "external risk proof" },
                 partial: false,
                 ts: 1,

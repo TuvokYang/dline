@@ -8,7 +8,7 @@ import type { BrowserSettings } from "@/shared/BrowserSettings"
 import type { FocusChainSettings } from "@/shared/FocusChainSettings"
 import type { SkillMetadata } from "@/shared/skills"
 import type { TaskCapabilityToggles } from "@/shared/TaskCapabilityToggles"
-import type { ClineDefaultTool } from "@/shared/tools"
+import type { DlineDefaultTool } from "@/shared/tools"
 
 /** Complete runtime context consumed by profile prompt generators. */
 export interface SystemPromptContext {
@@ -56,5 +56,5 @@ export interface SystemPromptContext {
     readonly terminalExecutionMode?: "vscodeTerminal" | "backgroundExec"
     readonly defaultTerminalProfile?: string
     readonly terminalCommandTimeoutSeconds?: number
-    readonly disableTools?: readonly ClineDefaultTool[]
+    readonly disableTools?: readonly DlineDefaultTool[]
 }

@@ -4,12 +4,13 @@ import { CopyButton } from "@/components/common/CopyButton"
 import MarkdownBlock from "@/components/common/MarkdownBlock"
 import { cn } from "@/lib/utils"
 
-interface ActModeRespondProps {
+interface WorkingRespondProps {
     text: string
     headClassNames?: string
 }
 
-const ActModeRespondRow = memo(({ text, headClassNames }: ActModeRespondProps) => {
+/** A working_respond message: the model's reply while it keeps working. */
+const WorkingRespondRow = memo(({ text, headClassNames }: WorkingRespondProps) => {
     return (
         <div className="rounded-sm border border-sky-300/30 overflow-visible bg-sky-100/20 dark:bg-sky-900/10 p-2 pt-3 relative">
             <div className="absolute top-2 right-2 z-10">
@@ -32,6 +33,6 @@ const ActModeRespondRow = memo(({ text, headClassNames }: ActModeRespondProps) =
     )
 })
 
-ActModeRespondRow.displayName = "ActModeRespondRow"
+WorkingRespondRow.displayName = "WorkingRespondRow"
 
-export default ActModeRespondRow
+export default WorkingRespondRow

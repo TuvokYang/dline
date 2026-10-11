@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert"
 import type { ToolUse } from "@core/assistant-message"
 import { createTaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
@@ -161,7 +161,7 @@ describe("turn-ending feedback handlers", () => {
         const continuation = handler
             .continueInteraction(
                 config,
-                createBlock(ClineDefaultTool.ASK, {
+                createBlock(DlineDefaultTool.ASK, {
                     question: "Which option?",
                     options: JSON.stringify(["Use the first option", selected]),
                 }),
@@ -206,7 +206,7 @@ describe("turn-ending feedback handlers", () => {
 
         const result = await handler.continueInteraction(
             config,
-            createBlock(ClineDefaultTool.ASK, {
+            createBlock(DlineDefaultTool.ASK, {
                 question: "Which option?",
                 options: JSON.stringify(["Use the first option", selected]),
             }),
@@ -228,9 +228,9 @@ describe("turn-ending feedback handlers", () => {
     it("keeps retained model guidance out of feedback rows owned by a causal presenter", async () => {
         const text = '<user_message description="internal guidance">\n## User text\n</user_message>'
         const handlers = [
-            { handler: new AskFollowupQuestionToolHandler(), tool: ClineDefaultTool.ASK },
-            { handler: new MakePlanHandler(), tool: ClineDefaultTool.MAKE_PLAN },
-            { handler: new GenerateReportHandler(), tool: ClineDefaultTool.GENERATE_REPORT },
+            { handler: new AskFollowupQuestionToolHandler(), tool: DlineDefaultTool.ASK },
+            { handler: new MakePlanHandler(), tool: DlineDefaultTool.MAKE_PLAN },
+            { handler: new GenerateReportHandler(), tool: DlineDefaultTool.GENERATE_REPORT },
         ]
         for (const { handler, tool } of handlers) {
             const config = createConfig(text)
@@ -249,7 +249,7 @@ describe("turn-ending feedback handlers", () => {
         const config = createConfig("Adjust the plan")
         const handler = new MakePlanHandler()
 
-        await handler.execute(config, createBlock(ClineDefaultTool.MAKE_PLAN, { response: "Choose a plan" }))
+        await handler.execute(config, createBlock(DlineDefaultTool.MAKE_PLAN, { response: "Choose a plan" }))
 
         expect(config.interactions.open).toHaveBeenCalledWith({
             turnId: "turn:tid-make_plan",
@@ -264,7 +264,7 @@ describe("turn-ending feedback handlers", () => {
         const config = createConfig("请按方案二调整")
         const handler = new MakePlanHandler()
 
-        const result = await handler.execute(config, createBlock(ClineDefaultTool.MAKE_PLAN, { response: "方案" }))
+        const result = await handler.execute(config, createBlock(DlineDefaultTool.MAKE_PLAN, { response: "方案" }))
 
         expect(config.callbacks.say).not.toHaveBeenCalledWith("user_feedback", "请按方案二调整", [], [])
         assert.ok(typeof result === "string")
@@ -278,7 +278,7 @@ describe("turn-ending feedback handlers", () => {
 
         const result = await handler.execute(
             config,
-            createBlock(ClineDefaultTool.GENERATE_REPORT, { title: "报告", content: "内容" }),
+            createBlock(DlineDefaultTool.GENERATE_REPORT, { title: "报告", content: "内容" }),
         )
 
         expect(config.callbacks.say).not.toHaveBeenCalledWith("user_feedback", "报告里补充风险", [], [])
@@ -291,7 +291,7 @@ describe("turn-ending feedback handlers", () => {
         const config = createConfig("我选择自定义答案")
         const handler = new AskFollowupQuestionToolHandler()
 
-        const result = await handler.execute(config, createBlock(ClineDefaultTool.ASK, { question: "继续吗？", options: "[]" }))
+        const result = await handler.execute(config, createBlock(DlineDefaultTool.ASK, { question: "继续吗？", options: "[]" }))
 
         expect(config.callbacks.say).not.toHaveBeenCalledWith("user_feedback", "我选择自定义答案", [], [])
         assert.ok(typeof result === "string")

@@ -6,7 +6,7 @@ import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { resolveMaxParallelSubagents } from "@shared/concurrency-limits"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
 import type { BackgroundResultDeliveryPort } from "../background/BackgroundResultDeliveryPort"
 import type { PeerTaskSpawnPort } from "../executors/spawn/PeerTaskSpawnPort"
@@ -213,7 +213,7 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
     readAdmissionSnapshot(block: ToolUse): ToolAdmissionSnapshot {
         const workspaceRoots = this.options.workspaceManager?.getRoots()
         const mcpToolAutoApprove =
-            block.name === ClineDefaultTool.MCP_USE
+            block.name === DlineDefaultTool.MCP_USE
                 ? this.options.services.mcpHub.connections
                       ?.find((connection) => connection.server.name === block.params.server_name)
                       ?.server.tools?.find((tool) => tool.name === block.params.tool_name)?.autoApprove === true

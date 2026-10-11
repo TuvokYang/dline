@@ -9,7 +9,7 @@ import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import { pathToCommandName } from "@shared/slashCommands"
 import { SLASH_TYPE_DESC } from "@shared/slashContext"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import fs from "fs/promises"
 import { telemetryService } from "@/services/telemetry"
 import { Logger } from "@/shared/services/Logger"
@@ -89,16 +89,16 @@ export interface SlashCommandExpansion {
 }
 
 const BUILTIN_EXPLICIT_INSTRUCTIONS: Readonly<Record<string, ExplicitInstructionDeclaration | undefined>> = {
-    newtask: { type: "new_task", source: "slash_command", targetTool: ClineDefaultTool.NEW_TASK },
-    smol: { type: "summarize_task", source: "manual_compact_command", targetTool: ClineDefaultTool.SUMMARIZE_TASK },
-    compact: { type: "summarize_task", source: "manual_compact_command", targetTool: ClineDefaultTool.SUMMARIZE_TASK },
-    newrule: { type: "new_rule", source: "slash_command", targetTool: ClineDefaultTool.NEW_RULE },
-    reportbug: { type: "report_bug", source: "slash_command", targetTool: ClineDefaultTool.REPORT_BUG },
-    "deep-planning": { type: "deep-planning", source: "slash_command", targetTool: ClineDefaultTool.NEW_TASK },
+    newtask: { type: "new_task", source: "slash_command", targetTool: DlineDefaultTool.NEW_TASK },
+    smol: { type: "summarize_task", source: "manual_compact_command", targetTool: DlineDefaultTool.SUMMARIZE_TASK },
+    compact: { type: "summarize_task", source: "manual_compact_command", targetTool: DlineDefaultTool.SUMMARIZE_TASK },
+    newrule: { type: "new_rule", source: "slash_command", targetTool: DlineDefaultTool.NEW_RULE },
+    reportbug: { type: "report_bug", source: "slash_command", targetTool: DlineDefaultTool.REPORT_BUG },
+    "deep-planning": { type: "deep-planning", source: "slash_command", targetTool: DlineDefaultTool.NEW_TASK },
     "explain-changes": {
         type: "explain_changes",
         source: "slash_command",
-        targetTool: ClineDefaultTool.GENERATE_EXPLANATION,
+        targetTool: DlineDefaultTool.GENERATE_EXPLANATION,
     },
 }
 

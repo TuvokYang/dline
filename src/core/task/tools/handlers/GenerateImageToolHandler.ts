@@ -12,7 +12,7 @@ import { DEFAULT_IMAGE_GENERATION_SIZE } from "@core/image-generation/ImageGener
 import { formatResponse } from "@core/prompts/responses"
 import type { UiSayTool } from "@shared/ExtensionMessage"
 import { IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION, type ImageGenerationPresentationV1 } from "@shared/image-generation"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import type { ToolApprovalPresentation } from "../../executors/tool/ToolPreflight"
 import type { IApprovalPresentingToolHandler, IDenialPresentingToolHandler, IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
@@ -109,7 +109,7 @@ function createAdmissionPresentation(block: ToolUse, status: "awaiting_approval"
 }
 
 export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPresentingToolHandler, IDenialPresentingToolHandler {
-    readonly name = ClineDefaultTool.GENERATE_IMAGE
+    readonly name = DlineDefaultTool.GENERATE_IMAGE
 
     getDescription(block: ToolUse): string {
         return `[${block.name} for '${block.params.prompt ?? ""}']`

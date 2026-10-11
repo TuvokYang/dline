@@ -17,11 +17,11 @@ Command-line authorization changes only the permitted tool choice. Keep the exis
 
 EVERY response must include at least one tool call, except when an \`<explicit_instructions>\` block defines a different response format. Choose the proper tool for each situation:
 - Standalone conversation or questions that should hand control back to the user: qna_respond
-- Non-blocking steering questions received during ongoing execution: answer with status_update or act_mode_respond as the mode permits, then continue with an actual work tool in the same turn
+- Stating what you are doing and why before tool calls, answering a message the user sent during the work, or acknowledging a correction: working_respond, then continue with an actual work tool in the same turn
 - Presenting a complete implementation or design plan: make_plan (in ACT MODE, only when explicitly requested by the user)
 - Technical report or structured analysis: generate_report
 - Final task completion: attempt_completion
-- Progress announcement during execution: status_update or act_mode_respond
+- Reporting a completed phase or batch of work: phase_report
 
 @TOOL_USE_FORMATTING_SECTION@
 

@@ -1,5 +1,5 @@
 import type { ToolUse } from "@core/assistant-message"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { createCanonicalAskRow } from "../../../ask-row"
 import { approvalInteractionId } from "../../approval-interaction"
@@ -9,7 +9,7 @@ import { ExecuteCommandToolHandler } from "../ExecuteCommandToolHandler"
 function commandBlock(dlineTid: string): ToolUse {
     return {
         type: "tool_use",
-        name: ClineDefaultTool.BASH,
+        name: DlineDefaultTool.BASH,
         params: { command: "npm test" },
         partial: false,
         function_id: `fn-${dlineTid}`,

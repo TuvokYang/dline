@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { declaresWritePath, resolveToolPathParam } from "../tool-path-params"
 
@@ -40,9 +40,9 @@ describe("tool path parameters", () => {
     })
 
     it("identifies every single-target writer", () => {
-        expect(declaresWritePath(ClineDefaultTool.FILE_NEW)).toBe(true)
-        expect(declaresWritePath(ClineDefaultTool.FILE_EDIT)).toBe(true)
-        expect(declaresWritePath(ClineDefaultTool.NEW_RULE)).toBe(true)
-        expect(declaresWritePath(ClineDefaultTool.FILE_READ)).toBe(false)
+        expect(declaresWritePath(DlineDefaultTool.FILE_NEW)).toBe(true)
+        expect(declaresWritePath(DlineDefaultTool.FILE_EDIT)).toBe(true)
+        expect(declaresWritePath(DlineDefaultTool.NEW_RULE)).toBe(true)
+        expect(declaresWritePath(DlineDefaultTool.FILE_READ)).toBe(false)
     })
 })

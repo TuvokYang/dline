@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { ExplicitInstructionRegistry } from "../ExplicitInstructionRegistry"
 import { getExplicitInstructionPolicy } from "../policy"
@@ -11,7 +11,7 @@ function registerSummarize(registry: ExplicitInstructionRegistry) {
         ...REQUEST_ONE,
         type: "summarize_task",
         source: "auto_compaction",
-        targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+        targetTool: DlineDefaultTool.SUMMARIZE_TASK,
     })
 }
 
@@ -25,7 +25,7 @@ describe("ExplicitInstructionRegistry", () => {
             instructionId: authorization.instructionId,
             type: "summarize_task",
             source: "auto_compaction",
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
         })
 
         expect(result).toEqual({ ok: true, authorization: expect.objectContaining({ state: "consumed" }) })
@@ -40,7 +40,7 @@ describe("ExplicitInstructionRegistry", () => {
                 instructionId: "missing",
                 type: "summarize_task",
                 source: "auto_compaction",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             }),
         ).toEqual({ ok: false, code: "explicit_instruction_missing" })
     })
@@ -55,7 +55,7 @@ describe("ExplicitInstructionRegistry", () => {
                 instructionId: authorization.instructionId,
                 type: "summarize_task",
                 source: "auto_compaction",
-                targetTool: ClineDefaultTool.NEW_TASK,
+                targetTool: DlineDefaultTool.NEW_TASK,
             }),
         ).toEqual({ ok: false, code: "explicit_instruction_tool_mismatch" })
         expect(registry.get(authorization.instructionId)?.state).toBe("pending")
@@ -71,7 +71,7 @@ describe("ExplicitInstructionRegistry", () => {
                 instructionId: authorization.instructionId,
                 type: "summarize_task",
                 source: "manual_compact_command",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             }),
         ).toEqual({ ok: false, code: "explicit_instruction_source_mismatch" })
         expect(registry.get(authorization.instructionId)?.state).toBe("pending")
@@ -84,7 +84,7 @@ describe("ExplicitInstructionRegistry", () => {
             instructionId: authorization.instructionId,
             type: "summarize_task" as const,
             source: "auto_compaction" as const,
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
         }
 
         expect(registry.consume({ ...base, ...REQUEST_TWO })).toEqual({
@@ -105,7 +105,7 @@ describe("ExplicitInstructionRegistry", () => {
             instructionId: authorization.instructionId,
             type: "summarize_task" as const,
             source: "auto_compaction" as const,
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
         }
 
         expect(registry.consume(input).ok).toBe(true)
@@ -124,7 +124,7 @@ describe("ExplicitInstructionRegistry", () => {
                 instructionId: authorization.instructionId,
                 type: "summarize_task",
                 source: "auto_compaction",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             }),
         ).toEqual({ ok: false, code: "explicit_instruction_expired" })
     })
@@ -160,7 +160,7 @@ describe("ExplicitInstructionRegistry", () => {
                 ...REQUEST_ONE,
                 type: "summarize_task",
                 source: "auto_compaction",
-                targetTool: ClineDefaultTool.NEW_TASK,
+                targetTool: DlineDefaultTool.NEW_TASK,
             }),
         ).toThrow("must target 'summarize_task'")
         expect(() =>
@@ -168,7 +168,7 @@ describe("ExplicitInstructionRegistry", () => {
                 ...REQUEST_ONE,
                 type: "skill",
                 source: "skill_injection",
-                targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+                targetTool: DlineDefaultTool.SUMMARIZE_TASK,
             }),
         ).toThrow("cannot authorize a tool")
     })
@@ -178,15 +178,15 @@ describe("explicit instruction policy", () => {
     it("authorizes only the declared explicit-only target tools", () => {
         expect(getExplicitInstructionPolicy("summarize_task")).toMatchObject({
             authorizesTool: true,
-            targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+            targetTool: DlineDefaultTool.SUMMARIZE_TASK,
         })
         expect(getExplicitInstructionPolicy("new_rule")).toMatchObject({
             authorizesTool: true,
-            targetTool: ClineDefaultTool.NEW_RULE,
+            targetTool: DlineDefaultTool.NEW_RULE,
         })
         expect(getExplicitInstructionPolicy("deep-planning")).toMatchObject({
             authorizesTool: true,
-            targetTool: ClineDefaultTool.NEW_TASK,
+            targetTool: DlineDefaultTool.NEW_TASK,
         })
     })
 

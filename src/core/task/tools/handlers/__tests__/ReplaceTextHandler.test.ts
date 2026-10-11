@@ -3,7 +3,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { ReplaceTextHandler } from "../ReplaceTextHandler"
@@ -35,7 +35,7 @@ function block(
         type: "tool_use" as const,
         function_id: "replace-text-test",
         dline_tid: "replace-text-test",
-        name: ClineDefaultTool.REPLACE_TEXT,
+        name: DlineDefaultTool.REPLACE_TEXT,
         partial: false,
         ts: 100,
         params: {

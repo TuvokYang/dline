@@ -1,4 +1,4 @@
-import { type ClineDefaultTool, CONVERSATIONAL_TOOL_NAMES } from "@shared/tools"
+import { CONVERSATIONAL_TOOL_NAMES, type DlineDefaultTool } from "@shared/tools"
 import type { ClineStorageMessage, ClineUserToolResultContentBlock } from "@/shared/messages"
 
 interface ToolUseIdentity {
@@ -13,7 +13,7 @@ function answersConversationalToolUse(block: ClineUserToolResultContentBlock, ca
         candidate.type === "tool_use" &&
         candidate.function_id === block.function_id &&
         candidate.dline_tid === block.dline_tid &&
-        CONVERSATIONAL_TOOL_NAMES.has(candidate.name as ClineDefaultTool)
+        CONVERSATIONAL_TOOL_NAMES.has(candidate.name as DlineDefaultTool)
     )
 }
 

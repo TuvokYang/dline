@@ -11,7 +11,7 @@ import { applyPatch } from "diff"
 import { telemetryService } from "@/services/telemetry"
 import { BASH_WRAPPERS, DiffError, PATCH_MARKERS, type Patch, PatchActionType, type PatchChunk } from "@/shared/Patch"
 import { preserveEscaping } from "@/shared/string"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
@@ -59,7 +59,7 @@ export const PatchClineSayMap = {
 } as const
 
 export class ApplyPatchHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.APPLY_PATCH
+    readonly name = DlineDefaultTool.APPLY_PATCH
     private config?: TaskConfig
     private pathResolver?: PathResolver
     private providerOps?: FileProviderOperations

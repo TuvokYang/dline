@@ -1,7 +1,7 @@
 import { getPrompt } from "@core/prompts/i18n"
 import { isInteractionCancellationError } from "@core/task/interaction/InteractionCancellationError"
 import { UiSayTool } from "@shared/ExtensionMessage"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { DEFAULT_LOCAL_SEARCH_ENGINE, isLocalSearchEngineId, LOCAL_SEARCH_ENGINE_LABELS } from "@shared/web-search"
 import { telemetryService } from "@/services/telemetry"
 import { createLocalSearchRegistry, type LocalSearchRegistryOptions } from "@/services/web-search/createLocalSearchRegistry"
@@ -57,7 +57,7 @@ function formatSearchResults(engineLabel: string, items: readonly LocalSearchRes
 }
 
 export class WebSearchToolHandler implements IFullyManagedTool {
-    readonly name = ClineDefaultTool.WEB_SEARCH
+    readonly name = DlineDefaultTool.WEB_SEARCH
 
     constructor(private readonly createRegistry: LocalSearchRegistryFactory = createLocalSearchRegistry) {}
 

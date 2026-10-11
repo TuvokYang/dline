@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { ToolPromptGenerator } from "../../generators/ToolPromptGenerator"
 import { PromptProfile } from "../../profiles/types"
@@ -20,7 +20,7 @@ const base = {
 
 describe("generate_image prompt gate", () => {
     it("exposes the tool only when a valid image profile exists", () => {
-        expect(names({ ...base, imageGenerationAvailable: true })).toContain(ClineDefaultTool.GENERATE_IMAGE)
-        expect(names({ ...base, imageGenerationAvailable: false })).not.toContain(ClineDefaultTool.GENERATE_IMAGE)
+        expect(names({ ...base, imageGenerationAvailable: true })).toContain(DlineDefaultTool.GENERATE_IMAGE)
+        expect(names({ ...base, imageGenerationAvailable: false })).not.toContain(DlineDefaultTool.GENERATE_IMAGE)
     })
 })

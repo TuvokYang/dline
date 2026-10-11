@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { ToolUse } from "@core/assistant-message"
-import { ClineDefaultTool, getToolUseNames } from "@shared/tools"
+import { DlineDefaultTool, getToolUseNames } from "@shared/tools"
 import { isTurnEndingToolUse } from "../../../assistant-message-order"
 import { type ProviderTurnApproval, resolveLaneContext, resolveToolLanes } from "../../../kernel"
 import { approvalInteractionId } from "../../../tools/approval-interaction"
@@ -76,7 +76,7 @@ export class ProductionToolHandlerRuntime {
     readonly coordinator = new ToolExecutorCoordinator()
 
     constructor(validator: ToolValidator) {
-        for (const toolName of getToolUseNames()) this.coordinator.registerByName(toolName as ClineDefaultTool, validator)
+        for (const toolName of getToolUseNames()) this.coordinator.registerByName(toolName as DlineDefaultTool, validator)
     }
 
     async plan(block: ToolUse, snapshot: ToolAdmissionSnapshot): Promise<ProductionToolPlan> {

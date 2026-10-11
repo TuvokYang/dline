@@ -1,4 +1,4 @@
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import {
     DISABLED_WEB_SEARCH_ROUTING_PLAN,
@@ -117,17 +117,22 @@ describe("Standard/Lite transport and capability behavior matrix", () => {
         expect(exposes(result, "native", "make_plan")).toBe(true)
     })
 
-    it.each(["native", "xml"] as const)("exposes act_mode_respond only in ACT MODE for %s", async (transport) => {
-        const act = await generate(PromptProfile.Standard, transport, {
-            providerInfo: { ...BASE_CONTEXT.providerInfo, mode: "act" },
-        })
-        const plan = await generate(PromptProfile.Standard, transport, {
-            providerInfo: { ...BASE_CONTEXT.providerInfo, mode: "plan" },
-            disableTools: [ClineDefaultTool.ACT_MODE],
-        })
+    it.each([
+        [PromptProfile.Standard, "native"],
+        [PromptProfile.Standard, "xml"],
+        [PromptProfile.Lite, "native"],
+        [PromptProfile.Lite, "xml"],
+    ] as const)("offers working_respond and phase_report in both modes and never their former names for %s/%s", async (profile, transport) => {
+        for (const mode of ["act", "plan"] as const) {
+            const result = await generate(profile, transport, { providerInfo: { ...BASE_CONTEXT.providerInfo, mode } })
 
-        expect(exposes(act, transport, "act_mode_respond")).toBe(true)
-        expect(exposes(plan, transport, "act_mode_respond")).toBe(false)
+            expect(exposes(result, transport, DlineDefaultTool.WORKING_RESPOND), mode).toBe(true)
+            expect(exposes(result, transport, DlineDefaultTool.PHASE_REPORT), mode).toBe(true)
+            for (const formerName of [DlineDefaultTool.LEGACY_ACT_MODE_RESPOND, DlineDefaultTool.LEGACY_STATUS_UPDATE]) {
+                expect(exposes(result, transport, formerName), mode).toBe(false)
+                expect(result.systemPrompt, mode).not.toContain(formerName)
+            }
+        }
     })
 
     it.each(["native", "xml"] as const)("applies browser support and disable gates for Standard/%s", async (transport) => {

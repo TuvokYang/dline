@@ -3,7 +3,7 @@ import { OutputLimitExceededError } from "@core/api/stream/OutputLimitExceededEr
 import type { ApiStream } from "@core/api/transform/stream"
 import { ExplicitInstructionRegistry } from "@core/task/explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import type { CompactionAttemptDiagnostics } from "../compaction-attempt-diagnostics"
 import { isCorrectableCompactionFailure, renderCompactionRetryReminder } from "../compaction-attempt-failure"
@@ -36,7 +36,7 @@ function createInstructions(): ExplicitInstructionRequestScope {
     instructions.register({
         type: "summarize_task",
         source: "auto_compaction",
-        targetTool: ClineDefaultTool.SUMMARIZE_TASK,
+        targetTool: DlineDefaultTool.SUMMARIZE_TASK,
         operationId: passIdentity.operationId,
     })
     return instructions

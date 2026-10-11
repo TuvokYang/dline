@@ -1,5 +1,5 @@
 import path from "node:path"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 
 export type ToolPathParamName = "path" | "absolutePath"
 
@@ -72,9 +72,9 @@ export function readToolPathParam(params: Record<string, string | undefined> | u
 
 /** Tools whose declared path names a file they will modify. */
 const PATH_WRITING_TOOLS: ReadonlySet<string> = new Set<string>([
-    ClineDefaultTool.FILE_NEW,
-    ClineDefaultTool.FILE_EDIT,
-    ClineDefaultTool.NEW_RULE,
+    DlineDefaultTool.FILE_NEW,
+    DlineDefaultTool.FILE_EDIT,
+    DlineDefaultTool.NEW_RULE,
 ])
 
 /** Whether a block's declared path is a write claim. */

@@ -15,6 +15,7 @@ import {
     ProductionCompactionAdapter,
     type ProductionCompactionService,
 } from "../executors/compaction/ProductionCompactionAdapter"
+import type { ComposePort } from "../executors/compose/ComposeCommandExecutor"
 import {
     type ComposeCompactionBarrierPort,
     type ComposeContextWindowGuardPort,
@@ -23,6 +24,7 @@ import {
     ProductionComposeAdapter,
 } from "../executors/compose/ProductionComposeAdapter"
 import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
+import { ToolSequenceBoundaryCompose, type ToolSequencePort } from "../executors/compose/ToolSequenceBoundary"
 import type { ToolDenialPort } from "../executors/compose/ToolTerminalManifestMaterializer"
 import type { DialogAwaitingPort, DialogWaiterPort } from "../executors/dialog/DialogCommandExecutor"
 import { ProductionDialogAdapter, type ProductionDialogAdapterOptions } from "../executors/dialog/ProductionDialogAdapter"
@@ -57,6 +59,8 @@ export interface TaskCompositionServices {
     readonly tool: ProductionToolExecutionService
     readonly toolResources: OwnedToolResources
     readonly toolOperationCancellation?: ProductionToolAdapterOptions["operationCancellation"]
+    /** Settles the one restore point a round of tool calls owes; absent in headless assemblies. */
+    readonly toolRoundCheckpoint?: ProductionToolAdapterOptions["roundCheckpoint"]
     readonly toolSurface: ToolDomainSurface
     /** Task-scoped WS-072 scheduler; owned by the task so limit changes reach the active turn. */
     readonly toolScheduler: TurnToolScheduler
@@ -79,6 +83,8 @@ export interface TaskCompositionOptions {
     readonly retainedInputPresentation?: RetainedInputPresentationPort
     /** Words a user's refusal the way the refused tool reports it. */
     readonly toolDenial?: ToolDenialPort
+    /** Learns when a round carries user input or an unfinished call; see ToolSequencePort. */
+    readonly toolSequence?: ToolSequencePort
     readonly deferRestoredCommands?: OpenTaskShellOptions["deferRestoredCommands"]
     /** The chat rows restored dialogs anchor to; see OpenTaskShellOptions. */
     readonly readAnchorRows?: OpenTaskShellOptions["readAnchorRows"]
@@ -149,6 +155,11 @@ function instrumentCompaction(port: CompactionPort, observer: CompactionSettleme
     return observer ? observer.instrument(port) : port
 }
 
+/** Interrupt the tool sequence on rounds that carry user input or an unfinished call. */
+function bindToolSequence(port: ProductionComposeAdapter, sequence: ToolSequencePort | undefined): ComposePort {
+    return sequence ? new ToolSequenceBoundaryCompose(port, sequence) : port
+}
+
 export async function composeTask(options: TaskCompositionOptions): Promise<TaskCompositionResult> {
     let runtime: TaskRuntime | undefined
     let conversation: JournalCompactionConversation | undefined
@@ -176,18 +187,21 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
                     presentation: options.providerPresentation,
                     report: options.providerRequestReport,
                 },
-                compose: new ProductionComposeAdapter({
-                    payloads: persistence.payloads,
-                    journal: persistence.ports.journal,
-                    readState,
-                    environment: options.services.environment,
-                    continuation: options.services.continuation,
-                    compactionBarrier: options.compactionBarrier,
-                    contextWindowGuard: options.contextWindowGuard,
-                    retainedInputPresentation: options.retainedInputPresentation,
-                    conversation: conversationView,
-                    toolDenial: options.toolDenial,
-                }),
+                compose: bindToolSequence(
+                    new ProductionComposeAdapter({
+                        payloads: persistence.payloads,
+                        journal: persistence.ports.journal,
+                        readState,
+                        environment: options.services.environment,
+                        continuation: options.services.continuation,
+                        compactionBarrier: options.compactionBarrier,
+                        contextWindowGuard: options.contextWindowGuard,
+                        retainedInputPresentation: options.retainedInputPresentation,
+                        conversation: conversationView,
+                        toolDenial: options.toolDenial,
+                    }),
+                    options.toolSequence,
+                ),
                 compaction: instrumentCompaction(
                     new ProductionCompactionAdapter({
                         payloads: persistence.payloads,
@@ -220,6 +234,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
                     approvalFeedback,
                     resources: options.services.toolResources,
                     operationCancellation: options.services.toolOperationCancellation,
+                    roundCheckpoint: options.services.toolRoundCheckpoint,
                     surface: options.services.toolSurface,
                     service: options.services.tool,
                     scheduler: options.services.toolScheduler,

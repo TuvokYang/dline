@@ -3,7 +3,7 @@ import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
 import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { showSystemNotification } from "@integrations/notifications"
-import { ClineDefaultTool } from "@/shared/tools"
+import { DlineDefaultTool } from "@/shared/tools"
 import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../../new-task/new-task-continuation"
 import type { ToolHandlerResult } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
@@ -12,7 +12,7 @@ import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
 export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
-    readonly name = ClineDefaultTool.NEW_TASK
+    readonly name = DlineDefaultTool.NEW_TASK
 
     getDescription(block: ToolUse): string {
         return `[${block.name} for creating a new task]`

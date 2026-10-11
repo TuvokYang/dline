@@ -20,7 +20,7 @@ import type { UiAsk, UiMessage, UiSay } from "@shared/ExtensionMessage"
 import type { ClineContent } from "@shared/messages/content"
 import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
 import { Logger } from "@shared/services/Logger"
-import type { ClineDefaultTool } from "@shared/tools"
+import type { DlineDefaultTool } from "@shared/tools"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
 import { sendPartialMessageEvent } from "../../ui/subscribeToPartialMessage"
 
@@ -308,7 +308,7 @@ export class ControllerTaskCallbacksOwner {
         }
     }
 
-    private async missingParameter(_toolName: ClineDefaultTool, paramName: string, relPath?: string, _existingTs?: number) {
+    private async missingParameter(_toolName: DlineDefaultTool, paramName: string, relPath?: string, _existingTs?: number) {
         const message = `${formatResponse.missingToolParameterError(paramName)}${relPath ? `\nPath: ${relPath}` : ""}`
         return formatResponse.toolError(message)
     }

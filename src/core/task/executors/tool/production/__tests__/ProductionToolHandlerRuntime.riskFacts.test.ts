@@ -1,6 +1,6 @@
 import type { ToolUse } from "@core/assistant-message"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
-import { ClineDefaultTool } from "@shared/tools"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { ToolValidator } from "../../../../tools/ToolValidator"
 import { ProductionApprovalPolicyAdapter } from "../../../policy/ProductionApprovalPolicyAdapter"
@@ -26,7 +26,7 @@ const snapshot = (actions: Record<string, boolean>): ToolAdmissionSnapshot => ({
 const commandBlock = (requiresApproval: string): ToolUse =>
     ({
         type: "tool_use",
-        name: ClineDefaultTool.BASH,
+        name: DlineDefaultTool.BASH,
         dline_tid: "block-1",
         params: { command: 'node -e "console.log(1)"', requires_approval: requiresApproval, workdirectory: "." },
         partial: false,
@@ -75,7 +75,7 @@ describe("ProductionToolHandlerRuntime approval facts", () => {
 
         if (plan.approval.kind !== "automatic") throw new Error("expected an automatic approval")
         expect(plan.approval.riskFacts).toMatchObject({
-            toolName: ClineDefaultTool.BASH,
+            toolName: DlineDefaultTool.BASH,
             isSafeCommand: true,
             isExternalPath: false,
         })
