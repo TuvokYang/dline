@@ -79,6 +79,44 @@ class DlineRuntimeFileManagerImpl {
         return path.join(directory, safeName)
     }
 
+    /**
+     * Resolve the attachment directory of one stable identity.
+     *
+     * Draft input resources address their storage by resource identity so the
+     * same resource always lives in the same directory. Each directory is a
+     * direct child of the attachment area, which keeps it under the same
+     * age-based retention as other staged attachments. The directory is not
+     * created here; its owner decides when it exists.
+     */
+    attachmentDirectory(stableId: string): string {
+        if (!TEMP_FILE_STEM_PATTERN.test(stableId)) {
+            throw new Error(`Invalid Dline attachment directory identity: ${stableId}`)
+        }
+        return path.join(this.attachmentsDir, stableId)
+    }
+
+    /**
+     * Keep one attachment directory out of the next age-based cleanup.
+     *
+     * Cleanup removes a directory once its newest file is older than the retention window, so
+     * refreshing one file's clock retains the whole directory. Callers state that the directory is
+     * still referenced; how age is measured stays private to this owner. Best effort: a directory
+     * that cannot be touched simply keeps its current age.
+     */
+    async markAttachmentDirectoryRetained(stableId: string): Promise<void> {
+        const directory = this.attachmentDirectory(stableId)
+        const now = new Date()
+        const files = await fs.promises.readdir(directory).catch(() => [] as string[])
+        for (const file of files) {
+            try {
+                await fs.promises.utimes(path.join(directory, file), now, now)
+                return
+            } catch {
+                // Try the next file; another process may have replaced this one.
+            }
+        }
+    }
+
     async cleanup(): Promise<CleanupResult> {
         try {
             this.ensureTempDirExists()

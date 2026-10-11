@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import type { Controller } from "@core/controller"
@@ -16,8 +16,8 @@ afterAll(() => {
     else process.env.DLINE_DOCS_DIR = previousDocumentsDir
 })
 
-function controllerWithTask(taskId: string | undefined): Controller {
-    return { task: taskId === undefined ? undefined : { taskId } } as unknown as Controller
+function controllerWithTask(taskId: string | undefined, writable = true): Controller {
+    return { task: taskId === undefined ? undefined : { taskId, writable } } as unknown as Controller
 }
 
 function oversizedText(): string {
@@ -50,6 +50,17 @@ describe("createInputTextResource", () => {
 
         expect(response.created).toBe(false)
         expect(response.result).toBe("missing_task")
+    })
+
+    it("writes nothing into a task this window only shows read-only", async () => {
+        const response = await invoke(
+            controllerWithTask("paste-read-only", false),
+            CreateInputTextResourceRequest.create({ text: oversizedText() }),
+        )
+
+        expect(response.created).toBe(false)
+        expect(response.result).toBe("missing_task")
+        expect(existsSync(path.join(process.env.DLINE_DOCS_DIR ?? "", "tasks", "paste-read-only"))).toBe(false)
     })
 
     it("keeps text inline when it still fits the inline budget", async () => {

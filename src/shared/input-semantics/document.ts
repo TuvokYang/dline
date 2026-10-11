@@ -121,6 +121,13 @@ export type InputResourceOwner =
     | { readonly kind: "draft"; readonly draftId: string }
     | { readonly kind: "task"; readonly taskId: string }
 
+/** Whether two owner claims name the same draft or the same task. */
+export function sameInputResourceOwner(left: InputResourceOwner | undefined, right: InputResourceOwner | undefined): boolean {
+    if (left?.kind === "draft" && right?.kind === "draft") return left.draftId === right.draftId
+    if (left?.kind === "task" && right?.kind === "task") return left.taskId === right.taskId
+    return false
+}
+
 /**
  * A reference to an owned input resource.
  *

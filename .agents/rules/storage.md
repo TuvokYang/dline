@@ -152,6 +152,8 @@ tasks/<task-id>/
     ├── command-logs/
     ├── conversation-export/
     ├── shell-diagnostics/
+    ├── input-resources/
+    │   └── <resource-id>/        (content file + input-resource.json)
     ├── image-previews/
     └── image-viewer/
 ```
@@ -171,6 +173,7 @@ Ownership matters more than the physical filename:
 - Task context helpers own `context.json` and `context_history.jsonl`.
 - Artifact APIs own `artifacts/` and enforce task-relative paths. Do not expose conversation, snapshot, settings, or database files through the artifact read scope.
 - `src/core/storage/task-temp.ts` owns `tmp/` and is the only source of that path. Command logs and shell diagnostics belong to the owning task; `command-logs` survives across sessions because chat rows and Activities keep a clickable path to it, so age alone never deletes a log. It is bounded only by a per-task total size budget enforced on the locked task, which drops the oldest logs first. `image-previews` and `image-viewer` stay process-ephemeral. Command execution without a task identity keeps using the process-level temp directory owned by `DlineRuntimeFileManager`, which also retains pre-migration logs.
+- `InputResourceStore` (`src/core/input-semantics/`) owns the composer's input resources. A task's resources live in `tmp/input-resources/<resource-id>/` and share the task's lifetime; a composer draft's resources live in the `DlineRuntimeFileManager` attachment area, which ages out directories nobody verified recently. Each resource directory is private (`0700`/`0600`), assembled under a `.staging` sibling and published by one rename, and honored only when its record, owner, generation and frozen content hash all match the reference. Admission adopts draft resources into the task under the same identity; never read or write a resource directory except through the store.
 
 Do not read or rewrite task files directly from controllers or UI code when an owning store exists. Task deletion must go through the task deletion coordinator so locks, active controllers, panels, TaskHistory, known databases, WAL/SHM files, and checkpoint ownership are handled coherently. When adding a task-owned file or directory, update deletion/recovery ownership explicitly; do not assume removing the task directory will succeed while unknown contents remain.
 

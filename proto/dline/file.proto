@@ -3,6 +3,7 @@ syntax = "proto3";
 package dline;
 
 import "dline/common.proto";
+import "dline/input.proto";
 import "dline/profile.proto";
 
 option go_package = "github.com/dline/grpc-go/dline";
@@ -43,6 +44,24 @@ service FileService {
 
   // Resolves dropped or pasted file URIs to host paths the composer attaches; rejected files are omitted
   rpc resolveAttachmentUris(RelativePathsRequest) returns (StringArray);
+
+  // Stages pasted text as an input resource owned by the active task, or by the request's draft when no task is active
+  rpc stageInputText(StageInputTextRequest) returns (InputResourceStageResults);
+
+  // Stages files that only exist as bytes in the composer as input resources
+  rpc stageInputBytes(StageInputBytesRequest) returns (InputResourceStageResults);
+
+  // Stages copies of dropped or pasted file URIs as input resources
+  rpc stageInputUris(StageInputUrisRequest) returns (InputResourceStageResults);
+
+  // Prompts for files and stages copies of the selection as input resources
+  rpc selectInputResources(SelectInputResourcesRequest) returns (InputResourceStageResults);
+
+  // Opens the verified local copy of an input resource in the editor
+  rpc openInputResource(InputResourceRequest) returns (InputResourceOperationResult);
+
+  // Removes a draft-owned input resource the composer no longer references
+  rpc removeInputResource(InputResourceRequest) returns (InputResourceOperationResult);
 
   // Search for files in the workspace with fuzzy matching
   rpc searchFiles(FileSearchRequest) returns (FileSearchResults);
@@ -241,6 +260,93 @@ message StageAttachmentRequest {
   Metadata metadata = 1;
   string file_name = 2;
   bytes data = 3;
+}
+
+// Pasted text the composer keeps as a resource instead of inline text.
+// Every staging request names the composer draft; the Host uses it as the owner
+// only when no task is active, so the Webview never chooses a task owner.
+message StageInputTextRequest {
+  Metadata metadata = 1;
+  string draft_id = 2;
+  string text = 3;
+  // Plain extension hint such as "ts"; anything else stages as .txt
+  string extension = 4;
+}
+
+// One file that only exists as bytes in the Webview
+message InputResourceFile {
+  string file_name = 1;
+  bytes data = 2;
+}
+
+message StageInputBytesRequest {
+  Metadata metadata = 1;
+  string draft_id = 2;
+  repeated InputResourceFile files = 3;
+}
+
+message StageInputUrisRequest {
+  Metadata metadata = 1;
+  string draft_id = 2;
+  repeated string uris = 3;
+}
+
+message SelectInputResourcesRequest {
+  Metadata metadata = 1;
+  string draft_id = 2;
+  bool images_allowed = 3;
+}
+
+// What a staged resource is to the composer and the provider
+enum InputResourceKind {
+  INPUT_RESOURCE_KIND_UNSPECIFIED = 0;
+  INPUT_RESOURCE_KIND_IMAGE = 1;
+  INPUT_RESOURCE_KIND_FILE = 2;
+  INPUT_RESOURCE_KIND_PASTED_TEXT = 3;
+}
+
+// A staged resource: the reference a document binds and the metadata the composer may show.
+// It never carries a path or the content.
+message StagedInputResource {
+  SemanticResourceRef ref = 1;
+  string display_name = 2;
+  InputResourceKind kind = 3;
+  optional int32 line_count = 4;
+}
+
+// Why one resource operation failed. The code is a semantic input diagnostic code and the
+// message is already free of paths, contents and credentials.
+message InputResourceError {
+  string code = 1;
+  string message = 2;
+  optional string resource_id = 3;
+  // Name of the item the request supplied, so a failure before staging is still attributable
+  optional string display_name = 4;
+}
+
+// Exactly one outcome is set
+message InputResourceStageResult {
+  oneof outcome {
+    StagedInputResource staged = 1;
+    InputResourceError error = 2;
+  }
+}
+
+// One result per requested item, in request order
+message InputResourceStageResults {
+  repeated InputResourceStageResult results = 1;
+}
+
+// Addresses one resource; the draft id is honored only for a draft-owned reference
+message InputResourceRequest {
+  Metadata metadata = 1;
+  string draft_id = 2;
+  SemanticResourceRef ref = 3;
+}
+
+// The error is absent when the operation succeeded
+message InputResourceOperationResult {
+  InputResourceError error = 1;
 }
 
 // Enum for file search type filtering

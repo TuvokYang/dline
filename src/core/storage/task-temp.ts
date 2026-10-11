@@ -153,6 +153,27 @@ export function resolveTaskTempFilePath(taskId: string, section: TaskTempSection
     return filePath
 }
 
+/**
+ * Resolve the directory of one stable entry inside a task temp section.
+ *
+ * Owners that keep several files per identity (an input resource keeps its
+ * content beside its record) address the entry by identity rather than
+ * building a path. The directory is not created here; its owner decides when
+ * an entry exists.
+ */
+export function getTaskTempEntryDirectory(taskId: string, section: TaskTempSection, stableStem: string): string {
+    if (!FILE_STEM_PATTERN.test(stableStem)) {
+        throw new Error(`Invalid task temp entry stem: ${stableStem}`)
+    }
+
+    const sectionDirectory = getTaskTempSectionDirectory(taskId, section)
+    const entryDirectory = path.join(sectionDirectory, stableStem)
+    if (path.dirname(path.resolve(entryDirectory)) !== path.resolve(sectionDirectory)) {
+        throw new Error(`Task temp entry escapes its section: ${stableStem}`)
+    }
+    return entryDirectory
+}
+
 /** Return whether an absolute path belongs to the task-owned temporary root. */
 export function isTaskTempPath(taskId: string, absolutePath: string): boolean {
     if (!path.isAbsolute(absolutePath)) return false

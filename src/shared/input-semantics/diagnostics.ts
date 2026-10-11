@@ -24,6 +24,7 @@ export const SEMANTIC_INPUT_DIAGNOSTIC_CODES = [
     "semantic_input_resource_stage_failed",
     "semantic_input_resource_adopt_failed",
     "semantic_input_resource_copy_failed",
+    "semantic_input_resource_open_failed",
 ] as const
 
 export type SemanticInputDiagnosticCode = (typeof SEMANTIC_INPUT_DIAGNOSTIC_CODES)[number]

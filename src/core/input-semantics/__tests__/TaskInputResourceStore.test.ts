@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
@@ -14,78 +14,57 @@ afterAll(() => {
     else process.env.DLINE_DOCS_DIR = previousDocumentsDir
 })
 
-async function openStore(taskId: string) {
-    const { TaskInputResourceStore } = await import("../TaskInputResourceStore")
-    return new TaskInputResourceStore(taskId)
+async function load() {
+    const [{ openTaskInputResources, taskInputResourceRoot }, { referenceOf }, { isTaskTempPath }] = await Promise.all([
+        import("../TaskInputResourceStore"),
+        import("../InputResourceStore"),
+        import("@core/storage/task-temp"),
+    ])
+    return { openTaskInputResources, taskInputResourceRoot, referenceOf, isTaskTempPath }
 }
 
-describe("TaskInputResourceStore", () => {
-    it("keeps the authoritative copy inside the task temp storage", async () => {
-        const store = await openStore("task-resources-1")
+describe("taskInputResourceRoot", () => {
+    it("keeps each resource in its own directory inside the task's input-resource storage", async () => {
+        const { taskInputResourceRoot } = await load()
+        const root = taskInputResourceRoot("task-resources-1")
+        const resourceId = "6f1c1f5e-3c55-4a8e-9a43-0c7b8a1e2d3f"
 
-        const resource = await store.storeText("first\nsecond\nthird")
-
-        expect(resource.absolutePath).toContain(path.join("tasks", "task-resources-1", "tmp", "input-resources"))
-        expect(readFileSync(resource.absolutePath, "utf8")).toBe("first\nsecond\nthird")
-        expect(resource.ownerTaskId).toBe("task-resources-1")
-        expect(resource.origin).toBe("pasted_text")
-        expect(resource.lineCount).toBe(3)
-        expect(resource.byteSize).toBe(18)
+        expect(root.owner).toEqual({ kind: "task", taskId: "task-resources-1" })
+        // Task storage lives as long as the task, so nothing needs to keep it alive.
+        expect(root.onVerifiedAccess).toBeUndefined()
+        expect(root.resourceDirectory(resourceId)).toBe(
+            path.join(process.env.DLINE_DOCS_DIR as string, "tasks", "task-resources-1", "tmp", "input-resources", resourceId),
+        )
     })
 
-    it("names the file readably and keeps two pastes in the same millisecond apart", async () => {
-        const store = await openStore("task-resources-naming")
+    it("refuses an identity that would address a directory outside the section", async () => {
+        const { taskInputResourceRoot } = await load()
 
-        const [first, second] = await Promise.all([store.storeText("one"), store.storeText("two")])
+        expect(() => taskInputResourceRoot("../other-task")).toThrow(/task identity/i)
+        expect(() => taskInputResourceRoot("task-resources-2").resourceDirectory("../escape")).toThrow(/stem/i)
+    })
+})
 
-        expect(first.displayName).toMatch(/^input_\d{14}_[0-9a-f]{8}\.txt$/)
-        expect(second.absolutePath).not.toBe(first.absolutePath)
-        expect(readFileSync(first.absolutePath, "utf8")).toBe("one")
-        expect(readFileSync(second.absolutePath, "utf8")).toBe("two")
+describe("openTaskInputResources", () => {
+    it("stages a resource the task read scope already covers", async () => {
+        const { openTaskInputResources, referenceOf, isTaskTempPath } = await load()
+        const store = openTaskInputResources("task-resources-3")
+
+        const staged = await store.stageText("first\nsecond\nthird")
+        if (!staged.ok) throw new Error(staged.failure.message)
+        const resolved = await store.resolve(referenceOf(staged.value))
+
+        expect(staged.value.owner).toEqual({ kind: "task", taskId: "task-resources-3" })
+        expect(resolved.ok && isTaskTempPath("task-resources-3", resolved.value.contentPath)).toBe(true)
     })
 
-    it("reads a stored resource back when the content still matches its binding", async () => {
-        const store = await openStore("task-resources-2")
-        const resource = await store.storeText("payload")
+    it("does not resolve a resource that belongs to another task", async () => {
+        const { openTaskInputResources, referenceOf } = await load()
+        const other = await openTaskInputResources("task-resources-4").stageText("other task content")
+        if (!other.ok) throw new Error(other.failure.message)
 
-        expect(await store.readText(resource)).toBe("payload")
-        expect(await store.readText({ ...resource, contentHash: "0".repeat(64) })).toBeUndefined()
-    })
+        const result = await openTaskInputResources("task-resources-5").resolve(referenceOf(other.value))
 
-    it("reports a missing resource instead of throwing", async () => {
-        const store = await openStore("task-resources-3")
-
-        expect(await store.readText({ absolutePath: path.join(tmpdir(), "absent.txt"), contentHash: "x" })).toBeUndefined()
-    })
-
-    it("refuses to read a path outside the task's own input resources", async () => {
-        const store = await openStore("task-resources-4")
-        const foreign = await (await openStore("task-resources-5")).storeText("other task content")
-
-        expect(await store.readText(foreign)).toBeUndefined()
-    })
-
-    it("adopts a resource into the receiving task under a new identity", async () => {
-        const source = await (await openStore("task-handoff-source")).storeText("handed over\npayload")
-        const target = await openStore("task-handoff-target")
-
-        const adopted = await target.adopt(source)
-
-        expect(adopted.resourceId).not.toBe(source.resourceId)
-        expect(adopted.ownerTaskId).toBe("task-handoff-target")
-        expect(adopted.contentHash).toBe(source.contentHash)
-        expect(adopted.lineCount).toBe(source.lineCount)
-        expect(target.owns(adopted.absolutePath)).toBe(true)
-        expect(readFileSync(adopted.absolutePath, "utf8")).toBe("handed over\npayload")
-        expect(readFileSync(source.absolutePath, "utf8")).toBe("handed over\npayload")
-    })
-
-    it("leaves no partial copy when the adopted content does not match its binding", async () => {
-        const source = await (await openStore("task-handoff-changed")).storeText("original")
-        const target = await openStore("task-handoff-rejects")
-        writeFileSync(source.absolutePath, "tampered", "utf8")
-
-        await expect(target.adopt(source)).rejects.toThrow(/adopt input resource/i)
-        expect(readFileSync(source.absolutePath, "utf8")).toBe("tampered")
+        expect(result.ok ? undefined : result.failure.code).toBe("semantic_input_resource_invalid")
     })
 })

@@ -148,7 +148,8 @@ function toProtoOwner(owner: InputResourceOwner): WireOwner {
     return owner.kind === "draft" ? WireOwner.create({ draftId: owner.draftId }) : WireOwner.create({ taskId: owner.taskId })
 }
 
-function toProtoResourceRef(resource: SemanticResourceRef): WireResourceRef {
+/** Encode one resource reference; typed resource RPCs reuse the document's own encoding. */
+export function toProtoSemanticResourceRef(resource: SemanticResourceRef): WireResourceRef {
     return WireResourceRef.create({
         resourceId: resource.resourceId,
         expectedContentHash: resource.expectedContentHash,
@@ -167,7 +168,7 @@ export function toProtoSemanticInputDocument(document: SemanticInputDocument): W
         documentId: document.documentId,
         rawText: document.rawText,
         nodes: document.nodes.map(toProtoNode),
-        resources: document.resources.map(toProtoResourceRef),
+        resources: document.resources.map(toProtoSemanticResourceRef),
     })
 }
 
@@ -321,6 +322,18 @@ function decodeResourceRef(
             generation: wire.generation,
         },
     }
+}
+
+/**
+ * Decode one reference a typed resource RPC carries.
+ *
+ * Returns undefined when the reference does not name exactly one owner; every
+ * other claim is left for the resource store to verify against its record.
+ */
+export function fromProtoSemanticResourceRef(wire: WireResourceRef | undefined): SemanticResourceRef | undefined {
+    if (!wire) return undefined
+    const decoded = decodeResourceRef(wire, "")
+    return decoded.ok ? decoded.resource : undefined
 }
 
 /**
