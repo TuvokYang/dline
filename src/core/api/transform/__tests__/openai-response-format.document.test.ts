@@ -34,7 +34,7 @@ describe("native PDF input", () => {
         ])
     })
 
-    it("declares the documented provider limits only for image-capable models", () => {
+    it("declares the documented provider limits only for models whose metadata implies PDF input", () => {
         expect(anthropicMessagesDocumentLimits(modelInfo(false))).toBeUndefined()
         expect(openAiResponsesDocumentLimits(modelInfo(false))).toBeUndefined()
 
@@ -42,5 +42,15 @@ describe("native PDF input", () => {
         expect(anthropicMessagesDocumentLimits(modelInfo(true))).toEqual({ maxTotalBytes: 22_500_000, maxTotalPages: 100 })
         expect(anthropicMessagesDocumentLimits(modelInfo(true, 1_000_000))?.maxTotalPages).toBe(600)
         expect(openAiResponsesDocumentLimits(modelInfo(true))).toEqual({ maxTotalBytes: 50_000_000 })
+    })
+
+    it("follows declared input media types over the legacy image flag", () => {
+        const visionWithoutPdf = { capabilities: { supportsImages: true, inputMediaTypes: ["image/png"] } } as ModelInfo
+        const pdfWithoutImages = { capabilities: { supportsImages: false, inputMediaTypes: ["Application/PDF"] } } as ModelInfo
+
+        expect(anthropicMessagesDocumentLimits(visionWithoutPdf)).toBeUndefined()
+        expect(openAiResponsesDocumentLimits(visionWithoutPdf)).toBeUndefined()
+        expect(anthropicMessagesDocumentLimits(pdfWithoutImages)?.maxTotalPages).toBe(100)
+        expect(openAiResponsesDocumentLimits(pdfWithoutImages)).toEqual({ maxTotalBytes: 50_000_000 })
     })
 })

@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
+import { MAX_ATTACHED_BASE64_TEXT_BYTES } from "@shared/attachments"
 import type { InputResourceStageResults, StagedInputResource } from "@shared/proto/dline/file"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Controller } from "../.."
@@ -160,13 +161,14 @@ describe("typed input resource staging", () => {
             proto.StageInputBytesRequest.create({
                 files: [
                     { fileName: "shot.png", data: PNG_1X1 },
-                    { fileName: "fake.png", data: Buffer.from("not an image") },
+                    // Opaque binary whose base64 text exceeds the per-attachment budget.
+                    { fileName: "huge.bin", data: Buffer.alloc(Math.floor(MAX_ATTACHED_BASE64_TEXT_BYTES / 4) * 3 + 1) },
                 ],
             }),
         )
 
         expect(stagedOf(results, 0).kind).toBe(proto.InputResourceKind.INPUT_RESOURCE_KIND_IMAGE)
-        expect(results.results[1]?.error).toMatchObject({ code: "semantic_input_resource_invalid_mime", displayName: "fake.png" })
+        expect(results.results[1]?.error).toMatchObject({ code: "semantic_input_resource_too_large", displayName: "huge.bin" })
     })
 
     it("returns only the sanitized leaf of a requested name in an error", async () => {
@@ -175,11 +177,16 @@ describe("typed input resource staging", () => {
         const results = await stageInputBytes(
             controllerWith("task-rpc-names"),
             proto.StageInputBytesRequest.create({
-                files: [{ fileName: "C:\\Users\\me\\private\\fake\u0007.png", data: Buffer.from("not an image") }],
+                files: [
+                    {
+                        fileName: "C:\\Users\\me\\private\\huge\u0007.bin",
+                        data: Buffer.alloc(Math.floor(MAX_ATTACHED_BASE64_TEXT_BYTES / 4) * 3 + 1),
+                    },
+                ],
             }),
         )
 
-        expect(results.results[0]?.error?.displayName).toBe("fake.png")
+        expect(results.results[0]?.error?.displayName).toBe("huge.bin")
     })
 
     it("stages a copy of a dropped local file and refuses a non-file URI", async () => {

@@ -1,3 +1,4 @@
+import { MAX_ATTACHED_BASE64_TEXT_BYTES } from "@shared/attachments"
 import type { AdmittedInputPart, AdmittedResourcePart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticResourceRef } from "@shared/input-semantics/document"
 import { describe, expect, it, vi } from "vitest"
@@ -148,22 +149,66 @@ describe("buildAdmittedInputContent", () => {
         expect(rendered).toContain('<attached_resource name="notes.txt" id="second">\nTWO\n</attached_resource>')
     })
 
-    it("sends only the inline image formats as images", async () => {
+    it("reports a recorded media type no extractor reads instead of guessing how to send it", async () => {
         const content = await buildAdmittedInputContent(
             { parts: [resource("svg", "image/svg+xml", "logo.svg")], opensTask: false },
             reader({ svg: { mediaType: "image/svg+xml", bytes: Buffer.from("<svg/>") } }),
         )
 
         expect(content.some((block) => block.type === "image")).toBe(false)
+        expect(content[0]).toMatchObject({ type: "text", text: expect.stringContaining("semantic_input_resource_invalid_mime") })
     })
 
-    it("reports an unsupported media type instead of guessing how to send it", async () => {
+    it("sends opaque binary whole as base64 text in its own tag", async () => {
+        const bytes = Buffer.from([0x4d, 0x5a, 0x90, 0x00, 0xff])
         const content = await buildAdmittedInputContent(
-            { parts: [resource("bin", "application/octet-stream", "blob.bin")], opensTask: false },
-            reader({ bin: { mediaType: "application/octet-stream", bytes: Buffer.from([0, 1]) } }),
+            { parts: [resource("exe", "application/octet-stream", "tool.exe")], opensTask: false },
+            reader({ exe: { mediaType: "application/octet-stream", bytes } }),
         )
 
-        expect(content[0]).toMatchObject({ type: "text", text: expect.stringContaining("semantic_input_resource_invalid_mime") })
+        expect(content).toEqual([
+            {
+                type: "text",
+                text: `<user_message>\n<attached_resource media_type="application/octet-stream" encoding="base64" name="tool.exe" id="exe">\n${bytes.toString("base64")}\n</attached_resource>\n</user_message>`,
+            },
+        ])
+    })
+
+    // pdf-parse rejects some valid PDFs; a native endpoint may still read them.
+    it("keeps the native path for a PDF the extractor rejects, with its base64 as the fallback", async () => {
+        const unparsed = Buffer.from("not parseable by the extractor")
+        const content = await buildAdmittedInputContent(
+            { parts: [resource("pdf", "application/pdf", "locked.pdf")], opensTask: false },
+            reader({ pdf: { mediaType: "application/pdf", bytes: unparsed } }),
+        )
+
+        expect(content[1]).toEqual({
+            type: "attached_document",
+            path: "locked.pdf",
+            media_type: "application/pdf",
+            data: unparsed.toString("base64"),
+            byte_length: unparsed.byteLength,
+            fallback_text: `<attached_resource media_type="application/pdf" encoding="base64" name="locked.pdf" id="pdf">\n${unparsed.toString("base64")}\n</attached_resource>`,
+        })
+    })
+
+    it("sends a document the extractor rejects as base64 text, or marks it unavailable beyond the budget", async () => {
+        const small = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00])
+        const large = Buffer.alloc(Math.floor(MAX_ATTACHED_BASE64_TEXT_BYTES / 4) * 3 + 1)
+        const docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        const content = await buildAdmittedInputContent(
+            {
+                parts: [resource("small", docx, "small.docx"), text(" "), resource("large", docx, "large.docx")],
+                opensTask: false,
+            },
+            reader({ small: { mediaType: docx, bytes: small }, large: { mediaType: docx, bytes: large } }),
+        )
+
+        const rendered = content[0]?.type === "text" ? content[0].text : ""
+        expect(rendered).toContain(`encoding="base64" name="small.docx" id="small">\n${small.toString("base64")}\n`)
+        expect(rendered).toContain(
+            '<attached_resource name="large.docx" id="large">\n[The attached resource is unavailable: semantic_input_resource_too_large]',
+        )
     })
 
     it("marks every resource unavailable when no reader was provided", async () => {

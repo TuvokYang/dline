@@ -2,8 +2,9 @@ import { createHash } from "node:crypto"
 import * as fs from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { MAX_ATTACHED_TEXT_FILE_BYTES } from "@shared/attachments"
+import { MAX_ATTACHED_BASE64_TEXT_BYTES, MAX_ATTACHED_TEXT_FILE_BYTES } from "@shared/attachments"
 import type { InputResourceOwner, SemanticResourceRef } from "@shared/input-semantics/document"
+import { OPAQUE_BINARY_MEDIA_TYPE } from "@shared/input-semantics/media-types"
 import { INLINE_TEXT_MAX_BYTES, INLINE_TEXT_MAX_LINES } from "@shared/input-semantics/resource-policy"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import {
@@ -116,14 +117,14 @@ describe("InputResourceStore staging", () => {
         expect(record.lineCount).toBeUndefined()
     })
 
-    it("rejects an image name whose bytes are not an attachable image", async () => {
+    it("never sends an image name under an image type its bytes do not prove", async () => {
         const { store } = await openStore()
 
-        const forged = await store.stageBytes("photo.png", Buffer.from("not an image at all"))
-        const gif = await store.stageBytes("animation.png", GIF_HEADER)
+        const forged = expectStaged(await store.stageBytes("photo.png", Buffer.from("not an image at all")))
+        const gif = expectStaged(await store.stageBytes("animation.png", GIF_HEADER))
 
-        expect(forged.ok ? undefined : forged.failure.code).toBe("semantic_input_resource_invalid_mime")
-        expect(gif.ok ? undefined : gif.failure.code).toBe("semantic_input_resource_invalid_mime")
+        expect(forged).toMatchObject({ kind: "file", mediaType: "text/plain" })
+        expect(gif).toMatchObject({ kind: "file", mediaType: OPAQUE_BINARY_MEDIA_TYPE })
     })
 
     it("rejects an image beyond the dimension providers accept", async () => {
@@ -131,31 +132,57 @@ describe("InputResourceStore staging", () => {
 
         const result = await store.stageBytes("huge.png", pngWithSize(8000, 10))
 
-        expect(result.ok ? undefined : result.failure.code).toBe("semantic_input_resource_too_large")
+        expect(result.ok ? undefined : result.failure).toMatchObject({
+            code: "semantic_input_resource_too_large",
+            message: expect.stringContaining("7680px"),
+        })
     })
 
-    it("requires a document's bytes to match its declared format", async () => {
+    it("applies the limit of the format the bytes prove, not the one the name claims", async () => {
+        const { store } = await openStore()
+
+        const textAsPdf = await store.stageBytes("report.pdf", Buffer.alloc(MAX_ATTACHED_TEXT_FILE_BYTES + 1, 0x61))
+
+        expect(textAsPdf.ok ? undefined : textAsPdf.failure.code).toBe("semantic_input_resource_too_large")
+    })
+
+    it("types a document by its format only when its bytes match that format", async () => {
         const { store } = await openStore()
 
         const pdf = expectStaged(await store.stageBytes("report.pdf", Buffer.from("%PDF-1.7\n%binary")))
-        const fakePdf = await store.stageBytes("report.pdf", Buffer.from("plain text"))
-        const fakeDocx = await store.stageBytes("notes.docx", Buffer.from("plain text"))
+        const textPdf = expectStaged(await store.stageBytes("report.pdf", Buffer.from("plain text")))
+        const binaryDocx = expectStaged(await store.stageBytes("notes.docx", Buffer.from([0, 1, 2, 0, 3])))
 
-        expect(pdf.kind).toBe("file")
-        expect(pdf.mediaType).toBe("application/pdf")
-        expect(fakePdf.ok ? undefined : fakePdf.failure.code).toBe("semantic_input_resource_invalid_mime")
-        expect(fakeDocx.ok ? undefined : fakeDocx.failure.code).toBe("semantic_input_resource_invalid_mime")
+        expect(pdf).toMatchObject({ kind: "file", mediaType: "application/pdf" })
+        expect(textPdf).toMatchObject({ kind: "file", mediaType: "text/plain" })
+        expect(binaryDocx).toMatchObject({ kind: "file", mediaType: OPAQUE_BINARY_MEDIA_TYPE })
     })
 
-    it("reads text files as text and rejects binary content under a text name", async () => {
+    it("reads text as text and keeps any other content as opaque binary", async () => {
         const { store } = await openStore()
 
         const json = expectStaged(await store.stageBytes("data.json", Buffer.from('{\n  "a": 1\n}')))
-        const binary = await store.stageBytes("notes.txt", Buffer.from([0, 159, 146, 150, 0, 0, 1, 2]))
+        const binary = expectStaged(await store.stageBytes("tool.exe", Buffer.from([0x4d, 0x5a, 0x90, 0, 3, 0, 0, 0])))
 
         expect(json.mediaType).toBe("application/json")
         expect(json.lineCount).toBe(3)
-        expect(binary.ok ? undefined : binary.failure.code).toBe("semantic_input_resource_invalid_mime")
+        expect(binary).toMatchObject({ kind: "file", mediaType: OPAQUE_BINARY_MEDIA_TYPE })
+        expect(binary.lineCount).toBeUndefined()
+    })
+
+    it("refuses opaque binary whose base64 text would exceed the per-attachment budget", async () => {
+        const { store } = await openStore()
+        // Base64 grows content by a third, so the largest accepted file is three quarters of the budget.
+        const largestFitting = Math.floor(MAX_ATTACHED_BASE64_TEXT_BYTES / 4) * 3
+
+        const fits = await store.stageBytes("fits.bin", Buffer.alloc(largestFitting))
+        const tooLarge = await store.stageBytes("blob.bin", Buffer.alloc(largestFitting + 1))
+
+        expect(fits.ok).toBe(true)
+        expect(tooLarge.ok ? undefined : tooLarge.failure).toMatchObject({
+            code: "semantic_input_resource_too_large",
+            message: expect.stringContaining("base64"),
+        })
     })
 
     it("rejects content above the attachment size limit before writing it", async () => {

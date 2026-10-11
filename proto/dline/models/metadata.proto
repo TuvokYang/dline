@@ -75,6 +75,11 @@ message ModelCapabilities {
   // than degrading to an automatic choice. Omitted metadata keeps the normal
   // provider wire default; consumers must not infer support from model names.
   optional bool supports_forced_tool_use = 14;
+  // Media types (MIME) the model reads natively as user input, such as
+  // "image/png" or "application/pdf". Empty means undeclared: consumers derive
+  // the legacy set from supports_images through the shared input media resolver
+  // and must not infer support from provider or model names.
+  repeated string input_media_types = 15;
 }
 
 /** Pricing tier for context-window-based tiered models. */

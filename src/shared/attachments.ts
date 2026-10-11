@@ -5,12 +5,15 @@
  * Webview; the host re-validates with the same rules before it reads or stages a file.
  */
 
+import { MAX_CONTENT_SIZE_BYTES } from "./content-limits"
+
 /** Image types every image-capable provider accepts as inline image input. */
 export const ATTACHABLE_IMAGE_EXTENSIONS: readonly string[] = ["png", "jpg", "jpeg", "webp"]
 
 /**
  * Document types the "Add files" picker offers. Drops and pastes are not limited to this list: any
- * non-image file attaches, and everything except binary documents is read as text.
+ * non-image file attaches. Text is read as text, binary documents are read by their format, and any
+ * other binary content is sent as base64 text within {@link fitsBase64TextLimit}.
  */
 export const ATTACHABLE_FILE_EXTENSIONS: readonly string[] = [
     "xml",
@@ -30,6 +33,25 @@ export const MAX_ATTACHED_PDF_BYTES = 50 * 1000 * 1000
 
 /** Other non-image attachments are read into text, so they share the text input limit. */
 export const MAX_ATTACHED_TEXT_FILE_BYTES = 20 * 1000 * 1024
+
+/**
+ * Largest base64 text one attachment of content no reader understands may contribute.
+ *
+ * Extracted text is truncated to the per-attachment content budget before it reaches the model;
+ * base64 cannot be truncated without becoming meaningless, so the whole encoding must fit that
+ * same budget or the attachment is refused when the input is prepared.
+ */
+export const MAX_ATTACHED_BASE64_TEXT_BYTES = MAX_CONTENT_SIZE_BYTES
+
+/** Length of the base64 text that encodes `byteLength` bytes. */
+export function base64EncodedLength(byteLength: number): number {
+    return 4 * Math.ceil(byteLength / 3)
+}
+
+/** Whether binary content no reader understands may be attached, sent whole as base64 text. */
+export function fitsBase64TextLimit(byteLength: number): boolean {
+    return base64EncodedLength(byteLength) <= MAX_ATTACHED_BASE64_TEXT_BYTES
+}
 
 /** Lower-case extension without the leading dot, or an empty string when the name has none. */
 export function attachmentExtension(fileName: string): string {
@@ -57,8 +79,8 @@ export function isBinaryDocumentName(fileName: string): boolean {
 }
 
 /**
- * Whether an attached file is read as plain text: every non-image file except binary documents,
- * whatever its extension. The host rejects such a file when its content turns out not to be text.
+ * Whether an attached file is expected to be plain text: every non-image file except binary documents,
+ * whatever its extension. When its content turns out not to be text, the host sends it as base64 text.
  */
 export function isTextAttachmentName(fileName: string): boolean {
     return !isBinaryDocumentName(fileName)

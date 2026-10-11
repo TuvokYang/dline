@@ -1,3 +1,10 @@
+import {
+    DOCX_MEDIA_TYPE,
+    NOTEBOOK_MEDIA_TYPE,
+    PDF_MEDIA_TYPE,
+    PLAIN_TEXT_MEDIA_TYPE,
+    XLSX_MEDIA_TYPE,
+} from "@shared/input-semantics/media-types"
 import ExcelJS from "exceljs"
 import * as iconv from "iconv-lite"
 import mammoth from "mammoth"
@@ -7,13 +14,9 @@ import { truncateContent } from "@/shared/content-limits"
 import { detectEncoding } from "./extract-text"
 import { sanitizeNotebookForLLM } from "./notebook-utils"
 
-export const PDF_MEDIA_TYPE = "application/pdf"
-const DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-const XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-const NOTEBOOK_MEDIA_TYPE = "application/x-ipynb+json"
 /** Media types whose bytes are the text itself. */
 const PLAIN_TEXT_MEDIA_TYPES: ReadonlySet<string> = new Set([
-    "text/plain",
+    PLAIN_TEXT_MEDIA_TYPE,
     "text/markdown",
     "text/csv",
     "application/json",

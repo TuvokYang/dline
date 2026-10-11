@@ -1,5 +1,7 @@
 import type { ModelInfo } from "@shared/api"
+import { PDF_MEDIA_TYPE } from "@shared/input-semantics/media-types"
 import type { DocumentInputLimits } from "@shared/messages/attached-documents"
+import { resolveInputMediaTypes } from "@shared/providers/input-media"
 
 const MEGABYTE = 1000 * 1000
 
@@ -20,14 +22,20 @@ function decodedBytesFitting(encodedBytes: number): number {
 }
 
 /**
- * Native PDF capacity of an Anthropic Messages request for this model.
+ * Whether the model reads PDFs natively, as its metadata declares.
  *
- * PDF pages are read as images, so a model without image input never receives a PDF natively; this also
- * keeps PDFs away from non-Claude models served through Anthropic-compatible endpoints.
+ * The API format only says a request *can* carry a PDF; whether this model reads one is a model
+ * capability, so it is asked of the one capability resolver rather than decided per provider. This
+ * keeps PDFs away from text-only models served through Anthropic- or OpenAI-compatible endpoints.
  */
+function readsPdfNatively(info: ModelInfo): boolean {
+    return resolveInputMediaTypes(info).has(PDF_MEDIA_TYPE)
+}
+
+/** Native PDF capacity of an Anthropic Messages request for this model; absent when the model reads no PDFs. */
 export function anthropicMessagesDocumentLimits(info: ModelInfo): DocumentInputLimits | undefined {
-    if (info.capabilities?.supportsImages !== true) return undefined
-    const contextWindow = info.capabilities.contextWindow ?? 0
+    if (!readsPdfNatively(info)) return undefined
+    const contextWindow = info.capabilities?.contextWindow ?? 0
     return {
         maxTotalBytes: decodedBytesFitting(ANTHROPIC_MAX_REQUEST_BYTES - ANTHROPIC_NON_DOCUMENT_HEADROOM_BYTES),
         maxTotalPages:
@@ -35,8 +43,8 @@ export function anthropicMessagesDocumentLimits(info: ModelInfo): DocumentInputL
     }
 }
 
-/** Native PDF capacity of an OpenAI Responses request; PDF page images require a vision-capable model. */
+/** Native PDF capacity of an OpenAI Responses request for this model; absent when the model reads no PDFs. */
 export function openAiResponsesDocumentLimits(info: ModelInfo): DocumentInputLimits | undefined {
-    if (info.capabilities?.supportsImages !== true) return undefined
+    if (!readsPdfNatively(info)) return undefined
     return { maxTotalBytes: OPENAI_MAX_TOTAL_FILE_BYTES }
 }

@@ -140,6 +140,7 @@ const OPTIONAL_REPEATED_MODEL_FIELDS = [
     { interfaceName: "ThinkingConfig", fieldName: "effortLevels" },
     { interfaceName: "ModelCapabilities", fieldName: "contextWindowTiers" },
     { interfaceName: "ModelCapabilities", fieldName: "tools" },
+    { interfaceName: "ModelCapabilities", fieldName: "inputMediaTypes" },
     { interfaceName: "ModelPricing", fieldName: "tiers" },
     { interfaceName: "ModelPricing", fieldName: "thinkingOutputPriceTiers" },
     { interfaceName: "ModelInfo", fieldName: "apiFormats" },

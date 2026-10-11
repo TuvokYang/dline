@@ -1,18 +1,21 @@
-import { extractResourceText, PDF_MEDIA_TYPE } from "@integrations/misc/extract-resource-text"
+import { extractResourceText, UnsupportedResourceMediaTypeError } from "@integrations/misc/extract-resource-text"
+import { fitsBase64TextLimit } from "@shared/attachments"
 import type { AdmittedInputPart, AdmittedResourcePart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticResourceRef } from "@shared/input-semantics/document"
+import {
+    INLINE_IMAGE_MEDIA_TYPES,
+    isInlineImageMediaType,
+    OPAQUE_BINARY_MEDIA_TYPE,
+    PDF_MEDIA_TYPE,
+} from "@shared/input-semantics/media-types"
 import type { ClineImageContentBlock, ClineTextContentBlock, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 
 type UserContentBlock = ClineTextContentBlock | ClineImageContentBlock | ClineUserAttachedDocumentBlock
-type InlineImageMediaType = Extract<ClineImageContentBlock["source"], { type: "base64" }>["media_type"]
 
-/** The image formats sent inline; they match what the input resource classifier admits as an image. */
-const INLINE_IMAGE_MEDIA_TYPES: ReadonlySet<string> = new Set<InlineImageMediaType>(["image/png", "image/jpeg", "image/webp"])
-
-function isInlineImageMediaType(mediaType: string): mediaType is InlineImageMediaType {
-    return INLINE_IMAGE_MEDIA_TYPES.has(mediaType)
-}
+/** Fails to compile when an inline image format is one the image block cannot carry. */
+const _INLINE_IMAGES_FIT_IMAGE_BLOCK: readonly Extract<ClineImageContentBlock["source"], { type: "base64" }>["media_type"][] =
+    INLINE_IMAGE_MEDIA_TYPES
 
 /**
  * Reads the bytes admission verified for one resource.
@@ -79,27 +82,62 @@ async function resourceBlocks(
     if (isInlineImageMediaType(record.mediaType)) {
         return [{ type: "image", source: { type: "base64", media_type: record.mediaType, data: bytes.toString("base64") } }]
     }
+    if (record.mediaType === OPAQUE_BINARY_MEDIA_TYPE) return [base64Resource(part, record.mediaType, bytes)]
+    const extracted = await extractText(part, record.mediaType, bytes)
+    if (extracted.kind === "unsupported") return [unavailableResource(part, "semantic_input_resource_invalid_mime")]
+    // A document whose text could not be extracted is still sent: its
+    // signature matched at admission, only the extractor rejected its content.
+    const resourceText =
+        extracted.kind === "text" ? attachedResource(part, extracted.text) : base64ResourceText(part, record.mediaType, bytes)
+    if (record.mediaType !== PDF_MEDIA_TYPE) return [{ type: "text", text: resourceText }]
+    // The native document and its fallback come from the same bytes, so
+    // whichever one a request sends describes the same attachment.
+    return [
+        {
+            type: "attached_document",
+            path: part.displayName,
+            media_type: PDF_MEDIA_TYPE,
+            data: bytes.toString("base64"),
+            byte_length: bytes.byteLength,
+            ...(extracted.kind === "text" && extracted.pageCount !== undefined ? { page_count: extracted.pageCount } : {}),
+            fallback_text: resourceText,
+        },
+    ]
+}
+
+type ExtractionOutcome =
+    | { readonly kind: "text"; readonly text: string; readonly pageCount?: number }
+    | { readonly kind: "unreadable" }
+    | { readonly kind: "unsupported" }
+
+/** Separates content the extractor rejected from a media type no extractor exists for, which is a code gap. */
+async function extractText(part: AdmittedResourcePart, mediaType: string, bytes: Buffer): Promise<ExtractionOutcome> {
     try {
-        const extracted = await extractResourceText(record.mediaType, bytes)
-        const resourceText = attachedResource(part, extracted.text)
-        if (record.mediaType !== PDF_MEDIA_TYPE) return [{ type: "text", text: resourceText }]
-        // The native document and its fallback come from the same bytes, so
-        // whichever one a request sends describes the same attachment.
-        return [
-            {
-                type: "attached_document",
-                path: part.displayName,
-                media_type: PDF_MEDIA_TYPE,
-                data: bytes.toString("base64"),
-                byte_length: bytes.byteLength,
-                ...(extracted.pageCount === undefined ? {} : { page_count: extracted.pageCount }),
-                fallback_text: resourceText,
-            },
-        ]
+        const extracted = await extractResourceText(mediaType, bytes)
+        return { kind: "text", text: extracted.text, pageCount: extracted.pageCount }
     } catch (error) {
-        Logger.warn(`[AdmittedInput] resource ${part.entityId} could not be read as ${record.mediaType}: ${errorName(error)}`)
-        return [unavailableResource(part, "semantic_input_resource_invalid_mime")]
+        if (error instanceof UnsupportedResourceMediaTypeError) {
+            Logger.error(`[AdmittedInput] resource ${part.entityId} has media type ${mediaType}, which no extractor reads`)
+            return { kind: "unsupported" }
+        }
+        Logger.warn(`[AdmittedInput] resource ${part.entityId} could not be read as ${mediaType}: ${errorName(error)}`)
+        return { kind: "unreadable" }
     }
+}
+
+/** Content no reader understands, sent whole as base64 text. */
+function base64Resource(part: AdmittedResourcePart, mediaType: string, bytes: Buffer): ClineTextContentBlock {
+    return { type: "text", text: base64ResourceText(part, mediaType, bytes) }
+}
+
+/**
+ * Admission already refused opaque content whose base64 exceeds its budget;
+ * the check here covers a document whose extractor rejected it, whose size was
+ * judged against its own format's limit when it was admitted.
+ */
+function base64ResourceText(part: AdmittedResourcePart, mediaType: string, bytes: Buffer): string {
+    if (!fitsBase64TextLimit(bytes.byteLength)) return unavailableResource(part, "semantic_input_resource_too_large").text
+    return attachedResource(part, bytes.toString("base64"), { media_type: mediaType, encoding: "base64" })
 }
 
 /** An explicit stand-in for a resource that cannot be sent; names the failure, never a path or its content. */
@@ -115,10 +153,13 @@ function unavailableResource(part: AdmittedResourcePart, code: string): ClineTex
  * same workspace path into a notice, and two attachments that only share a
  * display name are different content that must both reach the model.
  */
-function attachedResource(part: AdmittedResourcePart, content: string): string {
-    const name = escapeAttribute(part.displayName)
-    const id = escapeAttribute(part.ref.resourceId)
-    return `<attached_resource name="${name}" id="${id}">\n${content}\n</attached_resource>`
+function attachedResource(part: AdmittedResourcePart, content: string, extra: Readonly<Record<string, string>> = {}): string {
+    // Identity is spread last so no extra attribute can rename the resource.
+    const attributes = { ...extra, name: part.displayName, id: part.ref.resourceId }
+    const rendered = Object.entries(attributes)
+        .map(([key, value]) => `${key}="${escapeAttribute(value)}"`)
+        .join(" ")
+    return `<attached_resource ${rendered}>\n${content}\n</attached_resource>`
 }
 
 function escapeAttribute(value: string): string {
