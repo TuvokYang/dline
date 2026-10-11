@@ -6,7 +6,7 @@ import { InMemoryConversationJournal } from "../../stores/InMemoryRuntimeStores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import { JournalConversationView } from "../provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../provider/service/ProviderJournalMessageMaterializer"
-import { ProductionComposeAdapter } from "./ProductionComposeAdapter"
+import { ProductionComposeAdapter, type TurnContinuationInput } from "./ProductionComposeAdapter"
 
 /** Minimal payload store: content-addressing is irrelevant to round composition. */
 function payloadStore(): TaskPayloadStore & { contents: Map<string, Uint8Array> } {
@@ -297,5 +297,59 @@ describe("ProductionComposeAdapter draft", () => {
         expect(pending[1]).toBeGreaterThanOrEqual(10_000)
         // The answer belongs to the request the second draft fixed, so it is not counted again.
         expect(pending[2]).toBe(0)
+    })
+})
+
+describe("ProductionComposeAdapter continuation", () => {
+    async function composeContinuation(journalAnswer: boolean) {
+        const store = payloadStore()
+        const journal = new InMemoryConversationJournal()
+        const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "task" }))
+        const base = stateWithEntry(entryRef)
+        const state: TaskState = { ...base, flow: { ...base.flow, textOnlyTurnStreak: 2, maxConsecutiveMistakes: 3 } }
+        const seen: TurnContinuationInput[] = []
+        const adapter = new ProductionComposeAdapter({
+            payloads: store,
+            journal,
+            readState: () => state,
+            conversation: new JournalConversationView(journal, new ProviderJournalMessageMaterializer(store)),
+            continuation: {
+                render: (input) => {
+                    seen.push(input)
+                    return "CONTINUE"
+                },
+            },
+        })
+        const signal = new AbortController().signal
+        await adapter.compose({ admittedEntryIds: ["entry-1"], signal })
+        if (journalAnswer) {
+            await journal.append({
+                operationId: "provider:1",
+                payloadRef: await store.put(
+                    encodeTaskPayload({ kind: "provider_final", text: "I am done.", turnPlan: { mode: "serial", blocks: [] } }),
+                ),
+                source: "provider",
+            })
+        }
+        await adapter.compose({ admittedEntryIds: [], continuation: "no_tools_used", signal })
+        return seen
+    }
+
+    it("hands the renderer the toolless answer and the kernel's streak and limit", async () => {
+        const [input] = await composeContinuation(true)
+
+        expect(input).toMatchObject({
+            reason: "no_tools_used",
+            toollessStreak: 2,
+            toollessLimit: 3,
+            previousResponse: { kind: "journaled", message: { role: "assistant" } },
+        })
+        expect(JSON.stringify(input?.previousResponse)).toContain("I am done.")
+    })
+
+    it("reports an answer that left nothing in the journal instead of an older message", async () => {
+        const [input] = await composeContinuation(false)
+
+        expect(input?.previousResponse).toEqual({ kind: "not_journaled" })
     })
 })

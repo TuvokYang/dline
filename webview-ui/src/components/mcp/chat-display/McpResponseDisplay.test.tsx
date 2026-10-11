@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import type { PropsWithChildren } from "react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -31,5 +31,19 @@ describe("McpResponseDisplay height boundary", () => {
 
         expect(screen.getByTestId("mcp-response-card").style.maxHeight).toBe("60vh")
         expect(screen.getByTestId("mcp-response-content").style.overflowY).toBe("auto")
+    })
+
+    it("leaves the height bound to the enclosing card when embedded and keeps collapsing", () => {
+        render(
+            <McpResponseDisplay embedded responseText={Array.from({ length: 200 }, (_, index) => `line ${index}`).join("\n")} />,
+        )
+
+        expect(screen.getByTestId("mcp-response-card").style.maxHeight).toBe("")
+        expect(screen.getByTestId("mcp-response-content").style.overflowY).toBe("auto")
+
+        fireEvent.click(screen.getByText("Response"))
+
+        expect(screen.queryByTestId("mcp-response-content")).not.toBeInTheDocument()
+        expect(screen.getByTestId("mcp-response-card")).toBeInTheDocument()
     })
 })

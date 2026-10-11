@@ -2,7 +2,6 @@ import { strict as assert } from "node:assert"
 import { describe, it } from "vitest"
 import {
     buildContextUsageSection,
-    buildSalvagedConvergenceResult,
     CONTEXT_CONVERGENCE_THRESHOLD,
     describeConvergenceTrigger,
     exceedsContextConvergenceThreshold,
@@ -57,23 +56,14 @@ describe("SubagentConvergenceGate", () => {
         assert.equal(buildContextUsageSection({ contextTokens: 10, contextWindow: 0 }), undefined)
     })
 
+    it("omits the usage section until a request has reported usage", () => {
+        assert.equal(buildContextUsageSection({ contextTokens: 0, contextWindow: CONTEXT_WINDOW }), undefined)
+        assert.equal(buildContextUsageSection({ contextTokens: Number.NaN, contextWindow: CONTEXT_WINDOW }), undefined)
+    })
+
     it("distinguishes the convergence triggers", () => {
         assert.match(describeConvergenceTrigger("timeout"), /time limit/i)
         assert.match(describeConvergenceTrigger("context_pressure"), /context window usage reached 80%/i)
         assert.match(describeConvergenceTrigger("user"), /user requested/i)
-    })
-
-    it("keeps collected findings in the salvaged result", () => {
-        const salvaged = buildSalvagedConvergenceResult("timeout", "  found a race in the retry path  ")
-
-        assert.match(salvaged, /time limit/i)
-        assert.match(salvaged, /incomplete/i)
-        assert.match(salvaged, /found a race in the retry path/)
-    })
-
-    it("states plainly when nothing could be salvaged", () => {
-        const salvaged = buildSalvagedConvergenceResult("context_pressure", "   ")
-
-        assert.match(salvaged, /No reusable findings/i)
     })
 })

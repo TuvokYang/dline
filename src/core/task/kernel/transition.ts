@@ -469,14 +469,18 @@ const MISTAKE_LIMIT_PRESENTATION =
     'inability to use a tool properly, which can be mitigated with some user guidance (e.g. "Try breaking down the ' +
     'task into smaller steps").'
 
-/** Whether a turn that planned no tool may open the next round on its own. */
-function mistakeLimit(state: TaskState): number {
+/**
+ * Consecutive responses without a tool call at which the kernel stops opening
+ * rounds on its own and hands the task back to the user.
+ */
+export function mistakeLimit(state: TaskState): number {
     const configured = state.flow.maxConsecutiveMistakes
     return typeof configured === "number" && Number.isFinite(configured)
         ? Math.max(1, Math.trunc(configured))
         : MAX_TEXT_ONLY_TURNS
 }
 
+/** Whether a turn that planned no tool may open the next round on its own. */
 function continuesWithoutTools(state: TaskState): boolean {
     return canOpenNextRound(state) && (state.flow.textOnlyTurnStreak ?? 0) < mistakeLimit(state)
 }

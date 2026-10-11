@@ -306,6 +306,8 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                 toolCalls: activity.metrics?.toolCalls ?? entry.toolCalls,
                 inputTokens: activity.metrics?.inputTokens ?? entry.inputTokens,
                 outputTokens: activity.metrics?.outputTokens ?? entry.outputTokens,
+                cacheWriteTokens: activity.metrics?.cacheWriteTokens ?? entry.cacheWriteTokens,
+                cacheReadTokens: activity.metrics?.cacheReadTokens ?? entry.cacheReadTokens,
                 totalCost: activity.metrics?.totalCost ?? entry.totalCost,
                 currency: activity.metrics?.currency ?? entry.currency,
                 cacheHitRate: activity.metrics?.cacheHitRate ?? entry.cacheHitRate,
@@ -536,6 +538,8 @@ export default function SubagentStatusRow({ message }: SubagentStatusRowProps) {
                                     </div>
                                     <SubagentMetrics
                                         cacheHitRate={entry.cacheHitRate}
+                                        cacheReadTokens={entry.cacheReadTokens}
+                                        cacheWriteTokens={entry.cacheWriteTokens}
                                         className="basis-full pl-8"
                                         contextTokens={entry.contextTokens}
                                         contextWindow={entry.contextWindow}

@@ -63,7 +63,12 @@ describe("ChatRow MCP tool rendering", () => {
         expect(screen.getByText("Search docs")).toBeInTheDocument()
         expect(screen.queryByText("Auto-approve")).not.toBeInTheDocument()
         expect(screen.getByText(/Dline is using the/)).toBeInTheDocument()
-        expect(screen.getByTestId("mcp-request-card")).toHaveClass("max-h-[60vh]", "overflow-y-auto", "overscroll-x-contain")
+        expect(screen.getByTestId("mcp-request-card")).toHaveClass("max-h-[60vh]", "flex", "flex-col", "overflow-hidden")
+        const body = screen.getByTestId("mcp-request-body")
+        expect(body).toHaveClass("min-h-0", "overflow-y-auto", "overscroll-x-contain")
+        // Without a response the request may use the whole card.
+        expect(body).not.toHaveClass("max-h-[30vh]")
+        expect(screen.queryByTestId("mcp-response-group")).not.toBeInTheDocument()
     })
 
     it("groups every response item into the connected request card", async () => {
@@ -85,7 +90,15 @@ describe("ChatRow MCP tool rendering", () => {
         render(<ChatRowContent {...baseProps} message={clineMessages[0]} />)
 
         await screen.findByText(/first/)
-        expect(screen.getByTestId("mcp-response-group")).toHaveTextContent("second")
+        const group = screen.getByTestId("mcp-response-group")
+        expect(group).toHaveTextContent("second")
+        // The response renders inside the request card, below a request capped so it keeps room.
+        expect(screen.getByTestId("mcp-request-card")).toContainElement(group)
+        expect(screen.getByTestId("mcp-request-body")).toHaveClass("max-h-[30vh]", "shrink-0", "overflow-y-auto")
+        expect(group).toHaveClass("min-h-0", "flex-col")
+        // The card owns the 60vh bound, so the embedded response drops its own cap but still scrolls.
+        expect(screen.getByTestId("mcp-response-card").style.maxHeight).toBe("")
+        expect(screen.getByTestId("mcp-response-content").style.overflowY).toBe("auto")
     })
 
     it("caps MCP notifications at 60vh", () => {

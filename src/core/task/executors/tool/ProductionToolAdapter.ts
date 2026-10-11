@@ -51,6 +51,7 @@ export interface ProductionToolAdapterOptions {
         readonly directive: ToolPostCommitDirective
     }) => Promise<void>
     readonly onReleaseError?: (error: unknown) => void
+    readonly roundCheckpoint?: ToolCommandExecutorOptions["roundCheckpoint"]
 }
 
 async function persistResult(
@@ -107,6 +108,7 @@ export function createProductionToolAdapter(options: ProductionToolAdapterOption
         scheduler: options.scheduler,
         operationCancellation: options.operationCancellation,
         readMistakeLimit: options.readMistakeLimit,
+        roundCheckpoint: options.roundCheckpoint,
         runner: createToolDomainRunner({
             resources: options.resources,
             onReleaseError: (error) => options.onReleaseError?.(error),

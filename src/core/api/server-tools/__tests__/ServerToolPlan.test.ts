@@ -9,6 +9,7 @@ import {
     hasActiveServerTool,
     hasHostedWebRoute,
     isHostedToolRouted,
+    localizeHostedWebRoutes,
     projectServerTools,
     resolveHostedImageGenerationPlan,
     resolveServerToolPlan,
@@ -514,6 +515,67 @@ describe("hosted web tool predicates", () => {
         expect(forced.unavailableReason).toBe("server_tool_adapter_unavailable")
 
         expect(disableWebSearchRoute(forced).unavailableReason).toBeUndefined()
+    })
+})
+
+describe("localizeHostedWebRoutes", () => {
+    const anthropic = {
+        enabled: true,
+        modelInfo: { capabilities: { tools: [ServerTool.WEB_SEARCH, ServerTool.CODE_EXECUTION, ServerTool.WEB_FETCH] } },
+        selectedApiFormat: ApiFormat.ANTHROPIC_CHAT,
+        localAvailable: true,
+        remoteAdapterAvailable: true,
+        remoteWebFetchAdapterAvailable: true,
+    }
+
+    it("moves both hosted web tools to the local executor and declares no hosted tool", () => {
+        const hosted = resolveWebSearchRoutingPlan(anthropic)
+        expect(hosted).toMatchObject({ route: "hosted", webFetchRoute: "hosted" })
+
+        const localized = localizeHostedWebRoutes(hosted)
+
+        expect(localized).toMatchObject({ route: "local", webFetchRoute: "local", localToolEnabled: true })
+        expect(localized.serverTools).toEqual([])
+        expect(hasHostedWebRoute(localized)).toBe(false)
+        expect(projectServerTools(localized).declarations).toEqual([])
+    })
+
+    it("makes a forced remote tool unavailable instead of silently running it locally", () => {
+        const forced = resolveWebSearchRoutingPlan({ ...anthropic, mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_REMOTE })
+
+        const localized = localizeHostedWebRoutes(forced)
+
+        expect(localized).toMatchObject({
+            route: "unavailable",
+            unavailableReason: "server_tool_transport_unsupported",
+            webFetchRoute: "unavailable",
+            webFetchUnavailableReason: "server_tool_transport_unsupported",
+            localToolEnabled: false,
+        })
+        expect(localized.serverTools).toEqual([])
+    })
+
+    it("keeps routes that are not hosted, including their reasons", () => {
+        const fetchOnly = resolveWebSearchRoutingPlan({
+            ...anthropic,
+            mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_REMOTE,
+            remoteAdapterAvailable: false,
+        })
+        expect(fetchOnly).toMatchObject({ route: "unavailable", webFetchRoute: "hosted" })
+
+        const localized = localizeHostedWebRoutes(fetchOnly)
+
+        expect(localized).toMatchObject({
+            route: "unavailable",
+            unavailableReason: "server_tool_adapter_unavailable",
+            webFetchRoute: "unavailable",
+        })
+    })
+
+    it("returns a plan without hosted routes unchanged", () => {
+        const local = resolveWebSearchRoutingPlan({ ...anthropic, mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_LOCAL })
+
+        expect(localizeHostedWebRoutes(local)).toBe(local)
     })
 })
 

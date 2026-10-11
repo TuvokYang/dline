@@ -85,11 +85,12 @@ describe("SubagentOutputBudget", () => {
         assert.equal(budget.source, "default_ratio")
     })
 
-    it("injects the effective output budget into the subagent task prompt", () => {
-        const prompt = buildSubagentOutputBudgetPrompt("<task>inspect</task>", 10_240)
+    it("states the budget rule in the task prompt but leaves the figure to the per-request section", () => {
+        const prompt = buildSubagentOutputBudgetPrompt("<task>inspect</task>")
 
-        assert.match(prompt, /within 10,240 tokens/)
         assert.match(prompt, /attempt_completion result is returned to the main task/)
+        assert.match(prompt, /Context Budget section at the end of the latest message/)
+        assert.doesNotMatch(prompt, /\d[\d,]* tokens/)
     })
 
     it("truncates final output without exceeding the estimated token budget", () => {

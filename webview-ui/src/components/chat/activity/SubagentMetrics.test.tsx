@@ -57,6 +57,29 @@ describe("SubagentMetrics context usage", () => {
         expect(metrics.textContent).toContain("$0.01")
     })
 
+    it("counts cached input in In, matching the main task header", () => {
+        // A well-cached Anthropic run reports only the uncached tail as input.
+        render(
+            <SubagentMetrics
+                {...baseProps}
+                cacheHitRate={90.12}
+                cacheReadTokens={9_012}
+                cacheWriteTokens={900}
+                inputTokens={88}
+            />,
+        )
+
+        const metrics = screen.getByTestId("subagent-metrics")
+        expect(metrics.textContent).toContain("In:10.0K")
+        expect(metrics.textContent).not.toContain("In:88")
+    })
+
+    it("falls back to uncached input when no cache usage was reported", () => {
+        render(<SubagentMetrics {...baseProps} inputTokens={64_000} />)
+
+        expect(screen.getByTestId("subagent-metrics").textContent).toContain("In:64.0K")
+    })
+
     it.each([
         ["USD", "$0.01"],
         ["CNY", "CN¥0.01"],

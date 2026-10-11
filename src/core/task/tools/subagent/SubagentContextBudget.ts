@@ -26,14 +26,16 @@ export function resolveFinalResultTokens(configuredTokens: number, budget: Conte
  *
  * Rendered per request rather than once in the task prompt, because the share
  * moves while the subagent works: other subagents finish, and their results
- * take room from the main task.
+ * take room from the main task. It is the only place the final-result figure
+ * appears, so it is rendered even without a main-task budget.
  */
-export function buildContextBudgetSection(budget: ContextBudgetLease | undefined, configuredTokens: number): string | undefined {
-    if (!budget) return undefined
+export function buildContextBudgetSection(budget: ContextBudgetLease | undefined, configuredTokens: number): string {
+    const finalResultLine = `Your final result may use about ${resolveFinalResultTokens(configuredTokens, budget).toLocaleString()} tokens.`
+    if (!budget) return ["# Context Budget", finalResultLine].join("\n")
     const snapshot = budget.snapshot()
     return [
         "# Context Budget",
-        `Your final result may use about ${resolveFinalResultTokens(configuredTokens, budget).toLocaleString()} tokens.`,
+        finalResultLine,
         `This round's tool results may take ${snapshot.roundBudgetTokens.toLocaleString()} tokens together; ${snapshot.roundStagedTokens.toLocaleString()} are already used, and the rest is shared by ${snapshot.activeConsumers} working subagent(s) and tool call(s).`,
         snapshot.mustYield
             ? "The main task is out of room: your final result will be held whole and delivered after the main task compacts its context."

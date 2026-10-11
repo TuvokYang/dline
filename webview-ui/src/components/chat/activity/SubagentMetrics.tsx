@@ -1,3 +1,4 @@
+import { calculateApiUsageStatistics } from "@shared/api-usage"
 import { formatCurrencyAmount } from "@/utils/currency"
 import { formatTokenMetric } from "../task-header/util"
 
@@ -5,8 +6,11 @@ interface SubagentMetricsProps {
     toolCalls: number | undefined
     startedAt: number | undefined
     finishedAt: number | undefined
+    /** Uncached input tokens, as normalized provider usage reports them. */
     inputTokens: number | undefined
     outputTokens: number | undefined
+    cacheWriteTokens?: number
+    cacheReadTokens?: number
     cacheHitRate?: number
     contextTokens?: number
     contextWindow?: number
@@ -58,6 +62,8 @@ export function SubagentMetrics({
     finishedAt,
     inputTokens,
     outputTokens,
+    cacheWriteTokens,
+    cacheReadTokens,
     cacheHitRate,
     contextTokens,
     contextWindow,
@@ -66,7 +72,17 @@ export function SubagentMetrics({
     className,
 }: SubagentMetricsProps) {
     const normalizedToolCalls = normalizeCount(toolCalls)
-    const normalizedInputTokens = normalizeCount(inputTokens)
+    // Normalized usage reports cached input separately, so "In" must add the
+    // cache terms back; otherwise a well-cached run shows only the uncached tail.
+    // This matches the main task header and the cache hit-rate denominator.
+    const normalizedInputTokens = normalizeCount(
+        calculateApiUsageStatistics({
+            inputTokens: normalizeCount(inputTokens),
+            outputTokens: 0,
+            cacheWriteTokens: normalizeCount(cacheWriteTokens),
+            cacheReadTokens: normalizeCount(cacheReadTokens),
+        }).totalInputTokens,
+    )
     const normalizedOutputTokens = normalizeCount(outputTokens)
     const normalizedCacheHitRate = Number.isFinite(cacheHitRate) ? Math.max(0, Math.min(100, cacheHitRate ?? 0)) : undefined
     const contextUsage = formatContextUsage(contextTokens, contextWindow)

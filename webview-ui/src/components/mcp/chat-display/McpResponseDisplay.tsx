@@ -2,7 +2,7 @@ import { McpDisplayMode } from "@shared/McpDisplayMode"
 import { VSCodeProgressRing } from "@vscode/webview-ui-toolkit/react"
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import React, { useCallback, useEffect, useState } from "react"
-import styled from "styled-components"
+import styled, { css } from "styled-components"
 import ChatErrorBoundary from "@/components/chat/ChatErrorBoundary"
 import { TOOL_RESPONSE_MAX_HEIGHT } from "@/components/chat/constants"
 import { CODE_BLOCK_BG_COLOR } from "@/components/common/CodeBlock"
@@ -46,7 +46,7 @@ const ResponseHeader = styled.div`
 	}
 `
 
-const ResponseContainer = styled.div`
+const ResponseContainer = styled.div<{ $embedded?: boolean }>`
 	position: relative;
 	display: flex;
 	flex-direction: column;
@@ -68,6 +68,19 @@ const ResponseContainer = styled.div`
 		max-width: 100%;
 		padding: 10px;
 	}
+
+	${({ $embedded }) =>
+        $embedded &&
+        css`
+			/* The request card owns the frame and the height bound, so the response
+			   only separates itself from the request and shrinks into what is left. */
+			min-height: 0;
+			max-height: none;
+			background-color: transparent;
+			border: none;
+			border-top: 1px solid var(--vscode-editorGroup-border);
+			border-radius: 0;
+		`}
 `
 
 // Style for URL text to ensure proper wrapping
@@ -81,10 +94,18 @@ const UrlText = styled.div`
 
 interface McpResponseDisplayProps {
     responseText: string
+    /**
+     * Render as the lower section of an MCP request card. The card supplies the
+     * border, background and 60vh bound; the response keeps its own collapse
+     * toggle and scrolling content area.
+     */
+    embedded?: boolean
 }
 
-const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText }) => {
+const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText, embedded = false }) => {
     const { mcpResponsesCollapsed, mcpDisplayMode } = useExtensionState() // Get setting from context
+    const containerStyle = embedded ? undefined : { maxHeight: TOOL_RESPONSE_MAX_HEIGHT }
+    const headerInset = embedded ? "10px" : undefined
     const [isExpanded, setIsExpanded] = useState(!mcpResponsesCollapsed) // Initialize with context setting
     const [isLoading, setIsLoading] = useState(false) // Initial loading state for rich content
 
@@ -223,12 +244,13 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText })
 
     try {
         return (
-            <ResponseContainer data-testid="mcp-response-card" style={{ maxHeight: TOOL_RESPONSE_MAX_HEIGHT }}>
+            <ResponseContainer $embedded={embedded} data-testid="mcp-response-card" style={containerStyle}>
                 <ResponseHeader
                     onClick={toggleExpand}
                     style={{
                         borderBottom: isExpanded ? "1px dashed var(--vscode-editorGroup-border)" : "none",
                         marginBottom: isExpanded ? "8px" : "0px",
+                        paddingLeft: headerInset,
                     }}>
                     <div className="header-title">
                         {isExpanded ? (
@@ -260,8 +282,8 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText })
         console.log("Error rendering MCP response - falling back to plain text") // Restored comment
         // Fallback for critical rendering errors
         return (
-            <ResponseContainer data-testid="mcp-response-card" style={{ maxHeight: TOOL_RESPONSE_MAX_HEIGHT }}>
-                <ResponseHeader onClick={toggleExpand}>
+            <ResponseContainer $embedded={embedded} data-testid="mcp-response-card" style={containerStyle}>
+                <ResponseHeader onClick={toggleExpand} style={{ paddingLeft: headerInset }}>
                     <div className="header-title">
                         {isExpanded ? (
                             <ChevronDownIcon className="header-icon" size={16} />

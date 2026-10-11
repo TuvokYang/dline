@@ -907,6 +907,8 @@ describe("SubagentStatusRow", () => {
         expect(runtime).toHaveTextContent("openai_responses")
         expect(runtime).toHaveTextContent("high")
         const metrics = within(item).getByTestId("subagent-metrics")
+        // In = uncached 1,000 + cache write 500 + cache read 8,500 from the activity metrics.
+        expect(metrics).toHaveTextContent("In:10.0K")
         expect(metrics).toHaveTextContent("Cache:85%")
         expect(metrics).toHaveTextContent("CN¥0.01")
     })

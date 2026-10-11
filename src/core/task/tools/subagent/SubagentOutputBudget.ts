@@ -94,12 +94,19 @@ export function resolveSubagentOutputBudget(
     }
 }
 
-/** Add the effective final-response budget to the subagent's user task prompt. */
-export function buildSubagentOutputBudgetPrompt(prompt: string, outputTokens: number): string {
+/**
+ * Add the final-response budget rule to the subagent's user task prompt.
+ *
+ * The figure itself is deliberately absent: the budget shrinks while the
+ * subagent works, so the per-request Context Budget section is its only source.
+ * Stating an admission-time number here as well would leave the model with two
+ * conflicting limits.
+ */
+export function buildSubagentOutputBudgetPrompt(prompt: string): string {
     const budgetSection = [
         "# Final Response Budget",
         "Your final attempt_completion result is returned to the main task.",
-        "Keep that final result within " + outputTokens.toLocaleString() + " tokens.",
+        "Its token budget is stated in the Context Budget section at the end of the latest message, and it can shrink while you work.",
         "This is a hard output budget; prioritize the most useful findings and omit lower-value detail.",
     ].join("\n")
     return prompt.trimEnd() + "\n\n" + budgetSection

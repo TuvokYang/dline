@@ -1,6 +1,6 @@
 import { estimateContextValueBreakdown } from "@core/context/context-management/context-window-projection"
 import type { ClineStorageMessage } from "@shared/messages/content"
-import type { TaskState, TurnContinuationReason } from "../../kernel"
+import { mistakeLimit, type TaskState, type TurnContinuationReason } from "../../kernel"
 import type { ConversationJournal, JournalWatermark } from "../../stores"
 import type { TaskPayloadStore } from "../../stores/contracts"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
@@ -34,8 +34,30 @@ export interface ComposeEnvironmentPort {
  * keeps that wording out of the compose domain and out of the kernel.
  */
 export interface ComposeContinuationPort {
-    render(reason: TurnContinuationReason): string | undefined
+    render(input: TurnContinuationInput): string | undefined
 }
+
+/** What a kernel-opened round knows about the response that caused it. */
+export interface TurnContinuationInput {
+    readonly reason: TurnContinuationReason
+    readonly previousResponse: PreviousResponseObservation
+    /** Responses without a tool call in a row, including the previous one. */
+    readonly toollessStreak: number
+    /** Streak at which the kernel stops continuing and hands the task back to the user. */
+    readonly toollessLimit: number
+}
+
+/**
+ * The response that ended without a tool call, as the conversation shows it.
+ *
+ * `not_journaled` is evidence in itself: a response with no content leaves no
+ * assistant message behind. `unobserved` means the assembly cannot read the
+ * conversation, so nothing may be concluded about the response.
+ */
+export type PreviousResponseObservation =
+    | { readonly kind: "journaled"; readonly message: ClineStorageMessage }
+    | { readonly kind: "not_journaled" }
+    | { readonly kind: "unobserved" }
 
 /**
  * The provider conversation by journal entry, as provider requests materialize it.
@@ -187,7 +209,7 @@ export class ProductionComposeAdapter implements ComposePort {
         const state = this.options.readState()
         const entries = this.admittedEntries(input)
 
-        await this.appendContinuation(input, state.generation)
+        await this.appendContinuation(input, state)
         // Tool feedback carries its model text in the paired result. These original
         // refs carry admission metadata only: never append their text a second time.
         const inputPayloadRefs: string[] = [...(input.respondedQueue?.entries.map((entry) => entry.payloadRef) ?? [])]
@@ -278,6 +300,20 @@ export class ProductionComposeAdapter implements ComposePort {
         return added.length === 0 ? 0 : estimateContextValueBreakdown(added).totalTokens
     }
 
+    /**
+     * The response the kernel continued after, read from the conversation's tail.
+     *
+     * Only the very last message counts: when it is not an assistant message the
+     * response left nothing in the journal, and an older assistant message would
+     * describe a different response.
+     */
+    private async observePreviousResponse(): Promise<PreviousResponseObservation> {
+        const conversation = this.options.conversation
+        if (!conversation) return { kind: "unobserved" }
+        const last = (await conversation.entries()).at(-1)?.messages.at(-1)
+        return last?.role === "assistant" ? { kind: "journaled", message: last } : { kind: "not_journaled" }
+    }
+
     private admittedEntries(input: ComposeRoundInput) {
         const state = this.options.readState()
         const entries = [...state.intake.queued, ...state.intake.background, ...state.intake.coTask].filter((entry) =>
@@ -311,10 +347,18 @@ export class ProductionComposeAdapter implements ComposePort {
      * next request repeats the previous one verbatim and the model has no reason
      * to answer differently.
      */
-    private async appendContinuation(input: ComposeRoundInput, generation: number): Promise<void> {
+    private async appendContinuation(input: ComposeRoundInput, state: Readonly<TaskState>): Promise<void> {
         if (!input.continuation) return
-        const text = this.options.continuation?.render(input.continuation)
+        const continuation = this.options.continuation
+        if (!continuation) return
+        const text = continuation.render({
+            reason: input.continuation,
+            previousResponse: await this.observePreviousResponse(),
+            toollessStreak: state.flow.textOnlyTurnStreak ?? 0,
+            toollessLimit: mistakeLimit(state),
+        })
         if (!text) return
+        const generation = state.generation
         if (input.signal.aborted) throw input.signal.reason
         const envelope: TurnContinuationEnvelope = { kind: "turn_continuation", reason: input.continuation, text }
         await this.options.journal.append({

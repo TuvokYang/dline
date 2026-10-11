@@ -207,6 +207,34 @@ export function disableWebFetchRoute(plan: WebSearchRoutingPlan): WebSearchRouti
     })
 }
 
+/**
+ * Route every hosted web tool to the local executor for a request whose tools
+ * are written as XML text.
+ *
+ * Hosted tools are declared to the provider as native tools, which an
+ * XML-prompted model is never taught to call, while the hosted route also
+ * withholds the local XML tool. The model then has no usable web tool at all.
+ * Auto falls back to the local tool as it would for any hosted blocker; a
+ * forced remote mode has no fallback, so the tool becomes unavailable.
+ */
+export function localizeHostedWebRoutes(plan: WebSearchRoutingPlan): WebSearchRoutingPlan {
+    if (!hasHostedWebRoute(plan)) return plan
+    const search = localizeWebToolRoute(plan.route, plan.unavailableReason, plan.localFallbackAvailable)
+    const fetch = localizeWebToolRoute(plan.webFetchRoute, plan.webFetchUnavailableReason, plan.localFallbackAvailable)
+    return createWebSearchRoutingPlan(plan.mode, plan.serverToolPlan, search, fetch, plan.localFallbackAvailable)
+}
+
+function localizeWebToolRoute(
+    route: WebToolRoute,
+    unavailableReason: WebToolUnavailableReason | undefined,
+    localFallbackAvailable: boolean,
+): WebToolRouteResolution {
+    if (route !== "hosted") return unavailableReason === undefined ? { route } : { route, unavailableReason }
+    return localFallbackAvailable
+        ? { route: "local" }
+        : { route: "unavailable", unavailableReason: "server_tool_transport_unsupported" }
+}
+
 type HostedWebTool = ServerTool.WEB_SEARCH | ServerTool.WEB_FETCH
 
 interface WebToolRouteResolution {

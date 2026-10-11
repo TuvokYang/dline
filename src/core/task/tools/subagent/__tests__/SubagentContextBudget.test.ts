@@ -73,8 +73,11 @@ describe("resolveFinalResultTokens", () => {
 })
 
 describe("buildContextBudgetSection", () => {
-    it("is omitted without a main-task budget", () => {
-        expect(buildContextBudgetSection(undefined, 8_000)).toBeUndefined()
+    it("still states the configured final-result budget without a main-task budget", () => {
+        // This section is the only source of the figure, so it must not disappear.
+        expect(buildContextBudgetSection(undefined, 8_000)).toBe(
+            `# Context Budget\nYour final result may use about ${(8_000).toLocaleString()} tokens.`,
+        )
     })
 
     it("reports the current share, the round's budget and the working consumers", () => {

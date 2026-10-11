@@ -31,9 +31,15 @@ export function exceedsContextConvergenceThreshold(sample: ContextPressureSample
     return sample.contextTokens >= sample.contextWindow * CONTEXT_CONVERGENCE_THRESHOLD
 }
 
-/** Render the context usage section injected into every subagent turn. */
+/**
+ * Render the context usage section injected into every subagent turn.
+ *
+ * Omitted until a request has reported usage: before that the figure is an
+ * unset zero, and "0% used" would tell the model it has the whole window.
+ */
 export function buildContextUsageSection(sample: ContextPressureSample): string | undefined {
     if (!Number.isFinite(sample.contextWindow) || sample.contextWindow <= 0) return undefined
+    if (!Number.isFinite(sample.contextTokens) || sample.contextTokens <= 0) return undefined
 
     const usedTokens = Math.max(0, Math.floor(sample.contextTokens))
     const usagePercentage = Math.round((usedTokens / sample.contextWindow) * 100)
@@ -55,22 +61,4 @@ export function describeConvergenceTrigger(reason: SubagentFinishReason): string
         default:
             return "The user requested that the subagent finish now."
     }
-}
-
-/**
- * Build the result returned when a converging run keeps calling other tools.
- *
- * A run that reached this point has usually spent significant time collecting
- * material, so discarding everything as a failure destroys real work. The
- * partial transcript is returned instead, clearly marked as incomplete.
- */
-export function buildSalvagedConvergenceResult(reason: SubagentFinishReason, collectedFindings: string): string {
-    const header = [
-        describeConvergenceTrigger(reason),
-        "The subagent did not produce a final attempt_completion result after being asked to converge.",
-        "The material below was recovered from the run and is incomplete; treat every conclusion as unverified.",
-    ].join(" ")
-
-    const findings = collectedFindings.trim()
-    return findings ? `${header}\n\n${findings}` : `${header}\n\nNo reusable findings were recovered from this run.`
 }

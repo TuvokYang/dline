@@ -634,6 +634,8 @@ describe("TaskActivityPanel", () => {
         expect(runtime).toHaveTextContent("anthropic_chat")
         expect(runtime).toHaveTextContent("8,000 tokens")
         const metrics = within(runtimeAgent as HTMLElement).getByTestId("subagent-metrics")
+        // In = uncached 1,000 + cache write 1,000 + cache read 8,000.
+        expect(metrics).toHaveTextContent("In:10.0K")
         expect(metrics).toHaveTextContent("Cache:80%")
         expect(metrics).toHaveTextContent("¥0.01")
         expect(metrics).not.toHaveTextContent("CN")

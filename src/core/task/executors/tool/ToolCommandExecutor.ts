@@ -1,3 +1,4 @@
+import { Logger } from "@/shared/services/Logger"
 import type { Command, ToolRunCommand as KernelToolRunCommand, ToolRunBlock } from "../../kernel"
 import type { CommandExecutor } from "../../runtime"
 import { executorFailure, type HaltOrder, type HaltParticipant, type TaskEventSink } from "../contracts"
@@ -22,6 +23,12 @@ export interface ToolOperationCancellationPort {
     reset(): void
 }
 
+/** Settles the restore point a round of tool calls owes. */
+export interface ToolRoundCheckpointPort {
+    /** Commit the owed restore point, if any, and wait for commits already queued. */
+    settle(): Promise<void>
+}
+
 export type ToolCommandExecutorOptions = Omit<ToolExecutionDomainOptions, "sink"> & {
     /** Task-scoped WS-072 scheduler deciding when an approved block may start. */
     readonly scheduler: TurnToolScheduler
@@ -29,6 +36,8 @@ export type ToolCommandExecutorOptions = Omit<ToolExecutionDomainOptions, "sink"
     readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
     /** Cancellation scope shared by handlers such as Web Fetch and image generation. */
     readonly operationCancellation?: ToolOperationCancellationPort
+    /** Round-level restore point owed by commands, MCP calls and similar tools. */
+    readonly roundCheckpoint?: ToolRoundCheckpointPort
 }
 
 /** Adapts kernel tool commands to the single WS-072 tool execution domain. */
@@ -40,6 +49,9 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
     private readonly scheduler: TurnToolScheduler
     private readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
     private readonly operationCancellation?: ToolOperationCancellationPort
+    private readonly roundCheckpoint?: ToolRoundCheckpointPort
+    /** Turn whose blocks this executor last started; a new one opens a new round. */
+    private activeTurnId: string | undefined
     private readonly pending = new Map<string, PendingBlock>()
     private readonly executions = new Set<Promise<void>>()
     private readonly feedback = new Set<Promise<void>>()
@@ -50,10 +62,11 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
         options: ToolCommandExecutorOptions,
         private readonly events: TaskEventSink,
     ) {
-        const { scheduler, readMistakeLimit, operationCancellation, ...domainOptions } = options
+        const { scheduler, readMistakeLimit, operationCancellation, roundCheckpoint, ...domainOptions } = options
         this.scheduler = scheduler
         this.readMistakeLimit = readMistakeLimit
         this.operationCancellation = operationCancellation
+        this.roundCheckpoint = roundCheckpoint
         this.toolDomain = new ToolExecutionDomain({
             ...domainOptions,
             sink: {
@@ -69,11 +82,18 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
     execute(command: Command): Promise<void> {
         if (command.type === "tool.retire") {
             this.scheduler.retireTurn(command.turnId)
+            // The round's tools are all terminal, so its one owed restore point is
+            // committed now. It is not awaited: the next provider request must not
+            // wait on a shadow-repository commit, and the next round's tools wait
+            // for it below instead.
+            void this.settleRoundCheckpoint()
             return Promise.resolve()
         }
         if (command.type !== "tool.run") return Promise.reject(new Error(`Tool executor cannot run ${command.type}`))
         if (this.fencedHaltId) return Promise.resolve()
-        const completion = Promise.all(command.blocks.map((block) => this.executeBlock(command, block))).then(() => undefined)
+        const completion = this.openRound(command.turnId)
+            .then(() => Promise.all(command.blocks.map((block) => this.executeBlock(command, block))))
+            .then(() => undefined)
         this.executions.add(completion)
         void completion.finally(() => this.executions.delete(completion)).catch(() => undefined)
         return completion
@@ -101,6 +121,9 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
         if (this.haltPromise) await this.haltPromise
         while (this.feedback.size > 0) await Promise.allSettled([...this.feedback])
         await Promise.allSettled([...this.executions])
+        // A halted round never retires, yet its finished tools may already have
+        // changed the workspace; commit what it owes before the halt completes.
+        await this.settleRoundCheckpoint()
     }
 
     rearm(haltId: string): void {
@@ -109,6 +132,29 @@ export class ToolCommandExecutor implements CommandExecutor, HaltParticipant {
         this.operationCancellation?.reset()
         this.fencedHaltId = undefined
         this.haltPromise = undefined
+    }
+
+    /**
+     * Settle the previous round's restore point before a new round's first tool.
+     *
+     * This is the fallback for a round whose retirement never reached this
+     * executor: its owed restore point must capture its own effects, not the
+     * effects of the tools about to run.
+     */
+    private openRound(turnId: string): Promise<void> {
+        if (this.activeTurnId === turnId) return Promise.resolve()
+        this.activeTurnId = turnId
+        return this.settleRoundCheckpoint()
+    }
+
+    /** Failures are logged, never thrown: a restore point must not fail a tool or a halt. */
+    private async settleRoundCheckpoint(): Promise<void> {
+        if (!this.roundCheckpoint) return
+        try {
+            await this.roundCheckpoint.settle()
+        } catch (error) {
+            Logger.error("Failed to save the round checkpoint", error instanceof Error ? error : undefined)
+        }
     }
 
     private async executeBlock(command: KernelToolRunCommand, block: ToolRunBlock): Promise<void> {
