@@ -104,6 +104,19 @@ describe("ProviderUsageIncrements", () => {
 
         expect(settled).toMatchObject({ cacheUsageReported: 1 })
     })
+
+    it("reports how the reply ended from the last stop reason and the attempt's output tokens", () => {
+        const increments = new ProviderUsageIncrements()
+        increments.next({ type: "usage", inputTokens: 300, outputTokens: 0 })
+        increments.next({ type: "usage", usageMode: "delta", inputTokens: 0, outputTokens: 4_000 })
+        increments.next({ type: "usage", usageMode: "delta", inputTokens: 0, outputTokens: 96, stopReason: "output_limit" })
+
+        expect(increments.ending()).toEqual({ stopReason: "output_limit", outputTokens: 4_096 })
+    })
+
+    it("has no ending before usage reports output or a stop reason", () => {
+        expect(new ProviderUsageIncrements().ending()).toBeUndefined()
+    })
 })
 
 describe("sumAttemptUsage", () => {

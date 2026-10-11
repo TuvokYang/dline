@@ -1,6 +1,7 @@
 import { MAX_SUBAGENTS_PER_BATCH } from "@shared/concurrency-limits"
 import { DEFAULT_SUBAGENT_TIMEOUT_SECONDS } from "@shared/subagent-settings"
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
+import { DlineDefaultTool } from "@shared/tools"
 import { getShellForProfile } from "@utils/shell"
 import { getPrompt } from "../i18n"
 import { PromptProfile, requirePromptProfile } from "../profiles/types"
@@ -51,10 +52,16 @@ const COMPLETE_TEMPLATE_CONTRACT: PromptContract = {
     variables: Object.fromEntries(COMPLETE_TEMPLATE_ENV_KEYS.map((key) => [key, RUNTIME_RULE])),
 }
 
+/** Whether the request exposes a built-in tool; prompt text must never direct the model to a withheld tool. */
+function exposesTool(context: SystemPromptContext, tool: DlineDefaultTool): boolean {
+    return context.disableTools?.includes(tool) !== true
+}
+
 export function createSystemPromptConfig(context: SystemPromptContext): SystemPromptConfig {
     const servers = context.mcpHub?.getServers() ?? []
     const variant = requirePromptProfile(context.promptProfile)
     const webToolsEnabled = variant === PromptProfile.Standard && context.clineWebToolsEnabled === true
+    const webSearchExposed = webToolsEnabled && exposesTool(context, DlineDefaultTool.WEB_SEARCH)
     const userInstructionsEnabled = [
         context.preferredLanguageInstructions,
         context.globalClineRulesFileInstructions,
@@ -75,20 +82,33 @@ export function createSystemPromptConfig(context: SystemPromptContext): SystemPr
         browserEnabled:
             variant === PromptProfile.Standard &&
             context.supportsBrowserUse === true &&
-            context.browserSettings?.disableToolUse !== true,
+            context.browserSettings?.disableToolUse !== true &&
+            exposesTool(context, DlineDefaultTool.BROWSER),
         focusChainEnabled: variant === PromptProfile.Standard && context.focusChainSettings?.enabled === true,
         subagentsEnabled: variant === PromptProfile.Standard && context.subagentsEnabled === true,
         subagentRun: context.isSubagentRun === true,
         yoloModeEnabled: context.yoloModeToggled === true,
         cliEnvironment: context.isCliEnvironment === true,
         webToolsEnabled,
-        localWebSearchEnabled: webToolsEnabled && context.webSearchRoutingPlan?.route === "local",
-        serverWebSearchEnabled: webToolsEnabled && context.webSearchRoutingPlan?.route === "hosted",
+        localWebSearchEnabled: webSearchExposed && context.webSearchRoutingPlan?.route === "local",
+        serverWebSearchEnabled: webSearchExposed && context.webSearchRoutingPlan?.route === "hosted",
         userInstructionsEnabled,
     })
 }
 
+/** XML call-format guidance; the example carries task_progress only when the TODO list is tracked. */
+function createToolUseFormatting(config: SystemPromptConfig): string {
+    return assemblePromptFragments(getPrompt("toolUseFormatting", "main"), {
+        FOCUS_CHATIN_FORMATTING: config.focusChainEnabled ? getPrompt("toolUseFormatting", "focusChainExample") : "",
+    })
+}
+
 export function prepareToolUseSection(config: SystemPromptConfig, baseSection: string, xmlTools: string): string {
+    if (config.subagentRun) {
+        // The main-task examples and guidelines demonstrate tools a subagent does not have;
+        // an XML subagent needs only the call format and its own exposed tools.
+        return config.transport === "xml" ? [baseSection, createToolUseFormatting(config), xmlTools].join("\n\n") : baseSection
+    }
     const subagentGuidance =
         config.transport === "native" && config.subagentsEnabled && !config.subagentRun
             ? getPrompt("variants.lite", "subagentsGuidance")
@@ -103,16 +123,13 @@ export function prepareToolUseSection(config: SystemPromptConfig, baseSection: s
         return baseSection
     }
 
-    const formatting = assemblePromptFragments(getPrompt("toolUseFormatting", "main"), {
-        FOCUS_CHATIN_FORMATTING: config.focusChainEnabled ? getPrompt("toolUseFormatting", "focusChainExample") : "",
-    })
     const examples = assemblePromptFragments(getPrompt("toolUseExamples", "main"), {
         FOCUS_CHAIN_EXAMPLE_BASH: config.focusChainEnabled ? getPrompt("toolUseExamples", "focusChainBash") : "",
         FOCUS_CHAIN_EXAMPLE_NEW_FILE: config.focusChainEnabled ? getPrompt("toolUseExamples", "focusChainNewFile") : "",
         FOCUS_CHAIN_EXAMPLE_EDIT: config.focusChainEnabled ? getPrompt("toolUseExamples", "focusChainEdit") : "",
     })
     return assemblePromptFragments(getPrompt("toolUseIndex", "main"), {
-        TOOL_USE_FORMATTING_SECTION: formatting,
+        TOOL_USE_FORMATTING_SECTION: createToolUseFormatting(config),
         TOOLS_SECTION: xmlTools,
         TOOL_USE_EXAMPLES_SECTION: examples,
         TOOL_USE_GUIDELINES_SECTION: getPrompt("toolUseGuidelines", "main"),
@@ -147,8 +164,13 @@ export function prepareSystemRuntimeEnv(context: SystemPromptContext, config: Sy
         : ""
     const browserSupport = config.browserEnabled ? getPrompt("runtimeEnvironment", "browserSupport") : ""
     const browserCapabilities = config.browserEnabled ? getPrompt("runtimeEnvironment", "browserCapabilities") : ""
+    // Asking the user is possible only through ask_followup_question; without it the
+    // non-interactive wording applies, as it does when YOLO mode withholds the tool.
+    const canAskUser = !config.yoloModeEnabled && exposesTool(context, DlineDefaultTool.ASK)
     const webToolsCapabilities = [
-        config.webToolsEnabled ? getPrompt("runtimeEnvironment", "webToolsCapabilities") : "",
+        config.webToolsEnabled && exposesTool(context, DlineDefaultTool.WEB_FETCH)
+            ? getPrompt("runtimeEnvironment", "webToolsCapabilities")
+            : "",
         config.localWebSearchEnabled ? getPrompt("runtimeEnvironment", "localWebSearchCapabilities") : "",
         config.serverWebSearchEnabled ? getPrompt("runtimeEnvironment", "serverWebSearchCapabilities") : "",
     ].join("")
@@ -157,7 +179,7 @@ export function prepareSystemRuntimeEnv(context: SystemPromptContext, config: Sy
         WORKSPACE_NAMES: workspaceList,
         WORKSPACE_PATH_RULE: getPrompt("runtimeEnvironment", "workspacePathRule"),
         BROWSER_SUPPORT: browserSupport,
-        YOLO_ASK_TEXT: config.yoloModeEnabled ? "" : getPrompt("runtimeEnvironment", "yoloAskText"),
+        YOLO_ASK_TEXT: canAskUser ? getPrompt("runtimeEnvironment", "yoloAskText") : "",
         BROWSER_CAPABILITIES: browserCapabilities,
         WEB_TOOLS_CAPABILITIES: webToolsCapabilities,
         CUSTOM_INSTRUCTIONS: customInstructions,
@@ -171,15 +193,15 @@ export function prepareSystemRuntimeEnv(context: SystemPromptContext, config: Sy
         PARALLEL_TOOLS_RULE: config.parallelTools ? getPrompt("runtimeEnvironment", "parallelToolsRule") : "",
         BROWSER_WAIT_RULES: config.browserEnabled ? getPrompt("rules", "browserWaitRules") : "",
         MCP_RULE: "",
-        CLARIFY_PERMISSION: config.yoloModeEnabled ? "" : getPrompt("runtimeEnvironment", "clarifyPermission"),
+        CLARIFY_PERMISSION: canAskUser ? getPrompt("runtimeEnvironment", "clarifyPermission") : "",
         PARALLEL_TOOL_POLICY: getPrompt(
             "runtimeEnvironment",
             config.parallelTools ? "parallelToolPolicyEnabled" : "parallelToolPolicyDisabled",
         ),
-        CLARIFY_RULE: getPrompt("runtimeEnvironment", config.yoloModeEnabled ? "clarifyRuleYolo" : "clarifyRuleInteractive"),
+        CLARIFY_RULE: getPrompt("runtimeEnvironment", canAskUser ? "clarifyRuleInteractive" : "clarifyRuleYolo"),
         MISSING_PARAM_POLICY: getPrompt(
             "runtimeEnvironment",
-            config.yoloModeEnabled ? "missingParamPolicyYolo" : "missingParamPolicyInteractive",
+            canAskUser ? "missingParamPolicyInteractive" : "missingParamPolicyYolo",
         ),
         MCP_SERVERS_SECTION: "",
         MULTI_ROOT_HINT: multiRootHint,

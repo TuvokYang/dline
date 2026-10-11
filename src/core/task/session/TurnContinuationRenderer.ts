@@ -53,19 +53,22 @@ export class TurnContinuationRenderer implements ComposeContinuationPort {
 /** What the previous response contained, or undefined when nothing can be concluded. */
 function observeToollessTurn(previous: PreviousResponseObservation): ToollessTurnObservation | undefined {
     if (previous.kind === "unobserved") return undefined
-    if (previous.kind === "not_journaled") return { visibleText: "", reasoningPresent: false }
-    return observeStoredResponse(previous.message)
+    const content =
+        previous.kind === "not_journaled" ? { visibleText: "", reasoningPresent: false } : observeStoredResponse(previous.message)
+    const ending = previous.ending
+    return {
+        ...content,
+        ...(ending?.stopReason === undefined ? {} : { stopReason: ending.stopReason }),
+        ...(ending?.outputTokens === undefined ? {} : { outputTokens: ending.outputTokens }),
+    }
 }
 
-function observeStoredResponse(message: ClineStorageMessage): ToollessTurnObservation {
-    const outputTokens = message.metrics?.tokens?.completion
-    const withTokens = (observation: ToollessTurnObservation): ToollessTurnObservation =>
-        outputTokens === undefined ? observation : { ...observation, outputTokens }
-    if (typeof message.content === "string") return withTokens({ visibleText: message.content, reasoningPresent: false })
+function observeStoredResponse(message: ClineStorageMessage): Pick<ToollessTurnObservation, "visibleText" | "reasoningPresent"> {
+    if (typeof message.content === "string") return { visibleText: message.content, reasoningPresent: false }
     const visibleText = message.content
         .map((block) => (block.type === "text" ? block.text : ""))
         .filter(Boolean)
         .join("\n")
     const reasoningPresent = message.content.some((block) => block.type === "thinking" || block.type === "redacted_thinking")
-    return withTokens({ visibleText, reasoningPresent })
+    return { visibleText, reasoningPresent }
 }

@@ -21,7 +21,7 @@ import type { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
 import { deriveNewTaskFeedbackContinuationFromConversation } from "../new-task/new-task-continuation"
 import type { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
 import type { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
-import { createRequestApiScope } from "../RequestApiScope"
+import { createRequestApiScope, type NativeToolCallsPredicate } from "../RequestApiScope"
 import type { ProviderDraftEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { TaskStateManager } from "../TaskStateManager"
 import type { TaskApiHandlerOwner } from "./TaskApiHandlerOwner"
@@ -40,6 +40,8 @@ export interface TaskProviderRequestFactoryOptions {
     readonly authority: TaskTurnAuthority
     readonly tools: ProductionToolHandlerRuntime
     readonly readAdmissionSnapshot: (block: ToolUse) => ToolAdmissionSnapshot
+    /** The same predicate the prompt and tool execution use, so all three route Web tools alike. */
+    readonly usesNativeToolCalls: NativeToolCallsPredicate
 }
 
 /** Freezes one provider request from task-scoped owners and durable journal content. */
@@ -108,6 +110,7 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
             this.options.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true,
             undefined,
             this.options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
+            this.options.usesNativeToolCalls,
         )
         const context = await this.options.promptContext.build(
             requestScope.providerInfo,

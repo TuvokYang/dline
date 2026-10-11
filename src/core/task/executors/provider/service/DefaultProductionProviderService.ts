@@ -629,6 +629,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         const blocks = await Promise.all(
             materialized.tools.map((tool, index) => this.createBlock(request, tool, index, recorded(tool))),
         )
+        const ending = usage.ending()
         yield {
             kind: "final",
             turnId: request.turnId,
@@ -637,6 +638,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             ...(reasoningText.length > 0 ? { reasoning: reasoningText } : {}),
             content,
             ...(request.modelInfo === undefined ? {} : { modelInfo: request.modelInfo }),
+            ...(ending === undefined ? {} : { ending }),
             mode: blocks.length > 1 ? request.mode : "serial",
             blocks,
             ...(materialized.tools.length > 0 ? { toolRows: materialized.tools.map((tool) => tool.ts) } : {}),

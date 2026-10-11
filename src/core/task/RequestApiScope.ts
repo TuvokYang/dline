@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import type { ApiHandler, ApiProviderInfo } from "@core/api"
 import {
     type HostedImageGenerationPlan,
+    localizeHostedWebRoutes,
     resolveHostedImageGenerationPlan,
     resolveWebSearchRoutingPlan,
     type WebSearchRoutingPlan,
@@ -79,6 +80,15 @@ export function resolveRequestHostedImageGenerationPlan(api: ApiHandler, enabled
     return buildRequestHostedImageGenerationPlan(api, model, enabled, resolveSelectedApiFormat(api, model))
 }
 
+/**
+ * Decides whether a request offers its tools as provider-native definitions.
+ *
+ * Omitted by callers that only read the provider identity; every caller whose
+ * scope feeds the prompt, the provider request or tool execution must pass the
+ * same predicate, or the three disagree on where Web tools run.
+ */
+export type NativeToolCallsPredicate = (providerInfo: Readonly<ApiProviderInfo>) => boolean
+
 /** Capture one immutable handler/model/provider view for an API request. */
 export function createRequestApiScope(
     api: ApiHandler,
@@ -87,6 +97,7 @@ export function createRequestApiScope(
     webToolsEnabled = false,
     explicitInstructionRegistry = new ExplicitInstructionRegistry(),
     imageGenerationEnabled = false,
+    usesNativeToolCalls?: NativeToolCallsPredicate,
 ): RequestApiScope {
     const providerId = api.getProviderId?.()
     if (!providerId) {
@@ -95,6 +106,19 @@ export function createRequestApiScope(
     const model = api.getModel()
     const selectedApiFormat = resolveSelectedApiFormat(api, model)
     const frozenWebToolsEnabled = webToolsEnabled === true
+    const providerInfo: Readonly<ApiProviderInfo> = Object.freeze({
+        providerId,
+        model,
+        mode,
+        ...(customPrompt === undefined ? {} : { customPrompt }),
+    })
+    const requestedWebPlan = buildRequestWebSearchRoutingPlan(api, model, frozenWebToolsEnabled, selectedApiFormat)
+    // A model that writes its tools as XML cannot call a hosted tool, which is
+    // only ever declared natively; its Web tools have to run locally instead.
+    const webSearchRoutingPlan =
+        usesNativeToolCalls === undefined || usesNativeToolCalls(providerInfo)
+            ? requestedWebPlan
+            : localizeHostedWebRoutes(requestedWebPlan)
 
     return Object.freeze({
         api,
@@ -104,18 +128,13 @@ export function createRequestApiScope(
         }),
         webToolsEnabled: frozenWebToolsEnabled,
         selectedApiFormat,
-        webSearchRoutingPlan: buildRequestWebSearchRoutingPlan(api, model, frozenWebToolsEnabled, selectedApiFormat),
+        webSearchRoutingPlan,
         hostedImageGenerationPlan: buildRequestHostedImageGenerationPlan(
             api,
             model,
             imageGenerationEnabled === true,
             selectedApiFormat,
         ),
-        providerInfo: Object.freeze({
-            providerId,
-            model,
-            mode,
-            ...(customPrompt === undefined ? {} : { customPrompt }),
-        }),
+        providerInfo,
     })
 }

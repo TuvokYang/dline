@@ -23,7 +23,7 @@ import type { ExplicitInstructionConsumePort } from "../explicit-instructions/ty
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { ProviderRequestRoundPort } from "../performance/provider-request-round-port"
-import { createRequestApiScope } from "../RequestApiScope"
+import { createRequestApiScope, type NativeToolCallsPredicate } from "../RequestApiScope"
 import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { ToolInvocationEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
@@ -59,6 +59,8 @@ export interface TaskToolExecutionOwnerOptions {
     readonly peerTaskSpawner: PeerTaskSpawnPort
     readonly terminalExecutionMode: "vscodeTerminal" | "backgroundExec"
     readonly toolRuntime: ProductionToolHandlerRuntime
+    /** The same predicate the prompt and provider request use, so a Web call runs where the model was told it would. */
+    readonly usesNativeToolCalls: NativeToolCallsPredicate
 }
 
 /** Builds request-scoped handler configuration without depending on the legacy ToolExecutor. */
@@ -167,6 +169,7 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
             this.options.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true,
             undefined,
             this.options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
+            this.options.usesNativeToolCalls,
         )
         return {
             taskId: this.options.taskId,

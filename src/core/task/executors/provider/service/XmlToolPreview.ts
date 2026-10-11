@@ -36,6 +36,15 @@ export function assistantProse(text: string): string {
     return proseOf(parsePreview(text).blocks)
 }
 
+/**
+ * The prose of a reply that is still streaming: tool markup removed, and a
+ * trailing tag that may still open a call held back until it settles.
+ */
+export function streamingProse(text: string): string {
+    const { blocks } = parsePreview(text)
+    return withoutOpeningTagPrefix(proseOf(blocks), text, blocks)
+}
+
 /** The reply so far as the chat shows it while it streams. */
 export interface XmlPreviewFrame {
     /** Prose without tool markup, holding back a trailing tag that may still open a call. */

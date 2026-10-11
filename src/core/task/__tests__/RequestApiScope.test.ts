@@ -216,6 +216,31 @@ describe("createRequestApiScope", () => {
         })
     })
 
+    it("runs Web tools locally for a request whose tools are written as XML", () => {
+        const handler = createHandler("anthropic", "claude-opus-5")
+        handler.getModel = () => ({
+            id: "claude-opus-5",
+            info: {
+                id: "claude-opus-5",
+                apiFormats: [ApiFormat.ANTHROPIC_CHAT],
+                capabilities: { tools: [ServerTool.WEB_SEARCH] },
+            },
+        })
+        handler.supportsServerTool = (tool) => tool === ServerTool.WEB_SEARCH
+        handler.getDisabledServerTools = () => undefined
+        const seen: string[] = []
+        const scope = (native: boolean) =>
+            createRequestApiScope(handler, "act", undefined, true, undefined, false, (providerInfo) => {
+                seen.push(providerInfo.providerId)
+                return native
+            })
+
+        // A hosted tool is declared natively, which an XML-prompted model never learns to call.
+        expect(scope(false).webSearchRoutingPlan).toMatchObject({ route: "local", serverTools: [] })
+        expect(scope(true).webSearchRoutingPlan).toMatchObject({ route: "hosted", serverTools: [ServerTool.WEB_SEARCH] })
+        expect(seen).toEqual(["anthropic", "anthropic"])
+    })
+
     it("falls back to local search when the profile switched hosted search off", () => {
         const handler = createHandler("anthropic", "claude-opus-5")
         handler.getModel = () => ({

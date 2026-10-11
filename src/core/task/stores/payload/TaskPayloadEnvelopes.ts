@@ -1,3 +1,4 @@
+import type { ApiStopReason } from "@core/api/transform/stream"
 import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { ClineAssistantContent, ClineStorageMessage, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
@@ -159,10 +160,25 @@ export interface ProviderInterruptedEnvelope {
     readonly content: readonly ClineAssistantContent[]
 }
 
+/**
+ * How a reply ended, as the provider reported it.
+ *
+ * Kept with the reply because a reply that ran out of output budget or was
+ * filtered can look exactly like one that simply chose not to call a tool;
+ * only the provider's own account tells them apart. Absent fields were not reported.
+ */
+export interface ProviderTurnEnding {
+    readonly stopReason?: ApiStopReason
+    /** Output tokens the provider counted for the reply, reasoning included. */
+    readonly outputTokens?: number
+}
+
 export interface ProviderFinalEnvelope {
     readonly kind: "provider_final"
     readonly text?: string
     readonly content?: readonly ClineAssistantContent[]
+    /** Absent for replies written before it was recorded and for providers that report neither field. */
+    readonly ending?: ProviderTurnEnding
     /**
      * The model that wrote this reply.
      *

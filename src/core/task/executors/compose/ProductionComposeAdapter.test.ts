@@ -301,7 +301,14 @@ describe("ProductionComposeAdapter draft", () => {
 })
 
 describe("ProductionComposeAdapter continuation", () => {
-    async function composeContinuation(journalAnswer: boolean) {
+    async function composeContinuation(
+        journalAnswer: boolean,
+        answer: Record<string, unknown> = {
+            kind: "provider_final",
+            text: "I am done.",
+            turnPlan: { mode: "serial", blocks: [] },
+        },
+    ) {
         const store = payloadStore()
         const journal = new InMemoryConversationJournal()
         const entryRef = await store.put(encodeTaskPayload({ kind: "user_input", text: "task" }))
@@ -325,9 +332,7 @@ describe("ProductionComposeAdapter continuation", () => {
         if (journalAnswer) {
             await journal.append({
                 operationId: "provider:1",
-                payloadRef: await store.put(
-                    encodeTaskPayload({ kind: "provider_final", text: "I am done.", turnPlan: { mode: "serial", blocks: [] } }),
-                ),
+                payloadRef: await store.put(encodeTaskPayload(answer)),
                 source: "provider",
             })
         }
@@ -351,5 +356,23 @@ describe("ProductionComposeAdapter continuation", () => {
         const [input] = await composeContinuation(false)
 
         expect(input?.previousResponse).toEqual({ kind: "not_journaled" })
+    })
+
+    it("carries the provider's account of how the previous answer ended, even when it said nothing", async () => {
+        const ending = { stopReason: "output_limit", outputTokens: 32_000 }
+        const [truncated] = await composeContinuation(true, {
+            kind: "provider_final",
+            text: "<write_to_file>",
+            ending,
+            turnPlan: { mode: "serial", blocks: [] },
+        })
+        const [silent] = await composeContinuation(true, {
+            kind: "provider_final",
+            ending,
+            turnPlan: { mode: "serial", blocks: [] },
+        })
+
+        expect(truncated?.previousResponse).toMatchObject({ kind: "journaled", ending })
+        expect(silent?.previousResponse).toEqual({ kind: "not_journaled", ending })
     })
 })

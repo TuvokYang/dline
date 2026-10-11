@@ -1,5 +1,6 @@
-import type { ApiStreamUsageChunk } from "@core/api/transform/stream"
+import type { ApiStopReason, ApiStreamUsageChunk } from "@core/api/transform/stream"
 import { ApiUsageAccumulator } from "@core/api/transform/usage-accumulator"
+import type { ProviderTurnEnding } from "../../../stores/payload/TaskPayloadEnvelopes"
 
 type CountedExtra = "thoughtsTokenCount" | "webSearchRequests" | "webFetchRequests"
 
@@ -25,10 +26,16 @@ export class ProviderUsageIncrements {
     private thoughtsUsageReported = false
     private costUsageReported = false
     private serverToolUsageReported = false
+    private stopReason: ApiStopReason | undefined
+    private outputTokens = 0
+    private outputUsageReported = false
 
     next(chunk: ApiStreamUsageChunk): Record<string, number> {
         const { delta } = this.tokens.apply(chunk)
         const isDelta = chunk.usageMode === "delta"
+        if (chunk.stopReason) this.stopReason = chunk.stopReason
+        this.outputUsageReported ||= chunk.outputTokens !== undefined
+        this.outputTokens += delta.outputTokens
         if (isReportedAmount(chunk.totalCost)) {
             this.costUsageReported = true
             this.totalCost = isDelta ? this.totalCost + chunk.totalCost : chunk.totalCost
@@ -50,6 +57,15 @@ export class ProviderUsageIncrements {
             webSearchRequests: this.increment("webSearchRequests", chunk.serverToolUsage?.webSearchRequests, isDelta),
             webFetchRequests: this.increment("webFetchRequests", chunk.serverToolUsage?.webFetchRequests, isDelta),
             serverToolUsageReported: this.serverToolUsageReported ? 1 : 0,
+        }
+    }
+
+    /** How the attempt's reply ended, as far as its usage chunks reported it. */
+    ending(): ProviderTurnEnding | undefined {
+        if (!this.stopReason && !this.outputUsageReported) return undefined
+        return {
+            ...(this.stopReason ? { stopReason: this.stopReason } : {}),
+            ...(this.outputUsageReported ? { outputTokens: this.outputTokens } : {}),
         }
     }
 

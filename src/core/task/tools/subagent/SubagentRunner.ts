@@ -81,6 +81,7 @@ import {
     resolveSubagentOutputBudget,
     truncateTextToSubagentOutputBudget,
 } from "./SubagentOutputBudget"
+import { SubagentProseStream } from "./SubagentProseStream"
 
 /**
  * Failed responses in a row after which a run stops with an error.
@@ -987,7 +988,8 @@ export class SubagentRunner {
                 cwd: this.baseConfig.cwd,
                 ide: host?.platform || "Unknown",
                 skills,
-                focusChainSettings: this.baseConfig.focusChainSettings,
+                // A subagent keeps no TODO list, so its tools must not offer task_progress.
+                focusChainSettings: { ...this.baseConfig.focusChainSettings, enabled: false },
                 browserSettings: this.baseConfig.browserSettings,
                 yoloModeToggled: false,
                 enableNativeToolCalls: useNativeToolCalls,
@@ -1126,6 +1128,7 @@ export class SubagentRunner {
 
                 let assistantText = ""
                 let assistantTextSignature: string | undefined
+                let proseStream = new SubagentProseStream()
                 let requestId: string | undefined
                 // Completed provider-hosted calls (web search/fetch results) the endpoint needs back
                 // verbatim on later requests; without them the subagent loses what it just looked up.
@@ -1217,6 +1220,7 @@ export class SubagentRunner {
                         reasonsHandler.reset()
                         assistantText = ""
                         assistantTextSignature = undefined
+                        proseStream = new SubagentProseStream()
                         requestId = undefined
                         hostedToolBlocks.length = 0
                     },
@@ -1295,8 +1299,9 @@ export class SubagentRunner {
                                 requestId = requestId ?? chunk.provider_metadata?.response_id
                                 assistantText += chunk.text || ""
                                 assistantTextSignature = chunk.signature || assistantTextSignature
-                                if (chunk.text) {
-                                    onProgress({ event: { kind: "assistant_message", phase: "delta", text: chunk.text } })
+                                const proseDelta = proseStream.next(assistantText)
+                                if (proseDelta) {
+                                    onProgress({ event: { kind: "assistant_message", phase: "delta", text: proseDelta } })
                                 }
                                 break
                             case "tool_calls":
@@ -1417,7 +1422,8 @@ export class SubagentRunner {
 
                 // Keep the most recent narrative so a run that never converges can
                 // still hand back what it had reasoned out.
-                if (assistantText.trim()) latestAssistantNarrative = assistantText.trim()
+                const assistantProse = SubagentProseStream.final(assistantText)
+                if (assistantProse) latestAssistantNarrative = assistantProse
 
                 const nativeFinalizedToolCalls: SubagentToolCall[] = toolUseHandler.getAllFinalizedToolUses().map((toolCall) => {
                     if (!toolCall.function_id || !toolCall.dline_tid) {
@@ -1484,7 +1490,9 @@ export class SubagentRunner {
                 assistantContent.unshift(...hostedTurn.resumed)
                 assistantContent.push(...hostedTurn.others)
                 if (assistantText.trim().length > 0) {
-                    onProgress({ event: { kind: "assistant_message", phase: "final", text: assistantText } })
+                    if (assistantProse) {
+                        onProgress({ event: { kind: "assistant_message", phase: "final", text: assistantProse } })
+                    }
                     assistantContent.push({
                         type: "text",
                         text: assistantText,

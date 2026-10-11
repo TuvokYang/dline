@@ -30,6 +30,15 @@ EVERY response must include at least one tool call, except when an \`<explicit_i
 @TOOL_USE_EXAMPLES_SECTION@
 
 @TOOL_USE_GUIDELINES_SECTION@`,
+    subagent: `TOOL USE
+
+You have access to the tools exposed for this subagent run. Each tool descriptor is the source of truth for its parameters, behavior, and output.
+
+Tool results arrive after execution. Do not assume outcomes; dependent actions must wait for the results they depend on.
+
+EVERY response must include at least one tool call. Plain text never ends a subagent run; finish only as the subagent completion protocol specifies.
+
+Treat tool results as evidence. If a result differs from your expectation, adjust the approach rather than continuing from the assumption.`,
 }
 
 export default prompts

@@ -40,6 +40,8 @@ export type ProductionProviderChunk =
           readonly reasoning?: string
           readonly content?: ProviderFinalEnvelope["content"]
           readonly modelInfo?: ProviderFinalEnvelope["modelInfo"]
+          /** How the reply ended; journaled with it so the next round can say why it continues. */
+          readonly ending?: ProviderFinalEnvelope["ending"]
           readonly mode: ProviderTurnPlan["mode"]
           readonly blocks: readonly ProviderBlockOutput[]
           /** Chat rows of the calls the turn settled; see ProviderTextPresentationPort. */
@@ -123,6 +125,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
                 ...(chunk.text === undefined ? {} : { text: chunk.text }),
                 ...(chunk.content === undefined ? {} : { content: chunk.content }),
                 ...(chunk.modelInfo === undefined ? {} : { modelInfo: chunk.modelInfo }),
+                ...(chunk.ending === undefined ? {} : { ending: chunk.ending }),
                 turnPlan,
             }
             yield {

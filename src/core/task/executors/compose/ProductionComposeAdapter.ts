@@ -8,6 +8,8 @@ import type {
     EnvironmentDetailsEnvelope,
     LifecycleCommand,
     ProviderDraftEnvelope,
+    ProviderFinalEnvelope,
+    ProviderTurnEnding,
     TurnContinuationEnvelope,
     UserInputEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
@@ -53,10 +55,14 @@ export interface TurnContinuationInput {
  * `not_journaled` is evidence in itself: a response with no content leaves no
  * assistant message behind. `unobserved` means the assembly cannot read the
  * conversation, so nothing may be concluded about the response.
+ *
+ * `ending` is the provider's own account of how the response stopped, when the
+ * journal holds one; it separates a response cut off by its output limit from
+ * one that simply ended without a call.
  */
 export type PreviousResponseObservation =
-    | { readonly kind: "journaled"; readonly message: ClineStorageMessage }
-    | { readonly kind: "not_journaled" }
+    | { readonly kind: "journaled"; readonly message: ClineStorageMessage; readonly ending?: ProviderTurnEnding }
+    | { readonly kind: "not_journaled"; readonly ending?: ProviderTurnEnding }
     | { readonly kind: "unobserved" }
 
 /**
@@ -68,7 +74,10 @@ export type PreviousResponseObservation =
  */
 export interface ComposeConversationPort {
     entries(): Promise<
-        readonly { readonly entry: { readonly watermark: JournalWatermark }; readonly messages: readonly ClineStorageMessage[] }[]
+        readonly {
+            readonly entry: { readonly watermark: JournalWatermark; readonly payloadRef?: string }
+            readonly messages: readonly ClineStorageMessage[]
+        }[]
     >
 }
 
@@ -310,8 +319,29 @@ export class ProductionComposeAdapter implements ComposePort {
     private async observePreviousResponse(): Promise<PreviousResponseObservation> {
         const conversation = this.options.conversation
         if (!conversation) return { kind: "unobserved" }
-        const last = (await conversation.entries()).at(-1)?.messages.at(-1)
-        return last?.role === "assistant" ? { kind: "journaled", message: last } : { kind: "not_journaled" }
+        const tail = (await conversation.entries()).at(-1)
+        const ending = await this.endingOf(tail?.entry.payloadRef)
+        const withEnding = ending === undefined ? {} : { ending }
+        const last = tail?.messages.at(-1)
+        return last?.role === "assistant"
+            ? { kind: "journaled", message: last, ...withEnding }
+            : { kind: "not_journaled", ...withEnding }
+    }
+
+    /**
+     * How the journaled reply at `payloadRef` ended, if it is a reply that recorded it.
+     *
+     * The ending only refines the continuation's wording, so a payload that
+     * cannot be read leaves the continuation as it was rather than failing the round.
+     */
+    private async endingOf(payloadRef: string | undefined): Promise<ProviderTurnEnding | undefined> {
+        if (payloadRef === undefined) return undefined
+        try {
+            const payload = decodeTaskPayload<ProviderFinalEnvelope>(await this.options.payloads.read(payloadRef))
+            return payload.kind === "provider_final" ? payload.ending : undefined
+        } catch {
+            return undefined
+        }
     }
 
     private admittedEntries(input: ComposeRoundInput) {

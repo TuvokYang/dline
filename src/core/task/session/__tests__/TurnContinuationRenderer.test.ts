@@ -13,8 +13,15 @@ function render(previousResponse: PreviousResponseObservation, usesNativeToolCal
     })
 }
 
-function journaled(message: Omit<ClineStorageMessage, "role">): PreviousResponseObservation {
-    return { kind: "journaled", message: { role: "assistant", ...message } as ClineStorageMessage }
+function journaled(
+    message: Omit<ClineStorageMessage, "role">,
+    ending?: Extract<PreviousResponseObservation, { kind: "journaled" }>["ending"],
+): PreviousResponseObservation {
+    return {
+        kind: "journaled",
+        message: { role: "assistant", ...message } as ClineStorageMessage,
+        ...(ending === undefined ? {} : { ending }),
+    }
 }
 
 describe("TurnContinuationRenderer", () => {
@@ -24,10 +31,10 @@ describe("TurnContinuationRenderer", () => {
 
     it("names a reasoning-only response, its output tokens and the remaining budget before the reminder", () => {
         const text = render(
-            journaled({
-                content: [{ type: "thinking", thinking: "planning the next step", signature: "sig" }],
-                metrics: { tokens: { prompt: 1_000, completion: 812, cached: 0 } },
-            }),
+            journaled(
+                { content: [{ type: "thinking", thinking: "planning the next step", signature: "sig" }] },
+                { stopReason: "end_turn", outputTokens: 812 },
+            ),
         )
 
         expect(text).toMatch(/^\[ERROR\] The previous response contained only internal reasoning \(~812 output tokens\)/)
@@ -38,6 +45,23 @@ describe("TurnContinuationRenderer", () => {
 
     it("reports a response that left nothing in the conversation as empty", () => {
         expect(render({ kind: "not_journaled" })).toMatch(/^\[ERROR\] The previous response was empty/)
+    })
+
+    it("names the output limit when the provider reported the response was cut off", () => {
+        const truncated = render(
+            journaled(
+                { content: [{ type: "text", text: "<write_to_file>\n<path>a.ts</path>\n<content>" }] },
+                { stopReason: "output_limit", outputTokens: 32_000 },
+            ),
+            false,
+        )
+        // Even an empty reply is explained by the limit rather than reported as empty.
+        const empty = render({ kind: "not_journaled", ending: { stopReason: "output_limit", outputTokens: 32_000 } })
+
+        expect(truncated).toMatch(
+            /^\[ERROR\] The previous response was cut off at the output token limit \(~32,?000 output tokens\)/,
+        )
+        expect(empty).toMatch(/cut off at the output token limit/)
     })
 
     it("distinguishes unparsed tool markup from plain text in XML mode", () => {

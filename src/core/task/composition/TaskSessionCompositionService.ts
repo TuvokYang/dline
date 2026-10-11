@@ -377,6 +377,7 @@ export class TaskSessionCompositionService {
                 options.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true,
                 undefined,
                 options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
+                options.prompt.shouldUseNativeToolCalls,
             )
             return promptContext.build(scope.providerInfo, scope.webToolsEnabled, scope.webSearchRoutingPlan)
         }
@@ -511,6 +512,7 @@ export class TaskSessionCompositionService {
             providerRequestRounds: performance.providerRequestRounds,
             peerTaskSpawner: tool.peerTaskSpawner,
             terminalExecutionMode: options.prompt.terminalExecutionMode,
+            usesNativeToolCalls: options.prompt.shouldUseNativeToolCalls,
         })
         const environment = tool.terminals
             ? new TaskEnvironmentOwner({
@@ -544,6 +546,7 @@ export class TaskSessionCompositionService {
             authority: turnAuthority,
             tools: toolRuntime,
             readAdmissionSnapshot: (block) => toolExecution.readAdmissionSnapshot(block),
+            usesNativeToolCalls: options.prompt.shouldUseNativeToolCalls,
         })
         const realtimeMessages: RealtimeMessagePublisher = {
             publish: (row) => {

@@ -533,6 +533,44 @@ describe("SubagentToolHandler", () => {
         assert.ok((result as string).includes("boom"))
     })
 
+    it("records when each batch item finished rather than when the whole batch settled", async () => {
+        const { config, callbacks } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
+        const stats = {
+            toolCalls: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheWriteTokens: 0,
+            cacheReadTokens: 0,
+            totalCost: 0,
+            currency: "USD",
+            contextTokens: 0,
+            contextWindow: 200000,
+            contextUsagePercentage: 0,
+        }
+        vi.spyOn(SubagentRunner.prototype, "run").mockImplementation(async (prompt: string) => {
+            await delay(prompt.includes("slow task") ? 120 : 5)
+            return { status: "completed", result: "done", stats }
+        })
+
+        await new UseSubagentsToolHandler().execute(config, {
+            type: "tool_use",
+            name: DlineDefaultTool.USE_SUBAGENTS,
+            params: {
+                subagents: JSON.stringify([
+                    { task: "fast task", context: "ctx" },
+                    { task: "slow task", context: "ctx" },
+                ]),
+            },
+            partial: false,
+            ts: Date.now(),
+        })
+
+        const statusCalls = callbacks.say.mock.calls.filter((call) => call[0] === "subagent")
+        const items = JSON.parse(statusCalls[statusCalls.length - 1][1]).items as Array<{ task?: string; finishedAt?: number }>
+        const finishedAt = (task: string) => items.find((item) => item.task === task)?.finishedAt ?? Number.NaN
+        assert.ok(finishedAt("slow task") - finishedAt("fast task") >= 80)
+    })
+
     it("retains only a retryable foreground batch item and publishes its recovered result", async () => {
         const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
         const publish = vi.mocked(config.backgroundResults!.publish)

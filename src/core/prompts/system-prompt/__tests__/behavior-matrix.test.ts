@@ -273,7 +273,7 @@ describe("Standard/Lite transport and capability behavior matrix", () => {
             }),
         )
         const noSubagents = actModeSection(await generate(PromptProfile.Standard, transport, { subagentsEnabled: false }))
-        const subagentRun = actModeSection(await generate(PromptProfile.Standard, transport, { isSubagentRun: true }))
+        const subagentRun = (await generate(PromptProfile.Standard, transport, { isSubagentRun: true })).systemPrompt
 
         expect(local).toContain(SUBAGENT_DECISION_SOURCE)
         expect(local).toContain(WEB_DECISION_SOURCE)
@@ -282,6 +282,8 @@ describe("Standard/Lite transport and capability behavior matrix", () => {
         expect(noWeb).toContain(SUBAGENT_DECISION_SOURCE)
         expect(noSubagents).not.toContain(SUBAGENT_DECISION_SOURCE)
         expect(noSubagents).toContain(WEB_DECISION_SOURCE)
+        // A subagent has no modes or turn-ending interaction tools, so its prompt carries no ACT MODE section.
+        expect(subagentRun).not.toContain("## ACT MODE")
         expect(subagentRun).not.toContain(SUBAGENT_DECISION_SOURCE)
         for (const section of [local, hosted, noWeb, noSubagents, subagentRun]) {
             expect(section).not.toMatch(/@ACT_[A-Z_]+@/)

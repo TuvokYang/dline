@@ -1525,6 +1525,12 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
                             entry.startedAt = Date.now()
                             updateActivityFromEntry(config, entry)
                         },
+                    }).then((result) => {
+                        // Each child settles on its own; stamping it here keeps a fast child
+                        // from inheriting the finish time of the slowest one in the batch.
+                        entry.finishedAt = Date.now()
+                        updateActivityFromEntry(config, entry)
+                        return result
                     })
                 }),
             ),
@@ -1551,7 +1557,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
                 entry.error = result.error
                 entry.background = background
                 entry.backgroundHandoffAvailable = false
-                entry.finishedAt = Date.now()
+                entry.finishedAt ??= Date.now()
                 applyStats(entry, result.stats)
                 updateActivityFromEntry(config, entry)
                 if (!result.retryable || !entry.jobId) return
