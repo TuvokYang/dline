@@ -21,10 +21,13 @@ export function resolveTargetContextScope(input: TargetContextScopeInput): Targe
     }
     const policy = resolveCompactTriggerPolicy(providerContextWindow, computeSummarizeBudget(), input)
     return {
-        targetContextWindow: policy.hardPassContextWindowTokens,
+        targetContextWindow: policy.configuredContextWindowTokens,
         effectiveContextLimit: policy.effectiveContextLimitTokens,
-        compactTriggerTokens: policy.projectedUsageTriggerTokens,
-        fittingExitTarget: Math.floor(policy.effectiveContextLimitTokens * FITTING_EXIT_RATIO),
+        // The same value the ordinary request gate uses, so a profile or mode switch
+        // compacts at exactly the trigger line T the Auto Compact settings define.
+        compactTriggerTokens: policy.compactTriggerTokens,
+        // Compaction stops once the request is below 80% of the window the user works in.
+        fittingExitTarget: Math.floor(policy.configuredContextWindowTokens * FITTING_EXIT_RATIO),
     }
 }
 

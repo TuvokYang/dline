@@ -1,4 +1,9 @@
-import { renderCapabilitiesForContext } from "../capabilities/CapabilitiesSection"
+import {
+    joinCapabilityGroups,
+    type RenderedCapabilityGroup,
+    renderCapabilityGroupsForContext,
+} from "../capabilities/CapabilitiesSection"
+import type { CapabilitySource } from "../capabilities/types"
 import { getPrompt } from "../i18n"
 import type { SystemPromptContext } from "../system-prompt/context"
 import {
@@ -9,6 +14,7 @@ import {
 } from "../system-prompt/pipeline"
 import { INTEGRATED_SYSTEM_TEMPLATE, SystemTemplateRegistry } from "../system-prompt/templates/system-template-registry"
 import { createLiteSystemSections, createStandardSystemSections } from "../system-prompt/variants/section-content"
+import { measureSystemPromptComposition } from "./system-prompt-composition"
 import { ToolPromptGenerator } from "./ToolPromptGenerator"
 import type { GeneratedSystemPrompt } from "./types"
 
@@ -43,12 +49,15 @@ export class SystemPromptGenerator {
                       subagents: [],
                   }
                 : undefined)
-        const capabilitiesSection = capabilities
-            ? renderCapabilitiesForContext(capabilities, {
+        const capabilityGroups = capabilities
+            ? renderCapabilityGroupsForContext(capabilities, {
                   profile: config.variant,
                   subagentsEnabled: context.subagentsEnabled,
                   disableTools: context.disableTools,
               })
+            : []
+        const capabilitiesSection = capabilities
+            ? joinCapabilityGroups(capabilityGroups)
             : config.variant === "lite"
               ? ""
               : context.capabilitiesSection
@@ -69,6 +78,18 @@ export class SystemPromptGenerator {
             profile: config.variant,
             warnings: output.warnings,
             trace: output.trace,
+            composition: measureSystemPromptComposition({
+                systemPrompt: output.text,
+                userRules: config.userInstructionsEnabled ? String(env.CUSTOM_INSTRUCTIONS ?? "") : "",
+                skills: capabilityGroupText(capabilityGroups, "skills"),
+                workflows: capabilityGroupText(capabilityGroups, "workflows"),
+                toolDefinitions: xmlTools,
+            }),
         }
     }
+}
+
+/** The rendered text of one capability group, or nothing when the group was not rendered. */
+function capabilityGroupText(groups: readonly RenderedCapabilityGroup[], source: CapabilitySource): string {
+    return groups.find((group) => group.source === source)?.text ?? ""
 }

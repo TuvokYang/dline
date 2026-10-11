@@ -1,4 +1,8 @@
-import { restoreTargetWindowFitting, type TargetWindowFittingState } from "@core/context/context-management/target-window-fitting"
+import {
+    getUncoveredStartMessageIndex,
+    restoreTargetWindowFitting,
+    type TargetWindowFittingState,
+} from "@core/context/context-management/target-window-fitting"
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { ContextCompactionPresentation, type ContextCompactionPresentationSnapshot } from "../ContextCompactionPresentation"
 import type { ContextCompactionSessionEvent } from "../ContextCompactionSession"
@@ -101,6 +105,9 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
             const restored = restoreTargetWindowFitting(state, {
                 sourceHistoryHash: card.compactionSourceHistoryHash,
                 coveredTurnCount: card.compactionCoveredTurnCount,
+                ...(typeof card.compactionCoveredMessageIndex === "number"
+                    ? { coveredMessageIndex: card.compactionCoveredMessageIndex }
+                    : {}),
                 passIndex: card.compactionResumePassIndex,
                 cumulativeSummary: card.content,
                 nextPassSummaryCarryLimitTokens: card.compactionSummaryCarryLimitTokens,
@@ -152,6 +159,7 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
                     ? {
                           compactionSourceHistoryHash: state.sourceHistoryHash,
                           compactionCoveredTurnCount: state.coveredTurnCount,
+                          compactionCoveredMessageIndex: getUncoveredStartMessageIndex(state),
                           compactionResumePassIndex: state.passIndex,
                       }
                     : {}),

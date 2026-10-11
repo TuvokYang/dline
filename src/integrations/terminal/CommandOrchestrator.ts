@@ -21,7 +21,7 @@ import { formatCommandLogNotice, formatLargeOutputLogNotice } from "@/shared/com
 import { Logger } from "@/shared/services/Logger"
 import { isCommandCompletionSuccessful } from "./command-completion"
 import { resolveCommandLogPath } from "./command-log-path"
-import { appendCommandLogPath } from "./command-result"
+import { type CommandResultParts, formatCommandResult } from "./command-result"
 import {
     COMPLETION_TIMEOUT_MS,
     DEFAULT_TERMINAL_OUTPUT_LINE_LIMIT,
@@ -75,7 +75,9 @@ export async function orchestrateCommandExecution(
         suppressUserInteraction = false,
         activityId,
         taskId,
+        resultBytes,
     } = options
+    const composeResult = (parts: CommandResultParts) => formatCommandResult({ ...parts, maxBytes: resultBytes?.() })
 
     const say = async (
         type: Parameters<CommandExecutorCallbacks["say"]>[0],
@@ -280,6 +282,15 @@ export async function orchestrateCommandExecution(
     const output: TerminalOutputLine[] = []
     const formatOutput = (entries: readonly TerminalOutputLine[]): string =>
         formatTerminalOutput(entries, (lines) => terminalManager.processOutput(lines))
+    /** Lines kept for the result: all of them, or the first and last once output moved to the log. */
+    const capturedLines = (): TerminalOutputLine[] => (isWritingToFile ? [...firstLines, ...lastLines] : output)
+    /** Captured output text, with the log-only gap marked where it actually is. */
+    const formatCapturedOutput = (): string => {
+        if (!isWritingToFile) return formatOutput(output)
+        const skippedLines = Math.max(0, totalLineCount - firstLines.length - lastLines.length)
+        const skippedNotice = skippedLines > 0 ? `... (${skippedLines} lines written to ${largeOutputLogPath}) ...` : ""
+        return [formatOutput(firstLines), skippedNotice, formatOutput(lastLines)].filter(Boolean).join("\n\n")
+    }
 
     let commandTiming: { startedAt: number; deadlineAt?: number } | undefined
     type BackgroundTransitionReason = "explicit" | "automatic" | "user"
@@ -514,19 +525,18 @@ export async function orchestrateCommandExecution(
                     await outputScheduler.close()
                     await clearCommandState(process.getCompletionDetails?.(), true)
                     await finishFileBased()
-                    const currentOutput = formatOutput(output)
                     const logFilePath = largeOutputLogPath ?? undefined
                     return {
                         userRejected: false,
-                        result: appendCommandLogPath(
-                            `Command reached its ${timeoutSeconds}-second timeout and was terminated.${
-                                currentOutput.length > 0 ? `\nOutput captured before termination:\n${currentOutput}` : ""
-                            }`,
+                        result: composeResult({
+                            status: `Command reached its ${timeoutSeconds}-second timeout and was terminated.`,
+                            outputLabel: "Output captured before termination:",
+                            output: formatCapturedOutput(),
                             logFilePath,
-                        ),
+                        }),
                         completed: false,
                         timedOut: true,
-                        ...splitTerminalOutput(output),
+                        ...splitTerminalOutput(capturedLines()),
                         ...process.getCompletionDetails?.(),
                         logFilePath,
                     }
@@ -561,32 +571,19 @@ export async function orchestrateCommandExecution(
     // Clean up file-based logging if active
     await finishFileBased()
 
-    // Build result based on whether we used file-based logging
-    let result: string
-    let resultOutput: TerminalOutputLine[]
-
-    if (isWritingToFile) {
-        // Build summary from first and last lines
-        const skippedLines = Math.max(0, totalLineCount - firstLines.length - lastLines.length)
-        resultOutput = [...firstLines, ...lastLines]
-        const summaryNotice = `... (${skippedLines} lines written to ${largeOutputLogPath}) ...`
-        result = [formatOutput(resultOutput), summaryNotice].filter(Boolean).join("\n\n")
-    } else {
-        result = formatOutput(output)
-        resultOutput = output
-    }
-    const resultLines = splitTerminalOutput(resultOutput)
+    const result = formatCapturedOutput()
+    const resultLines = splitTerminalOutput(capturedLines())
 
     if (didCancelViaUi) {
         const logFilePath = largeOutputLogPath ?? undefined
         return {
             userRejected: true,
-            result: appendCommandLogPath(
-                formatResponse.toolResult(
-                    `Command cancelled. ${result.length > 0 ? `\nOutput captured before cancellation:\n${result}` : ""}`,
-                ),
+            result: composeResult({
+                status: "Command cancelled.",
+                outputLabel: "Output captured before cancellation:",
+                output: result,
                 logFilePath,
-            ),
+            }),
             completed: false,
             ...resultLines,
             logFilePath,
@@ -603,12 +600,15 @@ export async function orchestrateCommandExecution(
             fileContentString = await processFilesIntoText(userFeedback.files)
         }
 
+        const runningResult = composeResult({
+            status: "Command is still running in the user's terminal.",
+            outputLabel: "Here's the output so far:",
+            output: result,
+        })
         return {
             userRejected: true,
             result: formatResponse.toolResult(
-                `Command is still running in the user's terminal.${
-                    result.length > 0 ? `\nHere's the output so far:\n${result}` : ""
-                }\n\nThe user provided the following feedback:\n<feedback>\n${userFeedback.text}\n</feedback>`,
+                `${runningResult}\n\nThe user provided the following feedback:\n<feedback>\n${userFeedback.text}\n</feedback>`,
                 userFeedback.images,
                 fileContentString,
             ),
@@ -624,7 +624,6 @@ export async function orchestrateCommandExecution(
         const exitCode = completionDetails?.exitCode
         const signal = completionDetails?.signal
         const hasExitCode = typeof exitCode === "number"
-        const logFileMsg = largeOutputLogPath ? `\nFull output saved to: ${largeOutputLogPath}` : ""
         const statusMessage = isCommandCompletionSuccessful(completionDetails)
             ? "Command executed successfully (exit code 0)."
             : signal
@@ -635,7 +634,7 @@ export async function orchestrateCommandExecution(
 
         return {
             userRejected: false,
-            result: `${statusMessage}${result.length > 0 ? `\n${result}` : ""}${logFileMsg}`,
+            result: composeResult({ status: statusMessage, output: result, logFilePath: largeOutputLogPath ?? undefined }),
             completed: true,
             ...resultLines,
             logFilePath: largeOutputLogPath || undefined,
@@ -643,12 +642,15 @@ export async function orchestrateCommandExecution(
             signal,
         }
     }
-    const logFileMsg = largeOutputLogPath ? `\nFull output saved to: ${largeOutputLogPath}` : ""
     return {
         userRejected: false,
-        result: `Command is still running in the user's terminal.${
-            result.length > 0 ? `\nHere's the output so far:\n${result}` : ""
-        }${logFileMsg}\n\nIf a later model request is sent, it can include the terminal status and new output.`,
+        result: composeResult({
+            status: "Command is still running in the user's terminal.",
+            outputLabel: "Here's the output so far:",
+            output: result,
+            logFilePath: largeOutputLogPath ?? undefined,
+            footer: "\nIf a later model request is sent, it can include the terminal status and new output.",
+        }),
         completed: false,
         ...resultLines,
         logFilePath: largeOutputLogPath || undefined,

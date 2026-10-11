@@ -332,17 +332,33 @@ export class E2ETestHelper {
         const dlineTab = page.getByRole("tab", { name: /Dline/ })
         await expect(dlineTab).toBeVisible({ timeout: 60_000 })
         for (let attempt = 1; attempt <= 3; attempt++) {
-            if ((await dlineTab.getAttribute("aria-expanded")) === "true") return
+            if ((await dlineTab.getAttribute("aria-expanded")) === "true") {
+                // A restored sidebar needs no click, but the pointer may still rest where the window
+                // opened it, over the activity bar.
+                await E2ETestHelper.movePointerOffActivityBar(page)
+                return
+            }
             // Click the activity item itself: its progress badge overlays the inner label link while a
             // view is busy, but the badge is a descendant of the item, so the click still reaches it.
             await dlineTab.click()
             try {
                 await expect(dlineTab).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 })
+                await E2ETestHelper.movePointerOffActivityBar(page)
                 return
             } catch (error) {
                 if (attempt === 3) throw error
             }
         }
+    }
+
+    /**
+     * A pointer left resting on the activity item keeps its workbench hover open, and that hover
+     * floats over the top of the sidebar, where it intercepts clicks on the task header controls.
+     */
+    private static async movePointerOffActivityBar(page: Page): Promise<void> {
+        const sidebarBox = await page.locator(".part.sidebar").boundingBox()
+        if (!sidebarBox) return
+        await page.mouse.move(sidebarBox.x + sidebarBox.width / 2, sidebarBox.y + sidebarBox.height / 2)
     }
 
     /**

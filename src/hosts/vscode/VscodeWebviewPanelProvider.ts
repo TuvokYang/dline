@@ -9,6 +9,8 @@ import type { ExtensionMessage } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import type { WebviewMessage } from "@/shared/WebviewMessage"
 import { dlineEditorGroup } from "./DlineEditorGroup"
+import { createVscodeWebviewLiveness } from "./webview/VscodeWebviewLiveness"
+import type { WebviewLivenessMonitor } from "./webview/WebviewLivenessMonitor"
 
 /**
  * Shape of the state persisted via acquireVsCodeApi().setState() inside the webview.
@@ -31,6 +33,7 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
     private disposables: vscode.Disposable[] = []
     private pendingTaskId?: string
     private isWebviewReady = false
+    private liveness?: WebviewLivenessMonitor
 
     /**
      * Creates a new Editor Tab panel and initializes it.
@@ -66,9 +69,9 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
         // early webviewReady messages from fast-loading webview bundles.
         this.setWebviewMessageListener(panel.webview)
 
-        panel.webview.html = shouldUseWebviewHmr(this.context.extensionMode)
-            ? await this.getHMRHtmlContent()
-            : this.getHtmlContent()
+        this.watchLiveness(panel)
+        await this.assignDocument(panel)
+        this.liveness?.htmlAssigned()
 
         // Notify orchestrator of new panel
         OrchestratorController.getInstance().onPanelCreated()
@@ -78,6 +81,7 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
             () => {
                 this.controller.detachUi()
                 dlineEditorGroup.unregister(panel)
+                this.liveness?.dispose()
                 this.isWebviewReady = false
                 this.pendingTaskId = undefined
                 this.panel = undefined
@@ -116,9 +120,9 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
         // Register listener BEFORE HTML
         provider.setWebviewMessageListener(panel.webview)
 
-        panel.webview.html = shouldUseWebviewHmr(context.extensionMode)
-            ? await provider.getHMRHtmlContent()
-            : provider.getHtmlContent()
+        provider.watchLiveness(panel)
+        await provider.assignDocument(panel)
+        provider.liveness?.htmlAssigned()
 
         // Notify orchestrator
         OrchestratorController.getInstance().onPanelCreated()
@@ -127,6 +131,7 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
             () => {
                 provider.controller.detachUi()
                 dlineEditorGroup.unregister(panel)
+                provider.liveness?.dispose()
                 provider.isWebviewReady = false
                 provider.pendingTaskId = undefined
                 provider.panel = undefined
@@ -262,12 +267,40 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
         return this.panel
     }
 
+    /**
+     * Assign the panel document. Readiness is cleared first so a reload re-posts
+     * the pending panel state through the existing webviewReady path.
+     */
+    private async assignDocument(panel: vscode.WebviewPanel): Promise<void> {
+        this.isWebviewReady = false
+        panel.webview.html = shouldUseWebviewHmr(this.context.extensionMode)
+            ? await this.getHMRHtmlContent()
+            : this.getHtmlContent()
+    }
+
+    /**
+     * Detect a document that never boots or stops answering, and reload it.
+     * Created before the document is assigned so an early webviewReady is not missed.
+     */
+    private watchLiveness(panel: vscode.WebviewPanel): void {
+        this.liveness?.dispose()
+        this.liveness = createVscodeWebviewLiveness({
+            surface: "panel",
+            webview: () => this.panel?.webview,
+            isVisible: () => this.panel?.visible ?? false,
+            assignHtml: async () => {
+                if (this.panel === panel) await this.assignDocument(panel)
+            },
+        })
+    }
+
     private registerPanelVisibilityListener(panel: vscode.WebviewPanel): void {
         this.controller.setAccountUsagePollingEnabled(panel.visible)
         panel.onDidChangeViewState(
             (event) => {
                 dlineEditorGroup.synchronize(event.webviewPanel)
                 this.controller.setAccountUsagePollingEnabled(event.webviewPanel.visible)
+                this.liveness?.visibilityChanged(event.webviewPanel.visible)
             },
             null,
             this.disposables,
@@ -279,8 +312,18 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
     }
 
     async handleWebviewMessage(message: WebviewMessage) {
+        this.liveness?.heard()
         switch (message.type) {
+            case "dlinePong": {
+                this.liveness?.pong(message.nonce)
+                break
+            }
+            case "webviewMounted": {
+                this.liveness?.webviewMounted()
+                break
+            }
             case "webviewReady": {
+                this.liveness?.webviewReady()
                 this.isWebviewReady = true
                 if (this.pendingTaskId) {
                     void this.postPanelState(this.pendingTaskId)
@@ -318,6 +361,8 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
     }
 
     override async dispose() {
+        this.liveness?.dispose()
+        this.liveness = undefined
         this.isWebviewReady = false
         this.pendingTaskId = undefined
         while (this.disposables.length) {

@@ -167,6 +167,52 @@ export function indexLogicalTurns(history: readonly ClineStorageMessage[]): Logi
     return buildIndex(turns, protectedStartIndex, issues)
 }
 
+/**
+ * Split one logical turn into its smallest message-boundary segments.
+ *
+ * A cut is placed only where no tool use is open, so a tool use and its result always stay in the
+ * same segment and no message content is truncated. Compaction relies on this when a single turn is
+ * larger than one Pass may carry: the segments are then compacted in order across Passes.
+ */
+export function splitLogicalTurnAtMessageBoundaries(
+    history: readonly ClineStorageMessage[],
+    turn: LogicalTurnSpan,
+): LogicalTurnSpan[] {
+    const segments: LogicalTurnSpan[] = []
+    const openFunctionIds = new Set<string>()
+    let segmentStart = turn.startMessageIndex
+    let segmentFunctionIds: string[] = []
+
+    for (let messageIndex = turn.startMessageIndex; messageIndex <= turn.endMessageIndex; messageIndex++) {
+        const message = history[messageIndex]
+        if (!message) throw new Error("Logical turn exceeds the indexed history")
+        for (const use of getToolUses(message)) {
+            openFunctionIds.add(use.function_id)
+            if (!segmentFunctionIds.includes(use.function_id)) segmentFunctionIds.push(use.function_id)
+        }
+        for (const result of getToolResults(message)) {
+            openFunctionIds.delete(result.function_id)
+            if (!segmentFunctionIds.includes(result.function_id)) segmentFunctionIds.push(result.function_id)
+        }
+        if (openFunctionIds.size === 0 && messageIndex < turn.endMessageIndex) {
+            segments.push(createSegment(segmentStart, messageIndex, segmentFunctionIds))
+            segmentStart = messageIndex + 1
+            segmentFunctionIds = []
+        }
+    }
+    segments.push(createSegment(segmentStart, turn.endMessageIndex, segmentFunctionIds))
+    return segments
+}
+
+function createSegment(startMessageIndex: number, endMessageIndex: number, functionIds: readonly string[]): LogicalTurnSpan {
+    return {
+        id: createLogicalTurnId(startMessageIndex, endMessageIndex, functionIds),
+        startMessageIndex,
+        endMessageIndex,
+        functionIds: [...functionIds],
+    }
+}
+
 function buildIndex(turns: LogicalTurnSpan[], protectedStartIndex: number, issues: LogicalTurnIssue[]): LogicalTurnIndex {
     return {
         turns,

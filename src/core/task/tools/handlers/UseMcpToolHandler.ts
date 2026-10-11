@@ -3,7 +3,7 @@ import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { UiAskUseMcpServer, UiSayMcpServerResponse } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
-import { truncateContent } from "@/shared/content-limits"
+import { boundToolText } from "@/shared/content-limits"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { ToolHandlerResult } from "../ToolExecutionResult"
@@ -11,6 +11,7 @@ import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
+import { resolveSelfBoundResultBytes } from "../utils/tool-result-budget"
 
 function failed(
     response: ToolResponse,
@@ -174,16 +175,19 @@ export class UseMcpToolHandler implements IFullyManagedTool {
             await config.callbacks.say("mcp_server_response", responsePresentation)
 
             const toolResultImages = responseItems.filter((item) => item.startsWith("data:image/"))
-            let toolResultText = responseItems.filter((item) => !item.startsWith("data:image/")).join("\n\n")
-
-            // Handle model image support
             const supportsImages = config.api.getModel().info.capabilities?.supportsImages ?? false
-            if (toolResultImages.length > 0 && !supportsImages) {
-                toolResultText += `\n\n[${toolResultImages.length} images were provided in the response, and while they are displayed to the user, you do not have the ability to view them.]`
-            }
-
-            // Truncate response if it exceeds 400KB to prevent context overflow
-            toolResultText = truncateContent(toolResultText)
+            const hiddenImageNotice =
+                toolResultImages.length > 0 && !supportsImages
+                    ? `\n[${toolResultImages.length} images were provided in the response, and while they are displayed to the user, you do not have the ability to view them.]`
+                    : undefined
+            // Keep both ends of a long payload: servers often close with a summary or an error.
+            const toolResultText = boundToolText(
+                {
+                    body: responseItems.filter((item) => !item.startsWith("data:image/")).join("\n\n"),
+                    trailer: hiddenImageNotice,
+                },
+                { strategy: "headTail", maxBytes: resolveSelfBoundResultBytes(config.contextBudget) },
+            )
 
             // Return formatted result (only pass images if model supports them)
             const response = formatResponse.toolResult(toolResultText, supportsImages ? toolResultImages : undefined)

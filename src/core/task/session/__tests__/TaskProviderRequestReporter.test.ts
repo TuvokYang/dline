@@ -145,6 +145,51 @@ describe("TaskProviderRequestReporter", () => {
         ])
     })
 
+    it("charges every retried attempt but measures occupancy from the attempt that produced the turn", async () => {
+        const harness = createReporter()
+        const record = await harness.reporter.begin({ turnId: "turn-1" })
+
+        await record.settle({
+            // Two attempts: the first failed mid-stream after the provider reported its usage.
+            usage: { inputTokens: 8, cacheReadTokens: 181_000, cacheWriteTokens: 1_000, outputTokens: 282, totalCost: 0.5 },
+            contextUsage: { inputTokens: 4, cacheReadTokens: 91_000, outputTokens: 274, totalCost: 0.3 },
+            outcome: "completed",
+        })
+
+        expect(requestInfo(harness.rows[0])).toMatchObject({
+            tokensIn: 8,
+            tokensOut: 282,
+            cacheWrites: 1_000,
+            cacheReads: 181_000,
+            cost: 0.5,
+            contextTokens: 91_278,
+            contextTokensSource: "provider",
+        })
+        expect(harness.pressures).toEqual([
+            { contextTokens: 91_278, compactTriggerTokens: expect.any(Number) as unknown as number },
+        ])
+        expect(harness.usages).toEqual([{ turnId: "turn-1", contextTokens: 91_278, outputTokens: 274, contextWindow: 200_000 }])
+        expect(harness.telemetry).toEqual([
+            expect.objectContaining({ inputTokens: 8, outputTokens: 282, cacheReadTokens: 181_000, totalCost: 0.5 }),
+        ])
+    })
+
+    it("leaves occupancy unmeasured when only an abandoned attempt reported usage", async () => {
+        const harness = createReporter()
+        const record = await harness.reporter.begin({ turnId: "turn-1" })
+
+        await record.settle({
+            usage: { inputTokens: 4, cacheReadTokens: 90_000, outputTokens: 8 },
+            contextUsage: undefined,
+            outcome: "completed",
+        })
+
+        expect(requestInfo(harness.rows[0])).toMatchObject({ tokensIn: 4, cacheReads: 90_000, tokensOut: 8 })
+        expect(requestInfo(harness.rows[0]).contextTokens).toBeUndefined()
+        expect(harness.usages).toEqual([])
+        expect(harness.lifecycle).toEqual(["started:turn-1", "unmeasured"])
+    })
+
     it("persists the admitted request calibration sample for later compaction estimates", async () => {
         const state = messageState()
         const reporter = new TaskProviderRequestReporter({

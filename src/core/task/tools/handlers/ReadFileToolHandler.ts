@@ -4,9 +4,11 @@ import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { resolveWorkspacePath } from "@core/workspace"
-import { extractFileContent, type FileContentResult } from "@integrations/misc/extract-file-content"
+import { extractFileContent, type FileContentResult, isPlainTextFile } from "@integrations/misc/extract-file-content"
+import { readTextLineRange, type TextLineRange } from "@integrations/misc/read-text-line-range"
 import { arePathsEqual, getReadablePath, isLocatedInWorkspace } from "@utils/path"
 import { telemetryService } from "@/services/telemetry"
+import { MAX_TOOL_RESULT_TEXT_BYTES, TRUNCATION_MARKER_PREFIX } from "@/shared/content-limits"
 import { UiSayTool } from "@/shared/ExtensionMessage"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
@@ -14,9 +16,40 @@ import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
+import { resolveToolResultBytes } from "../utils/tool-result-budget"
 
 export const DEFAULT_MAX_LINES = 1000
-const FILE_TRUNCATED_MARKER = "\n\n---\n\n[FILE TRUNCATED:"
+
+/** Room kept in the tool result for a read prefix and the continuation footer. */
+const READ_RESULT_RESERVE_BYTES = 2 * 1024
+/** Bytes the line labels and lines of one plain-text read may take. */
+const READ_LINES_BUDGET_BYTES = MAX_TOOL_RESULT_TEXT_BYTES - READ_RESULT_RESERVE_BYTES
+/** Shortest part of each line a wide read keeps; a narrower range leaves each line more room. */
+const MIN_LINE_BYTES = 2 * 1024
+/** Lines a read still returns when the context budget leaves no room, so it can name where to continue. */
+const MIN_READ_LINES_BYTES = 512
+
+/**
+ * Bytes the lines of this read may take.
+ *
+ * The call's share of the context budget, not a fixed size: parallel reads
+ * split what the conversation can still hold, and a read that stops early
+ * names the line to continue from.
+ */
+function resolveReadLinesBudget(config: Pick<TaskConfig, "contextBudget">): number {
+    const resultBytes = resolveToolResultBytes(config.contextBudget, MAX_TOOL_RESULT_TEXT_BYTES)
+    // Never more lines than the whole result may hold: a smaller result keeps
+    // half of itself for the lines and half for the prefix and footer.
+    const minLinesBytes = Math.min(MIN_READ_LINES_BYTES, Math.floor(resultBytes / 2))
+    return Math.min(READ_LINES_BUDGET_BYTES, Math.max(minLinesBytes, resultBytes - READ_RESULT_RESERVE_BYTES))
+}
+
+/** What one read produced for the model and for the chat row. */
+interface ReadFileOutcome {
+    readonly text: string
+    readonly imageBlock?: FileContentResult["imageBlock"]
+    readonly displayedRange?: { readonly start: number; readonly end: number }
+}
 
 type DisplayedLineSlice = {
     start: number
@@ -33,7 +66,7 @@ function getDisplayedLineSlice(content: string, startLine?: number, endLine?: nu
 
     let body = content
     let truncationSuffix = ""
-    const truncationIndex = content.indexOf(FILE_TRUNCATED_MARKER)
+    const truncationIndex = content.indexOf(TRUNCATION_MARKER_PREFIX)
     if (truncationIndex !== -1) {
         body = content.slice(0, truncationIndex)
         truncationSuffix = content.slice(truncationIndex)
@@ -112,13 +145,118 @@ function parseRequestedLineRange(block: ToolUse): { startLine?: number; endLine?
     }
 }
 
-function buildReadResponse(block: ToolUse, fileContent: FileContentResult, prefix?: string): string {
-    const { startLine, endLine } = parseRequestedLineRange(block)
-    const text = fileContent.imageBlock
-        ? fileContent.text
-        : formatFileContentWithLineNumbers(fileContent.text, startLine, endLine)
+/** The lines a read asks for, normalized the same way for every file type. */
+function resolveLineWindow(startLine?: number, endLine?: number): { start: number; maxLines: number } {
+    const requestedStart = Math.max(1, startLine ?? 1)
+    const requestedEnd = endLine !== undefined ? Math.max(1, endLine) : requestedStart + DEFAULT_MAX_LINES - 1
+    const start = Math.min(requestedStart, requestedEnd)
+    const end = Math.max(requestedStart, requestedEnd)
+    return { start, maxLines: Math.min(end - start + 1, DEFAULT_MAX_LINES) }
+}
 
-    return prefix ? `${prefix}\n${text}` : text
+function lineLabel(lineNumber: number): string {
+    return `${lineNumber} | `
+}
+
+function lineCutSuffix(omittedBytes: number): string {
+    return omittedBytes > 0 ? ` …[line cut: ${omittedBytes} more bytes]` : ""
+}
+
+/**
+ * Label the lines of a plain-text read and append the footer that tells the
+ * model where the file continues, why the read stopped, and what it cut.
+ */
+export function formatTextLineRange(range: TextLineRange): string {
+    const labeled = range.lines
+        .map((line, index) => `${lineLabel(range.startLine + index)}${line.text}${lineCutSuffix(line.omittedBytes)}`)
+        .join("\n")
+    const footer = describeLineRange(range)
+    return labeled ? `${labeled}\n\n${footer}` : footer
+}
+
+function describeLineRange(range: TextLineRange): string {
+    const total = range.totalLines
+    if (range.lines.length === 0) {
+        // An empty file reads as empty text, as it always has.
+        if (total === 0) return ""
+        if (total !== undefined) return `(start_line=${range.startLine} is past the end of the file, which has ${total} lines.)`
+        return `(Scanned ${range.scannedLines} lines without reaching start_line=${range.startLine}; the file is too large to read that far. Use search_files to locate the text instead.)`
+    }
+    const notes: string[] = []
+    if (total !== undefined && range.endLine >= total) notes.push(`(File has ${total} lines total.)`)
+    else if (range.stop === "scan_limit") {
+        // A follow-up read rescans from the top and would stop at the same point.
+        notes.push(
+            `(Showing lines ${range.startLine}-${range.endLine} of at least ${range.scannedLines}. The file is too large to read past this line; use search_files to locate later text.)`,
+        )
+    } else {
+        const extent = total !== undefined ? `of ${total} total` : `of at least ${range.scannedLines}`
+        const reason = range.stop === "max_bytes" ? " The read stopped early to stay within the result size limit." : ""
+        notes.push(
+            `(Showing lines ${range.startLine}-${range.endLine} ${extent}.${reason} Use start_line=${range.endLine + 1} to continue reading.)`,
+        )
+    }
+    const cutLines = range.lines.filter((line) => line.omittedBytes > 0).length
+    if (cutLines > 0) {
+        notes.push(`(${cutLines} long line(s) were cut at the per-line limit; use search_files to find text inside them.)`)
+    }
+    return notes.join("\n")
+}
+
+/**
+ * Read a plain-text file line by line, so any range of a file of any size can be
+ * reached and the result stays within the tool result limit.
+ */
+async function readPlainTextLines(
+    absolutePath: string,
+    block: ToolUse,
+    linesBudgetBytes: number,
+    signal: AbortSignal | undefined,
+): Promise<ReadFileOutcome> {
+    const { startLine, endLine } = parseRequestedLineRange(block)
+    const window = resolveLineWindow(startLine, endLine)
+    let range: TextLineRange
+    try {
+        range = await readTextLineRange(absolutePath, {
+            startLine: window.start,
+            maxLines: window.maxLines,
+            maxBytes: linesBudgetBytes,
+            maxLineBytes: Math.max(MIN_LINE_BYTES, Math.floor(linesBudgetBytes / window.maxLines)),
+            lineOverheadBytes: (lineNumber, omittedBytes) =>
+                Buffer.byteLength(lineLabel(lineNumber) + lineCutSuffix(omittedBytes), "utf8"),
+            signal,
+        })
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === "ENOENT") throw new Error(`File not found: ${absolutePath}`)
+        throw new Error(`Error reading file: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return {
+        text: formatTextLineRange(range),
+        ...(range.lines.length > 0 ? { displayedRange: { start: range.startLine, end: range.endLine } } : {}),
+    }
+}
+
+/** Plain text is read line by line; images and parsed documents keep their whole-file extraction. */
+async function readFileForTool(
+    absolutePath: string,
+    block: ToolUse,
+    supportsImages: boolean,
+    linesBudgetBytes: number,
+    signal?: AbortSignal,
+): Promise<ReadFileOutcome> {
+    if (isPlainTextFile(absolutePath)) return readPlainTextLines(absolutePath, block, linesBudgetBytes, signal)
+    const fileContent = await extractFileContent(absolutePath, supportsImages)
+    if (fileContent.imageBlock) return { text: fileContent.text, imageBlock: fileContent.imageBlock }
+    const { startLine, endLine } = parseRequestedLineRange(block)
+    const displayedRange = getReadToolDisplayedLineRange(block, fileContent)
+    return {
+        text: formatFileContentWithLineNumbers(fileContent.text, startLine, endLine),
+        ...(displayedRange ? { displayedRange } : {}),
+    }
+}
+
+function buildReadResponse(outcome: ReadFileOutcome, prefix?: string): string {
+    return prefix ? `${prefix}\n${outcome.text}` : outcome.text
 }
 
 async function isProjectScopedRead(config: TaskConfig, requestedPath: string, absolutePath?: string): Promise<boolean> {
@@ -132,12 +270,12 @@ async function emitReadFileToolUiComplete(
     config: TaskConfig,
     sharedMessageProps: UiSayTool,
     block: ToolUse,
-    fileContent: FileContentResult,
+    outcome: ReadFileOutcome,
 ): Promise<void> {
     if (config.isSubagentExecution) {
         return
     }
-    const range = getReadToolDisplayedLineRange(block, fileContent)
+    const range = outcome.displayedRange
     const payload: UiSayTool = { ...sharedMessageProps }
     if (range) {
         payload.readLineStart = range.start
@@ -291,9 +429,15 @@ export class ReadFileToolHandler implements IFullyManagedTool {
 
             // Re-read from disk (cache doesn't store content to save memory)
             const supportsImages = config.api.getModel().info.capabilities?.supportsImages ?? false
-            let fileContent: FileContentResult
+            let outcome: ReadFileOutcome
             try {
-                fileContent = await extractFileContent(absolutePath, supportsImages)
+                outcome = await readFileForTool(
+                    absolutePath,
+                    block,
+                    supportsImages,
+                    resolveReadLinesBudget(config),
+                    config.taskState.operationSignal,
+                )
             } catch (error) {
                 // Tool executed normally — returning a toolError result, not a tool crash.
                 // Do NOT increment consecutiveMistakeCount: the model should see the error
@@ -306,27 +450,31 @@ export class ReadFileToolHandler implements IFullyManagedTool {
             }
 
             if (validCached.readCount >= 3) {
-                await emitReadFileToolUiComplete(config, sharedMessageProps, block, fileContent)
+                await emitReadFileToolUiComplete(config, sharedMessageProps, block, outcome)
                 return buildReadResponse(
-                    block,
-                    fileContent,
+                    outcome,
                     `[DUPLICATE READ] You have already read '${displayPath}' ${validCached.readCount} times in this conversation. The content has not changed since your last read. Please use the information you already have and proceed with your task.`,
                 )
             }
 
-            await emitReadFileToolUiComplete(config, sharedMessageProps, block, fileContent)
+            await emitReadFileToolUiComplete(config, sharedMessageProps, block, outcome)
             return buildReadResponse(
-                block,
-                fileContent,
+                outcome,
                 `[File already read] The file '${displayPath}' was already read earlier in this conversation. Returning content:`,
             )
         }
 
         // Execute the actual file read operation
         const supportsImages = config.api.getModel().info.capabilities?.supportsImages ?? false
-        let fileContent: FileContentResult
+        let outcome: ReadFileOutcome
         try {
-            fileContent = await extractFileContent(absolutePath, supportsImages)
+            outcome = await readFileForTool(
+                absolutePath,
+                block,
+                supportsImages,
+                resolveReadLinesBudget(config),
+                config.taskState.operationSignal,
+            )
         } catch (error) {
             // Tool executed normally — returning a toolError result, not a tool crash.
             // Do NOT increment consecutiveMistakeCount: the model should see the error
@@ -356,17 +504,15 @@ export class ReadFileToolHandler implements IFullyManagedTool {
         config.taskState.fileReadCache.set(cacheKey, {
             readCount: 1,
             mtime,
-            imageBlock: fileContent.imageBlock,
+            imageBlock: outcome.imageBlock,
         })
 
         // Handle image blocks separately - they need to be pushed to userMessageContent
-        if (fileContent.imageBlock) {
-            config.taskState.userMessageContent.push(fileContent.imageBlock)
-            await emitReadFileToolUiComplete(config, sharedMessageProps, block, fileContent)
-            return buildReadResponse(block, fileContent)
+        if (outcome.imageBlock) {
+            config.taskState.userMessageContent.push(outcome.imageBlock)
         }
 
-        await emitReadFileToolUiComplete(config, sharedMessageProps, block, fileContent)
-        return buildReadResponse(block, fileContent)
+        await emitReadFileToolUiComplete(config, sharedMessageProps, block, outcome)
+        return buildReadResponse(outcome)
     }
 }

@@ -1,5 +1,8 @@
 import type { ToolUse } from "@core/assistant-message"
+import type { ContextBudgetLease, ContextBudgetLedger } from "@core/context/context-management/context-budget-ledger"
+import { estimateContextValueBreakdown } from "@core/context/context-management/context-window-projection"
 import { formatResponse } from "@core/prompts/responses"
+import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
 import type { UiSayTool } from "@shared/ExtensionMessage"
 import type { ClineToolResponseContent, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
@@ -13,7 +16,8 @@ import { normalizeToolExecutionResult, type ToolPostCommitDirective } from "../.
 import type { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import type { TaskConfig } from "../../../tools/types/TaskConfig"
 import { ToolDisplayUtils } from "../../../tools/utils/ToolDisplayUtils"
-import { ToolResultUtils } from "../../../tools/utils/ToolResultUtils"
+import { type ToolResultBudget, ToolResultUtils } from "../../../tools/utils/ToolResultUtils"
+import { resolveToolResultBudget } from "../../../tools/utils/tool-result-budget"
 import type { ProductionToolExecutionService } from "../ProductionToolAdapter"
 import type { ToolDomainSurface } from "../ToolDomainSurface"
 import type { ToolRunCommand } from "../ToolExecutionDomain"
@@ -34,6 +38,12 @@ export interface DefaultProductionToolExecutionServiceOptions {
     readonly taskId: string
     readonly config: ProductionToolConfigFactory
     readonly runtime: ProductionToolHandlerRuntime
+    /**
+     * The task's context budget. Each call draws a share while it runs and
+     * counts its result the moment it is produced, so parallel calls cannot
+     * together overflow the conversation.
+     */
+    readonly contextBudget?: Pick<ContextBudgetLedger, "begin">
 }
 
 export interface ProductionToolExecutionResult {
@@ -118,23 +128,63 @@ function serializeResult(
     response: ClineToolResponseContent,
     description: string,
     failure?: ToolFailureObservation,
-): ProductionToolExecutionResult {
+    budget?: ToolResultBudget,
+): SerializedToolResult {
     const described = typeof response === "string"
+    const content = described
+        ? ToolResultUtils.boundTextResult(description, response, budget)
+        : ToolResultUtils.boundContent(response, budget)
     return {
-        content: serializeDurableToolResult(
-            {
-                type: "tool_result",
-                function_id: invocation.functionId,
-                dline_tid: invocation.dlineTid,
-                content: ToolResultUtils.boundContent(
-                    described ? ToolResultUtils.describeTextResult(description, response) : response,
-                ),
-                ...(failure ? { is_error: true } : {}),
-            },
-            toolResultReplayOf(invocation, described),
-        ),
-        ...(failure ? { failed: true, failure } : {}),
+        result: {
+            content: serializeDurableToolResult(
+                {
+                    type: "tool_result",
+                    function_id: invocation.functionId,
+                    dline_tid: invocation.dlineTid,
+                    content,
+                    ...(failure ? { is_error: true } : {}),
+                },
+                toolResultReplayOf(invocation, described),
+            ),
+            ...(failure ? { failed: true, failure } : {}),
+        },
+        contentBytes: measureTextBytes(content),
+        mediaTokens: measureMediaTokens(content),
     }
+}
+
+interface SerializedToolResult {
+    readonly result: ProductionToolExecutionResult
+    /** Text the next request carries for this result. */
+    readonly contentBytes: number
+    /** Images and documents the result carries, estimated by their own model rather than as text. */
+    readonly mediaTokens: number
+}
+
+function measureMediaTokens(content: unknown): number {
+    return typeof content === "string" ? 0 : estimateContextValueBreakdown(content).imageTokens
+}
+
+function measureTextBytes(content: ClineToolResponseContent): number {
+    if (typeof content === "string") return Buffer.byteLength(content, "utf8")
+    return content.reduce((total, block) => total + (block.type === "text" ? Buffer.byteLength(block.text, "utf8") : 0), 0)
+}
+
+/**
+ * Tools whose result is worth keeping whole: a subagent result can be many
+ * minutes of work, so when the conversation has no room left it waits for
+ * compaction instead of being cut to a notice.
+ */
+const DEFERRABLE_TOOLS: ReadonlySet<string> = new Set([ClineDefaultTool.USE_SUBAGENT, ClineDefaultTool.USE_SUBAGENTS])
+
+/** What the model receives in place of a result that waits for room; it pairs the call and lets the task go on. */
+export function deferredResultNotice(description: string): string {
+    return `[DEFERRED] ${description} result held: context budget below 3K. Continue the task; the result will be delivered after automatic compaction.`
+}
+
+function responseText(response: ClineToolResponseContent): string {
+    if (typeof response === "string") return response
+    return response.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n")
 }
 
 /** Rehydrate the canonical runtime tool block stored behind an invocation reference. */
@@ -205,7 +255,31 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
         if (input.invocation.dlineTid !== input.command.dlineTid) {
             throw new Error(`ToolInvocationIdentityMismatch:${input.invocation.dlineTid}:${input.command.dlineTid}`)
         }
-        let config = this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator })
+        const lease = this.options.contextBudget?.begin()
+        let resultBytes = 0
+        let mediaTokens = 0
+        try {
+            const serialized = await this.runBudgeted(input, lease)
+            resultBytes = serialized.contentBytes
+            mediaTokens = serialized.mediaTokens
+            return serialized.result
+        } finally {
+            lease?.end(resultBytes, mediaTokens)
+        }
+    }
+
+    private async runBudgeted(
+        input: {
+            readonly command: ToolRunCommand
+            readonly invocation: ToolInvocationEnvelope
+            readonly surface: ToolDomainSurface
+        },
+        lease: ContextBudgetLease | undefined,
+    ): Promise<SerializedToolResult> {
+        let config: TaskConfig = {
+            ...this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator }),
+            ...(lease ? { contextBudget: lease } : {}),
+        }
         const block = materializeToolInvocation(input.invocation)
         const approvalAnchor = config.messageState?.clineMessages.find(
             (message) => message.interactionId === approvalInteractionId(input.invocation.dlineTid),
@@ -227,15 +301,85 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
             config = createLocalWebSearchFallbackConfig(config)
         }
         const result = normalizeToolExecutionResult(await this.options.runtime.execute(config, block))
-        const response = applyRepeatedCallGuard(config, block, result.response)
+        const response = await this.deferWithoutRoom(
+            config,
+            input.invocation,
+            block,
+            applyRepeatedCallGuard(config, block, result.response),
+            description,
+            result.failure === undefined ? lease : undefined,
+        )
+        // Read the share only now: results other calls returned while this one
+        // ran have already been counted, so the share reflects what is left.
+        const serialized = serializeResult(
+            input.invocation,
+            response,
+            description,
+            result.failure,
+            resolveToolResultBudget(lease, MAX_TOOL_RESULT_TEXT_BYTES),
+        )
         return {
-            ...serializeResult(input.invocation, response, description, result.failure),
-            ...(result.documents?.length ? { documents: result.documents } : {}),
-            ...(result.postCommit === undefined ? {} : { postCommit: result.postCommit }),
+            contentBytes: serialized.contentBytes,
+            mediaTokens: serialized.mediaTokens + measureMediaTokens(result.documents ?? []),
+            result: {
+                ...serialized.result,
+                ...(result.documents?.length ? { documents: result.documents } : {}),
+                ...(result.postCommit === undefined ? {} : { postCommit: result.postCommit }),
+            },
         }
     }
 
-    restoreSubagentRetry(config: TaskConfig, activityId: string): Promise<boolean> {
-        return this.options.runtime.restoreSubagentRetry(config, activityId)
+    /**
+     * Hold a subagent result durably and answer the call with a notice while
+     * less than the yield margin is left; the background delivery ledger
+     * releases it once compaction makes room, also after a restart.
+     */
+    private async deferWithoutRoom(
+        config: TaskConfig,
+        invocation: ToolInvocationEnvelope,
+        block: ToolUse,
+        response: ClineToolResponseContent,
+        description: string,
+        lease: ContextBudgetLease | undefined,
+    ): Promise<ClineToolResponseContent> {
+        if (!lease || !DEFERRABLE_TOOLS.has(block.name) || !config.backgroundResults) return response
+        if (!lease.snapshot().mustYield) return response
+        await config.backgroundResults.publish({
+            entryId: `background:subagent-deferred:${invocation.dlineTid}:attempt:1`,
+            producerKind: block.name === ClineDefaultTool.USE_SUBAGENTS ? "subagent_batch" : "subagent",
+            producerId: invocation.dlineTid,
+            attempt: 1,
+            // The same bound an inline result has: a fan-out's combined results
+            // must not enter the conversation larger for having waited.
+            text: boundToolText(
+                {
+                    header: [
+                        "# Background Results",
+                        "## Deferred Subagent Results",
+                        `${description} (function_id ${invocation.functionId}) Result:`,
+                    ].join("\n"),
+                    body: responseText(response),
+                },
+                { strategy: "lines", maxBytes: MAX_TOOL_RESULT_TEXT_BYTES },
+            ),
+            acknowledge: () => undefined,
+        })
+        return deferredResultNotice(description)
+    }
+
+    /**
+     * A restored retry runs a subagent again on the main task's behalf, so it
+     * draws on the shared budget like the call that first started it.
+     */
+    async restoreSubagentRetry(config: TaskConfig, activityId: string): Promise<boolean> {
+        const lease = this.options.contextBudget?.begin()
+        try {
+            return await this.options.runtime.restoreSubagentRetry(
+                lease ? { ...config, contextBudget: lease } : config,
+                activityId,
+            )
+        } finally {
+            lease?.end()
+        }
     }
 }

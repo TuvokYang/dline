@@ -1,4 +1,5 @@
 import type { WebSearchRoutingPlan } from "@core/api/server-tools"
+import type { SystemPromptComposition } from "@core/prompts/generators/system-prompt-composition"
 import type { PromptFreshnessBaseline } from "@shared/PromptFreshness"
 import type { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -55,6 +56,11 @@ export interface FrozenSystemPromptCache {
     readonly refreshedAt: number
     readonly refreshReason: SystemPromptRefreshReason
     readonly promptBuilder: FrozenPromptBuilderInfo
+    /**
+     * Optional display metadata: prompts frozen before it was measured stay valid,
+     * and readers validate it with `readSystemPromptComposition` before use.
+     */
+    readonly composition?: SystemPromptComposition
 }
 
 /**

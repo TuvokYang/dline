@@ -7,7 +7,7 @@ import {
     materializeCompactionSourceSuffix,
 } from "./compaction-source-snapshot"
 import { compactionSummaryMessage } from "./compaction-summary-message"
-import type { LogicalTurnIndex, LogicalTurnSpan } from "./logical-turns"
+import { type LogicalTurnIndex, type LogicalTurnSpan, splitLogicalTurnAtMessageBoundaries } from "./logical-turns"
 
 export interface CompactionPassIdentity {
     operationId: string
@@ -67,6 +67,14 @@ export interface AcceptedCompactionPass {
 export interface CompactionResumeCheckpoint {
     readonly sourceHistoryHash: string
     readonly coveredTurnCount: number
+    /**
+     * First source message not yet covered by the summary.
+     *
+     * A turn larger than one Pass is split at message boundaries, so the turn count of the run that
+     * wrote the checkpoint can differ from a freshly indexed history. The message index is the
+     * stable coordinate; checkpoints written before it existed fall back to the turn count.
+     */
+    readonly coveredMessageIndex?: number
     readonly passIndex: number
     readonly cumulativeSummary: string
     readonly nextPassSummaryCarryLimitTokens?: number
@@ -119,19 +127,21 @@ export function restoreTargetWindowFitting(
     checkpoint: CompactionResumeCheckpoint,
 ): TargetWindowFittingState | undefined {
     const cumulativeSummary = checkpoint.cumulativeSummary.trim()
-    if (
-        checkpoint.sourceHistoryHash !== state.sourceHistoryHash ||
-        !cumulativeSummary ||
-        checkpoint.coveredTurnCount <= 0 ||
-        checkpoint.coveredTurnCount >= state.turns.length ||
-        checkpoint.passIndex <= 0
-    ) {
+    if (checkpoint.sourceHistoryHash !== state.sourceHistoryHash || !cumulativeSummary || checkpoint.passIndex <= 0) {
         return undefined
     }
-    const coveredTurnCount = checkpoint.coveredTurnCount
-    const nextMessageIndex = state.turns[coveredTurnCount]?.startMessageIndex ?? state.protectedStartMessageIndex
+    const aligned =
+        checkpoint.coveredMessageIndex === undefined
+            ? { turns: state.turns, coveredTurnCount: checkpoint.coveredTurnCount }
+            : alignTurnsToCoveredMessage(state, checkpoint.coveredMessageIndex)
+    if (!aligned || aligned.coveredTurnCount <= 0 || aligned.coveredTurnCount >= aligned.turns.length) {
+        return undefined
+    }
+    const { turns, coveredTurnCount } = aligned
+    const nextMessageIndex = turns[coveredTurnCount]?.startMessageIndex ?? state.protectedStartMessageIndex
     return {
         ...state,
+        turns,
         passIndex: checkpoint.passIndex,
         coveredTurnCount,
         passStartTurnIndex: coveredTurnCount,
@@ -143,6 +153,57 @@ export function restoreTargetWindowFitting(
         nextPassSummaryCarryLimitTokens: checkpoint.nextPassSummaryCarryLimitTokens,
         passPlanned: false,
     }
+}
+
+/**
+ * Make a turn boundary exist at the first uncovered message of a restored checkpoint.
+ *
+ * The run that wrote the checkpoint may have split a turn at message boundaries; the same split is
+ * reapplied here so coverage resumes exactly where the summary ends.
+ */
+function alignTurnsToCoveredMessage(
+    state: TargetWindowFittingState,
+    coveredMessageIndex: number,
+): { turns: readonly LogicalTurnSpan[]; coveredTurnCount: number } | undefined {
+    const containingIndex = state.turns.findIndex(
+        (turn) => turn.startMessageIndex <= coveredMessageIndex && coveredMessageIndex <= turn.endMessageIndex,
+    )
+    if (containingIndex < 0) return undefined
+    const containing = state.turns[containingIndex]
+    if (containing.startMessageIndex === coveredMessageIndex) {
+        return { turns: state.turns, coveredTurnCount: containingIndex }
+    }
+    const segments = splitLogicalTurnAtMessageBoundaries(state.sourceSnapshot.messages, containing)
+    const segmentIndex = segments.findIndex((segment) => segment.startMessageIndex === coveredMessageIndex)
+    if (segmentIndex < 0) return undefined
+    return {
+        turns: [...state.turns.slice(0, containingIndex), ...segments, ...state.turns.slice(containingIndex + 1)],
+        coveredTurnCount: containingIndex + segmentIndex,
+    }
+}
+
+/**
+ * Split the first uncovered logical turn at message boundaries.
+ *
+ * Used when that turn alone is larger than one Pass may carry. Returns undefined when the turn is
+ * already one indivisible unit, such as a single message or one tool use with its result.
+ */
+export function splitUncoveredLogicalTurn(state: TargetWindowFittingState): TargetWindowFittingState | undefined {
+    if (state.passPlanned) throw new Error("A planned compaction Pass cannot split its logical turns")
+    const turnIndex = state.coveredTurnCount
+    const turn = state.turns[turnIndex]
+    if (!turn) return undefined
+    const segments = splitLogicalTurnAtMessageBoundaries(state.sourceSnapshot.messages, turn)
+    if (segments.length <= 1) return undefined
+    return {
+        ...state,
+        turns: [...state.turns.slice(0, turnIndex), ...segments, ...state.turns.slice(turnIndex + 1)],
+    }
+}
+
+/** First source message the cumulative summary does not cover yet. */
+export function getUncoveredStartMessageIndex(state: TargetWindowFittingState): number {
+    return state.turns[state.coveredTurnCount]?.startMessageIndex ?? state.protectedStartMessageIndex
 }
 
 /** Apply one immutable planner result without advancing accepted logical-turn coverage. */

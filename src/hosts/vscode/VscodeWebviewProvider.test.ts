@@ -139,3 +139,39 @@ describe("VscodeWebviewProvider registration", () => {
         expect(second.messages.size).toBe(1)
     })
 })
+
+describe("VscodeWebviewProvider liveness", () => {
+    afterEach(async () => {
+        await WebviewProviderRegistry.disposeAll()
+        vi.useRealTimers()
+        vi.restoreAllMocks()
+    })
+
+    it("reassigns the document of a sidebar view that never announces itself", async () => {
+        vi.useFakeTimers()
+        vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
+        const provider = createProvider()
+        const webview = createWebviewView()
+        await provider.resolveWebviewView(webview.view as never)
+        expect(provider.getHtmlContent).toHaveBeenCalledTimes(1)
+
+        await vi.advanceTimersByTimeAsync(16_000)
+
+        expect(provider.getHtmlContent).toHaveBeenCalledTimes(2)
+    })
+
+    it("never reloads or probes a sidebar view that mounted and stayed visible", async () => {
+        vi.useFakeTimers()
+        vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
+        const provider = createProvider()
+        const webview = createWebviewView()
+        await provider.resolveWebviewView(webview.view as never)
+        webview.messages.fire({ type: "webviewReady" })
+        webview.messages.fire({ type: "webviewMounted" })
+
+        await vi.advanceTimersByTimeAsync(60_000)
+
+        expect(provider.getHtmlContent).toHaveBeenCalledTimes(1)
+        expect(webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "dlinePing" }))
+    })
+})

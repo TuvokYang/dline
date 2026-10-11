@@ -362,6 +362,20 @@ export async function activate(context: vscode.ExtensionContext) {
         }),
     )
 
+    // Manual recovery for a Dline view that stopped rendering.
+    context.subscriptions.push(
+        vscode.commands.registerCommand(commands.ReloadWebview, async () => {
+            const { reloadVisibleWebviews } = await import("./hosts/vscode/webview/VscodeWebviewLiveness")
+            const reloaded = await reloadVisibleWebviews()
+            if (reloaded === 0) {
+                HostProvider.window.showMessage({
+                    type: ShowMessageType.INFORMATION,
+                    message: "No visible Dline view to reload. Show the Dline view first, or use Developer: Reload Window.",
+                })
+            }
+        }),
+    )
+
     context.subscriptions.push(
         vscode.commands.registerCommand(commands.TerminalOutput, async () => {
             const terminal = vscode.window.activeTerminal

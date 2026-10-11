@@ -1,7 +1,13 @@
 import assert from "node:assert/strict"
+import type { TextLineRange } from "@integrations/misc/read-text-line-range"
 import { ClineDefaultTool } from "@shared/tools"
 import { describe, it } from "vitest"
-import { DEFAULT_MAX_LINES, formatFileContentWithLineNumbers, getReadToolDisplayedLineRange } from "../ReadFileToolHandler"
+import {
+    DEFAULT_MAX_LINES,
+    formatFileContentWithLineNumbers,
+    formatTextLineRange,
+    getReadToolDisplayedLineRange,
+} from "../ReadFileToolHandler"
 
 describe("getReadToolDisplayedLineRange", () => {
     const block = (start?: string, end?: string) => ({
@@ -143,16 +149,83 @@ describe("formatFileContentWithLineNumbers", () => {
 
     describe("byte truncation interaction", () => {
         it("preserves truncation notice without numbering it", () => {
-            const input =
-                "alpha\nbeta\n\n---\n\n[FILE TRUNCATED: This content is 1.0 MB but only the first 400 KB is shown (600 KB truncated).]"
+            const input = "alpha\nbeta\n\n---\n\n[OUTPUT TRUNCATED: showed the first part of 1.0 MB; the limit is 400.0 KB.]"
             const result = formatFileContentWithLineNumbers(input)
             assert.ok(result.startsWith("1 | alpha\n2 | beta"))
-            assert.ok(
-                result.includes(
-                    "[FILE TRUNCATED: This content is 1.0 MB but only the first 400 KB is shown (600 KB truncated).]",
-                ),
-            )
+            assert.ok(result.includes("[OUTPUT TRUNCATED: showed the first part of 1.0 MB; the limit is 400.0 KB.]"))
             assert.ok(!result.includes("3 |"))
         })
+    })
+})
+
+describe("formatTextLineRange", () => {
+    function range(overrides: Partial<TextLineRange>): TextLineRange {
+        return {
+            startLine: 1,
+            lines: [
+                { text: "alpha", omittedBytes: 0 },
+                { text: "beta", omittedBytes: 0 },
+            ],
+            endLine: 2,
+            stop: "end_of_file",
+            totalLines: 2,
+            scannedLines: 2,
+            ...overrides,
+        }
+    }
+
+    it("labels lines and reports the total when the read reached the end", () => {
+        assert.equal(formatTextLineRange(range({})), "1 | alpha\n2 | beta\n\n(File has 2 lines total.)")
+    })
+
+    it("points to the next line when the total is known", () => {
+        const result = formatTextLineRange(range({ stop: "max_lines", totalLines: 10, scannedLines: 10 }))
+        assert.ok(result.endsWith("(Showing lines 1-2 of 10 total. Use start_line=3 to continue reading.)"))
+    })
+
+    it("states only a lower bound when the scan stopped before the end", () => {
+        const result = formatTextLineRange(
+            range({ startLine: 50_000, endLine: 50_001, stop: "max_lines", totalLines: undefined, scannedLines: 90_000 }),
+        )
+        assert.ok(result.startsWith("50000 | alpha\n50001 | beta"))
+        assert.ok(result.includes("(Showing lines 50000-50001 of at least 90000. Use start_line=50002 to continue reading.)"))
+    })
+
+    it("explains a read cut short by the size budget", () => {
+        const result = formatTextLineRange(range({ stop: "max_bytes", totalLines: 10, scannedLines: 10 }))
+        assert.ok(result.includes("stopped early to stay within the result size limit"))
+        assert.ok(result.includes("Use start_line=3 to continue reading."))
+    })
+
+    it("marks a cut line and suggests searching inside it", () => {
+        const result = formatTextLineRange(range({ lines: [{ text: "aaaa", omittedBytes: 1_000 }], endLine: 1, totalLines: 1 }))
+        assert.ok(result.startsWith("1 | aaaa …[line cut: 1000 more bytes]"))
+        assert.ok(result.includes("1 long line(s) were cut"))
+    })
+
+    it("says so when the start line is past the end or too large to reach, and keeps an empty file empty", () => {
+        assert.equal(
+            formatTextLineRange(range({ startLine: 10, lines: [], endLine: 9, totalLines: 3, scannedLines: 3 })),
+            "(start_line=10 is past the end of the file, which has 3 lines.)",
+        )
+        assert.equal(formatTextLineRange(range({ lines: [], endLine: 0, totalLines: 0, scannedLines: 0 })), "")
+        assert.ok(
+            formatTextLineRange(
+                range({
+                    startLine: 9_000_000,
+                    lines: [],
+                    endLine: 8_999_999,
+                    stop: "scan_limit",
+                    totalLines: undefined,
+                    scannedLines: 1_000,
+                }),
+            ).includes("too large to read that far"),
+        )
+    })
+
+    it("does not point past a scan limit that a follow-up read would hit again", () => {
+        const result = formatTextLineRange(range({ stop: "scan_limit", totalLines: undefined, scannedLines: 2 }))
+        assert.ok(result.includes("(Showing lines 1-2 of at least 2. The file is too large to read past this line"))
+        assert.ok(!result.includes("start_line=3"))
     })
 })

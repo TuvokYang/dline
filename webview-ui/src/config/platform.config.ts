@@ -61,7 +61,11 @@ window.addEventListener("message", (event) => {
     const message = event.data
     if (!message?.type) return
     try {
-        if (message.type === "dlineSetPanelState" && message.taskId && vsCodeApi) {
+        // Answered here, before React mounts, so the host can tell a running
+        // document from a blank one even when rendering has failed.
+        if (message.type === "dlinePing") {
+            vsCodeApi?.postMessage({ type: "dlinePong", nonce: message.nonce })
+        } else if (message.type === "dlineSetPanelState" && message.taskId && vsCodeApi) {
             vsCodeApi.setState({ taskId: message.taskId })
         } else if (message.type === "dlineClearPanelState" && vsCodeApi) {
             vsCodeApi.setState({})
@@ -73,6 +77,14 @@ window.addEventListener("message", (event) => {
 
 // Notify the extension host that the webview is ready to receive state messages.
 vsCodeApi?.postMessage({ type: "webviewReady" })
+
+/**
+ * Tell the extension host that the root component mounted. A script that runs
+ * but fails to render still shows a blank view; only this signal proves it booted.
+ */
+export function announceWebviewMounted(): void {
+    vsCodeApi?.postMessage({ type: "webviewMounted" })
+}
 
 // Implementations for post message handling
 const postMessageStrategies: Record<string, PostMessageFunction> = {

@@ -163,7 +163,7 @@ describe("ProviderCompactionService", () => {
         expect(lastText(calls)).toContain(`Hard limit for the complete response: ${cap} tokens.`)
     })
 
-    it("honours a caller output ceiling without treating the ordinary context cap as a Provider limit", async () => {
+    it("honours a caller output ceiling and keeps an ordinary Pass summary inside the configured Maximum context", async () => {
         const capped = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 1_000_000, maxTokens: 384_000 })
         await run(service(capped.frame), { sourceHistory: SOURCE, maxOutputTokens: 12_000 })
         expect(outputCap(capped.calls)).toBe(12_000)
@@ -173,10 +173,14 @@ describe("ProviderCompactionService", () => {
             service(absolute.frame, () => ({ maxContextTokens: 50_000 })),
             { sourceHistory: SOURCE },
         )
-        expect(outputCap(absolute.calls)).toBe(384_000)
+        // The Pass input stays at or below T inside W = 50K; the summary may use the
+        // room above it in W, never the rest of the 1M Provider window.
+        const summaryCap = outputCap(absolute.calls)
+        expect(summaryCap).toBeGreaterThan(0)
+        expect(summaryCap).toBeLessThanOrEqual(50_000 - 3_000)
     })
 
-    it("keeps the complete Provider-fitting source in one Pass above an ordinary absolute cap", async () => {
+    it("caps each Pass at the trigger line of the configured Maximum context, not the Provider window", async () => {
         const absolute = probe([{ type: "text", text: SUMMARY_TEXT }], { contextWindow: 1_000_000, maxTokens: 64_000 })
         const requestPressures: NonNullable<ServiceOptions["requestPressures"]> = () => [
             {
@@ -190,16 +194,26 @@ describe("ProviderCompactionService", () => {
         ]
 
         await run(
-            service(absolute.frame, () => ({ maxContextTokens: 50_000 }), { requestPressures }),
+            service(
+                absolute.frame,
+                () => ({ maxContextTokens: 50_000, triggerPercent: 99, minReserveTokens: 500, maxReserveTokens: 1_000 }),
+                { requestPressures },
+            ),
             TWO_LARGE_TURNS,
         )
 
-        expect(absolute.calls).toHaveLength(1)
-        const sent = JSON.stringify(absolute.calls[0]?.[1])
-        expect(sent).toContain("task A")
-        expect(sent).toContain("task B")
-        expect(sent).toContain("a".repeat(1_000))
-        expect(sent).toContain("b".repeat(1_000))
+        // W is the 50K Maximum context, so T is 50K - 500 reserve - 5.5K = 44K even though the
+        // Provider window is 1M: each 40K turn fits a Pass but both together do not, and the
+        // second still sits above the 40K stop line, so they are compacted in order.
+        expect(absolute.calls).toHaveLength(2)
+        const first = JSON.stringify(absolute.calls[0]?.[1])
+        const second = JSON.stringify(absolute.calls[1]?.[1])
+        expect(first).toContain("task A")
+        expect(first).toContain("a".repeat(1_000))
+        expect(first).not.toContain("task B")
+        expect(second).toContain("THE SUMMARY")
+        expect(second).toContain("task B")
+        expect(second).toContain("b".repeat(1_000))
     })
 
     it("uses exact Provider token-per-byte history to maximize complete turns in one Pass", async () => {

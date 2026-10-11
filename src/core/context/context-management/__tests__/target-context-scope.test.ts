@@ -2,31 +2,32 @@ import { describe, expect, it } from "vitest"
 import { resolveTargetContextScope, shouldContinueTargetWindowFitting } from "../target-context-scope"
 
 describe("target context scope", () => {
-    it("uses the enabled absolute cap when it is smaller than the provider window", () => {
+    it("uses the enabled absolute cap as W when it is smaller than the provider window", () => {
+        // The reserve comes out of W like for any window: 272K × 3% = 8,160.
         expect(resolveTargetContextScope({ providerContextWindow: 1_000_000, maxContextTokens: 272_000 })).toEqual({
             targetContextWindow: 272_000,
-            effectiveContextLimit: 272_000,
-            compactTriggerTokens: 266_500,
+            effectiveContextLimit: 263_840,
+            compactTriggerTokens: 260_340,
             fittingExitTarget: 217_600,
         })
     })
 
-    it("uses the guarded percentage limit when the absolute cap is disabled or larger", () => {
+    it("stops at 80 percent of the provider window when the absolute cap is disabled or larger", () => {
         expect(resolveTargetContextScope({ providerContextWindow: 200_000, maxContextTokens: 0 })).toEqual({
             targetContextWindow: 200_000,
             effectiveContextLimit: 194_000,
-            compactTriggerTokens: 188_500,
-            fittingExitTarget: 155_200,
+            compactTriggerTokens: 190_500,
+            fittingExitTarget: 160_000,
         })
         expect(resolveTargetContextScope({ providerContextWindow: 200_000, maxContextTokens: 272_000 })).toEqual({
             targetContextWindow: 200_000,
             effectiveContextLimit: 194_000,
-            compactTriggerTokens: 188_500,
-            fittingExitTarget: 155_200,
+            compactTriggerTokens: 190_500,
+            fittingExitTarget: 160_000,
         })
     })
 
-    it("uses the configured percentage effective limit for the strict 80 percent exit", () => {
+    it("derives the 80 percent stop line from the configured window, not the reserve-adjusted limit", () => {
         expect(
             resolveTargetContextScope({
                 providerContextWindow: 472_000,
@@ -38,8 +39,8 @@ describe("target context scope", () => {
         ).toEqual({
             targetContextWindow: 472_000,
             effectiveContextLimit: 448_400,
-            compactTriggerTokens: 442_900,
-            fittingExitTarget: 358_720,
+            compactTriggerTokens: 444_900,
+            fittingExitTarget: 377_600,
         })
     })
 

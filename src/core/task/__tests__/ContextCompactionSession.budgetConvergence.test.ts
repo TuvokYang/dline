@@ -158,10 +158,11 @@ describe("ContextCompactionSession budget convergence", () => {
         })
 
         expect(result).toBe("failed")
-        // Bounded: the session must stop instead of retrying the same rejected range forever.
-        expect((ports.buildPassRequest as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThanOrEqual(8)
-        // Narrowing down to a single turn that is still refused reports the measurement that
-        // refused it, so the obstacle is diagnosable instead of surfacing as a silent stall.
+        // Bounded: the session must stop instead of retrying the same rejected range forever. Each
+        // narrowing or message-boundary split costs one attempt, and the attempts are capped.
+        expect((ports.buildPassRequest as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThanOrEqual(9)
+        // Narrowing and splitting down to an indivisible unit that is still refused, with nothing
+        // accepted yet, reports the measurement that refused it instead of a silent stall.
         const failure = (ports.publish as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1] as {
             kind: string
             error: string

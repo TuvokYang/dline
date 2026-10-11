@@ -21,7 +21,7 @@ describe("projectInteractionContinuation", () => {
 
         const text = textOf(result.toolResult.content)
         expect(text.startsWith("<feedback>\n")).toBe(true)
-        expect(text).toContain("[FILE TRUNCATED:")
+        expect(text.includes("[OUTPUT TRUNCATED:")).toBe(true)
         expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(MAX_TOOL_RESULT_TEXT_BYTES)
     })
 

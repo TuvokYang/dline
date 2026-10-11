@@ -35,4 +35,17 @@ describe("token estimation", () => {
 
         expect(tokenPerByte).toBeUndefined()
     })
+
+    it("ignores ratios no tokenizer produces, such as 13.5 tokens per byte", () => {
+        const sample = (actualInputTokens: number) => ({
+            ...SCOPE,
+            estimatedTextBytes: 1_000,
+            estimatedMediaTokens: 0,
+            actualInputTokens,
+        })
+
+        expect(resolveTokenPerByte([sample(13_500), sample(50)], SCOPE)).toBeUndefined()
+        expect(resolveTokenPerByte([sample(13_500), sample(250), sample(50)], SCOPE)).toBe(0.25)
+        expect(resolveTokenPerByte([sample(1_000), sample(100)], SCOPE)).toBe(0.55)
+    })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { mergeProviderUsage } from "../ProviderRequestReport"
+import { mergeProviderUsage, sumAttemptUsage } from "../ProviderRequestReport"
 import { ProviderUsageIncrements } from "../ProviderUsageIncrements"
 
 function settle(chunks: Parameters<ProviderUsageIncrements["next"]>[0][]): Readonly<Record<string, number>> | undefined {
@@ -103,5 +103,21 @@ describe("ProviderUsageIncrements", () => {
         ])
 
         expect(settled).toMatchObject({ cacheUsageReported: 1 })
+    })
+})
+
+describe("sumAttemptUsage", () => {
+    it("adds separate attempts and keeps the cost reported only when every attempt priced itself", () => {
+        const priced = { inputTokens: 100, totalCost: 0.01, costUsageReported: 1 }
+        const unpriced = { inputTokens: 120, costUsageReported: 0 }
+
+        expect(sumAttemptUsage(priced, { inputTokens: 80, totalCost: 0.02, costUsageReported: 1 })).toMatchObject({
+            inputTokens: 180,
+            totalCost: 0.03,
+            costUsageReported: 1,
+        })
+        expect(sumAttemptUsage(priced, unpriced)).toMatchObject({ inputTokens: 220, costUsageReported: 0 })
+        expect(sumAttemptUsage(unpriced, priced)).toMatchObject({ costUsageReported: 0 })
+        expect(sumAttemptUsage({ inputTokens: 5 }, priced)).toMatchObject({ costUsageReported: 0 })
     })
 })

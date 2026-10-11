@@ -1,4 +1,8 @@
-import { type ContextWindowIndicatorLineage, type ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
+import {
+    type ContextWindowIndicatorLineage,
+    type ContextWindowIndicatorSnapshot,
+    type DurableContextComposition,
+} from "@shared/context-window-indicator"
 import { Logger } from "@shared/services/Logger"
 import type { Mode } from "@shared/storage/types"
 import { ContextWindowIndicator } from "../ContextWindowIndicator"
@@ -6,6 +10,7 @@ import {
     type ContextWindowIndicatorSegments,
     type ContextWindowRequestOpening,
     projectAuthoritativeContextWindowIndicatorSegments,
+    scaleDurableComposition,
 } from "../ContextWindowIndicatorProjection"
 import type { TaskState } from "../kernel"
 import type { ContextUsageObserverPort } from "./TaskProviderRequestReporter"
@@ -83,6 +88,12 @@ export interface TaskContextUsageProjectionOptions {
      * save the figure a reopened task draws; this is where that save happens.
      */
     readonly settled?: () => void
+    /**
+     * Runs once the figure includes the tail the round added: an ordinary
+     * request opened carrying it, or a landed summary replaced it. Whoever
+     * counted that tail separately stops counting it here.
+     */
+    readonly tailCounted?: () => void
     /** The figure the task showed when it last stopped, drawn until its first request reports. */
     readonly restored?: ContextWindowIndicatorSnapshot
 }
@@ -350,6 +361,7 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
         if (!this.indicator) {
             this.indicator = new ContextWindowIndicator({ taskId: this.options.taskId, ...measured })
             this.show(this.indicator.getSnapshot())
+            this.options.tailCounted?.()
             this.publish()
             return
         }
@@ -361,6 +373,7 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
         if (condensed.lineage.kind === "baseline") this.lineage = condensed.lineage
         this.show(condensed)
         this.settle()
+        this.options.tailCounted?.()
         this.publish()
     }
 
@@ -431,12 +444,14 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
                 durableContextTokens: segments.durableContextTokens,
                 pendingSendTokens: segments.pendingSendTokens,
                 environmentTokens: segments.environmentTokens,
+                durableComposition: openingComposition(request.opening),
                 contextWindow: request.contextWindow,
                 profileId: scope.profileId,
                 profileName: scope.profileName,
                 mode: scope.mode,
             }),
         )
+        this.options.tailCounted?.()
     }
 
     /** Returns whether the indicator changed, which is when the view needs a redraw. */
@@ -468,6 +483,22 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
         })
         return this.indicator
     }
+}
+
+/**
+ * The prefix split an ordinary request shows, on the scale its figure uses.
+ *
+ * The split is an estimate, while the request is shown at its projected
+ * occupancy, which earlier provider reports set; scaling by the same ratio
+ * keeps the prefix comparable with the durable figure it is subtracted from.
+ * A measured request without a split drops the previous one, whose prompt it
+ * may no longer describe; an unmeasured request keeps it.
+ */
+function openingComposition(opening: ContextWindowRequestOpening | undefined): DurableContextComposition | null | undefined {
+    if (!opening) return undefined
+    if (!opening.durableComposition) return null
+    const factor = opening.estimatedTokens > 0 ? opening.projectedUsageTokens / opening.estimatedTokens : 1
+    return scaleDurableComposition(opening.durableComposition, factor)
 }
 
 /**

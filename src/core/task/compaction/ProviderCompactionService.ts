@@ -15,7 +15,6 @@ import {
     COMPACTION_CLOSURE_RESERVE_TOKENS,
     computeSummarizeBudget,
     getContextWindowInfo,
-    MIN_COMPACTION_SUMMARY_OUTPUT_TOKENS,
     resolveCompactTriggerPolicy,
 } from "@core/context/context-management/context-window-utils"
 import { buildSummaryRefitGuidance } from "@core/context/context-management/summary-refit"
@@ -266,15 +265,11 @@ export class ProviderCompactionService implements ProductionCompactionService {
             )
         return {
             getPassInputCeiling: () => policy().passInputCeilingTokens,
+            getLastTurnInputCeiling: () => policy().lastTurnPassInputCeilingTokens,
             restoreAcceptedPasses: async (_sessionInput, state) => this.options.progress?.restore(state),
             // Only an indivisible turn may use the window up to the closure reserve.
             getSingleTurnInputCeiling: () =>
-                Math.max(
-                    0,
-                    policy().hardPassContextWindowTokens -
-                        COMPACTION_CLOSURE_RESERVE_TOKENS -
-                        MIN_COMPACTION_SUMMARY_OUTPUT_TOKENS,
-                ),
+                Math.max(0, policy().hardPassContextWindowTokens - COMPACTION_CLOSURE_RESERVE_TOKENS),
             estimatePassInput: async (sessionInput, passHistory) => {
                 const request = this.passRequest(frame, sessionInput, passHistory, undefined, undefined, "estimate")
                 try {
@@ -284,6 +279,8 @@ export class ProviderCompactionService implements ProductionCompactionService {
                 }
             },
             buildPassRequest: async (sessionInput, state, feedback, passHistory) => {
+                // An indivisible unit may have been planned above T; check against what the plan used.
+                const passInputCeilingTokens = state.passInputCeiling ?? policy().passInputCeilingTokens
                 const request = this.passRequest(
                     frame,
                     sessionInput,
@@ -291,8 +288,9 @@ export class ProviderCompactionService implements ProductionCompactionService {
                     feedback,
                     smallestLimit(state.nextPassSummaryCarryLimitTokens, context.maxOutputTokens),
                     "send",
+                    passInputCeilingTokens,
                 )
-                return this.assertOfficialPassBudget(frame, request, estimator, policy().passInputCeilingTokens)
+                return this.assertOfficialPassBudget(frame, request, estimator, passInputCeilingTokens)
             },
             buildSummaryRefitRequest: async (sessionInput, state, carryLimitTokens, refitAttempt) => {
                 if (!state.cumulativeSummary) throw new Error("Summary refit requires an existing cumulative summary")
@@ -413,6 +411,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
         feedback: readonly ClineContent[] | undefined,
         summaryOutputLimitTokens: number | undefined,
         purpose: "send" | "estimate",
+        passInputCeilingTokens?: number,
     ): ContextCompactionPassRequest {
         const scope = new ExplicitInstructionRequestScope(this.registry, { requestId: randomUUID(), attemptId: randomUUID() })
         scope.register({
@@ -439,8 +438,16 @@ export class ProviderCompactionService implements ProductionCompactionService {
             )
             const serverTools = frame.options?.serverTools ?? []
             const model = frame.api.getModel()
+            // An ordinary Pass works inside W: its input stays at or below T, or at or below
+            // T plus half of the reserve when its last turn crosses T, and what is left of the
+            // reserve is what its summary may use. Only an indivisible unit sent above that is
+            // bounded by the model window instead.
+            const passWindowTokens =
+                passInputCeilingTokens !== undefined && passInputCeilingTokens > policy.lastTurnPassInputCeilingTokens
+                    ? policy.hardPassContextWindowTokens
+                    : policy.configuredContextWindowTokens
             const { budget, messages } = resolveCompactionWindowBudget({
-                contextWindow: policy.hardPassContextWindowTokens,
+                contextWindow: passWindowTokens,
                 maxOutputTokens: model.info.capabilities?.maxTokens,
                 summaryOutputLimitTokens,
                 systemPrompt: frame.systemPrompt,
@@ -456,7 +463,7 @@ export class ProviderCompactionService implements ProductionCompactionService {
                 budget.decision !== "ready" &&
                 purpose === "send" &&
                 frame.api.countInputTokens === undefined &&
-                budget.estimatedInputTokens > policy.passInputCeilingTokens
+                budget.estimatedInputTokens > (passInputCeilingTokens ?? policy.passInputCeilingTokens)
             ) {
                 // Structured so the session narrows the range with the measurement
                 // that refused it instead of reproposing the same range.

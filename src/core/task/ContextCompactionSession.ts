@@ -36,6 +36,7 @@ import {
     getCompactionPassIdentity,
     isIterativeCompactionPass,
     refitCompactionSummary,
+    splitUncoveredLogicalTurn,
     type TargetWindowFittingState,
     tryStartTargetWindowFitting,
 } from "@core/context/context-management/target-window-fitting"
@@ -235,6 +236,8 @@ export type ContextCompactionSessionEvent =
 export interface ContextCompactionSessionPorts {
     /** Maximum estimated input one Pass request may carry, including the reserve concession. */
     getPassInputCeiling(input: ContextCompactionSessionInput): number
+    /** Ceiling for the last complete turn of a Pass: T plus half of the reserve. */
+    getLastTurnInputCeiling?(input: ContextCompactionSessionInput): number
     /** Summary-safe hard ceiling available only to an indivisible first uncovered logical turn. */
     getSingleTurnInputCeiling?(input: ContextCompactionSessionInput): number
     restoreAcceptedPasses?(
@@ -297,14 +300,6 @@ export interface ContextCompactionSessionOptions {
     maxRetryAttempts: number
 }
 
-/**
- * Bound on how often one Pass may be replanned against a narrower turn range.
- *
- * Each attempt drops at least one logical turn, so this only limits how long an unfittable history
- * is probed before the measured failure is reported.
- */
-const MAX_PASS_RANGE_NARROWING_ATTEMPTS = 8
-
 interface FittedCompactionPass {
     planResult: Awaited<ReturnType<typeof planNextCompactionPass>>
     state: TargetWindowFittingState
@@ -313,6 +308,11 @@ interface FittedCompactionPass {
 }
 
 /** Own the complete fitting lifecycle shared by every compaction trigger. */
+/** A refit answered by the provider whose summary cannot replace the previous one. */
+class SummaryRefitRejectedError extends Error {
+    override readonly name = "SummaryRefitRejectedError"
+}
+
 export class ContextCompactionSession {
     private active?: {
         operationId: string
@@ -381,32 +381,77 @@ export class ContextCompactionSession {
                     // The planner and the send side can measure the same request differently. Whatever
                     // causes the divergence, the range must keep shrinking until a Pass actually fits;
                     // reproposing the rejected range would leave the task permanently unable to compact.
-                    const fitted = await this.planPassWithinSendBudget(input, state, signal)
+                    let fitted: FittedCompactionPass
+                    try {
+                        fitted = await this.planPassWithinSendBudget(input, state, signal)
+                    } catch (error) {
+                        // Only an indivisible unit larger than the model window cannot be sent at all.
+                        // What was already summarized is kept; there is nothing further to compact.
+                        if (isCompactionPassBudgetError(error) && commitOutcome.acceptedPassCount > 0) {
+                            await this.ports.commit(input, state, { ...commitOutcome })
+                            return "completed"
+                        }
+                        throw error
+                    }
                     const plannerMs = elapsedCompactionMs(plannerStartedAtMs)
                     const planResult = fitted.planResult
                     this.assertCurrent(input.operationId, signal)
-                    if (planResult.kind === "summary_carry_overflow" && state.cumulativeSummary) {
-                        if (consecutiveSummaryRefitAttempts >= MAX_SUMMARY_REFIT_ATTEMPTS) {
-                            throw new Error(
-                                formatSummaryRefitFailure(
-                                    planResult,
-                                    consecutiveSummaryRefitAttempts,
-                                    resolveSummaryRefitCarryLimit(planResult),
-                                ),
-                            )
+                    // Planning may have split an oversized turn; later steps continue from that split.
+                    state = fitted.state
+                    if (planResult.kind === "single_turn_overflow") {
+                        // A turn larger than one Pass is compacted across Passes at message
+                        // boundaries; its content is never truncated.
+                        const split = splitUncoveredLogicalTurn(state)
+                        if (split) {
+                            state = split
+                            if (this.active?.operationId === input.operationId) this.active.state = snapshotFittingState(state)
+                            continue
                         }
-                        consecutiveSummaryRefitAttempts += 1
-                        state = await this.runSummaryRefit(input, state, planResult, consecutiveSummaryRefitAttempts, signal)
-                        if (this.active?.operationId === input.operationId) this.active.state = snapshotFittingState(state)
-                        continue
+                    }
+                    if (planResult.kind === "summary_carry_overflow" && state.cumulativeSummary) {
+                        const carryLimitTokens = resolveSummaryRefitCarryLimit(planResult)
+                        const refitted =
+                            consecutiveSummaryRefitAttempts < MAX_SUMMARY_REFIT_ATTEMPTS && carryLimitTokens > 0
+                                ? await this.tryRunSummaryRefit(
+                                      input,
+                                      state,
+                                      planResult,
+                                      ++consecutiveSummaryRefitAttempts,
+                                      signal,
+                                  )
+                                : undefined
+                        if (refitted) {
+                            state = refitted
+                            if (this.active?.operationId === input.operationId) this.active.state = snapshotFittingState(state)
+                            continue
+                        }
+                        // The summary cannot shrink further, but a smaller slice of the next turn
+                        // still fits beside it: compaction continues at message boundaries.
+                        const split = splitUncoveredLogicalTurn(state)
+                        if (split) {
+                            state = split
+                            if (this.active?.operationId === input.operationId) this.active.state = snapshotFittingState(state)
+                            continue
+                        }
+                        if (commitOutcome.acceptedPassCount > 0) {
+                            await this.ports.commit(input, state, { ...commitOutcome })
+                            return "completed"
+                        }
+                        throw new Error(formatSummaryRefitFailure(planResult, consecutiveSummaryRefitAttempts, carryLimitTokens))
                     }
                     if (planResult.kind !== "planned") {
+                        // Nothing further can be compacted without truncation. What was already
+                        // summarized is kept and the task continues; only a run without any
+                        // accepted Pass has nothing to keep.
+                        if (commitOutcome.acceptedPassCount > 0) {
+                            await this.ports.commit(input, state, { ...commitOutcome })
+                            return "completed"
+                        }
                         throw new Error(formatCompactionPlanningFailure(planResult))
                     }
                     if (!fitted.request) {
                         throw new Error("Compaction Pass was planned without a request")
                     }
-                    state = fitted.state
                     const plannedState = state
                     if (this.active?.operationId === input.operationId) this.active.state = snapshotFittingState(state)
 
@@ -561,15 +606,12 @@ export class ContextCompactionSession {
                     }
 
                     if (!projection) throw new Error("Accepted compaction Pass is missing its target reprojection.")
-                    const decision = projection
-                    if (decision.status === "complete") {
+                    // Compaction stops once the candidate is below the stop line or nothing uncovered is
+                    // left. Running out of turns is a normal stop, never a failure: the accepted summary is
+                    // committed and the task continues with whatever context it now has.
+                    if (projection.status === "complete" || !hasUncoveredTurn(state)) {
                         await this.ports.commit(input, state, { ...commitOutcome })
                         return "completed"
-                    }
-                    if (decision.status === "exhausted") {
-                        throw new Error(
-                            `Context compaction could not fit the complete target request below the hard effective context limit of ${decision.effectiveContextLimit} tokens after all complete logical turns were compacted (projected ${decision.projectedUsageTokens} tokens).`,
-                        )
                     }
                 } catch (error) {
                     if (signal.aborted) throw signal.reason ?? error
@@ -611,31 +653,41 @@ export class ContextCompactionSession {
      * range would repeat that refusal forever. The two sides measure in different units, so the
      * refused size cannot be subtracted from the planner's ceiling; the range itself is narrowed
      * instead. Dropping at least one logical turn per refusal shrinks monotonically towards the
-     * single-turn case, which the planner reports as its own overflow outcome.
+     * single-turn case; a refused single turn is split at message boundaries, and only an
+     * indivisible unit is left to the planner's own overflow outcome.
      */
     private async planPassWithinSendBudget(
         input: ContextCompactionSessionInput,
         state: TargetWindowFittingState,
         signal: AbortSignal,
     ): Promise<FittedCompactionPass> {
-        const passInputCeiling = this.ports.getPassInputCeiling(input)
-        const singleTurnInputCeiling = this.ports.getSingleTurnInputCeiling?.(input)
+        let passInputCeiling = this.ports.getPassInputCeiling(input)
+        const lastTurnInputCeiling = this.ports.getLastTurnInputCeiling?.(input)
+        let current = state
         let maxEndTurnIndex: number | undefined
 
-        for (let attempt = 0; ; attempt++) {
+        // Every refusal drops a turn or splits one at a message boundary, so the loop ends once an
+        // indivisible unit is refused; no fixed attempt count is needed.
+        while (true) {
+            // Only a unit that cannot be split at message boundaries may go beyond T; a divisible
+            // turn is reported as overflow so it is split instead.
+            const singleTurnInputCeiling =
+                splitUncoveredLogicalTurn(current) === undefined ? this.ports.getSingleTurnInputCeiling?.(input) : undefined
+            const planningState = current
             const planResult = await planNextCompactionPass({
-                state,
+                state: planningState,
                 passInputCeiling,
+                ...(lastTurnInputCeiling === undefined ? {} : { lastTurnInputCeiling }),
                 ...(singleTurnInputCeiling === undefined ? {} : { singleTurnInputCeiling }),
                 ...(maxEndTurnIndex === undefined ? {} : { maxEndTurnIndex }),
-                estimateInputTokens: (passHistory) => this.ports.estimatePassInput(input, passHistory, state),
+                estimateInputTokens: (passHistory) => this.ports.estimatePassInput(input, passHistory, planningState),
             })
             this.assertCurrent(input.operationId, signal)
             if (planResult.kind !== "planned") {
-                return { planResult, state, request: undefined, requestBuildMs: 0 }
+                return { planResult, state: current, request: undefined, requestBuildMs: 0 }
             }
 
-            const plannedState = applyCompactionPassPlan(state, planResult.plan)
+            const plannedState = applyCompactionPassPlan(current, planResult.plan)
             const requestBuildStartedAtMs = performance.now()
             try {
                 const request = await this.ports.buildPassRequest(
@@ -651,14 +703,48 @@ export class ContextCompactionSession {
                     requestBuildMs: elapsedCompactionMs(requestBuildStartedAtMs),
                 }
             } catch (error) {
+                if (!isCompactionPassBudgetError(error)) throw error
                 const refusedEndTurnIndex = planResult.plan.passEndTurnIndex
-                const canNarrow =
-                    isCompactionPassBudgetError(error) &&
-                    refusedEndTurnIndex > planResult.plan.passStartTurnIndex &&
-                    attempt < MAX_PASS_RANGE_NARROWING_ATTEMPTS
-                if (!canNarrow) throw error
-                maxEndTurnIndex = refusedEndTurnIndex - 1
+                if (refusedEndTurnIndex > planResult.plan.passStartTurnIndex) {
+                    maxEndTurnIndex = refusedEndTurnIndex - 1
+                    continue
+                }
+                // The send side refused a single turn: split it at message boundaries and retry.
+                const split = splitUncoveredLogicalTurn(current)
+                if (split) {
+                    current = split
+                    maxEndTurnIndex = undefined
+                    continue
+                }
+                // An indivisible unit the planner measured at or below T but the send side
+                // counted above it is sent alone with its own ceiling, once.
+                const unitCeiling = this.ports.getSingleTurnInputCeiling?.(input)
+                if (unitCeiling === undefined || unitCeiling <= passInputCeiling) throw error
+                passInputCeiling = unitCeiling
+                maxEndTurnIndex = planResult.plan.passStartTurnIndex
             }
+        }
+    }
+
+    /**
+     * Run one summary refit, or report that the refit could not shrink the summary.
+     *
+     * A refit whose request does not fit or whose output is not smaller ends the
+     * refits the same way exhaustion does; only a provider failure or a cancel
+     * ends the compaction run.
+     */
+    private async tryRunSummaryRefit(
+        input: ContextCompactionSessionInput,
+        state: TargetWindowFittingState,
+        overflow: SummaryCarryOverflow,
+        refitAttempt: number,
+        signal: AbortSignal,
+    ): Promise<TargetWindowFittingState | undefined> {
+        try {
+            return await this.runSummaryRefit(input, state, overflow, refitAttempt, signal)
+        } catch (error) {
+            if (error instanceof SummaryRefitRejectedError || isCompactionPassBudgetError(error)) return undefined
+            throw error
         }
     }
 
@@ -749,7 +835,7 @@ export class ContextCompactionSession {
                 nextState = refitCompactionSummary(state, result.summary)
             } catch (error) {
                 const reason = error instanceof Error ? error.message : String(error)
-                throw new Error(
+                throw new SummaryRefitRejectedError(
                     `${formatSummaryRefitFailure(overflow, refitAttempt, carryLimitTokens)} ` +
                         `Refit output was rejected: ${reason}`,
                 )
@@ -816,6 +902,10 @@ export class ContextCompactionSession {
 
 function snapshotFittingState(state: TargetWindowFittingState): TargetWindowFittingState {
     return { ...state }
+}
+
+function hasUncoveredTurn(state: TargetWindowFittingState): boolean {
+    return state.coveredTurnCount < state.turns.length
 }
 
 function formatCompactionPlanningFailure(

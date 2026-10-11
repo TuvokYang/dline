@@ -10,6 +10,7 @@ import { parseWorkspaceInlinePath } from "@/core/workspace/utils/parseWorkspaceI
 import { WorkspacePathAdapter } from "@/core/workspace/WorkspacePathAdapter"
 import { resolveWorkspacePath } from "@/core/workspace/WorkspaceResolver"
 import { telemetryService } from "@/services/telemetry"
+import { boundToolText } from "@/shared/content-limits"
 import { UiSayTool } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { ClineDefaultTool } from "@/shared/tools"
@@ -18,6 +19,7 @@ import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
+import { resolveSelfBoundResultBytes } from "../utils/tool-result-budget"
 
 /**
  * Match and file counts parsed out of one formatted ripgrep result block.
@@ -473,6 +475,14 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
             workspaceContext,
             block.isNativeToolCall,
         )
-        return results
+        // The chat row keeps every match; the model gets whole leading lines and a way to see the rest.
+        return boundToolText(
+            { body: results },
+            {
+                strategy: "lines",
+                maxBytes: resolveSelfBoundResultBytes(config.contextBudget),
+                hint: "narrow the regex, path, or file_pattern to see the rest",
+            },
+        )
     }
 }

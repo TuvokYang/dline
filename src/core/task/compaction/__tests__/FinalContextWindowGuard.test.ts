@@ -16,22 +16,30 @@ const measuredMessages: ClineStorageMessage[][] = []
 // The projection arithmetic has its own tests; here the candidate's estimate is
 // scripted so the guard's own decisions (compact, re-measure, warn, refuse) are
 // what each case observes.
-vi.mock("@core/context/context-management/context-window-projection", () => ({
-    estimateContextWindowCandidate: (input: { messages: ClineStorageMessage[] }) => {
+vi.mock("@core/context/context-management/context-window-projection", () => {
+    const scripted = (input: { messages: ClineStorageMessage[] }) => {
         measuredMessages.push(input.messages)
         const next = estimates.shift()
         if (next === undefined) throw new Error("unexpected measurement")
         return next
-    },
-    resolveContextWindowProjection: (input: { candidateEstimatedTokens: number; triggerTokens: number }) => ({
-        baselineTokens: 0,
-        pendingDeltaTokens: 0,
-        candidateDeltaTokens: input.candidateEstimatedTokens,
-        projectedUsageTokens: input.candidateEstimatedTokens,
-        pressureSource: "candidate",
-        shouldCompact: input.candidateEstimatedTokens >= input.triggerTokens,
-    }),
-}))
+    }
+    return {
+        estimateContextWindowCandidate: scripted,
+        // The framed estimate reads the breakdown; only its total is scripted here.
+        estimateContextWindowCandidateBreakdown: (input: { messages: ClineStorageMessage[] }) => {
+            const totalTokens = scripted(input)
+            return { totalTokens, textTokens: totalTokens, textBytes: totalTokens * 4, imageTokens: 0 }
+        },
+        resolveContextWindowProjection: (input: { candidateEstimatedTokens: number; triggerTokens: number }) => ({
+            baselineTokens: 0,
+            pendingDeltaTokens: 0,
+            candidateDeltaTokens: input.candidateEstimatedTokens,
+            projectedUsageTokens: input.candidateEstimatedTokens,
+            pressureSource: "candidate",
+            shouldCompact: input.candidateEstimatedTokens >= input.triggerTokens,
+        }),
+    }
+})
 
 /** The requests the guard split for the indicator; only the admitted one should be. */
 const splits: { providerInput: { messages: ClineStorageMessage[] }; durableMessageCount: number }[] = []
@@ -44,6 +52,8 @@ vi.mock("../../ContextWindowIndicatorProjection", () => ({
         splits.push(input)
         return SPLIT
     },
+    // The scripted frames carry no prompt composition, so the request opens without a prefix split.
+    estimateDurableComposition: () => undefined,
 }))
 
 vi.mock("@core/context/context-management/context-window-utils", () => ({
@@ -119,11 +129,12 @@ describe("FinalContextWindowGuard", () => {
 
         await guard.admit({ signal: new AbortController().signal, environment: ENVIRONMENT })
 
-        expect(guard.admittedRequest()).toEqual({
+        expect(guard.admittedRequest()).toMatchObject({
             estimatedTokens: 300,
             projectedUsageTokens: 300,
             segments: SPLIT,
         })
+        expect(guard.admittedRequest()?.durableComposition).toBeUndefined()
         expect(splits).toHaveLength(1)
         // Everything before the latest message was sent already; the environment follows the round's input.
         expect(splits[0]?.durableMessageCount).toBe(HISTORY.length - 1)

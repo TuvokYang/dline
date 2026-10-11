@@ -447,6 +447,55 @@ describe("ProviderCommandExecutor request reporting", () => {
         // the previous total instead of being summed into a double charge.
         expect(report.settle).toHaveBeenCalledWith({
             usage: { inputTokens: 10, cacheReadTokens: 4, totalCost: 0.9, outputTokens: 7 },
+            contextUsage: { inputTokens: 10, cacheReadTokens: 4, totalCost: 0.9, outputTokens: 7 },
+            outcome: "completed",
+        })
+    })
+
+    it("keeps an abandoned attempt's usage out of the context the retried request occupies", async () => {
+        const report = reporter()
+        const executor = new ProviderCommandExecutor(
+            "task-1",
+            {
+                start: () =>
+                    chunks([
+                        // The first send reported its prompt before the stream broke.
+                        {
+                            kind: "usage",
+                            usage: { inputTokens: 4, cacheReadTokens: 367_654, cacheWriteTokens: 4_480, totalCost: 0.2 },
+                        },
+                        { kind: "usage", usage: { outputTokens: 8 } },
+                        { kind: "retry", notice: { attempt: 1, maxAttempts: 5, delayMs: 0, errorMessage: "{}" } },
+                        { kind: "usage", usage: { inputTokens: 4, cacheReadTokens: 372_134, totalCost: 0.3 } },
+                        {
+                            kind: "final",
+                            turnId: "turn-request",
+                            payloadRef: "payload:final",
+                            turnPlan: { mode: "serial", blocks: [] },
+                        },
+                        { kind: "usage", usage: { outputTokens: 274 } },
+                    ]),
+            },
+            new InMemoryConversationJournal(),
+            new InMemoryTaskViewPort(),
+            recorder().sink,
+            undefined,
+            report.port,
+        )
+
+        await executor.execute(command)
+
+        expect(report.settle).toHaveBeenCalledWith({
+            // Every attempt consumed tokens and cost, so consumption sums them.
+            usage: {
+                inputTokens: 8,
+                cacheReadTokens: 739_788,
+                cacheWriteTokens: 4_480,
+                totalCost: 0.5,
+                outputTokens: 282,
+            },
+            // Only the attempt that produced the turn describes what the next request carries.
+            contextUsage: { inputTokens: 4, cacheReadTokens: 372_134, totalCost: 0.3, outputTokens: 274 },
             outcome: "completed",
         })
     })

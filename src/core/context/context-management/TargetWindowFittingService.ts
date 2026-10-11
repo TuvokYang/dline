@@ -7,7 +7,7 @@ export interface DecideTargetWindowFittingInput extends CompactTriggerOptions {
     hasMoreTurns: boolean
 }
 
-export type TargetWindowFittingDecisionStatus = "continue" | "complete" | "exhausted"
+export type TargetWindowFittingDecisionStatus = "continue" | "complete"
 
 export interface TargetWindowFittingDecision {
     status: TargetWindowFittingDecisionStatus
@@ -22,13 +22,11 @@ export function decideTargetWindowFitting(input: DecideTargetWindowFittingInput)
     const scope = resolveTargetContextScope(input)
     const projectedUsageTokens = normalizeCandidateTokens(input.candidateEstimatedTokens)
     const mustContinue = shouldContinueTargetWindowFitting(projectedUsageTokens, scope)
-    const exceedsHardWindow = projectedUsageTokens >= scope.targetContextWindow
     return {
-        // The 80% boundary is the target for another iterative Pass, not a final
-        // validity gate. Once no complete turn remains, landing a request that still
-        // fits the hard window is strictly better than discarding the summary and
-        // terminating the task. Only a candidate the provider cannot hold is exhausted.
-        status: mustContinue && input.hasMoreTurns ? "continue" : exceedsHardWindow ? "exhausted" : "complete",
+        // Compaction stops below 80% of the window, or once nothing uncompacted
+        // is left. Long tasks need compaction to keep working, so running out of
+        // turns lands what was condensed instead of failing the task.
+        status: mustContinue && input.hasMoreTurns ? "continue" : "complete",
         projectedUsageTokens,
         targetContextWindow: scope.targetContextWindow,
         effectiveContextLimit: scope.effectiveContextLimit,

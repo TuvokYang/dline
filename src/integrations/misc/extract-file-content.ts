@@ -2,11 +2,18 @@ import { Anthropic } from "@anthropic-ai/sdk"
 import fs from "fs/promises"
 import * as path from "path"
 import { extractImageContent } from "./extract-images"
-import { callTextExtractionFunctions } from "./extract-text"
+import { callTextExtractionFunctions, requiresDocumentExtraction } from "./extract-text"
 
 export type FileContentResult = {
     text: string
     imageBlock?: Anthropic.ImageBlockParam
+}
+
+const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([".png", ".jpg", ".jpeg", ".webp"])
+
+/** Whether the file is read by decoding its bytes as text, so it can be read line by line. */
+export function isPlainTextFile(absolutePath: string): boolean {
+    return !IMAGE_EXTENSIONS.has(path.extname(absolutePath).toLowerCase()) && !requiresDocumentExtraction(absolutePath)
 }
 
 /**
@@ -21,9 +28,7 @@ export async function extractFileContent(absolutePath: string, modelSupportsImag
         throw new Error(`File not found: ${absolutePath}`)
     }
 
-    const fileExtension = path.extname(absolutePath).toLowerCase()
-    const imageExtensions = [".png", ".jpg", ".jpeg", ".webp"]
-    const isImage = imageExtensions.includes(fileExtension)
+    const isImage = IMAGE_EXTENSIONS.has(path.extname(absolutePath).toLowerCase())
 
     if (isImage && modelSupportsImages) {
         const imageResult = await extractImageContent(absolutePath)

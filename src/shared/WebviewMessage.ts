@@ -1,5 +1,9 @@
 export type WebviewMessage =
     | { type: "webviewReady" }
+    /** The root component mounted; liveness treats only this as a booted document. */
+    | { type: "webviewMounted" }
+    /** Liveness answer to a host `dlinePing`, echoing its nonce; sent before React mounts. */
+    | { type: "dlinePong"; nonce?: string }
     | { type: "grpc_request"; grpc_request?: GrpcRequest }
     | { type: "grpc_request_cancel"; grpc_request_cancel?: GrpcCancel }
 

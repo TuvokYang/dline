@@ -18,10 +18,10 @@ const snapshot: ContextWindowIndicatorSnapshot = {
     lineage: { kind: "baseline" },
 }
 
-function ContextWindowFixture() {
+function ContextWindowFixture({ indicator = snapshot }: { indicator?: ContextWindowIndicatorSnapshot }) {
     return (
         <div className="flex h-[520px] w-[520px] items-center p-8" data-testid="context-window-fixture">
-            <ContextWindow contextWindowIndicator={snapshot} useAutoCondense={false} />
+            <ContextWindow contextWindowIndicator={indicator} useAutoCondense={false} />
         </div>
     )
 }
@@ -38,3 +38,21 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const SegmentedSummary: Story = {}
+
+/** Durable carries a measured prefix: its segment shows sub-stripes and its summary card opens a breakdown. */
+export const DurableBreakdown: Story = {
+    args: {
+        indicator: {
+            ...snapshot,
+            phase: "stable",
+            pendingSendTokens: 0,
+            durableComposition: {
+                basePrompt: 21_000,
+                userRules: 6_400,
+                skills: 2_300,
+                workflows: 1_700,
+                toolDefinitions: 14_600,
+            },
+        },
+    },
+}

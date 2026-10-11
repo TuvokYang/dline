@@ -1,4 +1,4 @@
-import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
+import { type ContextWindowIndicatorSnapshot, readDurableContextComposition } from "@shared/context-window-indicator"
 
 const INDICATOR_PHASES = new Set(["stable", "sending", "receiving", "committing", "rolling_back"])
 
@@ -32,6 +32,8 @@ export function readHistoryContextWindowIndicator(input: unknown, taskId: string
     )
         return undefined
 
+    // The prefix split is display detail: an invalid one is dropped, never the figure itself.
+    const durableComposition = readDurableContextComposition(value.durableComposition)
     return {
         taskId,
         revision: value.revision,
@@ -48,5 +50,6 @@ export function readHistoryContextWindowIndicator(input: unknown, taskId: string
         mode: value.mode,
         updatedAt: value.updatedAt,
         lineage: { kind: "baseline" },
+        ...(durableComposition ? { durableComposition } : {}),
     }
 }

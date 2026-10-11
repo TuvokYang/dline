@@ -478,6 +478,7 @@ export class CommandExecutor {
             onLogFileCreated: (logFilePath) => publishCommandLogPath(logFilePath),
             suppressUserInteraction: options?.suppressUserInteraction,
             commandTs: options?.commandTs,
+            resultBytes: options?.resultBytes,
             onOutputFrame: async (frame) => {
                 activityLineCount += frame.length
                 this.callbacks.appendCommandActivityOutput?.(activityId, `${frame.map((entry) => entry.line).join("\n")}\n`)

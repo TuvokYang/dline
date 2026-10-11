@@ -28,6 +28,17 @@ describe("context pressure", () => {
         expect(readContextWindowRequestPressure(JSON.stringify({ request: "pending" }))).toEqual({})
     })
 
+    it("samples the producing attempt's input rather than the billing sum of retried attempts", () => {
+        expect(
+            readContextWindowRequestPressure(
+                JSON.stringify({ tokensIn: 300_000, cacheReads: 50_000, contextInputTokens: 120_000 }),
+            )?.actualInputTokens,
+        ).toBe(120_000)
+        expect(
+            readContextWindowRequestPressure(JSON.stringify({ tokensIn: 90_000, cacheReads: 10_000 }))?.actualInputTokens,
+        ).toBe(100_000)
+    })
+
     /** Preserve estimate provenance until a positive provider usage sample replaces it. */
     it("reads estimate and provider pressure sources without inventing reliable usage", () => {
         expect(

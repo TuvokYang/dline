@@ -1,6 +1,42 @@
-import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
+import {
+    type ContextWindowIndicatorSnapshot,
+    DURABLE_CONTEXT_PARTS,
+    type DurableContextPart,
+    readDurableContextComposition,
+    splitDurableContext,
+} from "@shared/context-window-indicator"
 
 export type ContextWindowSegmentKind = "durable" | "active" | "staged" | "environment"
+
+/** One source of the durable context, sized in whole tokens of the durable figure it splits. */
+export interface ContextWindowDurablePartViewModel {
+    part: DurableContextPart
+    label: string
+    tokens: number
+    /** Share of the durable segment, 0-100. */
+    percentOfDurable: number
+}
+
+const DURABLE_GREEN = "var(--vscode-charts-green, #3fb950)"
+
+export const DURABLE_PART_LABELS: Record<DurableContextPart, string> = {
+    basePrompt: "System prompt",
+    userRules: "User rules",
+    skills: "Skills",
+    workflows: "Workflows",
+    toolDefinitions: "Tool definitions",
+    conversation: "Conversation",
+}
+
+/** Shades of the durable green, so the parts read as one segment rather than new top-level ones. */
+export const DURABLE_PART_COLORS: Record<DurableContextPart, string> = {
+    basePrompt: `color-mix(in srgb, ${DURABLE_GREEN} 50%, black)`,
+    userRules: `color-mix(in srgb, ${DURABLE_GREEN} 65%, black)`,
+    skills: `color-mix(in srgb, ${DURABLE_GREEN} 80%, black)`,
+    workflows: `color-mix(in srgb, ${DURABLE_GREEN} 75%, white)`,
+    toolDefinitions: `color-mix(in srgb, ${DURABLE_GREEN} 55%, white)`,
+    conversation: DURABLE_GREEN,
+}
 
 export interface ContextWindowSegmentViewModel {
     kind: ContextWindowSegmentKind
@@ -17,6 +53,8 @@ export interface ContextWindowIndicatorViewModel {
     remainingTokens: number
     displayDenominator: number
     segments: ContextWindowSegmentViewModel[]
+    /** Absent when the snapshot carries no measured prefix, as for requests sent before it was measured. */
+    durableBreakdown?: ContextWindowDurablePartViewModel[]
 }
 
 export interface ContextWindowIndicatorDisplayTokens {
@@ -92,6 +130,7 @@ export function createContextWindowIndicatorViewModel(
         },
     ]
 
+    const durableBreakdown = createDurableBreakdown(snapshot, authoritativeTokens.durable)
     return {
         contextWindow,
         totalTokens,
@@ -99,7 +138,24 @@ export function createContextWindowIndicatorViewModel(
         remainingTokens: Math.max(0, contextWindow - totalTokens),
         displayDenominator,
         segments,
+        ...(durableBreakdown ? { durableBreakdown } : {}),
     }
+}
+
+/** Split the durable figure by source; the snapshot arrives as JSON, so its split is validated first. */
+function createDurableBreakdown(
+    snapshot: ContextWindowIndicatorSnapshot,
+    durableTokens: number,
+): ContextWindowDurablePartViewModel[] | undefined {
+    const composition = readDurableContextComposition(snapshot.durableComposition)
+    if (!composition || durableTokens <= 0) return undefined
+    const split = splitDurableContext(durableTokens, composition)
+    return DURABLE_CONTEXT_PARTS.map((part) => ({
+        part,
+        label: DURABLE_PART_LABELS[part],
+        tokens: split[part],
+        percentOfDurable: (split[part] / durableTokens) * 100,
+    }))
 }
 
 function normalizeTokens(value: number): number {

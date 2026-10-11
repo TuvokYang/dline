@@ -126,7 +126,7 @@ describe("ToolResultUtils approval feedback", () => {
             assert.equal(firstBlock?.type, "text")
             const text = firstBlock?.type === "text" ? firstBlock.text : ""
             expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(MAX_TOOL_RESULT_TEXT_BYTES)
-            expect(text).toContain("[FILE TRUNCATED:")
+            expect(text.includes("[OUTPUT TRUNCATED:")).toBe(true)
         }
         expect(userMessageContent[1]).toMatchObject({ function_id: "call-large-b", dline_tid: "dline_tid_call-large-b" })
     })

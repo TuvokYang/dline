@@ -8,6 +8,7 @@ import McpView from "./components/mcp/configuration/McpConfigurationView"
 import OnboardingView from "./components/onboarding/OnboardingView"
 import SettingsView from "./components/settings/SettingsView"
 import WorktreesView from "./components/worktrees/WorktreesView"
+import { announceWebviewMounted } from "./config/platform.config"
 import { useClineAuth } from "./context/ClineAuthContext"
 import { useExtensionState } from "./context/ExtensionStateContext"
 import { Providers } from "./Providers"
@@ -98,6 +99,8 @@ export const AppContent = () => {
 }
 
 const App = () => {
+    useEffect(() => announceWebviewMounted(), [])
+
     return (
         <Providers>
             <AppContent />

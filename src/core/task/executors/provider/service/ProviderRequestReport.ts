@@ -67,7 +67,19 @@ export interface ProviderRequestRecord {
      * Called once the stream ends, cancellation and failure included, so a
      * request never stays open as a permanently running row.
      */
-    settle(input: { readonly usage?: Readonly<Record<string, number>>; readonly outcome: ProviderRequestOutcome }): Promise<void>
+    settle(input: ProviderRequestSettlement): Promise<void>
+}
+
+/** What a logical request consumed and what its producing attempt left in the conversation. */
+export interface ProviderRequestSettlement {
+    /** Tokens and cost every provider attempt consumed, abandoned attempts included. */
+    readonly usage?: Readonly<Record<string, number>>
+    /**
+     * Usage of the attempt that produced the turn. A retried request carries the
+     * same conversation once, so context occupancy must never sum attempts.
+     */
+    readonly contextUsage?: Readonly<Record<string, number>>
+    readonly outcome: ProviderRequestOutcome
 }
 
 /**
@@ -90,6 +102,42 @@ export function mergeProviderUsage(
     }
     return merged
 }
+
+/**
+ * Fold one finished provider attempt into what the logical request consumed.
+ *
+ * Unlike chunks of one stream, separate attempts are separate charges, so a
+ * total cost adds up here; report flags stay set once any attempt reported them.
+ * A cost counts as reported only when every attempt reported one: otherwise the
+ * summed cost would miss the unpriced attempts and suppress the model-price fallback.
+ */
+export function sumAttemptUsage(
+    consumed: Readonly<Record<string, number>> | undefined,
+    attempt: Readonly<Record<string, number>>,
+): Readonly<Record<string, number>> {
+    if (!consumed) return { ...attempt }
+    const summed: Record<string, number> = { ...consumed }
+    for (const [key, value] of Object.entries(attempt)) {
+        if (!Number.isFinite(value)) continue
+        const previous = summed[key]
+        if (previous === undefined) summed[key] = value
+        else summed[key] = REPORT_FLAG_KEYS.has(key) ? Math.max(previous, value) : previous + value
+    }
+    if (COST_REPORTED_KEY in consumed || COST_REPORTED_KEY in attempt) {
+        summed[COST_REPORTED_KEY] = Math.min(consumed[COST_REPORTED_KEY] ?? 0, attempt[COST_REPORTED_KEY] ?? 0)
+    }
+    return summed
+}
+
+const COST_REPORTED_KEY = "costUsageReported"
+
+/** Usage fields that only flag whether a provider reported a category. */
+const REPORT_FLAG_KEYS: ReadonlySet<string> = new Set([
+    "cacheUsageReported",
+    "thoughtsUsageReported",
+    "costUsageReported",
+    "serverToolUsageReported",
+])
 
 /** Usage fields a provider reports as a running total for the whole request. */
 const TOTAL_USAGE_KEYS: ReadonlySet<string> = new Set([

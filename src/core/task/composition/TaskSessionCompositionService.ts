@@ -87,6 +87,7 @@ import { InMemoryBackgroundDeliveryLedger, type TaskViewPort } from "../stores"
 import { JournalConversationRewind } from "../stores/JournalConversationRewind"
 import { TaskStateManager } from "../TaskStateManager"
 import { withTerminateTimeout } from "../TaskTerminateTimeout"
+import { RoundCheckpointLedger } from "../tools/RoundCheckpointLedger"
 import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { ToolValidator } from "../tools/ToolValidator"
 import type { TaskSessionHostFactory } from "./TaskSessionHostFactory"
@@ -483,6 +484,10 @@ export class TaskSessionCompositionService {
         // One owner per task session: the provider request grants the turn's
         // authority and the tool gate reads it back under the same turn identity.
         const turnAuthority = new TaskTurnAuthority()
+        // File edits commit a restore point per call; commands, MCP calls and other
+        // workspace-affecting tools share one restore point per round, settled by
+        // the tool executor at the round boundary.
+        const roundCheckpoints = new RoundCheckpointLedger(() => tool.callbacks.saveCheckpoint?.() ?? Promise.resolve())
         const toolExecution = new TaskToolExecutionOwner({
             taskId: options.taskId,
             taskIncarnationId,
@@ -498,7 +503,7 @@ export class TaskSessionCompositionService {
             toolState,
             services: tool.services,
             interactions,
-            callbacks: tool.callbacks,
+            callbacks: roundCheckpoints.bind(tool.callbacks),
             readState,
             readCapabilityToggles: options.prompt.readCapabilityToggles,
             readTurnAuthority: (turnId) => turnAuthority.read(turnId),
@@ -883,6 +888,7 @@ export class TaskSessionCompositionService {
                     cancel: (reason) => toolState.cancelOperations(reason),
                     reset: () => toolState.resetOperationCancellation(),
                 },
+                toolRoundCheckpoint: roundCheckpoints,
                 toolSurface: tool.surface,
                 toolScheduler: toolExecution.turnScheduler,
                 environment,

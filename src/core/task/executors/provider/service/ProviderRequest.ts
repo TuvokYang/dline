@@ -1,6 +1,7 @@
 import type { ApiHandler } from "@core/api"
 import type { WebSearchRoutingPlan } from "@core/api/server-tools"
 import type { ToolUse } from "@core/assistant-message"
+import type { SystemPromptComposition } from "@core/prompts/generators/system-prompt-composition"
 import type { PromptProfile } from "@core/prompts/profiles/types"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import type { ClineMessageModelInfo } from "@shared/messages/metrics"
@@ -42,6 +43,8 @@ export interface ProviderRequestFrame {
     readonly mode: "serial" | "parallel"
     /** Profile the system prompt was rendered for; follow-up instructions must match it. */
     readonly profile: PromptProfile
+    /** How the system prompt splits into the parts the context-window indicator shows; absent when unmeasured. */
+    readonly systemPromptComposition?: SystemPromptComposition
 }
 
 /**

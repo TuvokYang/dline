@@ -30,14 +30,23 @@ export type CompactionPassEstimatePurpose = "request_envelope" | "summary_carry"
 export interface PlanNextCompactionPassInput {
     state: TargetWindowFittingState
     /**
-     * Maximum estimated input one Pass request may carry.
-     *
-     * The caller resolves this from the compaction trigger plus the reserve concession, so the
-     * ceiling already accounts for the tokens a complete range is allowed to borrow. The planner
-     * applies it uniformly and never maintains a second, looser bound.
+     * Maximum estimated input one Pass request may carry: the trigger line T. The reserve above it
+     * is left for the summary the Pass writes.
      */
     passInputCeiling: number
-    /** Summary-safe hard input ceiling used only when the first uncovered logical turn is indivisible. */
+    /**
+     * Ceiling for the last complete turn of the Pass: T plus half of the reserve.
+     *
+     * Turns are taken while the input stays at or below T; the one turn that crosses T may still
+     * join when the input stays at or below this ceiling, and no turn is taken after it. Without it
+     * the Pass stops at T.
+     */
+    lastTurnInputCeiling?: number
+    /**
+     * Hard input ceiling for a first uncovered turn that cannot be split at message boundaries any
+     * further. The caller passes it only for such an indivisible unit; a divisible turn larger than
+     * T is split instead of being sent over T.
+     */
     singleTurnInputCeiling?: number
     /**
      * Highest logical turn index this Pass may still cover.
@@ -75,17 +84,26 @@ export async function planNextCompactionPass(input: PlanNextCompactionPassInput)
         candidateEstimateCount += 1
         return normalizeTokenCount(await input.estimateInputTokens(messages, purpose))
     }
+    const lastTurnInputCeiling = Math.max(passInputCeiling, normalizeTokenCount(input.lastTurnInputCeiling ?? 0))
     const staticCosts = await estimateStaticPassCosts(input, estimateExactInput)
     const exactCandidate = await selectExactCandidate(
         input,
         passStartTurnIndex,
         maxEndTurnIndex,
-        passInputCeiling,
+        { passInputCeiling, lastTurnInputCeiling },
         staticCosts,
         estimateExactInput,
     )
     const isSingleTurnPass = exactCandidate.passEndTurnIndex === passStartTurnIndex
-    const singleTurnInputCeiling = Math.max(passInputCeiling, normalizeTokenCount(input.singleTurnInputCeiling ?? 0))
+    // The only turn of a single-turn Pass is also its last turn, so it may take the share of the
+    // reserve before an indivisible unit needs its own ceiling.
+    const singleTurnInputCeiling = Math.max(lastTurnInputCeiling, normalizeTokenCount(input.singleTurnInputCeiling ?? 0))
+    const ceilingFor = (inputTokens: number): number =>
+        inputTokens <= passInputCeiling
+            ? passInputCeiling
+            : inputTokens <= lastTurnInputCeiling
+              ? lastTurnInputCeiling
+              : singleTurnInputCeiling
     const singleTurnFitsHardCeiling =
         isSingleTurnPass && exactCandidate.breakdown.combinedEstimatedInputTokens <= singleTurnInputCeiling
     if (
@@ -93,8 +111,10 @@ export async function planNextCompactionPass(input: PlanNextCompactionPassInput)
         exactCandidate.breakdown.combinedEstimatedInputTokens > passInputCeiling &&
         !singleTurnFitsHardCeiling
     ) {
-        const turnFitsWithoutSummary =
-            exactCandidate.breakdown.requestEnvelopeTokens + exactCandidate.breakdown.turnTokens <= passInputCeiling
+        // An indivisible unit may be sent alone up to its own ceiling, so only the
+        // carried summary is in the way when the unit fits that ceiling by itself.
+        const turnWithoutSummaryTokens = exactCandidate.breakdown.requestEnvelopeTokens + exactCandidate.breakdown.turnTokens
+        const turnFitsWithoutSummary = turnWithoutSummaryTokens <= singleTurnInputCeiling
         return {
             kind:
                 exactCandidate.breakdown.summaryCarryTokens > 0 && turnFitsWithoutSummary
@@ -103,13 +123,19 @@ export async function planNextCompactionPass(input: PlanNextCompactionPassInput)
             turnIndex: passStartTurnIndex,
             candidateEstimateCount,
             ...exactCandidate.breakdown,
+            // The refit then shrinks the summary to fit beside the turn under the ceiling the turn
+            // is entitled to as the last turn of its Pass, or as an indivisible unit.
+            ...(turnFitsWithoutSummary ? { passInputCeiling: ceilingFor(turnWithoutSummaryTokens) } : {}),
         }
     }
-    if (exactCandidate.breakdown.combinedEstimatedInputTokens > passInputCeiling && !singleTurnFitsHardCeiling) {
+    const acceptedCeiling = isSingleTurnPass ? singleTurnInputCeiling : lastTurnInputCeiling
+    if (exactCandidate.breakdown.combinedEstimatedInputTokens > acceptedCeiling) {
         throw new Error("Unable to find a fitting compaction Pass after bounded exact candidate calibration")
     }
     const acceptedEndIndex = exactCandidate.passEndTurnIndex
     const acceptedEstimate = exactCandidate
+    // The send side checks the built request against the ceiling this plan actually used.
+    const effectivePassInputCeiling = ceilingFor(exactCandidate.breakdown.combinedEstimatedInputTokens)
 
     const rangeIdentity = createCompactionPassRangeIdentity(input.state, passStartTurnIndex, acceptedEndIndex)
     const nextPassSummaryCarryLimitTokens = estimateNextPassSummaryCarryLimit(
@@ -130,6 +156,7 @@ export async function planNextCompactionPass(input: PlanNextCompactionPassInput)
             summaryBaselineHash: input.state.summaryBaselineHash,
             ...rangeIdentity,
             ...acceptedEstimate.breakdown,
+            passInputCeiling: effectivePassInputCeiling,
             estimatedInputTokens: acceptedEstimate.breakdown.combinedEstimatedInputTokens,
             passHistoryHash: hashPassHistory(acceptedEstimate.passHistory),
             candidateEstimateCount,
@@ -179,11 +206,16 @@ function resolveMaxEndTurnIndex(input: PlanNextCompactionPassInput, passStartTur
     return Math.min(lastTurnIndex, Math.max(passStartTurnIndex, input.maxEndTurnIndex))
 }
 
+interface PassCeilings {
+    passInputCeiling: number
+    lastTurnInputCeiling: number
+}
+
 async function selectExactCandidate(
     input: PlanNextCompactionPassInput,
     passStartTurnIndex: number,
     maxEndTurnIndex: number,
-    passInputCeiling: number,
+    { passInputCeiling, lastTurnInputCeiling }: PassCeilings,
     staticCosts: StaticPassCosts,
     estimateExactInput: (messages: readonly ClineStorageMessage[], purpose: CompactionPassEstimatePurpose) => Promise<number>,
 ): Promise<RangeEstimate> {
@@ -213,6 +245,13 @@ async function selectExactCandidate(
         return estimate
     }
     const fits = (estimate: RangeEstimate) => estimate.breakdown.combinedEstimatedInputTokens <= passInputCeiling
+    // The largest range within T may still take the one turn that crosses T, within the share of
+    // the reserve; no further turn follows it.
+    const withLastTurn = async (best: RangeEstimate): Promise<RangeEstimate> => {
+        if (best.passEndTurnIndex >= maxEndTurnIndex) return best
+        const crossing = await estimateRange(best.passEndTurnIndex + 1)
+        return crossing.breakdown.combinedEstimatedInputTokens <= lastTurnInputCeiling ? crossing : best
+    }
 
     const firstEstimate = await estimateRange(passStartTurnIndex)
     if (!fits(firstEstimate) || passStartTurnIndex === maxEndTurnIndex) return firstEstimate
@@ -240,10 +279,10 @@ async function selectExactCandidate(
 
     if (fits(seedEstimate)) {
         bestEstimate = seedEstimate
-        if (seedEndTurnIndex === maxEndTurnIndex - 1) return bestEstimate
+        if (seedEndTurnIndex === maxEndTurnIndex - 1) return withLastTurn(bestEstimate)
 
         const nextEstimate = await estimateRange(seedEndTurnIndex + 1)
-        if (!fits(nextEstimate)) return bestEstimate
+        if (!fits(nextEstimate)) return withLastTurn(bestEstimate)
         bestEstimate = nextEstimate
         lowerEndTurnIndex = seedEndTurnIndex + 2
     } else {
@@ -260,7 +299,7 @@ async function selectExactCandidate(
             upperEndTurnIndex = midpoint - 1
         }
     }
-    return bestEstimate
+    return withLastTurn(bestEstimate)
 }
 
 function findApproximatePassEnd(

@@ -258,9 +258,11 @@ describe("MessageStateCompactionCards", () => {
                 state: {
                     sourceHistoryHash: "sha256:source",
                     coveredTurnCount: 3,
+                    turns: [],
+                    protectedStartMessageIndex: 12,
                     passIndex: 1,
                     nextPassSummaryCarryLimitTokens: 700,
-                } as TargetWindowFittingState,
+                } as unknown as TargetWindowFittingState,
             }),
         )
         await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(1), attempt: attempt0 }))
@@ -273,6 +275,7 @@ describe("MessageStateCompactionCards", () => {
             compactionPassIndex: 0,
             compactionSourceHistoryHash: "sha256:source",
             compactionCoveredTurnCount: 3,
+            compactionCoveredMessageIndex: 12,
             compactionResumePassIndex: 1,
             compactionSummaryCarryLimitTokens: 700,
         })

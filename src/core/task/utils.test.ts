@@ -131,4 +131,27 @@ describe("updateApiReqMsg", () => {
             cost: 0,
         })
     })
+
+    it("keeps the producing attempt's input apart and never leaves an unmeasured row readable as provider usage", async () => {
+        const messages: UiMessage[] = [{ ts: 1, type: "say", say: "api_req_started", text: "{}" }]
+        const messageStateHandler = {
+            get clineMessages() {
+                return messages
+            },
+            updateClineMessage: vi.fn(async (index: number, updates: Partial<UiMessage>) => {
+                messages[index] = { ...messages[index], ...updates }
+            }),
+        } as unknown as MessageStateHandler
+        const api = { getModel: () => ({ info: { pricing: { currency: "USD" } } }) } as unknown as ApiHandler
+        const retried = { messageStateHandler, lastApiReqIndex: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, api }
+
+        await updateApiReqMsg({ ...retried, inputTokens: 300, contextTokens: 120, contextInputTokens: 100 })
+        expect(JSON.parse(messages[0].text ?? "{}")).toMatchObject({ tokensIn: 300, contextInputTokens: 100, contextTokens: 120 })
+
+        messages[0] = { ts: 1, type: "say", say: "api_req_started", text: "{}" }
+        await updateApiReqMsg({ ...retried, inputTokens: 300, contextTokens: 0, contextInputTokens: 0 })
+        const unmeasured = JSON.parse(messages[0].text ?? "{}")
+        expect(unmeasured.contextTokensSource).toBe("estimate")
+        expect(unmeasured.contextTokens).toBeUndefined()
+    })
 })

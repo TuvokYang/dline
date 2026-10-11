@@ -15,6 +15,7 @@ import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { applyModelContentFixes } from "../utils/ModelContentProcessor"
+import { resolveSelfBoundResultBytes } from "../utils/tool-result-budget"
 import { parseCommandExecutionOptions } from "./command-execution-options"
 import { resolveCommandWorkdirectory } from "./command-workdirectory"
 
@@ -326,6 +327,7 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
             startInBackground: executionOptions.background,
             synchronous: executionOptions.synchronous,
             workdirectory: executionDir,
+            resultBytes: config.contextBudget ? () => resolveSelfBoundResultBytes(config.contextBudget) : undefined,
         })
 
         if (timeoutId) {

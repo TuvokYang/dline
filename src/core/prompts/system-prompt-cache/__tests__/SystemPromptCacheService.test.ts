@@ -625,6 +625,29 @@ describe("SystemPromptCacheService", () => {
         expect(saved?.systemPrompt?.frozen?.tools).toEqual(builtTools)
     })
 
+    it("persists the prompt composition measured by the same build", async () => {
+        let saved: TaskContextCache | undefined
+        const composition = { totalBytes: 19, userRulesBytes: 4, skillsBytes: 3, workflowsBytes: 2, toolDefinitionsBytes: 0 }
+        const service = new SystemPromptCacheService({
+            taskId: "task-1",
+            deps: {
+                getContext: async () => emptyContext("task-1"),
+                saveContext: async (_taskId, context) => {
+                    saved = context
+                },
+                collectCapabilities: async () => ({ mcp: [], skills: [], workflows: [], subagents: [] }),
+                buildSystemPrompt: async () => ({ systemPrompt: "frozen exact prompt", composition }),
+                getPromptBuilderInfo: () => testPromptBuilderInfo,
+                now: () => 15,
+            },
+        })
+
+        const result = await service.refresh({ promptContext, reason: "manual" })
+
+        expect(result.composition).toEqual(composition)
+        expect(saved?.systemPrompt?.frozen?.composition).toEqual(composition)
+    })
+
     it("rebuilds and saves one complete same-build pair after storage rejects an invalid cache", async () => {
         let saved: TaskContextCache | undefined
         const rebuiltTools: readonly ClineTool[] = [buildTool("rebuilt_exact_tool")]

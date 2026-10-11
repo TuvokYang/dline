@@ -182,6 +182,28 @@ describe("kernel continuation after a turn that used no tool", () => {
         ])
     })
 
+    it("carries a result released by compaction mid-round into the next round without user action", () => {
+        // Compaction lands while a round is composing and releases a held subagent result as a
+        // background arrival. That round's admissions are already fixed, so the result has to
+        // ride on the round the kernel opens next, with no user message.
+        const released = accepted(
+            transition(awaitingProvider(), {
+                type: "background.ready",
+                generation: 0,
+                entryId: "background:subagent-deferred:tid-1:attempt:1",
+                payloadRef: "result:held",
+            }),
+        )
+        expect(composeRounds(released.commands)).toEqual([])
+
+        expect(composeRounds(accepted(transition(released.state, turnReady([]))).commands)).toEqual([
+            expect.objectContaining({
+                type: "compose.round",
+                admittedEntryIds: ["background:subagent-deferred:tid-1:attempt:1"],
+            }),
+        ])
+    })
+
     it("carries a waiting entry even after the text-only budget is spent, because the user spoke", () => {
         const waiting: TaskState = {
             ...awaitingProvider(MAX_TEXT_ONLY_STREAK),

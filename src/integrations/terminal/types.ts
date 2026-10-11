@@ -506,6 +506,11 @@ export interface CommandExecutionOptions {
     suppressUserInteraction?: boolean
     /** ts of the command message, passed from handler to associate outputs */
     commandTs?: number
+    /**
+     * Byte budget of the model-visible result, read when the result is composed
+     * because parallel calls that finish first shrink it.
+     */
+    resultBytes?: () => number
 }
 
 /** Result of cancelling the command owned by one execute_command function call. */
@@ -614,6 +619,8 @@ export interface OrchestrationOptions {
     suppressUserInteraction?: boolean
     /** ts of the command message, passed from handler to associate outputs */
     commandTs?: number
+    /** Byte budget of the model-visible result, read when the result is composed. */
+    resultBytes?: () => number
 }
 
 /**

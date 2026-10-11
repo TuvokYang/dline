@@ -40,6 +40,14 @@ export async function extractTextFromFile(filePath: string): Promise<string> {
     return callTextExtractionFunctions(filePath)
 }
 
+/** Extensions whose text comes from a document parser rather than from decoding the bytes. */
+const DOCUMENT_EXTENSIONS: ReadonlySet<string> = new Set([".pdf", ".docx", ".ipynb", ".xlsx"])
+
+/** Whether the file's text needs a document parser instead of plain decoding. */
+export function requiresDocumentExtraction(filePath: string): boolean {
+    return DOCUMENT_EXTENSIONS.has(path.extname(filePath).toLowerCase())
+}
+
 /**
  * Expects the fs.access call to have already been performed prior to calling.
  * Content is automatically truncated if it exceeds 400KB to prevent context overflow.

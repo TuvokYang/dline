@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { ToolUse } from "@core/assistant-message"
+import { readSystemPromptComposition } from "@core/prompts/generators/system-prompt-composition"
 import { ToolPromptGenerator } from "@core/prompts/generators/ToolPromptGenerator"
 import { resolveFrozenPromptRuntime } from "@core/prompts/system-prompt-cache/FrozenPromptRuntime"
 import type { StateManager } from "@core/storage/StateManager"
@@ -124,6 +125,7 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
         const serverTools = Object.freeze([
             ...new Set([...runtime.webSearchRoutingPlan.serverTools, ...requestScope.hostedImageGenerationPlan.serverTools]),
         ])
+        const systemPromptComposition = readSystemPromptComposition(frozen.composition)
         return {
             api,
             systemPrompt: frozen.text,
@@ -143,6 +145,7 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
             // capability; scheduling must agree with what the model was told.
             mode: runtime.parallelToolsEnabled ? "parallel" : "serial",
             profile: context.promptProfile,
+            ...(systemPromptComposition ? { systemPromptComposition } : {}),
         }
     }
 }

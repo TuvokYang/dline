@@ -208,17 +208,22 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
     private async settle(
         ts: number,
         turnId: string,
-        settlement: {
-            readonly usage?: Readonly<Record<string, number>>
-            readonly outcome: ProviderRequestReport.ProviderRequestOutcome
-        },
+        settlement: ProviderRequestReport.ProviderRequestSettlement,
         profileId: string | undefined,
     ): Promise<void> {
         const index = this.options.messages.clineMessages.findIndex((message) => message.ts === ts)
         if (index < 0) return
         const api = this.options.api()
+        // Cost, profile totals, and telemetry count every attempt; occupancy only
+        // counts the attempt whose conversation the next request will carry.
         const tokens = readUsageTokens(settlement.usage)
-        const contextTokens = tokens.inputTokens + tokens.cacheWriteTokens + tokens.cacheReadTokens + tokens.outputTokens
+        const contextUsage = occupancyUsageOf(settlement)
+        const contextUsageTokens = readUsageTokens(contextUsage)
+        const contextTokens =
+            contextUsageTokens.inputTokens +
+            contextUsageTokens.cacheWriteTokens +
+            contextUsageTokens.cacheReadTokens +
+            contextUsageTokens.outputTokens
         await updateApiReqMsg({
             messageStateHandler: this.options.messages,
             lastApiReqIndex: index,
@@ -227,6 +232,8 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
             cacheWriteTokens: tokens.cacheWriteTokens,
             cacheReadTokens: tokens.cacheReadTokens,
             contextTokens,
+            contextInputTokens:
+                contextUsageTokens.inputTokens + contextUsageTokens.cacheWriteTokens + contextUsageTokens.cacheReadTokens,
             totalCost: tokens.totalCost,
             api,
             cancelReason: cancelReasonFor(settlement.outcome),
@@ -237,7 +244,13 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
         this.recordUsageTelemetry(api, settlement, tokens)
         this.recordProfileTokens(profileId, tokens)
         const { contextWindow } = ContextWindowManagement.getContextWindowInfo(api)
-        const compactTriggerTokens = this.recordCacheSample(api, settlement, tokens, contextTokens, contextWindow)
+        const compactTriggerTokens = this.recordCacheSample(
+            api,
+            { usage: contextUsage, outcome: settlement.outcome },
+            contextUsageTokens,
+            contextTokens,
+            contextWindow,
+        )
         // Only a completed request describes the conversation that the next one
         // will carry; a cancelled or failed turn never entered the history.
         if (settlement.outcome !== "completed") {
@@ -248,17 +261,19 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
         // A request that reported no usage says nothing about occupancy; showing
         // zero would read as an emptied window rather than an unknown one.
         if (contextTokens > 0)
-            await this.options.usage?.record({ turnId, contextTokens, outputTokens: tokens.outputTokens, contextWindow })
+            await this.options.usage?.record({
+                turnId,
+                contextTokens,
+                outputTokens: contextUsageTokens.outputTokens,
+                contextWindow,
+            })
         else await this.options.usage?.unmeasured({ turnId })
     }
 
     /** Emits one usage event for the completed logical request, never once per retry or chunk. */
     private recordUsageTelemetry(
         api: ApiHandler,
-        settlement: {
-            readonly usage?: Readonly<Record<string, number>>
-            readonly outcome: ProviderRequestReport.ProviderRequestOutcome
-        },
+        settlement: ProviderRequestReport.ProviderRequestSettlement,
         tokens: UsageTokens,
     ): void {
         const usage = settlement.usage
@@ -315,13 +330,13 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
         }
     }
 
-    /** Records the cache sample and reports the trigger it resolved for this request. */
+    /**
+     * Records the cache sample of the attempt that produced the turn and reports
+     * the trigger it resolved, so hit rates and occupancy describe one request.
+     */
     private recordCacheSample(
         api: ApiHandler,
-        settlement: {
-            readonly usage?: Readonly<Record<string, number>>
-            readonly outcome: ProviderRequestReport.ProviderRequestOutcome
-        },
+        settlement: ProviderRequestReport.ProviderRequestSettlement,
         tokens: UsageTokens,
         contextTokens: number,
         contextWindow: number,
@@ -455,6 +470,19 @@ interface UsageTokens {
 function cancelReasonFor(outcome: ProviderRequestReport.ProviderRequestOutcome): UiApiReqCancelReason | undefined {
     if (outcome === "cancelled") return "user_cancelled"
     return outcome === "failed" ? "streaming_failed" : undefined
+}
+
+/**
+ * The usage that describes what the conversation occupies after this request.
+ *
+ * An executor that separates attempts always states it, even as undefined when
+ * the producing attempt reported nothing; only a settlement without the field
+ * falls back to the consumed usage, which then covers a single attempt.
+ */
+function occupancyUsageOf(
+    settlement: ProviderRequestReport.ProviderRequestSettlement,
+): Readonly<Record<string, number>> | undefined {
+    return "contextUsage" in settlement ? settlement.contextUsage : settlement.usage
 }
 
 function readUsageTokens(usage: Readonly<Record<string, number>> | undefined): UsageTokens {

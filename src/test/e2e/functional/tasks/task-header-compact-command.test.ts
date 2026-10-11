@@ -125,7 +125,11 @@ e2e(
             const durableSegment = sidebar.getByTestId("context-window-segment-durable")
             await expect(progress).toHaveAttribute("data-phase", "sending", { timeout: 30_000 })
             const durableBeforeCompaction = Number(await durableSegment.getAttribute("data-authoritative-tokens"))
-            expect(durableBeforeCompaction).toBeGreaterThan(50_000)
+            // The hidden Pass is sized from its own request. The fixture's 80K usage for a
+            // request of about 73 KB exceeds one token per byte, so the estimator rejects
+            // that sample and sizes the Pass from bytes; the system prompt alone keeps it
+            // well above 10K, and the landed summary must still shrink it.
+            expect(durableBeforeCompaction).toBeGreaterThan(10_000)
 
             await expect(sidebar.getByText("E2E_TASK_HEADER_COMPACT_SUMMARY", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,

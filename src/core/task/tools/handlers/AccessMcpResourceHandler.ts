@@ -3,12 +3,13 @@ import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { UiAskUseMcpServer, UiSayMcpServerResponse } from "@shared/ExtensionMessage"
 import { telemetryService } from "@/services/telemetry"
-import { truncateContent } from "@/shared/content-limits"
+import { boundToolText } from "@/shared/content-limits"
 import { ClineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
+import { resolveSelfBoundResultBytes } from "../utils/tool-result-budget"
 
 export class AccessMcpResourceHandler implements IFullyManagedTool {
     readonly name = ClineDefaultTool.MCP_ACCESS
@@ -118,8 +119,10 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
             } satisfies UiSayMcpServerResponse),
         )
 
-        // Truncate response if it exceeds 400KB to prevent context overflow
-        const truncatedResult = truncateContent(resourceResultPretty)
+        const truncatedResult = boundToolText(
+            { body: resourceResultPretty },
+            { strategy: "headTail", maxBytes: resolveSelfBoundResultBytes(config.contextBudget) },
+        )
 
         // Return formatted result
         return formatResponse.toolResult(truncatedResult)

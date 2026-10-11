@@ -1,6 +1,6 @@
 import { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import { MAX_TOOL_RESULT_TEXT_BYTES, truncateContent } from "@shared/content-limits"
+import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
 import type { ClineContent, ClineUserToolResultContentBlock } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import { toolApprovalFeedbackText } from "../../utils/buildUserFeedbackContent"
@@ -18,6 +18,13 @@ import type { ToolResponse } from "../ToolResponse"
  * needs to return feedback content to the model.
  */
 export const NO_TOOL_RESULT = "__dline_no_tool_result__"
+
+/** How much of one tool result the conversation can still take, when that is less than the absolute cap. */
+export interface ToolResultBudget {
+    readonly maxBytes: number
+    /** Next step named in the truncation notice when the budget, not the cap, cut the result. */
+    readonly hint?: string
+}
 
 /**
  * Utility functions for handling tool results and feedback
@@ -110,15 +117,29 @@ export class ToolResultUtils {
         return `${description} Result:\n${text || "(tool did not return anything)"}`
     }
 
-    static boundContent(content: ToolResponse): ToolResponse {
+    /**
+     * Describe a string result and fit it into the tool result budget.
+     *
+     * The description is kept whole and the result keeps both of its ends: a
+     * tool that did not bound itself usually puts its status at the top and its
+     * errors, exit state, or continuation hints at the bottom.
+     */
+    static boundTextResult(description: string, text: string, budget?: ToolResultBudget): string {
+        return boundToolText(
+            { header: `${description} Result:`, body: text || "(tool did not return anything)" },
+            { strategy: "headTail", ...budget },
+        )
+    }
+
+    static boundContent(content: ToolResponse, budget?: ToolResultBudget): ToolResponse {
         return typeof content === "string"
-            ? truncateContent(content, MAX_TOOL_RESULT_TEXT_BYTES)
-            : ToolResultUtils.boundStructuredResult(content)
+            ? boundToolText({ body: content }, { strategy: "headTail", ...budget })
+            : ToolResultUtils.boundStructuredResult(content, budget)
     }
 
     /** Bound one tool result's generated text while preserving non-text blocks and user feedback. */
-    private static boundStructuredResult(content: Exclude<ToolResponse, string>): ToolResponse {
-        let remainingBytes = MAX_TOOL_RESULT_TEXT_BYTES
+    private static boundStructuredResult(content: Exclude<ToolResponse, string>, budget?: ToolResultBudget): ToolResponse {
+        let remainingBytes = Math.min(MAX_TOOL_RESULT_TEXT_BYTES, budget?.maxBytes ?? MAX_TOOL_RESULT_TEXT_BYTES)
         const bounded: typeof content = []
         for (const block of content) {
             if (block.type !== "text") {
@@ -126,7 +147,10 @@ export class ToolResultUtils {
                 continue
             }
             if (remainingBytes <= 0) continue
-            const text = truncateContent(block.text, remainingBytes)
+            const text = boundToolText(
+                { body: block.text },
+                { strategy: "headTail", maxBytes: remainingBytes, ...(budget?.hint ? { hint: budget.hint } : {}) },
+            )
             if (!text) continue
             bounded.push({ ...block, text })
             remainingBytes = Math.max(0, remainingBytes - Buffer.byteLength(text, "utf8"))
@@ -231,10 +255,7 @@ export class ToolResultUtils {
             // replaces the older one (e.g. "SEARCH block not found"). The final
             // result is what the AI sees, and ensureToolResultsFollowToolUse
             // deduplicates by function_id before sending to the API.
-            const boundedResult = truncateContent(
-                ToolResultUtils.describeTextResult(description, content),
-                MAX_TOOL_RESULT_TEXT_BYTES,
-            )
+            const boundedResult = ToolResultUtils.boundTextResult(description, content)
             const mergedContent = ToolResultUtils.mergeTextResult(boundedResult, pendingFeedback)
             return storeResult(ToolResultUtils.createResult(mergedContent, block, isError))
         }

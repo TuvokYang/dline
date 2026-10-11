@@ -80,6 +80,12 @@ function getGroupListIntroduction(group: keyof CapabilitiesSnapshot, profile: Pr
     }
 }
 
+/** One rendered capability group, kept apart so its share of the prompt can be measured. */
+export interface RenderedCapabilityGroup {
+    readonly source: CapabilitySource
+    readonly text: string
+}
+
 /**
  * Render the task-level Capabilities system prompt section.
  *
@@ -90,7 +96,20 @@ export function renderCapabilitiesSection(
     snapshot: CapabilitiesSnapshot,
     options: { readonly exclude?: readonly CapabilitySource[]; readonly profile?: PromptProfile } = {},
 ): string {
-    const sections = [getPrompt("capabilityCatalog", "heading")]
+    return joinCapabilityGroups(renderCapabilityGroups(snapshot, options))
+}
+
+/** Join rendered groups under the catalog heading, exactly as the Capabilities section reads. */
+export function joinCapabilityGroups(groups: readonly RenderedCapabilityGroup[]): string {
+    return [getPrompt("capabilityCatalog", "heading"), ...groups.map((group) => group.text)].join("\n\n")
+}
+
+/** Render each non-empty, non-excluded capability group in catalog order. */
+export function renderCapabilityGroups(
+    snapshot: CapabilitiesSnapshot,
+    options: { readonly exclude?: readonly CapabilitySource[]; readonly profile?: PromptProfile } = {},
+): RenderedCapabilityGroup[] {
+    const groups: RenderedCapabilityGroup[] = []
     const excluded = new Set(options.exclude ?? [])
     for (const group of GROUPS) {
         if (excluded.has(group.key)) {
@@ -108,20 +127,27 @@ export function renderCapabilitiesSection(
             LIST_INTRODUCTION: getGroupListIntroduction(group.key, profile),
             ENTRIES: entries.map(renderEntry).join("\n"),
         })
-        sections.push(renderedGroup)
+        groups.push({ source: group.key, text: renderedGroup })
     }
-    return sections.join("\n\n")
+    return groups
+}
+
+interface CapabilityPromptContext {
+    readonly profile: PromptProfile
+    readonly subagentsEnabled?: boolean
+    readonly disableTools?: readonly ClineDefaultTool[]
 }
 
 /** Render only capability groups whose invocation tools are available in the current prompt context. */
-export function renderCapabilitiesForContext(
+export function renderCapabilitiesForContext(snapshot: CapabilitiesSnapshot, context: CapabilityPromptContext): string {
+    return joinCapabilityGroups(renderCapabilityGroupsForContext(snapshot, context))
+}
+
+/** The groups {@link renderCapabilitiesForContext} joins, kept apart for measurement. */
+export function renderCapabilityGroupsForContext(
     snapshot: CapabilitiesSnapshot,
-    context: {
-        readonly profile: PromptProfile
-        readonly subagentsEnabled?: boolean
-        readonly disableTools?: readonly ClineDefaultTool[]
-    },
-): string {
+    context: CapabilityPromptContext,
+): RenderedCapabilityGroup[] {
     const exclude: CapabilitySource[] = []
     if (context.profile === PromptProfile.Lite) {
         exclude.push("skills", "subagents")
@@ -138,5 +164,5 @@ export function renderCapabilitiesForContext(
             exclude.push("subagents")
         }
     }
-    return renderCapabilitiesSection(snapshot, { exclude, profile: context.profile })
+    return renderCapabilityGroups(snapshot, { exclude, profile: context.profile })
 }

@@ -28,6 +28,7 @@ const ClineCommands = {
     AbortCommit: `${CONTRIBUTION_NAMESPACE}.abortGitCommitMessage`,
     ReconstructTaskHistory: `${CONTRIBUTION_NAMESPACE}.reconstructTaskHistory`,
     RecoverUiMessages: `${CONTRIBUTION_NAMESPACE}.recoverUiMessages`,
+    ReloadWebview: `${CONTRIBUTION_NAMESPACE}.reloadWebview`,
     // Jupyter Notebook commands
     JupyterGenerateCell: `${CONTRIBUTION_NAMESPACE}.jupyterGenerateCell`,
     JupyterExplainCell: `${CONTRIBUTION_NAMESPACE}.jupyterExplainCell`,

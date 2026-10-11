@@ -1,6 +1,6 @@
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { describe, expect, it } from "vitest"
-import { indexLogicalTurns, type LogicalTurnSpan } from "../logical-turns"
+import { indexLogicalTurns, type LogicalTurnSpan, splitLogicalTurnAtMessageBoundaries } from "../logical-turns"
 
 function textMessage(role: "user" | "assistant", text: string): ClineStorageMessage {
     return { role, content: [{ type: "text", text }] }
@@ -295,5 +295,46 @@ describe("logical turn indexing", () => {
             [2, 3],
         ])
         expect(result.protectedStartMessageIndex).toBe(history.length)
+    })
+
+    it("splits a turn only at message boundaries where no tool use is open", () => {
+        const twoResults: ClineStorageMessage = {
+            role: "user",
+            content: [
+                { type: "tool_result", function_id: "call-b", dline_tid: "tid-call-b", content: [{ type: "text", text: "B" }] },
+            ],
+        }
+        const history: ClineStorageMessage[] = [
+            textMessage("user", "large request"),
+            {
+                role: "assistant",
+                content: [
+                    { type: "tool_use", function_id: "call-a", dline_tid: "tid-call-a", name: "read_file", input: {} },
+                    { type: "tool_use", function_id: "call-b", dline_tid: "tid-call-b", name: "read_file", input: {} },
+                ],
+            },
+            toolResult("call-a", "A"),
+            twoResults,
+            textMessage("assistant", "done"),
+        ]
+        const [turn] = indexLogicalTurns(history).turns
+
+        const segments = splitLogicalTurnAtMessageBoundaries(history, turn)
+
+        // The tool uses stay with both of their results; every message is kept exactly once.
+        expect(segments.map(({ startMessageIndex, endMessageIndex }) => [startMessageIndex, endMessageIndex])).toEqual([
+            [0, 0],
+            [1, 3],
+            [4, 4],
+        ])
+        expect(segments[1]?.functionIds).toEqual(["call-a", "call-b"])
+        expect(serialized(segments.flatMap((segment) => spanMessages(history, segment)))).toBe(serialized(history))
+    })
+
+    it("returns one segment for a turn that cannot be split further", () => {
+        const history = [toolUse("call-only", "read_file"), toolResult("call-only", "result")]
+        const turn: LogicalTurnSpan = { id: "turn", startMessageIndex: 0, endMessageIndex: 1, functionIds: ["call-only"] }
+
+        expect(splitLogicalTurnAtMessageBoundaries(history, turn)).toHaveLength(1)
     })
 })

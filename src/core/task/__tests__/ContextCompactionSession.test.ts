@@ -169,7 +169,7 @@ describe("ContextCompactionSession", () => {
         expect(ports.reprojectTarget).toHaveBeenCalledOnce()
     })
 
-    it("admits one complete multi-tool logical turn that passes the trigger but fits the borrowed concession", async () => {
+    it("splits a logical turn larger than T at message boundaries and keeps the tool unit whole", async () => {
         const createSourceHistory = (payload: string): ClineStorageMessage[] => [
             { role: "user", content: [{ type: "text", text: "Inspect both large files without splitting this logical turn." }] },
             {
@@ -228,6 +228,8 @@ describe("ContextCompactionSession", () => {
         })
         const ports = createPorts()
         ports.getPassInputCeiling = () => policy.passInputCeilingTokens
+        ports.getSingleTurnInputCeiling = () => 472_000 - 3_000 - 1
+        ports.reprojectTarget = vi.fn(async () => decision("continue"))
         ports.estimatePassInput = async (_input, passHistory) => estimateContextWindowCandidate(createProviderInput(passHistory))
         ports.buildPassRequest = vi.fn(async (_input, state) => {
             const explicitInstructions = new ExplicitInstructionRequestScope(new ExplicitInstructionRegistry(), {
@@ -249,11 +251,10 @@ describe("ContextCompactionSession", () => {
         const session = new ContextCompactionSession(ports, { maxRetryAttempts: 1 })
         useSuccessfulCompactionStream()
 
-        // The range already passed the compaction trigger, so only the borrowed concession keeps it
-        // in one Pass instead of stranding its tail for the first post-compaction request.
+        // The turn is larger than T, so it cannot be one Pass. It is split at message boundaries:
+        // the user message first, then the tool use/result unit, which cannot be split further.
         expect(fullRequestTokens).toBe(targetInputTokens)
-        expect(fullRequestTokens).toBeGreaterThan(policy.projectedUsageTriggerTokens)
-        expect(fullRequestTokens).toBeLessThanOrEqual(policy.passInputCeilingTokens)
+        expect(fullRequestTokens).toBeGreaterThan(policy.passInputCeilingTokens)
 
         const result = await session.run({
             operationId: "operation-large-complete-turn",
@@ -265,11 +266,17 @@ describe("ContextCompactionSession", () => {
         })
 
         expect(result).toBe("completed")
-        expect(API.createMessage).toHaveBeenCalledOnce()
-        const sentMessages = JSON.stringify(vi.mocked(API.createMessage).mock.calls[0]?.[1])
-        expect(sentMessages).toContain("call-large-read-a")
-        expect(sentMessages).toContain("call-large-read-b")
-        expect(sentMessages).toContain("SECOND_LARGE_TOOL_RESULT")
+        expect(API.createMessage).toHaveBeenCalledTimes(2)
+        const firstPass = JSON.stringify(vi.mocked(API.createMessage).mock.calls[0]?.[1])
+        const secondPass = JSON.stringify(vi.mocked(API.createMessage).mock.calls[1]?.[1])
+        expect(firstPass).toContain("Inspect both large files")
+        expect(firstPass).not.toContain("call-large-read-a")
+        expect(secondPass).toContain("call-large-read-a")
+        expect(secondPass).toContain("call-large-read-b")
+        expect(secondPass).toContain("SECOND_LARGE_TOOL_RESULT")
+        expect(ports.commit).toHaveBeenCalledOnce()
+        const events = vi.mocked(ports.publish).mock.calls.map(([, event]) => event)
+        expect(events.map((event) => event.kind)).not.toContain("failed")
     })
 
     it("continues an approximately 800K source after a 600K first projection by refitting summary carry", async () => {
@@ -891,7 +898,7 @@ describe("ContextCompactionSession", () => {
         expect(events.some((event) => event.kind === "failed")).toBe(false)
     })
 
-    it("fails with carry diagnostics after two shrinking refits still cannot admit the same uncovered turn", async () => {
+    it("stops and commits the accepted Pass after two shrinking refits still cannot admit the next turn", async () => {
         const ports = createPorts()
         ports.getPassInputCeiling = () => 5_000
         ports.estimatePassInput = vi.fn(async (_input, history) => {
@@ -937,23 +944,74 @@ describe("ContextCompactionSession", () => {
             sourceHistory: HISTORY,
         })
 
-        expect(result).toBe("failed")
+        // Compaction made progress, so it keeps the accepted summary instead of failing the task.
+        expect(result).toBe("completed")
         expect(api.createMessage).toHaveBeenCalledTimes(3)
         expect(ports.buildSummaryRefitRequest).toHaveBeenCalledTimes(2)
         expect(ports.reprojectTarget).toHaveBeenCalledOnce()
         expect(ports.stageAcceptedPass).toHaveBeenCalledOnce()
-        expect(ports.commit).not.toHaveBeenCalled()
+        expect(ports.commit).toHaveBeenCalledOnce()
+        expect(vi.mocked(ports.commit).mock.calls[0]?.[1]).toMatchObject({
+            passIndex: 1,
+            coveredTurnCount: 1,
+            cumulativeSummary: summaries[2],
+        })
         const events = vi.mocked(ports.publish).mock.calls.map(([, event]) => event)
         expect(events.filter((event) => event.kind === "summary_refit_completed")).toHaveLength(2)
-        expect(events.at(-1)).toMatchObject({
-            kind: "failed",
-            state: {
-                passIndex: 1,
-                coveredTurnCount: 1,
-                cumulativeSummary: summaries[2],
-            },
-            error: "Cumulative summary refit exhausted after 2 attempt(s) before Pass 2: target carry budget 1900, current carry 4000, request envelope 100, logical turn 1000, combined 5100, Pass ceiling 5000.",
+        expect(events.map((event) => event.kind)).not.toContain("failed")
+    })
+
+    it("commits the accepted Pass instead of failing when a refit does not shrink the summary", async () => {
+        const ports = createPorts()
+        ports.getPassInputCeiling = () => 5_000
+        ports.estimatePassInput = vi.fn(async (_input, history) => {
+            const serialized = JSON.stringify(history)
+            if (history.length === 0) return 100
+            const hasTurnOne = serialized.includes("turn one")
+            const hasTurnTwo = serialized.includes("turn two")
+            const hasLargeSummary = serialized.includes("LARGE_CARRY_SUMMARY")
+            // The carried summary leaves no room beside any slice of turn two.
+            if (hasLargeSummary) return history.length === 1 ? 4_300 : 5_300
+            if (hasTurnOne && hasTurnTwo) return 6_000
+            if (hasTurnOne) return 2_500
+            return 1_100
         })
+        ports.reprojectTarget = vi.fn(async () => decision("continue"))
+        // Every refit answers with a longer summary, which cannot replace the previous one.
+        const summaries = ["LARGE_CARRY_SUMMARY_".repeat(80), "LARGE_CARRY_SUMMARY_".repeat(90)]
+        let providerCall = 0
+        const api = {
+            createMessage: vi.fn(async function* () {
+                const summary = summaries[Math.min(providerCall++, summaries.length - 1)]
+                yield { type: "text", text: summaryBlock(summary) }
+            }),
+        } as unknown as ApiHandler
+        const session = new ContextCompactionSession(ports, { maxRetryAttempts: 1 })
+
+        const result = await session.run({
+            operationId: "operation-summary-refit-rejected",
+            trigger: "auto_compaction",
+            compactionApi: api,
+            targetApi: api,
+            targetMode: "act",
+            sourceHistory: HISTORY,
+        })
+
+        const failure = vi
+            .mocked(ports.publish)
+            .mock.calls.map(([, event]) => event)
+            .find((event) => event.kind === "failed")
+        expect(failure).toBeUndefined()
+        expect(result).toBe("completed")
+        expect(ports.buildSummaryRefitRequest).toHaveBeenCalled()
+        expect(ports.commit).toHaveBeenCalledOnce()
+        expect(vi.mocked(ports.commit).mock.calls[0]?.[1]).toMatchObject({
+            passIndex: 1,
+            coveredTurnCount: 1,
+            cumulativeSummary: summaries[0],
+        })
+        const events = vi.mocked(ports.publish).mock.calls.map(([, event]) => event)
+        expect(events.map((event) => event.kind)).not.toContain("failed")
     })
 
     it("releases a completed transition immediately because adoption is not Session-owned", async () => {
@@ -1110,9 +1168,9 @@ describe("ContextCompactionSession", () => {
         })
     })
 
-    it("reports failure without rollback when the staged target remains exhausted", async () => {
+    it("stops and commits when no uncovered logical turn remains, even above the stop line", async () => {
         const ports = createPorts()
-        ports.reprojectTarget = vi.fn(async () => decision("exhausted"))
+        ports.reprojectTarget = vi.fn(async () => ({ ...decision("continue"), projectedUsageTokens: 950 }))
         const session = new ContextCompactionSession(ports, { maxRetryAttempts: 1 })
         useSuccessfulCompactionStream()
 
@@ -1125,15 +1183,12 @@ describe("ContextCompactionSession", () => {
             sourceHistory: HISTORY,
         })
 
-        expect(result).toBe("failed")
+        expect(result).toBe("completed")
         expect(ports.stageAcceptedPass).toHaveBeenCalledOnce()
-        expect(ports.commit).not.toHaveBeenCalled()
+        expect(ports.commit).toHaveBeenCalledOnce()
+        expect(vi.mocked(ports.commit).mock.calls[0]?.[1]).toMatchObject({ passIndex: 1, coveredTurnCount: 2 })
         const events = vi.mocked(ports.publish).mock.calls.map(([, event]) => event)
-        expect(events.at(-2)).toMatchObject({ kind: "pass_completed", state: { passIndex: 1, coveredTurnCount: 2 } })
-        expect(events.at(-1)).toMatchObject({
-            kind: "failed",
-            state: { passIndex: 1, coveredTurnCount: 2 },
-            error: "Context compaction could not fit the complete target request below the hard effective context limit of 1000 tokens after all complete logical turns were compacted (projected 100 tokens).",
-        })
+        expect(events.map((event) => event.kind)).not.toContain("failed")
+        expect(events.at(-1)).toMatchObject({ kind: "pass_completed", state: { passIndex: 1, coveredTurnCount: 2 } })
     })
 })

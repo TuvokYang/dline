@@ -618,6 +618,8 @@ export interface UiSayTool {
     compactionSourceHistoryHash?: string
     /** Complete logical turns already represented by this card's cumulative summary. */
     compactionCoveredTurnCount?: number
+    /** First source message the cumulative summary does not cover; stable when a turn was split across Passes. */
+    compactionCoveredMessageIndex?: number
     /** Number of accepted rolling Passes represented by the resumable checkpoint. */
     compactionResumePassIndex?: number
     /** Carry ceiling calibrated for the next Pass, retained across task reopen. */
@@ -917,6 +919,11 @@ export interface UiApiReqInfo {
     apiFormat?: number
     /** Distinguishes reliable Provider usage from a request-pressure estimate. */
     contextTokensSource?: "provider" | "estimate"
+    /**
+     * Input (fresh + cache write + cache read) of the attempt that produced the
+     * turn. `tokensIn` and the cache fields sum every retried attempt for billing.
+     */
+    contextInputTokens?: number
     tokensIn?: number
     tokensOut?: number
     cacheWrites?: number

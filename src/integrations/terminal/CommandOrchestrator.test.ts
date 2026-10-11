@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import { DlineRuntimeFileManager } from "@services/runtime-files"
 import { EventEmitter } from "events"
 import { afterEach, describe, it, vi } from "vitest"
+import { MAX_TOOL_RESULT_TEXT_BYTES } from "@/shared/content-limits"
 import { Logger } from "@/shared/services/Logger"
 import { orchestrateCommandExecution } from "./CommandOrchestrator"
 import { EXPLICIT_BACKGROUND_START_WINDOW_MS } from "./constants"
@@ -581,6 +582,96 @@ describe("CommandOrchestrator exit status messaging", () => {
             assert.match(result.result as string, /^Command failed with exit code 2\./)
             assert.equal(result.logFilePath, expectedLogPath)
             assert.equal((result.result as string).split("\n").at(-1), `Full output saved to: ${expectedLogPath}`)
+        } finally {
+            await fs.rm(expectedLogPath, { force: true })
+        }
+    })
+
+    it("keeps the status, the last error line, and the log path when a failing command's output overflows", async () => {
+        const process = new FakeTerminalProcess()
+        const activityId = "command_failed_overflow_contract"
+        const expectedLogPath = DlineRuntimeFileManager.createTempFilePath(activityId)
+        const errorLine = "Error: build failed at the final step"
+        const orchestrationPromise = orchestrateCommandExecution(
+            process.asResultPromise(),
+            createTerminalManager(),
+            createCallbacks(),
+            { activityId, command: "build" },
+        )
+
+        for (let index = 1; index < 600; index++) process.emitOutput(`line ${index} `.padEnd(1024, "x"), "stdout")
+        process.emitOutput(errorLine, "stderr")
+        process.complete({ exitCode: 1, signal: null })
+        const result = await orchestrationPromise
+
+        try {
+            const text = result.result as string
+            const lines = text.split("\n")
+            // Boolean assertions keep a failure report from dumping the bounded result.
+            assert.ok(Buffer.byteLength(text, "utf8") <= MAX_TOOL_RESULT_TEXT_BYTES)
+            assert.ok(text.startsWith("Command failed with exit code 1.\n"))
+            assert.ok(text.includes("[OUTPUT TRUNCATED:"))
+            assert.ok(lines.at(-2)?.endsWith(errorLine))
+            assert.equal(lines.at(-1), `Full output saved to: ${expectedLogPath}`)
+        } finally {
+            await fs.rm(expectedLogPath, { force: true })
+        }
+    })
+
+    it("bounds the result to the byte budget read when the command finishes", async () => {
+        const process = new FakeTerminalProcess()
+        const activityId = "command_budgeted_result_contract"
+        const expectedLogPath = DlineRuntimeFileManager.createTempFilePath(activityId)
+        let budgetBytes = 64 * 1024
+        const orchestrationPromise = orchestrateCommandExecution(
+            process.asResultPromise(),
+            createTerminalManager(),
+            createCallbacks(),
+            { activityId, command: "build", resultBytes: () => budgetBytes },
+        )
+
+        for (let index = 1; index < 600; index++) process.emitOutput(`line ${index} `.padEnd(256, "x"), "stdout")
+        // A parallel call that finished first shrank the budget after this command started.
+        budgetBytes = 4 * 1024
+        process.complete({ exitCode: 0, signal: null })
+        const result = await orchestrationPromise
+
+        try {
+            const text = result.result as string
+            assert.ok(Buffer.byteLength(text, "utf8") <= 4 * 1024)
+            assert.ok(text.startsWith("Command executed successfully (exit code 0).\n"))
+            assert.ok(text.includes("[OUTPUT TRUNCATED:"))
+            assert.equal(text.split("\n").at(-1), `Full output saved to: ${expectedLogPath}`)
+        } finally {
+            await fs.rm(expectedLogPath, { force: true })
+        }
+    })
+
+    it("reports the latest output, not only the pre-log output, when a logged command times out", async () => {
+        vi.useFakeTimers()
+        const process = new FakeTerminalProcess()
+        const activityId = "command_timeout_overflow_contract"
+        const expectedLogPath = DlineRuntimeFileManager.createTempFilePath(activityId)
+        const execution = orchestrateCommandExecution(process.asResultPromise(), createTerminalManager(10), createCallbacks(), {
+            activityId,
+            command: "long-running",
+            onProceedWhileRunning: vi.fn(() => ({ backgroundCommandId: "unexpected-background" })),
+            synchronous: true,
+            timeoutSeconds: 60,
+        })
+
+        for (let index = 1; index <= 40; index++) process.emitOutput(`progress ${index}`, "stdout")
+
+        try {
+            await vi.advanceTimersByTimeAsync(60_000)
+            const result = await execution
+            const text = result.result as string
+
+            assert.equal(result.timedOut, true)
+            assert.match(text, /progress 40\n/)
+            assert.match(text, /\.\.\. \(30 lines written to /)
+            assert.deepEqual(result.outputLines?.at(-1), "progress 40")
+            assert.equal(text.split("\n").at(-1), `Full output saved to: ${expectedLogPath}`)
         } finally {
             await fs.rm(expectedLogPath, { force: true })
         }

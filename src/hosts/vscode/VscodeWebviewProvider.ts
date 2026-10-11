@@ -8,6 +8,8 @@ import type { ClineExtensionContext } from "@/shared/cline"
 import type { ExtensionMessage } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { WebviewMessage } from "@/shared/WebviewMessage"
+import { createVscodeWebviewLiveness } from "./webview/VscodeWebviewLiveness"
+import type { WebviewLivenessMonitor } from "./webview/WebviewLivenessMonitor"
 
 /*
 https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -23,6 +25,8 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
     private readonly providerDisposables: vscode.Disposable[] = []
     private viewDisposables: vscode.Disposable[] = []
     private viewGeneration = 0
+    /** Watches the current view's document; disposed with the view bindings. */
+    private liveness?: WebviewLivenessMonitor
 
     constructor(context: ClineExtensionContext, options?: { deferController?: boolean }) {
         super(context, { ...options, isSidebar: true })
@@ -95,9 +99,10 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
         // webviewReady and initial gRPC subscriptions during navigation.
         this.setWebviewMessageListener(webviewView.webview, webviewView, generation, viewDisposables)
 
-        webviewView.webview.html = shouldUseWebviewHmr(this.context.extensionMode)
-            ? await this.getHMRHtmlContent()
-            : this.getHtmlContent()
+        // Created before the document is assigned so an early webviewReady is not missed.
+        const liveness = this.watchLiveness(webviewView, generation, viewDisposables)
+        await this.assignDocument(webviewView)
+        liveness.htmlAssigned()
 
         // Logs show up in bottom panel > Debug Console
         //Logger.log("registering listener")
@@ -111,6 +116,7 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
         webviewView.onDidChangeVisibility(
             async () => {
                 if (!this.isActiveView(webviewView, generation)) return
+                liveness.visibilityChanged(webviewView.visible)
                 const controller = await this.controllerReady
                 controller.setAccountUsagePollingEnabled(this.webview?.visible ?? false)
                 if (this.webview?.visible) {
@@ -146,6 +152,36 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
         Logger.log("[VscodeWebviewProvider] Webview view resolved")
 
         // Title setting logic removed to allow VSCode to use the container title primarily.
+    }
+
+    private async assignDocument(webviewView: vscode.WebviewView): Promise<void> {
+        webviewView.webview.html = shouldUseWebviewHmr(this.context.extensionMode)
+            ? await this.getHMRHtmlContent()
+            : this.getHtmlContent()
+    }
+
+    /** Detect a sidebar document that never boots or stops answering, and reload it. */
+    private watchLiveness(
+        webviewView: vscode.WebviewView,
+        generation: number,
+        disposables: vscode.Disposable[],
+    ): WebviewLivenessMonitor {
+        const liveness = createVscodeWebviewLiveness({
+            surface: "sidebar",
+            webview: () => (this.isActiveView(webviewView, generation) ? webviewView.webview : undefined),
+            isVisible: () => this.isActiveView(webviewView, generation) && webviewView.visible,
+            assignHtml: async () => {
+                if (this.isActiveView(webviewView, generation)) await this.assignDocument(webviewView)
+            },
+        })
+        this.liveness = liveness
+        disposables.push({
+            dispose: () => {
+                liveness.dispose()
+                if (this.liveness === liveness) this.liveness = undefined
+            },
+        })
+        return liveness
     }
 
     private getStartupFailureHtml(): string {
@@ -219,9 +255,19 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
      */
     async handleWebviewMessage(message: WebviewMessage) {
         const postMessageToWebview = (response: ExtensionMessage) => this.postMessageToWebview(response)
+        this.liveness?.heard()
 
         switch (message.type) {
+            case "dlinePong": {
+                this.liveness?.pong(message.nonce)
+                break
+            }
             case "webviewReady": {
+                this.liveness?.webviewReady()
+                break
+            }
+            case "webviewMounted": {
+                this.liveness?.webviewMounted()
                 break
             }
             case "grpc_request": {

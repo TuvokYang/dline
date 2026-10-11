@@ -2057,7 +2057,7 @@ e2e(
             expect(seedResults).toHaveLength(seedFiles.length)
             for (const result of seedResults) {
                 expect(Buffer.byteLength(result.content, "utf8")).toBeLessThanOrEqual(MAX_TOOL_RESULT_TEXT_BYTES)
-                expect(result.content).toContain("[FILE TRUNCATED:")
+                expect(/Use start_line=\d+ to continue reading/.test(result.content)).toBe(true)
             }
             expect(summaryRequest.contractError).toBeUndefined()
             expect(summaryRequest).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
@@ -2067,20 +2067,28 @@ e2e(
             expect(summarizedResults).toHaveLength(seedFiles.length + protectedFiles.length)
             for (const result of summarizedResults) {
                 expect(Buffer.byteLength(result.content, "utf8")).toBeLessThanOrEqual(MAX_TOOL_RESULT_TEXT_BYTES)
-                expect(result.content).toContain("[FILE TRUNCATED:")
+                expect(/Use start_line=\d+ to continue reading/.test(result.content)).toBe(true)
             }
 
             const expandTaskHeader = sidebar.getByLabel("Expand task header")
             if (await expandTaskHeader.isVisible()) await expandTaskHeader.click()
             await expect(sidebar.locator('[title="Maximum context window size for this model"]')).toHaveText("1.0m")
             const contextProgress = sidebar.getByRole("progressbar", { name: "Context window usage progress" })
+            // The fixture reports 930K tokens for a request of a few hundred KB, a ratio no
+            // tokenizer produces, so the estimator rejects that sample. The hidden Pass is then
+            // shown at its own estimated size, which one token per byte bounds from above.
+            const summaryRequestBytes = Buffer.byteLength(JSON.stringify(summaryRequest.requestBody), "utf8")
             let projectedTokens = 0
             await expect
                 .poll(async () => {
+                    const phase = await contextProgress.getAttribute("data-phase")
                     projectedTokens = Number(await contextProgress.getAttribute("aria-valuenow"))
-                    return projectedTokens > 930_100 && projectedTokens < 1_000_000
+                    return {
+                        inFlight: phase === "sending" || phase === "receiving",
+                        bounded: projectedTokens > 0 && projectedTokens <= summaryRequestBytes,
+                    }
                 })
-                .toBe(true)
+                .toEqual({ inFlight: true, bounded: true })
 
             await expect(sidebar.getByText("E2E_DEEPSEEK_PRESSURE_COMPLETE", { exact: false }).last()).toBeVisible({
                 timeout: 120_000,

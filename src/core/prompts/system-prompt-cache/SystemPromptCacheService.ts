@@ -1,6 +1,7 @@
 import type { CollectCapabilitiesInput } from "@core/prompts/capabilities/CapabilitiesAggregator"
 import { collectCapabilities } from "@core/prompts/capabilities/CapabilitiesAggregator"
 import { renderCapabilitiesForContext } from "@core/prompts/capabilities/CapabilitiesSection"
+import type { SystemPromptComposition } from "@core/prompts/generators/system-prompt-composition"
 import { PromptProfile } from "@core/prompts/profiles/types"
 import type { SystemPromptContext } from "@core/prompts/system-prompt"
 import { getSystemPrompt } from "@core/prompts/system-prompt"
@@ -28,6 +29,7 @@ export const SYSTEM_PROMPT_CONTRACT_VERSION = 7
 export interface BuiltSystemPrompt {
     readonly systemPrompt: string
     readonly tools?: readonly ClineTool[]
+    readonly composition?: SystemPromptComposition
 }
 
 export interface SystemPromptCacheDeps {
@@ -198,6 +200,7 @@ export class SystemPromptCacheService {
                 ...this.getPromptBuilderInfo(promptContext, built.tools),
                 contractVersion: SYSTEM_PROMPT_CONTRACT_VERSION,
             },
+            ...(built.composition ? { composition: built.composition } : {}),
         }
         await this.saveContext(this.taskId, {
             ...context,

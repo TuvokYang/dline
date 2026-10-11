@@ -1,5 +1,6 @@
 import { estimateContextWindowCandidateBreakdown } from "@core/context/context-management/context-window-projection"
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
+import type { SystemPromptComposition } from "@core/prompts/generators/system-prompt-composition"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import type { ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
 import type { CompactionProviderInput } from "./CompactionProviderInput"
@@ -15,6 +16,8 @@ export interface FramedRequestEstimate {
     readonly mediaTokens: number
     /** The framed input that was measured, so its parts can be measured apart. */
     readonly input: CompactionProviderInput
+    /** How the measured system prompt splits for display; kept beside the input, never estimated with it. */
+    readonly systemPromptComposition?: SystemPromptComposition
 }
 
 /**
@@ -48,5 +51,6 @@ export async function estimateFramedRequest(
         textBytes: breakdown.textBytes,
         mediaTokens: breakdown.imageTokens,
         input,
+        ...(frame.systemPromptComposition ? { systemPromptComposition: frame.systemPromptComposition } : {}),
     }
 }

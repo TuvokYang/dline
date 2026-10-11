@@ -8,7 +8,11 @@ import {
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 import { NO_COMPLETE_LOGICAL_TURN } from "../ContextCompactionSession"
-import { type ContextWindowRequestOpening, estimateContextWindowIndicatorSegments } from "../ContextWindowIndicatorProjection"
+import {
+    type ContextWindowRequestOpening,
+    estimateContextWindowIndicatorSegments,
+    estimateDurableComposition,
+} from "../ContextWindowIndicatorProjection"
 import { getHighContextPressureWarning, withHighContextPressureWarning } from "../environment-context"
 import type { CompactionFailurePresentationPort } from "../executors/compaction/ProductionCompactionAdapter"
 import type { ComposeContextWindowGuardPort, ContextWindowAdmission } from "../executors/compose/ProductionComposeAdapter"
@@ -146,6 +150,12 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
      */
     private admission(measured: Measurement): ContextWindowRequestOpening {
         const { estimate, projection } = measured
+        const durableComposition = estimateDurableComposition({
+            providerInput: estimate.input,
+            systemPromptComposition: estimate.systemPromptComposition,
+            providerId: estimate.providerId,
+            modelId: estimate.modelId,
+        })
         return {
             estimatedTokens: estimate.tokens,
             estimatedTextBytes: estimate.textBytes,
@@ -160,6 +170,7 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
                 providerId: estimate.providerId,
                 modelId: estimate.modelId,
             }),
+            ...(durableComposition ? { durableComposition } : {}),
         }
     }
 

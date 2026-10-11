@@ -247,6 +247,11 @@
                 "category": "Dline"
             },
             {
+                "command": "dline.reloadWebview",
+                "title": "Reload Dline View",
+                "category": "Dline"
+            },
+            {
                 "command": "dline.reviewComment.reply",
                 "title": "Reply",
                 "category": "Dline",

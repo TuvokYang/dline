@@ -789,7 +789,7 @@ e2e(
 )
 
 e2e(
-    "OpenAI compaction - calibrated 430K source remains complete in one hidden Pass",
+    "OpenAI compaction - calibrated source keeps the oldest complete turn whole in one hidden Pass",
     async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
         e2e.setTimeout(360_000)
         await configureTriggerBoundary(dlineDir, 472_000, 420_000, 5_000, 30_000, 95)
@@ -920,12 +920,14 @@ e2e(
                 contentType: "application/json",
             })
 
-            // A calibrated full request below the Provider hard window must stay one Pass.
-            // The current regression drops the newest complete turn because compaction lacks requestPressures.
+            // The Pass input is bounded by the trigger line of the 420K Maximum context. Only the
+            // calibrated estimate lets the oldest complete turn fit in one Pass; an uncalibrated estimate
+            // would split it and need a second Pass. After that Pass the candidate is below 80 percent of
+            // the configured window, so the newer complete turn stays verbatim.
             expect(hiddenPassText).toContain(turnAMarker)
-            expect(hiddenPassText).toContain(turnBMarker)
+            expect(hiddenPassText).not.toContain(turnBMarker)
             expect(continuedRequestText).not.toContain(turnAMarker)
-            expect(continuedRequestText).not.toContain(turnBMarker)
+            expect(continuedRequestText).toContain(turnBMarker)
             expect(requests.filter((request) => request.toolName === "summarize_task")).toHaveLength(1)
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
@@ -1261,7 +1263,8 @@ e2e(
         await configureTriggerBoundary(dlineDir, 1_000_000, 272_000)
         const belowFeedback = "E2E_ABSOLUTE_BELOW_CONTINUE"
         const triggerFeedback = "E2E_ABSOLUTE_TRIGGER_CONTINUE"
-        const compactTriggerTokens = 268_500
+        // The reserve comes from the effective window W = 272K, not the 1M model window.
+        const compactTriggerTokens = 260_340
         // Keep the first complete candidate outside the shared 2K tolerance, then
         // place the second baseline well inside it. The real Provider request delta
         // includes the complete tool-result envelope, not only the feedback text.
@@ -1365,7 +1368,7 @@ e2e(
         const completionMarker = "E2E_POST_COMPACTION_RETRY_OK"
         const failureMarker = "E2E_POST_COMPACTION_RETRY_503"
         const failureCode = "e2e_post_compaction_retry_503"
-        const compactTriggerTokens = 268_500
+        const compactTriggerTokens = 260_340
         // The last pre-compaction Provider usage stays inside the shared 2K tolerance,
         // so any gate that ignores the compaction boundary would compact again.
         const belowPreviousTokens = compactTriggerTokens - 3_000
@@ -1476,7 +1479,7 @@ e2e(
         const continuationMarker = "E2E_ITERATIVE_CONTINUE"
         const firstSummary = "E2E_ITERATIVE_SUMMARY_ONE covers only turn A."
         const secondSummary = "E2E_ITERATIVE_SUMMARY_TWO cumulatively covers turns A and B."
-        const turnAResponse = `${turnAMarker}:${"A".repeat(220_000)}`
+        const turnAResponse = `${turnAMarker}:${"A".repeat(160_000)}`
         const turnBResponse = `${turnBMarker}:${"B".repeat(220_000)}`
         const protectedTurnResponse = `${protectedTurnMarker}:${"C".repeat(80_000)}`
 
@@ -1505,7 +1508,9 @@ e2e(
                 id: "call_iterative_protected_turn_c",
                 name: "qna_respond",
                 arguments: { response: protectedTurnResponse },
-                usage: { inputTokens: 125_000, outputTokens: 100 },
+                // Calibrates turn B so the second Pass carries the first summary and the whole turn B
+                // within the trigger line; the continuation still crosses it.
+                usage: { inputTokens: 55_000, outputTokens: 100 },
                 expectedRequestIncludes: [turnBMarker, "E2E_ITERATIVE_USER_TURN_C"],
                 matchRequestContract: true,
             },
@@ -1610,7 +1615,7 @@ e2e(
         const refitSummaryMarker = "E2E_BUG011_800K_REFITTED"
         const finalSummary = "E2E_BUG011_800K_FINAL_SUMMARY preserves both complete logical turns."
         const firstSummary = `${firstSummaryMarker}:${"S".repeat(800_000)}`
-        const refittedSummary = `${refitSummaryMarker}:${"R".repeat(160_000)}`
+        const refittedSummary = `${refitSummaryMarker}:${"R".repeat(80_000)}`
         const turnPayload = "x".repeat(1_570_000)
 
         server.enqueueResponses(
@@ -1769,10 +1774,20 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
             const protectedTurnMarker = "E2E_ROLLING_PROTECTED_TURN_C"
             const continuationMarker = "E2E_ROLLING_CONTINUATION"
             const firstSummary = "E2E_ROLLING_SUMMARY_ONE covers only turn A."
-            const secondSummary = "E2E_ROLLING_SUMMARY_TWO cumulatively covers turns A and B."
+            const secondSummary = "E2E_ROLLING_SUMMARY_TWO cumulatively covers turns A, B and C."
+            // W is 272K, so the trigger T is 258,340, a turn crossing T may join a Pass up to 262,420
+            // (half the 8,160 reserve), and compaction stops below 217,600. Ordinary requests project
+            // from the reported usage plus about a quarter token per new character; a Pass is estimated
+            // from its request bytes, at the learned ratio of the ordinary requests (turns B and C, about
+            // 0.25 token per byte here) or at the default heuristic when no sample matches the Provider.
+            // Both estimates land within a few percent, and every boundary below keeps a wider margin.
             const turnAResponse = `${turnAMarker}:${"A".repeat(520_000)}`
             const turnBResponse = `${turnBMarker}:${"B".repeat(520_000)}`
-            const protectedTurnResponse = `${protectedTurnMarker}:${"C".repeat(300_000)}`
+            // Turn C is complete, so once turn A is summarized it joins turn B in the second Pass:
+            // a Pass takes every consecutive complete turn that fits. Turns B and C keep the history
+            // near 240K after the first Pass, above the stop line and within T, so the second Pass is
+            // required and carries both whole. Only the continuation stays verbatim.
+            const protectedTurnResponse = `${protectedTurnMarker}:${"C".repeat(360_000)}`
 
             server.enqueueResponses(
                 providerCase.target,
@@ -1790,7 +1805,10 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
                     id: "call_rolling_turn_b",
                     name: "qna_respond",
                     arguments: { response: turnBResponse },
-                    usage: { inputTokens: 130_000, outputTokens: 100 },
+                    // Below the request's size, so the request for turn C (about 130K more) still
+                    // projects under the trigger line although the Pass estimate of turns A and B
+                    // together, near 280K, exceeds the crossing allowance.
+                    usage: { inputTokens: 100_000, outputTokens: 100 },
                     expectedRequestIncludes: [turnAMarker, "E2E_ROLLING_USER_TURN_B"],
                     matchRequestContract: true,
                 },
@@ -1799,7 +1817,10 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
                     id: "call_rolling_protected_turn_c",
                     name: "qna_respond",
                     arguments: { response: protectedTurnResponse },
-                    usage: { inputTokens: 270_000, outputTokens: 100 },
+                    // Above the trigger line, so the continuation compacts. With turn B's low sample this
+                    // keeps the learned ratio near 0.25 token per byte, so the first Pass carries turn A
+                    // only and the second Pass fits turns B and C.
+                    usage: { inputTokens: 380_000, outputTokens: 100 },
                     expectedRequestIncludes: [turnBMarker, "E2E_ROLLING_USER_TURN_C"],
                     matchRequestContract: true,
                 },
@@ -1829,8 +1850,9 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
                         firstSummary,
                         "E2E_ROLLING_USER_TURN_B",
                         turnBMarker,
+                        protectedTurnMarker,
                     ],
-                    expectedRequestExcludes: [turnAMarker, protectedTurnMarker, continuationMarker],
+                    expectedRequestExcludes: [turnAMarker, continuationMarker],
                     matchRequestContract: true,
                 },
                 {
@@ -1838,12 +1860,13 @@ for (const providerCase of ROLLING_MERGE_PROVIDER_CASES) {
                     id: "call_rolling_complete",
                     name: "attempt_completion",
                     arguments: { result: "E2E_ROLLING_MERGE_OK" },
-                    expectedRequestIncludes: [secondSummary, protectedTurnMarker, continuationMarker],
+                    expectedRequestIncludes: [secondSummary, continuationMarker],
                     expectedRequestExcludes: [
                         "The current conversation is rapidly running out of context",
                         firstSummary,
                         turnAMarker,
                         turnBMarker,
+                        protectedTurnMarker,
                     ],
                     matchRequestContract: true,
                 },

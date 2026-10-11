@@ -22,7 +22,7 @@ When it is on, these settings appear:
 | **Maximum reserve** | 30K | Upper bound of the reserved space (K tokens) |
 | **Maximum context** | 0 | Absolute context cap (K tokens); 0 means no absolute cap |
 
-The trigger is not simply "97% used". The reserve derived from the percentage is clamped between the minimum and maximum reserve; when the model's context window is larger than **Maximum context**, that absolute value becomes the trigger center instead. Dline also applies a 2K estimation tolerance automatically.
+The trigger is not simply "97% used". When the model's context window is larger than **Maximum context**, that value becomes the window everything is measured against; the reserve derived from the percentage of that window is then clamped between the minimum and maximum reserve, exactly as for a model window of the same size. The trigger point is that window minus the reserve and a further 5.5K safety margin, and compaction starts as soon as the estimated next request reaches it. The estimation tolerance is already included in this point, so it does not move the trigger.
 
 Invalid input shows "Reserve values must be whole numbers from 0 to …" or "Minimum reserve cannot exceed maximum reserve."
 
@@ -33,6 +33,26 @@ Invalid input shows "Reserve values must be whole numbers from 0 to …" or "Min
 3. From then on, what is sent to the model consists of the cumulative summary, the messages not yet covered by it, and the current continuation.
 
 The full conversation record on disk is not deleted; only what is sent to the model gets shorter.
+
+### Passes and when compaction stops
+
+Below, "context window" means the model's window, or the **Maximum context** value when it is set and smaller.
+
+One compaction may run in several passes:
+
+1. Each pass starts from the oldest conversation not yet compacted and takes as many consecutive complete turns as fit without its input exceeding the trigger point, leaving the reserve for the summary. The one turn that crosses the trigger point may still join the pass if it takes no more than half of the reserve; no further turn follows it, so at least half of the reserve stays for the summary. This keeps a turn that only slightly overshoots in the same pass instead of starting another one.
+2. From the second pass on, the previous summary is carried along, so the summary accumulates pass by pass.
+3. A single turn that exceeds the trigger point by more than half of the reserve is split across passes by message, keeping each tool call with its result; its content is not truncated.
+4. A single message that is still larger than the trigger point is sent in a pass of its own, which may use the model's full window minus 3K.
+5. After each pass, compaction stops and takes effect once what is sent falls below 80% of the context window, or once no uncompacted conversation remains.
+
+Compaction does not fail because the context is still large. It ends without taking effect only if the summary request itself errors after its retries, or if you cancel it. The one exception is a single message larger than the model's whole window: if earlier passes already completed, their result takes effect; otherwise Dline reports that the message cannot be compacted.
+
+### Tool results near the limit
+
+To keep long tasks running, the results returned by one round of tool calls, including parallel reads, commands, and subagents, add up to at most 80% of the context that remained when the round started. The running calls share that allowance; each time a result returns, the others are recalculated at once, and a subagent can see its current allowance. Each single result also keeps its own 64 KB cap. This allowance never changes when compaction triggers, how passes are formed, or when compaction stops.
+
+When less than 3K of context remains, Dline ends the round and states that it will continue, keeping any undelivered subagent results aside. After automatic compaction completes, those results are delivered to the conversation and the task continues on its own; you do not need to send another message.
 
 ![A summary is generated automatically near the context limit; after compaction, context usage drops and the task continues](@docs-assets/ui/docs-auto-compact.gif)
 

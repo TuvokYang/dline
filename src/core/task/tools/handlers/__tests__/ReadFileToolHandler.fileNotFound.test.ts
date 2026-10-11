@@ -177,6 +177,21 @@ describe("ReadFileToolHandler.execute – file not found", () => {
         assert.equal(result, "")
     })
 
+    it("reads a range beyond the first 400 KB of a large plain-text file", async () => {
+        const { config, validator } = createConfig()
+        const handler = new ReadFileToolHandler(validator)
+        const largeFile = "large.log"
+        const lines = Array.from({ length: 12_000 }, (_, index) => `row ${index + 1}`.padEnd(99, "."))
+        await fs.writeFile(path.join(tmpDir, largeFile), `${lines.join("\n")}\n`)
+
+        const result = await handler.execute(config, makeBlockWithRange(largeFile, "9000", "9001"))
+
+        assert.equal(
+            result,
+            `9000 | ${lines[8999]}\n9001 | ${lines[9000]}\n\n(Showing lines 9000-9001 of 12000 total. Use start_line=9002 to continue reading.)`,
+        )
+    })
+
     it("does NOT increment consecutiveMistakeCount for file-not-found (exploratory)", async () => {
         const { config, taskState, validator } = createConfig()
         const handler = new ReadFileToolHandler(validator)

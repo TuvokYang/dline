@@ -12,19 +12,31 @@ const SUMMARIZE_INSTRUCTION_BUDGET = 2_500
 const ESTIMATION_TOLERANCE = 2_000
 export const COMPACTION_CLOSURE_RESERVE_TOKENS = 3_000
 /**
- * Smallest output space a hidden Pass request must leave inside the provider's hard context window.
+ * Share of the reserve the last complete turn of a Pass may take.
  *
- * The real output ceiling is resolved per request by the window budget, which subtracts the
- * concession already spent by the input. This constant only keeps the Pass ceiling strictly
- * inside the window so a request can never claim the entire context.
+ * The turn that crosses T usually overshoots it by a little. Splitting it off into another Pass
+ * would strand most of the window and replay that turn as a fresh prefix, losing prompt-cache
+ * reuse, so it may take up to half of the reserve; the other half stays for the summary.
  */
-export const MIN_COMPACTION_SUMMARY_OUTPUT_TOKENS = 1
+const LAST_TURN_RESERVE_SHARE = 0.5
 
 export interface CompactTriggerOptions {
     triggerPercent?: number
     minReserveTokens?: number
     maxReserveTokens?: number
     maxContextTokens?: number
+}
+
+/**
+ * The context window the user works in: the absolute cap when one is set below
+ * the model window, otherwise the model window. Compaction stops once the
+ * request falls below 80% of it, and one round's tool results are budgeted
+ * against what it still has room for.
+ */
+export function resolveConfiguredContextWindow(contextWindow: number, options: CompactTriggerOptions = {}): number {
+    const modelWindow = Math.max(0, Math.floor(contextWindow))
+    const cap = normalizeAutoCondenseMaxContextTokens(options.maxContextTokens)
+    return cap > 0 && modelWindow > cap ? cap : modelWindow
 }
 
 export type CompactTriggerBranch = "percentage_guarded" | "absolute_cap"
@@ -34,38 +46,25 @@ export interface CompactTriggerPolicy {
     guardedReserveTokens: number
     effectiveContextLimitTokens: number
     hardPassContextWindowTokens: number
+    /** The window the user works in; see `resolveConfiguredContextWindow`. */
+    configuredContextWindowTokens: number
     projectedUsageTriggerTokens: number
     compactTriggerTokens: number
     /**
      * Maximum estimated input one hidden compaction Pass request may carry.
      *
-     * This is derived from the provider's hard context window, not from the ordinary-request
-     * trigger or an optional auto-condense cap. Those settings decide when compaction starts and
-     * how small its landed target should be; they must not truncate a hidden Pass the provider can hold.
+     * A Pass carries no more than the trigger line T, so the reserve the user configured stays
+     * free for the summary that Pass writes. A turn larger than T is split at message boundaries
+     * instead of widening this ceiling; only an indivisible tool use/result unit may go beyond it.
      */
     passInputCeilingTokens: number
-    /** Diagnostic headroom between the ordinary-request trigger and the hidden Pass ceiling. */
-    passInputCeilingAllowanceTokens: number
-}
-
-interface CompactionPassCeiling {
-    allowanceTokens: number
-    passInputCeilingTokens: number
-}
-
-/** Resolve the hidden Pass ceiling from the provider's hard window. */
-function resolveCompactionPassCeiling(
-    projectedUsageTriggerTokens: number,
-    hardPassContextWindowTokens: number,
-): CompactionPassCeiling {
-    const passInputCeilingTokens = Math.max(
-        0,
-        hardPassContextWindowTokens - COMPACTION_CLOSURE_RESERVE_TOKENS - MIN_COMPACTION_SUMMARY_OUTPUT_TOKENS,
-    )
-    return {
-        allowanceTokens: Math.max(0, passInputCeilingTokens - projectedUsageTriggerTokens),
-        passInputCeilingTokens,
-    }
+    /**
+     * Ceiling for the last complete turn of a Pass: T plus half of the reserve.
+     *
+     * Turns are taken while the input stays at or below T; the one turn that crosses T may still
+     * join the Pass when the input stays at or below this ceiling. No turn is added after it.
+     */
+    lastTurnPassInputCeilingTokens: number
 }
 
 /**
@@ -113,7 +112,14 @@ export function shouldCompactProjectedUsage(projectedUsage: number, triggerToken
     return projectedUsage + ESTIMATION_TOLERANCE >= triggerTokens
 }
 
-/** Resolve the single auto-condense trigger policy shared by every runtime consumer. */
+/**
+ * Resolve the single auto-condense trigger policy shared by every runtime consumer.
+ *
+ * Everything is measured against the window the user works in, W: the reserve is
+ * `W × (100 − trigger%)` clamped to the configured bounds and stays free for the summary a
+ * Pass writes, and the trigger is `W − reserve − summarize instructions − closure reserve`.
+ * A Maximum context below the model window only changes W, never the formula.
+ */
 export function resolveCompactTriggerPolicy(
     contextWindow: number,
     summarizeInstructionBudget: number,
@@ -121,51 +127,40 @@ export function resolveCompactTriggerPolicy(
 ): CompactTriggerPolicy {
     const normalizedContextWindow = Math.max(0, Math.floor(contextWindow))
     const normalizedInstructionBudget = Math.max(0, Math.floor(summarizeInstructionBudget))
-    const maxContextTokens = normalizeAutoCondenseMaxContextTokens(options.maxContextTokens)
-    if (maxContextTokens > 0 && normalizedContextWindow > maxContextTokens) {
-        const effectiveContextLimitTokens = maxContextTokens
-        const hardPassContextWindowTokens = normalizedContextWindow
-        const projectedUsageTriggerTokens = Math.max(
-            0,
-            effectiveContextLimitTokens - normalizedInstructionBudget - COMPACTION_CLOSURE_RESERVE_TOKENS,
-        )
-        const passCeiling = resolveCompactionPassCeiling(projectedUsageTriggerTokens, hardPassContextWindowTokens)
-        return {
-            branch: "absolute_cap",
-            guardedReserveTokens: 0,
-            effectiveContextLimitTokens,
-            hardPassContextWindowTokens,
-            projectedUsageTriggerTokens,
-            compactTriggerTokens: projectedUsageTriggerTokens + ESTIMATION_TOLERANCE,
-            passInputCeilingTokens: passCeiling.passInputCeilingTokens,
-            passInputCeilingAllowanceTokens: passCeiling.allowanceTokens,
-        }
-    }
+    const configuredContextWindowTokens = resolveConfiguredContextWindow(normalizedContextWindow, options)
 
     const triggerPercent = normalizeAutoCondenseTriggerPercent(options.triggerPercent)
-    const percentageReserveTokens = Math.floor((normalizedContextWindow * (100 - triggerPercent)) / 100)
+    const percentageReserveTokens = Math.floor((configuredContextWindowTokens * (100 - triggerPercent)) / 100)
     const { minReserveTokens, maxReserveTokens } = normalizeAutoCondenseReservePair(
         options.minReserveTokens,
         options.maxReserveTokens,
     )
     const guardedReserveTokens = clampValue(percentageReserveTokens, minReserveTokens, maxReserveTokens)
 
-    const effectiveContextLimitTokens = Math.max(0, normalizedContextWindow - guardedReserveTokens)
+    const effectiveContextLimitTokens = Math.max(0, configuredContextWindowTokens - guardedReserveTokens)
     const hardPassContextWindowTokens = normalizedContextWindow
     const projectedUsageTriggerTokens = Math.max(
         0,
         effectiveContextLimitTokens - normalizedInstructionBudget - COMPACTION_CLOSURE_RESERVE_TOKENS,
     )
-    const passCeiling = resolveCompactionPassCeiling(projectedUsageTriggerTokens, hardPassContextWindowTokens)
     return {
-        branch: "percentage_guarded",
+        branch: configuredContextWindowTokens < normalizedContextWindow ? "absolute_cap" : "percentage_guarded",
         guardedReserveTokens,
         effectiveContextLimitTokens,
         hardPassContextWindowTokens,
+        configuredContextWindowTokens,
         projectedUsageTriggerTokens,
         compactTriggerTokens: projectedUsageTriggerTokens + ESTIMATION_TOLERANCE,
-        passInputCeilingTokens: passCeiling.passInputCeilingTokens,
-        passInputCeilingAllowanceTokens: passCeiling.allowanceTokens,
+        passInputCeilingTokens: projectedUsageTriggerTokens,
+        // T plus the share, measured from W so that a window smaller than the reserve, where T
+        // is clamped to zero, never lends the turn space the window does not have.
+        lastTurnPassInputCeilingTokens: Math.max(
+            projectedUsageTriggerTokens,
+            configuredContextWindowTokens -
+                (guardedReserveTokens - Math.floor(guardedReserveTokens * LAST_TURN_RESERVE_SHARE)) -
+                normalizedInstructionBudget -
+                COMPACTION_CLOSURE_RESERVE_TOKENS,
+        ),
     }
 }
 

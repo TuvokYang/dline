@@ -8,9 +8,11 @@ import {
     applyCompactionPassPlan,
     buildCompactionPassHistory,
     buildTargetCandidateHistory,
+    getUncoveredStartMessageIndex,
     isIterativeCompactionPass,
     refitCompactionSummary,
     restoreTargetWindowFitting,
+    splitUncoveredLogicalTurn,
     startTargetWindowFitting,
     type TargetWindowFittingState,
     tryStartTargetWindowFitting,
@@ -289,5 +291,42 @@ describe("target window rolling fitting", () => {
 
         expect(() => acceptCompactionPass(state, "  ")).toThrow("Compaction summary must be non-empty")
         expect(state.coveredTurnCount).toBe(0)
+    })
+
+    it("splits the first uncovered turn at message boundaries and resumes a split checkpoint by message index", () => {
+        const history = [
+            message("user", "LARGE_REQUEST"),
+            message("assistant", "LARGE_ANSWER"),
+            message("user", "NEXT_REQUEST"),
+            message("assistant", "NEXT_ANSWER"),
+        ]
+        const initial = startFitting(history, "operation-split")
+        expect(initial.turns).toHaveLength(2)
+
+        const split = splitUncoveredLogicalTurn(initial)
+        expect(split?.turns.map((turn) => [turn.startMessageIndex, turn.endMessageIndex])).toEqual([
+            [0, 0],
+            [1, 1],
+            [2, 3],
+        ])
+        // A segment that is already one message cannot be split further.
+        const firstSegmentOnly = { ...initial, turns: split!.turns.slice(0, 1) }
+        expect(splitUncoveredLogicalTurn(firstSegmentOnly)).toBeUndefined()
+
+        const accepted = acceptCompactionPass(planThrough(split!, 0), "SUMMARY_OF_REQUEST").state
+        expect(getUncoveredStartMessageIndex(accepted)).toBe(1)
+
+        // A fresh index does not contain the split; the message index restores the same boundary,
+        // while the stale turn count alone would have skipped LARGE_ANSWER.
+        const resumed = restoreTargetWindowFitting(startFitting(history, "operation-resume"), {
+            sourceHistoryHash: accepted.sourceHistoryHash,
+            coveredTurnCount: accepted.coveredTurnCount,
+            coveredMessageIndex: 1,
+            passIndex: accepted.passIndex,
+            cumulativeSummary: "SUMMARY_OF_REQUEST",
+        })
+        expect(resumed?.coveredTurnCount).toBe(1)
+        expect(resumed && getUncoveredStartMessageIndex(resumed)).toBe(1)
+        expect(serialized(buildTargetCandidateHistory(resumed!, []))).toContain("LARGE_ANSWER")
     })
 })

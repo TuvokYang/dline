@@ -30,15 +30,19 @@ import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import { Logger } from "@shared/services/Logger"
 import { ClineDefaultTool, ClineTool } from "@shared/tools"
 import { ContextManager } from "@/core/context/context-management/ContextManager"
+import { ContextBudgetLedger } from "@/core/context/context-management/context-budget-ledger"
 import { checkContextWindowExceededError } from "@/core/context/context-management/context-error-handling"
+import { DEFAULT_TOKEN_PER_BYTE } from "@/core/context/context-management/context-window-projection"
 import {
     computeCompactTrigger,
     computeSummarizeBudget,
     getContextWindowInfo,
+    resolveConfiguredContextWindow,
     shouldCompactProjectedUsage,
 } from "@/core/context/context-management/context-window-utils"
 import { HostRegistryInfo } from "@/registry"
 import { ClineError, ClineErrorType } from "@/services/error"
+import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@/shared/content-limits"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { calculateApiCostAnthropic } from "@/utils/cost"
 import { isNativeToolCallingConfig, isNextGenModelFamily } from "@/utils/model-utils"
@@ -49,8 +53,10 @@ import { DefaultToolHandlerState, type ToolHandlerState } from "../state/ToolHan
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
+import { resolveToolResultBudget } from "../utils/tool-result-budget"
 import type { AgentBaseConfig } from "./AgentConfigLoader"
 import { SUBAGENT_COMPLETION_CONTRACT, SubagentBuilder } from "./SubagentBuilder"
+import { buildContextBudgetSection, resolveFinalResultTokens } from "./SubagentContextBudget"
 import {
     buildContextUsageSection,
     buildSalvagedConvergenceResult,
@@ -516,6 +522,8 @@ export class SubagentRunner {
     private running = false
     /** The run that has not unwound yet; a retry waits for it instead of racing it. */
     private activeRun: Promise<SubagentRunResult> | undefined
+    /** This run's share of the main task's context budget; absent when the call carried none. */
+    private activeBudget: TaskConfig["contextBudget"]
     private activeCommandExecutions = 0
     private abortingCommands = false
     private apiLogRequestIndex = 0
@@ -770,11 +778,19 @@ export class SubagentRunner {
         while (this.activeRun) {
             await this.activeRun.catch(() => undefined)
         }
+        // One consumer of the main task's budget per run: it draws a share while
+        // working and counts its result the moment it returns.
+        const budget = this.baseConfig.contextBudget?.child()
+        this.activeBudget = budget
         const execution = this.execute(prompt, onProgress)
         this.activeRun = execution
+        let settled: SubagentRunResult | undefined
         try {
-            return await execution
+            settled = await execution
+            return settled
         } finally {
+            budget?.end(settled?.result ? Buffer.byteLength(settled.result, "utf8") : 0)
+            if (this.activeBudget === budget) this.activeBudget = undefined
             if (this.activeRun === execution) this.activeRun = undefined
         }
     }
@@ -833,6 +849,21 @@ export class SubagentRunner {
             )
             const outputBudget = resolveSubagentOutputBudget(this.baseConfig, this.agent.getConfiguredMaxOutputTokens())
             const promptWithBudget = buildSubagentOutputBudgetPrompt(prompt, outputBudget.outputTokens)
+            // The subagent's own tool results fill its own context, so they share
+            // what is left of its window the way the main task's results share the task's.
+            // The same W its compaction trigger uses: the user's Maximum context bounds both.
+            const toolBudget = new ContextBudgetLedger({
+                contextWindow: () =>
+                    resolveConfiguredContextWindow(
+                        stats.contextWindow > 0 ? stats.contextWindow : getContextWindowInfo(api).contextWindow,
+                        {
+                            maxContextTokens:
+                                this.baseConfig.services.stateManager.getGlobalSettingsKey("autoCondenseMaxContextTokens"),
+                        },
+                    ),
+                occupiedTokens: () => stats.contextTokens,
+                tokenPerByte: () => DEFAULT_TOKEN_PER_BYTE,
+            })
             this.activeApiAbort = api.abort?.bind(api)
             parentSignal?.addEventListener("abort", onParentAbort, { once: true })
             if (parentSignal?.aborted) onParentAbort()
@@ -849,7 +880,6 @@ export class SubagentRunner {
                 this.baseConfig.webToolsEnabled ??
                 this.baseConfig.services.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true
             const webSearchRoutingPlan = this.resolveAllowedWebRoutingPlan(api, webToolsEnabled)
-            const completionWebSearchRoutingPlan = resolveRequestWebSearchRoutingPlan(api, false)
             stats.contextWindow = providerInfo.model.info.capabilities?.contextWindow || 0
             stats.currency = providerInfo.model.info.pricing?.currency || "USD"
             const apiFormat = providerInfo.model.info.apiFormats?.[0]
@@ -918,14 +948,11 @@ export class SubagentRunner {
             }
 
             const generated = await getSystemPrompt(context)
+            // A finish request keeps this prompt and tool list unchanged and only
+            // appends a reminder: swapping either would invalidate the provider's
+            // prompt cache exactly when the run is out of time. The runner itself
+            // refuses every tool except attempt_completion once finishing.
             const systemPrompt = this.agent.buildSystemPrompt(generated.systemPrompt)
-            const completionGenerated = await getSystemPrompt({
-                ...context,
-                disableTools: Object.values(ClineDefaultTool).filter((tool) => tool !== ClineDefaultTool.ATTEMPT),
-                clineWebToolsEnabled: false,
-                webSearchRoutingPlan: undefined,
-            })
-            const completionSystemPrompt = this.agent.buildSystemPrompt(completionGenerated.systemPrompt)
             const nativeTools = generated.tools?.filter((tool) => {
                 if ("function" in tool) {
                     return allowedTools.has(tool.function.name as ClineDefaultTool)
@@ -934,10 +961,6 @@ export class SubagentRunner {
                     return allowedTools.has(tool.name as ClineDefaultTool)
                 }
                 return false
-            })
-            const completionNativeTools = nativeTools?.filter((tool) => {
-                if ("function" in tool) return tool.function.name === ClineDefaultTool.ATTEMPT
-                return "name" in tool && tool.name === ClineDefaultTool.ATTEMPT
             })
             const workspacesJson = await this.getWorkspaceMetadataJson()
             const workspaceMetadataEnvironmentBlock = this.buildEnvironmentBlock(workspacesJson)
@@ -1060,7 +1083,7 @@ export class SubagentRunner {
                 // `finalizeOpen` emit through this same callback, so collecting here
                 // catches every failure without inspecting lifecycle internals.
                 const failedHostedServerTools: HostedServerToolFailure[] = []
-                const requestWebSearchRoutingPlan = this.completionOnly ? completionWebSearchRoutingPlan : webSearchRoutingPlan
+                const requestWebSearchRoutingPlan = webSearchRoutingPlan
                 activeHostedServerToolLifecycle = new ServerToolLifecycle(requestWebSearchRoutingPlan, true, (update) => {
                     if (!countedHostedServerToolIds.has(update.dlineTid)) {
                         countedHostedServerToolIds.add(update.dlineTid)
@@ -1124,11 +1147,13 @@ export class SubagentRunner {
                 let roundThoughtsTokens = 0
                 let roundThoughtsReported = false
                 let roundTotalCost: number | undefined
+                // This request carries every tool result produced so far.
+                toolBudget.clearStaged()
                 const providerStream = this.createMessageWithInitialChunkRetry(
                     api,
-                    this.completionOnly ? completionSystemPrompt : systemPrompt,
+                    systemPrompt,
                     conversation,
-                    this.completionOnly ? completionNativeTools : nativeTools,
+                    nativeTools,
                     providerInfo.providerId,
                     providerInfo.model.id,
                     contextManager,
@@ -1144,10 +1169,15 @@ export class SubagentRunner {
                     },
                     onProgress,
                     () =>
-                        buildContextUsageSection({
-                            contextTokens: stats.contextTokens,
-                            contextWindow: stats.contextWindow,
-                        }),
+                        [
+                            buildContextUsageSection({
+                                contextTokens: stats.contextTokens,
+                                contextWindow: stats.contextWindow,
+                            }),
+                            buildContextBudgetSection(this.activeBudget, outputBudget.outputTokens),
+                        ]
+                            .filter((section): section is string => Boolean(section))
+                            .join("\n\n") || undefined,
                 )
                 const stream = normalizeApiStream(
                     providerStream,
@@ -1480,7 +1510,7 @@ export class SubagentRunner {
                             // which is the opposite of what convergence is for.
                             const salvaged = truncateTextToSubagentOutputBudget(
                                 buildSalvagedConvergenceResult(this.finishRequested ?? "user", latestAssistantNarrative),
-                                outputBudget.outputTokens,
+                                resolveFinalResultTokens(outputBudget.outputTokens, this.activeBudget),
                             )
                             onProgress({ status: "completed", result: salvaged, stats: { ...stats } })
                             return { status: "completed", result: salvaged, stats }
@@ -1510,7 +1540,7 @@ export class SubagentRunner {
 
                         const boundedCompletionResult = truncateTextToSubagentOutputBudget(
                             completionResult,
-                            outputBudget.outputTokens,
+                            resolveFinalResultTokens(outputBudget.outputTokens, this.activeBudget),
                         )
                         const latestToolCall = formatToolCallPreview(toolName, toolCallParams)
                         onProgress({
@@ -1550,11 +1580,13 @@ export class SubagentRunner {
                         },
                     })
 
+                    const toolLease = toolBudget.begin()
                     const subagentConfig = this.createSubagentTaskConfig(
                         state,
                         webToolsEnabled,
                         webSearchRoutingPlan,
                         imageGenerationService,
+                        toolLease,
                     )
                     const handler = subagentConfig.coordinator.getHandler(toolName)
                     let toolResult: unknown
@@ -1618,6 +1650,11 @@ export class SubagentRunner {
                     if (toolError) providerExecution.failTool()
                     else providerExecution.completeTool()
                     const serializedToolResult = serializeToolResult(toolResult)
+                    const boundedToolResult = boundToolText(
+                        { body: serializedToolResult },
+                        { strategy: "headTail", ...resolveToolResultBudget(toolLease, MAX_TOOL_RESULT_TEXT_BYTES) },
+                    )
+                    toolLease.end(Buffer.byteLength(boundedToolResult, "utf8"))
                     onProgress({
                         event: {
                             kind: "tool_call",
@@ -1639,7 +1676,7 @@ export class SubagentRunner {
                         },
                     })
                     const toolDescription = handler?.getDescription(toolCallBlock) || `[${toolName}]`
-                    pushSubagentToolResultBlock(toolResultBlocks, call, toolDescription, serializedToolResult)
+                    pushSubagentToolResultBlock(toolResultBlocks, call, toolDescription, boundedToolResult)
 
                     // Check for abort after each tool execution to exit early
                     if (this.shouldAbort()) {
@@ -1716,6 +1753,7 @@ export class SubagentRunner {
         webToolsEnabled: boolean,
         webSearchRoutingPlan: WebSearchRoutingPlan,
         imageGenerationService: TaskConfig["services"]["imageGenerationService"],
+        contextBudget: TaskConfig["contextBudget"],
     ): TaskConfig {
         const baseCallbacks = this.baseConfig.callbacks
         const coordinator = new ToolExecutorCoordinator()
@@ -1735,6 +1773,9 @@ export class SubagentRunner {
             webToolsEnabled,
             webSearchRoutingPlan,
             vscodeTerminalExecutionMode: "backgroundExec",
+            // The subagent's own budget, never the main task call's lease the
+            // base configuration carries: these results fill the subagent's context.
+            contextBudget,
             callbacks: {
                 ...baseCallbacks,
                 say: async () => undefined,

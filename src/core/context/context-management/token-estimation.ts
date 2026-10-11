@@ -7,12 +7,21 @@ export interface TokenEstimateScope {
 }
 
 const MAX_RECENT_SAMPLES = 9
+/**
+ * Ratios no tokenizer produces for text. Usage outside this range describes
+ * something other than the request bytes - a test double, hidden provider
+ * input, or a row whose usage and estimate belong to different requests - and
+ * learning from it would scale every later estimate by the same error.
+ */
+export const MIN_PLAUSIBLE_TOKEN_PER_BYTE = 0.1
+export const MAX_PLAUSIBLE_TOKEN_PER_BYTE = 1
 
 /**
  * Resolve text tokens per UTF-8 byte from exact input usage reported by one Provider scope.
  *
  * Mixed-media samples are excluded because images and documents use independent token models;
- * including them would distort every later text estimate.
+ * including them would distort every later text estimate. Implausible ratios are excluded for
+ * the same reason.
  */
 export function resolveTokenPerByte(
     pressures: readonly ContextWindowRequestPressure[],
@@ -26,6 +35,7 @@ export function resolveTokenPerByte(
             const tokens = positive(pressure.actualInputTokens)
             return bytes > 0 && tokens > 0 ? [tokens / bytes] : []
         })
+        .filter(isPlausibleTokenPerByte)
         .slice(-MAX_RECENT_SAMPLES)
         .sort((left, right) => left - right)
 
@@ -38,6 +48,10 @@ function sameScope(pressure: ContextWindowRequestPressure, scope: TokenEstimateS
     return (
         pressure.providerId === scope.providerId && pressure.modelId === scope.modelId && pressure.apiFormat === scope.apiFormat
     )
+}
+
+function isPlausibleTokenPerByte(ratio: number): boolean {
+    return ratio >= MIN_PLAUSIBLE_TOKEN_PER_BYTE && ratio <= MAX_PLAUSIBLE_TOKEN_PER_BYTE
 }
 
 function positive(value: number | undefined): number {

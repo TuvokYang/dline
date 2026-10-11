@@ -1,5 +1,6 @@
+import { ContextBudgetLedger } from "@core/context/context-management/context-budget-ledger"
 import { MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { replayDurableToolResult } from "../../../../DurableToolResult"
 import type { ToolInvocationEnvelope } from "../../../../stores/payload/TaskPayloadEnvelopes"
 import type { TaskConfig } from "../../../../tools/types/TaskConfig"
@@ -99,7 +100,7 @@ describe("DefaultProductionToolExecutionService", () => {
         const [result] = replayDurableToolResult(content) ?? []
         const text = result?.type === "tool_result" && typeof result.content === "string" ? result.content : ""
         expect(text.startsWith("[qna_respond] Result:\n<feedback>\n")).toBe(true)
-        expect(text).toContain("[FILE TRUNCATED:")
+        expect(text.includes("[OUTPUT TRUNCATED:")).toBe(true)
         expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(MAX_TOOL_RESULT_TEXT_BYTES)
     })
 
@@ -140,6 +141,144 @@ describe("DefaultProductionToolExecutionService", () => {
         })
 
         expect(receivedPresentationTs).toBe(99)
+    })
+})
+
+describe("DefaultProductionToolExecutionService context budget", () => {
+    function replayedText(content: string): string {
+        const [block] = replayDurableToolResult(content) ?? []
+        return String((block as { content?: unknown } | undefined)?.content ?? "")
+    }
+
+    function budgetedService(
+        occupied: number,
+        contextWindow: number,
+        results: Promise<string>[],
+        options: { readonly toolName?: string; readonly config?: Partial<TaskConfig> } = {},
+    ) {
+        const ledger = new ContextBudgetLedger({
+            contextWindow: () => contextWindow,
+            occupiedTokens: () => occupied,
+            tokenPerByte: () => 0.25,
+        })
+        const leases: unknown[] = []
+        let call = 0
+        const service = new DefaultProductionToolExecutionService({
+            taskId: "task-1",
+            config: { create: () => toolConfig(options.config) },
+            runtime: {
+                coordinator: { getHandler: () => undefined },
+                execute: async (config: TaskConfig) => {
+                    leases.push(config.contextBudget)
+                    return results[call++]
+                },
+                restoreSubagentRetry: async () => false,
+            } as unknown as ProductionToolHandlerRuntime,
+            contextBudget: ledger,
+        })
+        const run = (dlineTid: string) =>
+            service.execute({
+                command: { commandId: dlineTid, turnId: "turn-1", dlineTid, invocationRef: dlineTid },
+                invocation: {
+                    ...INVOCATION,
+                    toolName: options.toolName ?? INVOCATION.toolName,
+                    dlineTid,
+                    functionId: `function-${dlineTid}`,
+                },
+                surface: createDeniedSurface("detached_domain"),
+            })
+        return { ledger, leases, run }
+    }
+
+    function deferred() {
+        let resolve!: (value: string) => void
+        const promise = new Promise<string>((done) => {
+            resolve = done
+        })
+        return { promise, resolve }
+    }
+
+    it("gives parallel calls only the round's budget and counts each result as it is produced", async () => {
+        // 100K window, 87.5K occupied: the round may take 80% of the 12.5K left, 10K tokens (40 KB).
+        const first = deferred()
+        const second = deferred()
+        const { ledger, leases, run } = budgetedService(87_500, 100_000, [first.promise, second.promise])
+
+        const firstRun = run("tid-a")
+        const secondRun = run("tid-b")
+        await vi.waitFor(() => expect(leases).toHaveLength(2))
+        expect(leases.every(Boolean)).toBe(true)
+        expect(ledger.snapshot().activeConsumers).toBe(2)
+
+        first.resolve("a".repeat(100_000))
+        const firstText = replayedText((await firstRun).content)
+        const stagedAfterFirst = ledger.snapshot().stagedTokens
+        second.resolve("b".repeat(100_000))
+        const secondText = replayedText((await secondRun).content)
+
+        expect(Buffer.byteLength(firstText) <= 20 * 1024).toBe(true)
+        expect(stagedAfterFirst).toBe(Math.ceil(Buffer.byteLength(firstText) * 0.25))
+        expect(firstText.includes("near its budget")).toBe(true)
+        expect(secondText.includes("[OUTPUT TRUNCATED:")).toBe(true)
+        expect(ledger.snapshot().stagedTokens <= 10_000).toBe(true)
+        expect(ledger.snapshot().activeConsumers).toBe(0)
+    })
+
+    it("leaves a result whole while the window has room", async () => {
+        const { ledger, run } = budgetedService(0, 1_000_000, [Promise.resolve("c".repeat(10_000))])
+
+        const text = replayedText((await run("tid-c")).content)
+
+        expect(text).toBe(`[summarize_task] Result:\n${"c".repeat(10_000)}`)
+        expect(ledger.snapshot().stagedTokens).toBe(Math.ceil(Buffer.byteLength(text) * 0.25))
+    })
+
+    it("holds a subagent result for after compaction once less than the yield margin is left", async () => {
+        const publish = vi.fn(async () => undefined)
+        // 100K window, 98K occupied: 2K left, below the 3K yield margin.
+        const { ledger, run } = budgetedService(98_000, 100_000, [Promise.resolve("subagent final result")], {
+            toolName: "use_subagents",
+            config: { backgroundResults: { publish } } as unknown as Partial<TaskConfig>,
+        })
+
+        const text = replayedText((await run("tid-d")).content)
+
+        expect(text.includes("[DEFERRED]")).toBe(true)
+        expect(text.includes("subagent final result")).toBe(false)
+        expect(publish).toHaveBeenCalledOnce()
+        const [delivery] = publish.mock.calls[0] as unknown as [{ entryId: string; producerKind: string; text: string }]
+        expect(delivery.entryId).toBe("background:subagent-deferred:tid-d:attempt:1")
+        expect(delivery.producerKind).toBe("subagent_batch")
+        expect(delivery.text.startsWith("# Background Results\n## Deferred Subagent Results\n")).toBe(true)
+        expect(delivery.text.includes("(function_id function-tid-d) Result:")).toBe(true)
+        expect(delivery.text.endsWith("subagent final result")).toBe(true)
+        // Only the notice entered the conversation, so only the notice is staged.
+        expect(ledger.snapshot().stagedTokens).toBe(Math.ceil(Buffer.byteLength(text) * 0.25))
+    })
+
+    it("returns a subagent result directly while the conversation has room", async () => {
+        const publish = vi.fn(async () => undefined)
+        const { run } = budgetedService(0, 1_000_000, [Promise.resolve("subagent final result")], {
+            toolName: "use_subagent",
+            config: { backgroundResults: { publish } } as unknown as Partial<TaskConfig>,
+        })
+
+        const text = replayedText((await run("tid-e")).content)
+
+        expect(text.endsWith("subagent final result")).toBe(true)
+        expect(publish).not.toHaveBeenCalled()
+    })
+
+    it("never holds the result of a tool other than a subagent", async () => {
+        const publish = vi.fn(async () => undefined)
+        const { run } = budgetedService(98_000, 100_000, [Promise.resolve("short")], {
+            config: { backgroundResults: { publish } } as unknown as Partial<TaskConfig>,
+        })
+
+        const text = replayedText((await run("tid-f")).content)
+
+        expect(text.includes("[DEFERRED]")).toBe(false)
+        expect(publish).not.toHaveBeenCalled()
     })
 })
 

@@ -23,6 +23,7 @@ import type { ClineDefaultTool } from "@shared/tools"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
 import { WorkspaceRootManager } from "@/core/workspace"
 import type { ContextManager } from "../../../context/context-management/ContextManager"
+import type { ContextBudgetLease } from "../../../context/context-management/context-budget-ledger"
 import type { StateManager } from "../../../storage/StateManager"
 import type { TaskActivityStore } from "../../activity/TaskActivityStore"
 import type { BackgroundResultDeliveryPort } from "../../background/BackgroundResultDeliveryPort"
@@ -142,6 +143,13 @@ export interface TaskConfig {
      * for the same allowance instead of multiplying the configured limit.
      */
     subagentFanoutBudget?: SubagentFanoutBudget
+
+    /**
+     * This call's share of the task context budget. Handlers that bound their
+     * own results take their byte cap from it; calls made outside a task turn
+     * have none and keep the fixed tool result limit.
+     */
+    contextBudget?: ContextBudgetLease
 }
 
 /**
@@ -205,6 +213,14 @@ export interface TaskCallbacks {
      * an answer has no workspace history to step back through.
      */
     saveCheckpoint?: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
+
+    /**
+     * Record that the current round owes a restore point without committing one.
+     *
+     * Present only where a round boundary settles the debt with a single commit;
+     * without it, a tool that may change the workspace commits per call instead.
+     */
+    deferCheckpoint?: () => void
 
     /**
      * Wait until the task's baseline restore point exists.

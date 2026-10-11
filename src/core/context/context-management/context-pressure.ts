@@ -51,7 +51,10 @@ export function readContextWindowRequestPressure(text?: string): ContextWindowRe
     try {
         const info = JSON.parse(text) as UiApiReqInfo
         const pressure: ContextWindowRequestPressure = {}
-        const actualInputTokens = normalizePositiveTokens((info.tokensIn || 0) + (info.cacheWrites || 0) + (info.cacheReads || 0))
+        // Rows written before attempts were separated only carry the billing sum.
+        const actualInputTokens = normalizePositiveTokens(
+            info.contextInputTokens ?? (info.tokensIn || 0) + (info.cacheWrites || 0) + (info.cacheReads || 0),
+        )
         if (actualInputTokens > 0) pressure.actualInputTokens = actualInputTokens
         const estimatedTextBytes = normalizePositiveTokens(info.estimatedTextBytes)
         if (estimatedTextBytes > 0) pressure.estimatedTextBytes = estimatedTextBytes

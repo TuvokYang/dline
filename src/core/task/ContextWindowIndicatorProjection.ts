@@ -2,6 +2,8 @@ import {
     type ContextWindowCandidateEstimator,
     estimateContextWindowCandidate,
 } from "@core/context/context-management/context-window-projection"
+import type { SystemPromptComposition } from "@core/prompts/generators/system-prompt-composition"
+import { apportionTokens, type DurableContextComposition } from "@shared/context-window-indicator"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import cloneDeep from "clone-deep"
 import type { CompactionProviderInput } from "./compaction/CompactionProviderInput"
@@ -28,6 +30,13 @@ export interface ContextWindowRequestOpening {
     readonly projectedUsageTokens: number
     /** The estimate split into the history the request carries, the round's own input, and the environment. */
     readonly segments: ContextWindowIndicatorSegments
+    /** The request prefix split by source, on the same estimate scale; absent when the prompt was not measured. */
+    readonly durableComposition?: DurableContextComposition
+}
+
+export interface EstimateDurableCompositionInput extends ContextWindowCandidateEstimator {
+    providerInput: CompactionProviderInput
+    systemPromptComposition?: SystemPromptComposition
 }
 
 export interface EstimateContextWindowIndicatorSegmentsInput extends ContextWindowCandidateEstimator {
@@ -74,6 +83,57 @@ export function estimateContextWindowIndicatorSegments(
         pendingSendTokens,
         environmentTokens,
         totalTokens,
+    }
+}
+
+/**
+ * Estimate the request prefix every round repeats, split by where it comes from.
+ *
+ * The system prompt and the tool definitions are measured with the same
+ * estimator as the request itself; the prompt's estimate is then shared out by
+ * the byte sizes its generator recorded. A composition that does not describe
+ * this exact prompt is ignored rather than applied to different text.
+ */
+export function estimateDurableComposition(input: EstimateDurableCompositionInput): DurableContextComposition | undefined {
+    const composition = input.systemPromptComposition
+    const { systemPrompt } = input.providerInput
+    if (!composition || composition.totalBytes <= 0 || composition.totalBytes !== Buffer.byteLength(systemPrompt, "utf8")) {
+        return undefined
+    }
+    const estimator = { providerId: input.providerId, modelId: input.modelId, tokenPerByte: input.tokenPerByte }
+    const prefixTokens = estimateContextWindowCandidate({ ...input.providerInput, messages: [] }, estimator)
+    const promptTokens = Math.min(prefixTokens, estimateContextWindowCandidate({ systemPrompt, messages: [] }, estimator))
+    const measuredBytes = [
+        composition.userRulesBytes,
+        composition.skillsBytes,
+        composition.workflowsBytes,
+        composition.toolDefinitionsBytes,
+    ]
+    const baseBytes = Math.max(0, composition.totalBytes - measuredBytes.reduce((total, bytes) => total + bytes, 0))
+    const [basePrompt = 0, userRules = 0, skills = 0, workflows = 0, promptToolDefinitions = 0] = apportionTokens(
+        [baseBytes, ...measuredBytes],
+        promptTokens,
+    )
+    return {
+        basePrompt,
+        userRules,
+        skills,
+        workflows,
+        // Native tool and server-tool definitions are what the prefix holds beyond the prompt.
+        toolDefinitions: promptToolDefinitions + Math.max(0, prefixTokens - promptTokens),
+    }
+}
+
+/** Re-express an estimated prefix on another scale, as when a provider count has replaced the estimate. */
+export function scaleDurableComposition(composition: DurableContextComposition, factor: number): DurableContextComposition {
+    if (!Number.isFinite(factor) || factor <= 0 || factor === 1) return composition
+    const scale = (tokens: number) => Math.round(tokens * factor)
+    return {
+        basePrompt: scale(composition.basePrompt),
+        userRules: scale(composition.userRules),
+        skills: scale(composition.skills),
+        workflows: scale(composition.workflows),
+        toolDefinitions: scale(composition.toolDefinitions),
     }
 }
 

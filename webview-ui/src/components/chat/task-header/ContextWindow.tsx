@@ -92,6 +92,7 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
     onForceTruncateTask,
 }) => {
     const [isOpened, setIsOpened] = useState(false)
+    const [durableExpanded, setDurableExpanded] = useState(false)
     const [confirmationAction, setConfirmationAction] = useState<ConfirmationAction>()
     const [forceTruncateDialogOpen, setForceTruncateDialogOpen] = useState(false)
     const [forceTruncateConfirmation, setForceTruncateConfirmation] = useState("")
@@ -117,6 +118,16 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
     const handleFocus = useCallback(() => {
         setIsOpened(true)
     }, [])
+
+    // Clicking the durable segment opens the summary straight to its breakdown.
+    const handleDurableClick = useCallback(() => {
+        setIsOpened(true)
+        setDurableExpanded(true)
+    }, [])
+
+    useEffect(() => {
+        if (!isOpened) setDurableExpanded(false)
+    }, [isOpened])
 
     const handleCompactClick = useCallback(
         (event: React.MouseEvent) => {
@@ -221,7 +232,9 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
                                     cacheReads={cacheReads}
                                     cacheWrites={cacheWrites}
                                     contextWindow={tokenData.max}
+                                    durableExpanded={durableExpanded}
                                     indicatorViewModel={indicatorViewModel}
+                                    onDurableExpandedChange={setDurableExpanded}
                                     percentage={tokenData.percentage}
                                     tokensIn={tokensIn}
                                     tokensOut={tokensOut}
@@ -238,7 +251,10 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
                                     ref={progressBarRef}
                                     tabIndex={0}>
                                     {contextWindowIndicator ? (
-                                        <ContextWindowSegmentedProgress snapshot={contextWindowIndicator} />
+                                        <ContextWindowSegmentedProgress
+                                            onDurableClick={handleDurableClick}
+                                            snapshot={contextWindowIndicator}
+                                        />
                                     ) : (
                                         <Progress
                                             aria-label="Context window usage progress"

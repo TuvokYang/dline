@@ -1,4 +1,8 @@
-import type { ContextWindowIndicatorLineage, ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
+import type {
+    ContextWindowIndicatorLineage,
+    ContextWindowIndicatorSnapshot,
+    DurableContextComposition,
+} from "@shared/context-window-indicator"
 import type { Mode } from "@shared/storage/types"
 
 export interface CreateContextWindowIndicatorInput {
@@ -20,6 +24,11 @@ export interface BeginContextWindowIndicatorSendInput {
     allowDecrease?: boolean
     pendingSendTokens: number
     environmentTokens: number
+    /**
+     * The prefix the request repeats, split by source. Omitted keeps the split
+     * already shown; `null` drops it because this request's prefix was not measured.
+     */
+    durableComposition?: DurableContextComposition | null
     contextWindow: number
     profileId?: string
     profileName?: string
@@ -251,23 +260,26 @@ export class ContextWindowIndicator {
               }
         this.completedExchangeTokens = 0
         this.pendingInputTokens = 0
-        this.current = {
-            ...this.current,
-            revision: this.current.revision + 1,
-            epoch: this.current.epoch + 1,
-            phase: "sending",
-            durableContextTokens,
-            pendingSendTokens,
-            receivingTokens: 0,
-            stagedTokens: 0,
-            environmentTokens: normalizeTokens(input.environmentTokens),
-            contextWindow: normalizeTokens(input.contextWindow),
-            profileId: input.profileId,
-            profileName: input.profileName,
-            mode: input.mode,
-            updatedAt: input.updatedAt ?? Date.now(),
-            lineage: cloneLineage(input.lineage),
-        }
+        this.current = withDurableComposition(
+            {
+                ...this.current,
+                revision: this.current.revision + 1,
+                epoch: this.current.epoch + 1,
+                phase: "sending",
+                durableContextTokens,
+                pendingSendTokens,
+                receivingTokens: 0,
+                stagedTokens: 0,
+                environmentTokens: normalizeTokens(input.environmentTokens),
+                contextWindow: normalizeTokens(input.contextWindow),
+                profileId: input.profileId,
+                profileName: input.profileName,
+                mode: input.mode,
+                updatedAt: input.updatedAt ?? Date.now(),
+                lineage: cloneLineage(input.lineage),
+            },
+            input.durableComposition === undefined ? this.current.durableComposition : input.durableComposition,
+        )
         return this.getSnapshot()
     }
 
@@ -467,7 +479,16 @@ export function isSameContextWindowIndicatorLineage(
 }
 
 function cloneSnapshot(snapshot: ContextWindowIndicatorSnapshot): ContextWindowIndicatorSnapshot {
-    return { ...snapshot, lineage: cloneLineage(snapshot.lineage) }
+    return withDurableComposition({ ...snapshot, lineage: cloneLineage(snapshot.lineage) }, snapshot.durableComposition)
+}
+
+/** Set or drop the prefix split; an absent split is omitted rather than stored as `undefined`. */
+function withDurableComposition(
+    snapshot: ContextWindowIndicatorSnapshot,
+    composition: DurableContextComposition | null | undefined,
+): ContextWindowIndicatorSnapshot {
+    const { durableComposition: _previous, ...rest } = snapshot
+    return composition ? { ...rest, durableComposition: { ...composition } } : rest
 }
 
 function cloneLineage(lineage: ContextWindowIndicatorLineage): ContextWindowIndicatorLineage {

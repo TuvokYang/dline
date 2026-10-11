@@ -18,6 +18,8 @@ type UpdateApiReqMsgParams = {
     cacheWriteTokens: number
     cacheReadTokens: number
     contextTokens: number
+    /** Input of the attempt that produced the turn, when attempts were separated. */
+    contextInputTokens?: number
     totalCost?: number
     cacheHitRate?: number
     api: ApiHandler
@@ -51,11 +53,17 @@ export const updateApiReqMsg = async (params: UpdateApiReqMsgParams): Promise<vo
     const cacheHitRate = params.cacheHitRate ?? cacheHitRatePercent
 
     const hasReliableContextTokens = Number.isFinite(params.contextTokens) && params.contextTokens > 0
+    const contextInputTokens = params.contextInputTokens
     await params.messageStateHandler.updateClineMessage(currentApiReqIndex, {
         text: JSON.stringify({
             ...currentApiReqInfo, // Spread the modified info (with retryStatus removed)
+            // Without measured occupancy the source still says so, so a reader never
+            // falls back to the billing sum, which counts every retried attempt.
             ...(hasReliableContextTokens
                 ? { contextTokens: params.contextTokens, contextTokensSource: "provider" as const }
+                : { contextTokensSource: "estimate" as const }),
+            ...(contextInputTokens !== undefined && Number.isFinite(contextInputTokens) && contextInputTokens >= 0
+                ? { contextInputTokens }
                 : {}),
             tokensIn: params.inputTokens,
             tokensOut: params.outputTokens,
