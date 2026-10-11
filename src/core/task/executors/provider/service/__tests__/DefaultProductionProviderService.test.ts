@@ -162,6 +162,82 @@ describe("DefaultProductionProviderService", () => {
         expect(final).toMatchObject({ kind: "final", text: "Just an answer.", blocks: [] })
     })
 
+    // WS-051 stripped markup from the streamed prose but drew no card for it, so
+    // a call written as markup stayed invisible until the whole turn settled.
+    it("draws a card for a markup call while it streams and settles the call on that card's row", async () => {
+        const chunks = await run(
+            [text("Reading it. <read_file>"), text("<path>src/a"), text(".ts</path>"), text("</read_file>")],
+            false,
+        )
+
+        const cards = chunks.flatMap((chunk) =>
+            chunk.kind === "partial" && chunk.projection?.kind === "provider.tool_partial" ? [chunk.projection] : [],
+        )
+        expect(cards.length).toBeGreaterThan(0)
+        expect(cards.every((card) => card.provisional === true)).toBe(true)
+        const rows = new Set(cards.map((card) => (card.block as { ts: number }).ts))
+        expect(rows.size).toBe(1)
+        const [row] = rows
+        const final = chunks.find((chunk) => chunk.kind === "final")
+        if (final?.kind !== "final") throw new Error("missing final chunk")
+        expect(final.text).toBe("Reading it.")
+        expect(final.blocks.map((block) => block.invocation.presentationId)).toEqual([row])
+        expect(final.toolRows).toEqual([row])
+    })
+
+    it("streams the prose before the card of the call it introduces", async () => {
+        const chunks = await run([text("Reading it. <read_file><path>a.ts</path></read_file>")], false)
+
+        const partials = chunks.filter((chunk) => chunk.kind === "partial")
+        expect(partials.map((chunk) => [chunk.text, chunk.projection?.kind])).toEqual([
+            ["Reading it.", undefined],
+            ["Reading it.", "provider.tool_partial"],
+        ])
+    })
+
+    // Models often stop without closing their markup. The open call never runs,
+    // and it is neither shown as prose nor kept as a call the turn settled.
+    it("keeps a call that never closed out of the settled turn", async () => {
+        const chunks = await run([text("Writing it. <write_to_file><path>a.ts</path><content>partial")], false)
+
+        expect(chunks.some((chunk) => chunk.kind === "partial" && chunk.projection?.provisional === true)).toBe(true)
+        const final = chunks.find((chunk) => chunk.kind === "final")
+        if (final?.kind !== "final") throw new Error("missing final chunk")
+        expect(final.text).toBe("Writing it.")
+        expect(final.blocks).toEqual([])
+        expect(final.toolRows).toBeUndefined()
+        expect(JSON.stringify(final.content)).not.toContain("write_to_file")
+    })
+
+    it("never draws a card for an explicit-only call the gate has yet to decide", async () => {
+        const chunks = await run([text(MARKUP)], false)
+
+        expect(chunks.some((chunk) => chunk.kind === "partial" && chunk.projection !== undefined)).toBe(false)
+    })
+
+    it("draws no card for a native explicit-only call either, yet still settles it for the gate", async () => {
+        const chunks = await run(
+            [
+                {
+                    type: "tool_calls",
+                    function_id: "call_summary",
+                    dline_tid: "tid_summary",
+                    argumentsMode: "snapshot",
+                    tool_call: { function: { name: "summarize_task", arguments: '{"context":"SECRET_SUMMARY"}' } },
+                } as ApiStreamChunk,
+            ],
+            true,
+        )
+
+        const projections = chunks.flatMap((chunk) => (chunk.kind === "partial" && chunk.projection ? [chunk.projection] : []))
+        expect(projections.length).toBeGreaterThan(0)
+        expect(projections.every((projection) => projection.block === undefined)).toBe(true)
+        expect(JSON.stringify(projections)).not.toContain("SECRET")
+        const final = chunks.find((chunk) => chunk.kind === "final")
+        if (final?.kind !== "final") throw new Error("missing final chunk")
+        expect(final.blocks.map((block) => block.invocation.toolName)).toEqual(["summarize_task"])
+    })
+
     // A call written as markup beside native tools was never a provider call:
     // recording it as one replayed an invented call id on the next request.
     it("records markup beside native tools as the text the model sent, with a prose-only result", async () => {

@@ -29,6 +29,23 @@ describe("mergeMessageWindow", () => {
         expect(result.messages[1]?.partial).toBe(false)
     })
 
+    // A fetched page is a snapshot older than its arrival, so its partial copy of
+    // a row is never newer than the copy the realtime stream already delivered.
+    it.each([
+        ["a newer partial", createMessage(200, "streaming newer", true)],
+        ["a settled row", createMessage(200, "final", false)],
+    ])("keeps %s already held over the page's partial copy", (_label, held) => {
+        const result = mergeMessageWindow({
+            existing: [createMessage(100), held],
+            incoming: [createMessage(200, "streaming older", true), createMessage(300)],
+            existingStartIndex: 10,
+            incomingStartIndex: 11,
+        })
+
+        expect(result.messages.map((message) => message.ts)).toEqual([100, 200, 300])
+        expect(result.messages[1]).toBe(held)
+    })
+
     it("prepends earlier messages while preserving the existing anchor message", () => {
         const existing = [createMessage(300), createMessage(400)]
         const incoming = [createMessage(100), createMessage(200)]

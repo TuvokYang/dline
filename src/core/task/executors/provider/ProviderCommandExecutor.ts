@@ -10,7 +10,7 @@ import type {
     ProviderRequestReportPort,
     ProviderRetryNotice,
 } from "./service/ProviderRequestReport"
-import { mergeProviderUsage } from "./service/ProviderRequestReport"
+import { mergeProviderUsage, sumAttemptUsage } from "./service/ProviderRequestReport"
 
 export type ProviderExecutionChunk =
     | {
@@ -48,6 +48,8 @@ export type ProviderExecutionChunk =
           /** The assistant's settled prose; see ProviderTextPresentationPort. */
           readonly text?: string
           readonly reasoning?: string
+          /** Chat rows of the calls the turn settled; see ProviderTextPresentationPort. */
+          readonly toolRows?: readonly number[]
           readonly turnPlan: ProviderTurnPlan
       }
 
@@ -74,8 +76,19 @@ export interface ProviderTextPresentationPort {
         readonly reasoning?: string
         readonly projection?: Readonly<Record<string, unknown>>
     }): void
-    /** Settle those rows once the turn is durable, or retract a row that received nothing. */
-    commit(input: { readonly transientId: string; readonly text: string; readonly reasoning?: string }): Promise<void>
+    /**
+     * Settle those rows once the turn is durable, or retract a row that received nothing.
+     *
+     * A provisional tool card, drawn for a call before it settled, stays only when
+     * `toolRows` names its row: a call that never closed, never became a call, or
+     * belongs to a stopped or failed stream has nothing left to show.
+     */
+    commit(input: {
+        readonly transientId: string
+        readonly text: string
+        readonly reasoning?: string
+        readonly toolRows?: readonly number[]
+    }): Promise<void>
 }
 
 export interface ProviderExecutionInput {
@@ -103,7 +116,23 @@ interface ProviderTurnOutcome {
 
 /** Carries the usage seen so far into the settlement that happens after the stream. */
 interface UsageAccumulator {
+    /** Usage of the attempt still streaming, or of the attempt that produced the turn. */
     value?: Readonly<Record<string, number>>
+    /** Usage of attempts a retry replaced; consumed, but never part of the conversation. */
+    abandoned?: Readonly<Record<string, number>>
+}
+
+/** Close the current attempt so the retried one starts from an empty usage bucket. */
+function sealAbandonedAttempt(usage: UsageAccumulator): void {
+    if (!usage.value) return
+    usage.abandoned = sumAttemptUsage(usage.abandoned, usage.value)
+    usage.value = undefined
+}
+
+/** Everything the logical request consumed across its attempts. */
+function consumedUsage(usage: UsageAccumulator): Readonly<Record<string, number>> | undefined {
+    if (!usage.abandoned) return usage.value
+    return usage.value ? sumAttemptUsage(usage.abandoned, usage.value) : usage.abandoned
 }
 
 export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant {
@@ -243,7 +272,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
     ): Promise<void> {
         if (!record) return
         try {
-            await record.settle({ usage: usage.value, outcome })
+            await record.settle({ usage: consumedUsage(usage), contextUsage: usage.value, outcome })
         } catch {
             // Reporting must not change provider execution semantics.
         }
@@ -324,6 +353,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                     // the resent stream keeps its transient identity and rewrites
                     // those rows, so nothing it showed is journaled twice.
                     retrying = true
+                    sealAbandonedAttempt(usage)
                     await this.noteRetry(record, chunk.notice)
                     continue
                 }
@@ -389,6 +419,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                     transientId: finalChunk.transientId,
                     text: finalChunk.text ?? "",
                     ...(finalChunk.reasoning === undefined ? {} : { reasoning: finalChunk.reasoning }),
+                    ...(finalChunk.toolRows === undefined ? {} : { toolRows: finalChunk.toolRows }),
                 })
             }
             return { chunk: finalChunk, journalWatermark: appended.watermark }

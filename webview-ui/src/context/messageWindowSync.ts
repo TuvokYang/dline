@@ -14,6 +14,79 @@ import type { UiMessage } from "@shared/ExtensionMessage"
  * nothing, and those messages must be preserved.
  */
 
+/*
+ * Which copy of one row (same `ts`) the Webview keeps.
+ *
+ * Rows arrive by two routes on one ordered channel. The realtime row stream
+ * carries every change in the order the extension made it, so its latest frame
+ * is the newest copy the Webview has seen. A window fetch is a snapshot: its
+ * content dates from when the extension read it, which is earlier than when it
+ * arrives, and every frame published before that read has already arrived ahead
+ * of it. Two rules follow:
+ *   - a row never returns from settled to partial;
+ *   - a partial copy inside a fetch is never newer than the copy already held.
+ */
+
+/** Whether a realtime frame may replace the held copy of its row. */
+export function realtimeFrameSupersedes(held: UiMessage, frame: UiMessage): boolean {
+    return held.partial === true || frame.partial !== true
+}
+
+/** Whether a fetched copy may replace the held copy of its row. */
+export function fetchedCopySupersedes(fetched: UiMessage): boolean {
+    return fetched.partial !== true
+}
+
+/**
+ * Swap each fetched row the fetch may not replace for the copy already held.
+ *
+ * @param held Rows currently rendered.
+ * @param fetched Rows a fetch returned.
+ * @returns `fetched`, with held copies kept where they take precedence.
+ */
+export function preferHeldCopies(held: readonly UiMessage[], fetched: UiMessage[]): UiMessage[] {
+    const heldByTs = new Map(held.map((message) => [message.ts, message]))
+    return fetched.map((message) => {
+        const current = heldByTs.get(message.ts)
+        return current && !fetchedCopySupersedes(message) ? current : message
+    })
+}
+
+/**
+ * Carry realtime rows that landed after a reconciliation into its result.
+ *
+ * A fetch is reconciled against the rows as last rendered, but realtime frames
+ * queued since then are not rendered yet. Committing the reconciled rows as-is
+ * would discard them, a settled row among them. Rows the reconciliation saw keep
+ * its verdict; a row whose copy changed since then keeps the realtime copy when
+ * that copy takes precedence; a row appended after the reconciled tail since
+ * then is kept. Rows that appeared ahead of the tail are left out, as before,
+ * because keeping them would shift the window start the reconciliation chose.
+ *
+ * @param current Rows as they stand now, including queued realtime frames.
+ * @param base Rows the reconciliation was computed from.
+ * @param reconciled Result of that reconciliation.
+ * @returns `reconciled` with the later realtime rows applied.
+ */
+export function rebaseMessageWindow(
+    current: readonly UiMessage[],
+    base: readonly UiMessage[],
+    reconciled: UiMessage[],
+): UiMessage[] {
+    if (current === base) return reconciled
+    const baseByTs = new Map(base.map((message) => [message.ts, message]))
+    const currentByTs = new Map(current.map((message) => [message.ts, message]))
+    const kept = reconciled.map((message) => {
+        const live = currentByTs.get(message.ts)
+        const changedSince = live !== undefined && live !== baseByTs.get(message.ts)
+        return changedSince && realtimeFrameSupersedes(message, live) ? live : message
+    })
+    const tailTs = reconciled.at(-1)?.ts ?? Number.NEGATIVE_INFINITY
+    const appended = current.filter((message) => message.ts > tailTs && !baseByTs.has(message.ts))
+    if (appended.length === 0) return kept
+    return [...kept, ...appended].sort((left, right) => left.ts - right.ts)
+}
+
 /** A fetched window together with the absolute range it covers. */
 export interface FetchedMessageWindow {
     /** Messages returned by the backend, ordered by timestamp. */
@@ -130,10 +203,10 @@ export function reconcileMessageWindow(
         if (!localMessage) {
             return fetchedMessage
         }
-        // A local partial is an in-flight frame; the durable fetch supersedes it.
-        // Otherwise the local copy is at least as recent as this response, which
-        // may have been in flight while a newer realtime event arrived.
-        return localMessage.partial === true ? fetchedMessage : localMessage
+        // A settled fetch supersedes a local in-flight frame. Any other local copy
+        // is at least as recent as this response, which may have been in flight
+        // while a newer realtime frame arrived.
+        return localMessage.partial === true && fetchedCopySupersedes(fetchedMessage) ? fetchedMessage : localMessage
     })
 
     const merged = [...survivors, ...resolved].sort((left, right) => left.ts - right.ts)

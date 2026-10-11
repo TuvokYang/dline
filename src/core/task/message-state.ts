@@ -86,6 +86,16 @@ export interface MessageStateHandlerParams {
  */
 const TASK_DIRECTORY_SIZE_TTL_MS = 30_000
 
+/**
+ * Whether `next` may replace the row held under the same `ts`.
+ *
+ * A slow partial presenter must never regress a row that already reached its
+ * canonical final state under the same causal identity.
+ */
+function mayReplaceRow(current: UiMessage, next: UiMessage): boolean {
+    return current.partial === true || next.partial !== true
+}
+
 export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents> {
     private taskIsFavorited: boolean
     private checkpointTracker: CheckpointTracker | undefined
@@ -515,11 +525,14 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         const all = this.clineMessages
         const existingIndex = all.findIndex((m) => m.ts === msg.ts)
 
+        // The store re-checks the row under its own lock: a final write still
+        // queued there is invisible to the snapshot read above, and a partial
+        // admitted against that snapshot would land after it and regress the row.
+        const admit = (current: UiMessage) => mayReplaceRow(current, msg)
+
         if (existingIndex >= 0) {
             const existing = all[existingIndex]
-            // A slow partial presenter must never regress a row that already reached
-            // its canonical final state under the same causal identity.
-            if (existing.partial !== true && msg.partial === true) return existing
+            if (!admit(existing)) return existing
             const previousMessage = { ...existing }
             this.keepPlace(msg, existing)
             // The upsert replaces the whole row, so a presentation refresh that does
@@ -530,18 +543,23 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
                 msg.interactionId = all[existingIndex].interactionId
             }
 
-            await this.uiMessage?.upsertMessage(msg)
+            const stored = await this.uiMessage?.upsertMessage(msg, admit)
+            if (stored?.applied === false) return stored.message
             const freshAll = this.clineMessages
+            // Look the row up again: a row inserted ahead of it while the write
+            // waited on the lock moves it off the index read before the wait.
+            const freshIndex = freshAll.findIndex((m) => m.ts === msg.ts)
+            const current = freshAll[freshIndex] ?? msg
 
             this.emitClineMessagesChanged({
                 type: "update",
                 messages: freshAll,
-                index: existingIndex,
+                index: freshIndex >= 0 ? freshIndex : existingIndex,
                 previousMessage,
-                message: freshAll[existingIndex],
+                message: current,
             })
 
-            return freshAll[existingIndex]
+            return current
         }
 
         this.placeRow(msg, await this.currentConversationSize())
@@ -555,7 +573,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
             }
         }
 
-        const inserted = await this.uiMessage?.upsertMessage(msg)
+        const inserted = await this.uiMessage?.upsertMessage(msg, admit)
+        if (inserted?.applied === false) return inserted.message
         const freshAll = this.clineMessages
         const actualIndex = inserted?.index ?? insertIndex
         const storedMessage = inserted?.message ?? msg

@@ -10,6 +10,7 @@ import type { EntityFieldRef } from "../api/EntitySchema"
 import type {
     BufferedUnifyStoreChangeListener,
     BufferedUnifyStore as BufferedUnifyStoreContract,
+    StagedTimestampMerge,
     UnifyStore,
 } from "../api/UnifyStore"
 import { asc } from "../api/UnifyStoreQuery"
@@ -342,6 +343,27 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
             this.invalidateTimestampIndex()
             this.addToL2(item.ts, item)
             this.dirty = true
+        })
+    }
+
+    async stageMergeByTimestamp(
+        item: TItem,
+        admit: (current: TItem) => boolean = () => true,
+    ): Promise<StagedTimestampMerge<TItem>> {
+        this.assertWritable()
+        return await this.mutex.withLock(() => {
+            const existing = this.findLastTimestampIndex(item.ts)
+            if (existing >= 0 && !admit(this.items[existing])) {
+                return { index: existing, item: this.items[existing], applied: false }
+            }
+            const index = existing >= 0 ? existing : this.timestampInsertionIndex(item.ts)
+            const stored = existing >= 0 ? { ...this.items[existing], ...item } : item
+            if (existing >= 0) this.items[index] = stored
+            else this.items.splice(index, 0, stored)
+            this.invalidateTimestampIndex()
+            this.addToL2(stored.ts, stored)
+            this.dirty = true
+            return { index, item: stored, applied: true }
         })
     }
 
@@ -1009,6 +1031,12 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
             if (this.items[index].ts === timestamp) return index
         }
         return -1
+    }
+
+    /** Position that keeps the buffer in ascending timestamp order: before the first later row. */
+    private timestampInsertionIndex(timestamp: number): number {
+        const later = this.items.findIndex((candidate) => candidate.ts > timestamp)
+        return later >= 0 ? later : this.items.length
     }
 
     private assertIndex(operation: string, index: number): void {

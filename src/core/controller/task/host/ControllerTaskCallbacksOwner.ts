@@ -198,6 +198,18 @@ export class ControllerTaskCallbacksOwner {
         )
     }
 
+    /**
+     * Store one partial row, then publish the row as it was stored.
+     *
+     * The store refuses a partial over a row that already settled and answers
+     * with the settled row. Publishing the caller's own copy instead would put a
+     * partial frame of a settled row on the stream after its final one.
+     */
+    private async publishStoredPartial(row: UiMessage, description: string): Promise<void> {
+        const stored = (await this.options.messages.upsertClineMessageInMemory(row)) ?? row
+        await this.publishRow(stored, description)
+    }
+
     get browserSession(): BrowserSession {
         return this.browser
     }
@@ -241,8 +253,7 @@ export class ControllerTaskCallbacksOwner {
         // pending, and the row only offers Cancel while it is pending or running.
         if (type === "command" && !partial) message.commandStatus = this.commandStatusAt(ts)
         if (partial) {
-            await this.options.messages.upsertClineMessageInMemory(message)
-            await this.publishRow(message, `partial ${type} row ${ts}`)
+            await this.publishStoredPartial(message, `partial ${type} row ${ts}`)
         } else if (
             existingTs !== undefined &&
             this.options.messages.clineMessages.some((candidate) => candidate.ts === existingTs)
@@ -275,8 +286,7 @@ export class ControllerTaskCallbacksOwner {
         options?.onTsCreated?.(ts)
         if (partial === true) {
             const message: UiMessage = { ts, type: "ask", ask: type, text, partial: true }
-            await this.options.messages.upsertClineMessageInMemory(message)
-            await this.publishRow(message, `partial ${type} row ${ts}`)
+            await this.publishStoredPartial(message, `partial ${type} row ${ts}`)
             // Partial handlers deliberately ignore this promise. Rejecting keeps the
             // preview presentation-only instead of manufacturing a host interaction
             // that would execute beside the canonical final tool call.

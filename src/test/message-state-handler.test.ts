@@ -353,4 +353,70 @@ describe("MessageStateHandler Mutex Protection", () => {
         should.equal(messages[0].partial, false)
         should.equal(messages[0].text, "final")
     })
+
+    // The finalize is still queued on the store lock when the late partial reads
+    // its snapshot, so the row it checks is still partial. Only a check made
+    // under that lock sees the settled row and refuses the regression.
+    it("a partial racing a queued finalize does not regress the settled row", async () => {
+        const handler = new MessageStateHandler({
+            taskId: "test-task-id",
+            ulid: "test-ulid",
+            updateTaskHistory: async () => [],
+            apiConversation: serializedUiStore() as any,
+            uiMessage: serializedUiStore() as any,
+        })
+        const ts = Date.now()
+        const row = { ts, type: "say", say: "text" } as const
+        await handler.upsertClineMessageInMemory({ ...row, text: "partial", partial: true } as UiMessage)
+
+        const finalize = handler.finalizeClineMessage({ ...row, text: "final" } as UiMessage)
+        const late = handler.upsertClineMessageInMemory({ ...row, text: "late", partial: true } as UiMessage)
+        await Promise.all([finalize, late])
+
+        const messages = handler.clineMessages
+        messages.length.should.equal(1)
+        should.equal(messages[0].partial, false)
+        should.equal(messages[0].text, "final")
+        should.equal((await late).text, "final")
+    })
 })
+
+/**
+ * A UI message store whose writes run one at a time behind a lock, as the
+ * buffered store's do. Every write is queued on the lock before its body runs,
+ * which is what lets a caller's earlier snapshot go stale.
+ */
+function serializedUiStore() {
+    let rows: UiMessage[] = []
+    let tail: Promise<unknown> = Promise.resolve()
+    const locked = <T>(body: () => T): Promise<T> => {
+        const run = tail.then(body)
+        tail = run.catch(() => undefined)
+        return run
+    }
+    const indexOf = (ts: number) => rows.findIndex((row) => row.ts === ts)
+    return {
+        getAll: () => rows,
+        get count() {
+            return rows.length
+        },
+        findIndexByTs: indexOf,
+        upsertMessage: (message: UiMessage, admit: (current: UiMessage) => boolean = () => true) =>
+            locked(() => {
+                const index = indexOf(message.ts)
+                if (index >= 0 && !admit(rows[index])) return { index, message: rows[index], applied: false }
+                if (index >= 0) rows[index] = { ...rows[index], ...message }
+                else rows = [...rows, message].sort((left, right) => left.ts - right.ts)
+                const stored = indexOf(message.ts)
+                return { index: stored, message: rows[stored], applied: true }
+            }),
+        finalizeMessage: (message: UiMessage) =>
+            locked(() => {
+                const index = indexOf(message.ts)
+                const settled = { ...message, partial: false }
+                if (index >= 0) rows[index] = settled
+                else rows.push(settled)
+                return settled
+            }),
+    }
+}

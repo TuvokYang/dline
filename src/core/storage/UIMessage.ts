@@ -150,32 +150,21 @@ export class UIMessage {
 
     /**
      * Upsert a message in memory by ts (no disk write).
-     * If ts exists — replace in-place. If not — insert at ascending ts position.
+     * If ts exists — merge in place. If not — insert at ascending ts position.
      * Memory-layer only; disk sync is handled by flush timer.
      *
      * @param msg The message to upsert
-     * @returns The index and message as stored
+     * @param admit Decides, under the store lock, whether the row currently held
+     *   under `msg.ts` may be replaced. A check made before calling this would
+     *   miss a write still queued on that lock.
+     * @returns The index and message as stored, and whether `msg` was applied
      */
-    async upsertMessage(msg: UiMessage): Promise<{ index: number; message: UiMessage }> {
-        const all = this.store.getAll() as UiMessage[]
-        const existingIndex = all.findIndex((m) => m.ts === msg.ts)
-
-        if (existingIndex >= 0) {
-            // Same ts — update through the store so close/flush observes the latest delta.
-            const updated = await this.store.stagePatchAt(existingIndex, msg)
-            return { index: existingIndex, message: updated }
-        }
-
-        // New ts — find insertion point in ascending order, insert via memory-layer API
-        let insertIndex = all.length
-        for (let i = 0; i < all.length; i++) {
-            if (all[i].ts > msg.ts) {
-                insertIndex = i
-                break
-            }
-        }
-        await this.store.stageInsertAt(insertIndex, msg)
-        return { index: insertIndex, message: msg }
+    async upsertMessage(
+        msg: UiMessage,
+        admit?: (current: UiMessage) => boolean,
+    ): Promise<{ index: number; message: UiMessage; applied: boolean }> {
+        const merged = await this.store.stageMergeByTimestamp(msg, admit)
+        return { index: merged.index, message: merged.item, applied: merged.applied }
     }
 
     /**

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Virtuoso } from "react-virtuoso"
 import { StickyUserMessage } from "@/components/chat/task-header/StickyUserMessage"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { preferHeldCopies } from "@/context/messageWindowSync"
 import { cn } from "@/lib/utils"
 import { fetchTaskMessages, getTaskViewKey } from "@/services/task-messages"
 import { isApiReqActive } from "@/utils/streaming"
@@ -816,7 +817,9 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
                 firstItemIndexRef.current = nextFirstItemIndex
                 clineMessagesLengthRef.current = converted.length
-                setClineMessages(converted)
+                // The jump replaces the window, but the page is a snapshot older than
+                // its arrival: a row the stream already moved past keeps that copy.
+                setClineMessages((prev) => preferHeldCopies(prev, converted))
                 setFirstItemIndex(nextFirstItemIndex)
 
                 if (converted.length === 0) {

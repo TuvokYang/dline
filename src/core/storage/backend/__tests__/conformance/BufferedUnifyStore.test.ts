@@ -149,6 +149,43 @@ describe("BufferedUnifyStore", () => {
         }
     })
 
+    // The admission decision belongs under the store lock: a write queued ahead
+    // of the merge must be what `admit` sees, not the row the caller last read.
+    it("decides a timestamp merge against writes queued ahead of it", async () => {
+        const store = await open(`buffered-merge-admit-${randomUUID()}`)
+        try {
+            await store.append({ ts: 100, value: "draft" })
+            const settle = store.stageUpsertByTimestamp({ ts: 100, value: "settled" })
+            const late = store.stageMergeByTimestamp({ ts: 100, value: "late draft" }, (current) => current.value === "draft")
+            await settle
+
+            await expect(late).resolves.toEqual({ index: 0, item: { ts: 100, value: "settled" }, applied: false })
+            expect(store.getAll()).toEqual([{ ts: 100, value: "settled" }])
+        } finally {
+            await store.close()
+        }
+    })
+
+    it("merges into the row holding the timestamp, or inserts in timestamp order", async () => {
+        const store = await open(`buffered-merge-order-${randomUUID()}`)
+        try {
+            await store.append({ ts: 100, value: "first" })
+            await store.append({ ts: 300, value: "third" })
+
+            await expect(store.stageMergeByTimestamp({ ts: 200, value: "second" })).resolves.toMatchObject({
+                index: 1,
+                applied: true,
+            })
+            await expect(store.stageMergeByTimestamp({ ts: 300, value: "third, revised" })).resolves.toMatchObject({
+                index: 2,
+                applied: true,
+            })
+            expect(store.getAll().map(({ value }) => value)).toEqual(["first", "second", "third, revised"])
+        } finally {
+            await store.close()
+        }
+    })
+
     it("closes idempotently after admitted writes and rejects later writes", async () => {
         const store = await open(`buffered-close-${randomUUID()}`)
         const admitted = store.append({ ts: 100, value: "admitted" })

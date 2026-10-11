@@ -150,7 +150,22 @@ export async function describeToolDenial(handler: IToolHandler | undefined, conf
 export async function presentToolDenial(handler: IToolHandler | undefined, config: TaskConfig, block: ToolUse): Promise<void> {
     if (handler && "presentDenial" in handler) {
         await (handler as IDenialPresentingToolHandler).presentDenial(config, block)
+        return
     }
+    await withdrawUnsettledCard(config, block)
+}
+
+/**
+ * Remove the card a refused call drew while it streamed.
+ *
+ * The call never ran and the generic denial row reports the refusal, so a card
+ * still marked partial would otherwise keep spinning beside it forever. A card
+ * its handler already settled is left alone.
+ */
+async function withdrawUnsettledCard(config: TaskConfig, block: ToolUse): Promise<void> {
+    const card = config.messageState?.clineMessages.find((message) => message.ts === block.ts)
+    if (card?.partial !== true) return
+    await config.messageState.removeMessagesByTs([block.ts])
 }
 
 /**

@@ -85,6 +85,16 @@ export type BufferedUnifyStoreChangeListener = (change: BufferedUnifyStoreChange
 /**
  * Optional materialized and staged behavior used by legacy ordered message stores.
  */
+/** Outcome of {@link BufferedUnifyStore.stageMergeByTimestamp}. */
+export interface StagedTimestampMerge<TItem> {
+    /** Buffer position of the row after the call. */
+    readonly index: number
+    /** The row now stored under the timestamp. */
+    readonly item: TItem
+    /** False when `admit` refused the merge and the row was left as it was. */
+    readonly applied: boolean
+}
+
 export interface BufferedUnifyStore<TItem extends { ts: number }> {
     readonly count: number
     readonly isFullyLoaded: boolean
@@ -109,6 +119,15 @@ export interface BufferedUnifyStore<TItem extends { ts: number }> {
     stageUpdateAt(index: number, item: TItem): Promise<void>
     stagePatchAt(index: number, updates: Partial<TItem>): Promise<TItem>
     stageUpsertByTimestamp(item: TItem): Promise<void>
+    /**
+     * Merge `item` into the row carrying its timestamp, or insert it in timestamp
+     * order when no row does.
+     *
+     * `admit` sees the current row under the same lock as the write, so a write
+     * queued in between cannot invalidate the decision. A refused merge leaves the
+     * buffer untouched and reports the row it kept.
+     */
+    stageMergeByTimestamp(item: TItem, admit?: (current: TItem) => boolean): Promise<StagedTimestampMerge<TItem>>
     removeAt(index: number): Promise<void>
     insertAt(index: number, item: TItem): Promise<void>
     clear(): Promise<void>

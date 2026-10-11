@@ -1,4 +1,5 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
+import { fetchedCopySupersedes } from "@/context/messageWindowSync"
 
 export type BottomFollowIntent = "follow" | "none"
 
@@ -203,16 +204,26 @@ function buildIndexedMessages(
 function dedupeMessages(indexedMessages: IndexedMessage[]): IndexedMessage[] {
     const byIndex = new Map<number, IndexedMessage>()
     for (const item of indexedMessages) {
-        byIndex.set(item.index, item)
+        byIndex.set(item.index, laterEntry(byIndex.get(item.index), item))
     }
 
     const byTs = new Map<number, IndexedMessage>()
     for (const item of byIndex.values()) {
-        const existing = byTs.get(item.message.ts)
-        if (!existing || item.order > existing.order) {
-            byTs.set(item.message.ts, item)
-        }
+        byTs.set(item.message.ts, laterEntry(byTs.get(item.message.ts), item))
     }
 
     return Array.from(byTs.values()).sort((left, right) => left.index - right.index)
+}
+
+/**
+ * The entry that wins when two claim the same slot: normally the later one.
+ *
+ * Incoming entries come from a fetched page, a snapshot older than its arrival,
+ * so a partial copy in it never replaces a copy already held for the same row.
+ */
+function laterEntry(held: IndexedMessage | undefined, item: IndexedMessage): IndexedMessage {
+    if (!held) return item
+    const [earlier, later] = held.order < item.order ? [held, item] : [item, held]
+    const sameRow = earlier.message.ts === later.message.ts
+    return sameRow && !fetchedCopySupersedes(later.message) ? earlier : later
 }

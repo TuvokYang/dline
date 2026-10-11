@@ -40,7 +40,13 @@ import {
     UiServiceClient,
 } from "../services/grpc-client"
 import { fetchTaskMessages, getTaskViewKey } from "../services/task-messages"
-import { canAppendRealtimeMessage, isMessageWindowOverfull, reconcileMessageWindow } from "./messageWindowSync"
+import {
+    canAppendRealtimeMessage,
+    isMessageWindowOverfull,
+    realtimeFrameSupersedes,
+    rebaseMessageWindow,
+    reconcileMessageWindow,
+} from "./messageWindowSync"
 
 type ExtensionStatePatch = {
     __dlineStatePatch: true
@@ -69,8 +75,7 @@ const mergeClineMessagesByTs = (existing: UiMessage[], incoming: UiMessage[]): U
             merged.push(message)
             return
         }
-        const current = merged[existingIndex]
-        if (current.partial !== true && message.partial === true) {
+        if (!realtimeFrameSupersedes(merged[existingIndex], message)) {
             return
         }
         merged[existingIndex] = message
@@ -470,11 +475,17 @@ export const ExtensionStateContextProvider: React.FC<{
     totalMessageCountRef.current = state.totalMessageCount ?? 0
     if (clineMessages.length > 0) bootstrapResolvedRef.current = true
 
-    const commitMessageWindow = useCallback((messages: UiMessage[], startIndex: number) => {
-        clineMessagesRef.current = messages
+    // A fetch is reconciled against the rows as last rendered (`base`), so realtime
+    // frames queued since then are missing from its result. Rebasing inside the
+    // state update applies the reconciliation on top of those frames instead of
+    // overwriting them, a settled row among them.
+    const commitMessageWindow = useCallback((messages: UiMessage[], startIndex: number, base?: readonly UiMessage[]) => {
+        const rebase = (current: UiMessage[]) => (base ? rebaseMessageWindow(current, base, messages) : messages)
+        const committed = rebase(clineMessagesRef.current)
+        clineMessagesRef.current = committed
         firstItemIndexRef.current = startIndex
-        windowWasAtTailRef.current = canAppendRealtimeMessage(messages.length, startIndex, totalMessageCountRef.current)
-        setClineMessages(messages)
+        windowWasAtTailRef.current = canAppendRealtimeMessage(committed.length, startIndex, totalMessageCountRef.current)
+        setClineMessages(base ? rebase : messages)
         setFirstItemIndex(startIndex)
     }, [])
 
@@ -581,8 +592,9 @@ export const ExtensionStateContextProvider: React.FC<{
                     }
                     if (converted.length > 0) bootstrapResolvedRef.current = true
                     const startIndex = Math.max(0, resp.startIndex)
+                    const base = clineMessagesRef.current
                     const reconciled = applyFetchedMessageWindow(
-                        clineMessagesRef.current,
+                        base,
                         firstItemIndexRef.current,
                         converted,
                         startIndex,
@@ -590,7 +602,7 @@ export const ExtensionStateContextProvider: React.FC<{
                         localTimestampsAtFetchStart,
                         preserveOmittedPartials,
                     )
-                    commitMessageWindow(reconciled.messages, reconciled.startIndex)
+                    commitMessageWindow(reconciled.messages, reconciled.startIndex, base)
                     if (expectedInteraction) {
                         // The response may contain the anchor and still be
                         // rejected by the continuous-window contract when it does
@@ -703,8 +715,9 @@ export const ExtensionStateContextProvider: React.FC<{
                         const resp = await fetchCurrentMessages(fetchLatest ? -1 : knownEnd, TAIL_PAGE_SIZE)
                         if (!ownsSync()) return
                         const converted = resp.messages.map((message) => convertProtoToClineMessage(message))
+                        const base = clineMessagesRef.current
                         const reconciled = applyFetchedMessageWindow(
-                            clineMessagesRef.current,
+                            base,
                             firstItemIndexRef.current,
                             converted,
                             Math.max(0, resp.startIndex),
@@ -712,7 +725,7 @@ export const ExtensionStateContextProvider: React.FC<{
                             localTimestampsAtFetchStart,
                             preserveOmittedPartials,
                         )
-                        commitMessageWindow(reconciled.messages, reconciled.startIndex)
+                        commitMessageWindow(reconciled.messages, reconciled.startIndex, base)
                         progressed = firstStepPending || windowEnd() > knownEnd
                         firstStepPending = false
                     } catch {
@@ -1135,7 +1148,7 @@ export const ExtensionStateContextProvider: React.FC<{
                     setClineMessages((prev) => {
                         if (sourceKey !== currentTaskViewKeyRef.current) return prev
                         const existingIndex = prev.findIndex((msg) => msg.ts === partialMessage.ts)
-                        if (existingIndex >= 0 && prev[existingIndex].partial !== true && partialMessage.partial === true) {
+                        if (existingIndex >= 0 && !realtimeFrameSupersedes(prev[existingIndex], partialMessage)) {
                             return prev
                         }
                         if (

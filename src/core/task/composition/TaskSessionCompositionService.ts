@@ -5,7 +5,9 @@ import { getContextWindowInfo } from "@core/context/context-management/context-w
 import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { LegacyInputAdapter } from "@core/input-semantics/LegacyInputAdapter"
 import { SemanticInputAdmissionService } from "@core/input-semantics/SemanticInputAdmissionService"
+import { StoreResourceVerifier } from "@core/input-semantics/StoreResourceVerifier"
 import { TaskCommandExpander, TaskMentionResolver } from "@core/input-semantics/TaskEntityResolvers"
+import { openTaskInputResources } from "@core/input-semantics/TaskInputResourceStore"
 import { TaskSemanticInputAdmission } from "@core/input-semantics/TaskSemanticInputAdmission"
 import { formatResponse } from "@core/prompts/responses"
 import type { StateManager } from "@core/storage/StateManager"
@@ -57,7 +59,7 @@ import type { ActiveTaskSession } from "../session/ActiveTaskSession"
 import { HostedServerToolPresenter } from "../session/HostedServerToolPresenter"
 import { InitialCheckpointRequestReporter } from "../session/InitialCheckpointRequestReporter"
 import { createPresentationIdSequence } from "../session/PresentationIdSequence"
-import { ProviderTextPresenter } from "../session/ProviderTextPresenter"
+import { createHostPresentationPacing, ProviderTextPresenter } from "../session/ProviderTextPresenter"
 import type { RealtimeMessagePublisher } from "../session/RealtimeMessagePublisher"
 import { readRestoredContextPressure } from "../session/RestoredContextPressure"
 import { RestoredToolDialogContinuation } from "../session/RestoredToolDialogContinuation"
@@ -66,6 +68,7 @@ import { SessionResourceScope } from "../session/SessionResourceScope"
 import { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
 import { TaskBackgroundIngressOwner } from "../session/TaskBackgroundIngressOwner"
 import { TaskCollaborationSessionOwner } from "../session/TaskCollaborationSessionOwner"
+import { createTaskContextBudget } from "../session/TaskContextBudget"
 import { isRunAtRest, TaskContextUsageProjection } from "../session/TaskContextUsageProjection"
 import { TaskEnvironmentOwner } from "../session/TaskEnvironmentOwner"
 import { TaskInputPresenter } from "../session/TaskInputPresenter"
@@ -200,7 +203,12 @@ export class TaskSessionCompositionService {
         const toolState = new DefaultToolHandlerState()
         // One view per task: requests, compaction and every conversation reader
         // share it, and each journal payload is rendered once rather than once per round.
-        const journalMessages = new ProviderJournalMessageMaterializer(persistence.payloads)
+        // Admitted inputs place resources by reference; the request reads their
+        // verified bytes from the task's own store when it is materialized.
+        const journalMessages = new ProviderJournalMessageMaterializer(
+            persistence.payloads,
+            openTaskInputResources(options.taskId),
+        )
         const conversationView = new JournalConversationView(persistence.ports.journal, journalMessages)
         const providerConversation = { messages: () => conversationView.providerMessages() }
         const conversationRewind = new JournalConversationRewind(persistence.ports.journal, conversationView)
@@ -236,9 +244,32 @@ export class TaskSessionCompositionService {
         await activities.hydrate()
         let session: ActiveTaskSession | undefined
         let collaboration: TaskCollaborationSessionOwner | undefined
+        // The whole auto-condense setting group defines the trigger and the window a
+        // compaction may use. Passing only the percent would silently ignore the
+        // reserve bounds and the absolute cap the user configured.
+        const readCompactTriggerOptions = () => ({
+            triggerPercent: options.stateManager.getGlobalSettingsKey("autoCondenseTriggerPercent"),
+            minReserveTokens: options.stateManager.getGlobalSettingsKey("autoCondenseMinReserveTokens"),
+            maxReserveTokens: options.stateManager.getGlobalSettingsKey("autoCondenseMaxReserveTokens"),
+            maxContextTokens: options.stateManager.getGlobalSettingsKey("autoCondenseMaxContextTokens"),
+        })
+        // Results count against the context the moment they are produced, not
+        // when the next request reports them, so the calls of one round share
+        // its budget instead of each assuming all the room is theirs. The budget
+        // only bounds tool results; it never moves where compaction starts.
+        // The readings are deferred, so the handler created below is read when used.
+        const contextBudget = createTaskContextBudget({
+            api: () => api.current(),
+            indicator: () => toolState.contextWindowIndicator,
+            messages: () => messages.clineMessages,
+            contextSettings: readCompactTriggerOptions,
+        })
+        // A settled background result waits in the durable ledger while the
+        // conversation has no room for it, and is delivered once compaction makes room.
         const backgroundIngress = new TaskBackgroundIngressOwner(
             () => this.requireSession(session),
             persistence.backgroundDeliveries ?? new InMemoryBackgroundDeliveryLedger(),
+            contextBudget,
         )
         // Command dispatch, publication, commit and unowned dialog continuation all
         // run with no caller to reject, so one sink carries every decision they
@@ -518,16 +549,23 @@ export class TaskSessionCompositionService {
                     )
             },
         }
+        // A reply that calls no tool has no block to render it, so the prose
+        // itself is what the chat must show. The presenter paces every streamed
+        // row, tool calls included, so it is released with the session.
+        const providerPresentation = new ProviderTextPresenter(
+            messages,
+            nextPresentationId,
+            realtimeMessages,
+            async (projection) => {
+                if (projection.kind !== "provider.tool_partial") return
+                const block = projection.block
+                if (!block || typeof block !== "object") return
+                await toolExecution.presentPartial(block as ToolUse)
+            },
+            createHostPresentationPacing(() => options.prompt.ports.environment.getHostVersion()),
+        )
+        resources.add({ release: () => providerPresentation.dispose() })
         const compactionScopes = new CompactionRequestScopes()
-        // The whole auto-condense setting group defines the trigger and the window a
-        // compaction may use. Passing only the percent would silently ignore the
-        // reserve bounds and the absolute cap the user configured.
-        const readCompactTriggerOptions = () => ({
-            triggerPercent: options.stateManager.getGlobalSettingsKey("autoCondenseTriggerPercent"),
-            minReserveTokens: options.stateManager.getGlobalSettingsKey("autoCondenseMinReserveTokens"),
-            maxReserveTokens: options.stateManager.getGlobalSettingsKey("autoCondenseMaxReserveTokens"),
-            maxContextTokens: options.stateManager.getGlobalSettingsKey("autoCondenseMaxContextTokens"),
-        })
         // One barrier for both causes a round owes a compaction: a settled
         // request reporting the context is full, and a `/compact` an admitted
         // input carries. Either way the next round waits on it before it is composed.
@@ -568,12 +606,10 @@ export class TaskSessionCompositionService {
         // noticing that the rewound conversation is still full. Only a restore
         // seeds it: an ordinary resume keeps the conversation it already fitted.
         if (options.openReason === "checkpoint_restore") {
-            const trigger = resolveCompactTriggerTokens(getContextWindowInfo(api.current()).contextWindow, {
-                triggerPercent: options.stateManager.getGlobalSettingsKey("autoCondenseTriggerPercent"),
-                minReserveTokens: options.stateManager.getGlobalSettingsKey("autoCondenseMinReserveTokens"),
-                maxReserveTokens: options.stateManager.getGlobalSettingsKey("autoCondenseMaxReserveTokens"),
-                maxContextTokens: options.stateManager.getGlobalSettingsKey("autoCondenseMaxContextTokens"),
-            })
+            const trigger = resolveCompactTriggerTokens(
+                getContextWindowInfo(api.current()).contextWindow,
+                readCompactTriggerOptions(),
+            )
             const restored = readRestoredContextPressure(messages.clineMessages, trigger)
             if (restored) compaction.observe(restored)
         }
@@ -604,6 +640,9 @@ export class TaskSessionCompositionService {
             publish: options.publishState,
             // Saved with the history row, which is what a reopened task draws first.
             settled: () => void messages.updateTaskHistory(),
+            // The figure now carries the results the round composed, so the
+            // budget stops counting them on top of it.
+            tailCounted: () => contextBudget.retireCheckpoint(),
             // A checkpoint restore rewinds the conversation, so the figure from
             // before it describes a context the task no longer has.
             restored: options.openReason === "checkpoint_restore" ? undefined : options.restoredContextWindowIndicator,
@@ -677,6 +716,10 @@ export class TaskSessionCompositionService {
             compactionBarrier: {
                 settleBeforeRound: (input) => {
                     contextUsage.staged({ pendingContextTokens: input.pendingContextTokens ?? 0 })
+                    // The round carries every result produced so far. They stay
+                    // counted until its request opens or a summary replaces them,
+                    // since compose or compaction may still stop before either.
+                    contextBudget.checkpoint()
                     return compaction.settleBeforeRound(input)
                 },
             },
@@ -696,6 +739,8 @@ export class TaskSessionCompositionService {
                     usage: contextUsage,
                 }),
                 new PromptStateCompactionLanding(prompt, promptCache),
+                // Results that waited for room are delivered once the summary freed it.
+                { land: () => backgroundIngress.releaseHeld() },
             ]),
             // A summary the user asked for is theirs to accept or regenerate before
             // it replaces the conversation, through the same dialog every task uses.
@@ -737,19 +782,7 @@ export class TaskSessionCompositionService {
             // Retained input may answer only after the reveal is durable and the
             // canonical interaction is awaiting a response.
             dialogAwaiting: interactions,
-            // A reply that calls no tool has no block to render it, so the prose
-            // itself is what the chat must show.
-            providerPresentation: new ProviderTextPresenter(
-                messages,
-                nextPresentationId,
-                realtimeMessages,
-                async (projection) => {
-                    if (projection.kind !== "provider.tool_partial") return
-                    const block = projection.block
-                    if (!block || typeof block !== "object") return
-                    await toolExecution.presentPartial(block as ToolUse)
-                },
-            ),
+            providerPresentation,
             readMistakeLimit: () => ({
                 count: toolState.consecutiveMistakeCount,
                 limit: options.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes") ?? 3,
@@ -835,6 +868,7 @@ export class TaskSessionCompositionService {
                     taskId: options.taskId,
                     config: toolExecution,
                     runtime: toolRuntime,
+                    contextBudget,
                 }),
                 toolResources: {
                     revertDiff: async () => {
@@ -955,6 +989,9 @@ export class TaskSessionCompositionService {
         const service = () => options.prompt.ports.semanticCatalog
         const admission = new SemanticInputAdmissionService({
             catalog: () => service().current(),
+            conflicts: () => service().conflicts(),
+            // A resource node is admitted only when the task's store vouches for its bytes.
+            resources: new StoreResourceVerifier(() => openTaskInputResources(options.taskId)),
             mentions: new TaskMentionResolver(() => ({
                 cwd: options.cwd,
                 urlContentFetcher: services.urlContentFetcher,

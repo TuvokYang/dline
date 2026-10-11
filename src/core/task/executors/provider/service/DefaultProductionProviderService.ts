@@ -37,6 +37,7 @@ import { closeQuietly, detachOnAbort } from "./detachOnAbort"
 import { repairProviderPairing } from "./ProviderPairingRepair"
 import type { PreparedProviderRequest, ProviderRequestFactory, ProviderServerToolRequestContext } from "./ProviderRequest"
 import { ProviderUsageIncrements } from "./ProviderUsageIncrements"
+import { assistantProse, mayPreviewToolCall, proseOf, XmlToolPreview } from "./XmlToolPreview"
 
 /** The automatic retries one turn may still spend, shared by every send of it. */
 interface RetryBudget {
@@ -260,37 +261,13 @@ function parseArguments(value: unknown): Readonly<Record<string, unknown>> {
 }
 
 /**
- * Parses without allocating identities, for text that is only shown.
+ * The card of a call written as markup, drawn before the call settles.
  *
- * A streaming preview is re-parsed on every chunk; drawing real presentation
- * ids or tool identities for it would burn ids the final parse never uses.
+ * Provisional: the turn either settles the call on this row or the presenter
+ * withdraws it, so an unclosed or unmaterialized call leaves nothing behind.
  */
-const PREVIEW_PARSE_REGISTRY = {
-    getOrCreateTsForBlock: () => 0,
-    getOrCreateToolIdentityForBlock: () => ({ function_id: "", dline_tid: "" }),
-}
-
-function proseOf(blocks: ReturnType<typeof parseAssistantMessage>): string {
-    let prose = ""
-    let hasText = false
-    for (const block of blocks) {
-        if (block.type !== "text") continue
-        if (hasText) prose += "\n\n"
-        prose += block.content
-        hasText = true
-    }
-    return prose
-}
-
-/**
- * The prose of an assistant reply with its tool markup removed.
- *
- * Tool markup is an invocation, not something the model said to the user: a
- * call the task refuses (an explicit-only tool nobody authorized) must not
- * reach the chat as text while it streams any more than after it settles.
- */
-function visibleAssistantText(text: string): string {
-    return proseOf(parseAssistantMessage(text, PREVIEW_PARSE_REGISTRY))
+function xmlCardProjection(card: ToolUse): Readonly<Record<string, unknown>> {
+    return { kind: "provider.tool_partial", dlineTid: `xml:${card.ts}`, provisional: true, block: card }
 }
 
 /**
@@ -423,6 +400,11 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         )
         const transientId = `provider:${prepared.turnId}`
         let text = ""
+        // What the chat shows of `text` so far; its tool markup is drawn as cards instead.
+        let prose = ""
+        // Kept across attempts: a resent stream redraws its calls on the rows the failed
+        // one opened, and the presenter withdraws whichever rows the turn never settles.
+        const xmlPreview = new XmlToolPreview(this.nextPresentationId)
         let reasoningText = ""
         let reasoningIndicator = new ReasoningIndicator()
         // Replay needs what the provider signed, not only what it said: Anthropic
@@ -475,10 +457,17 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                             case "usage":
                                 yield { kind: "usage", usage: usage.next(chunk) }
                                 break
-                            case "text":
+                            case "text": {
                                 text += chunk.text
-                                yield { kind: "partial", transientId, text: visibleAssistantText(text) }
+                                const frame = xmlPreview.read(text)
+                                prose = frame.prose
+                                // The prose first, so its row is opened above the cards of the calls it introduces.
+                                yield { kind: "partial", transientId, text: prose }
+                                for (const card of frame.cards()) {
+                                    yield { kind: "partial", transientId, text: prose, projection: xmlCardProjection(card) }
+                                }
                                 break
+                            }
                             case "reasoning":
                                 reasoning.processReasoningDelta({
                                     provider_metadata: chunk.provider_metadata,
@@ -496,17 +485,17 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 const action = reasoningIndicator.decide({
                                     hasPlainReasoning: Boolean(chunk.reasoning),
                                     hasEncryptedReasoning: Boolean(chunk.redacted_data),
-                                    assistantTextStarted: visibleAssistantText(text).length > 0,
+                                    assistantTextStarted: prose.length > 0,
                                     hasPendingNativeToolUse: nativeTools.size > 0,
                                 })
                                 if (chunk.reasoning) reasoningText += chunk.reasoning
                                 if (action === "open_placeholder") {
-                                    yield { kind: "partial", transientId, text: visibleAssistantText(text), reasoning: "" }
+                                    yield { kind: "partial", transientId, text: prose, reasoning: "" }
                                 } else if (action === "publish_text") {
                                     yield {
                                         kind: "partial",
                                         transientId,
-                                        text: visibleAssistantText(text),
+                                        text: prose,
                                         reasoning: reasoningText,
                                     }
                                 }
@@ -514,22 +503,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                             case "tool_calls":
                                 toolActivity = true
                                 this.consumeNativeTool(nativeTools, chunk)
-                                const pendingTool = nativeTools.get(chunk.dline_tid)
-                                const partialBlock = pendingTool?.name
-                                    ? {
-                                          type: "tool_use" as const,
-                                          ...materializePartialNativeToolCall(
-                                              pendingTool.name,
-                                              pendingTool.arguments,
-                                              this.options.resolveMcpServerName,
-                                          ),
-                                          partial: true,
-                                          ts: pendingTool.presentationId,
-                                          isNativeToolCall: true,
-                                          function_id: pendingTool.functionId,
-                                          dline_tid: pendingTool.dlineTid,
-                                      }
-                                    : undefined
+                                const partialBlock = this.previewNativeTool(nativeTools.get(chunk.dline_tid))
                                 // The completed chunk may omit the name, so it is read from the call
                                 // the earlier deltas accumulated.
                                 if (chunk.phase === "completed" && isTurnEndingToolName(nativeTools.get(chunk.dline_tid)?.name))
@@ -537,7 +511,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 yield {
                                     kind: "partial",
                                     transientId,
-                                    text: visibleAssistantText(text),
+                                    text: prose,
                                     projection: {
                                         kind: "provider.tool_partial",
                                         dlineTid: chunk.dline_tid,
@@ -552,7 +526,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 yield {
                                     kind: "partial",
                                     transientId,
-                                    text: visibleAssistantText(text),
+                                    text: prose,
                                     projection: {
                                         kind: "provider.server_tool",
                                         tool: chunk.tool,
@@ -582,6 +556,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                     // The rows the failed stream showed are transient and keyed by this
                     // turn's stream, so the resent stream rewrites them from scratch.
                     text = ""
+                    prose = ""
                     reasoningText = ""
                     reasoningIndicator = new ReasoningIndicator()
                     reasoning = newReasoning()
@@ -619,7 +594,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             const reasoningContent: ClineAssistantContent[] = [...reasoning.getRedactedThinking()]
             const thinking = reasoning.getCurrentReasoning()
             if (thinking) reasoningContent.push(thinking)
-            const interrupted = interruptedTurn(reasoningContent, reasoningText, visibleAssistantText(text))
+            const interrupted = interruptedTurn(reasoningContent, reasoningText, assistantProse(text))
             if (interrupted) yield { kind: "interrupted", transientId, ...interrupted }
             return
         }
@@ -634,8 +609,8 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         const request = turn.request
         const materialized =
             request.nativeTools || nativeTools.size > 0
-                ? this.materializeNativeTools(nativeTools, text)
-                : this.materializeXmlTools(text)
+                ? this.materializeNativeTools(nativeTools, text, xmlPreview)
+                : this.materializeXmlTools(text, xmlPreview)
         // The provider opens its reply with the results of calls an earlier reply
         // deferred, and only accepts the next request when the turn keeps them first.
         const hostedTurn = splitResumedHostedResults(hostedToolBlocks)
@@ -664,6 +639,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             ...(request.modelInfo === undefined ? {} : { modelInfo: request.modelInfo }),
             mode: blocks.length > 1 ? request.mode : "serial",
             blocks,
+            ...(materialized.tools.length > 0 ? { toolRows: materialized.tools.map((tool) => tool.ts) } : {}),
         }
     }
 
@@ -858,6 +834,25 @@ export class DefaultProductionProviderService implements ProductionProviderServi
     }
 
     /**
+     * The card of a native call still streaming, or none while it has no name
+     * or is a call only the tool gate may reveal once it settles.
+     */
+    private previewNativeTool(tool: PendingNativeTool | undefined): ToolUse | undefined {
+        if (!tool?.name) return undefined
+        const call = materializePartialNativeToolCall(tool.name, tool.arguments, this.options.resolveMcpServerName)
+        if (!mayPreviewToolCall(call.name)) return undefined
+        return {
+            type: "tool_use",
+            ...call,
+            partial: true,
+            ts: tool.presentationId,
+            isNativeToolCall: true,
+            function_id: tool.functionId,
+            dline_tid: tool.dlineTid,
+        }
+    }
+
+    /**
      * Native tool calls arrive beside the assistant's prose, not instead of it.
      *
      * The streamed text is carried through rather than dropped: a provider that
@@ -869,8 +864,12 @@ export class DefaultProductionProviderService implements ProductionProviderServi
      * decides it: left as text it would bypass authorization entirely and show a
      * refused call to the user as if the model had said it.
      */
-    private materializeNativeTools(tools: Map<string, PendingNativeTool>, text: string): { text: string; tools: ToolUse[] } {
-        const written = this.materializeXmlTools(text)
+    private materializeNativeTools(
+        tools: Map<string, PendingNativeTool>,
+        text: string,
+        preview: XmlToolPreview,
+    ): { text: string; tools: ToolUse[] } {
+        const written = this.materializeXmlTools(text, preview)
         return {
             text: written.text,
             tools: [
@@ -891,25 +890,24 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         }
     }
 
-    private materializeXmlTools(text: string): { text: string; tools: ToolUse[] } {
-        const timestamps = new Map<string, number>()
+    /**
+     * The calls the reply wrote as markup, each on the row its preview drew.
+     *
+     * Only a call whose closing tag arrived is materialized; one the stream left
+     * open never runs, and its card is withdrawn rather than shown as prose.
+     */
+    private materializeXmlTools(text: string, preview: XmlToolPreview): { text: string; tools: ToolUse[] } {
         const identities = new Map<string, { function_id: string; dline_tid: string }>()
-        const blocks = parseAssistantMessage(text, {
-            getOrCreateTsForBlock: (key) => {
-                const existing = timestamps.get(key)
-                if (existing !== undefined) return existing
-                const created = this.nextPresentationId()
-                timestamps.set(key, created)
-                return created
-            },
-            getOrCreateToolIdentityForBlock: (key) => {
+        const blocks = parseAssistantMessage(
+            text,
+            preview.registry((key) => {
                 const existing = identities.get(key)
                 if (existing) return existing
                 const created = { function_id: this.identities.nextFunctionId(), dline_tid: this.identities.nextTraceId() }
                 identities.set(key, created)
                 return created
-            },
-        })
+            }),
+        )
         return {
             text: proseOf(blocks),
             tools: blocks.filter((block): block is ToolUse => block.type === "tool_use" && !block.partial),

@@ -200,6 +200,31 @@ describe("ControllerTaskCallbacksOwner say", () => {
         expect(delivered).toEqual([{ ts: 99, text: "preview", partial: true }])
     })
 
+    // The store refuses a partial over a row that already settled and answers
+    // with the settled row. Publishing the caller's own partial copy would put a
+    // partial frame of that row on the stream after its final one.
+    it("publishes the stored row when the store refuses a late partial", async () => {
+        const settled: UiMessage = { ts: 99, type: "say", say: "tool", text: "final", partial: false }
+        const handler = {
+            get clineMessages() {
+                return [settled]
+            },
+            upsertClineMessageInMemory: async () => settled,
+        } as unknown as MessageStateHandler
+        const delivered: Array<{ ts: number; text: string; partial: boolean }> = []
+        const unsubscribe = registerPartialMessageCallback((message) => {
+            delivered.push({ ts: Number(message.ts), text: message.text, partial: message.partial })
+        })
+
+        try {
+            await owner(handler).callbacks.say("tool", "late preview", undefined, undefined, true, 99)
+        } finally {
+            unsubscribe()
+        }
+
+        expect(delivered).toEqual([{ ts: 99, text: "final", partial: false }])
+    })
+
     it("presents a partial ask without opening a competing host interaction", async () => {
         const { handler, written } = messageStore()
         const interactions = { open: vi.fn() }

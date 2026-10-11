@@ -42,6 +42,8 @@ export type ProductionProviderChunk =
           readonly modelInfo?: ProviderFinalEnvelope["modelInfo"]
           readonly mode: ProviderTurnPlan["mode"]
           readonly blocks: readonly ProviderBlockOutput[]
+          /** Chat rows of the calls the turn settled; see ProviderTextPresentationPort. */
+          readonly toolRows?: readonly number[]
       }
 
 export interface ProductionProviderService {
@@ -130,6 +132,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
                 payloadRef: await this.options.payloads.put(encodeTaskPayload(finalPayload)),
                 ...(chunk.text === undefined ? {} : { text: chunk.text }),
                 ...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
+                ...(chunk.toolRows === undefined ? {} : { toolRows: chunk.toolRows }),
                 turnPlan,
             }
         }
