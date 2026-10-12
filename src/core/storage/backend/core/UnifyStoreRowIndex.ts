@@ -175,6 +175,18 @@ export class UnifyStoreCollectionWork<TEntity extends object> {
         this.full = index
     }
 
+    /** Removes every row `matches` selects; the remaining rows keep their order. */
+    deleteWhere(matches: (row: StoredValues<TEntity>) => boolean): void {
+        const index = UnifyStoreRowIndex.empty(this.schema)
+        let removed = false
+        for (const row of this.rows()) {
+            if (matches(row)) removed = true
+            else index.append(row)
+        }
+        // A delete that selected nothing must not turn an append-only commit into a rewrite.
+        if (removed) this.full = index
+    }
+
     /**
      * The committed index after this work. An append extends the index the work started
      * from in place, so call this only once the change is durable.

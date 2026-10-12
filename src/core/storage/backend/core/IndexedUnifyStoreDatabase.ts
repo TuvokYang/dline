@@ -3,18 +3,19 @@ import type {
     TransactionalUnifyStoreDatabase,
     UnifyStore,
     UnifyStoreCollectionInfo,
+    UnifyStoreCollectionTransaction,
     UnifyStoreDatabaseTransaction,
     UnifyStoreResult,
     UnifyStoreStats,
-    UnifyStoreTransaction,
 } from "../api/UnifyStore"
 import {
-    createValidatedTransaction,
+    createValidatedCollectionTransaction,
+    type UnifyStoreCollectionDriverTransaction,
     UnifyStoreCore,
     type UnifyStoreDriver,
     type UnifyStoreDriverTransaction,
 } from "./UnifyStoreCore"
-import { evaluateUnifyStoreValues, type NormalizedUnifyStoreQuery } from "./UnifyStoreQueryEvaluator"
+import { evaluateUnifyStoreValues, matchesUnifyStorePredicate, type NormalizedUnifyStoreQuery } from "./UnifyStoreQueryEvaluator"
 import {
     hydrateStoredValues,
     snapshotStoredValues,
@@ -93,12 +94,12 @@ export class IndexedUnifyStoreDatabase implements TransactionalUnifyStoreDatabas
         this.assertOpen()
         return await this.engine.write(async (view) => {
             const works = new Map<string, UnifyStoreCollectionWork<object>>()
-            const stores = new Map<string, UnifyStoreTransaction<object>>()
+            const stores = new Map<string, UnifyStoreCollectionTransaction<object>>()
             const result = await operation({
-                store: <TEntity extends object>(entity: StoredEntityClass<TEntity>): UnifyStoreTransaction<TEntity> => {
+                store: <TEntity extends object>(entity: StoredEntityClass<TEntity>): UnifyStoreCollectionTransaction<TEntity> => {
                     const schema = entity.storage
                     const cached = stores.get(schema.schemaId)
-                    if (cached) return cached as unknown as UnifyStoreTransaction<TEntity>
+                    if (cached) return cached as unknown as UnifyStoreCollectionTransaction<TEntity>
                     // Checked here rather than on first use, so a transaction that asks for a
                     // collection it may not use still fails the same way SQLite does.
                     if (!view.registered(schema)) {
@@ -112,8 +113,8 @@ export class IndexedUnifyStoreDatabase implements TransactionalUnifyStoreDatabas
                         }
                         return work
                     }
-                    const store = createValidatedTransaction(schema, workTransaction(schema, workOf))
-                    stores.set(schema.schemaId, store as unknown as UnifyStoreTransaction<object>)
+                    const store = createValidatedCollectionTransaction(schema, workTransaction(schema, workOf))
+                    stores.set(schema.schemaId, store as unknown as UnifyStoreCollectionTransaction<object>)
                     return store
                 },
             })
@@ -134,12 +135,13 @@ export class IndexedUnifyStoreDatabase implements TransactionalUnifyStoreDatabas
 function workTransaction<TEntity extends object>(
     schema: EntitySchema<TEntity>,
     workOf: () => Promise<UnifyStoreCollectionWork<TEntity>>,
-): UnifyStoreDriverTransaction<TEntity> {
+): UnifyStoreCollectionDriverTransaction<TEntity> {
     return {
         query: async (query) => hydrateAll(schema, evaluateUnifyStoreValues((await workOf()).rows(), query)),
         insert: async (records) => (await workOf()).insert(snapshotAll(schema, records)),
         upsert: async (records) => (await workOf()).upsert(snapshotAll(schema, records)),
         replaceAll: async (records) => (await workOf()).replaceAll(snapshotAll(schema, records)),
+        deleteWhere: async (where) => (await workOf()).deleteWhere((row) => matchesUnifyStorePredicate(row, where)),
     }
 }
 

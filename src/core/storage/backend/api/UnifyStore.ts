@@ -1,5 +1,5 @@
 import type { StoredEntityClass } from "./EntitySchema"
-import type { UnifyStoreQuery } from "./UnifyStoreQuery"
+import type { UnifyStorePredicate, UnifyStoreQuery } from "./UnifyStoreQuery"
 
 export interface UnifyStoreStats {
     readonly storageBytes: number
@@ -18,6 +18,18 @@ export interface UnifyStoreTransaction<TEntity extends object> {
     /** Insert records or replace the stored record with the same primary key; later duplicates in one batch win. */
     upsert(records: readonly TEntity[]): Promise<void>
     replaceAll(records: readonly TEntity[]): Promise<void>
+}
+
+/**
+ * One collection inside a database-wide transaction.
+ *
+ * Predicate deletes live here rather than on {@link UnifyStoreTransaction}: a store
+ * composed of several collections cannot translate a predicate across all of them,
+ * and a single collection never needs to delete without other writes depending on it.
+ */
+export interface UnifyStoreCollectionTransaction<TEntity extends object> extends UnifyStoreTransaction<TEntity> {
+    /** Delete every record matching `where`; the remaining records are unaffected. */
+    deleteWhere(where: UnifyStorePredicate<TEntity>): Promise<void>
 }
 
 /**
@@ -57,7 +69,7 @@ export interface UnifyStoreBackend {
 
 /** Transactional access to several collections of one physical database. */
 export interface UnifyStoreDatabaseTransaction {
-    store<TEntity extends object>(entity: StoredEntityClass<TEntity>): UnifyStoreTransaction<TEntity>
+    store<TEntity extends object>(entity: StoredEntityClass<TEntity>): UnifyStoreCollectionTransaction<TEntity>
 }
 
 /**

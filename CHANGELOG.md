@@ -6,6 +6,7 @@
 
 ### Fixes
 - 修复 LaTeX 公式块中 `\mathtt`、`\texttt`、`\mathsf`、`\mathbb`、`\mathfrak`、`\mathscr`、`\ell`、`\perp`、`\checkmark` 等命令无法排版、整块退回原始源码的问题；所需的 MathJax 字体数据现随 Webview 一起打包
+- 修复长任务中每次更新末尾聊天消息都会读取并重写整段 `messages.db` 历史、导致扩展主机长时间阻塞的问题；现在只校验并替换尾部行，耗时不再随任务长度增长，同时减少了任务视图每次刷新时对全部活动的复制
 
 ## [0.11.0]
 

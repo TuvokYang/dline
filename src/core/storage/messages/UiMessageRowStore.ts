@@ -1,13 +1,16 @@
+import type { UiMessage } from "@/shared/ExtensionMessage"
 import type { EntityFieldRef } from "../backend/api/EntitySchema"
 import type {
     TransactionalUnifyStoreDatabase,
     UnifyStore,
+    UnifyStoreCollectionTransaction,
     UnifyStoreDatabaseTransaction,
     UnifyStoreResult,
     UnifyStoreStats,
     UnifyStoreTransaction,
 } from "../backend/api/UnifyStore"
 import { and, asc, desc, eq, gte, lt, type UnifyStoreQuery } from "../backend/api/UnifyStoreQuery"
+import type { BufferedTailReplacement } from "../backend/core/BufferedUnifyStore"
 import { decodeUiMessage, encodeUiMessage, UiMessageAttachmentRow, type UiMessageRecord, UiMessageRow } from "./UiMessageRows"
 
 /** Order field of {@link UiMessageRecord}; the only order the row store serves. */
@@ -25,9 +28,36 @@ export const UI_MESSAGE_TIMESTAMP: EntityFieldRef<UiMessageRecord, number> = Obj
     nullable: false,
 })
 
-interface CollectionAccess {
-    readonly rows: Pick<UnifyStoreTransaction<UiMessageRow>, "query" | "insert" | "replaceAll">
-    readonly attachments: Pick<UnifyStoreTransaction<UiMessageAttachmentRow>, "query" | "insert" | "replaceAll">
+interface ReadAccess {
+    readonly rows: Pick<UnifyStoreTransaction<UiMessageRow>, "query">
+    readonly attachments: Pick<UnifyStoreTransaction<UiMessageAttachmentRow>, "query">
+}
+
+interface CollectionAccess extends ReadAccess {
+    readonly rows: Pick<UnifyStoreCollectionTransaction<UiMessageRow>, "query" | "insert" | "replaceAll" | "deleteWhere">
+    readonly attachments: Pick<
+        UnifyStoreCollectionTransaction<UiMessageAttachmentRow>,
+        "query" | "insert" | "replaceAll" | "deleteWhere"
+    >
+}
+
+/** Whether the counts describe a tail that can exist: whole, non-negative, and covering every replaced row. */
+function isValidTailReplacement(tailStart: number, replacedCount: number, expectedLength: number): boolean {
+    return (
+        Number.isSafeInteger(tailStart) &&
+        tailStart >= 0 &&
+        Number.isSafeInteger(replacedCount) &&
+        replacedCount >= 0 &&
+        replacedCount <= expectedLength
+    )
+}
+
+/** Whether `rows`, read from `start` onwards, are exactly the expected tail and nothing follows it. */
+function isExpectedTail(rows: readonly UiMessageRow[], start: number, expectedTimestamps: readonly number[]): boolean {
+    return (
+        rows.length === expectedTimestamps.length &&
+        rows.every((row, index) => row.ordinal === start + index && row.ts === expectedTimestamps[index])
+    )
 }
 
 /**
@@ -74,7 +104,7 @@ function toRecords(rows: readonly UiMessageRow[], attachments: readonly UiMessag
     }))
 }
 
-async function readRecords(access: CollectionAccess, limit: number | undefined): Promise<UiMessageRecord[]> {
+async function readRecords(access: ReadAccess, limit: number | undefined): Promise<UiMessageRecord[]> {
     const rows = await access.rows.query({ orderBy: [asc(ROW_ORDINAL)], limit })
     if (rows.length === 0) return []
     return toRecords(rows, await access.attachments.query())
@@ -118,17 +148,9 @@ export class UiMessageRowStore implements UnifyStore<UiMessageRecord> {
 
     async query(query?: UnifyStoreQuery<UiMessageRecord>): Promise<UnifyStoreResult<UiMessageRecord>> {
         const limit = assertOrderedQuery(query)
-        const direct: CollectionAccess = {
-            rows: {
-                query: async (q) => (await this.rows.query(q)).records,
-                insert: () => this.readOnly(),
-                replaceAll: () => this.readOnly(),
-            },
-            attachments: {
-                query: async (q) => (await this.attachments.query(q)).records,
-                insert: () => this.readOnly(),
-                replaceAll: () => this.readOnly(),
-            },
+        const direct: ReadAccess = {
+            rows: { query: async (q) => (await this.rows.query(q)).records },
+            attachments: { query: async (q) => (await this.attachments.query(q)).records },
         }
         return { records: await readRecords(direct, limit), stats: await this.stats() }
     }
@@ -144,6 +166,41 @@ export class UiMessageRowStore implements UnifyStore<UiMessageRecord> {
 
     replaceAll(records: readonly UiMessageRecord[]): Promise<void> {
         return this.database.transaction((transaction) => replaceRecords(transactionAccess(transaction), records))
+    }
+
+    /**
+     * Replace the last `replacedCount` stored messages with `entries`, rows and attachments
+     * together in one transaction, provided the stored history still ends with
+     * `expectedTailTimestamps` and holds exactly `durableCount` rows.
+     *
+     * Resolves false without writing otherwise, so the buffered store falls back to
+     * reading and merging the whole history. On SQLite only the tail is read and
+     * written, which keeps an edit near the end of a long task independent of its
+     * length; the in-memory engine behind the JSONL backend still rewrites the
+     * collection, as its merge did before.
+     *
+     * The check compares timestamps, not content: like the JSONL tail rewrite it
+     * relies on the task holding the only writable handle on its messages.
+     */
+    replaceTail(replacement: BufferedTailReplacement<UiMessage>): Promise<boolean> {
+        const { durableCount, expectedTailTimestamps, replacedCount, entries } = replacement
+        const tailStart = durableCount - expectedTailTimestamps.length
+        const firstReplaced = durableCount - replacedCount
+        if (!isValidTailReplacement(tailStart, replacedCount, expectedTailTimestamps.length)) return Promise.resolve(false)
+        return this.database.transaction(async (transaction) => {
+            const access = transactionAccess(transaction)
+            const tail = await access.rows.query({ where: gte(ROW_ORDINAL, tailStart), orderBy: [asc(ROW_ORDINAL)] })
+            if (!isExpectedTail(tail, tailStart, expectedTailTimestamps)) return false
+            if (replacedCount > 0) await access.rows.deleteWhere(gte(ROW_ORDINAL, firstReplaced))
+            // Attachments are keyed by ordinal, so any left at or past the first new row,
+            // including ones no row owns, would attach to the rows inserted below.
+            await access.attachments.deleteWhere(gte(ATTACHMENT_ORDINAL, firstReplaced))
+            await insertRecords(
+                access,
+                entries.map((message, index) => ({ ordinal: firstReplaced + index, ts: message.ts, message })),
+            )
+            return true
+        })
     }
 
     transaction<TResult>(
@@ -206,9 +263,5 @@ export class UiMessageRowStore implements UnifyStore<UiMessageRecord> {
 
     close(): Promise<void> {
         return this.release()
-    }
-
-    private readOnly(): Promise<void> {
-        return Promise.reject(new Error("UiMessageRowStore query access is read-only"))
     }
 }

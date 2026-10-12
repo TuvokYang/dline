@@ -1,6 +1,12 @@
 import type { EntitySchema } from "../api/EntitySchema"
-import type { UnifyStore, UnifyStoreResult, UnifyStoreStats, UnifyStoreTransaction } from "../api/UnifyStore"
-import type { UnifyStoreQuery } from "../api/UnifyStoreQuery"
+import type {
+    UnifyStore,
+    UnifyStoreCollectionTransaction,
+    UnifyStoreResult,
+    UnifyStoreStats,
+    UnifyStoreTransaction,
+} from "../api/UnifyStore"
+import type { UnifyStorePredicate, UnifyStoreQuery } from "../api/UnifyStoreQuery"
 import { type NormalizedUnifyStoreQuery, normalizeUnifyStoreQuery } from "./UnifyStoreQueryEvaluator"
 
 export interface UnifyStoreDriverTransaction<TEntity extends object> {
@@ -8,6 +14,12 @@ export interface UnifyStoreDriverTransaction<TEntity extends object> {
     insert(records: readonly TEntity[]): Promise<void>
     upsert(records: readonly TEntity[]): Promise<void>
     replaceAll(records: readonly TEntity[]): Promise<void>
+}
+
+/** A backend collection inside a database-wide transaction. */
+export interface UnifyStoreCollectionDriverTransaction<TEntity extends object> extends UnifyStoreDriverTransaction<TEntity> {
+    /** Receives a predicate already validated against the schema. */
+    deleteWhere(where: UnifyStorePredicate<TEntity>): Promise<void>
 }
 
 export interface UnifyStoreDriver<TEntity extends object> {
@@ -116,6 +128,22 @@ export function createValidatedTransaction<TEntity extends object>(
         replaceAll: async (records) => {
             validateRecords(schema, records)
             await driverTransaction.replaceAll(records)
+        },
+    }
+}
+
+/** {@link createValidatedTransaction} for a collection of a database-wide transaction, adding predicate deletes. */
+export function createValidatedCollectionTransaction<TEntity extends object>(
+    schema: EntitySchema<TEntity>,
+    driverTransaction: UnifyStoreCollectionDriverTransaction<TEntity>,
+): UnifyStoreCollectionTransaction<TEntity> {
+    return {
+        ...createValidatedTransaction(schema, driverTransaction),
+        deleteWhere: async (where) => {
+            // Normalizing as a query validates every field and value against the schema.
+            const normalized = normalizeUnifyStoreQuery(schema, { where })
+            if (!normalized.where) return
+            await driverTransaction.deleteWhere(normalized.where)
         },
     }
 }

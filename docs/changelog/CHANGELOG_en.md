@@ -6,6 +6,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ### Fixes
 - Fixed LaTeX formula blocks using `\mathtt`, `\texttt`, `\mathsf`, `\mathbb`, `\mathfrak`, `\mathscr`, `\ell`, `\perp`, `\checkmark`, and similar commands failing to typeset and falling back to raw source; the required MathJax font data now ships with the Webview
+- Fixed long tasks reading and rewriting the whole `messages.db` history on every update to the latest chat messages, which blocked the extension host for long periods; only the tail rows are now checked and replaced, so the cost no longer grows with task length, and the task view no longer copies every activity on each refresh
 
 ## [0.11.0]
 

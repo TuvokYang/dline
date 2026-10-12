@@ -36,6 +36,16 @@ export function compileSqliteQuery<TEntity extends object>(
     return { sql, bindings }
 }
 
+/** A `DELETE` of every row matching `where`, sharing the predicate translation queries use. */
+export function compileSqliteDelete<TEntity extends object>(
+    schema: EntitySchema<TEntity>,
+    where: UnifyStorePredicate<TEntity>,
+): CompiledSqliteQuery {
+    const bindings: SQLInputValue[] = []
+    const table = quoteIdentifier(physicalTableName(schema.schemaId))
+    return { sql: `DELETE FROM ${table} WHERE ${compilePredicate(schema, where, bindings)}`, bindings }
+}
+
 function compilePredicate<TEntity extends object>(
     schema: EntitySchema<TEntity>,
     predicate: UnifyStorePredicate<TEntity>,

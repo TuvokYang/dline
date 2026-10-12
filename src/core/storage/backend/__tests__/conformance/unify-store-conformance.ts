@@ -263,6 +263,69 @@ export function runUnifyStoreConformance(harness: UnifyStoreConformanceHarness):
         }
     })
 
+    it("deletes the records a predicate selects in a database transaction and leaves the rest unaffected", async () => {
+        try {
+            const database = await openDatabase("delete-where")
+            const store = await database.openStore(ConformanceEntity)
+            await store.insert([
+                new ConformanceEntity("a", "g", 10, 1, "a"),
+                new ConformanceEntity("b", "g", 20, 1, "b"),
+                new ConformanceEntity("c", "g", 30, 1, "c"),
+                new ConformanceEntity("d", "g", 40, 1, "d"),
+            ])
+            const fields = ConformanceEntity.storage.fields
+            await database.transaction(async (transaction) => {
+                const entities = transaction.store(ConformanceEntity)
+                await entities.deleteWhere(gte(fields.sortKey, 30))
+                // The freed key can be inserted again in the same transaction.
+                await entities.insert([new ConformanceEntity("c", "g", 35, 2, "c2")])
+                expect((await entities.query()).map(({ id }) => id)).toEqual(["a", "b", "c"])
+            })
+            await database.transaction(async (transaction) => {
+                await transaction.store(ConformanceEntity).deleteWhere(eq(fields.id, "missing"))
+            })
+            expect((await store.query()).records.map(({ id, value }) => [id, value])).toEqual([
+                ["a", "a"],
+                ["b", "b"],
+                ["c", "c2"],
+            ])
+            await expect(
+                database.transaction(async (transaction) => {
+                    await transaction.store(ConformanceEntity).deleteWhere(lt(fields.sortKey, 100))
+                    throw new Error("rollback")
+                }),
+            ).rejects.toThrow("rollback")
+            expect((await store.query()).records.map(({ id }) => id)).toEqual(["a", "b", "c"])
+        } finally {
+            await closeDatabases()
+        }
+    })
+
+    it("frees the unique values a predicate delete removes and deletes rows inserted earlier in the transaction", async () => {
+        try {
+            const database = await openDatabase("delete-where-unique")
+            const parity = await database.openStore(ParityEntity)
+            await parity.insert([ParityEntity.named(1, "o", "a", "x"), ParityEntity.named(2, "o", "b", "y")])
+            const fields = ParityEntity.storage.fields
+            await database.transaction(async (transaction) => {
+                const rows = transaction.store(ParityEntity)
+                await rows.deleteWhere(eq(fields.id, 1))
+                // Both the unique slug and the composite owner-name key are free again.
+                await rows.insert([ParityEntity.named(3, "o", "a", "x")])
+                await rows.insert([ParityEntity.named(4, "p", "c", "z")])
+                await rows.deleteWhere(eq(fields.id, 4))
+            })
+            expect((await parity.query()).records.map(({ id, slug }) => [id, slug])).toEqual([
+                [2, "y"],
+                [3, "x"],
+            ])
+            // The removed row's unique value is free as well.
+            await parity.insert([ParityEntity.named(5, "p", "c", "z")])
+        } finally {
+            await closeDatabases()
+        }
+    })
+
     it("commits transactions atomically and rolls back throwing operations", async () => {
         try {
             const store = await open("transaction")

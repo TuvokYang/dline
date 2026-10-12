@@ -117,6 +117,14 @@ function validateField<TEntity extends object>(schema: EntitySchema<TEntity>, fi
     }
 }
 
+/** Whether stored `values` satisfy `predicate`, with the same semantics a query filter applies. */
+export function matchesUnifyStorePredicate<TEntity extends object>(
+    values: EntityValues<TEntity>,
+    predicate: UnifyStorePredicate<TEntity>,
+): boolean {
+    return evaluatePredicate(predicate, values)
+}
+
 function evaluatePredicate<TEntity extends object>(
     predicate: UnifyStorePredicate<TEntity>,
     values: EntityValues<TEntity>,

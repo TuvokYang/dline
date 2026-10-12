@@ -86,9 +86,24 @@ export interface BufferedUnifyStoreOptions<TItem extends { ts: number }> {
      * check its tail cheaply leaves this unset and always merges.
      */
     readonly replaceTail?: (replacement: BufferedTailReplacement<TItem>) => Promise<boolean>
+    /**
+     * Whether a rejected `replaceTail` is guaranteed to have written nothing, as a
+     * single database transaction is.
+     *
+     * Unset means a failure may have cut the tail already, so the next commit writes
+     * the whole collection from memory. Set, the baseline stays valid and the next
+     * commit simply checks the tail again, or merges when it moved.
+     */
+    readonly replaceTailIsAtomic?: boolean
 }
 
 export interface BufferedTailReplacement<TItem> {
+    /**
+     * Entries the durable collection holds according to the baseline. This is the
+     * logical count: rows `acceptInitialItem` dropped at open are not included, so a
+     * collection still holding them fails the tail check until one merge rewrites it.
+     */
+    readonly durableCount: number
     /** Timestamps the durable collection must end with, in order; empty asserts it is empty. */
     readonly expectedTailTimestamps: readonly number[]
     /** Final durable entries to replace; zero appends. Never more than the expected tail. */
@@ -115,6 +130,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
     private readonly normalizeReadItems?: (items: TItem[]) => TItem[]
     private readonly truncateTail?: (keepCount: number, expectedCount: number) => Promise<void>
     private readonly replaceTail?: (replacement: BufferedTailReplacement<TItem>) => Promise<boolean>
+    private readonly replaceTailIsAtomic: boolean
     private readonly storeKind: string
     /**
      * Set when a tail write failed after it may have cut the durable tail. The
@@ -150,6 +166,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
         this.normalizeReadItems = options.normalizeReadItems
         this.truncateTail = options.truncateTail
         this.replaceTail = options.replaceTail
+        this.replaceTailIsAtomic = options.replaceTailIsAtomic ?? false
         this.storeKind = options.storeKind ?? "other"
     }
 
@@ -677,14 +694,18 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
         let replaced: boolean
         try {
             replaced = await replaceTail({
+                durableCount: persisted.length,
                 expectedTailTimestamps: persisted.slice(anchor).map((item) => item.ts),
                 replacedCount,
                 entries,
             })
         } catch (error) {
-            // The tail may already be cut, so the baseline no longer describes
-            // the collection and memory holds its only complete copy.
-            this.memoryRewriteRequired = true
+            // A non-atomic tail write may already have cut the tail, so the baseline
+            // no longer describes the collection and memory holds its only complete
+            // copy. An atomic one rolled back, and rewriting everything would both
+            // cost what the tail path exists to avoid and overwrite rows another
+            // writer committed meanwhile.
+            if (!this.replaceTailIsAtomic) this.memoryRewriteRequired = true
             throw error
         }
         if (!replaced) {

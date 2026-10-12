@@ -2,6 +2,7 @@ import type { StoredEntityClass } from "../backend/api/EntitySchema"
 import type {
     TransactionalUnifyStoreDatabase,
     UnifyStore,
+    UnifyStoreCollectionTransaction,
     UnifyStoreDatabaseTransaction,
     UnifyStoreTransaction,
 } from "../backend/api/UnifyStore"
@@ -30,7 +31,7 @@ export function claimOnWrite(database: TransactionalUnifyStoreDatabase, claim: (
             return database.transaction((transaction) =>
                 operation({
                     store: <TEntity extends object>(entity: StoredEntityClass<TEntity>) =>
-                        claimTransaction(transaction.store(entity), claim),
+                        claimCollectionTransaction(transaction.store(entity), claim),
                 }),
             )
         },
@@ -78,6 +79,19 @@ function claimTransaction<TEntity extends object>(
         replaceAll: async (records) => {
             claim()
             await transaction.replaceAll(records)
+        },
+    }
+}
+
+function claimCollectionTransaction<TEntity extends object>(
+    transaction: UnifyStoreCollectionTransaction<TEntity>,
+    claim: () => void,
+): UnifyStoreCollectionTransaction<TEntity> {
+    return {
+        ...claimTransaction(transaction, claim),
+        deleteWhere: async (where) => {
+            claim()
+            await transaction.deleteWhere(where)
         },
     }
 }

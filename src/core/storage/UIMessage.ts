@@ -51,6 +51,10 @@ export class UIMessage {
                 subscriptionKey: subscriptionKey(layout.database(InstanceDatabase.Messages)),
                 storeKind: "ui_message",
                 acceptInitialItem: (message) => message.ts > 0,
+                // Without it every edit near the end of the chat reads and rewrites the whole history.
+                replaceTail: (replacement) => rows.replaceTail(replacement),
+                // The row store replaces the tail in one database transaction.
+                replaceTailIsAtomic: true,
             },
         })
         const stored = store.getAll()

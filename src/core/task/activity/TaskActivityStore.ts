@@ -282,13 +282,18 @@ export class TaskActivityStore {
 
     /** Return the newest running foreground activity of the requested kind with a live handoff callback. */
     getReadyBackgroundHandoffActivityId(kind: TaskActivityKind): string | undefined {
-        return this.list().find(
-            (activity) =>
+        // Scans the stored records instead of list(): the task view asks on every state
+        // projection, and cloning and redacting every activity there blocked the host.
+        let newest: TaskActivityRecord | undefined
+        for (const activity of this.activities.values()) {
+            const ready =
                 activity.kind === kind &&
                 activity.status === "running" &&
                 activity.executionMode === "foreground" &&
-                this.backgroundMovers.has(activity.activityId),
-        )?.activityId
+                this.backgroundMovers.has(activity.activityId)
+            if (ready && (!newest || compareNewestFirst(activity, newest) < 0)) newest = activity
+        }
+        return newest?.activityId
     }
 
     /** Move eligible foreground activities into explicit background ownership. */
@@ -490,7 +495,7 @@ export class TaskActivityStore {
     list(): TaskActivityRecord[] {
         return Array.from(this.activities.values())
             .map((activity) => this.clone(activity))
-            .sort((a, b) => b.createdAt - a.createdAt || a.activityId.localeCompare(b.activityId))
+            .sort(compareNewestFirst)
     }
 
     listRunning(cancellationOwner?: TaskActivityCancellationOwner): TaskActivityRecord[] {
@@ -783,4 +788,9 @@ export class TaskActivityStore {
             status === "interrupted"
         )
     }
+}
+
+/** Order of list(): newest first, then ascending id so equal creation times stay deterministic. */
+function compareNewestFirst(a: TaskActivityRecord, b: TaskActivityRecord): number {
+    return b.createdAt - a.createdAt || a.activityId.localeCompare(b.activityId)
 }

@@ -5,13 +5,14 @@ import type {
     TransactionalUnifyStoreDatabase,
     UnifyStore,
     UnifyStoreCollectionInfo,
+    UnifyStoreCollectionTransaction,
     UnifyStoreDatabaseTransaction,
     UnifyStoreResult,
     UnifyStoreStats,
-    UnifyStoreTransaction,
 } from "../api/UnifyStore"
 import {
-    createValidatedTransaction,
+    createValidatedCollectionTransaction,
+    type UnifyStoreCollectionDriverTransaction,
     UnifyStoreCore,
     type UnifyStoreDriver,
     type UnifyStoreDriverTransaction,
@@ -19,7 +20,7 @@ import {
 import type { NormalizedUnifyStoreQuery } from "../core/UnifyStoreQueryEvaluator"
 import { type SqliteDatabaseLease, SqliteDatabaseRegistry } from "./SqliteDatabaseRegistry"
 import type { SqliteMigration } from "./SqliteMigrationRegistry"
-import { compileSqliteQuery } from "./SqliteQueryCompiler"
+import { compileSqliteDelete, compileSqliteQuery } from "./SqliteQueryCompiler"
 import {
     compileEntitySchema,
     decodeSqliteValue,
@@ -133,21 +134,26 @@ class SqliteUnifyStoreDatabase implements TransactionalUnifyStoreDatabase {
         return await this.lease.withLock(async () => {
             this.assertOpen()
             const database = this.lease.database
-            const stores = new Map<string, UnifyStoreTransaction<object>>()
+            const stores = new Map<string, UnifyStoreCollectionTransaction<object>>()
             database.exec("BEGIN IMMEDIATE")
             try {
                 const result = await operation({
-                    store: <TEntity extends object>(entity: StoredEntityClass<TEntity>): UnifyStoreTransaction<TEntity> => {
+                    store: <TEntity extends object>(
+                        entity: StoredEntityClass<TEntity>,
+                    ): UnifyStoreCollectionTransaction<TEntity> => {
                         const schema = entity.storage
                         const cached = stores.get(schema.schemaId)
-                        if (cached) return cached as unknown as UnifyStoreTransaction<TEntity>
+                        if (cached) return cached as unknown as UnifyStoreCollectionTransaction<TEntity>
                         if (!hasEntitySchema(database, schema)) {
                             throw new Error(
                                 `UnifyStore collection ${schema.schemaId} must be opened before a database transaction`,
                             )
                         }
-                        const store = createValidatedTransaction(schema, createSqliteDriverTransaction(database, schema))
-                        stores.set(schema.schemaId, store as unknown as UnifyStoreTransaction<object>)
+                        const store = createValidatedCollectionTransaction(
+                            schema,
+                            createSqliteDriverTransaction(database, schema),
+                        )
+                        stores.set(schema.schemaId, store as unknown as UnifyStoreCollectionTransaction<object>)
                         return store
                     },
                 })
@@ -176,12 +182,16 @@ class SqliteUnifyStoreDatabase implements TransactionalUnifyStoreDatabase {
 function createSqliteDriverTransaction<TEntity extends object>(
     database: DatabaseSync,
     schema: EntitySchema<TEntity>,
-): UnifyStoreDriverTransaction<TEntity> {
+): UnifyStoreCollectionDriverTransaction<TEntity> {
     return {
         query: async (query) => selectEntities(database, schema, query),
         insert: async (records) => insertEntities(database, schema, records),
         upsert: async (records) => upsertEntities(database, schema, records),
         replaceAll: async (records) => replaceAllEntities(database, schema, records),
+        deleteWhere: async (where) => {
+            const compiled = compileSqliteDelete(schema, where)
+            database.prepare(compiled.sql).run(...compiled.bindings)
+        },
     }
 }
 

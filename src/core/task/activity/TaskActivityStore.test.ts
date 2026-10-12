@@ -816,6 +816,35 @@ describe("TaskActivityStore", () => {
         expect(store.getReadyBackgroundHandoffActivityId("subagent")).toBeUndefined()
     })
 
+    it("finds the newest ready handoff without projecting every activity", () => {
+        vi.useFakeTimers()
+        try {
+            const store = new TaskActivityStore("task-1")
+            const createSubagent = (activityId: string, createdAt: number, ready: boolean) => {
+                vi.setSystemTime(createdAt)
+                store.create({
+                    activityId,
+                    kind: "subagent",
+                    executionMode: "foreground",
+                    title: activityId,
+                    ...(ready ? { continueInBackground: async () => true } : {}),
+                })
+            }
+            for (let index = 0; index < 200; index++) createSubagent(`history-${index}`, 1_000 + index, false)
+            createSubagent("ready-old", 5_000, true)
+            createSubagent("ready-tie-b", 9_000, true)
+            createSubagent("ready-tie-a", 9_000, true)
+            createSubagent("not-ready-newest", 10_000, false)
+            const list = vi.spyOn(store, "list")
+
+            // Newest first; equal creation times fall back to ascending id, as list() orders them.
+            expect(store.getReadyBackgroundHandoffActivityId("subagent")).toBe("ready-tie-a")
+            expect(list).not.toHaveBeenCalled()
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
     it("moves an eligible foreground activity to explicit background ownership", async () => {
         const move = vi.fn(async () => true)
         const store = new TaskActivityStore("task-1")
