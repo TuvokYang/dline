@@ -23,6 +23,40 @@ const MHCHEM_FORMULA = String.raw`\ce{H2O}`
 const AMS_ENVIRONMENT = String.raw`\begin{align} a &= b \\ c &= d \end{align}`
 const NEWCOMMAND_FORMULA = String.raw`\newcommand{\myVec}[1]{\mathbf{#1}}\myVec{x}`
 
+/**
+ * One formula per NewCM dynamic font file the engine bundles.
+ *
+ * These glyphs are not part of the font's static data: MathJax requests the
+ * file on first use. When the request cannot be served, the first missing
+ * glyph degrades to a system-font `<text>` fallback and any later glyph from
+ * the same file rejects the whole formula. Each entry is a macro from the
+ * announced TeX packages that was observed to need exactly that file.
+ */
+const DYNAMIC_FONT_FORMULAS: ReadonlyArray<readonly [file: string, source: string]> = [
+    ["monospace", String.raw`\mathtt{x} + \texttt{abc}`],
+    ["sans-serif", String.raw`\mathsf{x}`],
+    ["double-struck", String.raw`x \in \mathbb{R}`],
+    ["fraktur", String.raw`\mathfrak{g} + \Re z`],
+    ["script", String.raw`\mathscr{L} + \ell`],
+    ["calligraphic", String.raw`\mathcal{ABCDEFGHIJKLMNOPQRSTUVWXYZ}`],
+    ["latin", String.raw`\text{café}`],
+    ["math", String.raw`a \triangleq b \perp c`],
+    ["arrows", String.raw`a \leadsto b`],
+    ["greek", String.raw`\digamma`],
+    ["shapes", String.raw`\checkmark`],
+    ["symbols-b-i", String.raw`\circledR`],
+]
+
+/**
+ * Cyrillic glyphs live in a dynamic font file the engine deliberately does not
+ * bundle. Two distinct letters make the rejection independent of whether an
+ * earlier formula already consumed MathJax's single-glyph text fallback.
+ */
+const UNBUNDLED_FONT_FORMULA = String.raw`\text{ЖЯ}`
+
+/** MathJax emits `<text>` only for glyphs it could not take from the font. */
+const SYSTEM_FONT_FALLBACK = "<text"
+
 /** Glyph ids MathJax emits for greek letters, used to detect macro leakage. */
 const ALPHA_GLYPH = "1D6FC"
 const BETA_GLYPH = "1D6FD"
@@ -90,6 +124,21 @@ describe("renderLatexToNode", () => {
         ["mhchem", MHCHEM_FORMULA],
     ])("typesets a formula that needs the %s package", async (_package, source) => {
         const node = await renderLatexToNode(source, 320)
+
+        expect(outerHtmlOf(node)).toContain("<svg")
+    })
+
+    it.each(DYNAMIC_FONT_FORMULAS)("typesets glyphs from the bundled %s dynamic font file", async (_file, source) => {
+        const html = outerHtmlOf(await renderLatexToNode(source, 320))
+
+        expect(html).toContain("<svg")
+        expect(html).not.toContain("merror")
+        expect(html).not.toContain(SYSTEM_FONT_FALLBACK)
+    })
+
+    it("rejects glyphs whose dynamic font file is not bundled, then keeps typesetting", async () => {
+        await expect(renderLatexToNode(UNBUNDLED_FONT_FORMULA, 320)).rejects.toBeInstanceOf(LatexRenderError)
+        const node = await renderLatexToNode(String.raw`\mathtt{x}`, 320)
 
         expect(outerHtmlOf(node)).toContain("<svg")
     })

@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Fixes
+- 修复 LaTeX 公式块中 `\mathtt`、`\texttt`、`\mathsf`、`\mathbb`、`\mathfrak`、`\mathscr`、`\ell`、`\perp`、`\checkmark` 等命令无法排版、整块退回原始源码的问题；所需的 MathJax 字体数据现随 Webview 一起打包
+
 ## [0.11.0]
 
 ### Changed

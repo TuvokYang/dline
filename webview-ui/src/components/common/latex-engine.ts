@@ -15,6 +15,7 @@ import "@mathjax/src/js/input/tex/color/ColorConfiguration.js"
 import "@mathjax/src/js/input/tex/mhchem/MhchemConfiguration.js"
 import "@mathjax/src/js/input/tex/newcommand/NewcommandConfiguration.js"
 import "@mathjax/src/js/input/tex/noundefined/NoUndefinedConfiguration.js"
+import { installBundledFontLoader } from "./latex-font-loader"
 
 /**
  * TeX packages whose macros are announced to the model.
@@ -77,6 +78,9 @@ let cachedDocument: MathDocumentLike | undefined
  */
 function getMathDocument(): MathDocumentLike {
     if (!cachedDocument) {
+        // Glyphs such as \mathtt or \mathbb live in dynamic font files; without a
+        // loader every formula that needs one is rejected.
+        installBundledFontLoader()
         RegisterHTMLHandler(browserAdaptor())
         cachedDocument = mathjax.document("", {
             InputJax: new TeX({

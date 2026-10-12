@@ -4,6 +4,9 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+### Fixes
+- Fixed LaTeX formula blocks using `\mathtt`, `\texttt`, `\mathsf`, `\mathbb`, `\mathfrak`, `\mathscr`, `\ell`, `\perp`, `\checkmark`, and similar commands failing to typeset and falling back to raw source; the required MathJax font data now ships with the Webview
+
 ## [0.11.0]
 
 ### Changed
