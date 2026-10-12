@@ -1010,10 +1010,11 @@ e2e(
         await expect(sidebar.getByRole("button", { name: "Move to background" })).toHaveCount(0)
         const continueInBackground = taskFooter.locator('vscode-button[aria-label="Continue in Background"]')
         const actionRow = continueInBackground.locator("xpath=..")
-        const cancel = actionRow.locator('vscode-button[aria-label="Cancel"]')
+        // Cancel is the composer's action button; the footer row keeps only the handoff.
+        const cancel = taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')
         await expect(continueInBackground).toBeVisible({ timeout: 40_000 })
         await expect(cancel).toBeVisible()
-        await expect(actionRow.locator("vscode-button")).toHaveText(["Continue in Background", "Cancel"])
+        await expect(actionRow.locator("vscode-button")).toHaveText(["Continue in Background"])
         await taskFooter.screenshot({ path: e2e.info().outputPath("command-chat-footer-handoff.png") })
         await continueInBackground.click()
 
@@ -1093,7 +1094,7 @@ e2e(
         const taskFooter = sidebar.getByRole("contentinfo")
         await expect(sidebar.getByRole("button", { name: "Move to background" })).toHaveCount(0)
         const continueInBackground = taskFooter.locator('vscode-button[aria-label="Continue in Background"]')
-        const taskCancelButton = taskFooter.locator('vscode-button[aria-label="Cancel"]')
+        const taskCancelButton = taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')
         await expect(continueInBackground).toBeVisible({ timeout: 30_000 })
         await expect(taskCancelButton).toBeVisible()
         await continueInBackground.click()
@@ -1122,7 +1123,7 @@ e2e(
         await sidebar.getByRole("tab", { name: "Work", exact: true }).click()
         await expect(taskCancelButton).toBeVisible({ timeout: 30_000 })
         await taskCancelButton.click()
-        await expect(taskFooter.getByText("Resume", { exact: true })).toBeVisible({ timeout: 30_000 })
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toBeVisible({ timeout: 30_000 })
         await expect(sidebar.getByText("E2E_TASK_CANCEL_HANDOFF_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
 
         await expect

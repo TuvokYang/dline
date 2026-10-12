@@ -158,9 +158,10 @@ async function submitNewTaskFeedback(frame: Frame, text: string, action: "button
 
 async function expectNoDecisionButtons(frame: Frame): Promise<void> {
     const footer = frame.getByRole("contentinfo")
-    for (const label of ["Resume", "Start New Task", "Regenerate Context", "Approve", "Reject"]) {
+    for (const label of ["Start New Task", "Regenerate Context", "Approve", "Reject"]) {
         await expect(footer.getByText(label, { exact: true })).toHaveCount(0)
     }
+    await expect(footer.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
 }
 
 async function findAdditionalDlineFrame(page: Page, existingFrames: ReadonlySet<Frame>): Promise<Frame> {

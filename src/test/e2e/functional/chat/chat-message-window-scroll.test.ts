@@ -184,7 +184,7 @@ async function unlockAndContinueTask(sidebar: Frame, text: string): Promise<void
 
     const input = sidebar.getByTestId("chat-input")
     const sendButton = sidebar.getByTestId("send-button")
-    const resumeButton = sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
+    const resumeButton = sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')
     await expect(input).toBeEnabled({ timeout: 30_000 })
     await expect
         .poll(
@@ -405,7 +405,9 @@ e2e.describe("Chat message window scroll", () => {
 
                 await unlockAndContinueTask(sidebar, STREAM_CONTINUATION)
                 await expect(sidebar.getByText(STREAM_PARTIAL_MARKER, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-                await expect(sidebar.getByRole("contentinfo").getByText("Cancel", { exact: true })).toBeVisible({
+                await expect(
+                    sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="cancel"]'),
+                ).toBeVisible({
                     timeout: 30_000,
                 })
                 await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 30_000 }).toBe(1)
@@ -441,7 +443,9 @@ e2e.describe("Chat message window scroll", () => {
                     Math.abs(sameStreamingAnchor.top - anchor.top),
                     "active streaming must not pull the user's anchor toward the tail",
                 ).toBeLessThanOrEqual(20)
-                await expect(sidebar.getByRole("contentinfo").getByText("Cancel", { exact: true })).toBeVisible()
+                await expect(
+                    sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="cancel"]'),
+                ).toBeVisible()
 
                 await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 30_000 }).toBe(2)
                 await expect(sidebar.getByRole("contentinfo").getByText("Start New Task", { exact: true })).toBeVisible({

@@ -48,7 +48,9 @@ async function openHistoryInPanel(page: Page, sidebar: Frame, title: string): Pr
     const panel = await findAdditionalDlineFrame(page, existingFrames)
     await E2ETestHelper.dismissWhatsNewModal(panel)
     await expect(panel.getByText(title, { exact: true }).first()).toBeVisible({ timeout: 60_000 })
-    await expect(panel.getByRole("contentinfo").getByText("Resume", { exact: true })).toBeVisible({ timeout: 60_000 })
+    await expect(panel.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')).toBeVisible({
+        timeout: 60_000,
+    })
     return panel
 }
 
@@ -148,7 +150,9 @@ e2e(
 
             for (const panel of panels) {
                 expect(panel.isDetached()).toBe(false)
-                await expect(panel.getByRole("contentinfo").getByText("Resume", { exact: true })).toBeVisible()
+                await expect(
+                    panel.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]'),
+                ).toBeVisible()
             }
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {

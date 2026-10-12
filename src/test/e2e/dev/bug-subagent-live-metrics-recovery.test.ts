@@ -53,7 +53,7 @@ async function closeCurrentTask(sidebar: Frame): Promise<void> {
 
 async function cancelRunningTask(sidebar: Frame): Promise<void> {
     const taskFooter = sidebar.getByRole("contentinfo")
-    const cancelButton = taskFooter.locator('vscode-button[aria-label="Cancel"]')
+    const cancelButton = taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')
     await expect(cancelButton).toBeVisible({ timeout: 30_000 })
     await cancelButton.click()
     await expect(cancelButton).toHaveCount(0, { timeout: 30_000 })

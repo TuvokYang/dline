@@ -1185,7 +1185,7 @@ e2e(
         await expect.poll(() => pathExists(panelAPath)).toBe(false)
         await expect.poll(() => pathExists(panelBPath)).toBe(true)
         expect(normalizeNewlines(await readFile(panelBPath, "utf8"))).toBe("panel B checkpoint content\n")
-        await expect(panelA.locator('vscode-button[aria-label="Resume"]')).toBeVisible({ timeout: 30_000 })
+        await expect(panelA.locator('[data-testid="send-button"][data-action="resume"]')).toBeVisible({ timeout: 30_000 })
 
         await activateDlinePanelByFrame(dlineGroup, panelB)
         await expect(panelB.getByText(panelBTask, { exact: true }).first()).toBeVisible()
@@ -1207,7 +1207,7 @@ e2e(
         expect(normalizeNewlines(await readFile(panelBPath, "utf8"))).toBe("panel B checkpoint content\n")
 
         await activateDlinePanelByFrame(dlineGroup, panelA)
-        const panelAResume = panelA.locator('vscode-button[aria-label="Resume"]')
+        const panelAResume = panelA.locator('[data-testid="send-button"][data-action="resume"]')
         server.enqueueResponses("openai-compatible-chat", {
             type: "tool",
             id: "call_concurrent_panel_a_follow_up",

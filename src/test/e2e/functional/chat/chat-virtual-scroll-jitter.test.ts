@@ -2171,7 +2171,7 @@ async function unlockAndContinueTask(sidebar: Frame, text: string): Promise<void
 
     const input = sidebar.getByTestId("chat-input")
     const sendButton = sidebar.getByTestId("send-button")
-    const resumeButton = sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
+    const resumeButton = sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')
     await expect(input).toBeEnabled({ timeout: 30_000 })
     await expect
         .poll(

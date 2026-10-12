@@ -51,7 +51,7 @@ async function openHistoryTask(page: Page, sidebar: Frame): Promise<void> {
 }
 
 function resumeButton(sidebar: Frame) {
-    return sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Resume"]')
+    return sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')
 }
 
 function outputSince(userDataDir: string, baseline: string): string {

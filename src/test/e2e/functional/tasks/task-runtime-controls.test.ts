@@ -323,7 +323,9 @@ async function startTaskAndWaitForRuntimeControls(
     await input.fill(markers.task)
     await sidebar.getByTestId("send-button").click()
     await expect.poll(() => server.getRequestCount(target), { timeout: 30_000 }).toBe(1)
-    await expect(sidebar.getByRole("contentinfo").getByText("Cancel", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({
+        timeout: 30_000,
+    })
     const thinkingControl = sidebar.getByRole("combobox", { name: "Task thinking override" })
     await expect(thinkingControl).toBeVisible()
     await expect(thinkingControl).toBeEnabled()
@@ -1056,7 +1058,7 @@ e2e(
             await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(1)
 
             const taskFooter = sidebar.getByRole("contentinfo")
-            const cancelButton = taskFooter.getByText("Cancel", { exact: true })
+            const cancelButton = taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')
             await expect(cancelButton).toBeVisible({ timeout: 30_000 })
             const thinkingControl = sidebar.getByRole("combobox", { name: "Task thinking override" })
             const serviceTierControl = sidebar.getByRole("button", { name: "Task service tier" })
@@ -1069,7 +1071,7 @@ e2e(
                 .poll(() => server.getMockConsumptions("openai-compatible-chat")[0]?.abortedAtMs, { timeout: 30_000 })
                 .not.toBeUndefined()
 
-            await expect(taskFooter.getByText("Resume", { exact: true })).toBeVisible({ timeout: 30_000 })
+            await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toBeVisible({ timeout: 30_000 })
             await expect(thinkingControl).toBeVisible()
             await expect(thinkingControl).toBeEnabled()
             await expect(serviceTierControl).toBeVisible()

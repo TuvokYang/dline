@@ -693,7 +693,9 @@ e2e(
             // owns the persisted request, so no approval decision is left to replay.
             for (let reopen = 0; reopen < 2; reopen++) {
                 await reopenTask(opened.sidebar, taskText)
-                await expect(opened.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })).toBeVisible({
+                await expect(
+                    opened.sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]'),
+                ).toBeVisible({
                     timeout: 30_000,
                 })
                 await expect(opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })).toHaveCount(0)
@@ -703,7 +705,9 @@ e2e(
             }
 
             await attachHostedWebResumeEvidence(opened.page, dlineDir, dlineDocsDir, userDataDir, "legacy-hosted-resume")
-            const resumeButton = opened.sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Resume"]')
+            const resumeButton = opened.sidebar
+                .getByRole("contentinfo")
+                .locator('[data-testid="send-button"][data-action="resume"]')
             await resumeButton.click({ force: true })
             await expect(opened.sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
@@ -1839,7 +1843,9 @@ webFetchE2e(
             const restoreStartedAt = Date.now()
             await restoreTaskButton.click()
 
-            const resumeButton = opened.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
+            const resumeButton = opened.sidebar
+                .getByRole("contentinfo")
+                .locator('[data-testid="send-button"][data-action="resume"]')
             await expect(resumeButton).toBeVisible({ timeout: 5_000 })
             await expect
                 .poll(() => server.getWebFetchPageRequests()[1]?.closedAtMs, { timeout: 5_000 })

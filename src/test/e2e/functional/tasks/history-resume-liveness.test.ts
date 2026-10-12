@@ -146,7 +146,7 @@ e2e(
         await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 5_000 })
         const browserMessageSurfaceMs = Math.round(performance.now() - historyClickedAt)
         const footer = sidebar.getByRole("contentinfo")
-        const resumeButton = footer.getByText("Resume", { exact: true })
+        const resumeButton = footer.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 5_000 })
         const browserSurfaceMs = Math.round(performance.now() - historyClickedAt)
         // The extension's share is measured by its own stage timings: a browser

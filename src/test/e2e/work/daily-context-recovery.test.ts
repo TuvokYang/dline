@@ -200,7 +200,9 @@ e2e(
 
             await unlockAndContinueContextTask(sidebar, STREAM_CONTINUATION)
             await expect(sidebar.getByText(STREAM_PARTIAL, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await expect(sidebar.getByRole("contentinfo").getByText("Cancel", { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expect(
+                sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="cancel"]'),
+            ).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount(SOURCE_TARGET), { timeout: 60_000 }).toBe(1)
 
             let streamingBrowse = await captureWorkScroller(sidebar)

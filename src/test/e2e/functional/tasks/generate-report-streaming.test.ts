@@ -97,9 +97,10 @@ async function sendTask(sidebar: Frame, text: string): Promise<void> {
 
 async function expectNoDecisionButtons(sidebar: Frame): Promise<void> {
     const footer = sidebar.getByRole("contentinfo")
-    for (const label of ["Resume", "Approve", "Reject", "Start New Task"]) {
+    for (const label of ["Approve", "Reject", "Start New Task"]) {
         await expect(footer.getByText(label, { exact: true })).toHaveCount(0)
     }
+    await expect(footer.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
 }
 
 async function closeAndReopenTask(sidebar: Frame, taskText: string): Promise<void> {

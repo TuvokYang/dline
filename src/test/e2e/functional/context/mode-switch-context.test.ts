@@ -232,7 +232,7 @@ async function sendTask(sidebar: Frame, text: string, readinessTimeout = 60_000)
     const input = sidebar.getByTestId("chat-input")
     await expect(input).toBeEnabled({ timeout: readinessTimeout })
     await input.fill(text)
-    await expect(sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false", {
+    await expect(sidebar.getByTestId("send-button")).toHaveAttribute("data-action", /^(?:send|resume|queue)$/, {
         timeout: readinessTimeout,
     })
     await input.press("Enter")
@@ -458,12 +458,12 @@ e2e(
             })
             const taskFooter = sidebar.getByRole("contentinfo")
             await expect(taskFooter.getByText("Start New Task", { exact: true })).toBeVisible()
-            await expect(taskFooter.getByText("Resume", { exact: true })).toHaveCount(0)
+            await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
             // Reproduce the real task-local profile race: the selection RPC is
             // intentionally still in flight when the next user turn is submitted.
             await clickProfileOption(sidebar, E2E_PROFILE_NAMES.mockOpenAiResponses)
             await expect(taskFooter.getByText("Start New Task", { exact: true })).toBeVisible()
-            await expect(taskFooter.getByText("Resume", { exact: true })).toHaveCount(0)
+            await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
 
             const input = sidebar.getByTestId("chat-input")
             await expect(input).toBeEnabled()

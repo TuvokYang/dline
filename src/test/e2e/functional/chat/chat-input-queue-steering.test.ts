@@ -15,7 +15,7 @@ e2e(
         await input.fill("E2E_STEERING_TOOLROUND_TASK")
         await sidebar.getByTestId("send-button").click()
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-        await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({ timeout: 30_000 })
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({ timeout: 30_000 })
 
         await input.fill("E2E_QUEUED_MUST_WAIT")
         await input.press("Enter")

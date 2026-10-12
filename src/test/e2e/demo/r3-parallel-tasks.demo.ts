@@ -292,7 +292,7 @@ demo(
         )
 
         const cancelButtons = [sidebar, leftPanel, rightPanel].map((frame) =>
-            frame.getByRole("button", { name: "Cancel", exact: true }).first(),
+            frame.locator('[data-testid="send-button"][data-action="cancel"]'),
         )
         await Promise.all(cancelButtons.map((button) => expect(button).toBeVisible()))
         await pace()

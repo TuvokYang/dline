@@ -24,7 +24,7 @@ e2e(
         await input.fill("E2E_QUEUE_BLOCKED_TASK")
         await sidebar.getByTestId("send-button").click()
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-        await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({ timeout: 30_000 })
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({ timeout: 30_000 })
 
         // Enter while the task is running must not reach the model as a new request.
         // The markdown body is filled rather than typed because typing newlines
@@ -99,7 +99,7 @@ e2e(
         await input.fill("E2E_QUEUE_STEERING_TASK")
         await sidebar.getByTestId("send-button").click()
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-        await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({ timeout: 30_000 })
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({ timeout: 30_000 })
 
         await input.fill("E2E_STEERING_ENTRY")
         await input.press("Enter")
@@ -140,7 +140,7 @@ e2e("Chat input queue - removing an entry is the only way it leaves unsent", asy
     await input.fill("E2E_QUEUE_REMOVE_TASK")
     await sidebar.getByTestId("send-button").click()
     await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-    await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({ timeout: 30_000 })
+    await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({ timeout: 30_000 })
 
     await input.fill("E2E_REMOVE_FIRST")
     await input.press("Enter")
@@ -183,7 +183,7 @@ e2e("Chat input queue - a queued entry is delivered at the next turn end", async
     await input.fill("E2E_QUEUE_TURNEND_TASK")
     await sidebar.getByTestId("send-button").click()
     await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-    await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({ timeout: 30_000 })
+    await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({ timeout: 30_000 })
 
     await input.fill("## E2E_TURNEND_QUEUED_TEXT\n\n- E2E_DELIVERED_MARKDOWN_ITEM")
     await input.press("Enter")
@@ -240,10 +240,10 @@ e2e("Chat input queue - input after completion is sent, not queued", async ({ he
     // The task is finished once its completion result is on screen and the
     // Cancel button is gone.
     await expect(sidebar.getByText("E2E_COMPLETED_FIRST").first()).toBeVisible({ timeout: 60_000 })
-    await expect(sidebar.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0, { timeout: 30_000 })
+    await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toHaveCount(0, { timeout: 30_000 })
     // The completion result renders before Core opens the reply interaction;
     // until then the composer refuses a send, so wait until it accepts one.
-    await expect(sidebar.getByTestId("send-button")).not.toHaveAttribute("aria-disabled", "true", { timeout: 30_000 })
+    await expect(sidebar.getByTestId("send-button")).toHaveAttribute("data-action", "send", { timeout: 30_000 })
 
     await input.fill("E2E_AFTER_COMPLETION_TEXT")
     await input.press("Enter")
@@ -359,7 +359,7 @@ e2e(
             await sidebar.getByTestId("send-button").click()
             await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
 
-            const cancel = sidebar.getByRole("button", { name: "Cancel", exact: true }).first()
+            const cancel = sidebar.locator('[data-testid="send-button"][data-action="cancel"]')
             await expect(cancel).toBeVisible({ timeout: 30_000 })
 
             await input.fill("E2E_SURVIVES_CANCEL")
@@ -389,13 +389,15 @@ e2e(
                     for (const frame of candidatePage.frames()) {
                         if (frame.isDetached()) continue
                         const hasQueue = (await frame.getByTestId("input-queue-toggle").count()) > 0
-                        const hasResume = (await frame.getByRole("button", { name: "Resume", exact: true }).count()) > 0
+                        const hasResume = (await frame.locator('[data-testid="send-button"][data-action="resume"]').count()) > 0
                         if (hasQueue && hasResume) return frame
                     }
                 }
                 return undefined
             }, 60_000)
-            await expect(sidebar.getByRole("button", { name: "Resume", exact: true }).first()).toBeVisible({ timeout: 30_000 })
+            await expect(sidebar.locator('[data-testid="send-button"][data-action="resume"]').first()).toBeVisible({
+                timeout: 30_000,
+            })
             await expect(sidebar.getByTestId("hydration-pending")).toHaveCount(0, { timeout: 30_000 })
             await expect(sidebar.getByTestId("hydration-failed")).toHaveCount(0)
             await expect(sidebar.getByTestId("input-queue-toggle")).toContainText("Queue 1", { timeout: 60_000 })

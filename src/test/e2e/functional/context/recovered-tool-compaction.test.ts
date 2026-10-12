@@ -157,7 +157,7 @@ async function launchRecoveredResumeTask(
 }
 
 async function replyToResume(sidebar: Frame, reply: string): Promise<void> {
-    const resumeButton = sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
+    const resumeButton = sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')
     const input = sidebar.getByTestId("chat-input")
     await expect(resumeButton).toBeVisible({ timeout: 30_000 })
     await expect(input).toBeEnabled()
@@ -362,7 +362,9 @@ e2e(
             await setAutoApproveAction(resumed.sidebar, "Execute safe commands", true)
             await reopenTask(resumed.page, resumed.sidebar, setupTask)
             const input = resumed.sidebar.getByTestId("chat-input")
-            const resumeButton = resumed.sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
+            const resumeButton = resumed.sidebar
+                .getByRole("contentinfo")
+                .locator('[data-testid="send-button"][data-action="resume"]')
             await expect(resumeButton).toBeVisible({ timeout: 30_000 })
             await expect(input).toBeEnabled()
             await input.fill(followup)
@@ -445,7 +447,7 @@ e2e(
             const resumed = await openSidebar(resumedApp, helper)
             await reopenTask(resumed.page, resumed.sidebar, setupTask)
             const footer = resumed.sidebar.getByRole("contentinfo")
-            const resumeButton = footer.getByText("Resume", { exact: true })
+            const resumeButton = footer.locator('[data-testid="send-button"][data-action="resume"]')
             const input = resumed.sidebar.getByTestId("chat-input")
             await expect(resumeButton).toBeVisible({ timeout: 30_000 })
             await input.fill(resumeDraft)

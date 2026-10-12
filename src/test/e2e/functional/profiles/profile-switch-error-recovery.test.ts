@@ -187,7 +187,7 @@ e2e(
             await expect(
                 sidebar.getByText("E2E_PROFILE_SWITCH_429_INTERRUPTED_RESPONSE_MUST_NOT_RENDER", { exact: false }),
             ).toHaveCount(0)
-            const resumeButton = sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
+            const resumeButton = sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')
             await expect(resumeButton).toBeVisible({ timeout: 30_000 })
             await expect
                 .poll(async () => readSnapshot(dlineDocsDir, taskId), { timeout: 30_000 })

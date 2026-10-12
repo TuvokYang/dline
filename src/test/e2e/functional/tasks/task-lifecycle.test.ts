@@ -122,9 +122,10 @@ async function configureGpt56ResponsesProfile(dlineDir: string): Promise<void> {
 
 async function expectNoDecisionButtons(sidebar: Frame): Promise<void> {
     const taskFooter = sidebar.getByRole("contentinfo")
-    for (const label of ["Resume", "Start New Task", "Approve", "Reject", "Acknowledge", "Stop"]) {
+    for (const label of ["Start New Task", "Approve", "Reject", "Acknowledge", "Stop"]) {
         await expect(taskFooter.getByText(label, { exact: true })).toHaveCount(0)
     }
+    await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
 }
 
 async function expectNoConflictingDecisionButtons(sidebar: Frame): Promise<void> {
@@ -218,7 +219,7 @@ e2e(
 
         await sendTask(sidebar, "E2E_UNSENT_DRAFT_RUNNING_TASK")
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-        await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({
             timeout: 30_000,
         })
 
@@ -322,7 +323,7 @@ e2e(
             timeout: 60_000,
         })
         await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(1)
-        await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible()
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible()
 
         const unsentDraft = "E2E_STREAM_TURN_END_DRAFT_MUST_STAY_LOCAL"
         const input = sidebar.getByTestId("chat-input")
@@ -451,7 +452,7 @@ e2e(
 
         await sendTask(sidebar, "E2E_UNSENT_DRAFT_MULTI_TURN_TASK")
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-        await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({
             timeout: 30_000,
         })
 
@@ -541,7 +542,7 @@ for (const turnEndCase of waitingTurnEndDraftCases) {
 
             await sendTask(sidebar, `E2E_UNSENT_${turnEndCase.name.toUpperCase()}_TASK`)
             await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-            await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({
+            await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({
                 timeout: 30_000,
             })
 
@@ -597,11 +598,11 @@ e2e(
 
         await sendTask(sidebar, "E2E_CANCEL_RESUME_TASK")
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-        const cancelButton = sidebar.getByRole("button", { name: "Cancel", exact: true }).first()
+        const cancelButton = sidebar.locator('[data-testid="send-button"][data-action="cancel"]')
         await expect(cancelButton).toBeVisible({ timeout: 30_000 })
         await cancelButton.click()
 
-        const resumeButton = sidebar.getByRole("button", { name: "Resume", exact: true }).first()
+        const resumeButton = sidebar.locator('[data-testid="send-button"][data-action="resume"]').first()
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         const input = sidebar.getByTestId("chat-input")
         await expect(input).toBeEnabled()
@@ -626,7 +627,7 @@ e2e(
         await closeCurrentTask(sidebar)
         await reopenTask(sidebar, "E2E_CANCEL_RESUME_TASK")
         await expect(taskFooter.getByText("Start New Task", { exact: true })).toBeVisible({ timeout: 30_000 })
-        await expect(taskFooter.getByText("Resume", { exact: true })).toHaveCount(0)
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
         await expect(sidebar.getByTestId("chat-input")).toBeEnabled()
         await page.waitForTimeout(500)
         expect(server.openAiRequestCount).toBe(3)
@@ -668,15 +669,15 @@ e2e(
         await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(1)
 
         const taskFooter = sidebar.getByRole("contentinfo")
-        const cancelButton = taskFooter.getByText("Cancel", { exact: true })
+        const cancelButton = taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')
         await expect(cancelButton).toBeVisible({ timeout: 30_000 })
-        await startFooterActionStabilityObserver(sidebar, ["Cancel"])
+        await startFooterActionStabilityObserver(sidebar, ["Cancel task"], '[data-testid="send-button"]')
         await sidebar.page().waitForTimeout(1_000)
         const footerStabilityEvents = await stopFooterActionStabilityObserver(sidebar)
         expect(footerStabilityEvents).toEqual([])
         await cancelButton.click()
 
-        const resumeButton = taskFooter.getByText("Resume", { exact: true })
+        const resumeButton = taskFooter.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         await expect(cancelButton).toHaveCount(0)
         await expect(sidebar.getByText("E2E_STREAM_CANCELLED_TOOL_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
@@ -1231,14 +1232,14 @@ e2e(
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(1)
 
             const taskFooter = sidebar.getByRole("contentinfo")
-            const cancelButton = taskFooter.getByText("Cancel", { exact: true })
+            const cancelButton = taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')
             await expect(cancelButton).toBeVisible({ timeout: 30_000 })
             await cancelButton.click()
             await expect
                 .poll(() => server.getMockConsumptions("openai-compatible-responses")[0]?.abortedAtMs, { timeout: 30_000 })
                 .not.toBeUndefined()
 
-            const resumeAfterCancel = taskFooter.getByText("Resume", { exact: true })
+            const resumeAfterCancel = taskFooter.locator('[data-testid="send-button"][data-action="resume"]')
             await expect(resumeAfterCancel).toBeVisible({ timeout: 30_000 })
             const input = sidebar.getByTestId("chat-input")
             await input.fill(intermediateDraft)
@@ -1270,7 +1271,7 @@ e2e(
             expect(apiBefore.match(/Response interrupted by user/g)?.length).toBe(2)
 
             await reopenTask(sidebar, taskText)
-            const resumeAfterClose = sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
+            const resumeAfterClose = sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')
             await expect(resumeAfterClose).toBeVisible({ timeout: 30_000 })
             await expect(sidebar.getByText("E2E_GPT56_CANCELLED_RESPONSE_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
             await expect(sidebar.getByText("E2E_GPT56_CLOSED_RESPONSE_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)

@@ -57,7 +57,7 @@ async function expectSingleUserFeedback(sidebar: Frame, text: string): Promise<v
 
 async function expectComposerSendReady(sidebar: Frame): Promise<void> {
     await expect(sidebar.getByTestId("chat-input")).toBeEnabled()
-    await expect(sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false")
+    await expect(sidebar.getByTestId("send-button")).toHaveAttribute("data-action", /^(?:send|resume)$/)
 }
 
 e2e("Tools - auto-approves a project read and continues with its result", async ({ helper, server, sidebar }) => {
@@ -979,10 +979,10 @@ e2e(
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
 
         const taskFooter = sidebar.getByRole("contentinfo")
-        const cancelButton = taskFooter.getByText("Cancel", { exact: true })
+        const cancelButton = taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')
         await expect(cancelButton).toBeVisible({ timeout: 30_000 })
         await cancelButton.click()
-        const resumeButton = taskFooter.getByText("Resume", { exact: true })
+        const resumeButton = taskFooter.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         await expect(sidebar.getByText("E2E_CANCEL_APPROVED_READ_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
 
@@ -1055,10 +1055,10 @@ e2e(
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
 
         const taskFooter = sidebar.getByRole("contentinfo")
-        const cancelButton = taskFooter.getByText("Cancel", { exact: true })
+        const cancelButton = taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')
         await expect(cancelButton).toBeVisible({ timeout: 30_000 })
         await cancelButton.click()
-        const resumeButton = taskFooter.getByText("Resume", { exact: true })
+        const resumeButton = taskFooter.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         await expect(sidebar.getByText("E2E_CANCEL_APPROVED_WRITE_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
 
@@ -1861,7 +1861,7 @@ e2e(
         await expect(subagentCard.getByRole("button", { name: "Continue in Background", exact: true })).toHaveCount(0)
         const taskFooter = sidebar.getByRole("contentinfo")
         await expect(taskFooter.locator('vscode-button[aria-label="Continue in Background"]')).toBeVisible()
-        await expect(taskFooter.locator('vscode-button[aria-label="Cancel"]')).toBeVisible()
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible()
         await subagentCard.screenshot({ path: e2e.info().outputPath("foreground-subagent-card-actions.png") })
         await taskFooter.screenshot({ path: e2e.info().outputPath("foreground-subagent-chat-footer.png") })
         await cancelButton.evaluate((element) => element.setAttribute("data-e2e-footer-stability", "subagent-cancel"))
@@ -2223,11 +2223,11 @@ Remain active until the parent task is closed.`,
             .toBeGreaterThan(0)
         await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 }).toBe(1)
         const taskFooter = sidebar.getByRole("contentinfo")
-        const taskCancelButton = taskFooter.getByText("Cancel", { exact: true })
+        const taskCancelButton = taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')
         await expect(taskCancelButton).toBeVisible({ timeout: 30_000 })
         const heartbeatBeforeCancel = (await readFile(heartbeatPath, "utf8")).length
         await taskCancelButton.click()
-        await expect(taskFooter.getByText("Resume", { exact: true })).toBeVisible({ timeout: 30_000 })
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toBeVisible({ timeout: 30_000 })
         await page.waitForTimeout(800)
         expect((await readFile(heartbeatPath, "utf8")).length).toBeGreaterThan(heartbeatBeforeCancel)
         expect(server.getMockConsumptions("openai-compatible-responses")[0].abortedAtMs).toBeUndefined()

@@ -328,7 +328,7 @@ e2e(
         await restoreAllButton.click()
         await expect.poll(() => pathExists(filePath)).toBe(false)
 
-        const resumeButton = sidebar.getByText("Resume", { exact: true })
+        const resumeButton = sidebar.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         await page.waitForTimeout(500)
         expect(server.openAiRequestCount).toBe(2)
@@ -388,7 +388,7 @@ e2e(
         await closeCurrentTask(sidebar)
         await reopenTask(sidebar, taskText)
 
-        const resumeButton = sidebar.getByText("Resume", { exact: true })
+        const resumeButton = sidebar.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible()
         await expect(sidebar.getByRole("button", { name: /README\.md/ }).last()).toBeVisible()
@@ -455,7 +455,7 @@ e2e(
         await simulateIncompleteTurnEndContinuation(dlineDocsDir, taskId)
         await reopenTask(sidebar, taskText)
         await expect(sidebar.getByText("E2E_MISSING_QNA_PROMPT", { exact: true })).toBeVisible()
-        await expect(sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })).toBeVisible({
+        await expect(sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')).toBeVisible({
             timeout: 30_000,
         })
 
@@ -571,8 +571,8 @@ e2e(
         const taskFooter = sidebar.getByRole("contentinfo")
         await expect(taskFooter.getByText("Approve", { exact: true })).toHaveCount(0)
         await expect(taskFooter.getByText("Reject", { exact: true })).toHaveCount(0)
-        await expect(taskFooter.getByText("Cancel", { exact: true })).toHaveCount(0)
-        await expect(taskFooter.getByText("Resume", { exact: true })).toBeVisible()
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')).toHaveCount(0)
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toBeVisible()
         await expect(sidebar.getByText(/saved interaction message|controls are unavailable/i)).toHaveCount(0)
         await page.waitForTimeout(500)
         expect(server.openAiRequestCount).toBe(1)
@@ -615,7 +615,7 @@ e2e(
         const approveButton = taskFooter.getByText("Approve", { exact: true })
         await expect(approveButton).toBeVisible({ timeout: 30_000 })
         await expect(taskFooter.getByText("Reject", { exact: true })).toBeVisible()
-        await expect(taskFooter.getByText("Resume", { exact: true })).toHaveCount(0)
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
         await page.waitForTimeout(500)
         expect(server.openAiRequestCount).toBe(1)
 
@@ -789,7 +789,7 @@ e2e(
         await closeCurrentTask(sidebar)
         await reopenTask(sidebar, taskText)
         const taskFooter = sidebar.getByRole("contentinfo")
-        const resumeButton = taskFooter.getByText("Resume", { exact: true })
+        const resumeButton = taskFooter.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         const restoredCommandCard = await expectCommandCardReady(sidebar, command)
         await expect(restoredCommandCard).toContainText("E2E_HISTORY_COMPLETED_COMMAND_STDOUT")
@@ -883,7 +883,7 @@ e2e(
         const approveButton = taskFooter.getByText("Approve", { exact: true })
         await expect(approveButton).toBeVisible({ timeout: 30_000 })
         await expect(taskFooter.getByText("Reject", { exact: true })).toBeVisible()
-        await expect(taskFooter.getByText("Resume", { exact: true })).toHaveCount(0)
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
         await page.waitForTimeout(500)
         expect(server.openAiRequestCount).toBe(1)
 
@@ -955,7 +955,7 @@ e2e(
         await closeCurrentTask(sidebar)
         await reopenTask(sidebar, taskText)
         const taskFooter = sidebar.getByRole("contentinfo")
-        const resumeButton = taskFooter.getByText("Resume", { exact: true })
+        const resumeButton = taskFooter.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         await expect(taskFooter.getByText("Approve", { exact: true })).toHaveCount(0)
         await expect(taskFooter.getByText("Reject", { exact: true })).toHaveCount(0)
@@ -1034,7 +1034,7 @@ e2e(
         const restoredApprove = taskFooter.getByText("Approve", { exact: true })
         await expect(restoredApprove).toBeVisible({ timeout: 30_000 })
         await expect(taskFooter.getByText("Reject", { exact: true })).toBeVisible()
-        await expect(taskFooter.getByText("Resume", { exact: true })).toHaveCount(0)
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
         await page.waitForTimeout(500)
         expect(server.openAiRequestCount).toBe(1)
 
@@ -1044,7 +1044,7 @@ e2e(
         await closeCurrentTask(sidebar)
         await reopenTask(sidebar, taskText)
 
-        const resumeButton = taskFooter.getByText("Resume", { exact: true })
+        const resumeButton = taskFooter.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         await expect(taskFooter.getByText("Approve", { exact: true })).toHaveCount(0)
         await expect(taskFooter.getByText("Reject", { exact: true })).toHaveCount(0)
@@ -1241,13 +1241,13 @@ e2e(
         await reopenTask(sidebar, taskText)
 
         const taskFooter = sidebar.getByRole("contentinfo")
-        const resumeButton = taskFooter.getByText("Resume", { exact: true })
+        const resumeButton = taskFooter.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         await expect(taskFooter.getByText("Approve", { exact: true })).toHaveCount(0)
         await expect(taskFooter.getByText("Reject", { exact: true })).toHaveCount(0)
         const restoredCommandCard = await expectCommandCardReady(sidebar, command)
         await expect(restoredCommandCard).toContainText("Interrupted")
-        await expect(sidebar.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0)
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toHaveCount(0)
         await expect(sidebar.getByText("E2E_CLOSED_BACKGROUND_COMMAND_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
 
         const reopenedActivitiesTab = sidebar.getByRole("tab", { name: "Activities", exact: true })
@@ -1329,7 +1329,7 @@ e2e(
         const taskFooter = sidebar.getByRole("contentinfo")
         const restoredApprove = taskFooter.getByText("Approve", { exact: true })
         await expect(restoredApprove).toBeVisible({ timeout: 30_000 })
-        await expect(taskFooter.getByText("Resume", { exact: true })).toHaveCount(0)
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
         await page.waitForTimeout(500)
         expect(server.openAiRequestCount).toBe(1)
 
@@ -1341,7 +1341,7 @@ e2e(
         await closeCurrentTask(sidebar)
         await reopenTask(sidebar, taskText)
 
-        const resumeButton = taskFooter.getByText("Resume", { exact: true })
+        const resumeButton = taskFooter.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         await expect(taskFooter.getByText("Approve", { exact: true })).toHaveCount(0)
         await expect(taskFooter.getByText("Reject", { exact: true })).toHaveCount(0)

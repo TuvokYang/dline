@@ -8,6 +8,8 @@ export interface HistoryInteractivitySample {
     interactionUnavailable: boolean
     lockTakeoverVisible: boolean
     sendAriaDisabled: string | null
+    /** The composer action button's `data-action`: send, resume, queue, cancel or unavailable. */
+    sendAction: string | null
     taskSurfaceVisible: boolean
 }
 
@@ -69,6 +71,9 @@ export async function startHistoryInteractivityProbe(frame: Frame, expected: His
                     ),
                 sendAriaDisabled:
                     document.querySelector<HTMLElement>('[data-testid="send-button"]')?.getAttribute("aria-disabled") ?? null,
+                // The composer's action button also carries Resume and Cancel; this names which it offers.
+                sendAction:
+                    document.querySelector<HTMLElement>('[data-testid="send-button"]')?.getAttribute("data-action") ?? null,
                 taskSurfaceVisible: Boolean(document.querySelector('[aria-label="Close Task"]')),
             }
         }
@@ -80,6 +85,7 @@ export async function startHistoryInteractivityProbe(frame: Frame, expected: His
                 interactionUnavailable: current.interactionUnavailable,
                 lockTakeoverVisible: current.lockTakeoverVisible,
                 sendAriaDisabled: current.sendAriaDisabled,
+                sendAction: current.sendAction,
                 taskSurfaceVisible: current.taskSurfaceVisible,
             })
             if (signature !== previousSignature) {
@@ -106,7 +112,9 @@ export async function startHistoryInteractivityProbe(frame: Frame, expected: His
                 "Continue in Background",
             ])
             const hasEnabledTaskAction = [...enabledLabels].some((label) => taskActionLabels.has(label))
-            const sendEnabled = current.sendAriaDisabled === "false"
+            // Takes a direct send or a resume; queue and cancel are enabled too but mean the task is busy.
+            const sendEnabled =
+                current.sendAriaDisabled === "false" && (current.sendAction === "send" || current.sendAction === "resume")
             if (
                 current.taskSurfaceVisible &&
                 (hasEnabledTaskAction || sendEnabled || current.lockTakeoverVisible) &&
@@ -117,7 +125,7 @@ export async function startHistoryInteractivityProbe(frame: Frame, expected: His
             const expectedReached =
                 current.taskSurfaceVisible &&
                 (expectedInteraction === "resume"
-                    ? enabledLabels.has("Resume") && sendEnabled
+                    ? current.sendAction === "resume" && sendEnabled
                     : expectedInteraction === "start-new-task"
                       ? enabledLabels.has("Start New Task") && sendEnabled
                       : sendEnabled)

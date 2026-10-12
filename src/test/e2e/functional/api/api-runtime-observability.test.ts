@@ -811,7 +811,7 @@ e2e(
 
         await sendTask(sidebar, "E2E_UNSENT_MISTAKE_LIMIT_TASK")
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
-        await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({
             timeout: 30_000,
         })
 
@@ -967,7 +967,7 @@ e2e(
         const feedback =
             "同时要带mcp server， 方便ai管理服务。 还带时间触发审查， 如错误时， ai开始审查错误来源， 账号异常则自动补充。"
         const footer = sidebar.getByRole("contentinfo")
-        const resumeButton = footer.getByText("Resume", { exact: true })
+        const resumeButton = footer.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         const input = sidebar.getByTestId("chat-input")
         await input.fill(feedback)
@@ -1161,7 +1161,7 @@ e2e(
         await expect(sidebar.getByText(/Automatic retry (scheduled|in progress|stopped)/)).toHaveCount(0)
         await expect(sidebar.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible()
         await expect(sidebar.locator('vscode-button[aria-label="Retry"]')).toHaveCount(0)
-        await expect(sidebar.locator('vscode-button[aria-label="Cancel"]')).toHaveCount(0)
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toHaveCount(0)
         await page.waitForTimeout(1_000)
         await expect(allErrorBoxes).toHaveCount(0)
         expect(server.getMockConsumptions("deepseek-chat")).toHaveLength(2)
@@ -1314,7 +1314,7 @@ e2e(
         await expect.poll(() => server.getRequestCount("deepseek-chat")).toBe(3)
         await expect(errorBox).toHaveCount(0)
         await expect(sidebar.getByText(/Automatic retry (scheduled|in progress|stopped)/)).toHaveCount(0)
-        await expect(sidebar.locator('vscode-button[aria-label="Cancel"]')).toBeVisible()
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible()
 
         await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         await expect(sidebar.getByTestId("error-retry-box")).toHaveCount(0)
@@ -1470,8 +1470,9 @@ e2e(
 
         const retryButton = sidebar.locator('vscode-button[aria-label="Retry"]')
         await expect(retryButton).toBeVisible()
-        await expect(sidebar.locator('vscode-button[aria-label="Cancel"]')).toBeVisible()
-        await startFooterActionStabilityObserver(sidebar, ["Retry", "Cancel"])
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible()
+        // Cancel lives on the composer's action button now; the footer keeps Retry.
+        await startFooterActionStabilityObserver(sidebar, ["Retry"])
         await expect.poll(() => server.getMockConsumptions("openai-compatible-chat").length).toBe(2)
         await expect(errorBox.getByText("Automatic retry in progress", { exact: true })).toBeVisible()
         await expect(countdown).toHaveText(new RegExp(`^${retryAttemptLabel(1)}\\s+Retrying now$`))

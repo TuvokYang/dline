@@ -269,7 +269,7 @@ e2e(
             const rejectButton = reopenedFooter.getByRole("button", { name: "Reject", exact: true }).first()
             await expect(approveButton).toBeVisible({ timeout: 30_000 })
             await expect(rejectButton).toBeVisible()
-            await expect(reopenedFooter.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0)
+            await expect(reopenedFooter.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
             await page.waitForTimeout(750)
             expect(server.getMockConsumptions("openai-compatible-responses")).toHaveLength(1)
             await rejectButton.click()

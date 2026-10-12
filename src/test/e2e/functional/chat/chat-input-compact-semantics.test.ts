@@ -64,7 +64,9 @@ async function sendText(sidebar: Frame, text: string): Promise<void> {
     const input = sidebar.getByTestId("chat-input")
     await expect(input).toBeEnabled({ timeout: 60_000 })
     await input.fill(text)
-    await expect(sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false", { timeout: 60_000 })
+    await expect(sidebar.getByTestId("send-button")).toHaveAttribute("data-action", /^(?:send|resume|queue)$/, {
+        timeout: 60_000,
+    })
     await input.press("Enter")
     await expectComposerText(input, "")
     await expect(sidebar.getByText(text, { exact: true }).last()).toBeVisible()

@@ -195,7 +195,7 @@ e2e(
 
             const input = sidebar.getByTestId("chat-input")
             await input.fill(RESUME_INPUT)
-            await sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Resume"]').click()
+            await sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]').click()
             await expect(sidebar.getByText(COMPLETED, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
             const [request] = server.getMockConsumptions("openai-compatible-chat")
@@ -243,7 +243,7 @@ e2e(
             await helper.signin(sidebar)
             await openHistoryTask(page, sidebar, taskText)
             await sidebar.getByTestId("chat-input").fill(resumeInput)
-            await sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Resume"]').click()
+            await sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]').click()
             await expect(sidebar.getByText("E2E_LEGACY_TRUNCATE_RESUMED", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })

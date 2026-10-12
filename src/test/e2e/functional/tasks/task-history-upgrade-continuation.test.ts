@@ -105,7 +105,7 @@ e2e(
             await helper.signin(sidebar)
             await openHistoryTask(page, sidebar)
 
-            const resume = sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Resume"]')
+            const resume = sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')
             await expect(resume).toHaveAttribute("aria-disabled", "false", { timeout: 30_000 })
             const input = sidebar.getByTestId("chat-input")
             await input.fill(FIRST_FOLLOW_UP)

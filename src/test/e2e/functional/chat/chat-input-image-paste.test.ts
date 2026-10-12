@@ -55,7 +55,7 @@ e2e("Chat input - screenshot paste stays available while a task is running", asy
     await sidebar.getByTestId("send-button").click()
     await expect(sidebar.getByText("E2E_RUNNING_SCREENSHOT_PASTE_TASK", { exact: true }).first()).toBeVisible()
     await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-    await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({ timeout: 30_000 })
+    await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({ timeout: 30_000 })
 
     const runningDraft = "E2E_RUNNING_SCREENSHOT_PASTE_DRAFT"
     await input.fill(runningDraft)
@@ -121,7 +121,7 @@ e2e(
             await input.fill("E2E_QUEUED_SCREENSHOT_TASK")
             await sidebar.getByTestId("send-button").click()
             await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-            const cancel = sidebar.getByRole("button", { name: "Cancel", exact: true }).first()
+            const cancel = sidebar.locator('[data-testid="send-button"][data-action="cancel"]')
             await expect(cancel).toBeVisible({ timeout: 30_000 })
 
             await input.fill("E2E_QUEUED_SCREENSHOT_TEXT ")
@@ -190,7 +190,7 @@ e2e(
         await input.fill("E2E_QUEUED_SCREENSHOT_DELIVERY_TASK")
         await sidebar.getByTestId("send-button").click()
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(1)
-        await expect(sidebar.getByRole("button", { name: "Cancel", exact: true }).first()).toBeVisible({ timeout: 30_000 })
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="cancel"]')).toBeVisible({ timeout: 30_000 })
 
         await input.fill("E2E_QUEUED_SCREENSHOT_DELIVERED ")
         await pasteReadyScreenshot(input)

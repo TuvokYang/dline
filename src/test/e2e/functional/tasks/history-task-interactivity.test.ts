@@ -309,9 +309,9 @@ e2e(
             })
             if (probe?.expectedAtMs !== undefined) {
                 const input = sidebar.getByTestId("chat-input")
-                await expect(sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false")
+                await expect(sidebar.getByTestId("send-button")).toHaveAttribute("data-action", "resume")
                 await input.fill(INTERRUPTED_DRAFT)
-                await sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Resume"]').click()
+                await sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]').click()
                 await expect(sidebar.getByText(INTERRUPTED_COMPLETION, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
                 await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(3)
                 expect(server.getMockConsumptions("openai-compatible-chat")[2]?.contractError).toBeUndefined()

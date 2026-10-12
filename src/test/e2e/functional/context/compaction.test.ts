@@ -445,7 +445,7 @@ async function reopenTask(page: Page, sidebar: Frame, taskText: string): Promise
     await expect(sidebar.getByRole("button", { name: "Close Task", exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(sidebar.getByText(taskText, { exact: true }).first()).toBeVisible({ timeout: 30_000 })
     // The message surface is published before resume preparation finishes, so wait until the task admits input.
-    await expect(sidebar.getByTestId("send-button")).toHaveAttribute("aria-disabled", "false", { timeout: 30_000 })
+    await expect(sidebar.getByTestId("send-button")).toHaveAttribute("data-action", /^(?:send|resume)$/, { timeout: 30_000 })
 }
 
 async function onlyTaskId(dlineDocsDir: string): Promise<string> {
@@ -2017,7 +2017,7 @@ e2e(
             await E2ETestHelper.dismissWhatsNewModal(resumed)
             await helper.signin(resumed)
             await reopenTask(page, resumed, taskText)
-            const resume = resumed.getByRole("contentinfo").locator('vscode-button[aria-label="Resume"]')
+            const resume = resumed.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')
             await expect(resume).toBeVisible({ timeout: 30_000 })
             await resume.click()
             await expect(resumed.getByText("E2E_ROLLING_RESTART_OK", { exact: false }).last()).toBeVisible({ timeout: 120_000 })

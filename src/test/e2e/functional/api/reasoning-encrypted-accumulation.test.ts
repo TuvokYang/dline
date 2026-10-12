@@ -129,10 +129,10 @@ e2e(
         await expect.poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 }).toBe(1)
 
         const taskFooter = sidebar.getByRole("contentinfo")
-        const cancelButton = taskFooter.getByText("Cancel", { exact: true })
+        const cancelButton = taskFooter.locator('[data-testid="send-button"][data-action="cancel"]')
         await expect(cancelButton).toBeVisible({ timeout: 30_000 })
         await cancelButton.click()
-        await expect(taskFooter.getByText("Resume", { exact: true })).toBeVisible({ timeout: 60_000 })
+        await expect(taskFooter.locator('[data-testid="send-button"][data-action="resume"]')).toBeVisible({ timeout: 60_000 })
 
         const taskId = await onlyTaskId(dlineDocsDir)
         // The provider history lives in the task's instance journal; read it in the legacy line shape.

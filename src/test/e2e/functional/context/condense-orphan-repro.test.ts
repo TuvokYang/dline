@@ -801,7 +801,7 @@ e2e(
                 },
             )
 
-            const resumeButton = sidebar.getByText("Resume", { exact: true })
+            const resumeButton = sidebar.locator('[data-testid="send-button"][data-action="resume"]')
             await expect(resumeButton).toBeVisible({ timeout: 30_000 })
             const input = sidebar.getByTestId("chat-input")
             await input.fill("E2E_COMPACTION_RESTORE_AFTER_RESTORE")

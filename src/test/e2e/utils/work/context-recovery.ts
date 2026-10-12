@@ -281,7 +281,7 @@ export async function unlockAndContinueContextTask(sidebar: Frame, text: string)
 
     const input = sidebar.getByTestId("chat-input")
     const sendButton = sidebar.getByTestId("send-button")
-    const resumeButton = sidebar.getByRole("contentinfo").getByText("Resume", { exact: true })
+    const resumeButton = sidebar.getByRole("contentinfo").locator('[data-testid="send-button"][data-action="resume"]')
     await expect(input).toBeEnabled({ timeout: 60_000 })
     await expect
         .poll(

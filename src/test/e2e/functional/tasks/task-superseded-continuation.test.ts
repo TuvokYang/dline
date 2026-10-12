@@ -62,11 +62,11 @@ e2e(
             timeout: 30_000,
         })
 
-        const cancelButton = sidebar.getByRole("button", { name: "Cancel", exact: true }).first()
+        const cancelButton = sidebar.locator('[data-testid="send-button"][data-action="cancel"]')
         await expect(cancelButton).toBeVisible({ timeout: 30_000 })
         await cancelButton.click()
 
-        const resumeButton = sidebar.getByRole("button", { name: "Resume", exact: true }).first()
+        const resumeButton = sidebar.locator('[data-testid="send-button"][data-action="resume"]').first()
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
         const input = sidebar.getByTestId("chat-input")
         await expect(input).toBeEnabled()

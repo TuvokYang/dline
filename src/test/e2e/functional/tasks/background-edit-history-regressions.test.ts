@@ -142,7 +142,7 @@ e2e(
             await historyTask.click()
 
             await expect(sidebar.getByRole("button", { name: "Unlock", exact: true })).toHaveCount(0)
-            const resume = sidebar.getByText("Resume", { exact: true })
+            const resume = sidebar.locator('[data-testid="send-button"][data-action="resume"]')
             await expect(resume).toBeVisible({ timeout: 30_000 })
             await resume.click()
             await expect(sidebar.getByText("E2E_STALE_HISTORY_LOCK_RESUMED", { exact: false }).last()).toBeVisible({
@@ -202,7 +202,7 @@ e2e(
         await editor.press("Enter")
 
         await expect(sidebar.getByText("E2E_OLD_INPUT_EDITED_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-        await expect(sidebar.getByText("Resume", { exact: true })).toHaveCount(0)
+        await expect(sidebar.locator('[data-testid="send-button"][data-action="resume"]')).toHaveCount(0)
         await expect.poll(() => server.openAiRequestCount).toBe(3)
         const continuedRequest = JSON.stringify(server.getMockConsumptions("openai-compatible-chat")[2]?.requestBody)
         expect(continuedRequest).toContain(edited)
