@@ -45,11 +45,47 @@ export function isSameInteractionDraft(current: InteractionDraft, captured: Inte
     )
 }
 
-/** Accepted New Task approval retained until the matching successor surface is stable. */
+/**
+ * Unsent composer draft retained across an accepted New Task approval.
+ *
+ * It is put back into the successor's composer, never sent: the approval
+ * itself carries nothing to the successor.
+ */
 export interface PendingSuccessorDraftTransfer {
     readonly sourceTaskId: string
-    readonly context: string
+    /** The successor's task; its first row carries it, which identifies the successor surface. */
+    readonly task: string
     readonly draft: InteractionDraft
+}
+
+/** What the composition owner does with a retained successor draft on the current surface. */
+export type SuccessorDraftDisposition = "wait" | "restore" | "drop"
+
+/** Task surface facts the successor draft decision observes. */
+export interface SuccessorDraftSurface {
+    /** Task the view currently selects. */
+    readonly taskId?: string
+    /** Task the backend projection has settled on; differs from `taskId` while a switch is in flight. */
+    readonly projectedTaskId?: string
+    /** First row of the projected task, once loaded. */
+    readonly titleText?: string
+}
+
+/**
+ * Decide the retained draft's fate once a task other than its source is shown.
+ *
+ * Only a settled surface decides: the successor restores the draft, and any
+ * other task means the user navigated away, so the draft belongs to neither.
+ */
+export function resolveSuccessorDraft(
+    transfer: PendingSuccessorDraftTransfer,
+    surface: SuccessorDraftSurface,
+): SuccessorDraftDisposition {
+    const { taskId, projectedTaskId, titleText } = surface
+    if (!taskId || taskId === transfer.sourceTaskId || projectedTaskId !== taskId || titleText === undefined) {
+        return "wait"
+    }
+    return titleText === transfer.task ? "restore" : "drop"
 }
 
 /** Accepted interaction identity and exact draft snapshot returned to the composition owner. */

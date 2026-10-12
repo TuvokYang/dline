@@ -199,14 +199,16 @@ function editorWebviewCount(page: Page, sidebar: Frame): number {
 }
 
 e2e(
-    "New Task handoff - Sidebar carries submitted feedback and settings while consumed history stays inert",
+    "New Task handoff - Sidebar successor opens from task and context alone while feedback stays with the source",
     async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(240_000)
         await configurePlanModeProfiles(dlineDir)
 
         const originalTask = "/newtask E2E_NEW_TASK_SIDEBAR_SOURCE"
+        const firstTask = "E2E_NEW_TASK_SIDEBAR_TASK_DRAFT"
         const firstContext = "E2E_NEW_TASK_SIDEBAR_CONTEXT_DRAFT"
         const feedback = "E2E_NEW_TASK_SIDEBAR_FEEDBACK_KEEP_COMPATIBILITY"
+        const successorTask = "E2E_NEW_TASK_SIDEBAR_SUCCESSOR_TASK"
         const successorContext = "E2E_NEW_TASK_SIDEBAR_SUCCESSOR_CONTEXT"
         const unsentDraft = "E2E_NEW_TASK_SIDEBAR_UNSENT_DRAFT"
         const successorReady = "E2E_NEW_TASK_SIDEBAR_SUCCESSOR_READY"
@@ -218,14 +220,14 @@ e2e(
                 type: "tool",
                 id: "call_new_task_sidebar_initial",
                 name: "new_task",
-                arguments: { context: firstContext },
+                arguments: { task: firstTask, context: firstContext },
                 expectedRequestIncludes: ["E2E_NEW_TASK_SIDEBAR_SOURCE", 'explicit_instructions type=\\"new_task\\"'],
             },
             {
                 type: "tool",
                 id: approvedToolId,
                 name: "new_task",
-                arguments: { context: successorContext },
+                arguments: { task: successorTask, context: successorContext },
                 expectedRequestIncludes: [feedback, "dline:new-task-feedback:v1"],
                 expectedToolResults: [
                     {
@@ -239,8 +241,9 @@ e2e(
                 id: "call_new_task_sidebar_successor_ready",
                 name: "qna_respond",
                 arguments: { response: successorReady },
-                expectedRequestIncludes: [successorContext, `<feedback>\\n${feedback}\\n</feedback>`],
-                expectedRequestExcludes: ["E2E_NEW_TASK_SIDEBAR_SOURCE", firstContext, unsentDraft],
+                // Opened like a spawned task; the declined handoff's feedback answered the source alone.
+                expectedRequestIncludes: [`<task>\\n${successorTask}\\n</task>`, `<context>\\n${successorContext}\\n</context>`],
+                expectedRequestExcludes: ["E2E_NEW_TASK_SIDEBAR_SOURCE", firstTask, firstContext, feedback, unsentDraft],
                 expectedToolResultCount: 0,
             },
             {
@@ -258,7 +261,7 @@ e2e(
             await expect(sidebar.getByRole("button", { name: "Select model" })).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses)
 
             await sendTask(sidebar, originalTask)
-            await expect(sidebar.getByText(firstContext, { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expect(sidebar.getByText(firstTask, { exact: true })).toBeVisible({ timeout: 60_000 })
             const [oldTaskId] = await E2ETestHelper.waitForValue(async () => {
                 const ids = await taskIds(dlineDocsDir)
                 return ids.length === 1 ? ids : undefined
@@ -267,7 +270,7 @@ e2e(
             await expectInheritedTaskSettings(dlineDocsDir, oldTaskId)
 
             await submitNewTaskFeedback(sidebar, feedback, "button")
-            await expect(sidebar.getByText(successorContext, { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expect(sidebar.getByText(successorTask, { exact: true })).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
 
             const input = sidebar.getByTestId("chat-input")
@@ -289,8 +292,9 @@ e2e(
             const successorApiHistory = await readTaskConversationText(dlineDocsDir, successorTaskId)
             expect(oldApiHistory).toContain(approvedToolId)
             expect(oldApiHistory).toContain(feedback)
+            expect(successorApiHistory).toContain(successorTask)
             expect(successorApiHistory).toContain(successorContext)
-            expect(successorApiHistory).toContain(feedback)
+            expect(successorApiHistory).not.toContain(feedback)
             expect(successorApiHistory).not.toContain("E2E_NEW_TASK_SIDEBAR_SOURCE")
             expect(successorApiHistory).not.toContain(unsentDraft)
 
@@ -326,8 +330,10 @@ e2e(
         const sidebarTask = "E2E_NEW_TASK_ISOLATED_SIDEBAR_TASK"
         const sidebarWaiting = "E2E_NEW_TASK_ISOLATED_SIDEBAR_WAITING"
         const panelTask = "/newtask E2E_NEW_TASK_PANEL_SOURCE"
+        const firstTask = "E2E_NEW_TASK_PANEL_TASK_DRAFT"
         const firstContext = "E2E_NEW_TASK_PANEL_CONTEXT_DRAFT"
         const feedback = "E2E_NEW_TASK_PANEL_FEEDBACK"
+        const successorTask = "E2E_NEW_TASK_PANEL_SUCCESSOR_TASK"
         const successorContext = "E2E_NEW_TASK_PANEL_SUCCESSOR_CONTEXT"
         const successorReady = "E2E_NEW_TASK_PANEL_SUCCESSOR_READY"
         const approvedToolId = "call_new_task_panel_approved"
@@ -359,11 +365,11 @@ e2e(
                 type: "tool",
                 id: "call_new_task_panel_initial",
                 name: "new_task",
-                arguments: { context: firstContext },
+                arguments: { task: firstTask, context: firstContext },
                 expectedRequestIncludes: ["E2E_NEW_TASK_PANEL_SOURCE", 'explicit_instructions type=\\"new_task\\"'],
             })
             await sendTask(panel, panelTask)
-            await expect(panel.getByText(firstContext, { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expect(panel.getByText(firstTask, { exact: true })).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
             const oldPanelTaskId = await E2ETestHelper.waitForValue(async () => {
                 const ids = await taskIds(dlineDocsDir)
@@ -374,7 +380,7 @@ e2e(
                 type: "tool",
                 id: approvedToolId,
                 name: "new_task",
-                arguments: { context: successorContext },
+                arguments: { task: successorTask, context: successorContext },
                 expectedRequestIncludes: [feedback, "dline:new-task-feedback:v1"],
                 expectedToolResults: [
                     {
@@ -384,15 +390,15 @@ e2e(
                 ],
             })
             await submitNewTaskFeedback(panel, feedback, "enter")
-            await expect(panel.getByText(successorContext, { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expect(panel.getByText(successorTask, { exact: true })).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
             server.enqueueResponses("openai-compatible-responses", {
                 type: "tool",
                 id: "call_new_task_panel_successor_ready",
                 name: "qna_respond",
                 arguments: { response: successorReady },
-                expectedRequestIncludes: [successorContext, `<feedback>\\n${feedback}\\n</feedback>`],
-                expectedRequestExcludes: ["E2E_NEW_TASK_PANEL_SOURCE", firstContext],
+                expectedRequestIncludes: [`<task>\\n${successorTask}\\n</task>`, `<context>\\n${successorContext}\\n</context>`],
+                expectedRequestExcludes: ["E2E_NEW_TASK_PANEL_SOURCE", firstTask, firstContext, feedback],
                 expectedToolResultCount: 0,
             })
             await panel.locator('vscode-button[aria-label="Start New Task"]').click()
@@ -412,8 +418,9 @@ e2e(
             const successorApiHistory = await readTaskConversationText(dlineDocsDir, successorTaskId)
             expect(oldPanelApiHistory).toContain(approvedToolId)
             expect(oldPanelApiHistory).toContain(feedback)
+            expect(successorApiHistory).toContain(successorTask)
             expect(successorApiHistory).toContain(successorContext)
-            expect(successorApiHistory).toContain(feedback)
+            expect(successorApiHistory).not.toContain(feedback)
             expect(successorApiHistory).not.toContain("E2E_NEW_TASK_PANEL_SOURCE")
             expect(successorApiHistory).not.toContain(firstContext)
 

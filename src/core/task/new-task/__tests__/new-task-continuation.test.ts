@@ -15,7 +15,7 @@ function newTaskTool(overrides: Partial<ToolUse> = {}): ToolUse {
     return {
         type: "tool_use",
         name: DlineDefaultTool.NEW_TASK,
-        params: { context: "Candidate successor context" },
+        params: { task: "Candidate successor task", context: "Candidate successor context" },
         partial: false,
         ts: 100,
         function_id: "function-new-task",

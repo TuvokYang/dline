@@ -1,4 +1,5 @@
 import { readTaskConversation } from "@core/task/conversation/TaskConversationReader"
+import { encodeNewTaskAsk } from "@shared/new-task-ask"
 import fs from "fs/promises"
 import * as path from "path"
 import { UiMessage } from "@/shared/ExtensionMessage"
@@ -79,7 +80,7 @@ function toolToAskType(name: string): string | undefined {
 }
 
 /** Format ask text based on tool type */
-function formatAskText(name: string, input: Record<string, unknown>): string {
+export function formatAskText(name: string, input: Record<string, unknown>): string {
     switch (name) {
         case "write_to_file":
         case "replace_in_file": {
@@ -97,6 +98,8 @@ function formatAskText(name: string, input: Record<string, unknown>): string {
             return JSON.stringify(input)
         case "spawn_task":
             return JSON.stringify({ task: input.task, mode: input.mode, context: input.context })
+        case "new_task":
+            return formatNewTaskAsk(input)
         case "ask_followup_question":
             return JSON.stringify({ question: input.question, options: input.options })
         case "attempt_completion":
@@ -104,6 +107,17 @@ function formatAskText(name: string, input: Record<string, unknown>): string {
         default:
             return JSON.stringify(input)
     }
+}
+
+/**
+ * Recovers a `new_task` row through the same presentation contract the handler
+ * writes. A call made before the tool took a `task` recovers as its plain
+ * context, which is how such rows were written and read.
+ */
+function formatNewTaskAsk(input: Record<string, unknown>): string {
+    const context = typeof input.context === "string" ? input.context : ""
+    if (typeof input.task !== "string") return context
+    return encodeNewTaskAsk({ task: input.task, context })
 }
 
 function isSystemBlock(text: string): boolean {

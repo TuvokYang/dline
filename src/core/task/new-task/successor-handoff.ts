@@ -1,12 +1,6 @@
-import type { ClineUserContent } from "@shared/messages/content"
 import type { TaskEvent, TaskState } from "../kernel"
 import type { ToolPostCommitDirective } from "../tools/ToolExecutionResult"
-import {
-    createNewTaskHandoff,
-    type NewTaskConsumedState,
-    type NewTaskHandoff,
-    type NewTaskSettingsSource,
-} from "./new-task-handoff"
+import { createNewTaskHandoff, type NewTaskHandoff, type NewTaskSettingsSource } from "./new-task-handoff"
 
 /**
  * Starts the task a `new_task` block handed its work to.
@@ -17,11 +11,6 @@ import {
 export interface TaskSuccessorPort {
     /** Task-local bindings the successor inherits, read when the handoff happens. */
     settings(): NewTaskSettingsSource
-    /**
-     * Feedback the user gave on an earlier proposal of this handoff, as the
-     * successor's first input. Absent, the successor starts from its context alone.
-     */
-    feedback?(source: NewTaskConsumedState): Promise<readonly ClineUserContent[]>
     /**
      * Start the successor.
      *
@@ -89,11 +78,7 @@ export function createSuccessorHandoffPublisher(
         if (consumed.kind === "rejected") return
         // A successor must never exist beside a source that could still resume.
         await runtime.waitForDurable(consumed.state.revision)
-        // The model rewrites the context after Regenerate Context, but what the
-        // user asked for is theirs, so it reaches the successor verbatim.
-        const feedback =
-            (await options.successor.feedback?.({ functionId: directive.functionId, dlineTid: directive.dlineTid })) ?? []
-        const handoff = createNewTaskHandoff(directive, options.successor.settings(), feedback)
+        const handoff = createNewTaskHandoff(directive, options.successor.settings())
         schedule(() => {
             void options.successor.start(handoff).catch((error) => options.successor.onError?.(error))
         })

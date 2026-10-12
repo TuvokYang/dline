@@ -48,6 +48,7 @@ const prompts: Record<string, string> = {
 ## Example 3: Creating a new task
 
 <new_task>
+<task>Continue implementing the settings migration described in the context</task>
 <context>
 1. Current Work:
    [Detailed description]

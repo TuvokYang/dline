@@ -3,6 +3,7 @@
 const prompts: Record<string, string> = {
     newTaskXmlToolCallFormat: `Example:
 <new_task>
+<task>[What the new task should do next, stated as a direct instruction]</task>
 <context>1. Current Work:
    [Detailed description]
 
@@ -40,7 +41,8 @@ Your task is to create a detailed summary of the conversation so far, paying clo
 The user will be presented with a preview of your generated context and can choose to create a new task or keep chatting in the current conversation.
 
 Parameters:
-- Context: (required) The context to preload the new task with. If applicable based on the current task, this should include:
+- Task: (required) What the new task should do next, stated as a direct instruction. The new task receives it as its <task>, the same way a spawned task does.
+- Context: (required) The context to preload the new task with. The new task receives it as its <context>, after the task. If applicable based on the current task, this should include:
   1. Current Work: Describe in detail what was being worked on prior to this request to create a new task. Pay special attention to the more recent messages / conversation.
   2. Key Technical Concepts: List all important technical concepts, technologies, coding conventions, and frameworks discussed, which might be relevant for the new task.
   3. Relevant Files and Code: If applicable, enumerate specific files and code sections examined, modified, or created for the task continuation. Pay special attention to the most recent messages and changes.

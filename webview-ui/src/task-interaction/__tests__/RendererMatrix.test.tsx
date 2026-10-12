@@ -1,4 +1,5 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
+import { encodeNewTaskAsk } from "@shared/new-task-ask"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { PRESENTATION_KINDS, renderPresentation } from "../renderer-registry"
@@ -35,6 +36,20 @@ describe("renderer registry", () => {
             "overflow-y-auto",
             "overscroll-x-contain",
         )
+    })
+
+    it("renders a pending new_task as its task and context, not the encoded payload", async () => {
+        const message: UiMessage = {
+            ts: 100,
+            type: "ask",
+            ask: "new_task",
+            text: encodeNewTaskAsk({ task: "Ship the migration", context: "Context body" }),
+        }
+        render(renderPresentation("new_task", { message, selection: [], onSelectionChange: vi.fn() }))
+
+        expect(await screen.findByText("Ship the migration")).toBeVisible()
+        expect(screen.getByRole("button", { name: /Context body/ })).toBeVisible()
+        expect(screen.getByTestId("presentation-new_task").textContent).not.toContain('"task"')
     })
 
     it("reports focus-chain checked items through selection state", () => {

@@ -81,12 +81,13 @@ When you are ready to create the implementation task, you must call the new_task
 {
   "name": "new_task",
   "arguments": {
+    "task": "Implement the plan in implementation_plan.md",
     "context": "Your detailed context here following the 5-point structure..."
   }
 }
 \`\`\`
 
-The context parameter should include all five sections as described above.`,
+The task parameter states what the new task should do; the context parameter should include all five sections as described above.`,
 
     xmlNewTaskInstructions: `
 **new_task Tool Definition:**
@@ -95,11 +96,12 @@ When you are ready to create the implementation task, you must call the new_task
 
 \`\`\`xml
 <new_task>
+<task>Implement the plan in implementation_plan.md</task>
 <context>Your detailed context here following the 5-point structure...</context>
 </new_task>
 \`\`\`
 
-\tThe context parameter should include all five sections as described above.`,
+\tThe task parameter states what the new task should do; the context parameter should include all five sections as described above.`,
 
     bashNavCommands: `# Read Overview section
 sed -n '/\\[Overview\\]/,/\\[Types\\]/p' implementation_plan.md | head -n 1 | cat

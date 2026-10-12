@@ -36,7 +36,6 @@ import { settingsAffectPromptFreshness } from "@core/prompts/system-prompt-cache
 import * as SecretsManager from "@core/storage/secrets"
 import { capabilityResourceId } from "@core/storage/settings/capability-resource-id"
 import { type CapabilityKind, mergeScopedToggles, readScopedToggles } from "@core/storage/settings/capability-toggle-store"
-import { successorSubmission } from "@core/task/new-task/new-task-handoff"
 import { detectWorkspaceRoots } from "@core/workspace/detection"
 import { setupWorkspaceManager } from "@core/workspace/setup"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
@@ -52,7 +51,6 @@ import type { ExtensionState, Platform, TaskViewState, UiMessage } from "@shared
 import type { ApiMetrics } from "@shared/getApiMetrics"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { McpMarketplaceCatalog, McpMarketplaceItem, McpServer } from "@shared/mcp"
-import type { ClineUserContent } from "@shared/messages/content"
 import type { ModeSwitchRequestResult } from "@shared/mode-switch"
 import type { ProfileSwitchRequestResult } from "@shared/profile-switch"
 import { DispatchInteractionRequest, DispatchInteractionResponse, type TaskLockStatus } from "@shared/proto/dline/task"
@@ -119,6 +117,7 @@ import { UIMessage } from "../storage/UIMessage"
 import type { ActiveTaskDescriptor } from "../task/active-tasks/ActiveTaskContextProvider"
 import type { TaskActivityStore } from "../task/activity/TaskActivityStore"
 import { TaskSessionCompositionService } from "../task/composition/TaskSessionCompositionService"
+import type { NewTaskHandoff } from "../task/new-task/new-task-handoff"
 import type { ActiveTaskSession, CheckpointRestoreFence } from "../task/session/ActiveTaskSession"
 import { KernelTaskViewPort } from "../task/view/KernelTaskViewPort"
 import { readDiscoveredToggles } from "./file/capability-discovery-cache"
@@ -185,8 +184,6 @@ type InitTaskOptions = {
     onHistoryTaskReadyToDisplay?: () => Promise<void>
     /** Context fragments for spawned or new tasks. Each entry becomes an independent text block for cache-friendly design. */
     context?: string[]
-    /** Trusted internal content appended to the successor's first Provider request. */
-    initialUserContent?: ClineUserContent[]
     /** Return after task-start admission while the agent loop continues in the background. */
     startInBackground?: boolean
     /** Complete identity-dependent setup before the task can issue its first API request. */
@@ -1335,8 +1332,6 @@ export class Controller {
                     beforeStart: options?.beforeStart,
                     start: async () => {
                         const hookContext = await this.collectTaskStartHookContext(taskInstance, task ?? "")
-                        const handoff = successorSubmission(options?.initialUserContent ?? [])
-                        const submittedImages = [...(images ?? []), ...handoff.images]
                         // The composer staged into its draft before the task existed;
                         // admission only trusts the task's own resources.
                         const opening = options?.semanticInput
@@ -1344,13 +1339,11 @@ export class Controller {
                             : undefined
                         const input = await taskInstance.inputs.materialize({
                             text: task,
-                            images: submittedImages.length > 0 ? submittedImages : images,
+                            images,
                             files,
                             ...(opening ? { semanticInput: opening.document } : {}),
                             context:
-                                [...(options?.context ?? []), ...handoff.context, ...(hookContext ? [hookContext] : [])].join(
-                                    "\n\n",
-                                ) || undefined,
+                                [...(options?.context ?? []), ...(hookContext ? [hookContext] : [])].join("\n\n") || undefined,
                             opensTask: true,
                         })
                         const started = await taskInstance.task.start(input)
@@ -3605,21 +3598,21 @@ export class Controller {
     /**
      * Replace one source-owned Task with an independent successor on the same surface.
      *
-     * Bound to the exact opening that asked for it: the same task closed and
+     * The successor opens the way a spawned task does, from the handed-over task
+     * and context alone; nothing else of the source conversation travels with
+     * it. Bound to the exact opening that asked for it: the same task closed and
      * reopened in between is a different opening and is left alone.
      */
     async startSuccessorTask(
         source: TaskOpening,
-        task: string,
-        taskSettings: Partial<Settings>,
-        initialUserContent: readonly ClineUserContent[],
+        handoff: Pick<NewTaskHandoff, "task" | "context" | "taskSettings">,
     ): Promise<string | undefined> {
         return this.runTaskLifecycleOperation(async (scope) => {
             if (!this.isCurrentOpening(source)) return undefined
             await scope.clearTask({ suppressPostState: true })
-            return this.initTask(task, undefined, undefined, undefined, taskSettings, {
+            return this.initTask(handoff.task, undefined, undefined, undefined, handoff.taskSettings, {
+                context: [handoff.context],
                 startInBackground: true,
-                initialUserContent: [...initialUserContent],
                 skipInitialClear: true,
             })
         })

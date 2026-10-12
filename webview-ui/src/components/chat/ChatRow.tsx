@@ -12,6 +12,7 @@ import {
 } from "@shared/ExtensionMessage"
 import { parseImageGenerationPresentation } from "@shared/image-generation"
 import type { LoadCapabilityPayload } from "@shared/load-capabilities"
+import { parseNewTaskAsk } from "@shared/new-task-ask"
 import { BooleanRequest, StringRequest } from "@shared/proto/dline/common"
 import { Mode } from "@shared/storage/types"
 import deepEqual from "fast-deep-equal"
@@ -1597,16 +1598,18 @@ export const ChatRowContent = memo(
                                 </div>
                             </div>
                         )
-                    case "new_task":
+                    case "new_task": {
+                        const newTask = parseNewTaskAsk(message.text)
                         return (
                             <div>
                                 <div className={HEADER_CLASSNAMES}>
                                     <FilePlus2Icon className="size-2" />
                                     <span className="text-foreground font-bold">Dline wants to start a new task:</span>
                                 </div>
-                                <NewTaskPreview task={message.text || ""} />
+                                <NewTaskPreview context={newTask.context ? [newTask.context] : undefined} task={newTask.task} />
                             </div>
                         )
+                    }
                     case "spawn_task": {
                         let spawnTask: string | undefined
                         let spawnMode: UiAskSpawnTask["mode"] | undefined

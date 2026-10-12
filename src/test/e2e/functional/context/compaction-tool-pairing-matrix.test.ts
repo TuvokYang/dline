@@ -91,8 +91,8 @@ const turnEndScenarios: readonly TurnEndPairingScenario[] = [
         initialTaskText: "/newtask E2E_COMPACTION_PAIRING_NEW_TASK",
         tool: {
             name: "new_task",
-            arguments: { context: "E2E_NEW_TASK_PAIRING_CONTEXT" },
-            visibleText: "E2E_NEW_TASK_PAIRING_CONTEXT",
+            arguments: { task: "E2E_NEW_TASK_PAIRING_TASK", context: "E2E_NEW_TASK_PAIRING_CONTEXT" },
+            visibleText: "E2E_NEW_TASK_PAIRING_TASK",
         },
         feedback: "E2E_NEW_TASK_PAIRING_FEEDBACK",
         action: "reject_new_task",
@@ -173,7 +173,7 @@ const recoveredTurnEndScenarios: readonly PairingScenario[] = [
             seededTool(
                 "new-task",
                 "new_task",
-                { context: "E2E_NEW_TASK_PAIRING_CONTEXT" },
+                { task: "E2E_NEW_TASK_PAIRING_TASK", context: "E2E_NEW_TASK_PAIRING_CONTEXT" },
                 "[new_task] Result:\n<!-- dline:new-task-feedback:v1 -->\nThe user provided feedback instead of creating a new task:\n<feedback>\nE2E_NEW_TASK_PAIRING_FEEDBACK\n</feedback>",
             ),
         ],

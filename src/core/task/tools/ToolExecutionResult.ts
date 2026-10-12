@@ -5,6 +5,9 @@ import type { ToolResponse } from "./ToolResponse"
 /** Data-only successor directive executed only after the canonical tool result and turn are closed. */
 export interface StartSuccessorTaskPostCommitDirective {
     readonly type: "start_successor_task"
+    /** What the successor is asked to do; it opens the successor as `<task>`. */
+    readonly task: string
+    /** What the successor needs to know; it follows the task as `<context>`. */
     readonly context: string
     readonly functionId: string
     readonly dlineTid: string

@@ -31,6 +31,7 @@ import {
     type InteractionDraft,
     isActiveInteractionSynchronized,
     type PendingSuccessorDraftTransfer,
+    resolveSuccessorDraft,
 } from "@/task-interaction/types"
 import { HistoryTaskOpeningView } from "../history/HistoryTaskOpeningView"
 import { Navbar } from "../menu/Navbar"
@@ -255,14 +256,20 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         setPendingSuccessorDraft(transfer)
     }, [])
     useEffect(() => {
-        if (!pendingSuccessorDraft || !taskId || taskId === pendingSuccessorDraft.sourceTaskId) {
+        if (!pendingSuccessorDraft) {
             return
         }
-        const successorStateStable = taskViewState?.taskId === taskId && taskTitleMessage?.text === pendingSuccessorDraft.context
-        if (!successorStateStable) {
+        const disposition = resolveSuccessorDraft(pendingSuccessorDraft, {
+            taskId,
+            projectedTaskId: taskViewState?.taskId,
+            titleText: taskTitleMessage?.text,
+        })
+        if (disposition === "wait") {
             return
         }
-        restoreDraft(pendingSuccessorDraft.draft)
+        if (disposition === "restore") {
+            restoreDraft(pendingSuccessorDraft.draft)
+        }
         setPendingSuccessorDraft(undefined)
     }, [pendingSuccessorDraft, restoreDraft, taskId, taskTitleMessage?.text, taskViewState?.taskId])
     useTransitionDraftRestore({

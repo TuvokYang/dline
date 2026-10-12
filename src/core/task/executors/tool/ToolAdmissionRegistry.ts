@@ -72,7 +72,7 @@ const REQUIRED_PARAMETERS: Partial<Record<DlineDefaultTool, readonly RequiredPar
     [DlineDefaultTool.BROWSER]: ["action"],
     [DlineDefaultTool.MCP_USE]: ["server_name", "tool_name"],
     [DlineDefaultTool.MCP_ACCESS]: ["server_name", "uri"],
-    [DlineDefaultTool.NEW_TASK]: ["context"],
+    [DlineDefaultTool.NEW_TASK]: ["task", "context"],
     [DlineDefaultTool.MAKE_PLAN]: ["response"],
     [DlineDefaultTool.WORKING_RESPOND]: ["response"],
     [DlineDefaultTool.QNA_RESPOND]: ["response"],

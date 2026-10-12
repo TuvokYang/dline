@@ -15,28 +15,23 @@ describe("Controller New Task successor ownership", () => {
         const clearTask = vi.fn(async () => undefined)
         vi.spyOn(controller, "runTaskLifecycleOperation").mockImplementation(async (operation) => operation({ clearTask }))
         const initTask = vi.spyOn(controller, "initTask").mockResolvedValue("task-new")
-        const initialUserContent = [{ type: "text" as const, text: "<feedback>\nContinue narrowly\n</feedback>" }]
 
-        const taskId = await controller.startSuccessorTask(
-            source,
-            "Successor context",
-            { mode: "act", planModeProfile: "plan-old", actModeProfile: "act-old" },
-            initialUserContent,
-        )
+        const taskId = await controller.startSuccessorTask(source, {
+            task: "Successor task",
+            context: "Successor context",
+            taskSettings: { mode: "act", planModeProfile: "plan-old", actModeProfile: "act-old" },
+        })
 
         expect(taskId).toBe("task-new")
         expect(clearTask).toHaveBeenCalledWith({ suppressPostState: true })
         expect(initTask).toHaveBeenCalledWith(
-            "Successor context",
+            "Successor task",
             undefined,
             undefined,
             undefined,
             { mode: "act", planModeProfile: "plan-old", actModeProfile: "act-old" },
-            {
-                startInBackground: true,
-                initialUserContent,
-                skipInitialClear: true,
-            },
+            // Opened like a spawned task: the task as `<task>`, the context as `<context>`, nothing else.
+            { context: ["Successor context"], startInBackground: true, skipInitialClear: true },
         )
     })
 
@@ -52,7 +47,11 @@ describe("Controller New Task successor ownership", () => {
         vi.spyOn(controller, "runTaskLifecycleOperation").mockImplementation(async (operation) => operation({ clearTask }))
         const initTask = vi.spyOn(controller, "initTask").mockResolvedValue("task-new")
 
-        const taskId = await controller.startSuccessorTask(source, "Successor context", { mode: "plan" }, [])
+        const taskId = await controller.startSuccessorTask(source, {
+            task: "Successor task",
+            context: "Successor context",
+            taskSettings: { mode: "plan" },
+        })
 
         expect(taskId).toBeUndefined()
         expect(clearTask).not.toHaveBeenCalled()

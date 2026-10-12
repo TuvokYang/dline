@@ -1,8 +1,10 @@
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { parseImageGenerationToolText } from "@shared/image-generation"
+import { parseNewTaskAsk } from "@shared/new-task-ask"
 import { useState } from "react"
 import { ApiErrorBox } from "@/components/chat/ApiErrorBox"
 import ImageGenerationRow from "@/components/chat/ImageGenerationRow"
+import NewTaskPreview from "@/components/chat/NewTaskPreview"
 import { CopyButton } from "@/components/common/CopyButton"
 
 /** Props shared by pure interaction presentation renderers. */
@@ -213,6 +215,12 @@ export function CommandRenderer(props: PresentationProps) {
 /** Render conversation interaction content. */
 export function ConversationRenderer(props: PresentationProps) {
     return shell(props.message)
+}
+
+/** Render a pending New Task through the same presentation contract the handler writes. */
+export function NewTaskRenderer(props: PresentationProps) {
+    const newTask = parseNewTaskAsk(props.message.text)
+    return <NewTaskPreview context={newTask.context ? [newTask.context] : undefined} task={newTask.task} />
 }
 
 /** Render report interaction content. */

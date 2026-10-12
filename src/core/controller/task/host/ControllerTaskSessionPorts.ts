@@ -67,7 +67,7 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
         this.successor = {
             start: async (sourceTaskId, handoff) => {
                 if (sourceTaskId !== opening.taskId) return
-                await controller.startSuccessorTask(opening, handoff.context, handoff.taskSettings, handoff.initialUserContent)
+                await controller.startSuccessorTask(opening, handoff)
             },
         }
         this.profileUsage = {

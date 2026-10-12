@@ -905,7 +905,9 @@ export interface UiAskQuestion {
     selected?: string
 }
 
+/** Presentation of a pending `new_task` handoff: the successor's task and the context it starts with. */
 export interface UiAskNewTask {
+    task: string
     context: string
 }
 

@@ -36,7 +36,24 @@ vi.mock("@core/storage/UIMessage", () => ({
     UIMessage: { open: mocks.openUiMessage },
 }))
 
-import { recoverUiMessages } from "../recoverUiMessages"
+import { parseNewTaskAsk } from "@shared/new-task-ask"
+import { formatAskText, recoverUiMessages } from "../recoverUiMessages"
+
+describe("recovered new_task rows", () => {
+    it("recover through the shared presentation contract without extra fields", () => {
+        const text = formatAskText("new_task", { task: "Finish", context: "Details", task_progress: "- [ ] step" })
+
+        expect(parseNewTaskAsk(text)).toEqual({ task: "Finish", context: "Details" })
+        expect(text).not.toContain("task_progress")
+    })
+
+    it("recover a call made before the tool took a task as its plain context, read as the task", () => {
+        const text = formatAskText("new_task", { context: "Legacy context" })
+
+        expect(text).toBe("Legacy context")
+        expect(parseNewTaskAsk(text)).toEqual({ task: "Legacy context", context: "" })
+    })
+})
 
 function recoveredHistory(): ClineStorageMessage[] {
     return [

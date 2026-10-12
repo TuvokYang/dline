@@ -22,7 +22,8 @@ export interface FooterActionsProps {
     onDraftAccepted?: (settlement: AcceptedInteractionSettlement) => void
     onDraftRejected?: (settlement: AcceptedInteractionSettlement) => void
     onSuccessorAccepted?: (transfer: PendingSuccessorDraftTransfer) => void
-    successorContext?: string
+    /** Task the pending New Task would open its successor with. */
+    successorTask?: string
 }
 
 function errorMessage(error: unknown): string {
@@ -39,7 +40,7 @@ export function FooterActions({
     onDraftAccepted,
     onDraftRejected,
     onSuccessorAccepted,
-    successorContext,
+    successorTask,
 }: FooterActionsProps) {
     // A dispatch is pending for the task and interaction that issued it, but not
     // for a single `stateRevision`. Cancelling makes the backend publish further
@@ -132,10 +133,10 @@ export function FooterActions({
                                             }
                                             return
                                         }
-                                        if (startsSuccessor && successorContext) {
+                                        if (startsSuccessor && successorTask) {
                                             onSuccessorAccepted?.({
                                                 sourceTaskId: request.taskId,
-                                                context: successorContext,
+                                                task: successorTask,
                                                 draft: capturedDraft,
                                             })
                                         }

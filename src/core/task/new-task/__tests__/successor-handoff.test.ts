@@ -11,6 +11,7 @@ import {
 
 const directive = {
     type: "start_successor_task",
+    task: "Finish the migration",
     context: "Carry the migration forward",
     functionId: "function-1",
     dlineTid: "tid-1",
@@ -78,34 +79,14 @@ describe("successor handoff publisher", () => {
         await vi.waitFor(() => expect(started).toHaveLength(1))
         expect(order).toEqual(["submit", "durable:10", "start"])
         expect(started[0]).toEqual({
+            task: "Finish the migration",
             context: "Carry the migration forward",
             source: { functionId: "function-1", dlineTid: "tid-1" },
-            initialUserContent: [],
             taskSettings: { mode: "plan", planModeProfile: "planner", actModeProfile: "actor" },
         })
-    })
-
-    it("carries the feedback for the consumed declaration as the successor's first input", async () => {
-        const { runtime, order } = fakeRuntime("accepted")
-        const { successor, started } = fakeSuccessor(order)
-        const feedback = [{ type: "text" as const, text: "<feedback>\nKeep it narrow\n</feedback>" }]
-        const readFeedback = vi.fn(async () => {
-            order.push("feedback")
-            return feedback
-        })
-        const publish = createSuccessorHandoffPublisher({
-            runtime: () => runtime,
-            successor: { ...successor, feedback: readFeedback },
-            schedule: (run) => run(),
-        })
-
-        await publish({ command, directive })
-
-        await vi.waitFor(() => expect(started).toHaveLength(1))
-        // Read only once the source is durably consumed, from the declaration it consumed.
-        expect(order).toEqual(["submit", "durable:10", "feedback", "start"])
-        expect(readFeedback).toHaveBeenCalledWith({ functionId: "function-1", dlineTid: "tid-1" })
-        expect(started[0].initialUserContent).toEqual(feedback)
+        // The successor gets the task, context and settings alone; nothing of the
+        // source conversation, such as declined-handoff feedback, travels with it.
+        expect(Object.keys(started[0]).sort()).toEqual(["context", "source", "task", "taskSettings"])
     })
 
     it("starts nothing when the kernel refuses the handoff because the task is already stopping", async () => {
