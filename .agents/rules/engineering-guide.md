@@ -97,9 +97,21 @@ Responses API support is driven by API format and provider capabilities. Do not 
 
 ## Prompt and tool changes
 
-The only stable prompt profiles are Standard and Lite. Tool descriptions have one canonical source in `src/core/prompts/tools/tool-specs.ts`, with ordered inclusion in `tool-ids.ts`. Native and XML definitions are projected from that source.
+The only stable prompt profiles are Standard and Lite. Tool descriptors have one canonical source in `src/core/prompts/tools/tool-specs.ts`, with ordered inclusion in `tool-ids.ts`. Native and XML definitions are projected from that source.
 
 Do not create `system-prompt/tools/<tool>.ts` model-family variants or edit generated provider schemas independently.
+
+### Where prompt text lives
+
+Every sentence the model reads lives in the English i18n tree under `src/core/prompts/i18n/en/`, never inline in descriptors, handlers, or continuations:
+
+- **Tool descriptor text** (description, parameter instructions and usage examples) goes in `i18n/en/tools/<toolName>.ts`, a key-value module with no logic, registered in `i18n/en/tools/index.ts` with `defineLegacyModule("<toolName>", "tools", module, contracts)`. `tool-specs.ts` reads it with `getPrompt("<toolName>", "<key>")`.
+- **Runtime values** are written as `@NAME@` in the text and declared with `createRuntimeContract("NAME", ...)` in that module's registration.
+- **Handler-side text** (tool results, errors, feedback wrappers, recovery answers) goes in `i18n/en/tools/toolHandlers.ts` and is rendered through a `formatResponse` entry in `src/core/prompts/responses.ts`. When a live handler and a restored answer produce the same result, both call the same function so the model reads identical text.
+- **Slash-command and explicit-instruction text** (for example `/newtask`) goes in `i18n/en/commands/`.
+- Inline literals are acceptable only for protocol markers and structural tags a parser depends on, not for prose.
+- `i18n/__tests__/prompt-asset-inventory.test.ts` locks the module inventory; update it when adding or removing a module, and delete a module once no `getPrompt` reader remains.
+- `zh-CN` currently overlays only `system`; tool and command text is English-only.
 
 For a new tool, load `add-new-tool`. The change may include:
 
