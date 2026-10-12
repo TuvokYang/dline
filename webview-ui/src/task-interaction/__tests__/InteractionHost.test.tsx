@@ -224,9 +224,8 @@ describe("InteractionHost", () => {
             ),
         )
         expect(TaskServiceClient.cancelTask).not.toHaveBeenCalled()
-
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
-        await waitFor(() => expect(TaskServiceClient.cancelTask).toHaveBeenCalledOnce())
+        // Cancelling is the composer's action button's job, not the footer's.
+        expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull()
     })
 
     it.each([
@@ -359,10 +358,19 @@ describe("InteractionHost", () => {
         expect(screen.queryByRole("alert")).toBeNull()
     })
 
-    it("keeps task cancellation available while interaction controls wait for their exact anchor", async () => {
+    it("keeps task actions available while interaction controls wait for their exact anchor", async () => {
         const view = taskView()
         view.phase = "executing"
         view.footer.actions = [
+            {
+                type: "continue_in_background",
+                label: "Continue in Background",
+                appearance: "secondary",
+                enabled: true,
+                payloadPolicy: "none",
+                dispatchTarget: "task",
+                activityId: "command-1",
+            },
             {
                 type: "cancel",
                 label: "Cancel",
@@ -374,21 +382,30 @@ describe("InteractionHost", () => {
         ]
         render(<InteractionHost dispatch={vi.fn()} messages={[SAY]} view={view} />)
 
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+        fireEvent.click(screen.getByRole("button", { name: "Continue in Background" }))
 
-        await waitFor(() => expect(TaskServiceClient.cancelTask).toHaveBeenCalledOnce())
+        await waitFor(() => expect(TaskServiceClient.moveCommandToBackground).toHaveBeenCalledOnce())
         expect(screen.queryByRole("button", { name: "Approve" })).toBeNull()
+        expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull()
+    })
+
+    it("leaves Resume to the composer's action button", () => {
+        const view = taskView()
+        const message = configureInteraction(view, {
+            name: "Resume",
+            label: "Resume",
+            kind: "resume",
+            taskAsk: "resume_task",
+            presentationKind: "resume",
+            action: "resume",
+            enterAction: "resume",
+        })
+        render(<InteractionHost dispatch={vi.fn()} messages={[message]} view={view} />)
+
+        expect(screen.queryByRole("button", { name: "Resume" })).toBeNull()
     })
 
     it.each([
-        {
-            name: "Resume",
-            kind: "resume",
-            taskAsk: "resume_task" as const,
-            presentationKind: "resume",
-            action: "resume" as const,
-            enterAction: "resume" as const,
-        },
         {
             name: "Retry",
             kind: "error_retry",

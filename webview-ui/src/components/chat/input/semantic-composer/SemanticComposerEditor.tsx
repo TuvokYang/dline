@@ -51,6 +51,8 @@ export interface SemanticComposerEditorProps {
     readonly decorate?: (segments: readonly ComposerSegment[]) => readonly ComposerDecoration[]
     /** Runs before the editor's own key handling; prevent the default to take a key over. */
     readonly onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void
+    /** Told when a key is released; the editor has no handling of its own for it. */
+    readonly onKeyUp?: (event: React.KeyboardEvent<HTMLDivElement>) => void
     /** Runs before the editor's own paste handling; prevent the default to take the paste over. */
     readonly onPaste?: (event: React.ClipboardEvent<HTMLDivElement>) => void
     /**
@@ -378,6 +380,7 @@ export const SemanticComposerEditor = forwardRef<SemanticComposerEditorHandle, S
                 }}
                 onFocus={props.onFocus}
                 onKeyDown={handleKeyDown}
+                onKeyUp={props.onKeyUp}
                 onMouseDown={handleMouseDown}
                 onPaste={handlePaste}
                 ref={rootRef}

@@ -22,7 +22,9 @@ const ChatLayoutContainer = styled.div.withConfig({
     shouldForwardProp: (prop) => !["isHidden"].includes(prop),
 })<{ isHidden: boolean }>`
 	display: ${(props) => (props.isHidden ? "none" : "grid")};
-	grid-template-rows: 1fr auto;
+	/* The messages row yields first: a bare 1fr keeps its content's min height
+	   and pushes the composer below the clipped edge of a short or zoomed view. */
+	grid-template-rows: minmax(0, 1fr) auto;
 	overflow: hidden;
 	padding: 0;
 	margin: 0;
@@ -36,5 +38,6 @@ const MainContent = styled.div`
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
+	min-height: 0;
 	grid-row: 1;
 `

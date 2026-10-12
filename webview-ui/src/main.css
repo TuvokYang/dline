@@ -183,7 +183,8 @@ vscode-dropdown::part(listbox) {
 .slash-command-match-textarea-highlight {
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-editor-font-size);
-    line-height: var(--vscode-editor-line-height);
+    /* Must match CHAT_INPUT_LINE_HEIGHT: webviews expose no editor line height. */
+    line-height: var(--vscode-editor-line-height, calc(var(--vscode-editor-font-size, 13px) * 1.5));
 }
 
 .mention-context-textarea-highlight {

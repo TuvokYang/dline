@@ -40,6 +40,8 @@ export type ComposerSendRefusal = ComposerSendBlock | "input_not_ready"
 export interface ComposerSendContext {
     readonly catalog: InputSemanticCatalog
     readonly documentId: string
+    /** Freeze the draft as plain text, so no command or mention in it runs; see `composeComposerSubmission`. */
+    readonly plainText?: boolean
 }
 
 export type ComposerSendCapture =

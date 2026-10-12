@@ -32,7 +32,9 @@ const MockApp = () => {
 }
 
 // Constants
-const STORY_SURFACE_CLASS = "flex h-[800px] max-h-screen w-[700px] max-w-full flex-col overflow-hidden"
+// ChatLayout sizes itself to the viewport (min-height: 100vh), as it does in the
+// webview. A fixed-height surface shorter than the canvas clips the composer.
+const STORY_SURFACE_CLASS = "flex h-screen w-[700px] max-w-full flex-col overflow-hidden"
 const ExtensionStateProviderMock = ExtensionStateContext.Provider
 
 const meta: Meta<typeof MockApp> = {

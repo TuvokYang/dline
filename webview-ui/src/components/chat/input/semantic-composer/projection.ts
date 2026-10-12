@@ -304,6 +304,12 @@ export interface ComposerSubmissionOptions extends ComposerProjectionContext {
      * literal: the user did not type it, so nothing in it may run.
      */
     readonly literalPrefix?: string
+    /**
+     * Send the whole draft as plain text: every command, mention and piece of
+     * text becomes a literal, so nothing in it runs or resolves. Attachments
+     * stay attachments.
+     */
+    readonly plainText?: boolean
 }
 
 export interface ComposerSubmission {
@@ -321,8 +327,33 @@ export function composeComposerSubmission(
         ? [{ kind: "text", text: options.literalPrefix, source: "app_action" }, ...segments]
         : [...segments]
     const projection = projectComposerDocument(prefixed, options)
+    if (options.plainText) {
+        const plain: SemanticInputDocument = { ...projection.document, nodes: plainTextNodes(prefixed), rawText: "" }
+        const document = { ...plain, rawText: presentationTextOf(plain) }
+        return { text: document.rawText, semanticInput: document, projection }
+    }
     const { document } = projection
     return projection.requiresDocument
         ? { text: document.rawText, semanticInput: document, projection }
         : { text: document.rawText, projection }
+}
+
+/**
+ * The draft as inert nodes: text keeps the source it came from but turns
+ * literal, and a command or mention chip becomes the literal text it was
+ * written as. A literal is opaque however it was written, so its source stays
+ * truthful provenance rather than marking it inert.
+ */
+function plainTextNodes(segments: readonly ComposerSegment[]): SemanticInputNode[] {
+    const nodes: SemanticInputNode[] = []
+    for (const segment of segments) {
+        if (segment.kind === "text") {
+            if (segment.text) nodes.push({ kind: "literal", text: segment.text, source: segment.source })
+            continue
+        }
+        const { atom } = segment
+        if (atom.kind === "resource") nodes.push(atomNode(atom))
+        else nodes.push({ kind: "literal", text: atom.sourceText, source: "typed" })
+    }
+    return mergeContent(nodes)
 }

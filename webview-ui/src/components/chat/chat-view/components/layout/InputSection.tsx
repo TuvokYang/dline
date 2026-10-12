@@ -2,6 +2,7 @@ import { flushPendingTaskSettingsRequests } from "@components/settings/utils/set
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import React, { useEffect, useRef, useState } from "react"
 import ChatTextArea from "@/components/chat/ChatTextArea"
+import type { ComposerSubmitKind } from "@/components/chat/input/composer-action/composer-action"
 import { InputQueuePanel, type InputQueuePanelEntry } from "@/components/chat/input/InputQueuePanel"
 import type { ComposerSegment } from "@/components/chat/input/semantic-composer/model"
 import type { ComposerSendDraft } from "@/components/chat/input/semantic-composer/send-draft"
@@ -51,6 +52,12 @@ interface InputSectionProps {
     onToggleQueuedMode?: (id: string) => void
     onRemoveQueuedInput?: (id: string) => void
     onReorderQueuedInput?: (id: string, targetIndex: number) => void
+    /** Stops the running task from the composer's action button; absent while the task offers no cancel. */
+    onCancelTask?: () => Promise<void>
+    /** What a send from the composer does to the task, shown by its action button. */
+    submitKind?: ComposerSubmitKind
+    /** The model's output rate while a response streams, which tints the composer's action button. */
+    outputTokensPerSecond?: number
 }
 
 /**
@@ -79,6 +86,9 @@ export const InputSection: React.FC<InputSectionProps> = ({
     onToggleQueuedMode,
     onRemoveQueuedInput,
     onReorderQueuedInput,
+    onCancelTask,
+    submitKind,
+    outputTokensPerSecond,
 }) => {
     const {
         activeQuote,
@@ -310,6 +320,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
                 attachmentsDisabled={shouldDisableFilesAndImages}
                 composer={composer}
                 imagesAllowed={imagesAllowed}
+                onCancelTask={onCancelTask}
                 onFocusChange={handleFocusChange}
                 onHeightChange={() => {
                     if (isAtBottom) {
@@ -318,10 +329,13 @@ export const InputSection: React.FC<InputSectionProps> = ({
                 }}
                 onSend={handleSend}
                 onSendBlocked={onEnqueueInput ? enqueueBlockedDraft : undefined}
+                outputTokensPerSecond={outputTokensPerSecond}
                 placeholderText={placeholderText}
+                queueAvailable={queueCanDeliver}
                 ref={composerRef}
                 semanticCatalog={semanticCatalog}
                 sendingDisabled={enabled === undefined ? sendingDisabled : !enabled}
+                submitKind={submitKind}
             />
         </>
     )

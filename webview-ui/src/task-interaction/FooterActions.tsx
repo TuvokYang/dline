@@ -1,6 +1,7 @@
 import type { TaskViewAction, TaskViewState } from "@shared/ExtensionMessage"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { useState } from "react"
+import { composerCarriesAction } from "./task-actions"
 import {
     type AcceptedInteractionSettlement,
     buildInteractionRequest,
@@ -59,7 +60,7 @@ export function FooterActions({
     const [errorState, setErrorState] = useState<{ scope: string; message: string }>()
     const error = errorState?.scope === errorScope ? errorState.message : undefined
     const setError = (message?: string) => setErrorState(message ? { scope: errorScope, message } : undefined)
-    const actions = view.footer.actions.filter((action) => action.type !== "reply" || view.input.enterAction !== "reply")
+    const actions = view.footer.actions.filter((action) => !composerCarriesAction(view, action))
     if (actions.length === 0) {
         return null
     }

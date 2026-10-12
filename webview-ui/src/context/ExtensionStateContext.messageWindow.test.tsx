@@ -56,8 +56,12 @@ vi.mock("../services/grpc-client", () => {
 
 import { ChatRowContent } from "../components/chat/ChatRow"
 import { useChatState } from "../components/chat/chat-view/hooks/useChatState"
+import { ComposerActionButton } from "../components/chat/input/composer-action/ComposerActionButton"
 import { TaskServiceClient } from "../services/grpc-client"
 import { InteractionHost } from "../task-interaction/InteractionHost"
+import { composerResumesTask } from "../task-interaction/task-actions"
+import { buildInteractionRequest } from "../task-interaction/types"
+import { composerShortcutLabels } from "../utils/chat-input-shortcut"
 import { ExtensionStateContextProvider, useExtensionState } from "./ExtensionStateContext"
 
 function CapabilitySetterProbe({
@@ -113,14 +117,38 @@ function InteractionProbe({
             </label>
             <div data-testid="active-task-id">{currentTaskItem?.id ?? "none"}</div>
             {taskViewState ? (
-                <InteractionHost
-                    dispatch={TaskServiceClient.dispatchInteraction}
-                    // Attachments are resource nodes of the composer draft now; a plain text probe has none.
-                    draft={{ text: chatState.inputValue, images: [], files: [] }}
-                    messages={clineMessages}
-                    showTimeline={showTimeline}
-                    view={taskViewState}
-                />
+                <>
+                    <InteractionHost
+                        dispatch={TaskServiceClient.dispatchInteraction}
+                        // Attachments are resource nodes of the composer draft now; a plain text probe has none.
+                        draft={{ text: chatState.inputValue, images: [], files: [] }}
+                        messages={clineMessages}
+                        showTimeline={showTimeline}
+                        view={taskViewState}
+                    />
+                    {/* Resume is the composer's action, sent with the input's Enter action as the chat view does. */}
+                    <ComposerActionButton
+                        onSend={() => {
+                            const enterAction = taskViewState.input.enterAction
+                            const request = enterAction
+                                ? buildInteractionRequest(taskViewState, enterAction, {
+                                      text: chatState.inputValue,
+                                      images: [],
+                                      files: [],
+                                  })
+                                : undefined
+                            if (request) void TaskServiceClient.dispatchInteraction(request)
+                        }}
+                        shortcuts={composerShortcutLabels("enter")}
+                        state={{
+                            canSend: Boolean(taskViewState.input.enabled && taskViewState.input.enterAction),
+                            submitKind: composerResumesTask(taskViewState) ? "resume" : "send",
+                            canQueue: false,
+                            canCancel: false,
+                            hasContent: chatState.inputValue.length > 0,
+                        }}
+                    />
+                </>
             ) : null}
         </>
     )
@@ -335,7 +363,10 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
         act(() => {
             subscriptions.state?.onResponse({ stateJson: JSON.stringify(preparingState) })
         })
-        await waitFor(() => expect(screen.getByRole("button", { name: "Resume" })).toHaveAttribute("aria-disabled", "true"))
+        // The history task is still being prepared: the composer names Resume but cannot take it yet.
+        await waitFor(() => expect(screen.getByTestId("send-button")).toHaveAttribute("data-action", "unavailable"))
+        expect(screen.getByTestId("send-button")).toHaveAccessibleName("Resume task")
+        expect(screen.queryByRole("button", { name: "Resume" })).toBeNull()
 
         const completed = completionInteractionState(2)
         if (!completed.taskViewState?.activeInteraction) throw new Error("Expected active completion interaction")
@@ -383,11 +414,11 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
             subscriptions.state?.onResponse({ stateJson: JSON.stringify(resumeInteractionState(1)) })
         })
         await waitFor(() => expect(screen.getByTestId("active-task-id")).toHaveTextContent("task-1"))
-        await waitFor(() => expect(screen.getByRole("button", { name: "Resume" })).toBeVisible())
+        await waitFor(() => expect(screen.getByTestId("send-button")).toHaveAttribute("data-action", "resume"))
         fireEvent.change(screen.getByLabelText("Interaction draft"), { target: { value: "continue carefully" } })
         observedTaskIds.length = 0
 
-        fireEvent.click(screen.getByRole("button", { name: "Resume" }))
+        fireEvent.click(screen.getByTestId("send-button"))
         await waitFor(() => expect(TaskServiceClient.dispatchInteraction).toHaveBeenCalledOnce())
         await waitFor(() => expect(screen.getByTestId("active-task-id")).toHaveTextContent("task-1"))
 

@@ -1,10 +1,8 @@
 import type { TaskViewAction, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
-import { EmptyRequest } from "@shared/proto/dline/common"
-import { AskResponseRequest, MoveCommandToBackgroundRequest } from "@shared/proto/dline/task"
 import { useState } from "react"
-import { TaskServiceClient } from "@/services/grpc-client"
 import { FooterActions } from "./FooterActions"
 import { isPresentationKind, renderPresentation } from "./renderer-registry"
+import { dispatchTaskAction } from "./task-actions"
 import {
     type AcceptedInteractionSettlement,
     type DispatchInteraction,
@@ -56,30 +54,6 @@ const FOOTER_APPROVAL_PRESENTATIONS = new Set([
     "spawn_task_approval",
     "focus_chain_change",
 ])
-
-async function dispatchTaskAction(view: TaskViewState, action: TaskViewAction): Promise<void> {
-    if (action.type === "retry") {
-        await TaskServiceClient.askResponse(AskResponseRequest.create({ responseType: "retry" }))
-        return
-    }
-    if (action.type === "continue_in_background") {
-        if (!action.activityId) {
-            throw new Error("The foreground activity is no longer available to continue in the background.")
-        }
-        const response = await TaskServiceClient.moveCommandToBackground(
-            MoveCommandToBackgroundRequest.create({
-                taskId: view.taskId,
-                taskInstanceId: view.taskInstanceId ?? "",
-                activityId: action.activityId,
-            }),
-        )
-        if (!response.moved) {
-            throw new Error("The foreground activity is no longer available to continue in the background.")
-        }
-        return
-    }
-    await TaskServiceClient.cancelTask(EmptyRequest.create({}))
-}
 
 /** Bind one backend interaction projection to its exact ask presentation anchor. */
 export function InteractionHost({

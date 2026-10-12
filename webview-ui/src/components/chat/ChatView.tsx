@@ -21,6 +21,7 @@ import { getTaskViewKey } from "@/services/task-messages"
 import { createInteractionDispatchGate } from "@/task-interaction/dispatch-gate"
 import { InteractionHost } from "@/task-interaction/InteractionHost"
 import { isPresentationKind } from "@/task-interaction/renderer-registry"
+import { composerResumesTask, dispatchTaskAction, enabledCancelAction } from "@/task-interaction/task-actions"
 import {
     type AcceptedInteractionSettlement,
     buildInteractionRequest,
@@ -58,6 +59,7 @@ import { useComposerDraftKeepAlive } from "./chat-view/hooks/useComposerDraftKee
 import { useSuccessorDraftTransfer } from "./chat-view/hooks/useSuccessorDraftTransfer"
 import { isTransitionRunning, useTransitionDraftRestore } from "./chat-view/hooks/useTransitionDraftRestore"
 import { resolveActiveProfile, resolveTaskCurrency } from "./chat-view/utils/profileUtils"
+import { tokensPerSecondFromPerMinute } from "./input/composer-action/output-speed"
 import { appendAddToInput } from "./input/semantic-composer/add-to-input"
 import { createCommandAtom } from "./input/semantic-composer/atoms"
 import { type ComposerSegment, isBlankDraft, trimSegments } from "./input/semantic-composer/model"
@@ -565,6 +567,24 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     // input submitted while it runs must enter the durable queue and is admitted
     // after the summary lands instead of being trapped in the composer.
     const queueCanDeliver = taskViewState ? taskPhaseStillDelivers(taskViewState.phase) : false
+    // The composer's action button cancels through the same task action the footer offers.
+    const cancelAction = visibleTask ? enabledCancelAction(taskViewState) : undefined
+    const cancelTask = useMemo(
+        () =>
+            cancelAction && taskViewState
+                ? () =>
+                      dispatchTaskAction(taskViewState, cancelAction).catch((error: unknown) => {
+                          console.error("Failed to cancel the task from the composer:", error)
+                      })
+                : undefined,
+        [cancelAction, taskViewState],
+    )
+    // Resume lives on the composer's action button instead of the footer.
+    const composerSubmitKind = visibleTask && composerResumesTask(taskViewState) ? "resume" : "send"
+    // While the task runs, the action button tints by the same generation rate
+    // the task header reports as TPM.
+    const outputTokensPerSecond =
+        visibleTask && queueCanDeliver ? tokensPerSecondFromPerMinute(apiMetrics?.tokensPerMinute) : undefined
     const canRenderCompactTask = Boolean(taskViewState?.taskId)
     const canRenderForceTruncate = taskViewState?.forceTruncateAvailable === true
     useEffect(() => {
@@ -787,6 +807,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                     inputQueue={inputQueue.entries}
                     messageHandlers={messageHandlers}
                     onCancelQueuedInput={inputQueue.cancelEdit}
+                    onCancelTask={cancelTask}
                     onCommitQueuedInput={inputQueue.commitEdit}
                     onDraftAccepted={clearOwnedDraft}
                     onEditQueuedInput={inputQueue.beginEdit}
@@ -801,6 +822,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                             : undefined
                     }
                     onToggleQueuedMode={inputQueue.toggleMode}
+                    outputTokensPerSecond={outputTokensPerSecond}
                     placeholderText={placeholderText}
                     scrollBehavior={scrollBehavior}
                     semanticCatalog={semanticCatalog}
@@ -821,6 +843,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                             : `draft-${interactionDraft.ownerRevision ?? "unowned"}`
                     }
                     submissionScope={visibleTask ? taskId : undefined}
+                    submitKind={composerSubmitKind}
                 />
             </footer>
         </ChatLayout>

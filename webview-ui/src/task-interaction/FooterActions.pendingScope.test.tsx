@@ -12,19 +12,35 @@ const EMPTY_DRAFT: InteractionDraft = { text: "", images: [], files: [] }
  * `vscode-button` is a custom element, so `toBeDisabled` does not apply: the
  * component mirrors its disabled state onto `aria-disabled`.
  */
-function cancelIsPending(): boolean {
-    return screen.getByRole("button", { name: "Cancel" }).getAttribute("aria-disabled") === "true"
+function handoffIsPending(): boolean {
+    return handoffButton().getAttribute("aria-disabled") === "true"
 }
 
-/** Build a working task view whose only footer action is task Cancel. */
+function handoffButton(): HTMLElement {
+    return screen.getByRole("button", { name: "Continue in Background" })
+}
+
+/**
+ * Build a working task view whose footer offers a task action. Cancel rides
+ * along as the backend projects it, but the composer's action button owns it.
+ */
 function cancellableView(stateRevision: number): TaskViewState {
     return {
         taskId: "task-1",
-        phase: "streaming",
+        phase: "executing",
         stateRevision,
         input: { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false },
         footer: {
             actions: [
+                {
+                    type: "continue_in_background",
+                    label: "Continue in Background",
+                    appearance: "secondary",
+                    enabled: true,
+                    payloadPolicy: "none",
+                    dispatchTarget: "task",
+                    activityId: "command-1",
+                },
                 {
                     type: "cancel",
                     label: "Cancel",
@@ -38,12 +54,12 @@ function cancellableView(stateRevision: number): TaskViewState {
     } as TaskViewState
 }
 
-describe("FooterActions cancel pending scope", () => {
-    // Cancelling a task makes the backend emit new projections while the cancel
-    // RPC is still in flight. Scoping the pending latch to `stateRevision` made
-    // every one of those projections clear it, so Cancel flipped back to enabled
-    // mid-cancellation and the user could fire duplicate cancels.
-    it("keeps Cancel pending across backend revision advances during the in-flight call", async () => {
+describe("FooterActions task action pending scope", () => {
+    // A task action makes the backend emit new projections while its RPC is
+    // still in flight. Scoping the pending latch to `stateRevision` made every
+    // one of those projections clear it, so the action flipped back to enabled
+    // mid-flight and the user could fire it twice.
+    it("keeps a task action pending across backend revision advances during the in-flight call", async () => {
         let settleCancel: () => void = () => undefined
         const dispatchTaskAction = vi.fn(
             () =>
@@ -60,11 +76,11 @@ describe("FooterActions cancel pending scope", () => {
             />,
         )
 
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+        fireEvent.click(handoffButton())
         expect(dispatchTaskAction).toHaveBeenCalledTimes(1)
-        expect(cancelIsPending()).toBe(true)
+        expect(handoffIsPending()).toBe(true)
 
-        // The backend keeps publishing progress for the same task while it winds down.
+        // The backend keeps publishing progress for the same task meanwhile.
         rerender(
             <FooterActions
                 dispatch={vi.fn()}
@@ -74,14 +90,14 @@ describe("FooterActions cancel pending scope", () => {
             />,
         )
 
-        expect(cancelIsPending()).toBe(true)
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+        expect(handoffIsPending()).toBe(true)
+        fireEvent.click(handoffButton())
         expect(dispatchTaskAction).toHaveBeenCalledTimes(1)
 
         settleCancel()
     })
 
-    it("releases the pending latch once the cancel call settles", async () => {
+    it("releases the pending latch once the task action settles", async () => {
         const dispatchTaskAction = vi.fn(async () => undefined)
         render(
             <FooterActions
@@ -92,8 +108,8 @@ describe("FooterActions cancel pending scope", () => {
             />,
         )
 
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
-        await vi.waitFor(() => expect(cancelIsPending()).toBe(false))
+        fireEvent.click(handoffButton())
+        await vi.waitFor(() => expect(handoffIsPending()).toBe(false))
         expect(dispatchTaskAction).toHaveBeenCalledTimes(1)
     })
 
@@ -115,8 +131,8 @@ describe("FooterActions cancel pending scope", () => {
             />,
         )
 
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
-        expect(cancelIsPending()).toBe(true)
+        fireEvent.click(handoffButton())
+        expect(handoffIsPending()).toBe(true)
 
         rerender(
             <FooterActions
@@ -127,7 +143,7 @@ describe("FooterActions cancel pending scope", () => {
             />,
         )
 
-        expect(cancelIsPending()).toBe(false)
+        expect(handoffIsPending()).toBe(false)
 
         settleCancel()
     })

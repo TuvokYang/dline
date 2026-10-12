@@ -1,4 +1,4 @@
-import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT, getChatInputSendShortcutLabel } from "@shared/ChatInputSendShortcut"
+import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { Mode } from "@shared/storage/types"
 import { AtSignIcon, PlusIcon } from "lucide-react"
@@ -16,12 +16,20 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { usePlatform } from "@/context/PlatformContext"
 import { cn } from "@/lib/utils"
-import { shouldSendChatInput } from "@/utils/chat-input-shortcut"
+import { composerShortcutLabels, type QueueChord, shouldSendChatInput } from "@/utils/chat-input-shortcut"
 import { useMetaKeyDetection, useShortcut } from "@/utils/hooks"
 import { isSafari } from "@/utils/platformUtils"
 import ClineRulesToggleModal from "../agent-capabilities/ClineRulesToggleModal"
-import { CHAT_INPUT_MAX_HEIGHT_RATIO, CHAT_INPUT_MIN_ROWS, CHAT_INPUT_PADDING_Y_PX } from "./chat-input-height"
+import {
+    CHAT_INPUT_LINE_HEIGHT,
+    CHAT_INPUT_MAX_HEIGHT_RATIO,
+    CHAT_INPUT_MIN_ROWS,
+    CHAT_INPUT_PADDING_Y_PX,
+} from "./chat-input-height"
 import { ChatInputRuntimeControls } from "./input/ChatInputRuntimeControls"
+import { ComposerActionButton } from "./input/composer-action/ComposerActionButton"
+import type { ComposerSubmitKind } from "./input/composer-action/composer-action"
+import { QueueChordTracker } from "./input/queue-chord"
 import type { ChipAction } from "./input/semantic-composer/dom"
 import { composerHighlights } from "./input/semantic-composer/highlights"
 import {
@@ -56,8 +64,8 @@ const TRANSIENT_NOTICE_MS = 3000
 const EMPTY_SEND_DRAFT: ComposerSendDraft = { segments: [], text: "", images: [], files: [] }
 
 const COMPOSER_PADDING_Y = 2 * CHAT_INPUT_PADDING_Y_PX
-const COMPOSER_MIN_HEIGHT = `calc(${CHAT_INPUT_MIN_ROWS} * var(--vscode-editor-line-height) + ${COMPOSER_PADDING_Y}px)`
-const COMPOSER_MAX_HEIGHT = `calc(${CHAT_INPUT_MAX_HEIGHT_RATIO} * (${CHAT_INPUT_MIN_ROWS} * var(--vscode-editor-line-height) + ${COMPOSER_PADDING_Y}px))`
+const COMPOSER_MIN_HEIGHT = `calc(${CHAT_INPUT_MIN_ROWS} * ${CHAT_INPUT_LINE_HEIGHT} + ${COMPOSER_PADDING_Y}px)`
+const COMPOSER_MAX_HEIGHT = `calc(${CHAT_INPUT_MAX_HEIGHT_RATIO} * (${CHAT_INPUT_MIN_ROWS} * ${CHAT_INPUT_LINE_HEIGHT} + ${COMPOSER_PADDING_Y}px))`
 
 const PLAN_MODE_COLOR = "var(--vscode-activityWarningBadge-background)"
 
@@ -76,8 +84,19 @@ interface ChatTextAreaProps {
     sendingDisabled: boolean
     placeholderText: string
     onSend: (draft: ComposerSendDraft) => void
-    /** Receives a send made while sending is disabled, for the queue; absent when nothing can take it. */
+    /**
+     * Hands a draft to the queue: a send made while sending is disabled, or a
+     * queue chord. Absent when nothing can take it.
+     */
     onSendBlocked?: (draft: ComposerSendDraft) => void
+    /** Whether a blocked send will be delivered later, so the action button offers to queue it. */
+    queueAvailable?: boolean
+    /** Stops the running task; absent while the task offers no cancel. */
+    onCancelTask?: () => Promise<void>
+    /** What a send does to the task, shown by the action button; `send` when omitted. */
+    submitKind?: ComposerSubmitKind
+    /** The model's output rate while a response streams, which tints the action button. */
+    outputTokensPerSecond?: number
     /** True when the current interaction cannot take attachments at all. */
     attachmentsDisabled: boolean
     /** Whether the active model reads images natively, so the file dialog offers them. */
@@ -172,6 +191,10 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
             placeholderText,
             onSend,
             onSendBlocked,
+            queueAvailable = true,
+            onCancelTask,
+            submitKind,
+            outputTokensPerSecond,
             attachmentsDisabled,
             imagesAllowed,
             onHeightChange,
@@ -281,17 +304,59 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
             onSend(capture.draft)
         }, [documentId, engine, onSend, onSendBlocked, reportSendRefusal, semanticCatalog, sendingDisabled])
 
+        /**
+         * Hand the draft to the queue on purpose, as a queue chord asks, even
+         * while the task would take a send now. With nothing running to queue
+         * behind, the draft simply goes out, still as plain text if asked.
+         */
+        const tryQueue = useCallback(
+            (chord: QueueChord) => {
+                const draftSegments = engine.getState().segments
+                if (contentLength(draftSegments) === 0) return
+                const capture = captureComposerSend(draftSegments, {
+                    catalog: semanticCatalog,
+                    documentId,
+                    plainText: chord === "queue_plain_text",
+                })
+                if (!capture.ok) {
+                    reportSendRefusal(capture.block)
+                    return
+                }
+                if (onSendBlocked && queueAvailable) {
+                    onSendBlocked(capture.draft)
+                    return
+                }
+                if (sendingDisabled) {
+                    reportSendRefusal("input_not_ready")
+                    return
+                }
+                setIsFocused(false)
+                onSend(capture.draft)
+            },
+            [documentId, engine, onSend, onSendBlocked, queueAvailable, reportSendRefusal, semanticCatalog, sendingDisabled],
+        )
+        const queueChord = useMemo(
+            () => new QueueChordTracker({ insertText: (text) => engine.apply({ type: "insert_text", text, source: "typed" }) }),
+            [engine],
+        )
+
         const handleKeyDown = useCallback(
             (event: React.KeyboardEvent<HTMLDivElement>) => {
                 // Safari reports InputEvent.isComposing as false throughout, so keyCode 229 identifies composition there.
                 const isComposing = isSafari ? event.nativeEvent.keyCode === 229 : (event.nativeEvent?.isComposing ?? false)
+                const chord = queueChord.keyDown(event, isComposing)
+                if (chord.kind !== "pass") {
+                    event.preventDefault()
+                    if (chord.kind === "chord") tryQueue(chord.chord)
+                    return
+                }
                 if (menus.handleKeyDown(event, isComposing)) return
                 if (shouldSendChatInput(event, chatInputSendShortcut ?? DEFAULT_CHAT_INPUT_SEND_SHORTCUT, isComposing)) {
                     event.preventDefault()
                     trySend()
                 }
             },
-            [chatInputSendShortcut, menus, trySend],
+            [chatInputSendShortcut, menus, queueChord, tryQueue, trySend],
         )
 
         // --- mode switch ---
@@ -423,6 +488,7 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                         decorate={decorate}
                         engine={engine}
                         onBlur={() => {
+                            queueChord.flush()
                             menus.onEditorBlur()
                             setIsFocused(false)
                             onFocusChange?.(false)
@@ -434,6 +500,7 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                         }}
                         onHeightChange={onHeightChange}
                         onKeyDown={handleKeyDown}
+                        onKeyUp={(event) => queueChord.keyUp(event)}
                         onPaste={resourceInput.handlePaste}
                         onPasteText={resourceInput.handlePastedText}
                         placeholder={transientNotice ? "" : placeholderText}
@@ -444,7 +511,7 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                             color: "var(--vscode-input-foreground)",
                             fontFamily: "var(--vscode-font-family)",
                             fontSize: "var(--vscode-editor-font-size)",
-                            lineHeight: "var(--vscode-editor-line-height)",
+                            lineHeight: CHAT_INPUT_LINE_HEIGHT,
                             minHeight: COMPOSER_MIN_HEIGHT,
                             maxHeight: COMPOSER_MAX_HEIGHT,
                             overflowX: "hidden",
@@ -483,22 +550,21 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                         </div>
                     )}
                     <div
-                        className="absolute flex items-end bottom-4.5 right-5 z-10 h-8 text-xs"
+                        className="absolute flex items-end bottom-4 right-4.5 z-10 text-xs"
                         style={{ height: COMPOSER_MIN_HEIGHT }}>
-                        <div className="flex flex-row items-center">
-                            <button
-                                aria-disabled={sendingDisabled}
-                                aria-label="Send message"
-                                className={cn(
-                                    "input-icon-button codicon codicon-send h-5 w-5 appearance-none border-0 bg-transparent p-0 text-sm text-inherit",
-                                    { disabled: sendingDisabled },
-                                )}
-                                data-testid="send-button"
-                                onClick={trySend}
-                                title={`Send message (${getChatInputSendShortcutLabel(chatInputSendShortcut)})`}
-                                type="button"
-                            />
-                        </div>
+                        <ComposerActionButton
+                            onCancel={onCancelTask}
+                            onSend={trySend}
+                            outputTokensPerSecond={outputTokensPerSecond}
+                            shortcuts={composerShortcutLabels(chatInputSendShortcut)}
+                            state={{
+                                canSend: !sendingDisabled,
+                                submitKind,
+                                canQueue: Boolean(onSendBlocked) && queueAvailable,
+                                canCancel: Boolean(onCancelTask),
+                                hasContent: segments.length > 0,
+                            }}
+                        />
                     </div>
                 </div>
                 <div className="flex items-center -mt-0.5 px-3 pb-2 gap-2">

@@ -1,4 +1,4 @@
-import type { TaskViewState } from "@shared/ExtensionMessage"
+import type { TaskViewAction, TaskViewState } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { FooterActions } from "../FooterActions"
@@ -374,58 +374,39 @@ describe("FooterActions", () => {
         await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled())
     })
 
-    it("dispatches projected cancel through the task command boundary", async () => {
+    // The composer's action button cancels and resumes the task, so the footer
+    // must not offer either a second time.
+    it("leaves the task's cancel to the composer's action button", () => {
         const view = approvalView()
         delete view.activeInteraction
         view.phase = "streaming"
-        view.footer.actions = [
-            {
-                type: "cancel",
-                label: "Cancel",
-                appearance: "danger",
-                enabled: true,
-                payloadPolicy: "none",
-                dispatchTarget: "task",
-            },
-        ]
-        const dispatchTaskAction = vi.fn(async () => undefined)
+        view.footer.actions = [CANCEL_ACTION]
 
-        render(
+        const { container } = render(
             <FooterActions
                 dispatch={vi.fn()}
-                dispatchTaskAction={dispatchTaskAction}
+                dispatchTaskAction={vi.fn(async () => undefined)}
                 draft={{ text: "", images: [], files: [] }}
                 view={view}
             />,
         )
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
 
-        await waitFor(() => expect(dispatchTaskAction).toHaveBeenCalledWith(expect.objectContaining({ type: "cancel" })))
+        expect(container).toBeEmptyDOMElement()
     })
 
-    it("renders Continue in Background before Cancel and dispatches both task actions", async () => {
+    it("leaves Resume to the composer's action button", () => {
+        const view = resumeView()
+
+        const { container } = render(<FooterActions dispatch={vi.fn()} draft={{ text: "", images: [], files: [] }} view={view} />)
+
+        expect(container).toBeEmptyDOMElement()
+    })
+
+    it("renders Continue in Background without the composer's Cancel and dispatches it", async () => {
         const view = approvalView()
         delete view.activeInteraction
         view.phase = "executing"
-        view.footer.actions = [
-            {
-                type: "continue_in_background",
-                label: "Continue in Background",
-                appearance: "secondary",
-                enabled: true,
-                payloadPolicy: "none",
-                dispatchTarget: "task",
-                activityId: "command-1",
-            },
-            {
-                type: "cancel",
-                label: "Cancel",
-                appearance: "danger",
-                enabled: true,
-                payloadPolicy: "none",
-                dispatchTarget: "task",
-            },
-        ]
+        view.footer.actions = [CONTINUE_IN_BACKGROUND_ACTION, CANCEL_ACTION]
         const dispatchTaskAction = vi.fn(async () => undefined)
 
         render(
@@ -437,12 +418,11 @@ describe("FooterActions", () => {
             />,
         )
         const actionButtons = screen.getAllByRole("button")
-        expect(actionButtons.map((button) => button.getAttribute("aria-label"))).toEqual(["Continue in Background", "Cancel"])
+        expect(actionButtons.map((button) => button.getAttribute("aria-label"))).toEqual(["Continue in Background"])
         const actionGroup = actionButtons[0].parentElement
         expect(actionGroup).toHaveClass("flex", "gap-1.5")
         expect(actionGroup).not.toHaveClass("border", "rounded")
         expect(actionButtons[0]).toHaveClass("border", "border-(--vscode-panel-border)", "rounded")
-        expect(actionButtons[1]).toHaveClass("border", "border-(--vscode-panel-border)", "rounded")
         fireEvent.click(actionButtons[0])
 
         await waitFor(() =>
@@ -450,26 +430,15 @@ describe("FooterActions", () => {
                 expect.objectContaining({ type: "continue_in_background", activityId: "command-1" }),
             ),
         )
-        fireEvent.click(actionButtons[1])
-        await waitFor(() => expect(dispatchTaskAction).toHaveBeenCalledWith(expect.objectContaining({ type: "cancel" })))
     })
 
     it("shows a task action dispatch failure and restores the action", async () => {
         const view = approvalView()
         delete view.activeInteraction
-        view.phase = "streaming"
-        view.footer.actions = [
-            {
-                type: "cancel",
-                label: "Cancel",
-                appearance: "danger",
-                enabled: true,
-                payloadPolicy: "none",
-                dispatchTarget: "task",
-            },
-        ]
+        view.phase = "executing"
+        view.footer.actions = [CONTINUE_IN_BACKGROUND_ACTION]
         const dispatchTaskAction = vi.fn(async () => {
-            throw new Error("cancel unavailable")
+            throw new Error("background handoff unavailable")
         })
 
         render(
@@ -480,31 +449,22 @@ describe("FooterActions", () => {
                 view={view}
             />,
         )
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+        fireEvent.click(screen.getByRole("button", { name: "Continue in Background" }))
 
-        expect(await screen.findByRole("alert")).toHaveTextContent("cancel unavailable")
-        await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled())
+        expect(await screen.findByRole("alert")).toHaveTextContent("background handoff unavailable")
+        await waitFor(() => expect(screen.getByRole("button", { name: "Continue in Background" })).toBeEnabled())
     })
 
-    // Cancel clean-up can take seconds. The footer must follow the backend
-    // projection instead of holding every action hostage until the cancel RPC
-    // resolves, otherwise the resume action that cancelling produced is still
-    // disabled once it is already on screen.
-    it("enables the next projected action once cancel has been received, without waiting for the RPC", async () => {
-        const streamingView = approvalView()
-        delete streamingView.activeInteraction
-        streamingView.phase = "streaming"
-        streamingView.footer.actions = [
-            {
-                type: "cancel",
-                label: "Cancel",
-                appearance: "danger",
-                enabled: true,
-                payloadPolicy: "none",
-                dispatchTarget: "task",
-            },
-        ]
-        // The clean-up transaction never settles during this test.
+    // A task action's RPC can take seconds. The footer must follow the backend
+    // projection instead of holding every action hostage until it resolves,
+    // otherwise the interaction the task moved on to is still disabled once it
+    // is already on screen.
+    it("enables the next projected action once a task action has been received, without waiting for the RPC", async () => {
+        const executingView = approvalView()
+        delete executingView.activeInteraction
+        executingView.phase = "executing"
+        executingView.footer.actions = [CONTINUE_IN_BACKGROUND_ACTION]
+        // The handoff never settles during this test.
         const dispatchTaskAction = vi.fn(() => new Promise<void>(() => {}))
 
         const { rerender } = render(
@@ -512,63 +472,35 @@ describe("FooterActions", () => {
                 dispatch={vi.fn()}
                 dispatchTaskAction={dispatchTaskAction}
                 draft={{ text: "", images: [], files: [] }}
-                view={streamingView}
+                view={executingView}
             />,
         )
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+        fireEvent.click(screen.getByRole("button", { name: "Continue in Background" }))
         await waitFor(() => expect(dispatchTaskAction).toHaveBeenCalledOnce())
 
-        // The backend has already committed the cancellation and projected the
-        // resume interaction, even though the cancel RPC is still in flight.
-        const resumedView = approvalView()
-        resumedView.phase = "paused"
-        resumedView.stateRevision = 9
-        if (!resumedView.activeInteraction) throw new Error("Expected active interaction")
-        resumedView.activeInteraction = {
-            ...resumedView.activeInteraction,
-            kind: "resume",
-            presentationKind: "resume",
-            taskAsk: "resume_task",
-            stateRevision: 9,
-        }
-        resumedView.footer.actions = [
-            {
-                type: "resume",
-                label: "Resume",
-                appearance: "primary",
-                enabled: true,
-                payloadPolicy: "draft",
-                dispatchTarget: "interaction",
-            },
-        ]
+        // The backend has already moved on to the next approval, even though
+        // the handoff RPC is still in flight.
+        const nextView = approvalView()
+        nextView.stateRevision = 9
         rerender(
             <FooterActions
                 dispatch={vi.fn()}
                 dispatchTaskAction={dispatchTaskAction}
                 draft={{ text: "", images: [], files: [] }}
-                view={resumedView}
+                view={nextView}
             />,
         )
 
-        expect(screen.getByRole("button", { name: "Resume" })).toHaveAttribute("aria-disabled", "false")
+        expect(screen.getByRole("button", { name: "Approve" })).toHaveAttribute("aria-disabled", "false")
     })
 
-    // While the projection still shows the cancellable phase, the cancel button
-    // itself must not accept a second click.
-    it("keeps cancel disabled while its own projection is unchanged", async () => {
+    // While the projection still shows the same phase, the task action itself
+    // must not accept a second click.
+    it("keeps a task action disabled while its own projection is unchanged", async () => {
         const view = approvalView()
         delete view.activeInteraction
-        view.phase = "streaming"
-        view.footer.actions = [
-            {
-                type: "cancel",
-                label: "Cancel",
-                appearance: "danger",
-                enabled: true,
-                payloadPolicy: "none",
-                dispatchTarget: "task",
-            },
-        ]
+        view.phase = "executing"
+        view.footer.actions = [CONTINUE_IN_BACKGROUND_ACTION]
         const dispatchTaskAction = vi.fn(() => new Promise<void>(() => {}))
 
         render(
@@ -579,34 +511,51 @@ describe("FooterActions", () => {
                 view={view}
             />,
         )
-        expect(screen.getByRole("button", { name: "Cancel" })).toHaveAttribute("aria-disabled", "false")
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+        const handoff = () => screen.getByRole("button", { name: "Continue in Background" })
+        expect(handoff()).toHaveAttribute("aria-disabled", "false")
+        fireEvent.click(handoff())
 
-        await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toHaveAttribute("aria-disabled", "true"))
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+        await waitFor(() => expect(handoff()).toHaveAttribute("aria-disabled", "true"))
+        fireEvent.click(handoff())
         expect(dispatchTaskAction).toHaveBeenCalledOnce()
     })
-
-    it("keeps the explicit Resume button when Enter can also resume", () => {
-        const view = approvalView()
-        if (!view.activeInteraction) {
-            throw new Error("Expected active interaction")
-        }
-        view.activeInteraction = { ...view.activeInteraction, kind: "resume", presentationKind: "resume", taskAsk: "resume_task" }
-        view.input.enterAction = "resume"
-        view.footer.actions = [
-            {
-                type: "resume",
-                label: "Resume",
-                appearance: "primary",
-                enabled: true,
-                payloadPolicy: "draft",
-                dispatchTarget: "interaction",
-            },
-        ]
-
-        render(<FooterActions dispatch={vi.fn()} draft={{ text: "", images: [], files: [] }} view={view} />)
-
-        expect(screen.getByRole("button", { name: "Resume" })).toBeVisible()
-    })
 })
+
+const CANCEL_ACTION = {
+    type: "cancel",
+    label: "Cancel",
+    appearance: "danger",
+    enabled: true,
+    payloadPolicy: "none",
+    dispatchTarget: "task",
+} as const satisfies TaskViewAction
+
+const CONTINUE_IN_BACKGROUND_ACTION = {
+    type: "continue_in_background",
+    label: "Continue in Background",
+    appearance: "secondary",
+    enabled: true,
+    payloadPolicy: "none",
+    dispatchTarget: "task",
+    activityId: "command-1",
+} as const satisfies TaskViewAction
+
+/** A paused task whose Resume the composer's Enter also performs. */
+function resumeView(): TaskViewState {
+    const view = approvalView()
+    if (!view.activeInteraction) throw new Error("Expected active interaction")
+    view.phase = "paused"
+    view.activeInteraction = { ...view.activeInteraction, kind: "resume", presentationKind: "resume", taskAsk: "resume_task" }
+    view.input.enterAction = "resume"
+    view.footer.actions = [
+        {
+            type: "resume",
+            label: "Resume",
+            appearance: "primary",
+            enabled: true,
+            payloadPolicy: "draft",
+            dispatchTarget: "interaction",
+        },
+    ]
+    return view
+}
