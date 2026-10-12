@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -9,8 +8,6 @@ const MAX_FILE_AGE_MS = 50 * 60 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000
 const TEMP_FILE_STEM_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const ATTACHMENTS_DIRECTORY = "attachments"
-/** Characters that are invalid in a file name on at least one supported platform. */
-const UNSAFE_FILE_NAME_CHARACTERS = /[<>:"/\\|?*\u0000-\u001f]/g
 
 interface TempFileInfo {
     readonly path: string
@@ -65,18 +62,6 @@ class DlineRuntimeFileManagerImpl {
 
         this.initialize()
         return path.join(this.tempDir, `${stableStem}.log`)
-    }
-
-    /**
-     * Reserve a unique path for a user attachment that arrived as bytes without a host path.
-     * Each attachment gets its own directory so the file keeps its original base name, which is
-     * what the model sees. Staged attachments follow the same age-based retention as logs.
-     */
-    async createAttachmentPath(fileName: string): Promise<string> {
-        const safeName = path.basename(fileName).replace(UNSAFE_FILE_NAME_CHARACTERS, "_").trim() || "attachment"
-        const directory = path.join(this.attachmentsDir, randomUUID())
-        await fs.promises.mkdir(directory, { recursive: true })
-        return path.join(directory, safeName)
     }
 
     /**

@@ -53,6 +53,25 @@ describe("Per-Controller Event Isolation", () => {
 
             assert.equal(streamA.received.length, 1, "Controller A subscriber should receive event")
             assert.equal(streamB.received.length, 0, "Controller B subscriber should NOT receive event")
+            assert.deepEqual(streamA.received[0], { text: "hello from A", mentionReference: "", selection: "" })
+        })
+
+        it("carries an editor selection's mention and literal apart from its plain text", async () => {
+            const ctrl = createMockController("E")
+            const stream = createMockResponseStream()
+            await subscribeToAddToInput(ctrl, {} as any, stream.handler)
+
+            await sendAddToInputEvent(ctrl, {
+                text: "@/a.ts\n```\nx\n```",
+                mentionReference: "/a.ts",
+                selection: "\n```\nx\n```",
+            })
+
+            assert.deepEqual(stream.received[0], {
+                text: "@/a.ts\n```\nx\n```",
+                mentionReference: "/a.ts",
+                selection: "\n```\nx\n```",
+            })
         })
 
         it("does not throw when controller has no subscribers", async () => {

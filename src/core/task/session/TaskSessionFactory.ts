@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto"
-import { StoreDraftAttachments } from "@core/input-semantics/StoreDraftAttachments"
-import { openTaskInputResources } from "@core/input-semantics/TaskInputResourceStore"
 import { composeTask, type TaskCompositionOptions } from "../composition/TaskCompositionRoot"
 import type { DraftAttachmentPort } from "../interaction/DraftAttachments"
 import { ActiveTaskSession, type ActiveTaskSessionReleasePort } from "./ActiveTaskSession"
@@ -18,8 +16,8 @@ export interface OpenActiveTaskSessionOptions extends TaskCompositionOptions {
     readonly inputAdmission: TaskInputAdmissionPort
     /** Carries out lifecycle commands such as `/compact`; absent means they stay prose. */
     readonly lifecycleBarriers?: LifecycleBarrierPort
-    /** Resolves a draft's resources when a receiver consumes it; defaults to the task's own resource store. */
-    readonly draftAttachments?: DraftAttachmentPort
+    /** Resolves a draft's resources from the task's store when a receiver consumes it. */
+    readonly draftAttachments: DraftAttachmentPort
     /** See {@link ActiveTaskSession.upgradeImportPending}. */
     readonly upgradeImportPending?: boolean
 }
@@ -42,7 +40,7 @@ export async function openActiveTaskSession(options: OpenActiveTaskSessionOption
         options.lifecycleBarriers,
     )
     return new ActiveTaskSession({
-        draftAttachments: options.draftAttachments ?? new StoreDraftAttachments(() => openTaskInputResources(options.taskId)),
+        draftAttachments: options.draftAttachments,
         task: composed.task,
         checkpointRestore: composed.checkpointRestore,
         readState: () => composed.runtime.getState(),

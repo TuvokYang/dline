@@ -1220,6 +1220,7 @@ export const ChatRowContent = memo(
                                 messageTs={message.ts}
                                 queuedInputMode={message.queuedInputMode}
                                 sendMessageFromChatRow={sendMessageFromChatRow}
+                                submittedInputs={message.submittedInputs}
                                 text={message.text}
                             />
                         )
@@ -1279,6 +1280,7 @@ export const ChatRowContent = memo(
                                 messageTs={message.ts}
                                 queuedInputMode={message.queuedInputMode}
                                 sendMessageFromChatRow={sendMessageFromChatRow}
+                                submittedInputs={message.submittedInputs}
                                 text={message.text}
                             />
                         )

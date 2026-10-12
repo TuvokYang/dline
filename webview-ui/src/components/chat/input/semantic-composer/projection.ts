@@ -20,7 +20,6 @@ import {
     type ComposerRange,
     type ComposerSegment,
     type ComposerTextSource,
-    contentLength,
     flatTextOf,
     segmentLength,
 } from "./model"
@@ -326,9 +325,4 @@ export function composeComposerSubmission(
     return projection.requiresDocument
         ? { text: document.rawText, semanticInput: document, projection }
         : { text: document.rawText, projection }
-}
-
-/** True when the draft has no content at all. */
-export function isEmptyComposer(segments: readonly ComposerSegment[]): boolean {
-    return contentLength(segments) === 0
 }

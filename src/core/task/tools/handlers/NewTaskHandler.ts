@@ -1,10 +1,8 @@
 import type { ToolUse } from "@core/assistant-message"
-import { getPrompt } from "@core/prompts/i18n"
-import { formatResponse } from "@core/prompts/responses"
 import { showSystemNotification } from "@integrations/notifications"
 import { encodeNewTaskAsk } from "@shared/new-task-ask"
 import { DlineDefaultTool } from "@/shared/tools"
-import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../../new-task/new-task-continuation"
+import { declinedNewTaskResponse, newTaskCreatedResponse, successorDirective } from "../../new-task/new-task-answer"
 import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
 import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
@@ -63,37 +61,20 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
         })
         if (outcome.actionId === "approve") {
             return {
-                response: formatResponse.toolResult(getPrompt("toolHandlers", "newTaskCreated")),
-                postCommit: {
-                    type: "start_successor_task",
-                    task,
-                    context,
-                    functionId: block.function_id,
-                    dlineTid: block.dline_tid,
-                },
+                response: newTaskCreatedResponse(),
+                postCommit: successorDirective({ task, context, functionId: block.function_id, dlineTid: block.dline_tid }),
             }
         }
         if (outcome.actionId !== "reject") {
             throw new Error(`Unsupported New Task action: ${outcome.actionId}`)
         }
 
-        // Declining with feedback answers this conversation: the feedback is the
-        // tool's result here and never travels to a successor.
         const text = outcome.draft?.text ?? ""
         const images = outcome.draft?.images
         const files = outcome.draft?.files
         const attachments = await attachToolFeedbackFiles(files)
 
         await sayFeedbackOnce(config, "noButtonClicked", text, images, files, outcome)
-        // The marker is what lets the next round call new_task again without the
-        // user repeating /newtask; see deriveNewTaskFeedbackContinuation.
-        return withToolDocuments(
-            formatResponse.toolResult(
-                `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\n${text}\n</feedback>`,
-                images,
-                attachments.text,
-            ),
-            attachments.documents,
-        )
+        return withToolDocuments(declinedNewTaskResponse(text, images, attachments.text), attachments.documents)
     }
 }

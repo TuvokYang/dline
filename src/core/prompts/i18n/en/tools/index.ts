@@ -18,7 +18,6 @@ import loadCapability from "./loadCapability"
 import loadMcpDocumentation from "./loadMcpDocumentation"
 import loadMcpDocumentationTool from "./loadMcpDocumentationTool"
 import makePlan from "./makePlan"
-import newTask from "./newTask"
 import phaseReport from "./phaseReport"
 import qnaRespond from "./qnaRespond"
 import readFile from "./readFile"
@@ -79,7 +78,6 @@ export const toolPromptModules = [
     }),
     defineLegacyModule("loadMcpDocumentationTool", "tools", loadMcpDocumentationTool),
     defineLegacyModule("makePlan", "tools", makePlan),
-    defineLegacyModule("newTask", "tools", newTask),
     defineLegacyModule("qnaRespond", "tools", qnaRespond),
     defineLegacyModule("readFile", "tools", readFile, {
         pathInstruction: createRuntimeContract("WORKSPACE_PATH_RULE", "MULTI_ROOT_HINT"),
@@ -140,7 +138,7 @@ export const toolPromptModules = [
     defineLegacyModule("toolHandlers", "tools", toolHandlers, {
         toolError: createRuntimeContract("ERROR"),
         noToolsUsed: createRuntimeContract("TOOL_REMINDER"),
-        tooManyMistakes: createRuntimeContract("FEEDBACK"),
+        newTaskDeclinedFeedback: createRuntimeContract("FEEDBACK"),
         missingToolParameterError: createRuntimeContract("PARAM_NAME", "TOOL_REMINDER"),
         toolAlreadyUsed: createRuntimeContract("TOOL_NAME"),
         repeatedToolCall: createRuntimeContract("TOOL_NAME", "COUNT"),

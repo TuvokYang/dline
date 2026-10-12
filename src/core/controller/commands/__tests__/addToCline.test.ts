@@ -49,6 +49,35 @@ describe("addToCline", () => {
 
         expect(initTask).not.toHaveBeenCalled()
         expect(mocks.sendAddToInputEvent).toHaveBeenCalledOnce()
-        expect(mocks.sendAddToInputEvent).toHaveBeenCalledWith(controller, expect.stringContaining("const answer = 42"))
+        const selection = "\n```\nconst answer = 42\n```"
+        expect(mocks.sendAddToInputEvent).toHaveBeenCalledWith(controller, {
+            text: `@/sample.ts${selection}`,
+            mentionReference: "/sample.ts",
+            selection,
+        })
+    })
+
+    it("keeps problems inside the selection literal and normalizes the mention separators", async () => {
+        mocks.getFileMentionFromPath.mockResolvedValueOnce("@/src\\nested\\sample.ts")
+        const controller = { initTask: vi.fn(), task: undefined } as unknown as Controller
+
+        await addToCline(controller, { ...request, diagnostics: [{} as never] })
+
+        expect(mocks.sendAddToInputEvent).toHaveBeenCalledWith(controller, {
+            text: "@/src\\nested\\sample.ts\n```\nconst answer = 42\n```\nProblems:\nmock problem",
+            mentionReference: "/src/nested/sample.ts",
+            selection: "\n```\nconst answer = 42\n```\nProblems:\nmock problem",
+        })
+    })
+
+    it("sends no mention when the selection has no file", async () => {
+        const controller = { initTask: vi.fn(), task: undefined } as unknown as Controller
+
+        await addToCline(controller, { ...request, filePath: "" })
+
+        expect(mocks.sendAddToInputEvent).toHaveBeenCalledWith(
+            controller,
+            expect.not.objectContaining({ mentionReference: expect.anything() }),
+        )
     })
 })

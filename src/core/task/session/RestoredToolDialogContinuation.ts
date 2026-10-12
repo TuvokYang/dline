@@ -11,16 +11,52 @@ import { interactionKindForToolName, projectInteractionContinuation } from "../i
 import type { InteractionOutcome } from "../interaction/InteractionProtocol"
 import type { KernelBlock, TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
+import { newTaskCallOf, successorDirective } from "../new-task/new-task-answer"
+import type { PostCommitPublisher } from "../new-task/successor-handoff"
 import type { ConversationJournal, TaskPayloadStore } from "../stores"
 import { putAttachedDocuments } from "../stores/payload/AttachedDocuments"
 import { decodeTaskPayload, encodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { ToolInvocationEnvelope, ToolResultEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
+import type { ToolPostCommitDirective } from "../tools/ToolExecutionResult"
 import type {
     TaskResumptionPort,
     UnownedDialogContinuationPort,
     UnownedDialogOutcome,
     UnownedDialogResolution,
 } from "./UnownedDialogContinuation"
+
+/**
+ * What answering a restored dialog commits its source to.
+ *
+ * - `resume`: the answer is recorded as the tool's result and the source resumes.
+ * - `post_commit`: the directive replaces the resume, and the answer is
+ *   recorded only once the directive is accepted.
+ * - `unanswerable`: the record cannot carry out what the answer asks, so the
+ *   dialog stays answerable instead of recording a result that claims it did.
+ */
+type RestoredAnswerEffect =
+    | { readonly kind: "resume" }
+    | { readonly kind: "post_commit"; readonly directive: ToolPostCommitDirective }
+    | { readonly kind: "unanswerable" }
+
+/** How the restored dialog of one tool is answered; every tool-specific rule lives in its entry. */
+interface RestoredToolDialogPolicy {
+    /**
+     * Whether the answer replaces the interruption written for the stopped block.
+     *
+     * Stopping the task keeps some dialogs open with their options and buttons
+     * restored. The failure written for such a stopped block does not settle
+     * the call: the user's answer is still the tool's result, as dev restores
+     * these dialogs and commits the answer to the call.
+     */
+    readonly replacesInterruption: (block: KernelBlock) => boolean
+    /** What the answer commits the source to; without it every answer resumes the source. */
+    readonly effect?: (invocation: ToolInvocationEnvelope, resolution: UnownedDialogResolution) => RestoredAnswerEffect
+}
+
+const RESUME: RestoredAnswerEffect = { kind: "resume" }
+const always = () => true
+const never = () => false
 
 /**
  * Dialogs a tool opens and waits on inside its own execution.
@@ -30,13 +66,29 @@ import type {
  * still the tool's result, so it has to be recorded as that result rather than
  * as new input the model would read as an unrelated message.
  */
-const RESTORED_TOOL_DIALOG_KINDS: ReadonlySet<string> = new Set([
-    "followup",
-    "make_plan",
-    "qna_response",
-    "generate_report",
-    "status_acknowledgment",
-    "completion",
+const RESTORED_TOOL_DIALOG_POLICIES: ReadonlyMap<string, RestoredToolDialogPolicy> = new Map<string, RestoredToolDialogPolicy>([
+    ["followup", { replacesInterruption: always }],
+    ["make_plan", { replacesInterruption: never }],
+    ["qna_response", { replacesInterruption: never }],
+    ["generate_report", { replacesInterruption: never }],
+    ["status_acknowledgment", { replacesInterruption: always }],
+    // Only a completion the user had already been shown stays open.
+    ["completion", { replacesInterruption: (block) => Boolean(block.presentedCompletion) }],
+    [
+        "new_task",
+        {
+            // A handoff answered as new input would never start its successor and
+            // would lose the marker that lets the model ask again.
+            replacesInterruption: always,
+            effect: (invocation, resolution) => {
+                if (!isApproval(resolution)) return RESUME
+                // The live handler refuses a call that lacks its task or context
+                // before it opens the dialog, so a restored one cannot hand off either.
+                const call = newTaskCallOf(invocation)
+                return call ? { kind: "post_commit", directive: successorDirective(call) } : { kind: "unanswerable" }
+            },
+        },
+    ],
 ])
 
 export interface RestoredToolDialogPorts {
@@ -54,6 +106,12 @@ export interface RestoredToolDialogPorts {
      * appears after the next full reload.
      */
     readonly publishRow?: (row: UiMessage) => Promise<void>
+    /**
+     * Carry out what an answer commits the source to, as the tool adapter does
+     * for a live block: an approved `new_task` starts its successor. Without it
+     * such an answer cannot take effect, so the dialog stays answerable instead.
+     */
+    readonly publishPostCommit?: PostCommitPublisher
 }
 
 /** The option a follow-up answer picked, matched the way the live handler matches it. */
@@ -73,7 +131,9 @@ export function selectedFollowupOption(options: readonly string[], text: string 
  * this runs. The answer is journaled as the block's durable result under an
  * operation id derived from the turn and block, which makes a repeated answer
  * a no-op, and the task then resumes with an empty submission so the next
- * round reads that result. Every other unowned dialog keeps the generic
+ * round reads that result. An answer whose tool commits the source to a
+ * directive, such as an approved `new_task` starting its successor, carries
+ * that out instead of resuming. Every other unowned dialog keeps the generic
  * resume path, which submits the answer as ordinary input.
  */
 export class RestoredToolDialogContinuation implements UnownedDialogContinuationPort {
@@ -99,35 +159,51 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             if (target.recorded === "failed") return true
             await this.present(resolution, resolution.outcome.draft)
             if (target.recorded === "answered") return true
-            const { invocation, kind, turnId, operationId } = target
-            const draft = resolution.outcome.draft
-            const result = await projectInteractionContinuation({
-                kind,
-                functionId: invocation.functionId,
-                dlineTid: invocation.dlineTid,
-                chatContent: { message: draft?.text, images: draft?.images, files: draft?.files },
-                actionId: resolution.outcome.actionId,
-            })
-            const documentPayloadRefs = await putAttachedDocuments(this.ports.payloads, result.documents)
-            const envelope: ToolResultEnvelope = {
-                kind: "tool_result",
-                blockId: invocation.dlineTid,
-                content: serializeDurableToolResult(result.toolResult, toolResultReplayOf(invocation)),
-                ...(documentPayloadRefs ? { documentPayloadRefs } : {}),
-            }
-            const payloadRef = await this.ports.payloads.put(encodeTaskPayload(envelope))
-            if (resolution.isCurrent && !resolution.isCurrent()) return false
-            await this.ports.journal.append({
-                operationId,
-                payloadRef,
-                source: "tool",
-                causation: { ...(turnId === undefined ? {} : { turnId }), interactionId: resolution.interactionId },
-            })
-            return true
+            // An answer that commits the source is recorded only once its directive is accepted; see `commit`.
+            if (target.postCommit) return true
+            return await this.record(target, resolution, resolution.isCurrent)
         } catch (error) {
             Logger.error(`Failed to prepare restored tool interaction ${resolution.interactionId}`, error)
             return false
         }
+    }
+
+    /**
+     * Journal the answer as the block's durable result.
+     *
+     * The operation id is derived from the turn and block, so the first answer
+     * recorded wins and a repeated one is a no-op.
+     */
+    private async record(
+        target: RestoredToolTarget,
+        resolution: UnownedDialogResolution,
+        isCurrent?: () => boolean,
+    ): Promise<boolean> {
+        const { invocation, kind, turnId, operationId } = target
+        const draft = resolution.outcome.draft
+        const result = await projectInteractionContinuation({
+            kind,
+            functionId: invocation.functionId,
+            dlineTid: invocation.dlineTid,
+            chatContent: { message: draft?.text, images: draft?.images, files: draft?.files },
+            actionId: resolution.outcome.actionId,
+        })
+        const documentPayloadRefs = await putAttachedDocuments(this.ports.payloads, result.documents)
+        const envelope: ToolResultEnvelope = {
+            kind: "tool_result",
+            blockId: invocation.dlineTid,
+            content: serializeDurableToolResult(result.toolResult, toolResultReplayOf(invocation)),
+            ...(documentPayloadRefs ? { documentPayloadRefs } : {}),
+        }
+        const payloadRef = await this.ports.payloads.put(encodeTaskPayload(envelope))
+        if (isCurrent && !isCurrent()) return false
+        await this.ports.journal.append({
+            operationId,
+            payloadRef,
+            source: "tool",
+            causation: { ...(turnId === undefined ? {} : { turnId }), interactionId: resolution.interactionId },
+        })
+        return true
     }
 
     async continue(resolution: UnownedDialogResolution): Promise<UnownedDialogOutcome> {
@@ -135,16 +211,65 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
         if (!block) return resolution.queuedInput ? "declined" : this.fallback.continue(resolution)
         try {
             if (!(await this.prepare(resolution))) return "failed"
-            if (this.fallback.accepts(resolution) && (await this.target(block, resolution))?.recorded === "failed") {
+            const target = await this.target(block, resolution)
+            if (this.fallback.accepts(resolution) && target?.recorded === "failed") {
                 return this.fallback.continue(resolution)
             }
-            const input = await this.resumption.materialize({})
-            if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
-            await this.resumption.submit(input)
-            return "continued"
+            if (target?.postCommit) return await this.commit(target, target.postCommit, resolution)
+            return await this.resume(resolution)
         } catch (error) {
             Logger.error(`Failed to continue restored tool interaction ${resolution.interactionId}`, error)
             return "failed"
+        }
+    }
+
+    /** Resume the source with an empty submission, so the next round reads the recorded result. */
+    private async resume(resolution: UnownedDialogResolution): Promise<UnownedDialogOutcome> {
+        const input = await this.resumption.materialize({})
+        if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
+        await this.resumption.submit(input)
+        return "continued"
+    }
+
+    /**
+     * Carry out the directive an answer commits the source to.
+     *
+     * The source does not resume: an accepted handoff gives the conversation to
+     * the successor. The answer is recorded only after the kernel accepts the
+     * directive, so a refused one leaves the dialog answerable with nothing in
+     * the journal claiming it took effect, and a later answer still records its
+     * own result.
+     */
+    private async commit(
+        target: RestoredToolTarget,
+        postCommit: RestoredPostCommit,
+        resolution: UnownedDialogResolution,
+    ): Promise<UnownedDialogOutcome> {
+        if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
+        const outcome = await postCommit.publish({
+            command: { turnId: target.turnId, dlineTid: target.invocation.dlineTid, restoredDialog: true },
+            directive: postCommit.directive,
+            beforeStart: () => this.recordCommitted(target, resolution),
+        })
+        if (outcome === "refused") return "failed"
+        if (outcome === "handed_off") return "continued"
+        // The publisher does not own this directive, so nothing replaced the resume.
+        if (!(await this.record(target, resolution, resolution.isCurrent))) return "declined"
+        return await this.resume(resolution)
+    }
+
+    /**
+     * Record an answer whose directive was accepted.
+     *
+     * The source is already consumed, so a failed write cannot undo the
+     * directive; it only leaves the source's history without the result, and
+     * the successor starts regardless.
+     */
+    private async recordCommitted(target: RestoredToolTarget, resolution: UnownedDialogResolution): Promise<void> {
+        try {
+            await this.record(target, resolution)
+        } catch (error) {
+            Logger.error(`Failed to record the committed answer of restored interaction ${resolution.interactionId}`, error)
         }
     }
 
@@ -152,11 +277,24 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
     private async target(block: KernelBlock, resolution: UnownedDialogResolution): Promise<RestoredToolTarget | undefined> {
         const invocation = decodeTaskPayload<ToolInvocationEnvelope>(await this.ports.payloads.read(block.invocationRef))
         const kind = invocation.kind === "tool_invocation" ? interactionKindForToolName(invocation.toolName) : undefined
-        if (!kind || kind !== resolution.kind || invocation.dlineTid !== block.blockId) return undefined
+        const policy = kind ? RESTORED_TOOL_DIALOG_POLICIES.get(kind) : undefined
+        if (!kind || !policy || kind !== resolution.kind || invocation.dlineTid !== block.blockId) return undefined
+        const effect = policy.effect?.(invocation, resolution) ?? RESUME
+        // An answer that cannot take effect must not record a result claiming it did.
+        if (effect.kind === "unanswerable") return undefined
+        const publish = this.ports.publishPostCommit
+        if (effect.kind === "post_commit" && !publish) return undefined
         const turnId = this.ports.state().turn.turnId
         const operationId = `tool.restored_result:${turnId ?? "none"}:${block.blockId}`
-        const recorded = await this.recordedResult(operationId, turnId, block, kind)
-        return { invocation, kind, turnId, operationId, recorded }
+        const recorded = await this.recordedResult(operationId, turnId, block, policy)
+        return {
+            invocation,
+            kind,
+            turnId,
+            operationId,
+            recorded,
+            ...(effect.kind === "post_commit" && publish ? { postCommit: { directive: effect.directive, publish } } : {}),
+        }
     }
 
     /**
@@ -169,13 +307,13 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
      * result, so it has to reach the model as new input.
      *
      * Dialogs the restored view keeps answerable are the exception: see
-     * `answerReplacesInterruption`.
+     * `RestoredToolDialogPolicy.replacesInterruption`.
      */
     private async recordedResult(
         operationId: string,
         turnId: string | undefined,
         block: KernelBlock,
-        kind: RestoredToolTarget["kind"],
+        policy: RestoredToolDialogPolicy,
     ): Promise<RecordedResult> {
         if (await this.ports.journal.findByOperation(operationId)) return "answered"
         const state = this.ports.state()
@@ -186,14 +324,14 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             const payload = decodeTaskPayload<ToolResultEnvelope>(await this.ports.payloads.read(entry.payloadRef))
             if (payload.kind !== "tool_result" || payload.blockId !== block.blockId) continue
             if (!payload.failed) return "answered"
-            if (!answerReplacesInterruption(kind, block)) return "failed"
+            if (!policy.replacesInterruption(block)) return "failed"
         }
         return "none"
     }
 
     /** The cancelled block a restored tool dialog belongs to, if this is one. */
     private restoredBlock(resolution: UnownedDialogResolution): KernelBlock | undefined {
-        if (!RESTORED_TOOL_DIALOG_KINDS.has(resolution.kind)) return undefined
+        if (!RESTORED_TOOL_DIALOG_POLICIES.has(resolution.kind)) return undefined
         return this.ports
             .state()
             .turn.blocks.find((block) => block.blockId === resolution.interactionId && block.phase === "cancelled")
@@ -239,22 +377,18 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
     }
 }
 
-/**
- * Whether the answer to a restored dialog replaces the interruption written
- * for its stopped block.
- *
- * Stopping the task keeps a follow-up, a status acknowledgment and a completion
- * the user had already been shown open as the task's dialog, with their
- * options and buttons restored. The failure written for the stopped block
- * therefore does not settle the call: the user's answer is still the tool's
- * result, as dev restores these dialogs and commits the answer to the call.
- */
-function answerReplacesInterruption(kind: RestoredToolTarget["kind"], block: KernelBlock): boolean {
-    return kind === "followup" || kind === "status_acknowledgment" || Boolean(block.presentedCompletion)
+function isApproval(resolution: UnownedDialogResolution): boolean {
+    return resolution.outcome.actionId === "approve"
 }
 
 /** Whether a restored tool block already has its durable result, and what kind. */
 type RecordedResult = "none" | "answered" | "failed"
+
+/** A directive an answer commits the source to, and the port that carries it out. */
+interface RestoredPostCommit {
+    readonly directive: ToolPostCommitDirective
+    readonly publish: PostCommitPublisher
+}
 
 interface RestoredToolTarget {
     readonly invocation: ToolInvocationEnvelope
@@ -262,6 +396,8 @@ interface RestoredToolTarget {
     readonly turnId: string | undefined
     readonly operationId: string
     readonly recorded: RecordedResult
+    /** Set when the answer commits the source to a directive instead of resuming it. */
+    readonly postCommit?: RestoredPostCommit
 }
 
 function lastIndexOfInteraction(messages: readonly { readonly interactionId?: string }[], interactionId: string): number {

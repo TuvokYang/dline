@@ -6,10 +6,14 @@ import { ResumeDialogContinuation, type TaskResumptionPort } from "../UnownedDia
 const ACCEPTED = { kind: "accepted" } as unknown as EventSubmissionResult
 const REJECTED = { kind: "rejected", reason: "phase_mismatch" } as unknown as EventSubmissionResult
 
-function resumption(): TaskResumptionPort & { readonly materialize: ReturnType<typeof vi.fn> } {
+function resumption(): TaskResumptionPort & {
+    readonly materialize: ReturnType<typeof vi.fn>
+    readonly materializeAnswer: ReturnType<typeof vi.fn>
+} {
     const input: TaskInput = { entryId: "entry-1", payloadRef: "sha256:input" }
     return {
         materialize: vi.fn(async () => input),
+        materializeAnswer: vi.fn(async () => input),
         submit: vi.fn(async () => ACCEPTED),
     }
 }
@@ -27,10 +31,11 @@ describe("ResumeDialogContinuation", () => {
             outcome: { actionId: "resume", draft: { text: "continue carefully", images: [], files: [] } },
         })
 
-        const [submission, options] = ports.materialize.mock.calls[0] as [{ text?: string; context?: string }, unknown]
+        const [submission] = ports.materializeAnswer.mock.calls[0] as [{ text?: string; context?: string }]
         expect(submission.text).toBe("continue carefully")
-        // The answer was durable before the resume: a newer catalog must not refuse it.
-        expect(options).toEqual({ pinnedRevision: true })
+        // The answer was durable before the resume, so it goes through the entry
+        // that keeps its catalog revision, never the one for fresh input.
+        expect(ports.materialize).not.toHaveBeenCalled()
         expect(ports.submit).toHaveBeenCalledWith({ entryId: "entry-1", payloadRef: "sha256:input" })
     })
 
@@ -103,9 +108,27 @@ describe("ResumeDialogContinuation", () => {
             outcome: { actionId: "resume", draft: { text: "continue carefully", images: [], files: [] } },
         })
 
-        const [submission] = ports.materialize.mock.calls[0] as [{ text?: string; context?: string }]
+        const [submission] = ports.materializeAnswer.mock.calls[0] as [{ text?: string; context?: string }]
         expect(submission.context).toContain(RESTORED_SESSION)
         expect(submission.text).not.toContain(RESTORED_SESSION)
+    })
+
+    // Process Anyway frames the reply instead of replacing it, so a command in
+    // the reply is admitted and acts like any submission.
+    it("keeps a Process Anyway reply as typed and states the mistake limit as context", async () => {
+        const ports = resumption()
+        const continuation = new ResumeDialogContinuation(ports)
+
+        await continuation.continue({
+            interactionId: "mistake:task-1:9",
+            kind: "mistake_limit",
+            outcome: { actionId: "process_anyway", draft: { text: "/explain the failure", images: [], files: [] } },
+        })
+
+        const [submission] = ports.materializeAnswer.mock.calls[0] as [Record<string, unknown>]
+        expect(submission).toMatchObject({ text: "/explain the failure" })
+        expect(submission).not.toHaveProperty("admittedText")
+        expect(submission.context).toContain("trouble proceeding")
     })
 
     it("does not claim a restored session when retrying inside the live one", async () => {
@@ -118,7 +141,7 @@ describe("ResumeDialogContinuation", () => {
             outcome: { actionId: "retry", draft: { text: "try again", images: [], files: [] } },
         })
 
-        const [submission] = ports.materialize.mock.calls[0] as [{ context?: string }]
+        const [submission] = ports.materializeAnswer.mock.calls[0] as [{ context?: string }]
         expect(submission.context).toBeUndefined()
         expect(ports.submit).toHaveBeenCalledOnce()
     })
@@ -129,7 +152,7 @@ describe("ResumeDialogContinuation", () => {
 
         await continuation.continue({ interactionId: "interrupted:task-1:76", kind: "resume", outcome: { actionId: "resume" } })
 
-        const [submission] = ports.materialize.mock.calls[0] as [{ text?: string; context?: string }]
+        const [submission] = ports.materializeAnswer.mock.calls[0] as [{ text?: string; context?: string }]
         expect(submission.text).toBeUndefined()
         expect(submission.context).toContain(RESTORED_SESSION)
         expect(ports.submit).toHaveBeenCalledOnce()
@@ -146,7 +169,7 @@ describe("ResumeDialogContinuation", () => {
         })
 
         expect(outcome).toBe("declined")
-        expect(ports.materialize).not.toHaveBeenCalled()
+        expect(ports.materializeAnswer).not.toHaveBeenCalled()
         expect(ports.submit).not.toHaveBeenCalled()
     })
 
@@ -166,7 +189,7 @@ describe("ResumeDialogContinuation", () => {
         })
 
         expect(outcome).toBe("continued")
-        const [submission] = ports.materialize.mock.calls[0] as [{ text?: string }]
+        const [submission] = ports.materializeAnswer.mock.calls[0] as [{ text?: string }]
         expect(submission.text).toBe("keep going")
         expect(ports.submit).toHaveBeenCalledOnce()
     })

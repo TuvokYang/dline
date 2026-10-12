@@ -235,7 +235,6 @@ describe("FooterActions", () => {
                 draft={{ text: "Do not submit this", images: ["image"], files: ["file"] }}
                 onDraftAccepted={onDraftAccepted}
                 onSuccessorAccepted={onSuccessorAccepted}
-                successorTask="Successor task"
                 view={view}
             />,
         )
@@ -255,7 +254,7 @@ describe("FooterActions", () => {
         expect(onDraftAccepted).not.toHaveBeenCalled()
         expect(onSuccessorAccepted).toHaveBeenCalledWith({
             sourceTaskId: "task-1",
-            task: "Successor task",
+            interactionId: "interaction-1",
             draft: {
                 text: "Do not submit this",
                 images: ["image"],

@@ -592,6 +592,16 @@ export type LifecycleEvent =
           readonly turnId: TurnId
           readonly blockId: BlockId
           readonly consumedRef: string
+          /**
+           * The consuming block answers a dialog restored after its process ended.
+           *
+           * Hydration cancels every block that was executing, so a block whose
+           * dialog stays answerable after a restart is already settled. Only this
+           * marker lets a settled block consume the source, and only while nothing
+           * else executes; the block keeps its settled phase. A live consume from
+           * a cancelled block stays refused.
+           */
+          readonly restoredDialog?: true
       })
 
 export type TaskEvent =

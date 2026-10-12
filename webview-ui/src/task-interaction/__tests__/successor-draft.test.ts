@@ -4,32 +4,36 @@ import { type InteractionDraft, type PendingSuccessorDraftTransfer, resolveSucce
 // The decision never inspects the draft body; an opaque value keeps that visible.
 const transfer: PendingSuccessorDraftTransfer = {
     sourceTaskId: "source",
-    task: "Successor task",
+    interactionId: "tid-1",
     draft: { opaque: true } as unknown as InteractionDraft,
 }
+
+const successorView = { taskId: "next", projectedTaskId: "next", handoffSource: { taskId: "source", interactionId: "tid-1" } }
 
 describe("resolveSuccessorDraft", () => {
     it.each([
         ["no task is selected", {}],
-        ["the source task is still shown", { taskId: "source", projectedTaskId: "source", titleText: "Source task" }],
-        [
-            "the projection has not settled on the selected task",
-            { taskId: "next", projectedTaskId: "source", titleText: "Successor task" },
-        ],
-        ["the selected task has no first row yet", { taskId: "next", projectedTaskId: "next" }],
+        ["the source task is still shown", { taskId: "source", projectedTaskId: "source" }],
+        ["the projection has not settled on the selected task", { ...successorView, projectedTaskId: "source" }],
     ])("waits while %s", (_label, surface) => {
         expect(resolveSuccessorDraft(transfer, surface)).toBe("wait")
     })
 
-    it("restores the draft once the successor surface carries the transferred task", () => {
-        expect(resolveSuccessorDraft(transfer, { taskId: "next", projectedTaskId: "next", titleText: "Successor task" })).toBe(
-            "restore",
-        )
+    it("restores the draft on the opening the backend says this handoff started", () => {
+        expect(resolveSuccessorDraft(transfer, successorView)).toBe("restore")
     })
 
-    it("drops the draft when a settled surface shows a different task", () => {
-        expect(resolveSuccessorDraft(transfer, { taskId: "other", projectedTaskId: "other", titleText: "History task" })).toBe(
-            "drop",
-        )
+    it.each([
+        ["a task with no handoff source", { taskId: "other", projectedTaskId: "other" }],
+        [
+            "a successor of a different New Task interaction",
+            { ...successorView, handoffSource: { taskId: "source", interactionId: "tid-2" } },
+        ],
+        [
+            "a successor of a different source task",
+            { ...successorView, handoffSource: { taskId: "elsewhere", interactionId: "tid-1" } },
+        ],
+    ])("drops the draft on %s", (_label, surface) => {
+        expect(resolveSuccessorDraft(transfer, surface)).toBe("drop")
     })
 })

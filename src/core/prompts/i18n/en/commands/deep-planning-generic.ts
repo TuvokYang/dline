@@ -72,23 +72,6 @@ $content = Get-Content implementation_plan.md; $start = ($content | Select-Strin
     focusChainIntro: `**Task Progress Parameter:**
 When creating the new task, you must include a task_progress parameter that breaks down the implementation into trackable steps. This parameter should be included inside the tool call, but not located inside of other content/argument blocks. This should follow the standard Markdown checklist format with "- [ ]" for incomplete items.`,
 
-    nativeNewTaskInstructions: `
-**new_task Tool Definition:**
-
-When you are ready to create the implementation task, you must call the new_task tool with the following structure:
-
-\`\`\`json
-{
-  "name": "new_task",
-  "arguments": {
-    "task": "Implement the plan in implementation_plan.md",
-    "context": "Your detailed context here following the 5-point structure..."
-  }
-}
-\`\`\`
-
-The task parameter states what the new task should do; the context parameter should include all five sections as described above.`,
-
     xmlNewTaskInstructions: `
 **new_task Tool Definition:**
 

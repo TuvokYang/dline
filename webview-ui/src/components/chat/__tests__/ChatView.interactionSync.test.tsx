@@ -82,7 +82,6 @@ vi.mock("@/context/PlatformContext", () => ({ useShowNavbar: () => false }))
 vi.mock("@/services/grpc-client", () => ({
     FileServiceClient: {
         copyToClipboard: vi.fn(async () => undefined),
-        selectFiles: vi.fn(async () => ({ values1: [], values2: [] })),
     },
     // ChatView owns the input semantic catalog subscription shared by every composer surface.
     SlashServiceClient: {

@@ -139,6 +139,7 @@ async function harness(kind: string, toolName: string, actionId: string, options
     let ts = 1
     const resumption = {
         materialize: vi.fn(async () => ({ entryId: "resume-empty", payloadRef: rawRef })),
+        materializeAnswer: vi.fn(async () => ({ entryId: "resume-answer", payloadRef: rawRef })),
         submit: vi.fn(async () => ({ kind: "accepted" }) as unknown as EventSubmissionResult),
     }
     const fallback = { accepts: vi.fn(() => false), continue: vi.fn(async () => "declined" as const) }

@@ -1,6 +1,8 @@
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { describe, expect, it, vi } from "vitest"
 import { createInitialTaskState, type TaskState } from "../../kernel"
+import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../../new-task/new-task-continuation"
+import type { SuccessorHandoffRequest } from "../../new-task/successor-handoff"
 import type { EventSubmissionResult } from "../../runtime"
 import type { TaskInput } from "../../shell/TaskShell"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
@@ -14,11 +16,11 @@ import type { UnownedDialogContinuationPort } from "../UnownedDialogContinuation
 
 const TID = "tid-restored"
 
-function invocation(toolName: string): ToolInvocationEnvelope {
+function invocation(toolName: string, input: Readonly<Record<string, unknown>> = {}): ToolInvocationEnvelope {
     return {
         kind: "tool_invocation",
         toolName,
-        input: {},
+        input,
         functionId: "call_restored",
         dlineTid: TID,
         presentationId: 1,
@@ -35,10 +37,12 @@ function harness(options: {
     readonly fallbackAccepts?: boolean
     /** Termination kept the block's shown completion open as the task's dialog. */
     readonly presentedCompletion?: boolean
+    readonly input?: Readonly<Record<string, unknown>>
+    readonly publishPostCommit?: RestoredToolDialogPorts["publishPostCommit"]
 }) {
     const interruption: ToolResultEnvelope = { kind: "tool_result", blockId: TID, content: "interrupted", failed: true }
     const stored = new Map<string, unknown>([
-        ["ref:invocation", encodeTaskPayload(invocation(options.toolName))],
+        ["ref:invocation", encodeTaskPayload(invocation(options.toolName, options.input))],
         ["ref:interruption", encodeTaskPayload(interruption)],
     ])
     const puts: unknown[] = []
@@ -49,9 +53,16 @@ function harness(options: {
             return `ref:put-${puts.length}`
         }),
     } as unknown as RestoredToolDialogPorts["payloads"]
+    // Keyed by operation id like the real journal, so a repeated answer is a no-op.
+    const appended = new Set<string>()
     const journal = {
-        append: vi.fn(async () => ({ watermark: { seq: 9 }, disposition: "appended" as const })),
-        findByOperation: vi.fn(async () => undefined),
+        append: vi.fn(async (entry: { readonly operationId: string }) => {
+            appended.add(entry.operationId)
+            return { watermark: { seq: 9 }, disposition: "appended" as const }
+        }),
+        findByOperation: vi.fn(async (operationId: string) =>
+            appended.has(operationId) ? ({ operationId } as never) : undefined,
+        ),
         read: vi.fn(async () =>
             options.interrupted
                 ? ([
@@ -90,6 +101,7 @@ function harness(options: {
     const input: TaskInput = { entryId: "entry-1", payloadRef: "sha256:input" }
     const resumption = {
         materialize: vi.fn(async () => input),
+        materializeAnswer: vi.fn(async () => input),
         submit: vi.fn(async () => ({ kind: "accepted" }) as unknown as EventSubmissionResult),
     }
     const fallback: UnownedDialogContinuationPort & { readonly continue: ReturnType<typeof vi.fn> } = {
@@ -98,7 +110,15 @@ function harness(options: {
     }
     const publishRow = vi.fn(async () => undefined)
     const continuation = new RestoredToolDialogContinuation(
-        { state: () => state, payloads, journal, messages, nextPresentationId: () => 100, publishRow },
+        {
+            state: () => state,
+            payloads,
+            journal,
+            messages,
+            nextPresentationId: () => 100,
+            publishRow,
+            ...(options.publishPostCommit ? { publishPostCommit: options.publishPostCommit } : {}),
+        },
         resumption,
         fallback,
     )
@@ -320,6 +340,123 @@ describe("RestoredToolDialogContinuation", () => {
         await recovery.continuation.continue(interrupted)
         expect(recovery.fallback.continue).toHaveBeenCalledWith(interrupted)
         expect(recovery.journal.append).not.toHaveBeenCalled()
+    })
+
+    describe("new_task", () => {
+        const call = { task: "Finish the migration", context: "Carry the migration forward" }
+        const approval = { interactionId: TID, kind: "new_task", outcome: { actionId: "approve" as const } }
+        /** Stands in for the publisher: the source is consumed, then `beforeStart` runs. */
+        const handingOff = () =>
+            vi.fn(async (request: SuccessorHandoffRequest) => {
+                await request.beforeStart?.()
+                return "handed_off" as const
+            })
+
+        it("hands a restored approval off to the successor instead of resuming the source", async () => {
+            const publishPostCommit = handingOff()
+            const h = harness({ toolName: "new_task", input: call, publishPostCommit })
+
+            expect(h.continuation.accepts(approval)).toBe(true)
+            await expect(h.continuation.continue(approval)).resolves.toBe("continued")
+
+            // The result is recorded once the handoff is accepted, before the successor starts.
+            const result = h.journaledResult()
+            expect(result).toMatchObject({ kind: "tool_result", blockId: TID })
+            expect(result.content).not.toContain(NEW_TASK_FEEDBACK_CONTINUATION_MARKER)
+            expect(publishPostCommit).toHaveBeenCalledWith({
+                command: { turnId: "turn-1", dlineTid: TID, restoredDialog: true },
+                directive: {
+                    type: "start_successor_task",
+                    task: call.task,
+                    context: call.context,
+                    functionId: "call_restored",
+                    dlineTid: TID,
+                },
+                beforeStart: expect.any(Function),
+            })
+            expect(h.resumption.materialize).not.toHaveBeenCalled()
+            expect(h.resumption.submit).not.toHaveBeenCalled()
+            expect(h.messages.addToClineMessages).not.toHaveBeenCalled()
+        })
+
+        // Closing the window stops the task, which writes the interruption as the
+        // waiting call's failed result; the restored dialog still answers the call.
+        it("answers a handoff interrupted by a closed window as the call's result", async () => {
+            const publishPostCommit = handingOff()
+            const h = harness({ toolName: "new_task", input: call, publishPostCommit, interrupted: true, fallbackAccepts: true })
+
+            await expect(h.continuation.continue(approval)).resolves.toBe("continued")
+
+            expect(h.fallback.continue).not.toHaveBeenCalled()
+            expect(h.journal.append).toHaveBeenCalledWith(
+                expect.objectContaining({ operationId: `tool.restored_result:turn-1:${TID}`, source: "tool" }),
+            )
+            expect(publishPostCommit).toHaveBeenCalledOnce()
+        })
+
+        it("keeps the dialog answerable when the kernel refuses the handoff", async () => {
+            const publishPostCommit = vi.fn(async () => "refused" as const)
+            const h = harness({ toolName: "new_task", input: call, publishPostCommit })
+
+            await expect(h.continuation.continue(approval)).resolves.toBe("failed")
+
+            expect(h.journal.append).not.toHaveBeenCalled()
+            expect(h.resumption.submit).not.toHaveBeenCalled()
+        })
+
+        // A refused approval must not leave a "created" result that a later answer
+        // to the reopened dialog would find and treat as already settled.
+        it("records a decline after a refused approval as the call's result", async () => {
+            const publishPostCommit = vi.fn(async () => "refused" as const)
+            const h = harness({ toolName: "new_task", input: call, publishPostCommit })
+            const decline = {
+                interactionId: TID,
+                kind: "new_task",
+                outcome: { actionId: "reject" as const, draft: { text: "Stay here", images: [], files: [] } },
+            }
+
+            await expect(h.continuation.continue(approval)).resolves.toBe("failed")
+            await expect(h.continuation.continue(decline)).resolves.toBe("continued")
+
+            expect(h.journal.append).toHaveBeenCalledOnce()
+            const result = h.journaledResult()
+            expect(result.content).toContain(NEW_TASK_FEEDBACK_CONTINUATION_MARKER)
+            expect(result.content).toContain("Stay here")
+            expect(publishPostCommit).toHaveBeenCalledOnce()
+            expect(h.resumption.submit).toHaveBeenCalledOnce()
+        })
+
+        it("records nothing for an approval it cannot hand off", async () => {
+            const h = harness({ toolName: "new_task", input: call })
+
+            await expect(h.continuation.prepare(approval)).resolves.toBe(false)
+            await expect(h.continuation.continue(approval)).resolves.toBe("failed")
+
+            expect(h.journal.append).not.toHaveBeenCalled()
+            expect(h.resumption.submit).not.toHaveBeenCalled()
+        })
+
+        it("answers a restored decline in the source with the feedback marker and resumes", async () => {
+            const publishPostCommit = handingOff()
+            const h = harness({ toolName: "new_task", input: call, publishPostCommit })
+            const decline = {
+                interactionId: TID,
+                kind: "new_task",
+                outcome: { actionId: "reject" as const, draft: { text: "Keep it here", images: [], files: [] } },
+            }
+
+            await expect(h.continuation.continue(decline)).resolves.toBe("continued")
+
+            const result = h.journaledResult()
+            expect(result.content).toContain(NEW_TASK_FEEDBACK_CONTINUATION_MARKER)
+            expect(result.content).toContain("Keep it here")
+            expect(publishPostCommit).not.toHaveBeenCalled()
+            expect(h.messages.addToClineMessages).toHaveBeenCalledWith(
+                expect.objectContaining({ say: "user_feedback", text: "Keep it here" }),
+            )
+            expect(h.resumption.materialize).toHaveBeenCalledWith({})
+            expect(h.resumption.submit).toHaveBeenCalledOnce()
+        })
     })
 
     it("matches an option only as the whole answer or its prefix", () => {

@@ -73,6 +73,63 @@ describe("createProductionToolAdapter", () => {
         expect(cancelCommand).toHaveBeenCalledOnce()
     })
 
+    describe("a result whose effect follows it", () => {
+        const directive = {
+            type: "start_successor_task",
+            task: "Finish the migration",
+            context: "Carry it forward",
+            functionId: "function-1",
+            dlineTid: "block-1",
+        } as const
+
+        async function run(outcome: "handed_off" | "refused") {
+            const payloads = new MemoryPayloads()
+            const journal = new InMemoryConversationJournal()
+            const invocationRef = await payloads.put(encodeTaskPayload(INVOCATION))
+            const recordedBeforeStart: boolean[] = []
+            const publishPostCommit = vi.fn(async (request: { readonly beforeStart?: () => Promise<void> }) => {
+                if (outcome === "refused") return outcome
+                recordedBeforeStart.push(Boolean(await journal.findByOperation("tool.result:command-handoff")))
+                await request.beforeStart?.()
+                return outcome
+            })
+            const options = createProductionToolAdapter({
+                payloads,
+                journal,
+                resources: { revertDiff: async () => undefined, cancelCommand: async () => undefined },
+                surface: createDeniedSurface("detached_domain"),
+                service: { execute: async () => ({ content: "created", postCommit: directive }) },
+                scheduler: new TurnToolScheduler({ readConfiguredLimit: () => undefined }),
+                publishPostCommit,
+            })
+            await options.runner.runBlock({ commandId: "command-handoff", turnId: "turn-1", dlineTid: "block-1", invocationRef })
+            const entry = await journal.findByOperation("tool.result:command-handoff")
+            if (!entry?.payloadRef) throw new Error("missing result")
+            return {
+                publishPostCommit,
+                recordedBeforeStart,
+                result: decodeTaskPayload<ToolResultEnvelope>(await payloads.read(entry.payloadRef)),
+            }
+        }
+
+        it("records the result only once the directive is accepted", async () => {
+            const { publishPostCommit, recordedBeforeStart, result } = await run("handed_off")
+
+            expect(publishPostCommit).toHaveBeenCalledWith(expect.objectContaining({ directive }))
+            expect(recordedBeforeStart).toEqual([false])
+            expect(result).toEqual({ kind: "tool_result", blockId: "block-1", content: "created" })
+        })
+
+        // Stopping the task first refuses the handoff; the call must not claim it happened.
+        it("records a refused directive as the call's failure instead of its result", async () => {
+            const { result } = await run("refused")
+
+            expect(result.failed).toBe(true)
+            expect(result.content).not.toContain("created")
+            expect(result.content).toContain("The task was stopped before this tool call could take effect")
+        })
+    })
+
     // The handler returns attached PDFs with its result; storing each as its own
     // payload is what lets the next request place them after the result.
     it("completes an already-persisted model-facing failed result without writing a duplicate", async () => {

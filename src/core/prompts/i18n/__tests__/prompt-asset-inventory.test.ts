@@ -36,7 +36,6 @@ const EXPECTED_NAMESPACES = [
     "loadMcpDocumentationTool",
     "makePlan",
     "mcp",
-    "newTask",
     "objective",
     "phaseReport",
     "qnaRespond",
@@ -115,13 +114,13 @@ async function collectSources(directory: string): Promise<string[]> {
 describe("prompt asset inventory", () => {
     it("locks the final English namespace inventory", () => {
         expect(sortValues(Object.keys(englishPrompts))).toEqual(sortValues(EXPECTED_NAMESPACES))
-        expect(EXPECTED_NAMESPACES).toHaveLength(66)
+        expect(EXPECTED_NAMESPACES).toHaveLength(65)
     })
 
     it("locks the static domain group order and coverage", () => {
         expect(englishPromptGroups.map((group) => group.name)).toEqual(["system", "tools", "commands", "variants"])
-        expect(englishPromptGroups.map((group) => group.modules.length)).toEqual([27, 34, 3, 2])
-        expect(englishPromptGroups.flatMap((group) => group.modules)).toHaveLength(66)
+        expect(englishPromptGroups.map((group) => group.modules.length)).toEqual([27, 33, 3, 2])
+        expect(englishPromptGroups.flatMap((group) => group.modules)).toHaveLength(65)
         expect(englishPromptGroups[3].modules.map((module) => module.name)).toEqual(["variants.standard", "variants.lite"])
         for (const group of englishPromptGroups) {
             for (const module of group.modules) {
@@ -211,7 +210,6 @@ describe("prompt asset inventory", () => {
             "loadMcpDocumentation.ts",
             "loadMcpDocumentationTool.ts",
             "makePlan.ts",
-            "newTask.ts",
             "phaseReport.ts",
             "qnaRespond.ts",
             "readFile.ts",

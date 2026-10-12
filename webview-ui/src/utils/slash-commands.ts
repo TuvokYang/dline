@@ -1,4 +1,4 @@
-import { COMMAND_TRIGGER_CHARS, type InputSemanticCatalog, indexCommandTriggers } from "@shared/input-semantics/catalog"
+import { type InputSemanticCatalog, indexCommandTriggers } from "@shared/input-semantics/catalog"
 import { namespacedCommandTrigger } from "@shared/input-semantics/command-namespace"
 import type { SlashCommandNamespace } from "@shared/input-semantics/document"
 import type { McpServer } from "@shared/mcp"
@@ -10,8 +10,6 @@ import {
     pathToSkillName,
     type SlashCommand,
 } from "../../../src/shared/slashCommands.ts"
-
-export type { SlashCommand }
 
 /** Menu sections in display order; keyboard navigation follows the same order. */
 export const SLASH_MENU_SECTIONS = ["default", "workflow", "skill", "mcp"] as const
@@ -182,35 +180,6 @@ export function getMcpPromptCommands(mcpServers: McpServer[] = []): SlashCommand
     }
 
     return commands
-}
-
-/**
- * A whole command token ending at the caret, for deleting it in one keystroke.
- * Built from the catalog's trigger alphabet so deletion and recognition agree.
- */
-export const slashCommandDeleteRegex = new RegExp(`(^|\\s)(/[${COMMAND_TRIGGER_CHARS}]+)$`)
-
-/**
- * Removes a slash command at the cursor position
- */
-export function removeSlashCommand(text: string, position: number): { newText: string; newPosition: number } {
-    const beforeCursor = text.slice(0, position)
-    const afterCursor = text.slice(position)
-
-    // Check if we're at the end of a slash command (anywhere in text, not just at start)
-    const matchEnd = beforeCursor.match(slashCommandDeleteRegex)
-
-    if (matchEnd) {
-        // matchEnd[1] is the whitespace or empty string before the slash
-        // matchEnd[2] is the slash command (e.g., "/newtask")
-        const slashCommand = matchEnd[2]
-        const newText = text.slice(0, position - slashCommand.length) + afterCursor.replace(" ", "") // removes the first space after the command
-        const newPosition = position - slashCommand.length
-        return { newText, newPosition }
-    }
-
-    // If we're not at the end of a slash command, just return the original text and position
-    return { newText: text, newPosition: position }
 }
 
 /** Capability state the slash menu reads its entries and labels from. */

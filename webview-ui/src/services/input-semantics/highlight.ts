@@ -1,8 +1,8 @@
-import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
-import { planSemanticCommands } from "@shared/input-semantics/command-plan"
-import { isMentionNode, isSlashCommandNode } from "@shared/input-semantics/document"
-import { lexSemanticInput, type SemanticActivation } from "@shared/input-semantics/lexer"
-import { SUBMITTED_INPUT_SEPARATOR, type SubmittedInputFacts } from "@shared/input-semantics/submitted-input"
+import {
+    normalizeSubmittedInputs,
+    SUBMITTED_INPUT_SEPARATOR,
+    type SubmittedInputFacts,
+} from "@shared/input-semantics/submitted-input"
 
 export type SemanticSegmentRole = "text" | "command" | "mention"
 
@@ -16,47 +16,6 @@ export interface SemanticHighlightSegment {
      * pre-message, reads as literal text and must not look like an entity.
      */
     readonly active: boolean
-}
-
-/** The composer lexes on every keystroke, so its document identity is fixed. */
-const COMPOSER_DOCUMENT_ID = "composer"
-
-function escapeHtml(text: string): string {
-    return text.replace(/[<>&]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[character] ?? character)
-}
-
-/**
- * Split composer text the same way the task will read it.
- *
- * The segments come from the shared lexer and command plan, so what the user
- * sees highlighted is what the task admits: a command after a lifecycle barrier
- * is shown as literal text because that is how it will be sent.
- */
-export function segmentSemanticInput(
-    rawText: string,
-    catalog: InputSemanticCatalog,
-    documentId: string = COMPOSER_DOCUMENT_ID,
-    activationAt?: (start: number, end: number) => SemanticActivation,
-): readonly SemanticHighlightSegment[] {
-    const document = lexSemanticInput(rawText, {
-        catalog,
-        documentId,
-        activation: "auto",
-        ...(activationAt ? { activationAt } : {}),
-    })
-    const plan = planSemanticCommands(document)
-    // The barrier is a command the task will run, so it stays an entity; only the
-    // nodes it pushed into the pre-message become literal text.
-    const invoked = new Set([...plan.invocations, ...(plan.barrier ? [plan.barrier] : [])].map((command) => command.entityId))
-    return document.nodes.map((node) => {
-        if (isSlashCommandNode(node)) {
-            return { text: node.sourceText, role: "command" as const, active: invoked.has(node.entityId) }
-        }
-        if (isMentionNode(node)) {
-            return { text: node.sourceText, role: "mention" as const, active: node.state === "recognized" }
-        }
-        return { text: node.kind === "text" ? node.text : "", role: "text" as const, active: false }
-    })
 }
 
 /**
@@ -83,24 +42,53 @@ export function segmentSubmittedInputs(
     ])
 }
 
+/** Link target that marks an active entity inside a sent row's Markdown. */
+const SUBMITTED_ENTITY_HREF = "#dline-entity/"
+
+/** An active command or mention a sent row's Markdown marks for the renderer. */
+export interface SubmittedEntityLink {
+    readonly role: Exclude<SemanticSegmentRole, "text">
+    readonly text: string
+}
+
+/** Backslash-escape everything Markdown could read as syntax inside link text. */
+function escapeMarkdownText(text: string): string {
+    return text.replace(/[\\`*_[\]<>()#!|~&]/g, "\\$&")
+}
+
 /**
- * Render the composer highlight layer from the shared semantic segments.
+ * A sent row's Markdown with every active command and mention marked as an
+ * entity link, from the facts recorded when it was sent.
  *
- * `activationAt` is the same rule the submission uses, so a pasted candidate
- * that will be sent as plain text is never drawn as an active entity.
+ * The row keeps its Markdown, so a fenced selection still reads as code; only
+ * the entities the task actually ran or read are marked, and nothing is lexed
+ * again. Facts that do not spell the row's text, a legacy row and a row without
+ * active entities all return `undefined`, and the caller shows the plain text.
  */
-export function renderSemanticHighlightHtml(
-    rawText: string,
-    catalog: InputSemanticCatalog,
-    activationAt?: (start: number, end: number) => SemanticActivation,
-): string {
-    const html = segmentSemanticInput(rawText, catalog, COMPOSER_DOCUMENT_ID, activationAt)
+export function markSubmittedEntities(
+    text: string | undefined,
+    inputs: readonly SubmittedInputFacts[] | undefined,
+): string | undefined {
+    if (!text) return undefined
+    const segments = segmentSubmittedInputs(normalizeSubmittedInputs(inputs, text))
+    if (!segments?.some((segment) => segment.active && segment.role !== "text")) return undefined
+    return segments
         .map((segment) =>
             segment.active && segment.role !== "text"
-                ? `<mark class="mention-context-textarea-highlight">${escapeHtml(segment.text)}</mark>`
-                : escapeHtml(segment.text),
+                ? `[${escapeMarkdownText(segment.text)}](${SUBMITTED_ENTITY_HREF}${segment.role}/${encodeURIComponent(segment.text)})`
+                : segment.text,
         )
         .join("")
-    // A trailing newline would otherwise collapse and misalign the layer.
-    return html.replace(/\n$/, "\n\n")
+}
+
+/** The entity a link written by {@link markSubmittedEntities} names, or `undefined` for any other link. */
+export function parseSubmittedEntityLink(href: string | undefined): SubmittedEntityLink | undefined {
+    if (!href?.startsWith(SUBMITTED_ENTITY_HREF)) return undefined
+    const [role, ...rest] = href.slice(SUBMITTED_ENTITY_HREF.length).split("/")
+    if (role !== "command" && role !== "mention") return undefined
+    try {
+        return { role, text: decodeURIComponent(rest.join("/")) }
+    } catch {
+        return undefined
+    }
 }

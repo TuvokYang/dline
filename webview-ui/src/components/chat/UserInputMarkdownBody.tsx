@@ -13,10 +13,12 @@ interface UserInputMarkdownBodyProps {
     markdown?: string
     variant: UserInputMarkdownVariant
     testId: string
+    /** The Markdown was built from submitted facts; see `MarkdownBlock`'s prop of the same name. */
+    submittedEntities?: boolean
 }
 
 /** Shared Markdown body with a bounded, non-propagating vertical scroll surface. */
-export function UserInputMarkdownBody({ markdown, variant, testId }: UserInputMarkdownBodyProps) {
+export function UserInputMarkdownBody({ markdown, variant, testId, submittedEntities }: UserInputMarkdownBodyProps) {
     return (
         <div
             className={cn(
@@ -24,7 +26,7 @@ export function UserInputMarkdownBody({ markdown, variant, testId }: UserInputMa
                 HEIGHT_CLASS[variant],
             )}
             data-testid={testId}>
-            <MarkdownBlock markdown={markdown} />
+            <MarkdownBlock markdown={markdown} submittedEntities={submittedEntities} />
         </div>
     )
 }

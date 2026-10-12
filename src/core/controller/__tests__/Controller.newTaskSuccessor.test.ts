@@ -19,6 +19,7 @@ describe("Controller New Task successor ownership", () => {
         const taskId = await controller.startSuccessorTask(source, {
             task: "Successor task",
             context: "Successor context",
+            source: { functionId: "call-1", dlineTid: "tid-1" },
             taskSettings: { mode: "act", planModeProfile: "plan-old", actModeProfile: "act-old" },
         })
 
@@ -31,7 +32,13 @@ describe("Controller New Task successor ownership", () => {
             undefined,
             { mode: "act", planModeProfile: "plan-old", actModeProfile: "act-old" },
             // Opened like a spawned task: the task as `<task>`, the context as `<context>`, nothing else.
-            { context: ["Successor context"], startInBackground: true, skipInitialClear: true },
+            // The handoff source only names the opening, so the Webview can recognise its successor.
+            {
+                context: ["Successor context"],
+                startInBackground: true,
+                skipInitialClear: true,
+                handoffSource: { taskId: "task-old", interactionId: "tid-1" },
+            },
         )
     })
 
@@ -50,6 +57,7 @@ describe("Controller New Task successor ownership", () => {
         const taskId = await controller.startSuccessorTask(source, {
             task: "Successor task",
             context: "Successor context",
+            source: { functionId: "call-1", dlineTid: "tid-1" },
             taskSettings: { mode: "plan" },
         })
 

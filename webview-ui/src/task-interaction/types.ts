@@ -1,4 +1,4 @@
-import type { TaskViewActionType, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
+import type { TaskHandoffSource, TaskViewActionType, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { matchesActiveInteractionAnchor } from "@shared/interaction-anchor"
 import type { DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
@@ -17,6 +17,18 @@ export interface InteractionDraft {
      * until the user confirms it (WS-041 AC-09).
      */
     semanticInput?: SemanticInputDocument
+}
+
+/**
+ * Whether a value read back from storage has the shape of a draft.
+ *
+ * Webview state survives extension updates, so what it hands back is checked
+ * rather than trusted.
+ */
+export function isInteractionDraft(value: unknown): value is InteractionDraft {
+    if (!value || typeof value !== "object") return false
+    const draft = value as Partial<InteractionDraft>
+    return typeof draft.text === "string" && Array.isArray(draft.images) && Array.isArray(draft.files)
 }
 
 /** Capture mutable draft values before dispatching an interaction. */
@@ -53,9 +65,20 @@ export function isSameInteractionDraft(current: InteractionDraft, captured: Inte
  */
 export interface PendingSuccessorDraftTransfer {
     readonly sourceTaskId: string
-    /** The successor's task; its first row carries it, which identifies the successor surface. */
-    readonly task: string
+    /** The approved new_task interaction; the successor's view names it as its handoff source. */
+    readonly interactionId: string
     readonly draft: InteractionDraft
+}
+
+/** Whether a value read back from storage is a retained successor draft. */
+export function isPendingSuccessorDraftTransfer(value: unknown): value is PendingSuccessorDraftTransfer {
+    if (!value || typeof value !== "object") return false
+    const transfer = value as Partial<PendingSuccessorDraftTransfer>
+    return (
+        typeof transfer.sourceTaskId === "string" &&
+        typeof transfer.interactionId === "string" &&
+        isInteractionDraft(transfer.draft)
+    )
 }
 
 /** What the composition owner does with a retained successor draft on the current surface. */
@@ -67,25 +90,28 @@ export interface SuccessorDraftSurface {
     readonly taskId?: string
     /** Task the backend projection has settled on; differs from `taskId` while a switch is in flight. */
     readonly projectedTaskId?: string
-    /** First row of the projected task, once loaded. */
-    readonly titleText?: string
+    /** The handoff the projected opening was started by, if any. */
+    readonly handoffSource?: TaskHandoffSource
 }
 
 /**
  * Decide the retained draft's fate once a task other than its source is shown.
  *
- * Only a settled surface decides: the successor restores the draft, and any
- * other task means the user navigated away, so the draft belongs to neither.
+ * Only a settled surface decides. The successor is recognised by the handoff
+ * the backend says opened it, never by its text, so another task that happens
+ * to read the same cannot take the draft. Any other task means the user
+ * navigated away, and the draft belongs to neither.
  */
 export function resolveSuccessorDraft(
     transfer: PendingSuccessorDraftTransfer,
     surface: SuccessorDraftSurface,
 ): SuccessorDraftDisposition {
-    const { taskId, projectedTaskId, titleText } = surface
-    if (!taskId || taskId === transfer.sourceTaskId || projectedTaskId !== taskId || titleText === undefined) {
+    const { taskId, projectedTaskId, handoffSource } = surface
+    if (!taskId || taskId === transfer.sourceTaskId || projectedTaskId !== taskId) {
         return "wait"
     }
-    return titleText === transfer.task ? "restore" : "drop"
+    const succeeds = handoffSource?.taskId === transfer.sourceTaskId && handoffSource.interactionId === transfer.interactionId
+    return succeeds ? "restore" : "drop"
 }
 
 /** Accepted interaction identity and exact draft snapshot returned to the composition owner. */

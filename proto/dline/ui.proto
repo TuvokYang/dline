@@ -375,6 +375,21 @@ message ShowWebviewEvent {
   bool preserve_editor_focus = 1; // When true, webview should not steal focus from editor
 }
 
+// Content an app action adds to the composer without sending it.
+//
+// A producer without structure fills only `text`, which the composer inserts as
+// typed text. An editor selection also fills `selection`: the composer then
+// inserts the file as a mention and the fenced selection as one opaque literal,
+// so nothing inside the selected code can activate as a command or mention.
+message AddToInputEvent {
+  // The complete content as plain text; the fallback when no structure is given.
+  string text = 1;
+  // Workspace mention reference of the selection's file, without the leading "@".
+  string mention_reference = 2;
+  // The fenced selection plus any notebook context or problems, inserted as a literal.
+  string selection = 3;
+}
+
 // UiService provides methods for managing UI interactions
 service UiService {
   // Scrolls to a specific settings section in the settings view
@@ -387,7 +402,7 @@ service UiService {
   rpc onDidShowAnnouncement(EmptyRequest) returns (Boolean);
 
   // Subscribe to addToInput events (when user adds content via context menu)
-  rpc subscribeToAddToInput(EmptyRequest) returns (stream String);
+  rpc subscribeToAddToInput(EmptyRequest) returns (stream AddToInputEvent);
 
   // Subscribe to MCP button clicked events
   rpc subscribeToMcpButtonClicked(EmptyRequest) returns (stream Empty);

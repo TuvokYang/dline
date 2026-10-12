@@ -54,6 +54,27 @@ declare global {
 // Initialize the vscode API if available
 const vsCodeApi = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null
 
+/**
+ * The webview's persisted state, which VS Code hands back when this webview is
+ * reloaded or its panel is restored. Several owners keep keys in it, so writes
+ * merge into what is there instead of replacing it; an `undefined` value
+ * removes its key.
+ */
+export const webviewState = {
+    get(): Readonly<Record<string, unknown>> {
+        const state = vsCodeApi?.getState()
+        return state && typeof state === "object" ? state : {}
+    },
+    patch(changes: Readonly<Record<string, unknown>>): void {
+        if (!vsCodeApi) return
+        const next: Record<string, unknown> = { ...webviewState.get(), ...changes }
+        for (const [key, value] of Object.entries(next)) {
+            if (value === undefined) delete next[key]
+        }
+        vsCodeApi.setState(next)
+    },
+}
+
 // Listen for panel state persistence requests from the extension host.
 // Calls acquireVsCodeApi().setState() so VSCode can restore this panel
 // via WebviewPanelSerializer.deserializeWebviewPanel on next window reload.
@@ -65,10 +86,10 @@ window.addEventListener("message", (event) => {
         // document from a blank one even when rendering has failed.
         if (message.type === "dlinePing") {
             vsCodeApi?.postMessage({ type: "dlinePong", nonce: message.nonce })
-        } else if (message.type === "dlineSetPanelState" && message.taskId && vsCodeApi) {
-            vsCodeApi.setState({ taskId: message.taskId })
-        } else if (message.type === "dlineClearPanelState" && vsCodeApi) {
-            vsCodeApi.setState({})
+        } else if (message.type === "dlineSetPanelState" && message.taskId) {
+            webviewState.patch({ taskId: message.taskId })
+        } else if (message.type === "dlineClearPanelState") {
+            webviewState.patch({ taskId: undefined })
         }
     } catch (_e) {
         // Silently ignore — state persistence is best-effort

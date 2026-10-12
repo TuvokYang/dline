@@ -61,7 +61,7 @@ describe("successor handoff publisher", () => {
             schedule: (run) => scheduled.push(run),
         })
 
-        await publish({ command, directive })
+        await expect(publish({ command, directive })).resolves.toBe("handed_off")
 
         expect(events).toEqual([
             {
@@ -99,11 +99,76 @@ describe("successor handoff publisher", () => {
             schedule: (run) => scheduled.push(run),
         })
 
-        await publish({ command, directive })
+        await expect(publish({ command, directive })).resolves.toBe("refused")
 
         expect(scheduled).toEqual([])
         expect(started).toEqual([])
         expect(runtime.waitForDurable).not.toHaveBeenCalled()
+    })
+
+    it("records what the source owes after it is consumed and before the successor is scheduled", async () => {
+        const { runtime, order } = fakeRuntime("accepted")
+        const { successor } = fakeSuccessor(order)
+        const publish = createSuccessorHandoffPublisher({
+            runtime: () => runtime,
+            successor,
+            schedule: (run) => {
+                order.push("schedule")
+                run()
+            },
+        })
+        const beforeStart = vi.fn(async () => {
+            order.push("beforeStart")
+        })
+
+        await expect(publish({ command, directive, beforeStart })).resolves.toBe("handed_off")
+
+        await vi.waitFor(() => expect(order).toContain("start"))
+        expect(order).toEqual(["submit", "durable:10", "beforeStart", "schedule", "start"])
+    })
+
+    it("records nothing when the kernel refuses the handoff", async () => {
+        const { runtime, order } = fakeRuntime("rejected")
+        const { successor } = fakeSuccessor(order)
+        const publish = createSuccessorHandoffPublisher({ runtime: () => runtime, successor, schedule: (run) => run() })
+        const beforeStart = vi.fn(async () => undefined)
+
+        await expect(publish({ command, directive, beforeStart })).resolves.toBe("refused")
+
+        expect(beforeStart).not.toHaveBeenCalled()
+    })
+
+    it("marks the consumption of a dialog restored after its block's process ended", async () => {
+        const { runtime, events, order } = fakeRuntime("accepted")
+        const { successor, started } = fakeSuccessor(order)
+        const publish = createSuccessorHandoffPublisher({ runtime: () => runtime, successor, schedule: (run) => run() })
+
+        await expect(publish({ command: { ...command, restoredDialog: true }, directive })).resolves.toBe("handed_off")
+
+        expect(events).toEqual([
+            {
+                type: "lifecycle.consumed",
+                generation: 3,
+                turnId: "turn-1",
+                blockId: "tid-1",
+                consumedRef: newTaskConsumedRef(directive),
+                restoredDialog: true,
+            },
+        ])
+        await vi.waitFor(() => expect(started).toHaveLength(1))
+    })
+
+    it("leaves directives other than a successor start untouched", async () => {
+        const { runtime, order } = fakeRuntime("accepted")
+        const { successor } = fakeSuccessor(order)
+        const publish = createSuccessorHandoffPublisher({ runtime: () => runtime, successor })
+
+        await expect(publish({ command, directive: { type: "not_a_successor" } as unknown as typeof directive })).resolves.toBe(
+            "not_a_handoff",
+        )
+
+        expect(runtime.submit).not.toHaveBeenCalled()
+        expect(successor.start).not.toHaveBeenCalled()
     })
 
     it("reports a successor that failed to start instead of failing the finished block", async () => {
@@ -113,7 +178,7 @@ describe("successor handoff publisher", () => {
         vi.mocked(successor.start).mockRejectedValueOnce(failure)
         const publish = createSuccessorHandoffPublisher({ runtime: () => runtime, successor, schedule: (run) => run() })
 
-        await expect(publish({ command, directive })).resolves.toBeUndefined()
+        await expect(publish({ command, directive })).resolves.toBe("handed_off")
 
         await vi.waitFor(() => expect(successor.onError).toHaveBeenCalledWith(failure))
     })

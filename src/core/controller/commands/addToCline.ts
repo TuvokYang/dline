@@ -28,18 +28,21 @@ export async function addToCline(
     const filePath = request.filePath || ""
     const fileMention = await getFileMentionFromPath(filePath)
 
-    let input = `${fileMention}\n\`\`\`\n${request.selectedText}\n\`\`\``
+    // Everything after the mention is the selection block: the composer keeps it
+    // as one literal, so code that happens to read like a command never runs.
+    let selection = `\n\`\`\`\n${request.selectedText}\n\`\`\``
 
     // Add notebook context if provided (includes cell JSON)
     if (notebookContext) {
         Logger.log("Adding notebook context for enhanced editing")
-        input += `\n${notebookContext}`
+        selection += `\n${notebookContext}`
     }
 
     if (request.diagnostics.length) {
         const problemsString = await singleFileDiagnosticsToProblemsString(filePath, request.diagnostics)
-        input += `\nProblems:\n${problemsString}`
+        selection += `\nProblems:\n${problemsString}`
     }
+    const input = `${fileMention}${selection}`
 
     // Notebooks send immediately. Busy-sidebar editor commands start a task
     // on their isolated panel Controller; idle-sidebar adds keep the draft workflow.
@@ -48,11 +51,20 @@ export async function addToCline(
     } else if (notebookContext || options.startTask) {
         await controller.initTask(input)
     } else {
-        await sendAddToInputEvent(controller, input)
+        await sendAddToInputEvent(controller, {
+            text: input,
+            ...(filePath ? { mentionReference: mentionReferenceOf(fileMention) } : {}),
+            selection,
+        })
     }
 
     Logger.log("addToCline", request.selectedText, filePath, request.language)
     telemetryService.captureButtonClick("codeAction_addToChat", controller.task?.owners.identity.taskIncarnationId)
 
     return {}
+}
+
+/** The reference a file mention names, with the separators the shared mention grammar reads. */
+function mentionReferenceOf(fileMention: string): string {
+    return fileMention.replace(/^@/, "").replaceAll("\\", "/")
 }

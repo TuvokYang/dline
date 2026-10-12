@@ -30,8 +30,6 @@ import {
     createAcceptedInteractionSettlement,
     type InteractionDraft,
     isActiveInteractionSynchronized,
-    type PendingSuccessorDraftTransfer,
-    resolveSuccessorDraft,
 } from "@/task-interaction/types"
 import { HistoryTaskOpeningView } from "../history/HistoryTaskOpeningView"
 import { Navbar } from "../menu/Navbar"
@@ -56,10 +54,13 @@ import {
     useStoppedReasoningExpansion,
     WelcomeSection,
 } from "./chat-view"
+import { useComposerDraftKeepAlive } from "./chat-view/hooks/useComposerDraftKeepAlive"
+import { useSuccessorDraftTransfer } from "./chat-view/hooks/useSuccessorDraftTransfer"
 import { isTransitionRunning, useTransitionDraftRestore } from "./chat-view/hooks/useTransitionDraftRestore"
 import { resolveActiveProfile, resolveTaskCurrency } from "./chat-view/utils/profileUtils"
+import { appendAddToInput } from "./input/semantic-composer/add-to-input"
 import { createCommandAtom } from "./input/semantic-composer/atoms"
-import { type ComposerSegment, contentLength, isBlankDraft, trimSegments } from "./input/semantic-composer/model"
+import { type ComposerSegment, isBlankDraft, trimSegments } from "./input/semantic-composer/model"
 import { composeComposerSubmission } from "./input/semantic-composer/projection"
 import { composerSendBlock } from "./input/semantic-composer/send-draft"
 import { useInputQueue } from "./input/useInputQueue"
@@ -101,7 +102,6 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     } = useExtensionState()
     const [contentTab, setContentTab] = useState<TaskContentTab>("chat")
     const [focusedActivityId, setFocusedActivityId] = useState<string>()
-    const [pendingSuccessorDraft, setPendingSuccessorDraft] = useState<PendingSuccessorDraftTransfer>()
     const [compactCommandPending, setCompactCommandPending] = useState(false)
     const compactCommandPendingRef = useRef(false)
     const dispatchInteraction = useMemo(
@@ -201,15 +201,20 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         draftRevisionRef.current += 1
         previousDraftSourceRef.current = { draftSegments, activeQuote }
     }
+    const draftRevision = draftRevisionRef.current
     // Attachments travel as resource nodes of the document; the flat arrays stay empty.
-    const interactionDraft: InteractionDraft = {
-        text: draftSubmission.text,
-        images: [],
-        files: [],
-        activeQuote,
-        ownerRevision: draftRevisionRef.current,
-        ...(draftSubmission.semanticInput === undefined ? {} : { semanticInput: draftSubmission.semanticInput }),
-    }
+    // Rebuilt only when the draft changes: a streaming task renders far more often than the user edits.
+    const interactionDraft: InteractionDraft = useMemo(
+        () => ({
+            text: draftSubmission.text,
+            images: [],
+            files: [],
+            activeQuote,
+            ownerRevision: draftRevision,
+            ...(draftSubmission.semanticInput === undefined ? {} : { semanticInput: draftSubmission.semanticInput }),
+        }),
+        [activeQuote, draftRevision, draftSubmission],
+    )
     const taskSessionRef = useRef({ taskId, taskInstanceId, epoch: 0 })
     if (taskSessionRef.current.taskId !== taskId || taskSessionRef.current.taskInstanceId !== taskInstanceId) {
         taskSessionRef.current = { taskId, taskInstanceId, epoch: taskSessionRef.current.epoch + 1 }
@@ -252,30 +257,23 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         },
         [restoreDraft],
     )
-    const retainSuccessorDraft = useCallback((transfer: PendingSuccessorDraftTransfer): void => {
-        setPendingSuccessorDraft(transfer)
-    }, [])
-    useEffect(() => {
-        if (!pendingSuccessorDraft) {
-            return
-        }
-        const disposition = resolveSuccessorDraft(pendingSuccessorDraft, {
-            taskId,
-            projectedTaskId: taskViewState?.taskId,
-            titleText: taskTitleMessage?.text,
-        })
-        if (disposition === "wait") {
-            return
-        }
-        if (disposition === "restore") {
-            restoreDraft(pendingSuccessorDraft.draft)
-        }
-        setPendingSuccessorDraft(undefined)
-    }, [pendingSuccessorDraft, restoreDraft, taskId, taskTitleMessage?.text, taskViewState?.taskId])
+    const retainSuccessorDraft = useSuccessorDraftTransfer({
+        taskId,
+        projectedTaskId: taskViewState?.taskId,
+        handoffSource: taskViewState?.handoffSource,
+        composerBlank: isBlankDraft(draftSegments),
+        restoreDraft,
+    })
     useTransitionDraftRestore({
         taskId,
         transitionDraft,
         transitionRunning: isTransitionRunning(modeSwitch?.phase) || isTransitionRunning(profileSwitch?.phase),
+        composerBlank: isBlankDraft(draftSegments),
+        restoreDraft,
+    })
+    useComposerDraftKeepAlive({
+        taskId,
+        draft: interactionDraft,
         composerBlank: isBlankDraft(draftSegments),
         restoreDraft,
     })
@@ -421,22 +419,16 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 
     // Set up addToInput subscription
     const { engine: composerEngine } = composer
+    // Read at event time, so a catalog refresh does not resubscribe the stream.
+    const semanticCatalogRef = useRef(semanticCatalog)
+    semanticCatalogRef.current = semanticCatalog
     useEffect(() => {
         const cleanup = UiServiceClient.subscribeToAddToInput(
             {},
             {
                 onResponse: (event) => {
-                    if (event.value) {
-                        // The editor's "Add to Dline" text is appended on its own line. It stays typed text, as it
-                        // always was: its leading file mention keeps working and its code fence is opaque to the lexer.
-                        // A structured event carrying the mention and a literal selection needs a protocol change.
-                        const end = contentLength(composerEngine.getState().segments)
-                        composerEngine.apply({
-                            type: "insert_text",
-                            text: `${end > 0 ? "\n" : ""}${event.value}\n`,
-                            source: "typed",
-                            range: { start: end, end },
-                        })
+                    if (event.text) {
+                        appendAddToInput(composerEngine, semanticCatalogRef.current, event)
                         // Focus the input with the caret on the new line, scrolled into view, for easy typing.
                         setTimeout(() => {
                             composerRef.current?.focus()

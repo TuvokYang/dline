@@ -52,6 +52,22 @@ describe("MarkdownBlock links", () => {
         )
     })
 
+    it("draws an entity link as the command a sent row ran only when the row opts in", () => {
+        const markdown = "[/compact](#dline-entity/command/%2Fcompact) now"
+        const { container } = render(<MarkdownBlock markdown={markdown} submittedEntities />)
+
+        expect(container.querySelector(".mention-context-highlight-with-shadow")).toHaveTextContent("/compact")
+        expect(screen.queryByRole("link", { name: "/compact" })).toBeNull()
+    })
+
+    // Model output is Markdown too; a link it writes must not pass for a command the user ran.
+    it("keeps an entity link in other Markdown an ordinary link", () => {
+        const { container } = render(<MarkdownBlock markdown="[/compact](#dline-entity/command/%2Fcompact)" />)
+
+        expect(container.querySelector(".mention-context-highlight-with-shadow")).toBeNull()
+        expect(screen.getByRole("link", { name: "/compact" })).toBeInTheDocument()
+    })
+
     it("keeps absolute paths as plain links", () => {
         render(<MarkdownBlock markdown="[abs](/abs/path.png)" />)
 

@@ -156,6 +156,26 @@ describe("TaskInputMaterializer", () => {
         expect(envelope.authorizedTools).toEqual([])
     })
 
+    it("pins the catalog revision only for a dialog answer", async () => {
+        const store = recordingPayloads()
+        const seen: unknown[] = []
+        const recording: TaskInputAdmissionPort = {
+            admit: async (input, options) => {
+                seen.push(options)
+                return admittingPlainText.admit(input, options)
+            },
+        }
+        const materializer = new TaskInputMaterializer(store.payloads, identity, recording)
+
+        await materializer.materialize({ text: "fresh" })
+        await materializer.materializePayload({ text: "edited" })
+        const answer = await materializer.materializeAnswer({ text: "answer" })
+
+        expect(seen).toEqual([undefined, undefined, { pinnedRevision: true }])
+        expect(answer.mode).toBe("queued")
+        expect(store.lastEnvelope().text).toBe("answer")
+    })
+
     it("takes an owned barrier out of the turn and carries it with the input instead", async () => {
         const store = recordingPayloads()
         const barriers = recordingBarriers(true)
@@ -203,13 +223,13 @@ describe("TaskInputMaterializer", () => {
         await new TaskInputMaterializer(store.payloads, identity, admittingPlainText).materialize({ text: "hello" })
         expect(store.lastEnvelope().admittedParts).toBeUndefined()
 
-        // A caller-supplied projection is text only, so it may not silently drop the image.
-        const override = new TaskInputMaterializer(store.payloads, identity, withResource).materialize({
+        // Admission alone writes the projection: a caller cannot replace what the
+        // model reads while keeping the authority admission granted.
+        await new TaskInputMaterializer(store.payloads, identity, withResource).materialize({
             text: "look here",
             admittedText: "OVERRIDE",
         })
-        await expect(override).rejects.toBeInstanceOf(SemanticInputRejectedError)
-        await expect(override).rejects.toMatchObject({ diagnostics: [{ code: "semantic_input_resource_invalid" }] })
+        expect(store.lastEnvelope()).toMatchObject({ admittedText: "look [image] here", admittedParts: parts })
     })
 
     it("keeps the parts before an owned barrier, resources included", async () => {

@@ -78,14 +78,6 @@ export function isBinaryDocumentName(fileName: string): boolean {
     return BINARY_DOCUMENT_EXTENSIONS.includes(attachmentExtension(fileName))
 }
 
-/**
- * Whether an attached file is expected to be plain text: every non-image file except binary documents,
- * whatever its extension. When its content turns out not to be text, the host sends it as base64 text.
- */
-export function isTextAttachmentName(fileName: string): boolean {
-    return !isBinaryDocumentName(fileName)
-}
-
 /** Largest accepted size for a non-image attachment with this name. */
 export function maxAttachmentBytes(fileName: string): number {
     return isPdfFileName(fileName) ? MAX_ATTACHED_PDF_BYTES : MAX_ATTACHED_TEXT_FILE_BYTES

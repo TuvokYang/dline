@@ -42,20 +42,32 @@ export class TaskInputMaterializer {
         private readonly barriers?: LifecycleBarrierPort,
     ) {}
 
-    async materialize(
-        envelope: Omit<UserInputEnvelope, "kind">,
-        mode: TaskInput["mode"] = "queued",
-        options?: TaskInputAdmissionOptions,
-    ): Promise<TaskInput> {
-        return {
-            entryId: this.identity.nextEntryId(),
-            sequence: this.identity.nextSequence(),
-            mode,
-            payloadRef: await this.materializePayload(envelope, options),
-        }
+    async materialize(envelope: Omit<UserInputEnvelope, "kind">, mode: TaskInput["mode"] = "queued"): Promise<TaskInput> {
+        return this.entry(mode, await this.materializePayload(envelope))
     }
 
-    async materializePayload(envelope: Omit<UserInputEnvelope, "kind">, options?: TaskInputAdmissionOptions): Promise<string> {
+    /**
+     * Materialize the answer to a dialog.
+     *
+     * The answer was durable before anyone acted on it and may have been stored
+     * by an earlier process, so its document keeps the catalog revision it was
+     * accepted under: a newer catalog must not refuse or re-read what the user
+     * already sent. This is the only entry that pins, so no other submission
+     * can claim that standing.
+     */
+    async materializeAnswer(envelope: Omit<UserInputEnvelope, "kind">, mode: TaskInput["mode"] = "queued"): Promise<TaskInput> {
+        return this.entry(mode, await this.persist(envelope, { pinnedRevision: true }))
+    }
+
+    async materializePayload(envelope: Omit<UserInputEnvelope, "kind">): Promise<string> {
+        return this.persist(envelope)
+    }
+
+    private entry(mode: TaskInput["mode"], payloadRef: string): TaskInput {
+        return { entryId: this.identity.nextEntryId(), sequence: this.identity.nextSequence(), mode, payloadRef }
+    }
+
+    private async persist(envelope: Omit<UserInputEnvelope, "kind">, options?: TaskInputAdmissionOptions): Promise<string> {
         const admitted = await this.review(envelope, options)
         return this.payloads.put(encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", ...envelope, ...admitted }))
     }
@@ -70,16 +82,12 @@ export class TaskInputMaterializer {
 
         const owned = this.ownedBarrier(result.admitted)
         if (!owned) {
-            // A caller that supplies its own projection owns the whole of it, so it
-            // can only replace text: resources it would silently drop are refused.
-            if (envelope.admittedText !== undefined && hasResourceParts(result.admitted.parts)) {
-                throw new SemanticInputRejectedError([unrenderedResources(result.admitted.document)])
-            }
-            const parts = envelope.admittedText === undefined ? result.admitted.parts : []
+            // Admission is the only author of the projection: the text the model
+            // reads and the authority the turn holds come from the same review.
             return {
                 semanticInput: result.admitted.document,
-                admittedText: envelope.admittedText ?? result.admitted.admittedText,
-                ...partsField(parts),
+                admittedText: result.admitted.admittedText,
+                ...partsField(result.admitted.parts),
                 authorizedTools: result.admitted.authorizedTools,
                 explicitInstructions: result.admitted.explicitInstructions,
             }

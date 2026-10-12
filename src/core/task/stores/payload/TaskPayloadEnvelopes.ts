@@ -390,16 +390,13 @@ export interface ApiHistoryMessageEnvelope {
     readonly message: ClineStorageMessage
 }
 
+/**
+ * Legacy, read-only: no current code writes this kind. A successor task now
+ * opens through `initTask` with the handoff `<task>` and `<context>` as its
+ * first request, so an envelope only exists in journals written by earlier
+ * versions. Only `context` is replayed; any other stored property is ignored.
+ */
 export interface TaskHandoffEnvelope {
     readonly kind: "task_handoff"
     readonly context: string
-    readonly source: { readonly functionId: string; readonly dlineTid: string }
-    readonly initialUserContent: readonly unknown[]
-    readonly taskSettings: {
-        readonly mode: "plan" | "act"
-        readonly planModeProfileId?: string
-        readonly planModeProfile?: string
-        readonly actModeProfileId?: string
-        readonly actModeProfile?: string
-    }
 }

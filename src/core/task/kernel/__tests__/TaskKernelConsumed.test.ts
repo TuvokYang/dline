@@ -66,6 +66,41 @@ describe("task kernel successor handoff", () => {
         expect(result.state.turn.executingBlockIds).toEqual([])
     })
 
+    it("lets a block cancelled by restoration hand off only when the handoff answers its restored dialog", () => {
+        const restored: TaskState = {
+            ...handingOff(),
+            flow: { phase: "idle" },
+            turn: {
+                ...handingOff().turn,
+                blocks: [block("read", 0, "completed"), block("new-task", 1, "cancelled"), block("later", 2, "ready")],
+                executingBlockIds: [],
+            },
+        }
+
+        // A live handoff never comes from a cancelled block, so the plain event stays refused.
+        expect(transition(restored, consumed)).toMatchObject({ kind: "rejected", reason: "phase_invalid" })
+
+        const result = accepted(transition(restored, { ...consumed, restoredDialog: true }))
+        expect(result.state.flow).toMatchObject({ phase: "terminated", terminalReason: "consumed" })
+        expect(result.commands).toEqual([])
+    })
+
+    it("refuses a restored handoff while another block of the turn is still running", () => {
+        const running: TaskState = {
+            ...handingOff(),
+            turn: {
+                ...handingOff().turn,
+                blocks: [block("read", 0, "executing"), block("new-task", 1, "cancelled"), block("later", 2, "ready")],
+                executingBlockIds: ["read"],
+            },
+        }
+
+        expect(transition(running, { ...consumed, restoredDialog: true })).toMatchObject({
+            kind: "rejected",
+            reason: "phase_invalid",
+        })
+    })
+
     it("refuses the consuming block's own completion, so no round is opened for the successor's conversation", () => {
         const state = accepted(transition(handingOff(), consumed)).state
 

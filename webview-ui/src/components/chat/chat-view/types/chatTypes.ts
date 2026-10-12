@@ -191,5 +191,4 @@ export interface InputSectionProps {
     onFilesChange: (files: string[]) => void
     placeholderText: string
     shouldDisableFilesAndImages: boolean
-    selectFilesAndImages: () => Promise<void>
 }

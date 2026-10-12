@@ -1,6 +1,8 @@
 import { MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
-import { projectInteractionContinuation } from "../InteractionContinuation"
+import { declinedNewTaskResponse, newTaskCreatedResponse } from "../../new-task/new-task-answer"
+import { interactionKindForToolName, projectInteractionContinuation } from "../InteractionContinuation"
 
 function textOf(content: unknown): string {
     if (typeof content === "string") return content
@@ -35,5 +37,24 @@ describe("projectInteractionContinuation", () => {
 
         expect(textOf(result.toolResult.content)).toBe("<feedback>\nshort answer\n</feedback>")
         expect(result.documents).toEqual([])
+    })
+
+    // A `new_task` answered after a restart reads to the model exactly as the
+    // live handler's answer would.
+    it("answers new_task the way its handler does", async () => {
+        expect(interactionKindForToolName(DlineDefaultTool.NEW_TASK)).toBe("new_task")
+        const answer = (actionId: string, message?: string) =>
+            projectInteractionContinuation({
+                kind: "new_task",
+                functionId: "call-new",
+                dlineTid: "tid-new",
+                actionId,
+                ...(message === undefined ? {} : { chatContent: { message } }),
+            })
+
+        expect(textOf((await answer("approve")).toolResult.content)).toBe(textOf(newTaskCreatedResponse()))
+        expect(textOf((await answer("reject", "Keep going here")).toolResult.content)).toBe(
+            textOf(declinedNewTaskResponse("Keep going here")),
+        )
     })
 })

@@ -442,12 +442,17 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
         const block = state.turn.blocks.find((candidate) => candidate.blockId === event.blockId)
         if (state.turn.turnId !== event.turnId || !block)
             return { reason: "identity_mismatch", message: `Consuming block ${event.blockId} is not active` }
-        if (block.phase !== "executing")
+        if (block.phase !== "executing" && !handsOffRestoredDialog(state, event, block.phase))
             return { reason: "phase_invalid", message: `Block ${event.blockId} cannot hand off from ${block.phase}` }
         if (state.halt.status === "stopping")
             return { reason: "phase_invalid", message: "Task cannot hand off while it is stopping" }
     }
     return undefined
+}
+
+/** Restoration cancels the block whose New Task dialog stays answerable, so approving it may still hand off while nothing else runs. */
+function handsOffRestoredDialog(state: TaskState, event: { readonly restoredDialog?: true }, phase: string): boolean {
+    return event.restoredDialog === true && phase === "cancelled" && !state.turn.blocks.some((b) => b.phase === "executing")
 }
 
 /**

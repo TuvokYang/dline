@@ -198,6 +198,21 @@ function editorWebviewCount(page: Page, sidebar: Frame): number {
     return page.frames().filter((frame) => frame !== sidebar && frame.url().startsWith("vscode-webview://")).length
 }
 
+/** Open a Task from History in a freshly started window, as a user resumes work after a restart. */
+async function reopenFromHistory(app: ElectronApplication, helper: E2ETestHelper, marker: string): Promise<Frame> {
+    const { page, sidebar } = await openSignedInSidebar(app, helper)
+    await page.getByRole("button", { name: "History", exact: true }).click()
+    await E2ETestHelper.dismissWhatsNewModal(sidebar)
+    const item = sidebar.locator(".history-item").filter({ hasText: marker })
+    await expect(item).toHaveCount(1, { timeout: 30_000 })
+    await item.click()
+    return sidebar
+}
+
+function startNewTaskButton(frame: Frame) {
+    return frame.locator('vscode-button[aria-label="Start New Task"]')
+}
+
 e2e(
     "New Task handoff - Sidebar successor opens from task and context alone while feedback stays with the source",
     async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
@@ -445,6 +460,124 @@ e2e(
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await app.close()
+        }
+    },
+)
+
+e2e(
+    "New Task handoff - a dialog restored after a restart declines in the source and hands off like a live one",
+    async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+        e2e.setTimeout(420_000)
+        await configurePlanModeProfiles(dlineDir)
+
+        const source = "E2E_NEW_TASK_RESTART_SOURCE"
+        const firstTask = "E2E_NEW_TASK_RESTART_TASK_DRAFT"
+        const firstContext = "E2E_NEW_TASK_RESTART_CONTEXT_DRAFT"
+        const feedback = "E2E_NEW_TASK_RESTART_FEEDBACK"
+        const successorTask = "E2E_NEW_TASK_RESTART_SUCCESSOR_TASK"
+        const successorContext = "E2E_NEW_TASK_RESTART_SUCCESSOR_CONTEXT"
+        const successorReady = "E2E_NEW_TASK_RESTART_SUCCESSOR_READY"
+        const declinedToolId = "call_new_task_restart_declined"
+        const approvedToolId = "call_new_task_restart_approved"
+
+        server.enqueueResponses(
+            "openai-compatible-responses",
+            {
+                type: "tool",
+                id: declinedToolId,
+                name: "new_task",
+                arguments: { task: firstTask, context: firstContext },
+                expectedRequestIncludes: [source, 'explicit_instructions type=\\"new_task\\"'],
+            },
+            {
+                type: "tool",
+                id: approvedToolId,
+                name: "new_task",
+                arguments: { task: successorTask, context: successorContext },
+                // The restored decline answers the call it belongs to, as the live handler would.
+                expectedRequestIncludes: [feedback, "dline:new-task-feedback:v1"],
+                expectedToolResults: [{ callId: declinedToolId, contentIncludes: [feedback, "dline:new-task-feedback:v1"] }],
+            },
+            {
+                type: "tool",
+                id: "call_new_task_restart_successor_ready",
+                name: "qna_respond",
+                arguments: { response: successorReady },
+                expectedRequestIncludes: [`<task>\\n${successorTask}\\n</task>`, `<context>\\n${successorContext}\\n</context>`],
+                expectedRequestExcludes: [source, firstTask, firstContext, feedback],
+                expectedToolResultCount: 0,
+            },
+            {
+                type: "error",
+                status: 500,
+                code: "unexpected_consumed_new_task_replay",
+                message: "A consumed New Task round was replayed",
+            },
+        )
+
+        // The window closes while the first handoff waits on the user.
+        let sourceTaskId = ""
+        const first = await openVSCode(workspaceDir)
+        try {
+            const { sidebar } = await openSignedInSidebar(first, helper)
+            await sendTask(sidebar, `/newtask ${source}`)
+            await expect(sidebar.getByText(firstTask, { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expect(startNewTaskButton(sidebar)).toBeEnabled({ timeout: 60_000 })
+            const [id] = await E2ETestHelper.waitForValue(async () => {
+                const ids = await taskIds(dlineDocsDir)
+                return ids.length === 1 ? ids : undefined
+            }, 30_000)
+            if (!id) throw new Error("Source Task ID was not persisted")
+            sourceTaskId = id
+        } finally {
+            await first.close()
+        }
+
+        // Declining the restored dialog keeps the feedback in the source, which asks again.
+        const second = await openVSCode(workspaceDir)
+        try {
+            const sidebar = await reopenFromHistory(second, helper, source)
+            await submitNewTaskFeedback(sidebar, feedback, "button")
+            await expect(sidebar.getByText(successorTask, { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
+            await expect(startNewTaskButton(sidebar)).toBeEnabled({ timeout: 60_000 })
+        } finally {
+            await second.close()
+        }
+
+        // Approving the restored dialog consumes the source and starts the successor.
+        const third = await openVSCode(workspaceDir)
+        try {
+            const sidebar = await reopenFromHistory(third, helper, source)
+            await startNewTaskButton(sidebar).click()
+            await expect(sidebar.getByText(successorReady, { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
+
+            const successorTaskId = await E2ETestHelper.waitForValue(async () => {
+                const ids = await taskIds(dlineDocsDir)
+                return ids.length === 2 ? ids.find((id) => id !== sourceTaskId) : undefined
+            }, 30_000)
+            await expectInheritedTaskSettings(dlineDocsDir, successorTaskId)
+            await expectConsumedTaskSnapshot(dlineDocsDir, sourceTaskId, approvedToolId)
+
+            const sourceHistory = await readTaskConversationText(dlineDocsDir, sourceTaskId)
+            const successorHistory = await readTaskConversationText(dlineDocsDir, successorTaskId)
+            expect(sourceHistory).toContain(approvedToolId)
+            expect(sourceHistory).toContain(feedback)
+            expect(successorHistory).toContain(successorTask)
+            expect(successorHistory).toContain(successorContext)
+            expect(successorHistory).not.toContain(feedback)
+            expect(successorHistory).not.toContain(source)
+
+            // A consumed source stays inert; a deferred replay would surface as a fourth request.
+            await sidebar.page().waitForTimeout(1_000)
+            expect(server.getRequestCount("openai-compatible-responses")).toBe(3)
+            expect(
+                server.getMockConsumptions("openai-compatible-responses").every((entry) => entry.contractError === undefined),
+            ).toBe(true)
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await third.close()
         }
     },
 )

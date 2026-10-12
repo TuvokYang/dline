@@ -16,7 +16,9 @@ import { Button } from "@/components/ui/button"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
 import { FileServiceClient } from "@/services/grpc-client"
+import { parseSubmittedEntityLink } from "@/services/input-semantics/highlight"
 import { WithCopyButton } from "./CopyButton"
+import { SubmittedEntity } from "./SubmittedEntity"
 import UnsafeImage from "./UnsafeImage"
 
 /**
@@ -77,7 +79,7 @@ function parseMarkdownIntoBlocks(markdown: string): string[] {
 }
 
 const MemoizedMarkdownBlock = memo(
-    ({ content }: { content: string }) => {
+    ({ content, submittedEntities }: { content: string; submittedEntities?: boolean }) => {
         // A streaming math fence stays highlighted source until its closing fence arrives.
         const typesetMath = !isUnterminatedMathFence(content)
         return (
@@ -106,7 +108,7 @@ const MemoizedMarkdownBlock = memo(
                         // Use the async file check component for potential file paths
                         return <InlineCodeWithFileCheck {...props} />
                     },
-                    a: (props: ComponentProps<"a">) => <MarkdownLink {...props} />,
+                    a: (props: ComponentProps<"a">) => <MarkdownLink {...props} submittedEntities={submittedEntities} />,
                     strong: (props: ComponentProps<"strong">) => {
                         // Check if this is an "Act Mode" strong element by looking for the keyboard shortcut
                         // Handle both string children and array of children cases
@@ -158,16 +160,20 @@ const MemoizedMarkdownBlock = memo(
     },
     (prevProps, nextProps) => {
         if (prevProps.content !== nextProps.content) return false
-        return true
+        return prevProps.submittedEntities === nextProps.submittedEntities
     },
 )
 
 MemoizedMarkdownBlock.displayName = "MemoizedMarkdownBlock"
 
-const MemoizedMarkdown = memo(({ content, id }: { content: string; id: string }) => {
-    const blocks = useMemo(() => parseMarkdownIntoBlocks(content), [content])
-    return blocks?.map((block, index) => <MemoizedMarkdownBlock content={block} key={`${id}-block_${index}`} />)
-})
+const MemoizedMarkdown = memo(
+    ({ content, id, submittedEntities }: { content: string; id: string; submittedEntities?: boolean }) => {
+        const blocks = useMemo(() => parseMarkdownIntoBlocks(content), [content])
+        return blocks?.map((block, index) => (
+            <MemoizedMarkdownBlock content={block} key={`${id}-block_${index}`} submittedEntities={submittedEntities} />
+        ))
+    },
+)
 
 MemoizedMarkdown.displayName = "MemoizedMarkdown"
 
@@ -226,6 +232,14 @@ interface MarkdownBlockProps {
     markdown?: string
     compact?: boolean
     showCursor?: boolean
+    /**
+     * Draw `#dline-entity/` links as the commands and mentions a sent row ran.
+     *
+     * Only a row built from its submitted facts may set this: in any other
+     * Markdown, such as model output, the same link is ordinary text and must
+     * not pass for an entity the user ran.
+     */
+    submittedEntities?: boolean
 }
 
 /**
@@ -442,7 +456,16 @@ function isProjectRelativeLink(value: string): boolean {
 
 // react-markdown passes an internal `node` prop to custom components; it must not
 // leak onto the DOM as an attribute.
-const MarkdownLink = ({ href, onClick, node: _node, ...props }: ComponentProps<"a"> & { node?: unknown }) => {
+const MarkdownLink = ({
+    href,
+    onClick,
+    node: _node,
+    submittedEntities,
+    ...props
+}: ComponentProps<"a"> & { node?: unknown; submittedEntities?: boolean }) => {
+    // A sent user row marks the commands and mentions it ran as entity links.
+    const entity = submittedEntities ? parseSubmittedEntityLink(href) : undefined
+    if (entity) return <SubmittedEntity role={entity.role} text={entity.text} />
     const localPath = typeof href === "string" ? normalizeLocalPath(href) : ""
     const isLocal = isProjectRelativeLink(localPath)
 
@@ -540,7 +563,7 @@ const InlineCodeWithFileCheck: React.FC<ComponentProps<"code"> & { [key: string]
     return <code {...props} />
 }
 
-const MarkdownBlock = memo(({ markdown, compact, showCursor }: MarkdownBlockProps) => {
+const MarkdownBlock = memo(({ markdown, compact, showCursor, submittedEntities }: MarkdownBlockProps) => {
     return (
         <div className="inline-markdown-block">
             <span
@@ -548,7 +571,11 @@ const MarkdownBlock = memo(({ markdown, compact, showCursor }: MarkdownBlockProp
                     "inline-cursor-container": showCursor,
                     "[&>p]:m-0": compact,
                 })}>
-                {markdown ? <MemoizedMarkdown content={markdown} id="markdown-block" /> : markdown}
+                {markdown ? (
+                    <MemoizedMarkdown content={markdown} id="markdown-block" submittedEntities={submittedEntities} />
+                ) : (
+                    markdown
+                )}
             </span>
         </div>
     )

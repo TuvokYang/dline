@@ -58,12 +58,6 @@ export type StagingTarget =
     | { readonly kind: "task"; readonly taskId: string; readonly taskInstanceId: string }
     | { readonly kind: "draft"; readonly draftId: string }
 
-/** The active task when this window may write it, else nothing. */
-export function writableTaskIdOf(controller: Controller): string | undefined {
-    const task = controller.task
-    return task?.writable ? task.taskId : undefined
-}
-
 /** Resolve who owns newly staged resources: the active task, else the request's composer draft. */
 export function stagingTargetOf(controller: Controller, draftId: string): InputResourceResult<StagingTarget> {
     const task = controller.task

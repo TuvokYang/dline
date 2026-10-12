@@ -18,6 +18,10 @@ vi.mock("@core/prompts/responses", () => ({
                 ? [{ type: "text", text }, ...(images ?? []).map((image) => ({ type: "image", source: image }))]
                 : text,
         ),
+        newTaskDeclinedFeedback: vi.fn(
+            (feedback: string) =>
+                `The user provided feedback instead of creating a new task:\n<feedback>\n${feedback}\n</feedback>`,
+        ),
     },
 }))
 

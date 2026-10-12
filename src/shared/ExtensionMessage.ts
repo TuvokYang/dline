@@ -553,11 +553,20 @@ export interface TaskContextCompactionViewState {
     operationId: string
 }
 
+/** The source Task and New Task interaction that opened a successor Task. */
+export interface TaskHandoffSource {
+    taskId: string
+    /** The `dline_tid` of the approved new_task interaction in the source Task. */
+    interactionId: string
+}
+
 /** Complete backend projection consumed by the Webview interaction host. */
 export interface TaskViewState {
     taskId: string
     /** Ephemeral canonical Task opening; never stored in a runtime snapshot. */
     taskInstanceId?: string
+    /** Set only on the opening a New Task handoff started; ephemeral like `taskInstanceId`. */
+    handoffSource?: TaskHandoffSource
     phase: TaskViewPhase
     stateRevision: number
     activeInteraction?: ActiveInteractionView

@@ -1,5 +1,4 @@
 import type { TaskViewAction, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
-import { parseNewTaskAsk } from "@shared/new-task-ask"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { AskResponseRequest, MoveCommandToBackgroundRequest } from "@shared/proto/dline/task"
 import { useState } from "react"
@@ -96,9 +95,6 @@ export function InteractionHost({
     const [selection, setSelection] = useState<string[]>([])
     const interaction = view.activeInteraction
     const anchor = findActiveInteractionAnchor(messages, view)
-    // The successor opens with this task as its first row, which is how the
-    // retained draft finds the surface it belongs to.
-    const successorTask = interaction?.kind === "new_task" && anchor ? parseNewTaskAsk(anchor.text).task : undefined
     const presentationKind = interaction?.presentationKind
     const supported = presentationKind ? isPresentationKind(presentationKind) : false
     const showAnchorPresentation = showTimeline || (presentationKind && FOOTER_APPROVAL_PRESENTATIONS.has(presentationKind))
@@ -136,7 +132,6 @@ export function InteractionHost({
                     onDraftAccepted={onDraftAccepted}
                     onDraftRejected={onDraftRejected}
                     onSuccessorAccepted={onSuccessorAccepted}
-                    successorTask={successorTask}
                     view={taskOnlyView}
                 />
             ) : canRenderVerifiedFooter ? (
@@ -162,7 +157,6 @@ export function InteractionHost({
                         onDraftRejected={onDraftRejected}
                         onSuccessorAccepted={onSuccessorAccepted}
                         selection={{ values: selection }}
-                        successorTask={successorTask}
                         view={view}
                     />
                 </>
@@ -174,7 +168,6 @@ export function InteractionHost({
                     onDraftAccepted={onDraftAccepted}
                     onDraftRejected={onDraftRejected}
                     onSuccessorAccepted={onSuccessorAccepted}
-                    successorTask={successorTask}
                     view={view}
                 />
             )}

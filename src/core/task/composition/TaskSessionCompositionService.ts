@@ -3,8 +3,10 @@ import type { ToolUse } from "@core/assistant-message"
 import { collectContextWindowRequestPressures } from "@core/context/context-management/context-pressure"
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
+import type { InputResourceStore } from "@core/input-semantics/InputResourceStore"
 import { LegacyInputAdapter } from "@core/input-semantics/LegacyInputAdapter"
 import { SemanticInputAdmissionService } from "@core/input-semantics/SemanticInputAdmissionService"
+import { StoreDraftAttachments } from "@core/input-semantics/StoreDraftAttachments"
 import { StoreResourceVerifier } from "@core/input-semantics/StoreResourceVerifier"
 import { TaskCommandExpander, TaskMentionResolver } from "@core/input-semantics/TaskEntityResolvers"
 import { openTaskInputResources } from "@core/input-semantics/TaskInputResourceStore"
@@ -45,6 +47,7 @@ import type { TaskCompletionProjection, TaskCompletionProjectionUpdate } from ".
 import { TaskCompletionProjector } from "../history/TaskCompletionProjector"
 import type { TaskState } from "../kernel"
 import { MessageStateHandler } from "../message-state"
+import { createSuccessorHandoffPublisher, type TaskSuccessorPort } from "../new-task/successor-handoff"
 import { observeTaskStateVault, TaskTurnTelemetry } from "../observability/task-turn-telemetry"
 import { formatApiRequestTiming } from "../performance/api-request-timing"
 import { TaskPerformanceOwner } from "../performance/TaskPerformanceOwner"
@@ -203,12 +206,11 @@ export class TaskSessionCompositionService {
         const toolState = new DefaultToolHandlerState()
         // One view per task: requests, compaction and every conversation reader
         // share it, and each journal payload is rendered once rather than once per round.
-        // Admitted inputs place resources by reference; the request reads their
-        // verified bytes from the task's own store when it is materialized.
-        const journalMessages = new ProviderJournalMessageMaterializer(
-            persistence.payloads,
-            openTaskInputResources(options.taskId),
-        )
+        // One store serves every reader of the task's input resources: requests
+        // read verified bytes by reference, admission vouches for a node's bytes,
+        // and a dialog receiver resolves its draft's attachments from it.
+        const inputResources = openTaskInputResources(options.taskId)
+        const journalMessages = new ProviderJournalMessageMaterializer(persistence.payloads, inputResources)
         const conversationView = new JournalConversationView(persistence.ports.journal, journalMessages)
         const providerConversation = { messages: () => conversationView.providerMessages() }
         const conversationRewind = new JournalConversationRewind(persistence.ports.journal, conversationView)
@@ -283,7 +285,8 @@ export class TaskSessionCompositionService {
         // as an ordinary input, which only the opened session can do. A restored
         // tool dialog is the exception: its answer is the tool's result.
         const resumption: ResumeDialogContinuationPorts = {
-            materialize: (input, options) => this.requireSession(session).inputs.materialize(input, "queued", options),
+            materialize: (input) => this.requireSession(session).inputs.materialize(input),
+            materializeAnswer: (input) => this.requireSession(session).inputs.materializeAnswer(input),
             submit: (input) => this.requireSession(session).task.submitInput(input),
         }
         // The footer shows Retry and Cancel only while a countdown owns the
@@ -292,6 +295,26 @@ export class TaskSessionCompositionService {
         const providerRetry = new ProviderRetryGate(() => void options.publishState().catch(() => undefined))
         // Numbers the requests this session timed, for the diagnostic line each one logs.
         let timedRequests = 0
+        // A `new_task` hands the conversation to a successor on the same
+        // surface. The Controller owns that surface, so it starts the successor
+        // once the runtime has durably marked this task consumed.
+        const successor: TaskSuccessorPort = {
+            settings: () => ({
+                mode: settings.mode,
+                planModeProfileId: settings.planModeProfileId,
+                planModeProfile: settings.planModeProfile,
+                actModeProfileId: settings.actModeProfileId,
+                actModeProfile: settings.actModeProfile,
+            }),
+            start: (handoff) => options.prompt.ports.successor.start(options.taskId, handoff),
+            onError: (error) => Logger.error(`[Task ${options.taskId}] Failed to start the New Task successor: ${String(error)}`),
+        }
+        // One publisher for the live tool adapter and a restored dialog, so a
+        // `new_task` approved either way records its result and hands off alike.
+        const postCommit = createSuccessorHandoffPublisher({
+            runtime: () => this.requireSession(session).assembly.runtime,
+            successor,
+        })
         const interactions = new TaskInteractionOwner(
             messages,
             persistence.payloads,
@@ -303,6 +326,7 @@ export class TaskSessionCompositionService {
                     messages,
                     nextPresentationId: () => nextPresentationId(),
                     publishRow: (row) => options.prompt.ports.presentation.publish(row),
+                    publishPostCommit: postCommit,
                 },
                 resumption,
                 new ResumeDialogContinuation(resumption, () => toolState.resetMistakeLimitState(), providerRetry),
@@ -706,7 +730,8 @@ export class TaskSessionCompositionService {
             },
             diagnostics,
             owners,
-            inputAdmission: this.composeInputAdmission(options, taskIncarnationId, tool.services, api, settings),
+            inputAdmission: this.composeInputAdmission(options, taskIncarnationId, tool.services, api, settings, inputResources),
+            draftAttachments: new StoreDraftAttachments(() => inputResources),
             // A `/compact` the user types is carried out by the compaction barrier,
             // so its guidance shapes the summary instead of reaching the model.
             lifecycleBarriers: compaction,
@@ -757,21 +782,7 @@ export class TaskSessionCompositionService {
             compactionReview: new InteractionCompactionReview(interactions),
             compactionFailure,
             compactionProgress: compactionCards,
-            // A `new_task` hands the conversation to a successor on the same
-            // surface. The Controller owns that surface, so it starts the successor
-            // once the runtime has durably marked this task consumed.
-            successor: {
-                settings: () => ({
-                    mode: settings.mode,
-                    planModeProfileId: settings.planModeProfileId,
-                    planModeProfile: settings.planModeProfile,
-                    actModeProfileId: settings.actModeProfileId,
-                    actModeProfile: settings.actModeProfile,
-                }),
-                start: (handoff) => options.prompt.ports.successor.start(options.taskId, handoff),
-                onError: (error) =>
-                    Logger.error(`[Task ${options.taskId}] Failed to start the New Task successor: ${String(error)}`),
-            },
+            postCommit,
             // An approval is planned with the turn rather than opened by a tool, so
             // the interaction owner writes its row when the dialog is revealed.
             writeDialogAnchor: (request) => interactions.anchor(request),
@@ -975,6 +986,7 @@ export class TaskSessionCompositionService {
         services: Awaited<ReturnType<TaskSessionHostFactory["create"]>>["services"],
         api: TaskApiHandlerOwner,
         settings: TaskStateManager,
+        inputResources: InputResourceStore,
     ): TaskSemanticInputAdmission {
         // Command expansion only reads the provider identity; the request scope is
         // the canonical way this composition derives it from the current handler.
@@ -992,7 +1004,7 @@ export class TaskSessionCompositionService {
             catalog: () => service().current(),
             conflicts: () => service().conflicts(),
             // A resource node is admitted only when the task's store vouches for its bytes.
-            resources: new StoreResourceVerifier(() => openTaskInputResources(options.taskId)),
+            resources: new StoreResourceVerifier(() => inputResources),
             mentions: new TaskMentionResolver(() => ({
                 cwd: options.cwd,
                 urlContentFetcher: services.urlContentFetcher,

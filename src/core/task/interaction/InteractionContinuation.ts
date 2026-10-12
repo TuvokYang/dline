@@ -10,6 +10,7 @@ import type {
     ClineUserToolResultContentBlock,
 } from "@shared/messages/content"
 import { DlineDefaultTool } from "@shared/tools"
+import { declinedNewTaskResponse, newTaskCreatedResponse } from "../new-task/new-task-answer"
 import { ToolResultUtils } from "../tools/utils/ToolResultUtils"
 import type { InteractionKind } from "./Interaction"
 
@@ -40,6 +41,8 @@ export function interactionKindForToolName(name: string): InteractionKind | unde
             return "status_acknowledgment"
         case DlineDefaultTool.ATTEMPT:
             return "completion"
+        case DlineDefaultTool.NEW_TASK:
+            return "new_task"
         default:
             return undefined
     }
@@ -114,6 +117,11 @@ function projectResponseContent(input: InteractionContinuationInput, fileContent
             if (images?.length) content.push(...formatResponse.imageBlocks(images))
             return content
         }
+        case "new_task":
+            // Approving carries no reply; the successor itself is started by the caller.
+            return input.actionId === "approve"
+                ? newTaskCreatedResponse()
+                : declinedNewTaskResponse(text ?? "", images, fileContent)
         case "followup":
         default:
             return formatResponse.toolResult(`<feedback>\n${text ?? ""}\n</feedback>`, images, fileContent)

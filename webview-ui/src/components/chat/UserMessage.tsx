@@ -1,14 +1,18 @@
+import type { SubmittedInputFacts } from "@shared/input-semantics/submitted-input"
 import { CheckpointRestoreRequest } from "@shared/proto/dline/checkpoints"
 import { ClineCheckpointRestore } from "@shared/WebviewMessage"
-import React, { forwardRef, useRef, useState } from "react"
+import React, { forwardRef, useMemo, useRef, useState } from "react"
 import DynamicTextArea from "react-textarea-autosize"
 import Thumbnails from "@/components/common/Thumbnails"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { CheckpointsServiceClient } from "@/services/grpc-client"
+import { markSubmittedEntities } from "@/services/input-semantics/highlight"
 import { UserInputMarkdownBody } from "./UserInputMarkdownBody"
 
 interface UserMessageProps {
     text?: string
+    /** Facts recorded when the row was sent; the row marks the entities they say ran. */
+    submittedInputs?: readonly SubmittedInputFacts[]
     files?: string[]
     images?: string[]
     messageTs?: number // Timestamp for the message, needed for checkpoint restore
@@ -19,6 +23,7 @@ interface UserMessageProps {
 
 const UserMessage: React.FC<UserMessageProps> = ({
     text,
+    submittedInputs,
     images,
     files,
     messageTs,
@@ -32,6 +37,9 @@ const UserMessage: React.FC<UserMessageProps> = ({
     const { checkpointManagerErrorMessage } = useExtensionState()
 
     const queued = inputKind === "queued"
+    // History never lexes the text again: without valid facts the row is plain Markdown.
+    const marked = useMemo(() => markSubmittedEntities(text, submittedInputs), [submittedInputs, text])
+    const markdown = marked ?? text
 
     // Create refs for the buttons to check in the blur handler
     const restoreAllButtonRef = useRef<HTMLButtonElement>(null)
@@ -174,7 +182,8 @@ const UserMessage: React.FC<UserMessageProps> = ({
                 </>
             ) : (
                 <UserInputMarkdownBody
-                    markdown={text}
+                    markdown={markdown}
+                    submittedEntities={marked !== undefined}
                     testId={queued ? "queued-input-markdown-scroll" : "user-input-markdown-scroll"}
                     variant={queued ? "queued-history" : "direct"}
                 />

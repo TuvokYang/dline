@@ -47,7 +47,7 @@ import type { ModelInfo } from "@shared/api"
 import type { ChatContent } from "@shared/ChatContent"
 import { resolveMaxParallelSubagents, resolveMaxParallelToolCalls } from "@shared/concurrency-limits"
 import { type ContextWindowIndicatorSnapshot, getContextWindowIndicatorTotalTokens } from "@shared/context-window-indicator"
-import type { ExtensionState, Platform, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
+import type { ExtensionState, Platform, TaskHandoffSource, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import type { ApiMetrics } from "@shared/getApiMetrics"
 import type { HistoryItem } from "@shared/HistoryItem"
 import type { McpMarketplaceCatalog, McpMarketplaceItem, McpServer } from "@shared/mcp"
@@ -192,6 +192,8 @@ type InitTaskOptions = {
     onBackgroundError?: (error: unknown, taskId: string) => Promise<void> | void
     /** Internal lifecycle transaction already removed the previous Task. */
     skipInitialClear?: boolean
+    /** The New Task interaction this opening succeeds; projected so the Webview can recognise it. */
+    handoffSource?: TaskHandoffSource
     /** Promote a lightweight historical display into the interactive Task runtime. */
     activateHistory?: boolean
     /** Why an existing task is opened; defaults to an ordinary resume. */
@@ -235,6 +237,8 @@ export class Controller {
 
     task?: ActiveTaskSession
     private historyDisplaySession?: HistoryDisplaySession
+    /** The handoff that started one opening; any other opening ignores it. */
+    private handoffOpening?: { readonly taskInstanceId: string; readonly source: TaskHandoffSource }
     /** Holds state publications while an opening of the task is replaced by another. */
     private readonly openingHandoff = new OpeningHandoff()
     /**
@@ -1230,6 +1234,9 @@ export class Controller {
             // This opening's identity. The session adopts it as its incarnation, so
             // every row, page and activity the session publishes is attributed to it.
             const opening: TaskOpening = { taskId, taskInstanceId: randomUUID() }
+            this.handoffOpening = options?.handoffSource
+                ? { taskInstanceId: opening.taskInstanceId, source: options.handoffSource }
+                : undefined
             this.task = await new TaskSessionCompositionService().open({
                 taskId,
                 taskIncarnationId: opening.taskInstanceId,
@@ -2820,7 +2827,12 @@ export class Controller {
         )
         // Another window owns the task: show it, but offer nothing that would write.
         const owned = session.writable ? view : readOnlyTaskView(view)
-        return { ...owned, taskInstanceId: session.taskInstanceId }
+        const handoff = this.handoffOpening
+        return {
+            ...owned,
+            taskInstanceId: session.taskInstanceId,
+            ...(handoff?.taskInstanceId === session.taskInstanceId ? { handoffSource: handoff.source } : {}),
+        }
     }
 
     /** Build a monotonic extension state while preserving the public non-optional contract. */
@@ -3605,7 +3617,7 @@ export class Controller {
      */
     async startSuccessorTask(
         source: TaskOpening,
-        handoff: Pick<NewTaskHandoff, "task" | "context" | "taskSettings">,
+        handoff: Pick<NewTaskHandoff, "task" | "context" | "taskSettings" | "source">,
     ): Promise<string | undefined> {
         return this.runTaskLifecycleOperation(async (scope) => {
             if (!this.isCurrentOpening(source)) return undefined
@@ -3614,6 +3626,7 @@ export class Controller {
                 context: [handoff.context],
                 startInBackground: true,
                 skipInitialClear: true,
+                handoffSource: { taskId: source.taskId, interactionId: handoff.source.dlineTid },
             })
         })
     }

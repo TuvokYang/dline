@@ -58,7 +58,10 @@ export const formatResponse = {
             TOOL_REMINDER: usingNativeToolCalls ? "" : generateToolResponse("toolHandlers", "toolUseInstructionsReminder"),
         }),
 
-    tooManyMistakes: (feedback?: string) => generateToolResponse("toolHandlers", "tooManyMistakes", { FEEDBACK: feedback ?? "" }),
+    newTaskDeclinedFeedback: (feedback: string) =>
+        generateToolResponse("toolHandlers", "newTaskDeclinedFeedback", { FEEDBACK: feedback }),
+
+    postCommitRefused: () => generateToolResponse("toolHandlers", "postCommitRefused"),
 
     missingToolParameterError: (paramName: string) =>
         generateToolResponse("toolHandlers", "missingToolParameterError", {

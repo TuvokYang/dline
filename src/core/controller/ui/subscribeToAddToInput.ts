@@ -1,10 +1,21 @@
-import type { EmptyRequest, String as ProtoString } from "@shared/proto/dline/common"
+import type { EmptyRequest } from "@shared/proto/dline/common"
+import { AddToInputEvent } from "@shared/proto/dline/ui"
 import { Logger } from "@/shared/services/Logger"
 import { getRequestRegistry, type StreamingResponseHandler } from "../grpc-handler"
 import type { Controller } from "../index"
 
 // Per-controller subscriptions to isolate events between independent webviews.
-const subs = new Map<Controller, Set<StreamingResponseHandler<ProtoString>>>()
+const subs = new Map<Controller, Set<StreamingResponseHandler<AddToInputEvent>>>()
+
+/** An editor selection: the file it came from and the fenced code, kept apart so neither is retyped. */
+export interface EditorSelectionInput {
+    /** The complete content as plain text, for a composer that cannot take the structure. */
+    readonly text: string
+    /** Workspace mention reference of the selection's file, without the leading "@". */
+    readonly mentionReference?: string
+    /** The fenced selection plus any notebook context or problems. */
+    readonly selection: string
+}
 
 /**
  * Subscribe to addToInput events for a specific controller.
@@ -13,7 +24,7 @@ const subs = new Map<Controller, Set<StreamingResponseHandler<ProtoString>>>()
 export async function subscribeToAddToInput(
     controller: Controller,
     _request: EmptyRequest,
-    responseStream: StreamingResponseHandler<ProtoString>,
+    responseStream: StreamingResponseHandler<AddToInputEvent>,
     requestId?: string,
 ): Promise<void> {
     let set = subs.get(controller)
@@ -39,15 +50,19 @@ export async function subscribeToAddToInput(
 /**
  * Send an addToInput event to a specific controller's subscribers.
  * @param controller The controller whose subscribers should receive the event
- * @param text The text to add to the input
+ * @param content Plain text the composer inserts as typed, or an editor selection
  */
-export async function sendAddToInputEvent(controller: Controller, text: string): Promise<void> {
+export async function sendAddToInputEvent(controller: Controller, content: string | EditorSelectionInput): Promise<void> {
     const set = subs.get(controller)
     if (!set || set.size === 0) return
 
+    const event = AddToInputEvent.create(
+        typeof content === "string"
+            ? { text: content }
+            : { text: content.text, mentionReference: content.mentionReference ?? "", selection: content.selection },
+    )
     const promises = Array.from(set).map(async (responseStream) => {
         try {
-            const event: ProtoString = { value: text }
             await responseStream(event, false)
         } catch (error) {
             Logger.error("Error sending addToInput event:", error)

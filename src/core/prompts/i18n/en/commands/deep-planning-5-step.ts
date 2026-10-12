@@ -49,22 +49,6 @@ task_progress Items:
 You also MUST include the path to the markdown file you have created in your new task prompt. You should do this as follows:
   Refer to @path/to/file/markdown.md for a complete breakdown of the task requirements and steps. You should periodically read this file again.`,
 
-    nativeToolDef: `**new_task Tool Definition:**
-
-When you are ready to create the implementation task, you must call the new_task tool with the following structure:
-
-{
-  "name": "new_task",
-  "arguments": {
-    "task": "Implement the plan in implementation_plan.md",
-    "context": "Your detailed context here following the 5-point structure..."
-  }
-}
-
-The task parameter states what the new task should do; the context parameter should include all five sections as described above.
-
-`,
-
     xmlToolDef: `**new_task Tool Definition:**
 
 When you are ready to create the implementation task, you must call the new_task tool with the following structure:

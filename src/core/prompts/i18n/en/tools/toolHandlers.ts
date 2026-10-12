@@ -15,8 +15,8 @@ If the entire user task is complete after comparing the result with the latest r
 If progress requires information or a decision only the user can provide, use \`ask_followup_question\`.
 Otherwise, continue with the next non-turn-ending work step. Do not use a progress summary, intermediate milestone, automatic compaction, or context pressure as a reason to finish.
 (This is an automated message. Follow the applicable tool path above rather than replying in plain text.)`,
-    tooManyMistakes:
-        "You seem to be having trouble proceeding. The user has provided the following feedback to help guide you:\n<feedback>\n@FEEDBACK@\n</feedback>",
+    processAnywayContext:
+        "You seem to be having trouble proceeding. The user chose to let you continue; follow any guidance they sent with this message.",
     missingToolParameterError:
         "Missing value for required parameter '@PARAM_NAME@'. Please retry with complete response.\n\n@TOOL_REMINDER@",
     toolAlreadyUsed:
@@ -103,6 +103,10 @@ Always adhere to this format for all tool uses to ensure proper parsing and exec
 
     // NewTaskHandler
     newTaskCreated: "The user has created a new task with the provided context.",
+    newTaskDeclinedFeedback: "The user provided feedback instead of creating a new task:\n<feedback>\n@FEEDBACK@\n</feedback>",
+
+    // ProductionToolAdapter: a tool whose effect follows its result, such as new_task's handoff
+    postCommitRefused: "The task was stopped before this tool call could take effect, so it did not happen.",
 
     // SubagentToolHandler
     subagentExecutionFailed: "Subagent execution failed",
