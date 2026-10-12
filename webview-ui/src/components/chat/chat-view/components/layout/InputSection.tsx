@@ -1,5 +1,4 @@
 import { flushPendingTaskSettingsRequests } from "@components/settings/utils/settingsHandlers"
-import type { UiAsk } from "@shared/ExtensionMessage"
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import React, { useEffect, useRef, useState } from "react"
 import ChatTextArea from "@/components/chat/ChatTextArea"
@@ -28,7 +27,6 @@ interface InputSectionProps {
     submissionScope?: string
     /** Causal owner used to deduplicate only repeated dispatches of the same submission. */
     submissionIdentity?: string
-    clineAsk?: UiAsk
     /** Queue entries owned by the backend; the composer only renders them. */
     inputQueue?: readonly InputQueuePanelEntry[]
     /**
@@ -72,7 +70,6 @@ export const InputSection: React.FC<InputSectionProps> = ({
     onDraftAccepted,
     submissionScope,
     submissionIdentity,
-    clineAsk,
     inputQueue,
     canQueueInput,
     onEnqueueInput,
@@ -311,7 +308,6 @@ export const InputSection: React.FC<InputSectionProps> = ({
 
             <ChatTextArea
                 attachmentsDisabled={shouldDisableFilesAndImages}
-                clineAsk={clineAsk}
                 composer={composer}
                 imagesAllowed={imagesAllowed}
                 onFocusChange={handleFocusChange}

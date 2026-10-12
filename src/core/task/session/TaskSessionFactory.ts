@@ -8,6 +8,7 @@ import { CanonicalInputQueueApplication } from "./CanonicalInputQueueApplication
 import type { LifecycleBarrierPort, TaskInputAdmissionPort } from "./TaskInputAdmission"
 import { type TaskInputIdentityPort, TaskInputMaterializer } from "./TaskInputMaterializer"
 import type { TaskSessionOwners } from "./TaskSessionOwners"
+import { TransitionDraftApplication } from "./TransitionDraftApplication"
 
 export interface OpenActiveTaskSessionOptions extends TaskCompositionOptions {
     readonly inputIdentity?: TaskInputIdentityPort
@@ -50,6 +51,7 @@ export async function openActiveTaskSession(options: OpenActiveTaskSessionOption
         payloads: composed.payloads,
         inputs,
         inputQueue: new CanonicalInputQueueApplication(composed.runtime, inputs, composed.payloads, options.owners.interactions),
+        transitionDrafts: new TransitionDraftApplication(composed.runtime, composed.payloads),
         owners: options.owners,
         approvalFeedback: composed.approvalFeedback,
         conversation: composed.conversation,

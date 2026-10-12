@@ -2,7 +2,7 @@
  * Shared types and interfaces for the chat view components
  */
 
-import { UiAsk, UiMessage } from "@shared/ExtensionMessage"
+import { UiMessage } from "@shared/ExtensionMessage"
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { ListRange, VirtuosoHandle } from "react-virtuoso"
 import type { InteractionDraft } from "../../../../task-interaction/types"
@@ -162,7 +162,6 @@ export interface TaskSectionProps {
         supportsImages: boolean
     }
     isStreaming: boolean
-    clineAsk?: UiAsk
     modifiedMessages: UiMessage[]
 }
 

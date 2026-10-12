@@ -8,7 +8,8 @@ import rehypeHighlight, { Options } from "rehype-highlight"
 import remarkGfm from "remark-gfm"
 import type { Node } from "unist"
 import { visit } from "unist-util-visit"
-import { useModeSwitch } from "@/components/chat/mode-switch/useModeSwitch"
+import type { TransitionDraftComposer } from "@/components/chat/mode-switch/transitionDraft"
+import { type ModeSwitchDraft, useModeSwitch } from "@/components/chat/mode-switch/useModeSwitch"
 import LatexBlock from "@/components/common/LatexBlock"
 import MermaidBlock from "@/components/common/MermaidBlock"
 import { Button } from "@/components/ui/button"
@@ -170,6 +171,10 @@ const MemoizedMarkdown = memo(({ content, id }: { content: string; id: string })
 
 MemoizedMarkdown.displayName = "MemoizedMarkdown"
 
+/** The Act Mode link switches without a draft, so it never has one to send on or let go of. */
+const NO_DRAFT: ModeSwitchDraft = { text: "", images: [], files: [] }
+const NO_DRAFT_COMPOSER: TransitionDraftComposer<ModeSwitchDraft> = { holds: () => false, retire: () => undefined }
+
 /**
  * A component for Act Mode text that contains a clickable toggle and keyboard shortcut hint.
  */
@@ -179,10 +184,9 @@ const ActModeHighlight: React.FC = () => {
         mode,
         stateRevision,
         modeSwitch,
-        draft: { text: "", images: [], files: [] },
-        attachDraft: false,
+        draft: NO_DRAFT,
         onSend: () => undefined,
-        clearDraft: () => undefined,
+        composer: NO_DRAFT_COMPOSER,
     })
     const canSwitchToAct = mode === "plan" && !modeSwitchFlow.isSwitchPending
 

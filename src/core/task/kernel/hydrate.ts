@@ -1,5 +1,6 @@
 import { withoutAbandonedReview } from "./machines/dialog"
 import { expireAbandonedCompaction } from "./machines/flow"
+import { withoutClosedTransitionDraft } from "./machines/transition-draft"
 import { planRecoveryDialog, restorableApprovals } from "./recovery"
 import type {
     BlockPhase,
@@ -336,7 +337,7 @@ function normalizeState(
             turn: { ...state.turn, manualApprovalBlockIds: [] },
             dialog: { approvalsByBlock: {} },
         }
-        return { state, diagnostics: [] }
+        return { state: withoutClosedTransitionDraft(state), diagnostics: [] }
     }
     const approvals = restorableApprovals(state)
     const hasRestorableApproval = Object.keys(approvals).length > 0
@@ -350,7 +351,8 @@ function normalizeState(
         state = { ...state, dialog: { ...state.dialog, primary: recoveryInteraction(state, form) } }
     }
     return {
-        state,
+        // A restored approval or recovery dialog replaces the primary, which ends any draft kept for it.
+        state: withoutClosedTransitionDraft(state),
         diagnostics:
             executing.size > 0 ? [{ code: "inflight_cancelled", message: "In-flight blocks were cancelled during hydrate" }] : [],
     }

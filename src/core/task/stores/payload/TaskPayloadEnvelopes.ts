@@ -82,6 +82,22 @@ export interface DialogDraftEnvelope {
     readonly admittedParts?: readonly AdmittedInputPart[]
 }
 
+/**
+ * The composer draft a Mode or Profile switch carries to an awaiting dialog.
+ *
+ * Stored as the composer sent it, so a reload during the switch gives the user
+ * back the same draft: the document keeps confirmed commands, mentions and
+ * resource references, and the flat lists hold only attachments a draft
+ * without resource nodes carried. It is never part of the conversation.
+ */
+export interface TransitionDraftEnvelope {
+    readonly kind: "transition_draft"
+    readonly text: string
+    readonly images: readonly string[]
+    readonly files: readonly string[]
+    readonly semanticInput?: SemanticInputDocument
+}
+
 export interface DialogSelectionEnvelope {
     readonly kind: "dialog_selection"
     readonly values: readonly string[]

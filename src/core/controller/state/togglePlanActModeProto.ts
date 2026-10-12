@@ -27,6 +27,7 @@ export function toModeSwitchResponse(result: ModeSwitchRequestResult): ModeSwitc
         status: toProtoStatus(result.status),
         operationId: result.operationId,
         error: result.error,
+        draftDelivered: result.draftDelivered,
     })
 }
 

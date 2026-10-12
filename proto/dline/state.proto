@@ -337,6 +337,9 @@ message ModeSwitchResponse {
   optional string error = 3;
   // Set when the carried draft was rejected, so the composer can mark the node.
   optional SemanticInputDiagnostic diagnostic = 4;
+  // Set on a switch that carried a draft: whether the awaiting dialog took it
+  // as its reply. The composer lets go of the draft only when it did.
+  optional bool draft_delivered = 5;
 }
 
 message ModeSwitchOperationRequest {
@@ -365,6 +368,9 @@ message ProfileSwitchResponse {
   optional string error = 3;
   // Set when the carried draft was rejected, so the composer can mark the node.
   optional SemanticInputDiagnostic diagnostic = 4;
+  // Set on a switch that carried a draft: whether the awaiting dialog took it
+  // as its reply. The composer lets go of the draft only when it did.
+  optional bool draft_delivered = 5;
 }
 
 message ProfileSwitchOperationRequest {

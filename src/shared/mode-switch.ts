@@ -31,4 +31,6 @@ export interface ModeSwitchRequestResult {
     status: ModeSwitchRequestStatus
     operationId?: string
     error?: string
+    /** Set on a switch that carried a draft: whether the awaiting dialog took it as its reply. */
+    draftDelivered?: boolean
 }

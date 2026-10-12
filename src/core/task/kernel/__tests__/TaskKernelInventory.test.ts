@@ -41,7 +41,6 @@ const EXPECTED_TASK_VIEW_FILES = [
     "webview-ui/src/services/task-messages.ts",
     "webview-ui/src/task-interaction/FooterActions.tsx",
     "webview-ui/src/task-interaction/InteractionHost.tsx",
-    "webview-ui/src/task-interaction/TaskInput.tsx",
     "webview-ui/src/task-interaction/types.ts",
 ] as const
 

@@ -15,6 +15,7 @@ import type { TaskBackgroundIngressOwner } from "./TaskBackgroundIngressOwner"
 import type { TaskCollaborationSessionOwner } from "./TaskCollaborationSessionOwner"
 import type { TaskInputMaterializer } from "./TaskInputMaterializer"
 import type { TaskSessionOwners } from "./TaskSessionOwners"
+import type { TransitionDraftApplication } from "./TransitionDraftApplication"
 
 export type ActiveTaskSessionReleasePort = SessionResourceReleasePort
 
@@ -40,6 +41,8 @@ export interface ActiveTaskSessionOptions {
     readonly inputQueue: InputQueueApplicationPort
     /** Resolves a draft's persisted resource parts when a receiver that reads flat attachments consumes it. */
     readonly draftAttachments?: DraftAttachmentPort
+    /** Keeps the draft a Mode or Profile switch carries until the dialog it answers takes it. */
+    readonly transitionDrafts?: TransitionDraftApplication
     readonly owners: TaskSessionOwners
     /** Where an approval response records the feedback its tool block must carry. */
     readonly approvalFeedback: ToolApprovalFeedbackLedger
@@ -60,6 +63,7 @@ export class ActiveTaskSession {
     readonly inputs: TaskInputMaterializer
     readonly inputQueue: InputQueueApplicationPort
     readonly draftAttachments: DraftAttachmentPort | undefined
+    readonly transitionDrafts: TransitionDraftApplication | undefined
     readonly messages: MessageStateHandler
     readonly owners: TaskSessionOwners
     readonly approvalFeedback: ToolApprovalFeedbackLedger
@@ -89,6 +93,7 @@ export class ActiveTaskSession {
         this.inputs = options.inputs
         this.inputQueue = options.inputQueue
         this.draftAttachments = options.draftAttachments
+        this.transitionDrafts = options.transitionDrafts
         this.owners = options.owners
         this.messages = options.owners.messages
         this.approvalFeedback = options.approvalFeedback

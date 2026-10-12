@@ -11,6 +11,7 @@ import {
     selectRetainedQueueEntryIds,
 } from "./machines/intake"
 import { settleTerminatedTurn } from "./machines/terminate"
+import { reduceTransitionDraft, validateTransitionDraftEvent } from "./machines/transition-draft"
 import { reduceTurn, toolTerminalManifestPayload } from "./machines/turn"
 import {
     allBlocksTerminal,
@@ -859,7 +860,7 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
         return reject(state, "generation_mismatch", `Event generation ${event.generation} does not match ${state.generation}`)
     if (state.flow.phase === "terminated" && event.type !== "lifecycle.open")
         return reject(state, "phase_invalid", "Terminated tasks reject new events")
-    const invalid = validateEvent(state, event)
+    const invalid = validateEvent(state, event) ?? validateTransitionDraftEvent(state, event)
     if (invalid) return reject(state, invalid.reason, invalid.message)
 
     const nextRevision = state.revision + 1
@@ -955,6 +956,7 @@ export function transition(state: TaskState, event: TaskEvent): TransitionResult
     ) {
         next = { ...next, flow: { phase: "waiting" } }
     }
+    next = reduceTransitionDraft(next, event)
     const commands = [
         ...flow.commands,
         ...turn.commands,

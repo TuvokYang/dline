@@ -10,7 +10,7 @@ interface TestHarness {
     lease: ContextTransitionLease
     getOccupiedTokens: ReturnType<typeof vi.fn<() => number>>
     validate: ReturnType<typeof vi.fn<(operation: ProfileSwitchOperation) => boolean>>
-    commitProfile: ReturnType<typeof vi.fn<(operation: ProfileSwitchOperation) => Promise<void>>>
+    commitProfile: ReturnType<typeof vi.fn<ProfileCommitPort["commit"]>>
     resolveTarget: ReturnType<
         typeof vi.fn<(profileId: string, profileName: string, mode: Mode) => ResolvedProfileTarget | undefined>
     >
@@ -53,7 +53,7 @@ function createHarness(
     }
     const getOccupiedTokens = vi.fn<() => number>(() => options.occupiedTokens ?? TARGET_CONTEXT_WINDOW)
     const validate = vi.fn<(operation: ProfileSwitchOperation) => boolean>(() => true)
-    const commitProfile = vi.fn<(operation: ProfileSwitchOperation) => Promise<void>>(async () => undefined)
+    const commitProfile = vi.fn<ProfileCommitPort["commit"]>(async () => undefined)
     const commit: ProfileCommitPort = { validate, commit: commitProfile }
     const coordinator = new ProfileSwitchCoordinator({
         bindings,

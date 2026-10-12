@@ -26,6 +26,7 @@ export function toProfileSwitchResponse(result: ProfileSwitchRequestResult): Pro
         status: toProtoStatus(result.status),
         operationId: result.operationId,
         error: result.error,
+        draftDelivered: result.draftDelivered,
     })
 }
 

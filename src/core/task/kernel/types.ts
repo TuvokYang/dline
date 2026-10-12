@@ -306,6 +306,20 @@ export type HaltSlice =
           readonly forcedClosed?: readonly ParticipantId[]
       }
 
+/**
+ * A draft the user switched Mode or Profile with while a dialog awaited their reply.
+ *
+ * The switch delivers it only once the target handler is in place, which may
+ * take a compaction; recording it keeps the draft across a reload in between.
+ * It lives exactly as long as the dialog it answers stays open.
+ */
+export interface TransitionDraftFact {
+    readonly draftId: string
+    /** A `transition_draft` payload; a missing payload reads as no draft. */
+    readonly payloadRef: string
+    readonly interactionId: InteractionId
+}
+
 export interface TaskState {
     readonly taskId: TaskId
     readonly revision: number
@@ -317,6 +331,7 @@ export interface TaskState {
     readonly snapshotQueueImport?: SnapshotQueueImportMarker
     readonly halt: HaltSlice
     readonly journalWatermark?: JournalWatermark
+    readonly transitionDraft?: TransitionDraftFact
 }
 
 interface EventBase {
@@ -544,6 +559,12 @@ export type CoTaskEvent = EventBase & {
     readonly payloadRef: string
     readonly sequence?: number
 }
+export type TransitionDraftEvent = EventBase & {
+    readonly type: "transition_draft.recorded"
+    readonly draftId: string
+    readonly payloadRef: string
+    readonly interactionId: InteractionId
+}
 export type HaltEvent = EventBase & {
     readonly type: "halt.halted" | "halt.failed"
     readonly haltId: HaltId
@@ -586,6 +607,7 @@ export type TaskEvent =
     | CoTaskEvent
     | HaltEvent
     | LifecycleEvent
+    | TransitionDraftEvent
 
 interface CommandBase {
     readonly commandId: CommandId

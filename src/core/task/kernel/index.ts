@@ -1,5 +1,6 @@
 export { hydrate, requiredPayloadRefs } from "./hydrate"
 export { ALL_HALT_PARTICIPANTS } from "./machines/halt"
+export { openTransitionDraft, replyableDialog } from "./machines/transition-draft"
 export { restorableApprovals } from "./recovery"
 export { mistakeLimit, transition } from "./transition"
 export * from "./turn/approval-kind"

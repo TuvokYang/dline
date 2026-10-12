@@ -55,6 +55,7 @@ import {
     useStoppedReasoningExpansion,
     WelcomeSection,
 } from "./chat-view"
+import { isTransitionRunning, useTransitionDraftRestore } from "./chat-view/hooks/useTransitionDraftRestore"
 import { resolveActiveProfile, resolveTaskCurrency } from "./chat-view/utils/profileUtils"
 import { createCommandAtom } from "./input/semantic-composer/atoms"
 import { type ComposerSegment, contentLength, isBlankDraft, trimSegments } from "./input/semantic-composer/model"
@@ -93,6 +94,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         taskTitleMessage,
         historyTaskOpening,
         dismissHistoryTaskOpening,
+        transitionDraft,
+        modeSwitch,
+        profileSwitch,
     } = useExtensionState()
     const [contentTab, setContentTab] = useState<TaskContentTab>("chat")
     const [focusedActivityId, setFocusedActivityId] = useState<string>()
@@ -261,6 +265,13 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         restoreDraft(pendingSuccessorDraft.draft)
         setPendingSuccessorDraft(undefined)
     }, [pendingSuccessorDraft, restoreDraft, taskId, taskTitleMessage?.text, taskViewState?.taskId])
+    useTransitionDraftRestore({
+        taskId,
+        transitionDraft,
+        transitionRunning: isTransitionRunning(modeSwitch?.phase) || isTransitionRunning(profileSwitch?.phase),
+        composerBlank: isBlankDraft(draftSegments),
+        restoreDraft,
+    })
 
     useEffect(() => {
         const handleCopy = async (e: ClipboardEvent) => {
@@ -771,7 +782,6 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                 <InputSection
                     canQueueInput={visibleTask ? queueCanDeliver : false}
                     chatState={chatState}
-                    clineAsk={visibleTask ? taskViewState?.activeInteraction?.taskAsk : undefined}
                     draft={interactionDraft}
                     enabled={visibleTask ? taskInputEnabled : undefined}
                     imagesAllowed={imagesAllowed}

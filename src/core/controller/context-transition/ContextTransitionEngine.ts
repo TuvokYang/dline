@@ -2,6 +2,7 @@ import type { ApiHandler } from "@core/api"
 import type { TaskCompactionPort } from "@core/controller/context-transition/types"
 import type { ContextCompactionTransitionState } from "@core/task/ContextCompactionSession"
 import type { ChatContent } from "@shared/ChatContent"
+import { Logger } from "@shared/services/Logger"
 import type { Mode } from "@shared/storage/types"
 import type { ContextTransitionKind, ContextTransitionLease } from "./ContextTransitionLease"
 
@@ -34,7 +35,43 @@ export interface ContextTransitionRequestResult {
     status: ContextTransitionRequestStatus
     operationId?: string
     error?: string
+    /**
+     * Set on a switched transition that carried a draft: whether the draft was
+     * delivered as the awaiting dialog's reply. The composer that sent it may
+     * only let go of it when it was.
+     */
+    draftDelivered?: boolean
 }
+
+/** The part of an operation a draft carrier reads: which task it targets and the draft it was requested with. */
+export interface TransitionDraftSource {
+    readonly operationId: string
+    readonly taskId: string
+    readonly chatContent?: ChatContent
+}
+
+/** Whether a transition's draft could be kept while it awaits confirmation. */
+export type TransitionDraftHold = "held" | "none" | "failed"
+
+/** What became of a transition's draft once the transition committed. */
+export type TransitionDraftDelivery = "empty" | "delivered" | "undelivered"
+
+/**
+ * Carries the composer draft a transition was requested with.
+ *
+ * The engine owns when it happens, so every transition kind gets the same
+ * ordering: the draft is made durable before a confirmation becomes visible,
+ * and it is answered to the awaiting dialog only as the last step of a
+ * committed transition, after any compaction barrier was released. Policies
+ * never see the draft.
+ */
+export interface TransitionDraftCarrier {
+    /** `failed` means a dialog awaits the draft but it could not be kept; the transition must not wait on it. */
+    hold(source: TransitionDraftSource): Promise<TransitionDraftHold>
+    deliver(source: TransitionDraftSource): Promise<TransitionDraftDelivery>
+}
+
+const DRAFT_NOT_KEPT_ERROR = "The draft sent with the switch could not be kept while the switch waits."
 
 export interface ContextTransitionCompactionRequest {
     operationId: string
@@ -98,6 +135,8 @@ export interface ContextTransitionEngineDeps {
     compaction: TaskCompactionPort
     postState: () => Promise<void>
     createId: () => string
+    /** Absent when the host carries no composer drafts across transitions. */
+    draftCarrier?: TransitionDraftCarrier
 }
 
 /** Own the only Profile/Mode transition operation and phase state. */
@@ -141,7 +180,7 @@ export class ContextTransitionEngine {
                     this.directCommit = { operationId, taskId: request.taskId }
                     try {
                         await policy.commit(directOperation)
-                        return { status: "switched", operationId }
+                        return { status: "switched", operationId, ...(await this.deliverDraft(directOperation)) }
                     } finally {
                         if (this.directCommit?.operationId === operationId) this.directCommit = undefined
                     }
@@ -194,6 +233,11 @@ export class ContextTransitionEngine {
 
         this.active.operation = preparation.operation
         if (preparation.kind === "confirm") {
+            // A reload while the confirmation is visible must not lose the draft,
+            // so it is kept before the confirmation is published.
+            if ((await this.holdDraft(preparation.operation)) === "failed") {
+                return this.failActive(DRAFT_NOT_KEPT_ERROR, false)
+            }
             this.active.phase = "awaiting_confirmation"
             await this.publish(
                 policy.kind,
@@ -233,8 +277,7 @@ export class ContextTransitionEngine {
                 await active.policy.commit(active.operation)
                 active.targetAdopted = true
                 if (!createCompactionRequest) {
-                    await this.clearActive(active.operationId)
-                    return { status: "switched", operationId: active.operationId }
+                    return this.settleCommitted(active.operation)
                 }
             }
             if (!createCompactionRequest) {
@@ -263,8 +306,7 @@ export class ContextTransitionEngine {
             active.compactionCompleted = true
             if (active.policy.confirmationOrder === "commit_then_compact") {
                 await this.deps.compaction.complete(active.operationId)
-                await this.clearActive(active.operationId)
-                return { status: "switched", operationId: active.operationId }
+                return this.settleCommitted(active.operation)
             }
             return this.commitActive(active.policy, active.operation, true)
         } catch (error) {
@@ -319,8 +361,6 @@ export class ContextTransitionEngine {
         try {
             await policy.commit(operation)
             if (releaseBarrier) await this.deps.compaction.complete(operation.operationId)
-            await this.clearActive(operation.operationId)
-            return { status: "switched", operationId: operation.operationId }
         } catch (error) {
             const reason = error instanceof Error ? error.message : "Context transition commit failed."
             const reportedReason = this.active?.compactionCompleted
@@ -328,6 +368,50 @@ export class ContextTransitionEngine {
                 : reason
             return this.failActive(reportedReason, releaseBarrier)
         }
+        return this.settleCommitted(operation)
+    }
+
+    /**
+     * Finish a committed transition: deliver its draft, then return to idle.
+     *
+     * Delivery is the point of no return. Once the awaiting dialog took the
+     * draft, a failure to publish the settled state must not report the switch
+     * as failed: the composer would keep a draft that was already sent.
+     */
+    private async settleCommitted(operation: ContextTransitionOperation): Promise<ContextTransitionRequestResult> {
+        const delivery = await this.deliverDraft(operation)
+        try {
+            await this.clearActive(operation.operationId)
+        } catch (error) {
+            Logger.warn(`[ContextTransition] ${operation.operationId}: settled state was not published`, error)
+        }
+        return { status: "switched", operationId: operation.operationId, ...delivery }
+    }
+
+    private async holdDraft(operation: ContextTransitionOperation): Promise<TransitionDraftHold> {
+        const carrier = this.deps.draftCarrier
+        if (!carrier) return "none"
+        try {
+            return await carrier.hold(operation)
+        } catch (error) {
+            Logger.warn(`[ContextTransition] ${operation.operationId}: draft could not be kept`, error)
+            return "failed"
+        }
+    }
+
+    private async deliverDraft(
+        operation: ContextTransitionOperation,
+    ): Promise<Pick<ContextTransitionRequestResult, "draftDelivered">> {
+        const carrier = this.deps.draftCarrier
+        if (!carrier) return {}
+        let delivery: TransitionDraftDelivery
+        try {
+            delivery = await carrier.deliver(operation)
+        } catch (error) {
+            Logger.warn(`[ContextTransition] ${operation.operationId}: draft was not delivered`, error)
+            delivery = "undelivered"
+        }
+        return delivery === "empty" ? {} : { draftDelivered: delivery === "delivered" }
     }
 
     /**

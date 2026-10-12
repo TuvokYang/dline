@@ -102,9 +102,11 @@ export class ModeTransitionPolicy implements ContextTransitionPolicy<ModeSwitchR
                     profile: operation.target.profile,
                     contextWindow: operation.target.contextWindow,
                 },
+                // A copy of the whole draft, its document included, so the transition
+                // record never describes a draft other than the one being carried.
                 chatContent: operation.chatContent
                     ? {
-                          message: operation.chatContent.message,
+                          ...operation.chatContent,
                           images: [...(operation.chatContent.images ?? [])],
                           files: [...(operation.chatContent.files ?? [])],
                       }

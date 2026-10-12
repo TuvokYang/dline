@@ -135,6 +135,126 @@ describe("useProfileSwitch", () => {
         expect(StateServiceClient.requestProfileSwitch).toHaveBeenCalledTimes(1)
     })
 
+    it("carries the composer draft read at request time", async () => {
+        const { result, rerender } = renderHook(
+            (props: { text: string }) =>
+                useProfileSwitch({ profileSwitch: { phase: "idle" }, draft: { text: props.text, images: [], files: [] } }),
+            { initialProps: { text: "first" } },
+        )
+        rerender({ text: "answer under the new Profile" })
+
+        await act(async () => result.current.requestSwitch("small-profile", ["act"]))
+
+        expect(StateServiceClient.requestProfileSwitch).toHaveBeenCalledWith(
+            expect.objectContaining({
+                chatContent: expect.objectContaining({ message: "answer under the new Profile" }),
+            }),
+        )
+    })
+
+    it("sends no draft content for an empty composer", async () => {
+        const { result } = renderHook(() =>
+            useProfileSwitch({ profileSwitch: { phase: "idle" }, draft: { text: "  ", images: [], files: [] } }),
+        )
+
+        await act(async () => result.current.requestSwitch("small-profile", ["act"]))
+
+        expect(vi.mocked(StateServiceClient.requestProfileSwitch).mock.calls[0]?.[0].chatContent).toBeUndefined()
+    })
+
+    function composerHolding(holds = true) {
+        return { holds: vi.fn(() => holds), retire: vi.fn() }
+    }
+
+    function response(status: ProfileSwitchStatus, draftDelivered?: boolean): ProfileSwitchResponse {
+        return ProfileSwitchResponse.create({ status, operationId: "profile-operation-1", draftDelivered })
+    }
+
+    it("lets the composer go only when a switch reports its draft delivered", async () => {
+        const composer = composerHolding()
+        const draft = { text: "reply", images: [], files: [] }
+        vi.mocked(StateServiceClient.requestProfileSwitch).mockResolvedValueOnce(
+            response(ProfileSwitchStatus.PROFILE_SWITCH_STATUS_SWITCHED, false),
+        )
+        const { result } = renderHook(() => useProfileSwitch({ profileSwitch: { phase: "idle" }, draft, composer }))
+
+        await act(async () => result.current.requestSwitch("small-profile", ["act"]))
+        expect(composer.retire).not.toHaveBeenCalled()
+
+        vi.mocked(StateServiceClient.requestProfileSwitch).mockResolvedValueOnce(
+            response(ProfileSwitchStatus.PROFILE_SWITCH_STATUS_CONFIRMATION_REQUIRED),
+        )
+        vi.mocked(StateServiceClient.confirmProfileSwitch).mockResolvedValueOnce(
+            response(ProfileSwitchStatus.PROFILE_SWITCH_STATUS_SWITCHED, true),
+        )
+        await act(async () => result.current.requestSwitch("small-profile", ["act"]))
+        expect(composer.retire).not.toHaveBeenCalled()
+        await act(async () => result.current.confirmSwitch("profile-operation-1"))
+        expect(composer.retire).toHaveBeenCalledOnce()
+    })
+
+    it("settles a confirmation against the draft its request carried, not the composer's later one", async () => {
+        const composer = composerHolding()
+        const sent = { text: "reply", images: [], files: [] }
+        vi.mocked(StateServiceClient.requestProfileSwitch).mockResolvedValueOnce(
+            response(ProfileSwitchStatus.PROFILE_SWITCH_STATUS_CONFIRMATION_REQUIRED),
+        )
+        vi.mocked(StateServiceClient.confirmProfileSwitch).mockResolvedValueOnce(
+            response(ProfileSwitchStatus.PROFILE_SWITCH_STATUS_SWITCHED, true),
+        )
+        const { result, rerender } = renderHook(
+            ({ draft }: { draft: typeof sent }) => useProfileSwitch({ profileSwitch: { phase: "idle" }, draft, composer }),
+            { initialProps: { draft: sent } },
+        )
+
+        await act(async () => result.current.requestSwitch("small-profile", ["act"]))
+        rerender({ draft: { text: "typed while the notice was open", images: [], files: [] } })
+        await act(async () => result.current.confirmSwitch("profile-operation-1"))
+
+        expect(composer.holds).toHaveBeenCalledWith(sent)
+        expect(composer.retire).toHaveBeenCalledOnce()
+    })
+
+    it("leaves a composer the user edited after the request alone", async () => {
+        const composer = composerHolding(false)
+        vi.mocked(StateServiceClient.requestProfileSwitch).mockResolvedValueOnce(
+            response(ProfileSwitchStatus.PROFILE_SWITCH_STATUS_CONFIRMATION_REQUIRED),
+        )
+        vi.mocked(StateServiceClient.confirmProfileSwitch).mockResolvedValueOnce(
+            response(ProfileSwitchStatus.PROFILE_SWITCH_STATUS_SWITCHED, true),
+        )
+        const { result } = renderHook(() =>
+            useProfileSwitch({ profileSwitch: { phase: "idle" }, draft: { text: "reply", images: [], files: [] }, composer }),
+        )
+
+        await act(async () => result.current.requestSwitch("small-profile", ["act"]))
+        await act(async () => result.current.confirmSwitch("profile-operation-1"))
+
+        expect(composer.retire).not.toHaveBeenCalled()
+    })
+
+    it("keeps the draft when a delivered flag accompanies a refused switch", async () => {
+        const composer = composerHolding()
+        vi.mocked(StateServiceClient.requestProfileSwitch).mockResolvedValueOnce(
+            ProfileSwitchResponse.create({
+                status: ProfileSwitchStatus.PROFILE_SWITCH_STATUS_REJECTED,
+                operationId: "profile-operation-1",
+                draftDelivered: true,
+            }),
+        )
+        const { result } = renderHook(() =>
+            useProfileSwitch({
+                profileSwitch: { phase: "idle" },
+                draft: { text: "reply", images: [], files: [] },
+                composer,
+            }),
+        )
+
+        await act(async () => result.current.requestSwitch("small-profile", ["act"]))
+
+        expect(composer.retire).not.toHaveBeenCalled()
+    })
+
     it("confirms and cancels by immutable operation identity", async () => {
         const { result } = renderHook(() => useProfileSwitch({ profileSwitch: snapshot("awaiting_confirmation") }))
 

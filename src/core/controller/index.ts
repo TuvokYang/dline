@@ -152,7 +152,7 @@ import { ControllerTransitionCompactionPort } from "./task/host/ControllerTransi
 import { OpeningHandoff } from "./task/OpeningHandoff"
 import { type TaskOpening } from "./task/opened-task"
 import { readOnlyTaskView } from "./task/readOnlyTaskView"
-import { replyWithTransitionDraft } from "./task/replyWithTransitionDraft"
+import { controllerTransitionDraftCarrier, projectTransitionDraft } from "./task/replyWithTransitionDraft"
 import { selectTaskRateMetricsQuery, type TaskRateMetricsQueryFn } from "./task/TaskRateMetricsSource"
 import { adaptCanonicalTaskView } from "./task/TaskViewMessageAdapter"
 import { startTaskLifecycle } from "./task/task-start-lifecycle"
@@ -1857,6 +1857,7 @@ export class Controller {
     private createContextTransitionEngine(): ContextTransitionEngine {
         return new ContextTransitionEngine({
             lease: new ContextTransitionLease(),
+            draftCarrier: controllerTransitionDraftCarrier(this),
             compaction: new ControllerTransitionCompactionPort({ getSession: () => this.task }),
             postState: () => this.postStateToWebview({ immediate: true }),
             createId: () => randomUUID(),
@@ -1892,12 +1893,6 @@ export class Controller {
                         session.owners.prompt.requestRefresh("mode_switch")
                         await session.owners.api.rebuild({ abortPrevious: true })
                         rebuilt = true
-                        // The draft the user switched with answers the awaiting dialog under
-                        // the target Mode; a refused answer must not leave a switch that
-                        // silently dropped it.
-                        if ((await replyWithTransitionDraft(this, operation.chatContent, session)) === "rejected") {
-                            throw new Error("The awaiting dialog refused the draft sent with the mode switch.")
-                        }
                     } catch (error) {
                         await this.restoreSourceMode(session, sourceMode, rebuilt)
                         throw error
@@ -1977,11 +1972,6 @@ export class Controller {
                     // sent again on its own.
                     session.owners.providerRetry?.handBack()
                     await session.owners.interactions.dismissProviderFailure()
-                    if ((await replyWithTransitionDraft(this, operation.chatContent, session)) === "rejected") {
-                        Logger.warn(
-                            `[ProfileSwitch] ${operation.operationId}: awaiting dialog refused the draft sent with the switch`,
-                        )
-                    }
                     this.restartAccountUsagePolling()
                 },
             },
@@ -3179,6 +3169,7 @@ export class Controller {
             inputQueue: this.task
                 ? [...(await this.task.inputQueue.project())]
                 : [...(this.historyDisplaySession?.getInputQueue() ?? [])],
+            transitionDraft: this.task ? await projectTransitionDraft(this.task) : undefined,
             /** Complete interaction view projected only from canonical runtime state. */
             taskViewState: this.projectCurrentTaskViewState(rawMessages),
         }

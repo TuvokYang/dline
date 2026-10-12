@@ -4,6 +4,7 @@ import { ContextTransitionEngine } from "@core/controller/context-transition/Con
 import { ContextTransitionLease } from "@core/controller/context-transition/ContextTransitionLease"
 import * as profileCatalog from "@core/controller/file/getApiProfiles"
 import type { ProfileSwitchCoordinator } from "@core/controller/profile-switch/ProfileSwitchCoordinator"
+import { controllerTransitionDraftCarrier } from "@core/controller/task/replyWithTransitionDraft"
 import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -59,17 +60,18 @@ describe("Controller Profile switch integration", () => {
         const handBack = vi.fn(() => true)
         const flushPendingState = vi.fn(async () => undefined)
         const restartAccountUsagePolling = vi.fn()
+        const task = createSessionFixture({
+            taskId: "task-1",
+            owners: {
+                settings: { mode: "act" as const, setProfileIdentityBindings },
+                api: { rebuild },
+                interactions: { dismissProviderFailure },
+                providerRetry: { handBack },
+            },
+        })
         const fakeController = {
             stateManager: { flushPendingState },
-            task: createSessionFixture({
-                taskId: "task-1",
-                owners: {
-                    settings: { mode: "act" as const, setProfileIdentityBindings },
-                    api: { rebuild },
-                    interactions: { dismissProviderFailure },
-                    providerRetry: { handBack },
-                },
-            }),
+            task,
             // Occupancy is read by the Controller from the live indicator.
             getOccupiedContextTokens,
             profileTransitionEngine: new ContextTransitionEngine({
@@ -81,6 +83,8 @@ describe("Controller Profile switch integration", () => {
                 },
                 postState: vi.fn(async () => undefined),
                 createId: () => "profile-operation-1",
+                // The carrier the Controller wires reads only its current task.
+                draftCarrier: controllerTransitionDraftCarrier({ task } as never),
             }),
             resolveTaskProfileName: vi.fn(() => "source-profile"),
             resolveProfileTarget: vi.fn(() => ({
@@ -115,6 +119,8 @@ describe("Controller Profile switch integration", () => {
         await expect(coordinator.confirm("profile-operation-1")).resolves.toEqual({
             status: "switched",
             operationId: "profile-operation-1",
+            // No dialog awaits a reply, so the draft stays the composer's.
+            draftDelivered: false,
         })
         expect(compact).not.toHaveBeenCalled()
         expect(release).not.toHaveBeenCalled()

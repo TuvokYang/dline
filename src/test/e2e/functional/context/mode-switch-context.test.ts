@@ -884,6 +884,69 @@ e2e(
 )
 
 e2e(
+    "Mode switch interaction - a pasted command in the switch draft reaches the awaiting question as inert text",
+    async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
+        e2e.setTimeout(120_000)
+        await configureModeProfiles(dlineDir, {
+            actProfile: E2E_PROFILE_NAMES.mockOpenAi,
+            actContextWindow: 131_072,
+            planProfile: E2E_PROFILE_NAMES.mockOpenAi,
+            planContextWindow: 131_072,
+        })
+        const pasted = "/compact E2E_SWITCH_PASTED_LITERAL"
+        server.enqueueResponses(
+            "openai-compatible-chat",
+            {
+                type: "tool",
+                id: "call_pasted_draft_question",
+                name: "qna_respond",
+                arguments: { response: "E2E_PASTED_DRAFT_QUESTION" },
+            },
+            {
+                type: "tool",
+                id: "call_pasted_draft_plan",
+                name: "make_plan",
+                arguments: { response: "E2E_PASTED_DRAFT_PLAN_READY", needs_more_exploration: false },
+                // The reply keeps the pasted text inert: a re-parse of the captured string would run /compact.
+                expectedRequestIncludes: [pasted, "PLAN MODE"],
+                expectedRequestExcludes: [INTERNAL_MODE_RESPONSE, COMPACT_INSTRUCTION_MARKER],
+            },
+        )
+
+        const app = await openVSCode(workspaceDir)
+        try {
+            const { sidebar } = await openSidebar(app, helper)
+            await sendTask(sidebar, "E2E_PASTED_DRAFT_TASK")
+            await expect(sidebar.getByText("E2E_PASTED_DRAFT_QUESTION", { exact: false }).last()).toBeVisible({
+                timeout: 60_000,
+            })
+
+            const input = sidebar.getByTestId("chat-input")
+            await input.click()
+            await app.evaluate(({ clipboard }, value) => clipboard.writeText(value), pasted)
+            await input.press(process.platform === "darwin" ? "Meta+V" : "Control+V")
+            await expectComposerText(input, pasted)
+            await sidebar.getByTestId("mode-switch").evaluate((element) => element.click())
+            await expectPlanMode(sidebar)
+            // The switch reported the draft delivered, so the composer let it go.
+            await expectComposerText(input, "")
+            await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 20_000 }).toBe(2)
+            await expect(sidebar.getByText("E2E_PASTED_DRAFT_PLAN_READY", { exact: false }).last()).toBeVisible({
+                timeout: 60_000,
+            })
+
+            const continuationRequest = server.getMockConsumptions("openai-compatible-chat")[1]
+            expect(continuationRequest.contractError).toBeUndefined()
+            expect(JSON.stringify(continuationRequest.requestBody).match(/E2E_SWITCH_PASTED_LITERAL/g)).toHaveLength(1)
+            await expectNoInternalCompactionEcho(sidebar)
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await app.close()
+        }
+    },
+)
+
+e2e(
     "Mode switch context - a smaller target switches directly when current usage fits",
     async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(150_000)

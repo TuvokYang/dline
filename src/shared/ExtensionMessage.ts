@@ -28,6 +28,7 @@ import type { TaskLockStatus } from "./proto/dline/task"
 import { Mode } from "./storage/types"
 import type { TaskCapabilityToggles } from "./TaskCapabilityToggles"
 import { TelemetrySetting } from "./TelemetrySetting"
+import type { TransitionDraftProjection } from "./TransitionDraft"
 import { UserInfo } from "./UserInfo"
 import type { LocalSearchEngineId } from "./web-search"
 import type { WebFetchPresentationV1, WebSearchPresentationV1 } from "./web-tools"
@@ -113,6 +114,8 @@ export interface ExtensionState {
     taskViewState?: TaskViewState
     /** Input the user queued while the task was busy; the backend owns it. */
     inputQueue?: QueuedInputEntry[]
+    /** A draft a Mode or Profile switch carried, kept until the dialog it answers takes it. */
+    transitionDraft?: TransitionDraftProjection
     shellIntegrationTimeout: number
     terminalReuseEnabled?: boolean
     terminalOutputLineLimit: number

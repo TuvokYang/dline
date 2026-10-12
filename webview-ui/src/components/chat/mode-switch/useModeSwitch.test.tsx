@@ -4,7 +4,7 @@ import type { Mode } from "@shared/storage/types"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { StateServiceClient } from "@/services/grpc-client"
-import { type ModeSwitchDraft, shouldAttachModeSwitchDraft, useModeSwitch } from "./useModeSwitch"
+import { type ModeSwitchDraft, useModeSwitch } from "./useModeSwitch"
 
 vi.mock("@/services/grpc-client", () => ({
     StateServiceClient: {
@@ -18,7 +18,6 @@ interface HookProps {
     mode: Mode
     stateRevision: number
     modeSwitch?: ModeSwitchSnapshot
-    attachDraft: boolean
 }
 
 // The captured draft carries its structure, so every assertion that the same
@@ -53,6 +52,15 @@ function createResponse(status: ModeSwitchStatus, operationId = "operation-1", e
     return ModeSwitchResponse.create({ status, operationId, error })
 }
 
+/** A response reporting the switch done, with the backend's account of the draft it carried. */
+function switchedResponse(draftDelivered: boolean): ModeSwitchResponse {
+    return ModeSwitchResponse.create({
+        status: ModeSwitchStatus.MODE_SWITCH_STATUS_SWITCHED,
+        operationId: "operation-1",
+        draftDelivered,
+    })
+}
+
 function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
     let resolve!: (value: T) => void
     const promise = new Promise<T>((resolvePromise) => {
@@ -64,7 +72,8 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
 /** Verify draft ownership and transaction completion semantics without timeout fallbacks. */
 describe("useModeSwitch", () => {
     const onSend = vi.fn<(draft: ModeSwitchDraft) => void>()
-    const clearDraft = vi.fn<() => void>()
+    // The composer still holds the captured draft unless a test says the user edited it.
+    const composer = { holds: vi.fn<(draft: ModeSwitchDraft) => boolean>(() => true), retire: vi.fn<() => void>() }
 
     beforeEach(() => {
         vi.clearAllMocks()
@@ -83,39 +92,35 @@ describe("useModeSwitch", () => {
         vi.useRealTimers()
     })
 
-    it("assigns mode-switch continuation drafts to the backend transaction", () => {
-        expect(shouldAttachModeSwitchDraft("followup")).toBe(true)
-        expect(shouldAttachModeSwitchDraft("make_plan")).toBe(true)
-        expect(shouldAttachModeSwitchDraft("qna_respond")).toBe(true)
-        expect(shouldAttachModeSwitchDraft("generate_report")).toBe(true)
-        expect(shouldAttachModeSwitchDraft("status_acknowledgment")).toBe(true)
-        expect(shouldAttachModeSwitchDraft("completion_result")).toBe(true)
-        expect(shouldAttachModeSwitchDraft("api_req_failed")).toBe(false)
-        expect(shouldAttachModeSwitchDraft(undefined)).toBe(false)
-    })
-
     /** Preserve a backend-owned draft while user confirmation is pending. */
-    it("does not clear draft when confirmation is required", async () => {
+    it("sends the composed draft and keeps it while confirmation is required", async () => {
         const { result } = renderHook(
             (props: HookProps) =>
                 useModeSwitch({
                     ...props,
                     draft: DRAFT,
                     onSend,
-                    clearDraft,
+                    composer,
                 }),
             {
-                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" }, attachDraft: true },
+                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" } },
             },
         )
 
         await act(async () => result.current.requestSwitch("act"))
 
         expect(result.current.isSwitchPending).toBe(true)
-        expect(clearDraft).not.toHaveBeenCalled()
+        expect(composer.retire).not.toHaveBeenCalled()
         expect(onSend).not.toHaveBeenCalled()
         expect(StateServiceClient.togglePlanActModeProto).toHaveBeenCalledWith(
-            expect.objectContaining({ chatContent: { message: "draft text", images: ["image-data"], files: ["file-path"] } }),
+            expect.objectContaining({
+                chatContent: {
+                    message: "draft text",
+                    images: ["image-data"],
+                    files: ["file-path"],
+                    semanticInput: expect.objectContaining({ rawText: "draft text" }),
+                },
+            }),
         )
     })
 
@@ -127,9 +132,8 @@ describe("useModeSwitch", () => {
                 stateRevision: 2,
                 modeSwitch: createSnapshot("compacting"),
                 draft: DRAFT,
-                attachDraft: false,
                 onSend,
-                clearDraft,
+                composer,
             }),
         )
 
@@ -147,9 +151,8 @@ describe("useModeSwitch", () => {
                 stateRevision: 2,
                 modeSwitch: createSnapshot("compacting"),
                 draft: DRAFT,
-                attachDraft: false,
                 onSend,
-                clearDraft,
+                composer,
             }),
         )
 
@@ -158,55 +161,51 @@ describe("useModeSwitch", () => {
         expect(result.current.isSwitchPending).toBe(true)
     })
 
-    /** Send a frontend-owned draft exactly once after a direct switch commits. */
-    it("submits text images and files once after switched", async () => {
-        vi.mocked(StateServiceClient.togglePlanActModeProto).mockResolvedValueOnce(
-            createResponse(ModeSwitchStatus.MODE_SWITCH_STATUS_SWITCHED),
-        )
+    /** Send a draft no dialog took exactly once after a direct switch commits. */
+    it("submits an undelivered draft once after switched", async () => {
+        vi.mocked(StateServiceClient.togglePlanActModeProto).mockResolvedValueOnce(switchedResponse(false))
         const { result, rerender } = renderHook(
             (props: HookProps) =>
                 useModeSwitch({
                     ...props,
                     draft: DRAFT,
                     onSend,
-                    clearDraft,
+                    composer,
                 }),
             {
-                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" }, attachDraft: false },
+                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" } },
             },
         )
 
         await act(async () => result.current.requestSwitch("act"))
-        rerender({ mode: "act", stateRevision: 2, modeSwitch: { phase: "idle" }, attachDraft: false })
+        rerender({ mode: "act", stateRevision: 2, modeSwitch: { phase: "idle" } })
 
         await waitFor(() => expect(onSend).toHaveBeenCalledWith(DRAFT))
-        rerender({ mode: "act", stateRevision: 3, modeSwitch: { phase: "idle" }, attachDraft: false })
+        rerender({ mode: "act", stateRevision: 3, modeSwitch: { phase: "idle" } })
         expect(onSend).toHaveBeenCalledTimes(1)
-        expect(clearDraft).not.toHaveBeenCalled()
+        expect(composer.retire).not.toHaveBeenCalled()
     })
 
-    /** Clear a backend-owned completion draft without sending it a second time. */
-    it("does not resubmit a completion draft after a direct switch", async () => {
-        vi.mocked(StateServiceClient.togglePlanActModeProto).mockResolvedValueOnce(
-            createResponse(ModeSwitchStatus.MODE_SWITCH_STATUS_SWITCHED),
-        )
+    /** Clear a draft the awaiting dialog took without sending it a second time. */
+    it("does not resubmit a draft the switch delivered", async () => {
+        vi.mocked(StateServiceClient.togglePlanActModeProto).mockResolvedValueOnce(switchedResponse(true))
         const { result, rerender } = renderHook(
             (props: HookProps) =>
                 useModeSwitch({
                     ...props,
                     draft: DRAFT,
                     onSend,
-                    clearDraft,
+                    composer,
                 }),
             {
-                initialProps: { mode: "act", stateRevision: 1, modeSwitch: { phase: "idle" }, attachDraft: true },
+                initialProps: { mode: "act", stateRevision: 1, modeSwitch: { phase: "idle" } },
             },
         )
 
         await act(async () => result.current.requestSwitch("plan"))
-        rerender({ mode: "plan", stateRevision: 2, modeSwitch: { phase: "idle" }, attachDraft: true })
+        rerender({ mode: "plan", stateRevision: 2, modeSwitch: { phase: "idle" } })
 
-        await waitFor(() => expect(clearDraft).toHaveBeenCalledOnce())
+        await waitFor(() => expect(composer.retire).toHaveBeenCalledOnce())
         expect(onSend).not.toHaveBeenCalled()
     })
 
@@ -222,29 +221,32 @@ describe("useModeSwitch", () => {
                     draft: DRAFT,
                     submitDraftAfterSwitch: false,
                     onSend,
-                    clearDraft,
+                    composer,
                 }),
             {
-                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" }, attachDraft: false },
+                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" } },
             },
         )
 
         await act(async () => result.current.requestSwitch("act"))
-        rerender({ mode: "act", stateRevision: 2, modeSwitch: { phase: "idle" }, attachDraft: false })
+        rerender({ mode: "act", stateRevision: 2, modeSwitch: { phase: "idle" } })
 
         await waitFor(() => expect(result.current.isSwitchPending).toBe(false))
         expect(onSend).not.toHaveBeenCalled()
-        expect(clearDraft).not.toHaveBeenCalled()
+        expect(composer.retire).not.toHaveBeenCalled()
     })
 
-    /** Treat the canonical state stream as committed even when the unary response is delayed. */
-    it("submits the draft when committed state arrives before the unary response", async () => {
+    /**
+     * The Mode change alone cannot say whether the dialog took the draft, so a
+     * switch that carried one settles only on its own response.
+     */
+    it("waits for the switch's response when committed state arrives first", async () => {
         const response = createDeferred<ModeSwitchResponse>()
         vi.mocked(StateServiceClient.togglePlanActModeProto).mockReturnValueOnce(response.promise)
         const { result, rerender } = renderHook(
-            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, clearDraft }),
+            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, composer }),
             {
-                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" }, attachDraft: false },
+                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" } },
             },
         )
 
@@ -253,61 +255,59 @@ describe("useModeSwitch", () => {
             request = result.current.requestSwitch("act")
             await Promise.resolve()
         })
-        rerender({ mode: "act", stateRevision: 2, modeSwitch: { phase: "idle" }, attachDraft: false })
-
-        await waitFor(() => expect(onSend).toHaveBeenCalledWith(DRAFT))
-        response.resolve(createResponse(ModeSwitchStatus.MODE_SWITCH_STATUS_SWITCHED))
-        await act(async () => request)
-        expect(onSend).toHaveBeenCalledTimes(1)
-    })
-
-    /** Bind backend draft ownership from confirmation state before the unary response returns. */
-    it("does not resubmit a confirmed compaction draft when the unary response is delayed", async () => {
-        const response = createDeferred<ModeSwitchResponse>()
-        vi.mocked(StateServiceClient.togglePlanActModeProto).mockReturnValueOnce(response.promise)
-        const { result, rerender } = renderHook(
-            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, clearDraft }),
-            {
-                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" }, attachDraft: false },
-            },
-        )
-
-        let request!: Promise<void>
-        await act(async () => {
-            request = result.current.requestSwitch("act")
-            await Promise.resolve()
-        })
-        rerender({
-            mode: "plan",
-            stateRevision: 2,
-            modeSwitch: createSnapshot("awaiting_confirmation"),
-            attachDraft: false,
-        })
-        rerender({ mode: "plan", stateRevision: 3, modeSwitch: createSnapshot("compacting"), attachDraft: false })
-        rerender({ mode: "act", stateRevision: 4, modeSwitch: { phase: "idle" }, attachDraft: false })
-
-        await waitFor(() => expect(clearDraft).toHaveBeenCalledOnce())
+        rerender({ mode: "act", stateRevision: 2, modeSwitch: { phase: "idle" } })
         expect(onSend).not.toHaveBeenCalled()
-        response.resolve(createResponse(ModeSwitchStatus.MODE_SWITCH_STATUS_CONFIRMATION_REQUIRED))
+        expect(composer.retire).not.toHaveBeenCalled()
+        expect(result.current.isSwitchPending).toBe(true)
+
+        response.resolve(switchedResponse(false))
         await act(async () => request)
-        expect(clearDraft).toHaveBeenCalledTimes(1)
+        await waitFor(() => expect(onSend).toHaveBeenCalledWith(DRAFT))
+        expect(onSend).toHaveBeenCalledTimes(1)
+        expect(composer.retire).not.toHaveBeenCalled()
     })
 
-    /** Let confirmed compaction consume a draft that was frontend-owned before the response. */
-    it("clears rather than resubmits a draft after confirmed compaction", async () => {
+    /** A confirmed switch that delivered its draft lets the composer go and never resends it. */
+    it("clears a draft that a confirmed switch delivered", async () => {
+        vi.mocked(StateServiceClient.confirmModeSwitch).mockResolvedValueOnce(switchedResponse(true))
         const { result, rerender } = renderHook(
-            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, clearDraft }),
+            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, composer }),
             {
-                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" }, attachDraft: false },
+                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" } },
             },
         )
 
         await act(async () => result.current.requestSwitch("act"))
-        rerender({ mode: "plan", stateRevision: 2, modeSwitch: createSnapshot("compacting"), attachDraft: false })
-        rerender({ mode: "act", stateRevision: 3, modeSwitch: { phase: "idle" }, attachDraft: false })
+        rerender({ mode: "plan", stateRevision: 2, modeSwitch: createSnapshot("awaiting_confirmation") })
+        await act(async () => result.current.confirmSwitch("operation-1"))
+        rerender({ mode: "plan", stateRevision: 3, modeSwitch: createSnapshot("compacting") })
+        rerender({ mode: "act", stateRevision: 4, modeSwitch: { phase: "idle" } })
 
-        await waitFor(() => expect(clearDraft).toHaveBeenCalledOnce())
+        await waitFor(() => expect(composer.retire).toHaveBeenCalledOnce())
         expect(onSend).not.toHaveBeenCalled()
+    })
+
+    /**
+     * A confirmed switch with no dialog left to take the draft used to clear it
+     * all the same; the draft is now sent as the user's next message instead.
+     */
+    it("sends a confirmed switch's undelivered draft instead of dropping it", async () => {
+        vi.mocked(StateServiceClient.confirmModeSwitch).mockResolvedValueOnce(switchedResponse(false))
+        const { result, rerender } = renderHook(
+            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, composer }),
+            {
+                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" } },
+            },
+        )
+
+        await act(async () => result.current.requestSwitch("act"))
+        rerender({ mode: "plan", stateRevision: 2, modeSwitch: createSnapshot("compacting") })
+        await act(async () => result.current.confirmSwitch("operation-1"))
+        rerender({ mode: "act", stateRevision: 3, modeSwitch: { phase: "idle" } })
+
+        await waitFor(() => expect(onSend).toHaveBeenCalledWith(DRAFT))
+        expect(onSend).toHaveBeenCalledTimes(1)
+        expect(composer.retire).not.toHaveBeenCalled()
     })
 
     /** Cancel only transaction metadata and preserve all input fields. */
@@ -318,15 +318,14 @@ describe("useModeSwitch", () => {
                 stateRevision: 2,
                 modeSwitch: createSnapshot("awaiting_confirmation"),
                 draft: DRAFT,
-                attachDraft: true,
                 onSend,
-                clearDraft,
+                composer,
             }),
         )
 
         await act(async () => result.current.cancelSwitch("operation-1"))
 
-        expect(clearDraft).not.toHaveBeenCalled()
+        expect(composer.retire).not.toHaveBeenCalled()
         expect(onSend).not.toHaveBeenCalled()
         expect(StateServiceClient.cancelModeSwitch).toHaveBeenCalledTimes(1)
     })
@@ -334,9 +333,9 @@ describe("useModeSwitch", () => {
     /** Preserve draft content when backend compaction enters a failed terminal state. */
     it("preserves draft after compact failure", async () => {
         const { result, rerender } = renderHook(
-            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, clearDraft }),
+            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, composer }),
             {
-                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" }, attachDraft: true },
+                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" } },
             },
         )
         await act(async () => result.current.requestSwitch("act"))
@@ -345,20 +344,62 @@ describe("useModeSwitch", () => {
             mode: "plan",
             stateRevision: 2,
             modeSwitch: { ...createSnapshot("failed"), error: "Compaction failed." },
-            attachDraft: true,
         })
 
         await waitFor(() => expect(result.current.isSwitchPending).toBe(false))
-        expect(clearDraft).not.toHaveBeenCalled()
+        expect(composer.retire).not.toHaveBeenCalled()
         expect(onSend).not.toHaveBeenCalled()
+    })
+
+    /** The user's edit after the switch started is newer work that neither a delivery nor a resend may touch. */
+    it.each([true, false])("leaves an edited composer alone when the switch settles (delivered: %s)", async (delivered) => {
+        vi.mocked(StateServiceClient.togglePlanActModeProto).mockResolvedValueOnce(switchedResponse(delivered))
+        const { result, rerender } = renderHook(
+            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, composer }),
+            {
+                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" } },
+            },
+        )
+
+        await act(async () => result.current.requestSwitch("act"))
+        composer.holds.mockReturnValue(false)
+        rerender({ mode: "act", stateRevision: 2, modeSwitch: { phase: "idle" } })
+
+        await waitFor(() => expect(result.current.isSwitchPending).toBe(false))
+        expect(composer.holds).toHaveBeenCalledWith(DRAFT)
+        expect(composer.retire).not.toHaveBeenCalled()
+        expect(onSend).not.toHaveBeenCalled()
+        composer.holds.mockReturnValue(true)
+    })
+
+    /** A request or confirmation answered without a settlement must not leave the toggle disabled forever. */
+    it.each([
+        ["request", ModeSwitchStatus.MODE_SWITCH_STATUS_IN_PROGRESS],
+        ["confirmation", ModeSwitchStatus.MODE_SWITCH_STATUS_UNSPECIFIED],
+    ])("releases a %s that ends without settling the draft", async (step, status) => {
+        if (step === "request") {
+            vi.mocked(StateServiceClient.togglePlanActModeProto).mockResolvedValueOnce(createResponse(status))
+        } else {
+            vi.mocked(StateServiceClient.confirmModeSwitch).mockResolvedValueOnce(createResponse(status))
+        }
+        const { result } = renderHook((props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, composer }), {
+            initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" } },
+        })
+
+        await act(async () => result.current.requestSwitch("act"))
+        if (step === "confirmation") await act(async () => result.current.confirmSwitch("operation-1"))
+
+        expect(result.current.isSwitchPending).toBe(false)
+        expect(onSend).not.toHaveBeenCalled()
+        expect(composer.retire).not.toHaveBeenCalled()
     })
 
     /** Ignore a terminal snapshot that belongs to a different operation identity. */
     it("ignores stale operation snapshots", async () => {
         const { result, rerender } = renderHook(
-            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, clearDraft }),
+            (props: HookProps) => useModeSwitch({ ...props, draft: DRAFT, onSend, composer }),
             {
-                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" }, attachDraft: false },
+                initialProps: { mode: "plan", stateRevision: 1, modeSwitch: { phase: "idle" } },
             },
         )
         await act(async () => result.current.requestSwitch("act"))
@@ -367,7 +408,6 @@ describe("useModeSwitch", () => {
             mode: "plan",
             stateRevision: 2,
             modeSwitch: { ...createSnapshot("failed", "stale-operation"), error: "Stale failure." },
-            attachDraft: false,
         })
 
         expect(result.current.isSwitchPending).toBe(true)

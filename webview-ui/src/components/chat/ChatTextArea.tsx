@@ -1,5 +1,4 @@
 import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT, getChatInputSendShortcutLabel } from "@shared/ChatInputSendShortcut"
-import type { UiAsk } from "@shared/ExtensionMessage"
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { Mode } from "@shared/storage/types"
 import { AtSignIcon, PlusIcon } from "lucide-react"
@@ -9,7 +8,8 @@ import styled from "styled-components"
 import ContextMenu from "@/components/chat/ContextMenu"
 import { CHAT_CONSTANTS } from "@/components/chat/chat-view/constants"
 import { ModeSwitchDialog } from "@/components/chat/mode-switch/ModeSwitchDialog"
-import { shouldAttachModeSwitchDraft, useModeSwitch } from "@/components/chat/mode-switch/useModeSwitch"
+import type { TransitionDraftComposer } from "@/components/chat/mode-switch/transitionDraft"
+import { useModeSwitch } from "@/components/chat/mode-switch/useModeSwitch"
 import SlashCommandMenu from "@/components/chat/SlashCommandMenu"
 import ModelSwitcher from "@/components/chat/task-header/ModelSwitcher"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -82,7 +82,6 @@ interface ChatTextAreaProps {
     attachmentsDisabled: boolean
     /** Whether the active model reads images natively, so the file dialog offers them. */
     imagesAllowed: boolean
-    clineAsk?: UiAsk
     onHeightChange?: (height: number) => void
     onFocusChange?: (isFocused: boolean) => void
     /** The catalog every submission of this view is composed against. */
@@ -175,7 +174,6 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
             onSendBlocked,
             attachmentsDisabled,
             imagesAllowed,
-            clineAsk,
             onHeightChange,
             onFocusChange,
             semanticCatalog,
@@ -297,22 +295,30 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
         )
 
         // --- mode switch ---
-        const attachDraft = shouldAttachModeSwitchDraft(clineAsk)
-        // A switch carries text only, so a draft with attachments stays in the composer instead of travelling with it.
+        // A switch carries the whole composed draft, resources included, as their
+        // document nodes. A draft still staging a resource cannot be captured and
+        // stays in the composer instead of travelling with the switch.
         const modeSwitchDraft = useMemo(() => {
-            if (resourceCount > 0) return EMPTY_SEND_DRAFT
             const capture = captureComposerSend(segments, { catalog: semanticCatalog, documentId })
             return capture.ok ? capture.draft : EMPTY_SEND_DRAFT
-        }, [documentId, resourceCount, segments, semanticCatalog])
+        }, [documentId, segments, semanticCatalog])
+        // Segments are immutable, so a composer still holding the very segments a
+        // switch captured holds that draft unedited; any edit or send replaced them.
+        const transitionComposer = useMemo<TransitionDraftComposer<ComposerSendDraft>>(
+            () => ({
+                holds: (captured) => captured.segments === engine.getState().segments,
+                retire: composer.retire,
+            }),
+            [composer.retire, engine],
+        )
         const modeSwitchFlow = useModeSwitch({
             mode,
             stateRevision,
             modeSwitch,
             draft: modeSwitchDraft,
-            attachDraft,
             submitDraftAfterSwitch: currentTaskItem !== undefined,
             onSend: (capturedDraft) => onSend(capturedDraft),
-            clearDraft: composer.retire,
+            composer: transitionComposer,
         })
         const onModeToggle = useCallback(() => {
             const targetMode: Mode = mode === "plan" ? "act" : "plan"
@@ -537,7 +543,13 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                         <ClineRulesToggleModal />
 
                         <ChatInputRuntimeControls
-                            profileControl={<ModelSwitcher onOpenSettings={() => navigateToSettings("api-config")} />}
+                            profileControl={
+                                <ModelSwitcher
+                                    draft={modeSwitchDraft}
+                                    draftComposer={transitionComposer}
+                                    onOpenSettings={() => navigateToSettings("api-config")}
+                                />
+                            }
                         />
 
                         <UsageBar />

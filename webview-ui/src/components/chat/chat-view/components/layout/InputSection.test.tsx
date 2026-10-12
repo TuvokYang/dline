@@ -1,4 +1,3 @@
-import type { UiAsk } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { type ComponentProps, forwardRef, type ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -30,11 +29,9 @@ vi.mock("@/components/chat/ChatTextArea", () => {
                 onSend: (draft: ComposerSendDraft) => void
                 onSendBlocked?: (draft: ComposerSendDraft) => void
                 sendingDisabled: boolean
-                clineAsk?: UiAsk
             }
         >((props, _ref) => (
             <>
-                <output data-testid="cline-ask">{props.clineAsk}</output>
                 <button
                     onClick={() => (props.sendingDisabled ? props.onSendBlocked?.(captured) : props.onSend(captured))}
                     type="button">
@@ -129,12 +126,6 @@ describe("InputSection deferred task submission", () => {
 
         releaseSettings()
         await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce())
-    })
-
-    it("forwards the active interaction ask to mode-switch draft ownership", () => {
-        render(<InputSection {...props(draft("answer"))} clineAsk="qna_respond" />)
-
-        expect(screen.getByTestId("cline-ask")).toHaveTextContent("qna_respond")
     })
 
     it("submits the input-owned draft instead of a stale parent draft", async () => {

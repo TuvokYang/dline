@@ -28,7 +28,7 @@ interface TestHarness {
     release: ReturnType<typeof vi.fn<(operationId: string) => Promise<void>>>
     fail: ReturnType<typeof vi.fn<(operationId: string, reason: string) => Promise<void>>>
     validate: ReturnType<typeof vi.fn<(operation: ModeSwitchOperation) => boolean>>
-    commitMode: ReturnType<typeof vi.fn<(operation: ModeSwitchOperation) => Promise<void>>>
+    commitMode: ReturnType<typeof vi.fn<ModeCommitPort["commit"]>>
     setTaskId: (taskId: string | undefined) => void
 }
 
@@ -70,7 +70,7 @@ function createHarness(projectedUsageTokens = 128_001): TestHarness {
     const fail = vi.fn<(operationId: string, reason: string) => Promise<void>>(async () => undefined)
     const compaction: TaskCompactionPort = { compact, complete: release, abort: fail }
     const validate = vi.fn<(operation: ModeSwitchOperation) => boolean>(() => true)
-    const commitMode = vi.fn<(operation: ModeSwitchOperation) => Promise<void>>(async () => {})
+    const commitMode = vi.fn<ModeCommitPort["commit"]>(async () => undefined)
     const commit: ModeCommitPort = { validate, commit: commitMode }
     const postState = vi.fn<() => Promise<void>>(async () => {})
     const coordinator = new ModeSwitchCoordinator({
@@ -184,8 +184,8 @@ describe("ModeSwitchCoordinator", () => {
     it("rejects re-entry while a same-profile direct commit is unresolved", async () => {
         let resolveCommit: (() => void) | undefined
         harness.commitMode.mockReturnValueOnce(
-            new Promise<void>((resolve) => {
-                resolveCommit = resolve
+            new Promise<undefined>((resolve) => {
+                resolveCommit = () => resolve(undefined)
             }),
         )
         const acquire = vi.spyOn(harness.lease, "acquire")

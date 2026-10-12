@@ -8,12 +8,17 @@ import { updateSetting } from "@/components/settings/utils/settingsHandlers"
 import { Switch } from "@/components/ui/switch"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip"
+import type { TransitionDraftComposer, TransitionDraftContent } from "../mode-switch/transitionDraft"
 import { ProfileSwitchDialog } from "../profile-switch/ProfileSwitchDialog"
 import { useProfileSwitch } from "../profile-switch/useProfileSwitch"
 import { resolveProfileDisplayState } from "./profileDisplayState"
 
 interface ModelSwitcherProps {
     onOpenSettings: () => void
+    /** The composer draft a Profile switch carries to a dialog awaiting a reply. */
+    draft?: TransitionDraftContent
+    /** The composer the draft came from, which lets go of a draft the switch delivered. */
+    draftComposer?: TransitionDraftComposer
 }
 
 /** Tab labels and their mode mapping */
@@ -24,7 +29,7 @@ type ModeTab = "act" | "plan"
  * check circle radio selection. Supports Act/Plan tabs when
  * planActSeparateModelsSetting is enabled.
  */
-const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings }) => {
+const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings, draft, draftComposer }) => {
     const {
         apiConfiguration,
         mode,
@@ -46,7 +51,7 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = ({ onOpenSettings }) => {
     // history item or title message is temporarily absent from the state window.
     const taskId = taskViewState?.taskId
     const hasActiveTask = Boolean(taskId)
-    const profileSwitchFlow = useProfileSwitch({ profileSwitch })
+    const profileSwitchFlow = useProfileSwitch({ profileSwitch, draft, composer: draftComposer })
 
     useEffect(() => {
         if (!open) setActiveTab(mode || "act")
