@@ -1,4 +1,5 @@
 import type { ToolResultAttachments } from "@integrations/misc/extract-text"
+import { REPLY_AS_TYPED, submittedInputRow } from "@shared/input-semantics/submitted-input"
 import type { ClineAskResponse } from "@shared/WebviewMessage"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -51,6 +52,9 @@ export function isAckedFeedback(
  * @param text Optional feedback text.
  * @param images Optional feedback image payloads.
  * @param files Optional feedback file payloads.
+ * @param presentation The outcome the feedback came from. A structured draft in
+ *   it is shown as the user submitted it, not as the text and attachments the
+ *   receiver resolved from it.
  * @returns Promise resolved after optional UI feedback rendering.
  */
 export async function sayFeedbackOnce(
@@ -59,11 +63,24 @@ export async function sayFeedbackOnce(
     text?: string,
     images?: string[],
     files?: string[],
-    presentation?: Pick<InteractionOutcome, "feedbackPresented">,
+    presentation?: Pick<InteractionOutcome, "feedbackPresented" | "draft">,
 ): Promise<void> {
     if (presentation?.feedbackPresented) return
     if (!isAckedFeedback(config, response, text, images, files)) {
-        await config.callbacks.say("user_feedback", text ?? "", images, files)
+        const draft = presentation?.draft
+        if (draft?.semanticInput) {
+            // A dialog reply reaches its receiver as typed; a command its owner
+            // claimed was already taken out of this document. The draft's own
+            // flat attachments travel with it; the resolved ones never do.
+            await config.callbacks.sayUserReply(
+                submittedInputRow(
+                    [{ semanticInput: draft.semanticInput, images: draft.images, files: draft.files }],
+                    REPLY_AS_TYPED,
+                ),
+            )
+        } else {
+            await config.callbacks.say("user_feedback", text ?? "", images, files)
+        }
     }
     config.taskState.ackedFeedback = undefined
 }

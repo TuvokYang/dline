@@ -45,6 +45,27 @@ describe("UI message rows", () => {
         expect(attachments).toEqual([])
         expect(decodeUiMessage(row, attachments)).toEqual(message)
     })
+
+    it("keeps the facts a user row was submitted with without a schema change", () => {
+        const message = {
+            ts: 6,
+            type: "say",
+            say: "user_feedback",
+            text: "/compact then /explain-changes",
+            submittedInputs: [
+                {
+                    segments: [
+                        { text: "/compact", role: "command", active: true },
+                        { text: " then ", role: "text", active: false },
+                        { text: "/explain-changes", role: "command", active: false },
+                    ],
+                },
+            ],
+        } as unknown as UiMessage
+        const { row, attachments } = encodeUiMessage(message, 1)
+        expect(row.extra).toEqual({ submittedInputs: message.submittedInputs })
+        expect(decodeUiMessage(row, attachments)).toEqual(message)
+    })
 })
 
 describe("UiMessageRowStore", () => {

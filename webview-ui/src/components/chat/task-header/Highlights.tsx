@@ -1,8 +1,7 @@
-import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
+import type { UiMessage } from "@shared/ExtensionMessage"
 import { StringRequest } from "@shared/proto/dline/common"
 import { FileServiceClient } from "@/services/grpc-client"
-import { type SemanticHighlightSegment, segmentSentMessage } from "@/services/input-semantics/highlight"
-import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSemanticCatalog"
+import { type SemanticHighlightSegment, segmentSubmittedInputs } from "@/services/input-semantics/highlight"
 
 function highlightClass(withShadow: boolean): string {
     return withShadow ? "mention-context-highlight-with-shadow" : "mention-context-highlight"
@@ -37,29 +36,19 @@ function renderSegment(segment: SemanticHighlightSegment, index: number, withSha
 }
 
 /**
- * Highlight an already-sent message from the shared input semantics.
+ * Highlight an already-sent user row from the facts recorded when it was sent.
  *
- * The catalog is passed in rather than read here so this stays a pure render of
- * one text: the same message is shown in several places, and each caller already
- * subscribes to the catalog it should be read against.
+ * Pure and catalog-free: the row says which commands ran and which mentions
+ * were read, so a later catalog cannot change how it reads. A legacy row has no
+ * facts and is shown as its plain text, never re-scanned for entities.
  */
-export function highlightTextWithCatalog(
-    text: string | undefined,
-    catalog: InputSemanticCatalog,
+export function highlightSubmittedMessage(
+    message: Pick<UiMessage, "text" | "submittedInputs"> | null | undefined,
     withShadow = true,
 ): (string | JSX.Element)[] | string | undefined {
-    if (!text) {
-        return text
-    }
-    const segments = segmentSentMessage(text, catalog)
-    if (!segments.some((segment) => segment.active && segment.role !== "text")) {
-        return text
-    }
+    const text = message?.text
+    if (!text) return text
+    const segments = segmentSubmittedInputs(message?.submittedInputs)
+    if (!segments?.some((segment) => segment.active && segment.role !== "text")) return text
     return segments.map((segment, index) => renderSegment(segment, index, withShadow))
-}
-
-/** Hook form for components that render sent text without threading the catalog. */
-export function useHighlightedText(text: string | undefined, withShadow = true) {
-    const catalog = useInputSemanticCatalog()
-    return highlightTextWithCatalog(text, catalog, withShadow)
 }

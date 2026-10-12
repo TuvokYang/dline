@@ -27,8 +27,10 @@ describe("ResumeDialogContinuation", () => {
             outcome: { actionId: "resume", draft: { text: "continue carefully", images: [], files: [] } },
         })
 
-        const [submission] = ports.materialize.mock.calls[0] as [{ text?: string; context?: string }]
+        const [submission, options] = ports.materialize.mock.calls[0] as [{ text?: string; context?: string }, unknown]
         expect(submission.text).toBe("continue carefully")
+        // The answer was durable before the resume: a newer catalog must not refuse it.
+        expect(options).toEqual({ pinnedRevision: true })
         expect(ports.submit).toHaveBeenCalledWith({ entryId: "entry-1", payloadRef: "sha256:input" })
     })
 

@@ -1,3 +1,4 @@
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import { describe, expect, it, vi } from "vitest"
 import { createInitialTaskState, type TaskState } from "../../kernel"
 import type { EventSubmissionResult } from "../../runtime"
@@ -136,6 +137,62 @@ describe("RestoredToolDialogContinuation", () => {
         expect(h.resumption.materialize).toHaveBeenCalledWith({})
         expect(h.resumption.submit).toHaveBeenCalledOnce()
         expect(h.fallback.continue).not.toHaveBeenCalled()
+    })
+
+    it("shows a structured restored reply as typed, naming its resource without resolving it", async () => {
+        const h = harness({ toolName: "ask_followup_question", askText: JSON.stringify({ question: "Q?", options: [] }) })
+        const semanticInput: SemanticInputDocument = {
+            schemaVersion: 1,
+            parserVersion: "1.0.0",
+            catalogRevision: "3",
+            documentId: "doc-restored",
+            rawText: "",
+            nodes: [
+                {
+                    kind: "slash_command",
+                    entityId: "explain",
+                    commandId: "command.explain",
+                    canonicalName: "explain-changes",
+                    namespace: "cmd",
+                    compositionMode: "composable",
+                    state: "recognized",
+                    sourceText: "/explain-changes",
+                },
+                { kind: "text", text: " see " },
+                { kind: "image", entityId: "img", resourceId: "r-secret", displayName: "shot.png" },
+            ],
+            resources: [],
+        }
+        const resolution = {
+            interactionId: TID,
+            kind: "followup",
+            outcome: {
+                actionId: "reply" as const,
+                draft: { text: "/explain-changes see [shot.png]", images: [], files: [], semanticInput },
+            },
+        }
+
+        await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+
+        const row = (h.messages.addToClineMessages as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
+        expect(row).toMatchObject({
+            say: "user_feedback",
+            interactionId: `tool-feedback:${TID}`,
+            text: "/explain-changes see [shot.png]",
+            images: [],
+            files: [],
+            submittedInputs: [
+                {
+                    segments: [
+                        // The reply answered the tool; its command did not run.
+                        { text: "/explain-changes", role: "command", active: false },
+                        { text: " see ", role: "text", active: false },
+                        { text: "[shot.png]", role: "resource", active: true },
+                    ],
+                },
+            ],
+        })
+        expect(JSON.stringify(row)).not.toContain("r-secret")
     })
 
     it("answers a restored status Stop as the tool would instead of declining it", async () => {

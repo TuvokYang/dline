@@ -16,6 +16,7 @@ import { FocusChainSettings } from "./FocusChainSettings"
 import { HistoryItem } from "./HistoryItem"
 import type { QueuedInputEntry } from "./InputQueue"
 import type { ImageGenerationPresentationV1 } from "./image-generation"
+import type { SubmittedInputFacts } from "./input-semantics/submitted-input"
 import type { LoadCapabilityPayload } from "./load-capabilities"
 import { McpDisplayMode } from "./McpDisplayMode"
 import { ClineMessageModelInfo } from "./messages"
@@ -308,6 +309,13 @@ export interface UiMessage {
     userInputKind?: "direct" | "queued"
     /** Original InputQueue delivery pool for queued user input. */
     queuedInputMode?: "queued" | "steering"
+    /**
+     * What each input in a user's row said and did when it was submitted, one
+     * entry per input (a queued batch holds several). History renders from these
+     * facts instead of reading `text` against the current catalog; a legacy row
+     * without them is shown as plain text.
+     */
+    submittedInputs?: readonly SubmittedInputFacts[]
     /** Stable identity shared by the command message, activity, background record, and cancellation entry. */
     activityId?: string
     /** ts of the associated command message (set on command_output messages) */

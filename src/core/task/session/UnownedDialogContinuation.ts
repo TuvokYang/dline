@@ -6,6 +6,7 @@ import type { QueuedInputResponse } from "../kernel"
 import { createResumeSubmissionContext } from "../resume/ResumeProvenance"
 import type { EventSubmissionResult } from "../runtime"
 import type { TaskInput } from "../shell/TaskShell"
+import type { TaskInputAdmissionOptions } from "./TaskInputAdmission"
 
 /** One answered dialog that no receiver was waiting for. */
 export interface UnownedDialogResolution {
@@ -60,15 +61,18 @@ export interface UnownedDialogContinuationPort {
 
 /** The submission path a continuation uses to put the task back to work. */
 export interface TaskResumptionPort {
-    materialize(input: {
-        readonly text?: string
-        /** Trusted internal projection sent to the provider while `text` remains the visible user row. */
-        readonly admittedText?: string
-        readonly images?: readonly string[]
-        readonly files?: readonly string[]
-        readonly context?: string
-        readonly semanticInput?: SemanticInputDocument
-    }): Promise<TaskInput>
+    materialize(
+        input: {
+            readonly text?: string
+            /** Trusted internal projection sent to the provider while `text` remains the visible user row. */
+            readonly admittedText?: string
+            readonly images?: readonly string[]
+            readonly files?: readonly string[]
+            readonly context?: string
+            readonly semanticInput?: SemanticInputDocument
+        },
+        options?: TaskInputAdmissionOptions,
+    ): Promise<TaskInput>
     /**
      * Resolves `rejected` when the runtime refuses the input, for example after a
      * phase change or with intake at capacity. That refusal is an expected answer,
@@ -151,12 +155,18 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
                 ? { images: draft?.images, files: draft?.files }
                 : { semanticInput: draft.semanticInput }
         try {
-            const input = await this.resumption.materialize({
-                text: draft?.text,
-                ...(processAnyway ? { admittedText: formatResponse.tooManyMistakes(draft?.text) } : {}),
-                ...attachments,
-                ...(context === undefined ? {} : { context }),
-            })
+            const input = await this.resumption.materialize(
+                {
+                    text: draft?.text,
+                    ...(processAnyway ? { admittedText: formatResponse.tooManyMistakes(draft?.text) } : {}),
+                    ...attachments,
+                    ...(context === undefined ? {} : { context }),
+                },
+                // The answer was durable before this ran and may have been
+                // stored by an earlier process: a newer catalog must not refuse
+                // or re-read what the user already sent.
+                { pinnedRevision: true },
+            )
             if (resolution.isCurrent && !resolution.isCurrent()) return "declined"
             if (processAnyway) this.resetMistakes?.()
             if (manualRetry) this.providerRetry?.takeOver()

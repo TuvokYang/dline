@@ -1,3 +1,4 @@
+import { ADMITTED_SUBMISSION, submittedInputRow, submittedRowFields } from "@shared/input-semantics/submitted-input"
 import type {
     RetainedInputPresentation,
     RetainedInputPresentationCommit,
@@ -8,7 +9,6 @@ import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { PresentationIdSequence } from "./PresentationIdSequence"
-import { userInputRowText } from "./UserInputRowText"
 
 /** Projects only user-authored content; model guidance never belongs in this row. */
 export class RetainedInputPresenter implements RetainedInputPresentationPort {
@@ -26,13 +26,14 @@ export class RetainedInputPresenter implements RetainedInputPresentationPort {
                 return payload
             }),
         )
+        // One row for the batch, but one set of facts per entry: each entry was
+        // admitted on its own, and a later reader must still tell them apart.
+        const shown = submittedInputRow(payloads, ADMITTED_SUBMISSION)
         const row = {
             ts: this.nextPresentationId(),
             type: "say" as const,
             say: "user_feedback" as const,
-            text: payloads.map(userInputRowText).join("\n\n"),
-            images: payloads.flatMap((payload) => [...(payload.images ?? [])]),
-            files: payloads.flatMap((payload) => [...(payload.files ?? [])]),
+            ...submittedRowFields(shown),
             interactionId: input.deliveryId,
             userInputKind: "queued" as const,
             queuedInputMode: input.mode,

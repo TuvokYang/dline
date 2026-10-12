@@ -14,7 +14,7 @@ import RefreshPromptButton from "./buttons/RefreshPromptButton"
 import { CheckpointError } from "./CheckpointError"
 import ContextWindow from "./ContextWindow"
 import { FocusChain } from "./FocusChain"
-import { useHighlightedText } from "./Highlights"
+import { highlightSubmittedMessage } from "./Highlights"
 import { PromptCacheHealthBanner } from "./PromptCacheHealthBanner"
 import { TaskRateMetrics } from "./rate-metrics/TaskRateMetrics"
 import SpawnedTasksBar from "./SpawnedTasksBar"
@@ -95,7 +95,9 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
     const [isTextOverflowing, setIsTextOverflowing] = useState(false)
     const highlightedTextRef = React.useRef<HTMLDivElement>(null)
 
-    const highlightedText = useHighlightedText(task.text, false)
+    // Read from the facts recorded when the task was opened, never from the
+    // current catalog: a command added or withdrawn since cannot change it.
+    const highlightedText = highlightSubmittedMessage(task, false)
 
     // Check if text overflows the container (i.e., needs clamping)
     useLayoutEffect(() => {

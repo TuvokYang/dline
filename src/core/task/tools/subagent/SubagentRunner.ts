@@ -1866,6 +1866,7 @@ export class SubagentRunner {
             callbacks: {
                 ...baseCallbacks,
                 say: async () => undefined,
+                sayUserReply: async () => undefined,
                 sayAndCreateMissingParamError: async (_toolName, paramName) =>
                     formatResponse.toolError(formatResponse.missingToolParameterError(paramName)),
                 executeCommandTool: async (command: string, timeoutSeconds: number | undefined, options) => {

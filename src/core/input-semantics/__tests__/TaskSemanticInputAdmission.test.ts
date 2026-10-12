@@ -90,3 +90,33 @@ describe("TaskSemanticInputAdmission scanner budget", () => {
         expect(resolve).toHaveBeenCalledTimes(1)
     })
 })
+
+describe("TaskSemanticInputAdmission catalog pin", () => {
+    it("admits a structured document stored under an older catalog revision only when pinned", async () => {
+        const stored = { ...lexSemanticInputActual(RAW, "doc-stored"), catalogRevision: "6" }
+        const { admission } = harness()
+
+        const unpinned = await admission.admit({ text: RAW, semanticInput: stored })
+        const pinned = await admission.admit({ text: RAW, semanticInput: stored }, { pinnedRevision: true })
+
+        expect(unpinned.ok).toBe(false)
+        expect(pinned.ok).toBe(true)
+    })
+
+    it("never forwards the pin for a legacy text, which is lexed against the current catalog", async () => {
+        const review = vi.spyOn(SemanticInputAdmissionService.prototype, "admit")
+        try {
+            const { admission } = harness()
+
+            await admission.admit({ text: RAW }, { pinnedRevision: true })
+
+            expect(review.mock.calls[0]?.[1]).toMatchObject({ pinnedRevision: false })
+        } finally {
+            review.mockRestore()
+        }
+    })
+})
+
+function lexSemanticInputActual(text: string, documentId: string) {
+    return lexer.lexSemanticInput(text, { catalog, documentId, activation: "auto" })
+}

@@ -97,6 +97,13 @@ export interface AdmittedSemanticInput {
     readonly explicitInstructions: readonly ExplicitInstructionDeclaration[]
 }
 
+export interface SemanticInputAdmitOptions {
+    /** The catalog a legacy text was just lexed against; defaults to the current catalog. */
+    readonly composedWith?: InputSemanticCatalog
+    /** Skip the revision check for a document recovered after it was accepted; see {@link SemanticInputAdmissionService.admit}. */
+    readonly pinnedRevision?: boolean
+}
+
 export type SemanticInputAdmission =
     | { readonly ok: true; readonly admitted: AdmittedSemanticInput }
     | { readonly ok: false; readonly diagnostics: readonly SemanticInputDiagnostic[] }
@@ -144,13 +151,18 @@ export class SemanticInputAdmissionService {
      * snapshot keeps the check honest: discovery may publish a new revision at
      * any moment, and comparing against it would refuse a document for drifting
      * from a catalog it never saw.
+     *
+     * A document recovered after it was accepted is reviewed with its revision
+     * pinned: a newer catalog must not refuse it, so only the revision check is
+     * skipped. Every identity check still runs, because recovery is not a way to
+     * run a command the visible text never named.
      */
-    async admit(document: SemanticInputDocument, composedWith?: InputSemanticCatalog): Promise<SemanticInputAdmission> {
+    async admit(document: SemanticInputDocument, options: SemanticInputAdmitOptions = {}): Promise<SemanticInputAdmission> {
         const structural = validateSemanticInputDocument(document)
         if (structural.length > 0) return { ok: false, diagnostics: structural }
 
-        const catalog = composedWith ?? this.ports.catalog()
-        const reviewed = this.reviewAgainstCatalog(document, catalog)
+        const catalog = options.composedWith ?? this.ports.catalog()
+        const reviewed = this.reviewAgainstCatalog(document, catalog, options.pinnedRevision === true)
         if (!reviewed.ok) return reviewed
 
         const resources = await this.reviewResources(document)
@@ -182,9 +194,13 @@ export class SemanticInputAdmissionService {
     }
 
     /** A stale revision, a withdrawn command or a forged identity fails closed; it never degrades to plain text. */
-    private reviewAgainstCatalog(document: SemanticInputDocument, catalog: InputSemanticCatalog): Review<ReviewedEntities> {
+    private reviewAgainstCatalog(
+        document: SemanticInputDocument,
+        catalog: InputSemanticCatalog,
+        pinnedRevision: boolean,
+    ): Review<ReviewedEntities> {
         const locator = { documentId: document.documentId }
-        if (document.catalogRevision !== String(catalog.revision)) {
+        if (!pinnedRevision && document.catalogRevision !== String(catalog.revision)) {
             return refuse(
                 semanticInputDiagnostic(
                     "semantic_input_catalog_stale",

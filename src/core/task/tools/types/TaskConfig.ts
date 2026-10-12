@@ -16,6 +16,7 @@ import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import type { BrowserSettings } from "@shared/BrowserSettings"
 import type { CommandStatus, UiAsk, UiSay } from "@shared/ExtensionMessage"
 import type { FocusChainSettings } from "@shared/FocusChainSettings"
+import type { SubmittedInputRow } from "@shared/input-semantics/submitted-input"
 import type { ClineContent, ClineToolResponseContent } from "@shared/messages/content"
 import type { Mode } from "@shared/storage/types"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
@@ -188,6 +189,16 @@ export interface TaskCallbacks {
          */
         commandTs?: number,
     ) => Promise<number | undefined>
+
+    /**
+     * Show the user's own reply row built from what they submitted.
+     *
+     * Used for a structured reply instead of `say`, which only carries flat
+     * attachments: the row names each resource and keeps the reply's submitted
+     * facts, and never the image data or paths its receiver resolved. Required,
+     * so a host cannot silently fall back to showing the resolved content.
+     */
+    sayUserReply: (row: SubmittedInputRow) => Promise<void>
 
     focusChainForceUpdate: (newPlan: string) => Promise<void>
 

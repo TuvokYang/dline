@@ -284,7 +284,7 @@ export class TaskSessionCompositionService {
         // as an ordinary input, which only the opened session can do. A restored
         // tool dialog is the exception: its answer is the tool's result.
         const resumption: ResumeDialogContinuationPorts = {
-            materialize: (input) => this.requireSession(session).inputs.materialize(input),
+            materialize: (input, options) => this.requireSession(session).inputs.materialize(input, "queued", options),
             submit: (input) => this.requireSession(session).task.submitInput(input),
         }
         // The footer shows Retry and Cancel only while a countdown owns the

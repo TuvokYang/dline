@@ -88,6 +88,12 @@ export interface ReviewedReply {
      * admits the reply again finds no command left to act a second time.
      */
     readonly document: SemanticInputDocument
+    /**
+     * Entity of the lifecycle command the reply handed to its owner, in the
+     * submitted document; absent when nothing was claimed. It is the only part
+     * of a reply that acts rather than reaching the dialog as typed.
+     */
+    readonly claimedBarrier?: string
     /** Carry out the reply's command; call only after the reply was accepted. */
     commit(): void
 }
@@ -104,12 +110,26 @@ export type TaskInputAdmissionResult =
  * expansion details.
  */
 export interface TaskInputAdmissionPort {
-    admit(input: {
-        readonly text?: string
-        readonly images?: readonly string[]
-        readonly files?: readonly string[]
-        readonly semanticInput?: SemanticInputDocument
-    }): Promise<TaskInputAdmissionResult>
+    admit(
+        input: {
+            readonly text?: string
+            readonly images?: readonly string[]
+            readonly files?: readonly string[]
+            readonly semanticInput?: SemanticInputDocument
+        },
+        options?: TaskInputAdmissionOptions,
+    ): Promise<TaskInputAdmissionResult>
+}
+
+export interface TaskInputAdmissionOptions {
+    /**
+     * The document was already accepted once, under the catalog revision it
+     * names: a reply recovered after the runtime stored it. Its revision is then
+     * not compared with the current catalog - a revision is a counter local to
+     * one process and a recovered draft may come from another - but its
+     * structure, command identities, mentions and resources are still checked.
+     */
+    readonly pinnedRevision?: boolean
 }
 
 /**

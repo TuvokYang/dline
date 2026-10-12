@@ -1,10 +1,15 @@
+import {
+    ADMITTED_SUBMISSION,
+    rowHasVisibleContent,
+    submittedInputRow,
+    submittedRowFields,
+} from "@shared/input-semantics/submitted-input"
 import type { MessageStateHandler } from "../message-state"
 import type { TaskInput, TaskInputPresentationCommit, TaskInputPresentationPort } from "../shell/TaskShell"
 import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { PresentationIdSequence } from "./PresentationIdSequence"
-import { userInputRowText } from "./UserInputRowText"
 
 /**
  * Shows the input the runtime accepted as the user's own chat row.
@@ -29,9 +34,10 @@ export class TaskInputPresenter implements TaskInputPresentationPort {
         // Recovery sometimes needs an intake event only to start the next round.
         // Its actual user reply is already shown by the restored tool interaction,
         // so rendering the empty continuation as feedback leaves a blank chat row.
-        const text = userInputRowText(payload)
-        const hasVisibleContent = Boolean(text.trim() || payload.images?.length || payload.files?.length)
-        if (!hasVisibleContent) return { commit: async () => {} }
+        // Every intake entry passed admission, so its commands ran and its
+        // recognized mentions were read; the row records that as it happened.
+        const shown = submittedInputRow([payload], ADMITTED_SUBMISSION)
+        if (!rowHasVisibleContent(shown)) return { commit: async () => {} }
         // Stamped from the session's shared sequence, and before submission. Rows
         // are ordered by this id, and the submission begins allocating its own
         // ids as soon as it is accepted; a wall-clock reading taken afterwards
@@ -42,9 +48,7 @@ export class TaskInputPresenter implements TaskInputPresentationPort {
             say: rows.some((candidate) => candidate.type === "say" && candidate.say === "task")
                 ? ("user_feedback" as const)
                 : ("task" as const),
-            text,
-            ...(payload.images === undefined ? {} : { images: [...payload.images] }),
-            ...(payload.files === undefined ? {} : { files: [...payload.files] }),
+            ...submittedRowFields(shown),
             interactionId: input.entryId,
         }
         return { commit: () => this.messages.addToClineMessages(row) }

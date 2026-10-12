@@ -41,6 +41,7 @@ interface ReviewedReplyFixture {
     readonly text: string
     readonly document?: SemanticInputDocument
     readonly parts?: readonly AdmittedInputPart[]
+    readonly claimedBarrier?: string
     readonly commit: () => void
 }
 
@@ -600,20 +601,62 @@ describe("dispatchInteraction", () => {
             })
         })
 
-        it("shows the consumed reply's row with the resources its parts resolve to", async () => {
+        it("shows the consumed reply as typed, naming its resource without resolving it", async () => {
+            const typed: SemanticInputDocument = {
+                schemaVersion: 1,
+                parserVersion: "1.0.0",
+                catalogRevision: "3",
+                documentId: "doc-reply",
+                rawText: "/compact like ",
+                nodes: [
+                    {
+                        kind: "slash_command",
+                        entityId: "cmd-1",
+                        commandId: "command.compact",
+                        sourceText: "/compact",
+                        canonicalName: "compact",
+                        namespace: "cmd",
+                        compositionMode: "lifecycle_barrier",
+                        state: "recognized",
+                    },
+                    { kind: "text", text: " like " },
+                    { kind: "image", entityId: "img-1", resourceId: image.ref.resourceId, displayName: "shot.png" },
+                ],
+                resources: [image.ref],
+            }
+            const resolve = vi.fn(async () => ({ images: ["data:image/png;base64,AQ=="], files: [], notices: [] }))
             const host = controller(state(), {
-                reviewed: { text: "", parts, commit: vi.fn() },
-                draftAttachments: {
-                    resolve: async () => ({ images: ["data:image/png;base64,AQ=="], files: [], notices: [] }),
-                },
+                reviewed: { text: "", parts, claimedBarrier: "cmd-1", commit: vi.fn() },
+                draftAttachments: { resolve },
+            })
+            const request = DispatchInteractionRequest.create({
+                ...compactReply("/compact like "),
+                draft: { text: "/compact like ", images: [], files: [], semanticInput: toProtoSemanticInputDocument(typed) },
             })
 
-            await dispatchInteraction(host.value as never, compactReply())
+            await dispatchInteraction(host.value as never, request)
 
+            // The row is fixed from the reply itself: the barrier its owner claimed
+            // ran, and the resource is named where the user placed it. Showing it
+            // never reads the resource, so a moved or unreadable file cannot fail it.
             expect(host.beginDurableClineMessage).toHaveBeenCalledWith(
-                expect.objectContaining({ say: "user_feedback", images: ["data:image/png;base64,AQ=="] }),
+                expect.objectContaining({
+                    say: "user_feedback",
+                    text: "/compact like [shot.png]",
+                    images: [],
+                    files: [],
+                    submittedInputs: [
+                        {
+                            segments: [
+                                { text: "/compact", role: "command", active: true },
+                                { text: " like ", role: "text", active: false },
+                                { text: "[shot.png]", role: "resource", active: true },
+                            ],
+                        },
+                    ],
+                }),
             )
-            // The resolved bytes are presentation only; the stored reply keeps the reference.
+            expect(resolve).not.toHaveBeenCalled()
             expect(decodeTaskPayload<DialogDraftEnvelope>(host.put.mock.calls[0][0]).images).toEqual([])
         })
     })

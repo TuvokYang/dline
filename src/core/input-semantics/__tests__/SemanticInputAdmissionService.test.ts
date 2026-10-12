@@ -141,9 +141,55 @@ describe("SemanticInputAdmissionService", () => {
         // would drop a submission the user just made.
         const advanced: InputSemanticCatalog = { revision: 5, descriptors: BUILTIN_INPUT_SEMANTICS }
 
-        const result = await service({ catalog: advanced }).admit(lex("/compact"), catalog)
+        const result = await service({ catalog: advanced }).admit(lex("/compact"), { composedWith: catalog })
 
         expect(result.ok).toBe(true)
+    })
+
+    it("admits a recovered document under the revision it was accepted with, whatever the catalog is now", async () => {
+        // A reply stored by an earlier process names a revision of that process's
+        // counter; the catalog moving on must not refuse what the user already sent.
+        const recovered = { ...lex("/compact keep the audit"), catalogRevision: "1" }
+
+        const result = await service().admit(recovered, { pinnedRevision: true })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) return
+        expect(result.admitted.plan.barrier?.commandId).toBe("command.compact")
+    })
+
+    it("still refuses a recovered command the catalog withdrew, rather than running it as text", async () => {
+        const withdrawn: InputSemanticCatalog = {
+            revision: 9,
+            descriptors: BUILTIN_INPUT_SEMANTICS.filter((descriptor) => descriptor.id !== "command.compact"),
+        }
+        const recovered = { ...lex("/compact"), catalogRevision: "1" }
+
+        const result = await service({ catalog: withdrawn }).admit(recovered, { pinnedRevision: true })
+
+        expect(result.ok).toBe(false)
+        if (result.ok) return
+        expect(result.diagnostics[0].code).toBe("semantic_input_command_unknown")
+    })
+
+    it("still refuses a recovered node whose trigger is not the one its visible text names", async () => {
+        // Pinning skips only the revision: recovery is not a way to run a command
+        // the user never typed.
+        const document = lex("/compact")
+        const [command] = document.nodes
+        if (command.kind !== "slash_command") throw new Error("expected a command node")
+        const forged: SemanticInputDocument = {
+            ...document,
+            catalogRevision: "1",
+            rawText: "/hello",
+            nodes: [{ ...command, sourceText: "/hello" }],
+        }
+
+        const result = await service().admit(forged, { pinnedRevision: true })
+
+        expect(result.ok).toBe(false)
+        if (result.ok) return
+        expect(result.diagnostics[0].code).toBe("semantic_input_node_invalid")
     })
 
     it("fails closed when a recognized command left the catalog, and names the node", async () => {

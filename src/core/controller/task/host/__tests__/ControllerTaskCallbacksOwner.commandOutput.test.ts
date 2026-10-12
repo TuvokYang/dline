@@ -87,6 +87,24 @@ describe("ControllerTaskCallbacksOwner say", () => {
         expect(written).toEqual([reply, expect.objectContaining({ ts, say: "user_feedback", text: "" })])
     })
 
+    it("writes a reply row with the facts the user submitted and no resolved content", async () => {
+        const { handler, written } = messageStore()
+        const facts = { segments: [{ text: "[shot.png]", role: "resource" as const, active: true }] }
+
+        await owner(handler).callbacks.sayUserReply({ text: "[shot.png]", images: [], files: [], submittedInputs: [facts] })
+
+        expect(written).toEqual([
+            expect.objectContaining({
+                type: "say",
+                say: "user_feedback",
+                text: "[shot.png]",
+                images: [],
+                files: [],
+                submittedInputs: [facts],
+            }),
+        ])
+    })
+
     it("carries commandTs onto the persisted command_output row", async () => {
         const { handler, written } = messageStore()
 

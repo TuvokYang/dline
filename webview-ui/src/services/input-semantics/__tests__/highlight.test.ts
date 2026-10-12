@@ -1,6 +1,6 @@
 import { BUILTIN_INPUT_SEMANTICS, type InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { describe, expect, it } from "vitest"
-import { renderSemanticHighlightHtml, segmentSemanticInput, segmentSentMessage } from "../highlight"
+import { renderSemanticHighlightHtml, segmentSemanticInput, segmentSubmittedInputs } from "../highlight"
 
 const catalog: InputSemanticCatalog = { revision: 1, descriptors: BUILTIN_INPUT_SEMANTICS }
 
@@ -35,21 +35,43 @@ describe("semantic composer highlight", () => {
     })
 })
 
-describe("sent message highlight", () => {
-    it("reads a sent message with the same semantics the task applied", () => {
-        expect(segmentSentMessage("/compact @/src/index.ts", catalog)).toEqual([
+describe("submitted input highlight", () => {
+    it("draws exactly the entities the facts recorded", () => {
+        expect(
+            segmentSubmittedInputs([
+                {
+                    segments: [
+                        { text: "/compact", role: "command", active: true },
+                        { text: " then ", role: "text", active: false },
+                        { text: "/explain-changes", role: "command", active: false },
+                    ],
+                },
+            ]),
+        ).toEqual([
             { text: "/compact", role: "command", active: true },
-            { text: " ", role: "text", active: false },
-            { text: "@/src/index.ts", role: "mention", active: true },
+            { text: " then ", role: "text", active: false },
+            { text: "/explain-changes", role: "command", active: false },
         ])
     })
 
-    it("does not present a command the task never ran as an entity", () => {
-        const segments = segmentSentMessage("Explain why /compact exists, then /explain-changes", catalog)
-
-        expect(segments.filter((segment) => segment.role === "command" && segment.active)).toEqual([
-            { text: "/compact", role: "command", active: true },
+    it("names a resource as plain text rather than an entity", () => {
+        expect(segmentSubmittedInputs([{ segments: [{ text: "[diagram.png]", role: "resource", active: true }] }])).toEqual([
+            { text: "[diagram.png]", role: "text", active: false },
         ])
-        expect(segments).toContainEqual({ text: "/explain-changes", role: "command", active: false })
+    })
+
+    it("separates the inputs of a batch the same way the row text does", () => {
+        const segments = segmentSubmittedInputs([
+            { segments: [{ text: "first", role: "text", active: false }] },
+            { segments: [{ text: "@/src/a.ts", role: "mention", active: false }] },
+        ])
+
+        expect(segments?.map((segment) => segment.text).join("")).toBe("first\n\n@/src/a.ts")
+        expect(segments).toContainEqual({ text: "@/src/a.ts", role: "mention", active: false })
+    })
+
+    it("has no segments for a legacy row, so the caller shows its plain text", () => {
+        expect(segmentSubmittedInputs(undefined)).toBeUndefined()
+        expect(segmentSubmittedInputs([])).toBeUndefined()
     })
 })

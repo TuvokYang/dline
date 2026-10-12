@@ -1,7 +1,7 @@
 import { UiMessage } from "@shared/ExtensionMessage"
 import React, { memo, useCallback } from "react"
 import { cn } from "@/lib/utils"
-import { useHighlightedText } from "./Highlights"
+import { highlightSubmittedMessage } from "./Highlights"
 
 interface StickyUserMessageProps {
     readonly lastUserMessage: UiMessage | null
@@ -34,14 +34,12 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
         )
 
         const messageText = lastUserMessage?.text?.trim()
-        // Highlighted before the visibility check: reading the semantic catalog is
-        // a hook, so it cannot sit behind a conditional return.
-        const highlightedText = useHighlightedText(messageText, false)
 
         // Don't render if no user message or not visible
         if (!messageText || !isVisible) {
             return null
         }
+        const highlightedText = highlightSubmittedMessage(lastUserMessage, false)
 
         return (
             <button
@@ -75,6 +73,7 @@ export const StickyUserMessage: React.FC<StickyUserMessageProps> = memo(
         return (
             prevProps.lastUserMessage?.ts === nextProps.lastUserMessage?.ts &&
             prevProps.lastUserMessage?.text === nextProps.lastUserMessage?.text &&
+            prevProps.lastUserMessage?.submittedInputs === nextProps.lastUserMessage?.submittedInputs &&
             prevProps.isVisible === nextProps.isVisible
         )
     },

@@ -9,6 +9,7 @@ import {
     parseImageGenerationPresentation,
     parseImageGenerationToolText,
 } from "@shared/image-generation"
+import { normalizeSubmittedInputs, type SubmittedInputFacts } from "@shared/input-semantics/submitted-input"
 // The proto wire keeps its original Cline* message and enum names; only the application types were renamed.
 import {
     ClineMessageType,
@@ -16,7 +17,28 @@ import {
     ClineMessage as ProtoClineMessage,
     type ImageGenerationPresentation as ProtoImageGenerationPresentation,
     ClineSay as ProtoSay,
+    type SubmittedInput as ProtoSubmittedInput,
 } from "@shared/proto/dline/ui"
+
+/**
+ * Submitted facts as they cross the wire, in either direction.
+ *
+ * Both sides read facts that came from storage or the other process, so both
+ * accept them only whole and only when they spell the row's text; otherwise
+ * the row travels without them and is shown as its plain text, the way a
+ * legacy row is. A damaged record therefore never fails the history it is in.
+ */
+function copySubmittedInputs(inputs: unknown, text: string | undefined): SubmittedInputFacts[] | undefined {
+    return normalizeSubmittedInputs(inputs, text)?.map((input) => ({
+        segments: input.segments.map((segment) => ({ ...segment })),
+    }))
+}
+
+function convertSubmittedInputsToProto(inputs: unknown, text: string | undefined): ProtoSubmittedInput[] {
+    return (normalizeSubmittedInputs(inputs, text) ?? []).map((input) => ({
+        segments: input.segments.map((segment) => ({ text: segment.text, role: segment.role, active: segment.active })),
+    }))
+}
 
 // Helper function to convert UiAsk string to enum
 function convertClineAskToProtoEnum(ask: AppClineAsk | undefined): ProtoAsk | undefined {
@@ -291,6 +313,7 @@ export function convertClineMessageToProto(message: AppClineMessage): ProtoCline
         userInputKind: message.userInputKind ?? "",
         queuedInputMode: message.queuedInputMode ?? "",
         imageGeneration: convertImageGenerationToProto(imageGeneration),
+        submittedInputs: convertSubmittedInputsToProto(message.submittedInputs, message.text),
     }
 
     return protoMessage
@@ -410,6 +433,12 @@ export function convertProtoToClineMessage(protoMessage: ProtoClineMessage): App
     if (protoMessage.imageGeneration) {
         const imageGeneration = parseImageGenerationPresentation(protoMessage.imageGeneration)
         if (imageGeneration) message.imageGeneration = imageGeneration
+    }
+    // Every input or none: a row missing one of its inputs would show a batch
+    // that differs from what was sent.
+    const submittedInputs = copySubmittedInputs(protoMessage.submittedInputs, message.text)
+    if (submittedInputs) {
+        message.submittedInputs = submittedInputs
     }
 
     return message

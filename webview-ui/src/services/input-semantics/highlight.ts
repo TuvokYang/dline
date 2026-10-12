@@ -2,6 +2,7 @@ import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import { planSemanticCommands } from "@shared/input-semantics/command-plan"
 import { isMentionNode, isSlashCommandNode } from "@shared/input-semantics/document"
 import { lexSemanticInput, type SemanticActivation } from "@shared/input-semantics/lexer"
+import { SUBMITTED_INPUT_SEPARATOR, type SubmittedInputFacts } from "@shared/input-semantics/submitted-input"
 
 export type SemanticSegmentRole = "text" | "command" | "mention"
 
@@ -19,9 +20,6 @@ export interface SemanticHighlightSegment {
 
 /** The composer lexes on every keystroke, so its document identity is fixed. */
 const COMPOSER_DOCUMENT_ID = "composer"
-
-/** Already-sent text is read for display only, so its identity is separate. */
-const HISTORY_DOCUMENT_ID = "history"
 
 function escapeHtml(text: string): string {
     return text.replace(/[<>&]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[character] ?? character)
@@ -62,14 +60,27 @@ export function segmentSemanticInput(
 }
 
 /**
- * Split already-sent text with the same semantics the task applied to it.
+ * The segments of an already-sent row, from the facts recorded when it was sent.
  *
- * History rendering used to run its own slash regex and command lookup, so a
- * literal `/compact` in a sent message could be highlighted as a command the
- * task never ran. Reading the shared lexer keeps display and admission aligned.
+ * History never lexes sent text again: the catalog may have gained, renamed or
+ * withdrawn a command since, and re-reading would show a literal `/compact` as
+ * a command or hide one that ran. A resource reads as text here; the row names
+ * it, and only commands and mentions are drawn as entities. A row without facts
+ * is legacy and has no segments, so its caller shows the plain text.
  */
-export function segmentSentMessage(rawText: string, catalog: InputSemanticCatalog): readonly SemanticHighlightSegment[] {
-    return segmentSemanticInput(rawText, catalog, HISTORY_DOCUMENT_ID)
+export function segmentSubmittedInputs(
+    inputs: readonly SubmittedInputFacts[] | undefined,
+): readonly SemanticHighlightSegment[] | undefined {
+    if (!inputs || inputs.length === 0) return undefined
+    return inputs.flatMap((input, index) => [
+        ...(index > 0 ? [{ text: SUBMITTED_INPUT_SEPARATOR, role: "text" as const, active: false }] : []),
+        ...input.segments.map(
+            (segment): SemanticHighlightSegment =>
+                segment.role === "command" || segment.role === "mention"
+                    ? { text: segment.text, role: segment.role, active: segment.active }
+                    : { text: segment.text, role: "text", active: false },
+        ),
+    ])
 }
 
 /**

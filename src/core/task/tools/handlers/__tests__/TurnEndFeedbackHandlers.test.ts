@@ -34,6 +34,7 @@ function createConfig(text: string): TaskConfig {
     const callbacks: TaskConfig["callbacks"] = {
         ask: vi.fn(async () => ({ response: "messageResponse" as const, text, images: [], files: [] })),
         say: vi.fn(async () => Date.now()),
+        sayUserReply: vi.fn(async () => {}),
         focusChainForceUpdate: vi.fn(async () => {}),
         saveCheckpoint: vi.fn(async () => {}),
         sayAndCreateMissingParamError: vi.fn(async () => "missing param"),

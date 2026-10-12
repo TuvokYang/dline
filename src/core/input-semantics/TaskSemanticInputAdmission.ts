@@ -1,7 +1,11 @@
 import { semanticInputDiagnostic } from "@shared/input-semantics/diagnostics"
 import { isResourceNode, isSlashCommandNode, type SemanticInputDocument } from "@shared/input-semantics/document"
 import { Logger } from "@shared/services/Logger"
-import type { TaskInputAdmissionPort, TaskInputAdmissionResult } from "@/core/task/session/TaskInputAdmission"
+import type {
+    TaskInputAdmissionOptions,
+    TaskInputAdmissionPort,
+    TaskInputAdmissionResult,
+} from "@/core/task/session/TaskInputAdmission"
 import type { LegacyInputAdapter } from "./LegacyInputAdapter"
 import type { SemanticInputAdmissionService } from "./SemanticInputAdmissionService"
 
@@ -18,12 +22,15 @@ export class TaskSemanticInputAdmission implements TaskInputAdmissionPort {
         private readonly admission: SemanticInputAdmissionService,
     ) {}
 
-    async admit(input: {
-        readonly text?: string
-        readonly images?: readonly string[]
-        readonly files?: readonly string[]
-        readonly semanticInput?: SemanticInputDocument
-    }): Promise<TaskInputAdmissionResult> {
+    async admit(
+        input: {
+            readonly text?: string
+            readonly images?: readonly string[]
+            readonly files?: readonly string[]
+            readonly semanticInput?: SemanticInputDocument
+        },
+        options?: TaskInputAdmissionOptions,
+    ): Promise<TaskInputAdmissionResult> {
         // A legacy submission carries the catalog it was just lexed against, so
         // admission reviews it against that snapshot instead of a revision that
         // discovery may have published in between.
@@ -38,7 +45,12 @@ export class TaskSemanticInputAdmission implements TaskInputAdmissionPort {
             return { ok: false, diagnostics: [mixedAttachmentAuthority(document)] }
         }
         reportUnresolvedCommands(document)
-        const result = await this.admission.admit(document, adapted.catalog)
+        const result = await this.admission.admit(document, {
+            ...(adapted.catalog === undefined ? {} : { composedWith: adapted.catalog }),
+            // Only a structured document can have been accepted before; a legacy
+            // text is lexed here and now, so its revision is current by construction.
+            pinnedRevision: input.semanticInput !== undefined && options?.pinnedRevision === true,
+        })
         if (!result.ok) return result
         return {
             ok: true,

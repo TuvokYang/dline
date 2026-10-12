@@ -1,12 +1,16 @@
-import type { DraftAttachmentPort, DraftAttachments } from "@core/task/interaction/DraftAttachments"
 import type { InteractionOutcome } from "@core/task/interaction/InteractionProtocol"
 import type { MessageStateHandler } from "@core/task/message-state"
 import { type ReviewedReply, SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
-import { userInputRowText } from "@core/task/session/UserInputRowText"
 import { encodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
 import type { DialogDraftEnvelope, DialogSelectionEnvelope } from "@core/task/stores/payload/TaskPayloadEnvelopes"
 import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import { isResourceNode, type SemanticInputDocument } from "@shared/input-semantics/document"
+import {
+    rowHasVisibleContent,
+    type SubmittedInputRow,
+    submittedInputRow,
+    submittedRowFields,
+} from "@shared/input-semantics/submitted-input"
 import { type DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
 import { decodeAdmissibleSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Logger } from "@shared/services/Logger"
@@ -72,17 +76,19 @@ function mixesResourceCarriers(draft: DispatchInteractionRequest["draft"], docum
  * The row is registered before the first await, so it is in the chat before
  * the caller releases the command and the dialog: a summary they produce
  * quickly is published after the user's row, as dev shows the reply first.
+ *
+ * Built from the reply as submitted, never from its resolved attachments: the
+ * receiver reads the resources, the row only names them, so no image data or
+ * local path enters the chat history and no file is read twice.
  */
 async function showConsumedReply(
     messages: MessageStateHandler,
     nextPresentationId: (() => number) | undefined,
     request: DispatchInteractionRequest,
-    /** What the user reads for the reply; see {@link userInputRowText}. */
-    rowText: string,
-    shown: Pick<DraftAttachments, "images" | "files">,
+    shown: SubmittedInputRow,
 ): Promise<void> {
     const rowId = `reply:${request.interactionId}`
-    if (!rowText || messages.clineMessages.some((row) => row.interactionId === rowId)) return
+    if (!rowHasVisibleContent(shown) || messages.clineMessages.some((row) => row.interactionId === rowId)) return
     // Rows are ordered by the session's shared sequence; drawing from it keeps
     // the reply ahead of the summary and the turn it causes.
     const lastTs = messages.clineMessages.at(-1)?.ts ?? 0
@@ -91,9 +97,7 @@ async function showConsumedReply(
         ts,
         type: "say",
         say: "user_feedback",
-        text: rowText,
-        images: [...shown.images],
-        files: [...shown.files],
+        ...submittedRowFields(shown),
         interactionId: rowId,
     })
     await registered.persistence
@@ -256,10 +260,6 @@ export async function dispatchInteraction(
     // as intake, so no other path shows the user the note they sent with it.
     const approvalNote = Boolean(approvalEntry && hasDraftContent(request.draft, attachments))
     const showsReply = replyConsumed || approvalNote
-    // Resolved before the response is submitted: reading the reply's files is
-    // the only slow step, and once the runtime has accepted the reply nothing
-    // may stand between its durability and the row, the command and the dialog.
-    const shown = showsReply ? await shownAttachmentsOf(attachments, session.draftAttachments) : attachments
     // An approval is planned from the turn, so its draft is not an intake entry.
     // Recording it against the block is the only route into the next provider
     // request; without it a note typed while approving is silently discarded.
@@ -345,8 +345,22 @@ export async function dispatchInteraction(
               session.messages,
               session.owners.nextPresentationId,
               request,
-              userInputRowText({ text: request.draft?.text, semanticInput: draftDocument }),
-              shown,
+              // The whole reply as the user typed it: only a command its owner
+              // claimed acted, the rest reached the dialog as written.
+              submittedInputRow(
+                  [
+                      {
+                          text: request.draft?.text,
+                          images: attachments.images,
+                          files: attachments.files,
+                          ...(draftDocument === undefined ? {} : { semanticInput: draftDocument }),
+                      },
+                  ],
+                  {
+                      admitted: false,
+                      ...(reviewed?.claimedBarrier === undefined ? {} : { claimedBarrier: reviewed.claimedBarrier }),
+                  },
+              ),
           ).catch((error: unknown) => {
               Logger.warn(
                   `dispatchInteraction: could not show the reply for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -393,27 +407,4 @@ function hasDraftContent(draft: DispatchInteractionRequest["draft"], attachments
                 attachments.files.length > 0 ||
                 attachments.admittedParts.some((part) => part.kind === "resource")),
     )
-}
-
-/**
- * What the reply's chat row shows: its legacy lists plus its resolved parts.
- *
- * Presentation only; the row is never read back as the reply's attachments,
- * so a resolution that fails shows the row without them rather than holding
- * back the reply the runtime already accepted.
- */
-async function shownAttachmentsOf(
-    attachments: ReplyAttachments,
-    port: DraftAttachmentPort | undefined,
-): Promise<Pick<DraftAttachments, "images" | "files">> {
-    if (!port || !attachments.admittedParts.some((part) => part.kind === "resource")) return attachments
-    try {
-        const resolved = await port.resolve(attachments.admittedParts)
-        return { images: [...attachments.images, ...resolved.images], files: [...attachments.files, ...resolved.files] }
-    } catch (error) {
-        Logger.warn(
-            `dispatchInteraction: could not resolve the reply's attachments: ${error instanceof Error ? error.name : "unknown"}`,
-        )
-        return attachments
-    }
 }

@@ -1,4 +1,10 @@
 import type { UiAskQuestion, UiMessage } from "@shared/ExtensionMessage"
+import {
+    REPLY_AS_TYPED,
+    rowHasVisibleContent,
+    submittedInputRow,
+    submittedRowFields,
+} from "@shared/input-semantics/submitted-input"
 import { Logger } from "@shared/services/Logger"
 import { serializeDurableToolResult, toolResultReplayOf } from "../DurableToolResult"
 import { interactionKindForToolName, projectInteractionContinuation } from "../interaction/InteractionContinuation"
@@ -206,7 +212,11 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
                 await this.publish(messages.clineMessages[index])
             }
         }
-        if (resolution.outcome.feedbackPresented || (!draft?.text && !draft?.images.length && !draft?.files.length)) return
+        if (resolution.outcome.feedbackPresented || !draft) return
+        // The reply answered a tool, so nothing in it ran: it is shown as typed,
+        // and a structured reply names its resources without resolving them.
+        const row = submittedInputRow([draft], REPLY_AS_TYPED)
+        if (!rowHasVisibleContent(row)) return
         const interactionId = `tool-feedback:${resolution.interactionId}`
         if (messages.clineMessages.some((message) => message.interactionId === interactionId)) return
         await messages.addToClineMessages({
@@ -214,9 +224,7 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             type: "say",
             say: "user_feedback",
             interactionId,
-            text: draft?.text ?? "",
-            images: [...(draft?.images ?? [])],
-            files: [...(draft?.files ?? [])],
+            ...submittedRowFields(row),
         })
     }
 

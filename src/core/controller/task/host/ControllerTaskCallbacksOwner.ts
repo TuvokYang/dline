@@ -17,6 +17,7 @@ import type { ICheckpointManager } from "@integrations/checkpoints/types"
 import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import { BrowserSession } from "@services/browser/BrowserSession"
 import type { UiAsk, UiMessage, UiSay } from "@shared/ExtensionMessage"
+import { type SubmittedInputRow, submittedRowFields } from "@shared/input-semantics/submitted-input"
 import type { ClineContent } from "@shared/messages/content"
 import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
 import { Logger } from "@shared/services/Logger"
@@ -118,6 +119,7 @@ export class ControllerTaskCallbacksOwner {
         }
         this.callbacks = {
             say: (...args) => this.say(...args),
+            sayUserReply: (row) => this.sayUserReply(row),
             ask: (...args) => this.ask(...args),
             focusChainForceUpdate: (plan) => this.focusChain.forceReplaceFocusChain(plan),
             saveCheckpoint: (completion, ts) => this.checkpointManager?.saveCheckpoint(completion, ts) ?? Promise.resolve(),
@@ -261,14 +263,32 @@ export class ControllerTaskCallbacksOwner {
             await this.options.messages.finalizeClineMessage(message)
             await this.publishRow(message, `finalized ${type} row ${ts}`)
         } else {
-            // The view refetches its window by index, so a complete row inserted
-            // behind one it already received can be skipped; dev pushed every new row.
-            // The push is not awaited: the caller (an approved write saving its file,
-            // for one) must not wait on the view, and a busy view delayed it by seconds.
-            await this.options.messages.addToClineMessages(message)
-            void this.publishRow(message, `added ${type} row ${ts}`)
+            await this.addRow(message, `added ${type} row ${ts}`)
         }
         return ts
+    }
+
+    /** A user's reply row, carrying the facts of what they submitted. */
+    private async sayUserReply(row: SubmittedInputRow): Promise<void> {
+        const ts = this.options.nextPresentationId()
+        await this.addRow(
+            {
+                ts,
+                type: "say",
+                say: "user_feedback",
+                ...submittedRowFields(row),
+            },
+            `added user_feedback row ${ts}`,
+        )
+    }
+
+    private async addRow(message: UiMessage, label: string): Promise<void> {
+        // The view refetches its window by index, so a complete row inserted
+        // behind one it already received can be skipped; dev pushed every new row.
+        // The push is not awaited: the caller (an approved write saving its file,
+        // for one) must not wait on the view, and a busy view delayed it by seconds.
+        await this.options.messages.addToClineMessages(message)
+        void this.publishRow(message, label)
     }
 
     /** A command row keeps the status its execution already reached; a new one waits to run. */

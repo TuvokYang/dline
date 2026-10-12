@@ -18,6 +18,7 @@ import {
     type LifecycleBarrierPort,
     type ReviewedReply,
     SemanticInputRejectedError,
+    type TaskInputAdmissionOptions,
     type TaskInputAdmissionPort,
 } from "./TaskInputAdmission"
 
@@ -41,23 +42,30 @@ export class TaskInputMaterializer {
         private readonly barriers?: LifecycleBarrierPort,
     ) {}
 
-    async materialize(envelope: Omit<UserInputEnvelope, "kind">, mode: TaskInput["mode"] = "queued"): Promise<TaskInput> {
+    async materialize(
+        envelope: Omit<UserInputEnvelope, "kind">,
+        mode: TaskInput["mode"] = "queued",
+        options?: TaskInputAdmissionOptions,
+    ): Promise<TaskInput> {
         return {
             entryId: this.identity.nextEntryId(),
             sequence: this.identity.nextSequence(),
             mode,
-            payloadRef: await this.materializePayload(envelope),
+            payloadRef: await this.materializePayload(envelope, options),
         }
     }
 
-    async materializePayload(envelope: Omit<UserInputEnvelope, "kind">): Promise<string> {
-        const admitted = await this.review(envelope)
+    async materializePayload(envelope: Omit<UserInputEnvelope, "kind">, options?: TaskInputAdmissionOptions): Promise<string> {
+        const admitted = await this.review(envelope, options)
         return this.payloads.put(encodeTaskPayload<UserInputEnvelope>({ kind: "user_input", ...envelope, ...admitted }))
     }
 
     /** Refusing here keeps a rejected submission out of the journal entirely. */
-    private async review(envelope: Omit<UserInputEnvelope, "kind">): Promise<Partial<UserInputEnvelope>> {
-        const result = await this.admission.admit(envelope)
+    private async review(
+        envelope: Omit<UserInputEnvelope, "kind">,
+        options?: TaskInputAdmissionOptions,
+    ): Promise<Partial<UserInputEnvelope>> {
+        const result = await this.admission.admit(envelope, options)
         if (!result.ok) throw new SemanticInputRejectedError(result.diagnostics)
 
         const owned = this.ownedBarrier(result.admitted)
@@ -131,7 +139,13 @@ export class TaskInputMaterializer {
         if (!document) throw new Error(`InconsistentReplyBarrier:${owned.entityId}`)
         const parts = replyPartsOf(document, owned.turnParts)
         const command = { commandId: owned.commandId, premessage: owned.premessage }
-        return { text: document.rawText, document, parts, commit: () => this.barriers?.request(command) }
+        return {
+            text: document.rawText,
+            document,
+            parts,
+            claimedBarrier: owned.entityId,
+            commit: () => this.barriers?.request(command),
+        }
     }
 
     private ownedBarrier(admitted: AdmittedTaskInput): AdmittedLifecycleBarrier | undefined {

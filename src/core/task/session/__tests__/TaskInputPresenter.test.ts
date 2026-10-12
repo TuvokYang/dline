@@ -143,6 +143,66 @@ describe("TaskInputPresenter", () => {
         expect(JSON.stringify(state.rows)).not.toContain(resourceId)
     })
 
+    // History renders a row from these facts, never by lexing its text against
+    // a later catalog, so a literal after the barrier stays literal for good.
+    it("records which commands the admitted submission ran", async () => {
+        const state = messageState()
+        const command = (entityId: string, sourceText: string, compositionMode: string) => ({
+            kind: "slash_command",
+            entityId,
+            commandId: `command.${entityId}`,
+            sourceText,
+            canonicalName: sourceText.slice(1),
+            namespace: "cmd",
+            compositionMode,
+            state: "recognized",
+        })
+        const semanticInput = {
+            schemaVersion: 1,
+            parserVersion: "1.0.0",
+            catalogRevision: "1",
+            documentId: "doc-2",
+            rawText: "/compact then /explain-changes",
+            nodes: [
+                command("compact", "/compact", "lifecycle_barrier"),
+                { kind: "text", text: " then " },
+                command("explain", "/explain-changes", "composable"),
+            ],
+            resources: [],
+        }
+        const presenter = new TaskInputPresenter(
+            payloadStore({ text: semanticInput.rawText, semanticInput: semanticInput as never }),
+            state.messages,
+            sequence(),
+        )
+
+        await present(presenter, "entry-1")
+
+        expect(state.rows).toEqual([
+            expect.objectContaining({
+                say: "task",
+                submittedInputs: [
+                    {
+                        segments: [
+                            { text: "/compact", role: "command", active: true },
+                            { text: " then ", role: "text", active: false },
+                            { text: "/explain-changes", role: "command", active: false },
+                        ],
+                    },
+                ],
+            }),
+        ])
+    })
+
+    it("records no facts for a legacy input, so its row reads as typed", async () => {
+        const state = messageState()
+        const presenter = new TaskInputPresenter(payloadStore({ text: "/compact" }), state.messages, sequence())
+
+        await present(presenter, "entry-1")
+
+        expect(state.rows[0]).not.toHaveProperty("submittedInputs")
+    })
+
     it("still renders an attachment-only submission", async () => {
         const state = messageState()
         const presenter = new TaskInputPresenter(payloadStore({ text: "", files: ["context.txt"] }), state.messages, sequence())
