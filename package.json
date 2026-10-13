@@ -445,6 +445,7 @@
         "test:snapshot": "cross-env UPDATE_NEW_PROMPT_SNAPSHOTS=true UPDATE_SNAPSHOTS=true vitest run src/core/prompts/system-prompt/__tests__/profile-matrix-snapshot.test.ts src/core/prompts/system-prompt/__tests__/command-profile-snapshot.test.ts src/core/task/focus-chain/__tests__/prompts-snapshot.test.ts",
         "test:integration": "vscode-test",
         "test:unit": "vitest run --config vitest.config.ts",
+        "test:perf": "cross-env DLINE_PERF_GATES=1 vitest run --config vitest.config.ts src/core/task/performance",
         "test:coverage": "vscode-test --coverage",
         "test:sca-server": "npx tsx watch scripts/test-standalone-core-api-server.ts",
         "test:tp-orchestrator": "npx tsx scripts/testing-platform-orchestrator.ts",
