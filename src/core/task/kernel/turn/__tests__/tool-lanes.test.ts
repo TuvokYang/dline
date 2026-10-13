@@ -33,7 +33,10 @@ function registeredToolNames(): string[] {
 
     const mapStart = source.indexOf("toolHandlersMap")
     expect(mapStart, "ToolExecutorCoordinator no longer declares toolHandlersMap").toBeGreaterThan(-1)
-    const mapEnd = source.indexOf("\n\t}", mapStart)
+    // The literal closes at the declaration's own indentation, whatever the formatter chose.
+    const lineStart = source.lastIndexOf("\n", mapStart) + 1
+    const indent = /^[ \t]*/.exec(source.slice(lineStart))?.[0] ?? ""
+    const mapEnd = source.indexOf(`\n${indent}}`, mapStart)
     expect(mapEnd, "could not bound the toolHandlersMap literal").toBeGreaterThan(mapStart)
 
     const body = source.slice(mapStart, mapEnd)
