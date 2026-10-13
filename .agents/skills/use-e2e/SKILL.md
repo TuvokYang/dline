@@ -27,24 +27,36 @@ Run commands from the repository root and collect them until the process exits.
 
 | Purpose | Command |
 | --- | --- |
-| Run the complete required gate | `npm run test:e2e:work` |
-| Run only the work smoke | `npm run test:e2e:work -- --project "work smoke"` |
-| Run one daily workflow with its smoke dependency | `npm run test:e2e:work -- --project "work chat tools"` |
-| Run one functional file | `npm run test:e2e:functional -- src/test/e2e/functional/<domain>/<file>.test.ts --project "functional e2e tests" --workers=1 --retries=0` |
+| Run the complete required gate (downloads VS Code and Chromium, builds, runs) | `npm run test:e2e:work` |
+| Download the pinned VS Code and Playwright Chromium once | `npm run e2e:prepare` |
+| Run only the work smoke | `npm run e2e:smoke` |
+| Run one daily workflow with its smoke dependency | `npm run e2e:work -- --project "work chat tools"` |
+| Run one functional file | `npm run e2e:functional -- src/test/e2e/functional/<domain>/<file>.test.ts --project "functional e2e tests" --workers=1 --retries=0` |
 | Run one development diagnostic | `npm run e2e:dev -- src/test/e2e/dev/bug-<behavior>.test.ts --project "development e2e tests" --workers=1 --retries=0` |
 | Run the explicit packaged pressure tier | `npm run test:e2e:pressure` |
 | Run one demo/capture file | `npm run e2e:demo -- src/test/e2e/demo/<file>.demo.ts` |
 | Inspect who currently owns `dist/` | `npm run e2e:lock:status` |
 | List a tier without launching VS Code | `npx playwright test -c <playwright-tier-config> <path> --list` |
 
+Pass Playwright arguments only to the single-command `e2e:*` scripts (`e2e:smoke`, `e2e:work`, `e2e:functional`, `e2e:dev`, `e2e:demo`, `e2e:pressure`). `test:e2e:work` and `test:e2e:functional` are chained scripts (`npm run e2e:prepare && npm run e2e:<tier>`): arguments after `--` are appended to the inner `npm run` and parsed by npm itself, so `--project`, `--workers`, and `--retries` never reach Playwright. Run `npm run e2e:prepare` once, then use the `e2e:*` form for focused runs.
+
+Each `e2e:*` script except `e2e:pressure` has a `pree2e:<tier>` hook that rebuilds the source-mode bundle under the exclusive `dist/` lock before Playwright starts.
+
 ### Source mode versus packaged mode
 
 The extension source a tier loads is decided by `PACKAGED_E2E_LIFECYCLES` in `src/test/e2e/utils/vscode-launch-isolation.ts`, not by the script name:
 
 - **Packaged mode** (`test:e2e`, `test:e2e:optimal`, `test:e2e:pressure`): builds `dist/e2e.vsix` and installs it per worker slot. `vsce package` runs `vscode:prepublish`, so `dist/extension.js` becomes a production bundle.
-- **Source mode** (`e2e:*`, `test:e2e:work`, `test:e2e:functional`): the `pree2e` hook builds generated code, the Webview, and a dev bundle, then VS Code loads the checkout through `--extensionDevelopmentPath`.
+- **Source mode** (`e2e:*`, `test:e2e:work`, `test:e2e:functional`): the `pree2e` hook builds generated code, the Webview, and a dev bundle, then VS Code loads the checkout through `--extensionDevelopmentPath`. `e2e:pressure` has no pre-hook and reuses whatever `dist/` already contains.
 
 `test:e2e:work` and `test:e2e:functional` are source mode with the VS Code and Playwright download step added; they deliberately do not package a VSIX their fixture would never install. Set `DLINE_E2E_INSTALL_VSIX=1` to force packaged mode when a current `dist/e2e.vsix` already exists.
+
+CI tests the packaged VSIX, not the dev bundle. To reproduce the CI work gate locally:
+
+```powershell
+npm run test:e2e:build; npm run e2e:prepare
+$env:DLINE_E2E_INSTALL_VSIX = "1"; node scripts/with-dist-lock.mjs --shared -- npx playwright test -c playwright.work.config.ts
+```
 
 Raw `npx playwright test` intentionally skips npm lifecycle hooks and the `dist/` lock; use it only when the artifact is already current.
 
@@ -60,11 +72,11 @@ This means:
 - Several test runs may share one prepared build concurrently.
 - A build is refused while test runs are still reading, because rebuilding would swap the bundle underneath them.
 
-To run tiers concurrently, prepare once and then start read-only runs:
+To run tiers concurrently, build once and then start read-only runs that take only the shared side of the lock. Do not start the concurrent runs through `npm run e2e:*`: their `pree2e:*` hooks request the exclusive build lock and are refused while another run reads `dist/`.
 
 ```powershell
-npm run test:e2e:build          # or: npm run pree2e
-$env:DLINE_E2E_RUN_ID = "concurrent-a"; npx playwright test -c playwright.work.config.ts
+npm run pree2e                  # source-mode bundle; use `npm run test:e2e:build` only for packaged tiers
+$env:DLINE_E2E_RUN_ID = "concurrent-a"; node scripts/with-dist-lock.mjs --shared -- npx playwright test -c playwright.work.config.ts
 ```
 
 When a command is refused, the error names the holding PID, run ID, and command. Run `npm run e2e:lock:status` to inspect holders; entries left by a crashed run are pruned automatically on the next attempt, so never delete `dist/.e2e-lock/` while another run is active.
@@ -72,29 +84,29 @@ When a command is refused, the error names the holding PID, run ID, and command.
 ## Test Domains
 
 - **Work gate**: `playwright.work.config.ts` and `src/test/e2e/work/`. It contains one 120-second smoke and four 600-second single-file, single-top-level-test daily workflows. This is the required CI and release E2E surface.
-- **Functional regressions**: `playwright.functional.config.ts` and `src/test/e2e/functional/`. Keep tests focused, stable, and black-box; run only affected files or names during implementation. Full functional execution is nightly or explicitly requested.
+- **Functional regressions**: `playwright.functional.config.ts` and `src/test/e2e/functional/`. Keep tests focused, stable, and black-box; run only affected files or names during implementation. Full functional execution runs in production-release validation (`release.yml`, packaged VSIX, one shard per functional folder) or when explicitly requested; no scheduled workflow runs it. `DLINE_E2E_WORKERS` overrides the default of 2 workers.
 - **Development diagnostics**: `playwright.dev.config.ts` and `src/test/e2e/dev/`. Use readable `bug-`, `feature-`, or `issue-<number>-` names for fault injection, forensic capture, and precise reproduction. Dev uses one worker, no retries, retained failure traces, and never enters required CI.
 - **Pressure**: `playwright.pressure.config.ts` is the explicit load/soak tier, not routine completion evidence.
 - **Default compatibility collection**: `playwright.config.ts` collects ordinary work and functional tests while excluding dev. Do not run it as the normal required gate.
 - **Demo/capture E2E**: `playwright.demo.config.ts` and `src/test/e2e/demo/**/*.demo.ts` are for deterministic media or scenario capture, not regression evidence.
-- **Legacy E2E**: `playwright.legacy.config.ts` is only for explicitly retained compatibility scenarios.
+- **Storybook Playwright**: `playwright.storybook.config.ts` runs `tests/storybook/` specs against a Storybook server it starts itself. There is no npm script; run `npx playwright test -c playwright.storybook.config.ts`.
 - **Storybook**: stories live under `webview-ui/src/**/*.stories.tsx`. Use `npm run storybook` for interactive inspection or `npm --prefix webview-ui run build-storybook` for a bounded static build.
 
 ## Pre-Run Checks
 
 1. Read `package.json`, the selected tier config, and `src/test/e2e/work/manifest.ts` when work projects are involved. Do not infer commands, lifecycle hooks, project names, or timeouts.
-2. Choose work, functional, dev, pressure, demo, legacy, or Storybook based on the behavior being proved. Do not report one tier as coverage for another.
+2. Choose work, functional, dev, pressure, demo, or Storybook based on the behavior being proved. Do not report one tier as coverage for another.
 3. Set a unique run ID for every Playwright process:
 
 ```powershell
 $env:DLINE_E2E_RUN_ID = "functional-task-resume-20260917"
-npm run test:e2e:functional -- src/test/e2e/functional/tasks/history-resume-liveness.test.ts --project "functional e2e tests" --workers=1 --retries=0
+npm run e2e:functional -- src/test/e2e/functional/tasks/history-resume-liveness.test.ts --project "functional e2e tests" --workers=1 --retries=0
 ```
 
 `DLINE_E2E_RUN_ID` may contain only letters, numbers, dots, underscores, and hyphens. If it is not set, the fixture creates a process-unique ID.
 
 4. Do not manually delete the entire `tmp/test-result` directory or temporary directories owned by another run. Global setup cleans only its own run namespace; deleting external directories can cause trace `ENOENT` errors or remove another Task's profile.
-5. Required CI packages one VSIX, then runs work smoke and the four daily projects on Linux, macOS, and Windows against that same artifact. Full functional and dev runs are not substitutes for this gate.
+5. Required CI (`.github/workflows/e2e.yml`) packages one VSIX, runs the work smoke on Linux, and then runs each of the four daily projects on Linux, macOS, and Windows with `--no-deps`, all against that same artifact. Full functional and dev runs are not substitutes for this gate.
 
 ## Artifact Locations and Isolation
 
@@ -103,7 +115,7 @@ Playwright artifacts are stored at:
 ```text
 tmp/test-result/<run-id>/
 ├── <test-result-directory>/
-│   ├── trace.zip
+│   ├── trace.zip              (dev tier, or runs with --trace=on)
 │   ├── test-failed-1.png
 │   ├── vscode-failure.png
 │   ├── dline-output.log
@@ -164,7 +176,7 @@ e2e("Task renders the completed result", async ({ helper, sidebar, server, userD
 
 ### Mock Response Queues
 
-Reset the queue at the start of each test and enqueue only the responses that test needs:
+Reset the queue at the start of each test and enqueue only the responses that test needs. `enqueueOpenAiResponses` targets the OpenAI-compatible chat endpoint; use `server.enqueueResponses("<target>", ...)` for other protocols such as `openai-compatible-responses`, `anthropic-messages`, or `deepseek-chat`, and `server.getRequestCount("<target>")` to assert request counts:
 
 ```typescript
 server.resetOpenAiMock()
@@ -193,7 +205,7 @@ When a test fails, do not immediately change production code. Preserve the faile
 
 1. **The first Playwright assertion or timeout boundary**
    - Distinguish startup, fixture, UI locator, API-contract, and business-assertion failures.
-   - A timeout near 60 seconds usually indicates an unresolved Promise, streaming state, Electron startup, or fixture-scope problem.
+   - A timeout at the tier's configured limit usually indicates an unresolved Promise, streaming state, Electron startup, or fixture-scope problem. Limits: default and functional 60 seconds on CI or Windows and 20 seconds elsewhere, work smoke 120 seconds, daily workflows 600 seconds, dev 15 minutes.
 2. **Screenshots**
    - Inspect `tmp/test-result/<run-id>/<test-result-directory>/test-failed-1.png`.
    - For a real VS Code page failure, also inspect `vscode-failure.png`.
@@ -212,7 +224,7 @@ When a test fails, do not immediately change production code. Preserve the faile
    - For `Profile not found`, provider unavailable, or queue exhaustion, investigate fixture and directory isolation before attributing the failure to UI business logic.
 7. **Trace**
    - For a complete action timeline, run with `--trace=on` and inspect actions, DOM snapshots, network, and console in the Playwright trace viewer.
-   - Do not let global setup delete `outputDir` during a trace run; otherwise `.playwright-artifacts/*.zip` can fail with `ENOENT`.
+   - Reusing a `DLINE_E2E_RUN_ID` reuses `tmp/test-result/<run-id>/`; use a fresh run ID when earlier artifacts or traces must survive.
 
 ### Symptom-to-Evidence Map
 
@@ -223,9 +235,9 @@ When a test fails, do not immediately change production code. Preserve the faile
 | `e2e_tool_result_contract_failed` | Previous tool result, call ID, request body, and `expectedToolResults` |
 | `API Request Failed` | Screenshot, Dline log, provider/protocol/path, and response status |
 | Blank page or sidebar frame unavailable | `vscode-failure.png`, VS Code logs, console/pageerror, and Webview-frame initialization |
-| `ENOENT .playwright-artifacts/*.zip` | Whether setup deleted the current run's output root |
+| `ENOENT .playwright-artifacts/*.zip` | Whether another process reused the same run ID or removed the current run's output root |
 | Tasks interfere with each other | `DLINE_E2E_RUN_ID`, worker/test/retry directories, dynamic ports, and mock queue reset |
-| 60-second timeout | The first unmet wait boundary; do not increase the timeout first |
+| Timeout at the tier limit | The first unmet wait boundary; do not increase the timeout first |
 
 ## Minimal Reproduction After a Failure
 

@@ -17,11 +17,11 @@ Do not run these commands by default:
 npx vitest --ui
 vitest --ui
 npm run test:watch
-npm run watch-tests
+npm --prefix webview-ui run test:watch
 vitest
 ```
 
-The last command starts watch mode when `run` is omitted. Background Vitest UI startup must include `--no-open` and must never open the UI URL in a system browser. The repository provides two managed paths:
+`vitest` without `run` starts watch mode, and the Webview `test:watch` script is `vitest dev`. `npm run watch-tests` is not Vitest at all: it is a `tsc` watch that emits into `out/`; do not use it for test validation either.
 
 - `npm run vitest:ui:server` starts the long-lived repository-local server for CLI use;
 - `npm run vitest:ui:mcp` uses `ensureVitestUiServer()` to reuse the configured endpoint or start the repository-local Vitest 4 process automatically.
@@ -47,9 +47,12 @@ When reporting the resident server, identify its `function_id`, URL, and the dis
 Treat these files as the source of truth if commands appear stale:
 
 - `package.json`: npm script names and lifecycle hooks.
-- `vitest.config.ts`: root projects, aliases, workers, and the 60-second test timeout.
-- `webview-ui/vitest.config.ts`: Webview test root and jsdom setup.
-- `scripts/vitest-ui/cli.mjs`: supported status/rerun arguments and their default `unknown` handling.
+- `vitest.config.ts`: the root project list only (backend projects plus the Webview project).
+- `vitest.backend-projects.ts`: backend project names and path ownership, path aliases, the `threads` pool with `maxWorkers: 4`, the shared setup file, the `src/test/e2e/**` exclusion, and the 60-second `testTimeout`.
+- `vitest.smoke.config.ts`: the `backend-smoke` project used by `npm run test:smoke`.
+- `webview-ui/vitest.project.ts`: Webview test root, jsdom, setup file, include globs, aliases, workers, and timeout; `webview-ui/vitest.config.ts` adds the React plugin.
+- `scripts/vitest-ui/cli.mjs`: supported commands and flags (`status`, `errors`, `files`, `rerun all|failed|file|test|task`).
+- `scripts/vitest-ui/lib/client.mjs`: the default URL and the rejection of empty, incomplete, or `unknown` collections.
 - `scripts/vitest-ui/server.mjs`: direct background server startup.
 - `scripts/vitest-ui/lib/managed-server.mjs`: MCP reuse/start behavior and configured endpoint selection.
 
@@ -57,7 +60,13 @@ Do not infer a command from memory when one of these files has changed.
 
 ## Run One-Shot Tests
 
-Prefer `test:run`. It expands to `vitest run` and does not invoke the `pretest` lifecycle hook.
+Prefer `test:run`. It expands to `vitest run` and does not invoke the `pretest` lifecycle hook. `test:unit` is the same run with an explicit `--config vitest.config.ts`.
+
+Other one-shot scripts:
+
+- `npm run test:smoke`: the `backend-smoke` project (`src/__tests__/smoke.test.ts`).
+- `npm run test:perf`: `src/core/task/performance` with `DLINE_PERF_GATES=1`; without that variable the absolute timing gates are skipped.
+- `npm run test:webview`: the Webview package's `vitest run`.
 
 Escalate test scope deliberately:
 
@@ -66,7 +75,7 @@ Escalate test scope deliberately:
 3. Then run the owning Vitest project when the changed boundary warrants broader confidence.
 4. When the user requests all projects, switch to the background Vitest UI workflow instead of launching a foreground one-shot full run.
 
-A full Dline rerun normally takes about 7-8 minutes. Give Vitest UI CLI wait/rerun operations a timeout of at least 10 minutes, keep querying the same server, and do not start another server or full run because output is temporarily quiet. Prefer separate one-shot project runs for local changes; reserve the UI workflow for explicit full-suite validation.
+A full Dline rerun normally takes about 7-10 minutes. Give Vitest UI CLI wait/rerun operations a timeout of at least 15 minutes, keep querying the same server, and do not start another server or full run because output is temporarily quiet. Prefer separate one-shot project runs for local changes; reserve the UI workflow for explicit full-suite validation.
 
 Run focused root tests:
 
@@ -114,17 +123,18 @@ npm run test:snapshot
 
 Treat `package.json` as the source of truth for the exact generation scope. The script sets the required snapshot-update environment variables and runs the repository's prompt and focus-chain snapshot generators. Do not replace it with an ad hoc Vitest command, and NEVER hand-edit generated `.snap` files.
 
-After generation succeeds, review the resulting snapshot changes and run the owning prompt project without update flags:
+After generation succeeds, review the resulting snapshot changes and run the owning tests without update flags. The script also regenerates the focus-chain snapshot, which belongs to `backend-task`, so run both:
 
 ```
 npm run test:run -- --project backend-prompts
+npm run test:run -- src/core/task/focus-chain/__tests__/prompts-snapshot.test.ts
 ```
 
 Snapshot generation passing proves that the generator completed; the subsequent project run verifies that the committed baselines and the rest of the prompt tests are consistent. Report separately any unrelated pre-existing failures rather than modifying their assertions or inventories to make the suite pass.
 
 ## Select The Project
 
-The root config assigns tests by path:
+`vitest.backend-projects.ts` and the Webview config assign tests by path:
 
 | Project | Owned tests |
 | --- | --- |
@@ -134,6 +144,11 @@ The root config assigns tests by path:
 | `backend-core` | Other `src/core/**/*.test.ts` files |
 | `backend` | Tests under `src/` outside `src/core/` |
 | `webview` | Tests/specs under `webview-ui/src/` |
+| `backend-smoke` | `src/__tests__/smoke.test.ts`, only through `vitest.smoke.config.ts` (`npm run test:smoke`) |
+
+`src/test/e2e/**` is excluded from every backend project; those files are Playwright tests (see `use-e2e`).
+
+CI (`.github/workflows/test.yml`) runs `npm run test:smoke`, then each project separately with `npx vitest run --config <config> --project <name>`. Reproduce a CI project failure with the same project selector locally.
 
 Start with the changed module's focused test. Then run adjacent tests for shared contracts, and broaden only in proportion to the change's blast radius.
 
@@ -143,7 +158,7 @@ When broader validation is appropriate, run the owning project before considerin
 
 The CLI in `scripts/vitest-ui/cli.mjs` only connects to an existing server; it does not start one. For an explicit full-suite request, first reuse a healthy server or automatically start one in the background.
 
-Probe at most five consecutive ports, from `51205` through `51209`. A 2xx/3xx response proves reachability only. Stop at the first endpoint whose Vitest UI identity reports the current repository root; managed startup rejects a reachable endpoint owned by another checkout and requires a dedicated port or URL.
+Probe at most five consecutive ports, from `51205` through `51209`. A 2xx response proves reachability only. Stop at the first endpoint whose Vitest UI identity reports the current repository root and config; managed startup rejects a reachable endpoint owned by another checkout and requires a dedicated port or URL. The CLI honours `VITEST_UI_URL`; the server and MCP wrapper honour `VITEST_UI_HOST`, `VITEST_UI_PORT`, and `VITEST_UI_CONFIG`.
 
 Each candidate URL has the form `http://localhost:<port>/__vitest__/`. Use a short per-probe timeout. Pass the selected URL through `--url` on every subsequent CLI command; do not keep assuming port `51205` after another port is selected.
 
@@ -157,11 +172,11 @@ timeout: 0
 requires_approval: false
 ```
 
-The server wrapper supplies `--watch --no-open` to Vitest, so it remains resident without launching a system browser. Record the returned `function_id` and candidate URL. Because the server was started with `background=true` and `timeout=0`, do not wait for that command to exit. Probe that exact URL for up to 30 seconds before using the CLI. If the background command exits or the port is occupied by a non-Vitest service, inspect the command result and try the next candidate port, stopping after `51209`. Do not start duplicate servers on ports that already expose a healthy Vitest UI.
+The server wrapper supplies `--watch --no-open` to Vitest, so it remains resident without launching a system browser. Record the returned `function_id` and candidate URL. Because the server was started with `background=true` and `timeout=0`, do not wait for that command to exit. The wrapper waits up to 60 seconds for the UI to start and then dispatches the initial run; if the command output shows `[vitest-ui] failed to bootstrap initial run`, the wrapper has already shut the server down, so report that output. If the background command exits or the port is occupied by a non-Vitest service, inspect the command result and try the next candidate port, stopping after `51209`. Do not start duplicate servers on ports that already expose a healthy Vitest UI.
 
 If no candidate can start, report the environment/startup failure and do not claim that the full suite ran. Do not silently replace the requested UI workflow with a foreground full run.
 
-A newly started UI automatically begins its initial full run. Avoid the empty-collection race: query `status --json` until `summary.total` is greater than zero, retrying for up to 30 seconds. Then wait for the same run to become idle without `--allow-unknown`:
+A newly started UI automatically begins its initial full run. Do not poll a non-waiting `status`: it exits non-zero while the collection is empty, incomplete, or contains `unknown` files. Go straight to the waiting status, which blocks until the collection is non-empty, complete, idle, and free of `unknown` files:
 
 ```
 npm run vitest:ui -- status --url <vitest-ui-url> --wait-idle --timeout 900000 --rpc-timeout 900000
@@ -228,7 +243,7 @@ When a bounded one-shot or CLI command yields a continuation/process handle, kee
 
 If a one-shot test exceeds its expected duration, inspect the active process and the test's awaited boundary. Do not switch to watch/UI mode to obtain output.
 
-The root config sets `testTimeout: 60_000`. A failure at approximately 60 seconds usually indicates an unresolved promise, import, timer, interaction, or worker boundary. Diagnose that boundary; do not raise the timeout merely to make the test pass.
+Both the backend projects (`vitest.backend-projects.ts`) and the Webview project (`webview-ui/vitest.project.ts`) set `testTimeout: 60_000`. A failure at approximately 60 seconds usually indicates an unresolved promise, import, timer, interaction, or worker boundary. Diagnose that boundary; do not raise the timeout merely to make the test pass.
 
 ## Report Results
 
