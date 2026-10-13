@@ -637,8 +637,9 @@ describe("TaskActivityPanel", () => {
         // In = uncached 1,000 + cache write 1,000 + cache read 8,000.
         expect(metrics).toHaveTextContent("In:10.0K")
         expect(metrics).toHaveTextContent("Cache:80%")
-        expect(metrics).toHaveTextContent("¥0.01")
-        expect(metrics).not.toHaveTextContent("CN")
+        // Yuan and yen share the ¥ glyph, so runtime metrics name the currency.
+        expect(metrics).toHaveTextContent("CN¥0.01")
+        expect(metrics).not.toHaveTextContent("JP¥")
     })
 
     it("shows all activities and filters the vertical list by type", () => {
