@@ -6,7 +6,7 @@ import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limit
 import type { UiSayTool } from "@shared/ExtensionMessage"
 import type { ClineToolResponseContent, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import { WebToolsMode } from "@shared/proto/dline/provider/common"
-import { DlineDefaultTool } from "@shared/tools"
+import { CONVERSATIONAL_TOOL_NAMES, DlineDefaultTool } from "@shared/tools"
 import { serializeDurableToolResult, toolResultReplayOf } from "../../../DurableToolResult"
 import { LOOP_DETECTION_SOFT_THRESHOLD, recordToolCall, toolCallSignature } from "../../../loop-detection"
 import { ToolExecutionObservation, type ToolFailureObservation } from "../../../observability/tool-execution-observation"
@@ -177,6 +177,20 @@ function measureTextBytes(content: ClineToolResponseContent): number {
  */
 const DEFERRABLE_TOOLS: ReadonlySet<string> = new Set([DlineDefaultTool.USE_SUBAGENT, DlineDefaultTool.USE_SUBAGENTS])
 
+/**
+ * The budget one call's result is bounded with.
+ *
+ * A conversational call returns what the user answered: input the task is
+ * waiting on, not output a tool generated, and compaction keeps it as the turn
+ * the user opened. Cutting it to the round's share would erase the reply
+ * exactly when the context is full and compaction is about to run, so only the
+ * absolute cap applies to it. Its bytes are still counted against the round.
+ */
+function resultBudgetOf(toolName: string, lease: ContextBudgetLease | undefined): ToolResultBudget | undefined {
+    if (CONVERSATIONAL_TOOL_NAMES.has(toolName as DlineDefaultTool)) return undefined
+    return resolveToolResultBudget(lease, MAX_TOOL_RESULT_TEXT_BYTES)
+}
+
 /** What the model receives in place of a result that waits for room; it pairs the call and lets the task go on. */
 export function deferredResultNotice(description: string): string {
     return `[DEFERRED] ${description} result held: context budget below 3K. Continue the task; the result will be delivered after automatic compaction.`
@@ -316,7 +330,7 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
             response,
             description,
             result.failure,
-            resolveToolResultBudget(lease, MAX_TOOL_RESULT_TEXT_BYTES),
+            resultBudgetOf(block.name, lease),
         )
         return {
             contentBytes: serialized.contentBytes,

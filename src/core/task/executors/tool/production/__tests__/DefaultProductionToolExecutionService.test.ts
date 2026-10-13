@@ -233,6 +233,17 @@ describe("DefaultProductionToolExecutionService context budget", () => {
         expect(ledger.snapshot().stagedTokens).toBe(Math.ceil(Buffer.byteLength(text) * 0.25))
     })
 
+    it("keeps the user's reply to a conversational call whole after the round's budget is spent", async () => {
+        // 100K window, 125K occupied: the round has nothing left to share out.
+        const reply = "<feedback>\nWORK_CONTEXT_AUTO_COMPACT_CONTINUE\n</feedback>"
+        const { ledger, run } = budgetedService(125_000, 100_000, [Promise.resolve(reply)], { toolName: "qna_respond" })
+
+        const text = replayedText((await run("tid-reply")).content)
+
+        expect(text).toContain(reply)
+        expect(ledger.snapshot().stagedTokens).toBe(Math.ceil(Buffer.byteLength(text) * 0.25))
+    })
+
     it("holds a subagent result for after compaction once less than the yield margin is left", async () => {
         const publish = vi.fn(async () => undefined)
         // 100K window, 98K occupied: 2K left, below the 3K yield margin.
