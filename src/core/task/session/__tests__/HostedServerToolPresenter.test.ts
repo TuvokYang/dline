@@ -176,4 +176,34 @@ describe("HostedServerToolPresenter", () => {
         expect(completed.status).toBe("completed")
         expect(completed.hostedCall).toBeUndefined()
     })
+
+    // resumeDeferred runs inside the provider request. A rejected local write used
+    // to escape it and surface as "API Request Failed" with a manual Retry.
+    it("keeps resuming when the abandoned row cannot be written", async () => {
+        const rows = new Map<number, UiMessage>([
+            [10, deferredRow(10, "webSearch", "srvtoolu_deferred", "trace-search")],
+            [20, deferredRow(20, "webFetch", "srvtoolu_gone", "trace-fetch")],
+        ])
+        const store = messageStore(rows)
+        const writeFailure = new Error("BufferedUnifyStore.appendDurable: timestamp 20 already exists")
+        store.beginDurableClineMessage = ((row: UiMessage) => {
+            const persistence = Promise.reject(writeFailure)
+            persistence.catch(() => undefined)
+            return { message: row, persistence }
+        }) as MessageStateHandler["beginDurableClineMessage"]
+        let nextId = 100
+        const session = new HostedServerToolPresenter("task-1", store, () => ++nextId).begin({
+            providerId: "anthropic",
+            webSearchRoutingPlan: hostedPlan,
+            imageGeneration: { enabled: false },
+        } as never)
+
+        const carried = await session.resumeDeferred?.({
+            history: deferredTurn,
+            protocol: "anthropic_messages",
+            replayHostedTools: new Set(["web_search"]),
+        })
+
+        expect(carried).toEqual(new Map([["srvtoolu_deferred", "trace-search"]]))
+    })
 })

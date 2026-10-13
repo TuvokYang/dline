@@ -712,7 +712,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         const uiMessage = this.uiMessage
         if (!uiMessage) throw new Error("UI message store is unavailable for durable commit")
 
-        const durableIndex = uiMessage.getByTs(message.ts) ? uiMessage.findIndexByTs(message.ts) : -1
+        const durableIndex = uiMessage.findIndexByTs(message.ts)
         if (!allowDurableReplacement && durableIndex >= 0) {
             throw new Error(`Durable message ${message.ts} already exists`)
         }

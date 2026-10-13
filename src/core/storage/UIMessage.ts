@@ -89,8 +89,19 @@ export class UIMessage {
     getAt(index: number): UiMessage | undefined {
         return this.store.getAt(index)
     }
+    /**
+     * Position of the row with this timestamp in `getAll()`, or -1 when absent.
+     *
+     * Callers pass the result to positional writes such as `updateMessage`, so it
+     * must be a collection index. The store's timestamp index answers a different
+     * question (the sorted insertion point) and never reports absence.
+     */
     findIndexByTs(ts: number): number {
-        return this.store.findTimestampIndex(ts)
+        const messages = this.store.getAll()
+        for (let index = messages.length - 1; index >= 0; index--) {
+            if (messages[index].ts === ts) return index
+        }
+        return -1
     }
     get count(): number {
         return this.store.count

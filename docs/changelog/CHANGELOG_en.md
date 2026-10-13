@@ -19,6 +19,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed the expanded input queue covering the auto-approve bar and making it unclickable; the queue list now opens above the auto-approve bar on an opaque background
 - Fixed the format badge in resource chips, such as PNG, wrapping onto two lines when space runs short
 - Fixed a command that needs approval showing an extra Completed command card, whether it was approved or rejected
+- Fixed tasks with more than 500 messages failing with `API Request Failed` (`timestamp ... already exists`) and asking for a manual retry when a deferred hosted tool call was resumed: saved messages are no longer mistaken for new ones, and such a local save failure no longer fails the API request
 - Fixed LaTeX formula blocks using
 - Fixed long tasks reading and rewriting the whole `messages.db` history on every update to the latest chat messages, which blocked the extension host for long periods; only the tail rows are now checked and replaced, so the cost no longer grows with task length, and the task view no longer copies every activity on each refresh
 

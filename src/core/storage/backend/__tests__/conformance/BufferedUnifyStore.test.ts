@@ -195,6 +195,24 @@ describe("BufferedUnifyStore", () => {
         await Promise.all([admitted, firstClose])
         await expect(store.append({ ts: 200, value: "rejected" })).rejects.toThrow(/closed/i)
     })
+
+    // The timestamp cache holds a bounded window of rows. A committed row outside
+    // it was reported as absent, so callers that check before writing appended a
+    // second row with the same timestamp and the durable append rejected it.
+    it("finds every committed row by timestamp, not only the cached window", async () => {
+        const store = await open(`buffered-lookup-${randomUUID()}`)
+        try {
+            const rows = Array.from({ length: 600 }, (_, index) => ({ ts: 1_000 + index, value: `row-${index}` }))
+            await store.replaceAll(rows)
+            await store.appendDurable({ ts: 5_000, value: "tail" })
+
+            expect(store.getByTimestamp(1_550)).toEqual({ ts: 1_550, value: "row-550" })
+            expect(store.getByTimestamp(5_000)).toEqual({ ts: 5_000, value: "tail" })
+            expect(store.getByTimestamp(4_999)).toBeUndefined()
+        } finally {
+            await store.close()
+        }
+    })
 })
 
 function isTestItem(value: unknown): value is TestItem {

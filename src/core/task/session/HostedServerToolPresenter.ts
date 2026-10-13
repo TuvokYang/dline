@@ -9,6 +9,7 @@ import {
 } from "@shared/code-execution-tools"
 import type { UiSayTool } from "@shared/ExtensionMessage"
 import { ServerTool } from "@shared/proto/dline/models/metadata"
+import { Logger } from "@shared/services/Logger"
 import {
     type HostedCallPresentation,
     normalizeHostedWebFetchContent,
@@ -220,6 +221,10 @@ class HostedServerToolPresentationSession implements ProviderServerToolPresentat
     /**
      * Fail a deferred row in place. It is written directly rather than through the lifecycle, because the
      * current request may no longer route the tool, and it keeps the provider that announced the call.
+     *
+     * A failed write only loses this presentation update: the durable row stays deferred and is abandoned
+     * again by the next request. It must not fail the provider request that is resuming, which would
+     * present a local storage error as an API failure the user has to retry by hand.
      */
     private async abandonDeferred(row: DeferredHostedRow): Promise<void> {
         this.rowIds.set(row.dlineTid, row.ts)
@@ -236,6 +241,9 @@ class HostedServerToolPresentationSession implements ProviderServerToolPresentat
                 error: DEFERRED_HOSTED_CALL_ABANDONED_REASON,
             }
             await this.present(row.dlineTid, buildHostedMessage(update, row.providerId ?? this.context.providerId), false)
+        } catch (error) {
+            Logger.error(`[HostedServerToolPresenter] Failed to persist the abandoned deferred row ${row.ts}:`, error)
+            return
         } finally {
             this.rowIds.delete(row.dlineTid)
         }

@@ -198,10 +198,25 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
         return this.items
     }
 
+    /**
+     * The latest entry with this timestamp, or undefined when the collection has none.
+     *
+     * The cache only holds a bounded window, so a miss falls back to the entries
+     * themselves. Answering from the cache alone reported committed rows outside
+     * the window as absent, and callers that check before writing then appended
+     * a duplicate timestamp.
+     */
     getByTimestamp(timestamp: number): TItem | undefined {
         const cached = this.l2Cache.get(timestamp)
-        if (cached) this.touchL2(timestamp)
-        return cached
+        if (cached) {
+            this.touchL2(timestamp)
+            return cached
+        }
+        const index = this.findLastTimestampIndex(timestamp)
+        if (index < 0) return undefined
+        const item = this.items[index]
+        this.addToL2(timestamp, item)
+        return item
     }
 
     getAt(index: number): TItem | undefined {
@@ -227,7 +242,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
         const start = Math.max(0, this.sortedTimestamps.length - limit)
         return this.sortedTimestamps
             .slice(start)
-            .map((timestamp) => this.resolveByTimestamp(timestamp))
+            .map((timestamp) => this.getByTimestamp(timestamp))
             .filter(isDefined)
     }
 
@@ -240,7 +255,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
         for (let index = this.findTimestampIndex(fromTimestamp); index < this.sortedTimestamps.length; index++) {
             const timestamp = this.sortedTimestamps[index]
             if (timestamp >= toTimestamp) break
-            const item = this.resolveByTimestamp(timestamp)
+            const item = this.getByTimestamp(timestamp)
             if (item) result.push(item)
         }
         return result
@@ -955,17 +970,11 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
         this.l2Cache.clear()
         this.l2AccessOrder = []
         this.invalidateTimestampIndex()
-        for (let index = 0; index < Math.min(items.length, L2_MAX_SIZE); index++) {
+        // Seed the most recent rows: lookups concentrate on the tail of a
+        // conversation, where streaming and terminal updates land.
+        for (let index = Math.max(0, items.length - L2_MAX_SIZE); index < items.length; index++) {
             if (items[index].ts > 0) this.addToL2(items[index].ts, items[index])
         }
-    }
-
-    private resolveByTimestamp(timestamp: number): TItem | undefined {
-        const cached = this.getByTimestamp(timestamp)
-        if (cached) return cached
-        const item = [...this.items].reverse().find((candidate) => candidate.ts === timestamp)
-        if (item) this.addToL2(timestamp, item)
-        return item
     }
 
     /**
