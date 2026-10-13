@@ -2831,7 +2831,7 @@ export class Controller {
         return {
             ...owned,
             taskInstanceId: session.taskInstanceId,
-            ...(handoff?.taskInstanceId === session.taskInstanceId ? { handoffSource: handoff.source } : {}),
+            ...(handoff && handoff.taskInstanceId === session.taskInstanceId ? { handoffSource: handoff.source } : {}),
         }
     }
 
