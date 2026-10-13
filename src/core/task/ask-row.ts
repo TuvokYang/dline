@@ -1,5 +1,22 @@
 import type { UiAsk, UiMessage } from "@shared/ExtensionMessage"
 
+/** What separates a command approval's command line from the directory it runs in. */
+const WORKING_DIRECTORY_SEPARATOR = "\n\nWorking directory: "
+
+/** The body of a command approval: the command line, then the directory it runs in. */
+export function formatCommandApprovalBody(commandLine: string, workingDirectory: string): string {
+    return `${commandLine}${WORKING_DIRECTORY_SEPARATOR}${workingDirectory}`
+}
+
+/**
+ * The command line a command approval body names, which is the whole text of
+ * the row streaming drew for the same call before the approval was planned.
+ */
+export function commandLineOfApprovalBody(body: string): string {
+    const separator = body.lastIndexOf(WORKING_DIRECTORY_SEPARATOR)
+    return separator < 0 ? body : body.slice(0, separator)
+}
+
 /**
  * Build the canonical complete ask row every writer of an ask must use.
  *

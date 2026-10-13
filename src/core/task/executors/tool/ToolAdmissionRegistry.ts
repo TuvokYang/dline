@@ -3,6 +3,7 @@ import path from "node:path"
 import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
 import { getTaskTempDirectory } from "@core/storage/task-temp"
+import { formatCommandApprovalBody } from "@core/task/ask-row"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import { type BrowserAction, browserActions, type UiAsk, type UiSayTool } from "@shared/ExtensionMessage"
 import { DlineDefaultTool } from "@shared/tools"
@@ -416,8 +417,8 @@ function buildPresentation(
         }
         const command = parameterValue(block, "command")
         const workingDirectory = resolveLexicalPath(declaredPath(block, toolName), snapshot) ?? snapshot.cwd
-        const body = typeof command === "string" ? command : description
-        return { ask, body: `${body}\n\nWorking directory: ${workingDirectory}`, notify }
+        const commandLine = typeof command === "string" ? command : description
+        return { ask, body: formatCommandApprovalBody(commandLine, workingDirectory), notify }
     }
     if (ask === "browser_action_launch") {
         const url = parameterValue(block, "url")

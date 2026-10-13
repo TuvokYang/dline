@@ -173,6 +173,9 @@ describe("TaskInteractionOwner", () => {
         expect(rows[0]).toMatchObject({ ts: 1, text: "kept" })
     })
 
+    // Streaming draws the command line alone; the approval body adds the working
+    // directory. Matching the two as equal texts never succeeded, so a second
+    // ask was appended and the statusless streamed row rendered as Completed.
     it("promotes a streamed command row into its approval anchor without appending a duplicate", async () => {
         const rows: UiMessage[] = [{ ts: 10, type: "say", say: "command", text: "npm test", partial: true }]
         const messages = createMessages(rows)
@@ -182,7 +185,7 @@ describe("TaskInteractionOwner", () => {
             interactionId: "approval:tid-command",
             kind: "tool_approval",
             ask: "command",
-            body: "npm test",
+            body: "npm test\n\nWorking directory: /repo",
         })
 
         expect(messages.finalizeClineMessage).toHaveBeenCalledWith(

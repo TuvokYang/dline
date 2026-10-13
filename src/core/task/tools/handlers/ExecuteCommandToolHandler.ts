@@ -2,6 +2,7 @@ import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
+import { formatCommandApprovalBody } from "@core/task/ask-row"
 import { WorkspacePathAdapter } from "@core/workspace/WorkspacePathAdapter"
 import { showSystemNotification } from "@integrations/notifications"
 import type { CommandExecutionOutcome } from "@integrations/terminal"
@@ -269,7 +270,7 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
         if (!config.isSubagentExecution) {
             await config.callbacks.say(
                 "command",
-                `${actualCommand}\n\nWorking directory: ${executionDir}`,
+                formatCommandApprovalBody(actualCommand, executionDir),
                 undefined,
                 undefined,
                 false,

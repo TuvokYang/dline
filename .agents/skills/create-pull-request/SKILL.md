@@ -17,6 +17,7 @@ Use read-only checks:
 git branch --show-current
 git status --short
 git remote -v
+git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}"
 git branch -vv
 git rev-parse HEAD
 gh --version
@@ -45,16 +46,23 @@ Resolve:
 - `<head-owner>` and `<head-ref>`;
 - the current base SHA and head SHA.
 
-Use explicit user input, branch upstream configuration, platform metadata, and remote URLs in the order defined by the repository contract.
+Resolve them in the order defined by repository-and-release:
 
-Stop when:
+1. an explicit repository, remote, and ref in the user's current instruction;
+2. the current branch's configured upstream, only when it matches the intended hosting service;
+3. base and head repositories and refs returned by the platform;
+4. in a fork flow, a writable fork remote owned by the current user or the PR head owner.
+
+This skill creates GitHub PRs with `gh`. If the resolved base repository is not on GitHub, stop; do not substitute GitLab MR commands without an explicit target.
+
+Stop and ask the user when:
 
 - the branch has no upstream;
 - more than one remote may be writable;
 - fetch and push URLs imply different repositories and intent is unclear;
-- pushing would write the contributor branch to the base repository without explicit authorization;
+- pushing would write the contributor branch to the base repository, an organization repository, or another user's fork without explicit authorization;
 - the GitHub repository cannot be distinguished from another hosting target;
-- adding or changing a remote/tracking configuration would be required.
+- adding or changing a remote, tracking branch, push default, or repository configuration would be required.
 
 ## 4. Analyze the proposed PR
 
@@ -77,7 +85,9 @@ Run the checks appropriate to the blast radius. At minimum, record focused tests
 
 Feature-branch verification does not replace the integration checks that run after the PR enters `dev`.
 
-Contributors must not create changelog-entry files, add What's New sections, or perform release version bumps unless the user explicitly requested release preparation. Maintainers curate release versions, changelogs, and What's New through the release workflow.
+For user-visible changes, add equivalent entries to the paired `## [Unreleased]` sections of `CHANGELOG.md` (Chinese) and `docs/changelog/CHANGELOG_en.md` (English), following repository-and-release. Do not create separate changelog-entry files. Do not bump `package.json`, freeze `Unreleased` into a version section, or add What's New sections unless the user explicitly requested version preparation; that work belongs to dev-version-bump.
+
+Typical checks: `npm run check-types`, `npm run lint`, `npm run format`, focused Vitest or `npm run test:run`, `npm run test:smoke`, and `npm run docs:verify` for `docs/` or `assets/docs/` changes. CI runs the `Tests` workflow for PRs into `dev`, and `Docs Check` for docs changes.
 
 ## 6. Prepare the PR body
 
@@ -90,7 +100,9 @@ Include:
 - user-visible or compatibility impact;
 - tests and manual verification;
 - risks, screenshots, or follow-up work when relevant;
-- a real issue reference only when one exists. Use the template's documented no-issue value rather than leaving a fake placeholder.
+- a real issue reference only when one exists. Use the template's `Related: N/A` when no issue exists, and `Fixes #<n>` only when the PR fully resolves the issue.
+
+Tick Type of Change, Verification, and Pre-flight items only when the diff and the recorded checks support them.
 
 Determine whether the PR should be draft. Do not mark unchecked work as completed.
 
@@ -102,11 +114,18 @@ Before pushing, show:
 - local branch and head SHA;
 - destination branch;
 - commits to be uploaded;
-- normal push or force-with-lease and its expected remote SHA.
+- normal push or force-with-lease and its expected remote SHA;
+- for force-with-lease, the remote commits that would leave the destination branch history.
 
 Obtain push authorization. If force-with-lease is required, refresh the remote SHA immediately before the write and bind the lease to that SHA. Never use unconditional force.
 
-Before PR creation, show:
+Before PR creation, check read-only whether a PR already exists for the same pair:
+
+```text
+gh pr list --repo <base-repository> --head <head-ref> --base dev --state open
+```
+
+Then show:
 
 - `<base-repository>`;
 - `head=<head-owner>:<head-ref>`;
