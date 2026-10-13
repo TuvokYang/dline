@@ -349,9 +349,9 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                     throw new Error("ChunkAfterFinal")
                 }
                 if (chunk.kind === "retry") {
-                    // A stream that showed only prose or reasoning may be sent again;
-                    // the resent stream keeps its transient identity and rewrites
-                    // those rows, so nothing it showed is journaled twice.
+                    // A dropped stream is sent again however far it got; the resent
+                    // stream keeps its transient identity and rewrites those rows,
+                    // so nothing it showed is journaled twice.
                     retrying = true
                     sealAbandonedAttempt(usage)
                     await this.noteRetry(record, chunk.notice)

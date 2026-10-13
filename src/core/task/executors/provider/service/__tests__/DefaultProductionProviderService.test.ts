@@ -1163,10 +1163,64 @@ describe("DefaultProductionProviderService request retry", () => {
         expect(call).toBe(2)
     })
 
-    it("never replays once the stream called a tool", async () => {
-        const failure = httpError(503, "Service Unavailable")
+    // undici reports a connection the server dropped mid-response as
+    // TypeError("terminated") with the socket error as its cause.
+    const socketDrop = () =>
+        Object.assign(new TypeError("terminated"), {
+            cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }),
+        })
+
+    // A dropped stream is retried however far it got: no call it streamed has
+    // run, since calls only run from the final reply.
+    it.each([
+        [
+            "a native tool call",
+            {
+                type: "tool_calls",
+                phase: "delta",
+                function_id: "fn-1",
+                dline_tid: "tid-1",
+                tool_call: { function: { id: "fn-1", name: "read_file", arguments: "{" } },
+            },
+        ],
+        ["a hosted tool call", { type: "server_tool", tool: "web_search", phase: "started", dline_tid: "hosted-1" }],
+        [
+            "a completed turn-ending call",
+            {
+                type: "tool_calls",
+                phase: "completed",
+                function_id: "fn-2",
+                dline_tid: "tid-2",
+                tool_call: { function: { id: "fn-2", name: "attempt_completion", arguments: '{"result":"done"}' } },
+            },
+        ],
+    ])("replays a stream dropped after %s and keeps only the resent reply", async (_label, streamed) => {
         let call = 0
         const harness = scripted([{ chunks: [] }])
+        ;(harness.api as { createMessage: unknown }).createMessage = vi.fn(async function* () {
+            call++
+            if (call === 1) {
+                yield streamed as unknown as ApiStreamChunk
+                throw socketDrop()
+            }
+            yield text("Recovered answer.")
+        })
+
+        const chunks = await collect(harness.service)
+
+        expect(call).toBe(2)
+        expect(harness.waits).toEqual([1000])
+        expect(chunks.filter((chunk) => chunk.kind === "retry")).toEqual([
+            { kind: "retry", notice: expect.objectContaining({ attempt: 1, maxAttempts: 5 }) },
+        ])
+        const final = chunks.at(-1)
+        expect(final).toMatchObject({ kind: "final", text: "Recovered answer.", blocks: [] })
+    })
+
+    it("fails a stream dropped mid tool call once the retry budget is spent", async () => {
+        const failure = socketDrop()
+        let call = 0
+        const harness = scripted([{ chunks: [] }], { maxAttempts: 1 })
         ;(harness.api as { createMessage: unknown }).createMessage = vi.fn(async function* () {
             call++
             yield {
@@ -1180,7 +1234,7 @@ describe("DefaultProductionProviderService request retry", () => {
         })
 
         expect(await failureOf(harness.service)).toBe(failure)
-        expect(call).toBe(1)
+        expect(call).toBe(2)
     })
 
     // The rate metrics count logical requests: every send of the turn's request,

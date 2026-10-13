@@ -303,6 +303,9 @@ function describedFailure(request: PreparedProviderRequest, error: unknown): unk
 /** Closes a reply the user stopped, so the next request knows it was cut short on purpose. */
 export const USER_INTERRUPTION_NOTICE = "[Response interrupted by user]"
 
+/** Closes a hosted call whose stream dropped before the call returned, whether or not the reply is then sent again. */
+const DROPPED_HOSTED_CALL_REASON = "Provider stream failed before this hosted tool call returned a result."
+
 /**
  * What a stopped reply leaves in the conversation.
  *
@@ -419,9 +422,6 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         // A manual Retry owns this request, so its failure returns to the user
         // rather than opening a second automatic sequence.
         const retryBudget: RetryBudget = { attempts: this.retry.claimManualTakeover?.() ? this.retry.maxAttempts : 0 }
-        // Set once the reply called a tool or ran a hosted one; from then on a
-        // failed stream is final, because replaying it could repeat that call.
-        let toolActivity = false
         // A cancelled command cannot authorize a tool in a later turn.
         const abort = () => turn.abandon()
         input.signal.addEventListener("abort", abort, { once: true })
@@ -501,7 +501,6 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 }
                                 break
                             case "tool_calls":
-                                toolActivity = true
                                 this.consumeNativeTool(nativeTools, chunk)
                                 const partialBlock = this.previewNativeTool(nativeTools.get(chunk.dline_tid))
                                 // The completed chunk may omit the name, so it is read from the call
@@ -520,7 +519,6 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 }
                                 break
                             case "server_tool":
-                                toolActivity = true
                                 if (chunk.replay) hostedToolBlocks.push(chunk.replay)
                                 await serverTools?.consume(chunk)
                                 yield {
@@ -549,12 +547,12 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                     streamCompletedAtMs = performance.now()
                     break
                 } catch (error) {
-                    const notice = input.signal.aborted
-                        ? undefined
-                        : this.midStreamRetry(error, turn.request, retryBudget, toolActivity || turnEnded)
+                    const notice = input.signal.aborted ? undefined : this.midStreamRetry(error, turn.request, retryBudget)
                     if (!notice) throw error
                     // The rows the failed stream showed are transient and keyed by this
                     // turn's stream, so the resent stream rewrites them from scratch.
+                    // Nothing it streamed was acted on: tool calls only run from the
+                    // final reply, so the resent stream starts the reply over.
                     text = ""
                     prose = ""
                     reasoningText = ""
@@ -566,6 +564,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                     usage = new ProviderUsageIncrements()
                     receivingTokens = 0
                     authoritativeContextTokens = 0
+                    turnEnded = false
+                    // Hosted calls the dropped stream left open get no result from it;
+                    // the resent stream opens its own rows.
+                    await serverTools?.finalizeOpen(DROPPED_HOSTED_CALL_REASON)
                     yield { kind: "retry", notice }
                     const waited = await this.retry.wait(notice.delayMs, input.signal)
                     if (waited !== "send" || input.signal.aborted) {
@@ -585,7 +587,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                 input.signal.aborted
                     ? "Provider-hosted tool cancelled before it returned a result."
                     : streamFailed
-                      ? "Provider stream failed before this hosted tool call returned a result."
+                      ? DROPPED_HOSTED_CALL_REASON
                       : "Provider stream ended before this hosted tool call returned a result.",
             )
             input.signal.removeEventListener("abort", abort)
@@ -652,10 +654,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
     /**
      * Open the request's stream, sending it again until it produces a first chunk.
      *
-     * Only a failure before the first chunk is replayed: nothing reached the
+     * Only a failure before the first chunk is replayed here: nothing reached the
      * conversation or the chat yet, so the same request can simply be sent
-     * again. After that, a replay would duplicate prose or tool calls the user
-     * already saw.
+     * again. A stream that fails later is sent again by `start`, which first
+     * clears what the failed stream showed.
      *
      * A deterministic tool-pairing rejection is not transient, so waiting would
      * repeat it. The conversation is rebuilt with canonical pairing once and
@@ -686,19 +688,19 @@ export class DefaultProductionProviderService implements ProductionProviderServi
     /**
      * Decide whether a stream that failed after its first chunk is sent again.
      *
-     * Only a reply that so far streamed prose or reasoning is replayed: those rows
-     * are transient and the resent stream rewrites them. A reply that called a
-     * tool, ran a hosted one or ended its turn stands as it is, since a replay
-     * could repeat that call. Returns the notice to show, or undefined when the
-     * failure is final.
+     * A dropped stream is retried the same way however far it got, whether it
+     * had streamed prose, reasoning, tool calls, hosted calls or a turn-ending
+     * call: nothing in it is acted on before the reply completes, so the resent
+     * request rebuilds the whole reply. Only a non-retryable error or a spent
+     * budget makes the failure final. Returns the notice to show, or undefined
+     * when the failure is final.
      */
     private midStreamRetry(
         error: unknown,
         request: PreparedProviderRequest,
         budget: RetryBudget,
-        replyActed: boolean,
     ): ProviderRetryNoticeInput | undefined {
-        if (replyActed || budget.attempts >= this.retry.maxAttempts) return undefined
+        if (budget.attempts >= this.retry.maxAttempts) return undefined
         const provider: ProviderIdentity = { providerId: request.api.getProviderId?.(), modelId: request.api.getModel().id }
         if (!isRetryableProviderError(error, provider)) return undefined
         budget.attempts++
