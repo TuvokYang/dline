@@ -86,6 +86,14 @@ export interface MessageHandlers {
 /**
  * Scroll behavior interface
  */
+/**
+ * Who asked for a row to expand or collapse.
+ *
+ * Only a reader's own toggle takes the viewport away from auto-follow; a row
+ * that expands itself (a command that starts running) must leave it alone.
+ */
+export type RowExpansionOrigin = "user" | "auto"
+
 export interface ScrollBehavior {
     virtuosoRef: React.RefObject<VirtuosoHandle>
     scrollContainerRef: React.RefObject<HTMLDivElement>
@@ -104,7 +112,7 @@ export interface ScrollBehavior {
     scrollToBottomSmooth: () => void
     scrollToBottomAuto: () => void
     scrollToMessage: (messageIndex: number) => void
-    toggleRowExpansion: (ts: number) => void
+    toggleRowExpansion: (ts: number, origin?: RowExpansionOrigin) => void
     handleRowHeightChange: (isTaller: boolean) => void
     showScrollToBottom: boolean
     setShowScrollToBottom: React.Dispatch<React.SetStateAction<boolean>>

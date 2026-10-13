@@ -254,10 +254,10 @@ export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
                 } catch {
                     break // keep on parse error to be safe
                 }
-                // Keep this row if a subsequent api_req_failed needs it as an error carrier.
+                // Keep this row if its own api_req_failed needs it as an error carrier.
                 // api_req_failed messages are filtered out and are only used to update the
                 // latest api_req_started row. If we drop the carrier row, the error is invisible.
-                if (arr.slice(index + 1).some((m) => m.ask === "api_req_failed")) {
+                if (isFollowedByOwnFailure(arr, index)) {
                     break
                 }
                 return false
@@ -281,6 +281,24 @@ export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
         }
         return true
     })
+}
+
+/**
+ * Whether an api_req_failed follows this request before the next request starts.
+ * A failure belongs to the request it follows; scanning past the next request
+ * kept every earlier request visible once any later request failed.
+ */
+function isFollowedByOwnFailure(messages: UiMessage[], requestIndex: number): boolean {
+    for (let i = requestIndex + 1; i < messages.length; i++) {
+        const candidate = messages[i]
+        if (candidate.say === "api_req_started") {
+            return false
+        }
+        if (candidate.ask === "api_req_failed") {
+            return true
+        }
+    }
+    return false
 }
 
 /**
@@ -384,45 +402,6 @@ export function getTaskMessage(messages: UiMessage[]): UiMessage | undefined {
  */
 export function shouldShowScrollButton(disableAutoScroll: boolean, isAtBottom: boolean): boolean {
     return disableAutoScroll && !isAtBottom
-}
-
-/**
- * Find reasoning content associated with an api_req_started message.
- * Also returns whether response content (non-reasoning) has started.
- */
-export function findReasoningForApiReq(
-    apiReqTs: number,
-    allMessages: UiMessage[],
-): { reasoning: string | undefined; responseStarted: boolean } {
-    const apiReqIndex = allMessages.findIndex((m) => m.ts === apiReqTs && m.say === "api_req_started")
-    if (apiReqIndex === -1) {
-        return { reasoning: undefined, responseStarted: false }
-    }
-
-    // Collect reasoning and check if response content has started
-    const reasoningParts: string[] = []
-    let responseStarted = false
-
-    for (let i = apiReqIndex + 1; i < allMessages.length; i++) {
-        const msg = allMessages[i]
-        // Stop at next api_req_started
-        if (msg.say === "api_req_started") {
-            break
-        }
-        // Collect reasoning content
-        if (msg.say === "reasoning" && msg.text) {
-            reasoningParts.push(msg.text)
-        }
-        // Check if non-reasoning response content has started (text, tool calls, etc.)
-        if (msg.say === "text" || msg.say === "tool" || msg.ask === "tool" || msg.ask === "command" || msg.say === "command") {
-            responseStarted = true
-        }
-    }
-
-    return {
-        reasoning: reasoningParts.length > 0 ? reasoningParts.join("\n\n") : undefined,
-        responseStarted,
-    }
 }
 
 /**
@@ -898,8 +877,22 @@ function isApiReqFollowedOnlyByLowStakesTools(index: number, messages: (UiMessag
  * Absorbs api_req_started messages that are followed only by low-stakes tools.
  * Only creates tool groups when there's at least one actual tool - reasoning-only groups are dropped.
  * Should be called after groupMessages.
+ *
+ * A group never draws the checkpoints it holds, so a checkpoint the row
+ * renderer treats as its turn's primary one must stay outside the group. A
+ * restore point an MCP call or a command only owes its round is committed
+ * later and can land after the next round's read rows; absorbing it there
+ * left the turn without any visible checkpoint, because the renderer hides
+ * every later checkpoint of the turn as non-primary.
+ *
+ * @param isPrimaryCheckpoint The renderer's primary-checkpoint rule, evaluated
+ *   against the same messages it reads; without it every checkpoint inside a
+ *   group is absorbed.
  */
-export function groupLowStakesTools(groupedMessages: (UiMessage | UiMessage[])[]): (UiMessage | UiMessage[])[] {
+export function groupLowStakesTools(
+    groupedMessages: (UiMessage | UiMessage[])[],
+    isPrimaryCheckpoint?: (checkpointTs: number) => boolean,
+): (UiMessage | UiMessage[])[] {
     const result: (UiMessage | UiMessage[])[] = []
     let toolGroup: UiMessage[] = []
     let pendingReasoning: UiMessage[] = []
@@ -989,8 +982,8 @@ export function groupLowStakesTools(groupedMessages: (UiMessage | UiMessage[])[]
             continue
         }
 
-        // Checkpoint - absorb into active tool group
-        if (messageType === "checkpoint_created" && hasTools) {
+        // Checkpoint - absorb into active tool group, unless it is the one its turn shows
+        if (messageType === "checkpoint_created" && hasTools && !isPrimaryCheckpoint?.(message.ts)) {
             toolGroup.push(message)
             continue
         }

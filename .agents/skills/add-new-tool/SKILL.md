@@ -69,7 +69,7 @@ File: `src/core/task/executors/tool/ToolAdmissionRegistry.ts`.
 - `validateParameters`: value checks (follow the existing `bash`, `spawn_task`, and `browser_action` branches).
 - `declaredPaths`: needed when the tool targets paths through parameters other than `path`/`file_path`, or several paths (for example a source and a destination). The default branch handles one path only.
 - `DYNAMIC_WRITE_FANOUT_TOOLS`: when writes can fan out beyond the declared paths.
-- Approval card payload: map the tool in `PRESENTATION_TOOLS` / `approvalAsk` / `buildPresentation`, or implement `IApprovalPresentingToolHandler.getApprovalPresentation` on the handler. Both must build the card from parameters only. Unmapped tools fall back to a generic `statusUpdate` card.
+- Approval card payload: map the tool in `PRESENTATION_TOOLS` / `approvalAsk` / `buildPresentation`, or implement `IApprovalPresentingToolHandler.getApprovalPresentation` on the handler. Both must build the card from parameters only. Unmapped tools fall back to a neutral `genericTool` card.
 
 Tests: `src/core/task/executors/tool/__tests__/ToolAdmissionRegistry.test.ts`, including "classifies every remaining tool".
 

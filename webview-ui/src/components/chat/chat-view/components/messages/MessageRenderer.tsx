@@ -6,13 +6,8 @@ import ChatRow from "@/components/chat/ChatRow"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "@/components/chat/constants"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
-import type { MessageHandlers } from "../../types/chatTypes"
-import {
-    findReasoningForApiReq,
-    isTextMessagePendingToolCall,
-    isToolGroup,
-    resolveMessageRowExpanded,
-} from "../../utils/messageUtils"
+import type { MessageHandlers, RowExpansionOrigin } from "../../types/chatTypes"
+import { isTextMessagePendingToolCall, isToolGroup, resolveMessageRowExpanded } from "../../utils/messageUtils"
 import { ToolGroupRenderer } from "./ToolGroupRenderer"
 
 interface MessageRendererProps {
@@ -21,7 +16,7 @@ interface MessageRendererProps {
     groupedMessages: (UiMessage | UiMessage[])[]
     modifiedMessages: UiMessage[]
     expandedRows: Record<number, boolean>
-    onToggleExpand: (ts: number) => void
+    onToggleExpand: (ts: number, origin?: RowExpansionOrigin) => void
     onHeightChange: (isTaller: boolean) => void
     onAddToInput: (text: string) => void
     onSetQuote: (quote: string | null) => void
@@ -51,15 +46,6 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     const { mode } = useExtensionState()
 
     const isLastMessage = useMemo(() => index === groupedMessages?.length - 1, [groupedMessages, index])
-
-    // Get reasoning content and response status for api_req_started messages
-    const reasoningData = useMemo(() => {
-        if (!Array.isArray(messageOrGroup) && messageOrGroup.say === "api_req_started") {
-            // Use the same message source-of-truth that `groupedMessages` is derived from.
-            return findReasoningForApiReq(messageOrGroup.ts, modifiedMessages)
-        }
-        return { reasoning: undefined, responseStarted: false }
-    }, [messageOrGroup, modifiedMessages])
 
     // Check if a text message is waiting for tool call completion
     const isRequestInProgress = useMemo(() => {
@@ -129,8 +115,6 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
                 onHeightChange={onHeightChange}
                 onSetQuote={onSetQuote}
                 onToggleExpand={onToggleExpand}
-                reasoningContent={reasoningData.reasoning}
-                responseStarted={reasoningData.responseStarted}
             />
         </div>
     )
@@ -144,7 +128,7 @@ export const createMessageRenderer = (
     groupedMessages: (UiMessage | UiMessage[])[],
     modifiedMessages: UiMessage[],
     expandedRows: Record<number, boolean>,
-    onToggleExpand: (ts: number) => void,
+    onToggleExpand: (ts: number, origin?: RowExpansionOrigin) => void,
     onHeightChange: (isTaller: boolean) => void,
     onAddToInput: (text: string) => void,
     onSetQuote: (quote: string | null) => void,

@@ -110,7 +110,7 @@ The current checklist is shown above in environment_details. Continue by:
 2. Reporting each completed item through task_progress with its exact text
 3. Rechecking the user's full Objective after the checklist is complete
 
-For non-blocking phase summaries, use phase_report with requires_acknowledgment set to false. Do not use another tool to bypass this completion gate.
+For phase summaries, use phase_report; it never waits for the user. Do not use another tool to bypass this completion gate.
 
 If the plan genuinely needs to change, use change_todo_list to request user approval.`,
 

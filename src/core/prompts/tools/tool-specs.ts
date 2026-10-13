@@ -375,11 +375,7 @@ export const STANDARD_TOOL_SPECS: readonly Omit<ProfileToolSpec, "profile">[] = 
     spec(
         DlineDefaultTool.PHASE_REPORT,
         getPrompt("phaseReport", "standardDescription"),
-        [
-            param("response", true, getPrompt("phaseReport", "responseInstruction")),
-            param("requires_acknowledgment", false, getPrompt("phaseReport", "requiresAcknowledgmentInstruction"), "boolean"),
-            taskProgress,
-        ],
+        [param("response", true, getPrompt("phaseReport", "responseInstruction")), taskProgress],
         undefined,
         [fragment(getPrompt("phaseReport", "focusOmissionDescriptionSentence"), whenFocusTrackingDisabled)],
     ),

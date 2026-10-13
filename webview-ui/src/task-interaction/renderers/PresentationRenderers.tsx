@@ -19,6 +19,8 @@ function shell(message: UiMessage) {
     return <div>{message.text}</div>
 }
 
+const GENERIC_APPROVAL_TITLE = "Dline wants your approval:"
+
 const TOOL_APPROVAL_TITLES: Record<UiSayTool["tool"], string> = {
     editedExistingFile: "Dline wants to edit this file:",
     newFileCreated: "Dline wants to create this file:",
@@ -42,6 +44,7 @@ const TOOL_APPROVAL_TITLES: Record<UiSayTool["tool"], string> = {
     actModeRespond: "Dline wants to continue execution with this update:",
     killCommand: "Dline wants to stop this command:",
     generateImage: "Dline wants to generate an image:",
+    genericTool: GENERIC_APPROVAL_TITLE,
 }
 
 function parseTool(text: string | undefined): UiSayTool | undefined {
@@ -68,8 +71,6 @@ function toolDetail(tool: UiSayTool): string | undefined {
     if (Array.isArray(tool.content) && tool.content.length > 0) return tool.content.join("\n")
     return undefined
 }
-
-const GENERIC_APPROVAL_TITLE = "Dline wants your approval:"
 
 interface ApprovalSummary {
     title: string

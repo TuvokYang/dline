@@ -35,8 +35,9 @@ export function interactionKindForToolName(name: string): InteractionKind | unde
             return "qna_response"
         case DlineDefaultTool.GENERATE_REPORT:
             return "generate_report"
+        // Only acknowledgments recorded by earlier versions reach here: a phase report no
+        // longer opens an interaction. Dialogs recorded before the rename carry the former name.
         case DlineDefaultTool.PHASE_REPORT:
-        // Restored dialogs recorded before the rename carry the former name.
         case DlineDefaultTool.LEGACY_STATUS_UPDATE:
             return "status_acknowledgment"
         case DlineDefaultTool.ATTEMPT:

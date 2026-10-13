@@ -160,6 +160,138 @@ describe("TaskSessionCompositionService", () => {
     })
 })
 
+describe("TaskSessionCompositionService orphaned activities", () => {
+    afterEach(() => {
+        vi.restoreAllMocks()
+        persistenceMock.open.mockReset()
+    })
+
+    // A command started by an earlier session ended with it; only the window that
+    // owns the task may say so, since a deferred window may be showing work that
+    // another window still runs.
+    it.each([
+        { deferRestoredCommands: false, expected: "interrupted" },
+        { deferRestoredCommands: true, expected: "running" },
+    ])("settles a persisted running command only when the window owns the task (deferred: $deferRestoredCommands)", async ({
+        deferRestoredCommands,
+        expected,
+    }) => {
+        const rows: Array<Record<string, unknown>> = [
+            { ts: 11, type: "say", say: "command", text: "npm run dev", activityId: "orphan", commandStatus: "running" },
+        ]
+        const stores = {
+            uiMessage: {
+                close: vi.fn(async () => undefined),
+                getAll: () => rows,
+                updateMessage: vi.fn(async (index: number, updates: Record<string, unknown>) => {
+                    rows[index] = { ...rows[index], ...updates }
+                }),
+            },
+            apiConversation: { close: vi.fn(async () => undefined), getAll: () => [] },
+        }
+        persistenceMock.open.mockResolvedValue({
+            close: vi.fn(async () => undefined),
+            ports: { journal: new InMemoryConversationJournal() },
+            payloads: { put: vi.fn(), read: vi.fn() },
+        } as unknown as TaskPersistenceAssembly)
+        const earlierSession = new TaskActivityStore("task-open-failure")
+        earlierSession.create({ activityId: "orphan", kind: "command", executionMode: "background", title: "npm run dev" })
+        vi.spyOn(TaskActivityPersistence.prototype, "load").mockResolvedValue(earlierSession.list())
+        const upsert = vi.spyOn(TaskActivityPersistence.prototype, "upsert").mockResolvedValue(undefined)
+        vi.spyOn(TaskActivityPersistence.prototype, "close").mockResolvedValue(undefined)
+        vi.spyOn(TaskPromptLifecycle.prototype, "start").mockImplementation(() => undefined)
+        vi.spyOn(TaskPromptLifecycle.prototype, "dispose").mockResolvedValue(undefined)
+        vi.spyOn(coreApi, "buildApiHandler").mockReturnValue({} as never)
+        const failure = new Error("host factory failed")
+        const options: OpenTaskSessionCompositionOptions = {
+            ...openOptions(stores as unknown as ReturnType<typeof messageStores>),
+            cwd: ".",
+            deferRestoredCommands,
+            stateManager: {
+                getTaskCacheRef: () => ({ mode: "act" }),
+                getApiConfigurationForTask: () => ({}),
+            } as never,
+            prompt: { ports: { promptContext: {} } } as never,
+            hostFactory: {
+                create: vi.fn(async () => {
+                    throw failure
+                }),
+            },
+            publishState: async () => undefined,
+        }
+
+        await expect(new TaskSessionCompositionService().open(options)).rejects.toBe(failure)
+
+        expect(rows[0].commandStatus).toBe(expected)
+        const written = upsert.mock.calls.flatMap(([activities]) => activities)
+        if (deferRestoredCommands) {
+            expect(written).toEqual([])
+            expect(stores.uiMessage.updateMessage).not.toHaveBeenCalled()
+        } else {
+            expect(written).toEqual([expect.objectContaining({ activityId: "orphan", status: "interrupted" })])
+        }
+    })
+
+    // The next opening recovers only activities persisted as in flight. An activity
+    // settled while the session closes is already interrupted then, so its row has
+    // to be settled on close or it stays running for good.
+    it("settles the command row of an activity still running when the session closes", async () => {
+        const rows: Array<Record<string, unknown>> = [
+            { ts: 11, type: "say", say: "command", text: "npm run dev", activityId: "late", commandStatus: "running" },
+        ]
+        const stores = {
+            uiMessage: {
+                close: vi.fn(async () => undefined),
+                getAll: () => rows,
+                updateMessage: vi.fn(async (index: number, updates: Record<string, unknown>) => {
+                    rows[index] = { ...rows[index], ...updates }
+                }),
+            },
+            apiConversation: { close: vi.fn(async () => undefined), getAll: () => [] },
+        }
+        persistenceMock.open.mockResolvedValue({
+            close: vi.fn(async () => undefined),
+            ports: { journal: new InMemoryConversationJournal() },
+            payloads: { put: vi.fn(), read: vi.fn() },
+        } as unknown as TaskPersistenceAssembly)
+        const runningSession = new TaskActivityStore("task-open-failure")
+        runningSession.create({ activityId: "late", kind: "command", executionMode: "background", title: "npm run dev" })
+        vi.spyOn(TaskActivityPersistence.prototype, "load").mockResolvedValue(runningSession.list())
+        vi.spyOn(TaskActivityPersistence.prototype, "upsert").mockResolvedValue(undefined)
+        vi.spyOn(TaskActivityPersistence.prototype, "close").mockResolvedValue(undefined)
+        // The opening leaves the activity in flight, as it does for work this session still owns.
+        vi.spyOn(TaskActivityStore.prototype, "recoverInterruptedActivities").mockResolvedValue([])
+        vi.spyOn(TaskPromptLifecycle.prototype, "start").mockImplementation(() => undefined)
+        vi.spyOn(TaskPromptLifecycle.prototype, "dispose").mockResolvedValue(undefined)
+        vi.spyOn(coreApi, "buildApiHandler").mockReturnValue({} as never)
+        const failure = new Error("host factory failed")
+        const options: OpenTaskSessionCompositionOptions = {
+            ...openOptions(stores as unknown as ReturnType<typeof messageStores>),
+            cwd: ".",
+            deferRestoredCommands: false,
+            stateManager: {
+                getTaskCacheRef: () => ({ mode: "act" }),
+                getApiConfigurationForTask: () => ({}),
+            } as never,
+            prompt: { ports: { promptContext: {} } } as never,
+            hostFactory: {
+                create: vi.fn(async () => {
+                    throw failure
+                }),
+            },
+            publishState: async () => undefined,
+        }
+
+        await expect(new TaskSessionCompositionService().open(options)).rejects.toBe(failure)
+
+        expect(rows[0].commandStatus).toBe("interrupted")
+        expect(stores.uiMessage.close).toHaveBeenCalledOnce()
+        expect(stores.uiMessage.updateMessage.mock.invocationCallOrder[0]).toBeLessThan(
+            stores.uiMessage.close.mock.invocationCallOrder[0],
+        )
+    })
+})
+
 describe("cancelRunningActivities", () => {
     it("ends a running command as cancelled even when the kill reports a failure", async () => {
         const store = new TaskActivityStore("task-close")

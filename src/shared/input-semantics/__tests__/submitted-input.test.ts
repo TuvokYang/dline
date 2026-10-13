@@ -128,6 +128,30 @@ describe("projectSubmittedInput", () => {
         ])
     })
 
+    // The row keeps the stored resource's reference, never its path or bytes, so the chip can open it later.
+    it("records the stored resource a resource segment names when the document binds one", () => {
+        const ref = {
+            resourceId: "r-1",
+            expectedContentHash: "sha256:abc",
+            mediaType: "image/png",
+            byteLength: 42,
+            owner: { kind: "task" as const, taskId: "task-1" },
+            generation: 1,
+        }
+        const facts = projectSubmittedInput(
+            {
+                ...document([{ kind: "image", entityId: "img", resourceId: "r-1", displayName: "diagram.png" }]),
+                resources: [ref],
+            },
+            REPLY_AS_TYPED,
+        )
+
+        expect(facts.segments).toEqual([{ text: "[diagram.png]", role: "resource", active: true, resource: ref }])
+        expect(isSubmittedInputFacts(facts)).toBe(true)
+        const malformed = { segments: [{ ...facts.segments[0], resource: { ...ref, owner: { kind: "task" } } }] }
+        expect(isSubmittedInputFacts(malformed)).toBe(false)
+    })
+
     it("reads pasted literal text as text whatever shape it has", () => {
         const facts = projectSubmittedInput(
             document([{ kind: "literal", text: "/compact @/x", source: "pasted" }]),
@@ -157,6 +181,23 @@ describe("submittedInputRow", () => {
 
         expect(row).toEqual({ text: "/compact", images: ["data:image/png;base64,AA"], files: ["/a.txt"] })
         expect(rowHasVisibleContent(row)).toBe(true)
+    })
+
+    // A dialog reply arrives here after its resources were resolved for the receiver;
+    // the row names each resource once, in its text, and never as a second thumbnail.
+    it("drops what a document's resources resolved to and keeps a text-only document's attachments", () => {
+        const shot: SemanticInputNode = { kind: "image", entityId: "img-1", resourceId: "res-1", displayName: "shot.png" }
+        const resolved = submittedInputRow(
+            [{ semanticInput: document([shot]), images: ["data:image/png;base64,AA"], files: ["/tmp/shot.png"] }],
+            REPLY_AS_TYPED,
+        )
+        const textOnly = submittedInputRow(
+            [{ semanticInput: document([{ kind: "text", text: "see attached" } as SemanticInputNode]), images: ["data:x"] }],
+            REPLY_AS_TYPED,
+        )
+
+        expect(resolved).toMatchObject({ text: "[shot.png]", images: [], files: [] })
+        expect(textOnly.images).toEqual(["data:x"])
     })
 
     it("treats a row with only whitespace and no attachments as empty", () => {

@@ -980,7 +980,7 @@ e2e(
 )
 
 e2e(
-    "Status acknowledgment - restored Acknowledge and Stop buttons render and carry the current draft",
+    "Phase report - a recorded request for acknowledgment shows the report and never blocks the run",
     async ({ helper, page, server, sidebar, userDataDir }) => {
         e2e.setTimeout(180_000)
         await helper.signin(sidebar)
@@ -988,75 +988,33 @@ e2e(
         server.enqueueOpenAiResponses(
             {
                 type: "tool",
-                id: "call_status_acknowledge",
+                id: "call_status_report",
                 name: "status_update",
-                arguments: { response: "E2E_STATUS_ACKNOWLEDGE", requires_acknowledgment: true },
+                arguments: { response: "E2E_STATUS_REPORT", requires_acknowledgment: true },
             },
             {
                 type: "tool",
                 id: "call_status_read",
                 name: "read_file",
                 arguments: { path: "README.md" },
-                expectedToolResults: [
-                    {
-                        callId: "call_status_acknowledge",
-                        contentIncludes: ["User acknowledged", "E2E_STATUS_ACK_DRAFT"],
-                    },
-                ],
-            },
-            {
-                type: "tool",
-                id: "call_status_stop",
-                name: "status_update",
-                arguments: { response: "E2E_STATUS_STOP", requires_acknowledgment: true },
-                expectedToolResults: [{ callId: "call_status_read", contentIncludes: "# Test Workspace" }],
-            },
-            {
-                type: "tool",
-                id: "call_status_qna",
-                name: "qna_respond",
-                arguments: { response: "E2E_STATUS_STOP_ACCEPTED" },
-                expectedToolResults: [
-                    {
-                        callId: "call_status_stop",
-                        contentIncludes: ["User chose to stop", "E2E_STATUS_STOP_DRAFT"],
-                    },
-                ],
+                expectedToolResults: [{ callId: "call_status_report", contentIncludes: "[Message displayed." }],
             },
             {
                 type: "tool",
                 id: "call_status_completion",
                 name: "attempt_completion",
-                arguments: { result: "E2E_STATUS_ACKNOWLEDGMENT_OK" },
-                expectedRequestIncludes: ["E2E_STATUS_QNA_FEEDBACK"],
+                arguments: { result: "E2E_STATUS_REPORT_OK" },
+                expectedToolResults: [{ callId: "call_status_read", contentIncludes: "# Test Workspace" }],
             },
         )
 
-        const taskText = "E2E_STATUS_ACKNOWLEDGMENT_TASK"
-        await sendTask(sidebar, taskText)
-        await expect(sidebar.getByText("E2E_STATUS_ACKNOWLEDGE", { exact: true })).toBeVisible({ timeout: 60_000 })
-        await expect(sidebar.getByRole("contentinfo").getByText("Acknowledge", { exact: true })).toBeVisible()
-        await expect(sidebar.getByRole("contentinfo").getByText("Stop", { exact: true })).toBeVisible()
-
-        await closeCurrentTask(sidebar)
-        await reopenTask(sidebar, taskText)
-        const input = sidebar.getByTestId("chat-input")
-        await expect(input).toBeEnabled()
-        await expect(sidebar.getByRole("contentinfo").getByText("Acknowledge", { exact: true })).toBeVisible()
-        await input.fill("E2E_STATUS_ACK_DRAFT")
-        await sidebar.getByRole("contentinfo").getByText("Acknowledge", { exact: true }).click()
-        await expectComposerText(input, "")
-        await expect(sidebar.getByText("E2E_STATUS_STOP", { exact: true })).toBeVisible({ timeout: 60_000 })
-        await expectSingleUserFeedback(sidebar, "E2E_STATUS_ACK_DRAFT")
-
-        await input.fill("E2E_STATUS_STOP_DRAFT")
-        await sidebar.getByRole("contentinfo").getByText("Stop", { exact: true }).click()
-        await expectComposerText(input, "")
-        await expect(sidebar.getByText("E2E_STATUS_STOP_ACCEPTED", { exact: true })).toBeVisible({ timeout: 60_000 })
-        await expectSingleUserFeedback(sidebar, "E2E_STATUS_STOP_DRAFT")
-        await submitWithEnter(sidebar, "E2E_STATUS_QNA_FEEDBACK")
-        await expect(sidebar.getByText("E2E_STATUS_ACKNOWLEDGMENT_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-        await expect.poll(() => server.openAiRequestCount).toBe(5)
+        await sendTask(sidebar, "E2E_STATUS_REPORT_TASK")
+        await expect(sidebar.getByTestId("phase-report-row").getByText("E2E_STATUS_REPORT", { exact: true })).toBeVisible({
+            timeout: 60_000,
+        })
+        await expect(sidebar.getByText("E2E_STATUS_REPORT_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+        await expect(sidebar.getByRole("contentinfo").getByText("Acknowledge", { exact: true })).toHaveCount(0)
+        await expect.poll(() => server.openAiRequestCount).toBe(3)
         await page.waitForTimeout(500)
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },

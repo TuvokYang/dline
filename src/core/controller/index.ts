@@ -3024,14 +3024,21 @@ export class Controller {
             }
         }
         const { getApiMetrics, getLastApiReqTotalTokens, getLastTaskProgressText } = await import("@shared/getApiMetrics")
+        // Combining parses each paired request as a whole, so a single
+        // malformed entry fails the aggregate outright. The per-message pass
+        // isolates its parsing per entry, so falling back to it keeps the
+        // remaining usage visible: reporting zero tokens for a long
+        // conversation is a worse answer than an approximate total.
+        const usageTotals = aggregatedMetrics ?? getApiMetrics(rawMessages)
+        const rateSnapshot = this.task?.owners.apiRateSnapshot?.() ?? this.historyDisplaySession?.getRateSnapshot() ?? {}
         const apiMetrics = {
-            // Combining parses each paired request as a whole, so a single
-            // malformed entry fails the aggregate outright. The per-message pass
-            // isolates its parsing per entry, so falling back to it keeps the
-            // remaining usage visible: reporting zero tokens for a long
-            // conversation is a worse answer than an approximate total.
-            ...(aggregatedMetrics ?? getApiMetrics(rawMessages)),
-            ...(this.task?.owners.apiRateSnapshot?.() ?? this.historyDisplaySession?.getRateSnapshot() ?? {}),
+            ...usageTotals,
+            ...rateSnapshot,
+            // The rows price every request, including the ones a provider did not
+            // price, and add subagent usage; the provider-round store only holds
+            // reported cost. Cost therefore stays with the rows, as in task history.
+            totalCost: usageTotals.totalCost,
+            currency: usageTotals.currency ?? rateSnapshot.currency,
         }
         const contextWindowIndicator = shownContextWindowIndicator(this.task, this.historyDisplaySession)
         const lastApiReqTotalTokens = contextWindowIndicator

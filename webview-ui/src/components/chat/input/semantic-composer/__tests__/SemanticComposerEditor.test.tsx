@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { act, fireEvent, render } from "@testing-library/react"
 import { createRef } from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -6,6 +9,19 @@ import { plainTextOfComposerDom, writeModelSelection } from "../dom"
 import { SemanticComposerEngine } from "../engine"
 import { type ComposerSegment, caretAt, flatTextOf, type ResourceAtom } from "../model"
 import { SemanticComposerEditor, type SemanticComposerEditorHandle } from "../SemanticComposerEditor"
+
+// Read the stylesheet source directly: Vitest does not process CSS, so a `?raw` import resolves to an empty string.
+const composerCss = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../semantic-composer.css"), "utf8")
+
+/** The element selector of the stylesheet rule that draws the placeholder hint. */
+function placeholderHostSelector(): string {
+    const rule = /([^{}]+)\{[^}]*content:\s*attr\(data-placeholder\)/.exec(composerCss)
+    if (!rule) throw new Error("semantic-composer.css no longer draws the placeholder from data-placeholder")
+    return rule[1]
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .trim()
+        .replace(/::before$/, "")
+}
 
 const image: ResourceAtom = {
     kind: "resource",
@@ -59,6 +75,17 @@ describe("SemanticComposerEditor", () => {
         expect(root.getAttribute("aria-multiline")).toBe("true")
         expect(root.getAttribute("aria-placeholder")).toBe("Type a message...")
         expect(root.dataset.empty).toBe("true")
+    })
+
+    // The hint gives way to the caret: an empty box shows it only while unfocused.
+    it("hides the placeholder hint while the empty box has focus", () => {
+        const { root } = setup()
+        const hint = placeholderHostSelector()
+
+        expect(document.activeElement).toBe(root)
+        expect(root.matches(hint)).toBe(false)
+        act(() => root.blur())
+        expect(root.matches(hint)).toBe(true)
     })
 
     it("turns typed input into engine edits at the DOM caret", () => {

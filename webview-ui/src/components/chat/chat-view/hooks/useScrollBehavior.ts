@@ -3,7 +3,7 @@ import debounce from "debounce"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useEvent } from "react-use"
 import { ListRange, VirtuosoHandle } from "react-virtuoso"
-import { ScrollBehavior } from "../types/chatTypes"
+import { type RowExpansionOrigin, ScrollBehavior } from "../types/chatTypes"
 import { findGroupedMessageByTs, resolveMessageRowExpanded, toggleMessageRowExpansion } from "../utils/messageUtils"
 import { createScrollArbiter, LAYOUT_SETTLE_RETRY_MS, type ScrollRequest } from "../utils/scrollArbiter"
 
@@ -333,7 +333,7 @@ export function useScrollBehavior(
 
     // scroll when user toggles certain rows
     const toggleRowExpansion = useCallback(
-        (ts: number) => {
+        (ts: number, origin: RowExpansionOrigin = "user") => {
             const location = findGroupedMessageByTs(groupedMessages, ts)
             const message = location?.message
             const isCollapsing = resolveMessageRowExpanded(message, expandedRows)
@@ -349,8 +349,10 @@ export function useScrollBehavior(
 
             setExpandedRows((prev) => toggleMessageRowExpansion(message, prev))
 
-            // disable auto scroll when user expands row
-            if (!isCollapsing) {
+            // A reader who expands a row takes the viewport. A row that expands
+            // itself does not: a reopened task's still-"running" command did, and
+            // that left the list stuck above the bottom (BUGFIX-068 semantics).
+            if (!isCollapsing && origin === "user") {
                 disableAutoScrollRef.current = true
             }
             // Only scroll on collapse, never on expand - expanding should stay in place

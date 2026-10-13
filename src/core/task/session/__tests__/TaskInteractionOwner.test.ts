@@ -291,6 +291,74 @@ describe("TaskInteractionOwner", () => {
         expect(pushed).toEqual([expect.objectContaining({ ts: 7 })])
     })
 
+    // A follow-up card is previewed while the reply streams; prose the same turn
+    // commits afterwards lands after it. Reusing the preview put the question and
+    // its options in the middle of the reply (BUGFIX-175).
+    it("anchors a turn-ending dialog after the reply when its preview is no longer last", async () => {
+        const rows: UiMessage[] = [
+            { ts: 50, type: "ask", ask: "followup", text: "{}", partial: true },
+            { ts: 60, type: "say", say: "text", text: "Trailing reply" },
+        ]
+        const messages = createMessages(rows)
+        const pushed: UiMessage[] = []
+        const { owner, whenSubmitted } = createOwner({
+            messages,
+            nextPresentationId: () => 61,
+            publishRow: (row) => pushed.push(row),
+        })
+        const submittedNext = whenSubmitted()
+
+        void owner.open({ kind: "followup", interactionId: "q-1", turnId: "turn-1", presentation: "{}", existingTs: 50 })
+        await submittedNext
+
+        expect(messages.removeMessagesByTs).toHaveBeenCalledWith([50])
+        expect(pushed).toEqual([expect.objectContaining({ ts: 61, ask: "followup", interactionId: "q-1" })])
+        expect(vi.mocked(messages.flushUiMessages).mock.invocationCallOrder[0]).toBeLessThan(
+            vi.mocked(messages.removeMessagesByTs).mock.invocationCallOrder[0],
+        )
+    })
+
+    // The preview is the only row the dialog has until its new anchor is written.
+    // Dropping it first left nothing to show or restore when that write failed.
+    it("keeps the preview row when the relocated anchor cannot be written", async () => {
+        const rows: UiMessage[] = [
+            { ts: 50, type: "ask", ask: "followup", text: "{}", partial: true },
+            { ts: 60, type: "say", say: "text", text: "Trailing reply" },
+        ]
+        const messages = createMessages(rows)
+        const failure = new Error("messages.db is read-only")
+        vi.mocked(messages.addToClineMessages).mockRejectedValue(failure)
+        const { owner } = createOwner({ messages, nextPresentationId: () => 61 })
+
+        await expect(
+            owner.open({ kind: "followup", interactionId: "q-1", turnId: "turn-1", presentation: "{}", existingTs: 50 }),
+        ).rejects.toBe(failure)
+
+        expect(messages.removeMessagesByTs).not.toHaveBeenCalled()
+        expect(rows.map((row) => row.ts)).toEqual([50, 60])
+    })
+
+    it("keeps a previewed dialog row that is still the last row", async () => {
+        const rows: UiMessage[] = [
+            { ts: 40, type: "say", say: "text", text: "Reply" },
+            { ts: 50, type: "ask", ask: "followup", text: "{}", partial: true },
+        ]
+        const messages = createMessages(rows)
+        const pushed: UiMessage[] = []
+        const { owner, whenSubmitted } = createOwner({
+            messages,
+            nextPresentationId: () => 61,
+            publishRow: (row) => pushed.push(row),
+        })
+        const submittedNext = whenSubmitted()
+
+        void owner.open({ kind: "followup", interactionId: "q-1", turnId: "turn-1", presentation: "{}", existingTs: 50 })
+        await submittedNext
+
+        expect(messages.removeMessagesByTs).not.toHaveBeenCalled()
+        expect(pushed).toEqual([expect.objectContaining({ ts: 50, ask: "followup" })])
+    })
+
     // Another producer may hold the current millisecond. Reusing it would turn
     // the anchor into an in-place replacement of that producer's row.
     it("draws a new anchor's id from the session sequence, not the wall clock", async () => {

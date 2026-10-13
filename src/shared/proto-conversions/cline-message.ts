@@ -19,6 +19,7 @@ import {
     ClineSay as ProtoSay,
     type SubmittedInput as ProtoSubmittedInput,
 } from "@shared/proto/dline/ui"
+import { fromProtoSemanticResourceRef, toProtoSemanticResourceRef } from "@shared/proto-conversions/input-semantics/document"
 
 /**
  * Submitted facts as they cross the wire, in either direction.
@@ -36,7 +37,21 @@ function copySubmittedInputs(inputs: unknown, text: string | undefined): Submitt
 
 function convertSubmittedInputsToProto(inputs: unknown, text: string | undefined): ProtoSubmittedInput[] {
     return (normalizeSubmittedInputs(inputs, text) ?? []).map((input) => ({
-        segments: input.segments.map((segment) => ({ text: segment.text, role: segment.role, active: segment.active })),
+        segments: input.segments.map((segment) => ({
+            text: segment.text,
+            role: segment.role,
+            active: segment.active,
+            ...(segment.resource ? { resource: toProtoSemanticResourceRef(segment.resource) } : {}),
+        })),
+    }))
+}
+
+/** Decode wire facts into the shape normalizeSubmittedInputs validates; a malformed reference fails the facts whole. */
+function decodeSubmittedInputs(inputs: readonly ProtoSubmittedInput[]): unknown[] {
+    return inputs.map((input) => ({
+        segments: input.segments.map(({ resource, ...segment }) =>
+            resource ? { ...segment, resource: fromProtoSemanticResourceRef(resource) ?? null } : segment,
+        ),
     }))
 }
 
@@ -436,7 +451,7 @@ export function convertProtoToClineMessage(protoMessage: ProtoClineMessage): App
     }
     // Every input or none: a row missing one of its inputs would show a batch
     // that differs from what was sent.
-    const submittedInputs = copySubmittedInputs(protoMessage.submittedInputs, message.text)
+    const submittedInputs = copySubmittedInputs(decodeSubmittedInputs(protoMessage.submittedInputs), message.text)
     if (submittedInputs) {
         message.submittedInputs = submittedInputs
     }

@@ -152,6 +152,42 @@ describe("subscribeToTaskActivities", () => {
         }
     })
 
+    // Updates are never replayed, so a stream that silently skipped one would show
+    // the stale row until the panel was reopened.
+    it("ends the stream once its opening is replaced instead of dropping the next update", async () => {
+        const activityStore = new TaskActivityStore("task-1")
+        const responseStream = vi.fn(async () => undefined)
+        const requestId = "activity-opening-replaced"
+        const controller = controllerWith({ task: { taskId: "task-1", taskInstanceId: "open-1" }, activityStore })
+
+        await subscribeToTaskActivities(
+            controller as never,
+            TaskActivitySubscriptionRequest.create({ taskId: "task-1", taskInstanceId: "open-1" }),
+            responseStream,
+            requestId,
+        )
+        try {
+            await vi.waitFor(() => expect(responseStream).toHaveBeenCalledOnce())
+
+            controller.task = { taskId: "task-1", taskInstanceId: "open-2" }
+            activityStore.create({ activityId: "command-1", kind: "command", executionMode: "foreground", title: "npm test" })
+
+            await vi.waitFor(() => expect(responseStream).toHaveBeenCalledTimes(2))
+            expect(responseStream.mock.calls[1]).toEqual([
+                expect.objectContaining({ snapshot: true, activities: [], taskId: "task-1", taskInstanceId: "open-1" }),
+                true,
+            ])
+            expect(getRequestRegistry().hasRequest(requestId)).toBe(false)
+
+            activityStore.update("command-1", { status: "completed" })
+            await new Promise((resolve) => setImmediate(resolve))
+            expect(responseStream).toHaveBeenCalledTimes(2)
+        } finally {
+            getRequestRegistry().cancelRequest(requestId)
+            activityStore.dispose()
+        }
+    })
+
     it("projects retry attempts and an unavailable reason through the Proto stream", async () => {
         const activityStore = new TaskActivityStore("task-1")
         activityStore.create({

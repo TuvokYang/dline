@@ -178,3 +178,21 @@ describe("buildState header sourcing", () => {
         expect(state.firstItemIndex).toBe(0)
     })
 })
+
+describe("buildState usage totals", () => {
+    // The chat rows price requests the provider did not price, as the task
+    // history does; the provider-round store only knows reported cost.
+    it("keeps the task's priced cost when the rate snapshot reports less", async () => {
+        const fakeController = createFakeController(buildMessages(3))
+        const owners = (fakeController.task as { owners: Record<string, unknown> }).owners
+        owners.messages = {
+            ...(owners.messages as Record<string, unknown>),
+            readStateMetrics: () => ({ totalTokensIn: 1_000, totalTokensOut: 200, totalCost: 0.5, currency: "USD" }),
+        }
+        owners.apiRateSnapshot = () => ({ requestsPerMinute: 6, totalTokensIn: 1_000, totalCost: 0 })
+
+        const state = await buildState.call(fakeController, 1)
+
+        expect(state.apiMetrics).toMatchObject({ totalCost: 0.5, currency: "USD", requestsPerMinute: 6 })
+    })
+})

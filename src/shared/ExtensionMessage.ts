@@ -602,6 +602,8 @@ export interface UiSayTool {
         | "actModeRespond"
         | "killCommand"
         | "generateImage"
+        /** A tool without a dedicated presentation; its approval shows a neutral card. */
+        | "genericTool"
     path?: string
     /** Activity target associated with a command result presentation. */
     activityId?: string

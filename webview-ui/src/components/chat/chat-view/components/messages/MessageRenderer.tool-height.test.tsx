@@ -20,7 +20,6 @@ vi.mock("@/components/chat/ChatRow", () => ({
 }))
 
 vi.mock("../../utils/messageUtils", () => ({
-    findReasoningForApiReq: () => ({ reasoning: undefined, responseStarted: false }),
     isTextMessagePendingToolCall: () => false,
     isToolGroup: (value: UiMessage | UiMessage[]) => Array.isArray(value),
     resolveMessageRowExpanded: () => false,

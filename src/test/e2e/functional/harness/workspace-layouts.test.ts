@@ -115,6 +115,8 @@ for (const { title, workspaceType } of E2E_WORKSPACE_TYPES) {
                     (await readFile(path.join(secondaryRoot, "e2e-layout-secondary.txt"), "utf8")).replaceAll("\r\n", "\n"),
                 ).toBe(`${title} secondary write\n`)
             }
+            // Every layout keeps a restorable checkpoint for the turn that wrote files.
+            await expect.poll(() => sidebar.getByText(/^Checkpoint\b/).count(), { timeout: 30_000 }).toBeGreaterThan(0)
 
             const initial = server.getMockConsumptions("openai-compatible-chat")[0]
             expect(initial.contractError).toBeUndefined()

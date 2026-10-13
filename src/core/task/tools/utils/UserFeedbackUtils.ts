@@ -70,8 +70,9 @@ export async function sayFeedbackOnce(
         const draft = presentation?.draft
         if (draft?.semanticInput) {
             // A dialog reply reaches its receiver as typed; a command its owner
-            // claimed was already taken out of this document. The draft's own
-            // flat attachments travel with it; the resolved ones never do.
+            // claimed was already taken out of this document. By now the draft's
+            // flat attachments may hold what its resources resolved to;
+            // submittedInputRow keeps those out of the row.
             await config.callbacks.sayUserReply(
                 submittedInputRow(
                     [{ semanticInput: draft.semanticInput, images: draft.images, files: draft.files }],

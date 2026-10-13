@@ -62,6 +62,24 @@ describe("ToolAdmissionRegistry", () => {
         expect(run).toHaveBeenCalledOnce()
     })
 
+    it("presents a tool without a dedicated presentation as a neutral card, not as a phase report", () => {
+        const admission = prepareRegisteredToolAdmission({
+            canonicalToolName: DlineDefaultTool.BROWSER,
+            block: block(DlineDefaultTool.BROWSER, { action: "scroll_down" }),
+            description: "[browser_action] scroll_down",
+            snapshot: snapshot(),
+            run: async () => undefined,
+        })
+
+        expect(admission.outcome).toBe("admitted")
+        if (admission.outcome !== "admitted") throw new Error("expected admission")
+        expect(admission.presentation?.ask).toBe("tool")
+        expect(JSON.parse(admission.presentation?.body ?? "{}")).toMatchObject({
+            tool: "genericTool",
+            content: "[browser_action] scroll_down",
+        })
+    })
+
     it("uses the image handler's typed presentation for manual approval", () => {
         const coordinator = new ToolExecutorCoordinator()
         coordinator.register(new GenerateImageToolHandler())

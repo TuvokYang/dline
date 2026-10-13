@@ -192,6 +192,7 @@ vi.mock("../chat-view", () => {
         filterVisibleMessages: (messages: UiMessage[]) => messages,
         groupLowStakesTools: (messages: UiMessage[]) => messages,
         groupMessages: (messages: UiMessage[]) => messages,
+        isPrimaryCheckpointForUserTurn: () => true,
         useChatState: mocks.useChatState,
         useMessageHandlers: () => ({
             handleSendMessage: vi.fn(async () => undefined),

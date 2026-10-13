@@ -427,8 +427,10 @@ function buildPresentation(
     if (ask !== "tool") {
         return { ask, body: JSON.stringify(block.params ?? {}), notify }
     }
+    // An unmapped tool gets a neutral card; borrowing another tool's key would render
+    // its approval as that tool (a phase report, for instance).
     const body: UiSayTool = {
-        tool: PRESENTATION_TOOLS[toolName] ?? "statusUpdate",
+        tool: PRESENTATION_TOOLS[toolName] ?? "genericTool",
         path: declaredPath(block, toolName) ?? description,
         content: description,
     }

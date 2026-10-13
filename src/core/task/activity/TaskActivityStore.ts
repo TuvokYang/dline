@@ -147,6 +147,27 @@ export class TaskActivityStore {
         await this.hydratePromise
     }
 
+    /**
+     * Settle every activity that is still in flight as interrupted.
+     *
+     * Called once the owners that could finish the work are gone, such as when a
+     * session closes after its cancellation and executor teardown. Without it, an
+     * activity whose cancellation timed out, or one that never had a canceller,
+     * is persisted as running and shown as running by every later opening.
+     *
+     * @param latestEvent Reason shown on each settled activity.
+     * @returns Identities of the activities that were settled.
+     */
+    interruptUnsettledActivities(latestEvent = "Interrupted when the task closed"): string[] {
+        const interruptedActivityIds: string[] = []
+        for (const activity of this.activities.values()) {
+            if (!this.isTransient(activity.status)) continue
+            interruptedActivityIds.push(activity.activityId)
+            this.update(activity.activityId, { status: "interrupted", latestEvent })
+        }
+        return interruptedActivityIds
+    }
+
     /** Finalize persisted in-flight work after the caller has acquired the task lock. */
     async recoverInterruptedActivities(): Promise<string[]> {
         await this.hydrate()
@@ -422,6 +443,7 @@ export class TaskActivityStore {
             return
         }
         const previousStatus = activity.status
+        const previousOwnership = `${activity.executionMode}:${activity.cancellationOwner}`
         const { metrics, runtime, ...activityPatch } = patch
         const sanitizedPatch = {
             ...activityPatch,
@@ -457,7 +479,10 @@ export class TaskActivityStore {
             // must survive the terminal transition and stay available to the user.
             if (activity.status !== "failed" && activity.status !== "cancelled") this.retriers.delete(activityId)
         }
-        const priority = previousStatus !== activity.status || this.isTerminal(activity.status)
+        // A move to the background changes what the row offers as much as a status
+        // does, so it is published at once rather than with the next output batch.
+        const ownershipChanged = previousOwnership !== `${activity.executionMode}:${activity.cancellationOwner}`
+        const priority = previousStatus !== activity.status || this.isTerminal(activity.status) || ownershipChanged
         this.markDirty(activityId, priority)
     }
 

@@ -10,6 +10,7 @@ import type { TaskLockStatus as CoreTaskLockStatus } from "@/core/locks/TaskLock
 import { InstanceDatabase, instanceDatabaseExists, openInstanceStorage, resolveInstanceLayout } from "@/core/storage/instance"
 import { UIMessage } from "@/core/storage/UIMessage"
 import type { UIMessageWindowPage, UIMessageWindowReader } from "@/core/storage/UIMessageWindowReader"
+import { isInterruptedCommandRow } from "@/core/task/activity/interruptedCommandRows"
 import { TaskActivityPersistence } from "@/core/task/activity/TaskActivityPersistence"
 import { TaskActivityStore } from "@/core/task/activity/TaskActivityStore"
 import { automaticCompactionFailureAwaitsRecovery } from "@/core/task/compaction/CompactionRecovery"
@@ -57,15 +58,6 @@ export interface HistoryDisplayLoadOptions {
      * surface was already shown, so the chat can redraw them.
      */
     readonly onMaintained?: (rows: readonly UiMessage[]) => Promise<void> | void
-}
-
-/** A command row still showing work whose activity was found interrupted. */
-function isInterruptedCommandCard(message: UiMessage, activityIds: ReadonlySet<string>): boolean {
-    return (
-        message.activityId !== undefined &&
-        activityIds.has(message.activityId) &&
-        (message.commandStatus === "pending" || message.commandStatus === "running")
-    )
 }
 
 export class HistoryDisplaySession {
@@ -323,7 +315,7 @@ export class HistoryDisplaySession {
             if (this.disposed) return
             const settled: UiMessage[] = []
             this.messages = this.messages.map((message) => {
-                if (!isInterruptedCommandCard(message, interrupted)) return message
+                if (!isInterruptedCommandRow(message, interrupted)) return message
                 const row: UiMessage = { ...message, commandStatus: "interrupted" }
                 settled.push(row)
                 return row
@@ -377,7 +369,7 @@ export class HistoryDisplaySession {
             const store = await UIMessage.open(this.taskId)
             try {
                 for (const [index, message] of store.getAll().entries()) {
-                    if (isInterruptedCommandCard(message, activityIds)) {
+                    if (isInterruptedCommandRow(message, activityIds)) {
                         await store.updateMessage(index, { commandStatus: "interrupted" })
                     }
                 }

@@ -113,23 +113,12 @@ describe("handler interaction matrix", () => {
         expect(taskConfig.callbacks.updateFCListFromToolResponse).not.toHaveBeenCalled()
     })
 
-    it("opens acknowledged status as status_acknowledgment", async () => {
-        const taskConfig = config({ actionId: "acknowledge", text: "ok" })
-        await new PhaseReportHandler().execute(
-            taskConfig,
-            block(DlineDefaultTool.PHASE_REPORT, { response: "Checkpoint", requires_acknowledgment: "true" }),
-        )
-        expect(taskConfig.interactions.open).toHaveBeenCalledWith(
-            expect.objectContaining({ kind: "status_acknowledgment", presentation: "Checkpoint" }),
-        )
-    })
-
-    it("presents non-acknowledged status as say only", async () => {
+    it.each<{ label: string; params: Record<string, string> }>([
+        { label: "a report", params: { response: "Working" } },
+        { label: "a recorded request for acknowledgment", params: { response: "Working", requires_acknowledgment: "true" } },
+    ])("presents $label as say only, never as an interaction", async ({ params }) => {
         const taskConfig = config()
-        await new PhaseReportHandler().execute(
-            taskConfig,
-            block(DlineDefaultTool.PHASE_REPORT, { response: "Working", requires_acknowledgment: "false" }),
-        )
+        await new PhaseReportHandler().execute(taskConfig, block(DlineDefaultTool.PHASE_REPORT, params))
         expect(taskConfig.interactions.say).toHaveBeenCalledWith(
             expect.objectContaining({
                 taskSay: "tool",

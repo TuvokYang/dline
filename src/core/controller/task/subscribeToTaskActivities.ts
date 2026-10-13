@@ -152,33 +152,40 @@ export async function subscribeToTaskActivities(
     const canRetry = () => interactive() || controller.canPromoteHistoryDisplay(request.taskId)
     const requestRegistry = getRequestRegistry()
     let completed = false
-    const unsubscribe = activityStore.subscribe(
-        async (update) => {
-            if (controller.currentOpening() !== owner || completed) return
-            await responseStream(
-                {
-                    ...toProtoUpdate(update, (activityId) => ({
-                        cancellable: interactive() && activityStore.isCancellable(activityId),
-                        finishable: interactive() && activityStore.isFinishable(activityId),
-                        retryable: canRetry() && activityStore.isRetryable(activityId),
-                    })),
-                    taskId: owner.taskId,
-                    taskInstanceId: owner.taskInstanceId,
-                },
-                false,
-                update.sequence,
-            )
-        },
-        async () => {
-            if (completed) return
-            completed = true
-            try {
-                await responseStream(ended(), true)
-            } finally {
-                if (requestId) requestRegistry.cancelRequest(requestId)
-            }
-        },
-    )
+    let unsubscribe: () => void = () => undefined
+    const complete = async () => {
+        if (completed) return
+        completed = true
+        unsubscribe()
+        try {
+            await responseStream(ended(), true)
+        } finally {
+            if (requestId) requestRegistry.cancelRequest(requestId)
+        }
+    }
+    unsubscribe = activityStore.subscribe(async (update) => {
+        if (completed) return
+        // Updates are incremental and never replayed, so one dropped here would
+        // be missing for as long as the stream stayed open. Ending it instead
+        // makes the Webview resubscribe and start again from a snapshot.
+        if (controller.currentOpening() !== owner) {
+            await complete()
+            return
+        }
+        await responseStream(
+            {
+                ...toProtoUpdate(update, (activityId) => ({
+                    cancellable: interactive() && activityStore.isCancellable(activityId),
+                    finishable: interactive() && activityStore.isFinishable(activityId),
+                    retryable: canRetry() && activityStore.isRetryable(activityId),
+                })),
+                taskId: owner.taskId,
+                taskInstanceId: owner.taskInstanceId,
+            },
+            false,
+            update.sequence,
+        )
+    }, complete)
     if (requestId && !completed) {
         requestRegistry.registerRequest(
             requestId,

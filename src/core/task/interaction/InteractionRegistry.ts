@@ -100,6 +100,8 @@ const DEFINITIONS: Readonly<Record<InteractionKind, InteractionDefinition>> = {
     make_plan: define("make_plan", "make_plan", [], REPLY_INPUT, "handler"),
     qna_response: define("qna_response", "qna_respond", [], REPLY_INPUT, "handler"),
     generate_report: define("generate_report", "generate_report", [], REPLY_INPUT, "handler"),
+    // No handler opens this kind any more; it stays so an acknowledgment left open by an
+    // earlier version can still be answered after the task is restored.
     status_acknowledgment: define(
         "status_acknowledgment",
         "status_acknowledgment",

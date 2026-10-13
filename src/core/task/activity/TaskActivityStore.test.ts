@@ -731,6 +731,79 @@ describe("TaskActivityStore", () => {
         expect(reopened.get("running-zero-timeout")?.result).toBeUndefined()
     })
 
+    // A session closing after its cancellation timed out, or holding work that
+    // never had a canceller, must not leave that work persisted as running.
+    it("settles every in-flight activity as interrupted once its owners are gone", async () => {
+        const persistence = rowPersistence()
+        const store = new TaskActivityStore("task-close", persistence)
+        store.create({
+            activityId: "running-command",
+            kind: "command",
+            executionMode: "background",
+            title: "npm run dev",
+            cancel: vi.fn(),
+        })
+        store.create({ activityId: "unowned-command", kind: "command", executionMode: "foreground", title: "npm test" })
+        store.create({ activityId: "cancelling-command", kind: "command", executionMode: "foreground", title: "stuck" })
+        store.update("cancelling-command", { status: "cancelling" })
+        store.create({
+            activityId: "waiting-agent",
+            kind: "subagent",
+            executionMode: "background",
+            status: "awaiting_approval",
+            title: "review",
+        })
+        store.create({ activityId: "done-command", kind: "command", executionMode: "foreground", title: "ls" })
+        store.update("done-command", { status: "completed" })
+
+        expect(store.interruptUnsettledActivities().sort()).toEqual([
+            "cancelling-command",
+            "running-command",
+            "unowned-command",
+            "waiting-agent",
+        ])
+        await store.waitForPersistence()
+
+        for (const activityId of ["running-command", "unowned-command", "cancelling-command", "waiting-agent"]) {
+            expect(persistence.rows.get(activityId)).toMatchObject({
+                status: "interrupted",
+                latestEvent: "Interrupted when the task closed",
+            })
+            expect(store.isCancellable(activityId)).toBe(false)
+        }
+        expect(persistence.rows.get("done-command")?.status).toBe("completed")
+        expect(store.interruptUnsettledActivities()).toEqual([])
+    })
+
+    // The label and the Cancel/Move controls follow the mode, so a handoff must
+    // not wait behind the output batch like a log line does.
+    it("publishes a move to the background at once, while output still waits for its batch", async () => {
+        const store = new TaskActivityStore("task-mode")
+        store.create({ activityId: "command-1", kind: "command", executionMode: "foreground", title: "npm run dev" })
+        const updates: Activity[][] = []
+        store.subscribe((update) => {
+            if (!update.snapshot) updates.push(update.activities)
+        })
+        await new Promise((resolve) => setImmediate(resolve))
+
+        store.update("command-1", { latestEvent: "Listening on 3000" })
+        await new Promise((resolve) => setImmediate(resolve))
+        expect(updates).toEqual([])
+
+        store.update("command-1", { executionMode: "background", cancellationOwner: "explicit" })
+        await new Promise((resolve) => setImmediate(resolve))
+        expect(updates).toHaveLength(1)
+        expect(updates[0]).toEqual([
+            expect.objectContaining({
+                activityId: "command-1",
+                executionMode: "background",
+                cancellationOwner: "explicit",
+                latestEvent: "Listening on 3000",
+            }),
+        ])
+        store.dispose()
+    })
+
     it("redacts obvious secrets from every persisted activity text field", async () => {
         const upsert = vi.fn(async (_activities: readonly Activity[]) => undefined)
         const store = new TaskActivityStore("task-1", {

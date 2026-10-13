@@ -6,7 +6,6 @@ import { cleanPathPrefix } from "../common/CodeAccordian"
 import { getIconByToolName } from "./chat-view"
 import { isApiReqAbsorbable, isLowStakesTool } from "./chat-view/utils/messageUtils"
 import ErrorRow from "./ErrorRow"
-import { ThinkingRow } from "./ThinkingRow"
 import { TypewriterText } from "./TypewriterText"
 
 interface UsageInfo {
@@ -25,18 +24,14 @@ interface RequestStartRowProps {
     apiRequestFailedMessage?: string
     apiReqStreamingFailedMessage?: string
     cost?: number
-    reasoningContent?: string
-    responseStarted?: boolean
     clineMessages: UiMessage[]
     mode?: Mode
     classNames?: string
-    isExpanded: boolean
-    handleToggle: () => void
     usageInfo?: UsageInfo
 }
 
 // State type for api_req_started rendering
-type ApiReqState = "pre" | "thinking" | "error" | "final"
+type ApiReqState = "pre" | "error" | "final"
 
 // Helper to format search regex for display - show all terms separated by |
 const formatSearchRegex = (regex: string, path: string, filePattern?: string): string => {
@@ -137,38 +132,28 @@ const _findPrevCompletedApiReq = (messages: UiMessage[], beforeIdx: number): num
 }
 
 /**
- * Displays the current state of an active tool operation,
+ * Displays the current state of an active tool operation and request failures.
+ *
+ * Reasoning is never drawn here: every reasoning message has its own row, and a
+ * request row that also drew it rendered the same Thinking block twice.
  */
 export const RequestStartRow: React.FC<RequestStartRowProps> = ({
     apiRequestFailedMessage,
     apiReqStreamingFailedMessage,
     cost,
-    reasoningContent,
-    responseStarted,
     clineMessages,
     mode,
-    handleToggle,
-    isExpanded,
     message,
     usageInfo,
 }) => {
     // Derive explicit state
     const hasError = !!(apiRequestFailedMessage || apiReqStreamingFailedMessage)
     const hasCost = cost != null
-    const hasReasoning = !!reasoningContent
     const _hasCompletionResult = clineMessages.some(
         (msg) => msg.ask === "completion_result" || msg.say === "completion_result" || msg.ask === "make_plan",
     )
 
-    const apiReqState: ApiReqState = hasError ? "error" : hasCost ? "final" : hasReasoning ? "thinking" : "pre"
-
-    // While reasoning is streaming, keep the Brain ThinkingBlock exactly as-is.
-    // Once response content starts (any text/tool/command), collapse into a compact
-    // "🧠 Thinking" row that can be expanded to show the reasoning only.
-    const _showStreamingThinking = useMemo(
-        () => hasReasoning && !hasError && !cost && !responseStarted,
-        [hasReasoning, hasError, cost, responseStarted],
-    )
+    const apiReqState: ApiReqState = hasError ? "error" : hasCost ? "final" : "pre"
 
     // Check if this api_req will be absorbed into a tool group (reasoning will disappear)
     const _willBeAbsorbed = useMemo(() => {
@@ -238,27 +223,6 @@ export const RequestStartRow: React.FC<RequestStartRowProps> = ({
                     </div>
                 </div>
             )}
-            {reasoningContent &&
-                (!hasCost ? (
-                    // Still streaming - show "Thinking..." text with shimmer
-                    <div className="ml-1 pl-0 mb-1 -mt-1.25 pt-1">
-                        <div className="inline-flex justify-baseline gap-0.5 text-left select-none px-0 w-full">
-                            <span className="animate-shimmer bg-linear-90 from-foreground to-description bg-[length:200%_100%] bg-clip-text text-transparent text-[13px] leading-none">
-                                Thinking...
-                            </span>
-                        </div>
-                    </div>
-                ) : (
-                    // Complete - always show collapsible thinking section
-                    <ThinkingRow
-                        isExpanded={isExpanded}
-                        isVisible={true}
-                        onToggle={handleToggle}
-                        reasoningContent={reasoningContent}
-                        showTitle={true}
-                    />
-                ))}
-
             {apiReqState === "error" && (
                 <ErrorRow
                     apiReqStreamingFailedMessage={apiReqStreamingFailedMessage}

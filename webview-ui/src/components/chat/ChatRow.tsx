@@ -48,11 +48,13 @@ import { cn } from "@/lib/utils"
 import { FileServiceClient, UiServiceClient } from "@/services/grpc-client"
 import { findMatchingResourceOrTemplate, getMcpServerDisplayName } from "@/utils/mcp"
 import CodeAccordian, { cleanPathPrefix } from "../common/CodeAccordian"
+import AgentUpdateRow from "./AgentUpdateRow"
 import { ApiErrorBox } from "./ApiErrorBox"
 import { cancelTaskActivities } from "./activity/useTaskActivities"
 import CodeExecutionRow from "./CodeExecutionRow"
 import { CommandOutputContent, CommandOutputRow } from "./CommandOutputRow"
 import { CompletionOutputRow } from "./CompletionOutputRow"
+import type { RowExpansionOrigin } from "./chat-view/types/chatTypes"
 import {
     collectMcpResponseTexts,
     isPrimaryCheckpointForUserTurn,
@@ -73,7 +75,6 @@ import { KillCommandRow } from "./KillCommandRow"
 import LoadCapabilityRow from "./LoadCapabilityRow"
 import { MarkdownRow } from "./MarkdownRow"
 import NewTaskPreview from "./NewTaskPreview"
-import PhaseReportRow from "./PhaseReportRow"
 import PlanCompletionOutputRow from "./PlanCompletionOutputRow"
 import QnaOutputRow from "./QnaOutputRow"
 import QuoteButton from "./QuoteButton"
@@ -86,7 +87,6 @@ import { ThinkingRow } from "./ThinkingRow"
 import UserMessage from "./UserMessage"
 import WebFetchRow from "./WebFetchRow"
 import WebSearchRow from "./WebSearchRow"
-import WorkingRespondRow from "./WorkingRespondRow"
 
 const HEADER_CLASSNAMES = "flex items-center gap-2.5 mb-3"
 
@@ -115,7 +115,7 @@ const autoCollapsedCommands = new Set<number>()
 interface ChatRowProps {
     message: UiMessage
     isExpanded: boolean
-    onToggleExpand: (ts: number) => void
+    onToggleExpand: (ts: number, origin?: RowExpansionOrigin) => void
     lastModifiedMessage?: UiMessage
     isLast: boolean
     onHeightChange: (isTaller: boolean) => void
@@ -125,8 +125,6 @@ interface ChatRowProps {
     onSetQuote: (text: string) => void
     onCancelCommand?: () => void
     mode?: Mode
-    reasoningContent?: string
-    responseStarted?: boolean
     isRequestInProgress?: boolean
 }
 
@@ -253,8 +251,6 @@ export const ChatRowContent = memo(
         onSetQuote,
         onCancelCommand,
         mode,
-        reasoningContent,
-        responseStarted,
     }: ChatRowContentProps) => {
         const {
             backgroundEditEnabled,
@@ -514,7 +510,7 @@ export const ChatRowContent = memo(
             const wasLast = prevIsLastRef.current
             if (wasLast && !isLast && isExpanded && isAutoCollapsibleMessage && !hasAutoCollapsedRef.current) {
                 hasAutoCollapsedRef.current = true
-                onToggleExpand(message.ts)
+                onToggleExpand(message.ts, "auto")
             }
             prevIsLastRef.current = isLast
         }, [isAutoCollapsibleMessage, isExpanded, isLast, message.ts, onToggleExpand])
@@ -572,8 +568,10 @@ export const ChatRowContent = memo(
         // Auto-expand when command starts executing (only if running > 500ms)
         useEffect(() => {
             if (isCommandMessage && isCommandExecuting && !isExpanded) {
+                // The row expands itself; it must not take the viewport from
+                // auto-follow the way a reader's own expand does.
                 const timer = setTimeout(() => {
-                    onToggleExpand(message.ts)
+                    onToggleExpand(message.ts, "auto")
                 }, 500)
                 return () => clearTimeout(timer)
             }
@@ -1041,9 +1039,19 @@ export const ChatRowContent = memo(
                     )
                 // Persisted row keys of phase_report and working_respond, kept from their former tool names.
                 case "statusUpdate":
-                    return <PhaseReportRow text={Array.isArray(tool.content) ? tool.content.join("\n") : tool.content || ""} />
+                    return (
+                        <AgentUpdateRow
+                            kind="phase_report"
+                            text={Array.isArray(tool.content) ? tool.content.join("\n") : tool.content || ""}
+                        />
+                    )
                 case "actModeRespond":
-                    return <WorkingRespondRow text={Array.isArray(tool.content) ? tool.content.join("\n") : tool.content || ""} />
+                    return (
+                        <AgentUpdateRow
+                            kind="reply"
+                            text={Array.isArray(tool.content) ? tool.content.join("\n") : tool.content || ""}
+                        />
+                    )
                 case "killCommand":
                     return (
                         <KillCommandRow
@@ -1183,12 +1191,8 @@ export const ChatRowContent = memo(
                                 apiRequestFailedMessage={apiRequestFailedMessage}
                                 clineMessages={clineMessages}
                                 cost={cost}
-                                handleToggle={handleToggle}
-                                isExpanded={isExpanded}
                                 message={message}
                                 mode={mode}
-                                reasoningContent={reasoningContent}
-                                responseStarted={responseStarted}
                                 usageInfo={usageInfo}
                             />
                         )
@@ -1711,10 +1715,10 @@ export const ChatRowContent = memo(
                             </div>
                         )
                     }
-                    case "status_acknowledgment": {
-                        const text = message.text || ""
-                        return <PhaseReportRow headClassNames={HEADER_CLASSNAMES} text={text} />
-                    }
+                    // Phase reports no longer wait for an acknowledgment; rows persisted
+                    // by earlier versions still render as the report they carried.
+                    case "status_acknowledgment":
+                        return <AgentUpdateRow kind="phase_report" text={message.text || ""} />
                     default:
                         return <InvisibleSpacer />
                 }

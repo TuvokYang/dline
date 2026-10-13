@@ -1,5 +1,13 @@
 import { planSemanticCommands } from "./command-plan"
-import { isActiveEntity, isMentionNode, isResourceNode, isSlashCommandNode, type SemanticInputDocument } from "./document"
+import {
+    isActiveEntity,
+    isMentionNode,
+    isResourceNode,
+    isSlashCommandNode,
+    resourceRefOf,
+    type SemanticInputDocument,
+    type SemanticResourceRef,
+} from "./document"
 
 // The facts persist in chat history and travel to the Webview, so this module
 // stays pure: no catalog, no store, nothing that could change after submission.
@@ -25,6 +33,12 @@ export interface SubmittedInputSegment {
      * or mention that stayed prose is inactive and must not look like an entity.
      */
     readonly active: boolean
+    /**
+     * The resource a `resource` segment names, so its chip can open it while the
+     * task is open. Identity and integrity claims only, never a path or payload.
+     * Rows written before this field existed lack it; their chips stay static.
+     */
+    readonly resource?: SemanticResourceRef
 }
 
 /**
@@ -76,7 +90,10 @@ export function projectSubmittedInput(document: SemanticInputDocument, execution
             return { text: node.sourceText, role: "command", active: ran.has(node.entityId) }
         }
         if (isMentionNode(node)) return { text: node.sourceText, role: "mention", active: mentionsRead && isActiveEntity(node) }
-        if (isResourceNode(node)) return { text: `[${node.displayName}]`, role: "resource", active: true }
+        if (isResourceNode(node)) {
+            const resource = resourceRefOf(document, node)
+            return { text: `[${node.displayName}]`, role: "resource", active: true, ...(resource ? { resource } : {}) }
+        }
         return { text: node.text, role: "text", active: false }
     })
     return { segments }
@@ -141,10 +158,24 @@ export function submittedInputRow(inputs: readonly SubmittedInput[], execution: 
     const structured = inputs.some((input) => input.semanticInput !== undefined)
     return {
         text: facts.map(submittedInputText).join(SUBMITTED_INPUT_SEPARATOR),
-        images: inputs.flatMap((input) => [...(input.images ?? [])]),
-        files: inputs.flatMap((input) => [...(input.files ?? [])]),
+        images: inputs.flatMap((input) => [...legacyAttachments(input).images]),
+        files: inputs.flatMap((input) => [...legacyAttachments(input).files]),
         ...(structured ? { submittedInputs: facts } : {}),
     }
+}
+
+/**
+ * The attachments a row shows beside one input's text.
+ *
+ * A document that names resources already shows each one in its text. Separate
+ * images or files travelling with it are what those resources resolved to for
+ * the receiver (data URLs, local paths), so the row keeps none of them; showing
+ * them would draw every resource twice. Admission refuses a reply that carries
+ * both, so this drops nothing the user attached beside the document.
+ */
+function legacyAttachments(input: SubmittedInput): { images: readonly string[]; files: readonly string[] } {
+    if (input.semanticInput?.nodes.some(isResourceNode)) return { images: [], files: [] }
+    return { images: input.images ?? [], files: input.files ?? [] }
 }
 
 /** Whether the row has anything a person would see. */
@@ -198,6 +229,22 @@ function isSubmittedInputSegment(value: unknown): value is SubmittedInputSegment
     return (
         typeof segment.text === "string" &&
         typeof segment.active === "boolean" &&
-        SUBMITTED_INPUT_SEGMENT_ROLES.includes(segment.role as SubmittedInputSegmentRole)
+        SUBMITTED_INPUT_SEGMENT_ROLES.includes(segment.role as SubmittedInputSegmentRole) &&
+        (segment.resource === undefined || isSemanticResourceRef(segment.resource))
+    )
+}
+
+function isSemanticResourceRef(value: unknown): value is SemanticResourceRef {
+    if (typeof value !== "object" || value === null) return false
+    const ref = value as Partial<SemanticResourceRef>
+    const owner = ref.owner as { kind?: unknown; draftId?: unknown; taskId?: unknown } | undefined
+    return (
+        typeof ref.resourceId === "string" &&
+        typeof ref.expectedContentHash === "string" &&
+        typeof ref.mediaType === "string" &&
+        typeof ref.byteLength === "number" &&
+        typeof ref.generation === "number" &&
+        ((owner?.kind === "task" && typeof owner.taskId === "string") ||
+            (owner?.kind === "draft" && typeof owner.draftId === "string"))
     )
 }

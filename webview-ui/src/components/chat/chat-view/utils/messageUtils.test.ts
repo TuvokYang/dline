@@ -80,6 +80,21 @@ describe("filterVisibleMessages request rows", () => {
 
         expect(filterVisibleMessages([request])).toEqual([request])
     })
+
+    it("keeps only the request that carries a failure, not every earlier request", () => {
+        // A failure belongs to the request it follows. Earlier settled requests have
+        // nothing to show; keeping them re-rendered their reasoning a second time.
+        const earlierRequest = createRequestMessage(1, { cost: 0.01 })
+        const earlierReasoning = createReasoningMessage(2, "**Performing typechecking**")
+        const failingRequest = createRequestMessage(3, {})
+        const failure: UiMessage = { ts: 4, type: "ask", ask: "api_req_failed", text: "boom" }
+
+        const visible = filterVisibleMessages([earlierRequest, earlierReasoning, failingRequest, failure])
+
+        expect(visible).toContain(failingRequest)
+        expect(visible).not.toContain(earlierRequest)
+        expect(visible).toContain(earlierReasoning)
+    })
 })
 
 /**
@@ -350,5 +365,57 @@ describe("isPrimaryCheckpointForUserTurn", () => {
         ]
 
         expect(isPrimaryCheckpointForUserTurn(4, messages)).toBe(true)
+    })
+})
+
+describe("groupLowStakesTools checkpoint visibility", () => {
+    // An MCP call or a command only owes its round a restore point, which is
+    // committed later and lands after the next round's read rows.
+    const mcpTurn: UiMessage[] = [
+        { type: "say", say: "checkpoint_created", ts: 2 },
+        { type: "say", say: "user_feedback", text: "look it up", ts: 10 },
+        createRequestMessage(11, { cost: 0.01 }),
+        {
+            type: "say",
+            say: "use_mcp_server",
+            text: JSON.stringify({ type: "use_mcp_tool", serverName: "docs", toolName: "search", arguments: "{}" }),
+            ts: 12,
+        },
+        createRequestMessage(15, { cost: 0.01 }),
+        createToolMessage(16, "readFile"),
+        { type: "say", say: "checkpoint_created", ts: 17 },
+        createToolMessage(18, "readFile"),
+        { type: "say", say: "checkpoint_created", ts: 19 },
+    ]
+    const isPrimary = (ts: number) => isPrimaryCheckpointForUserTurn(ts, mcpTurn)
+    const standalone = (grouped: (UiMessage | UiMessage[])[], ts: number) =>
+        grouped.some((item) => !Array.isArray(item) && item.say === "checkpoint_created" && item.ts === ts)
+    const grouped = (rule?: (ts: number) => boolean) => groupLowStakesTools(groupMessages(filterVisibleMessages(mcpTurn)), rule)
+
+    it("keeps a turn's primary checkpoint out of a read group, so the turn still shows one", () => {
+        expect(isPrimary(17)).toBe(true)
+
+        const result = grouped(isPrimary)
+
+        expect(standalone(result, 17)).toBe(true)
+        expect(
+            result
+                .filter(isToolGroup)
+                .flat()
+                .some((message) => message.ts === 17),
+        ).toBe(false)
+    })
+
+    it("still absorbs later checkpoints of the same turn into the read group", () => {
+        const result = grouped(isPrimary)
+
+        expect(isPrimary(19)).toBe(false)
+        expect(standalone(result, 19)).toBe(false)
+        expect(
+            result
+                .filter(isToolGroup)
+                .flat()
+                .some((message) => message.ts === 19),
+        ).toBe(true)
     })
 })

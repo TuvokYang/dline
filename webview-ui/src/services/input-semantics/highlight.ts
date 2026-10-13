@@ -1,4 +1,4 @@
-import { isResourceNode, type SemanticInputDocument } from "@shared/input-semantics/document"
+import { isResourceNode, type SemanticInputDocument, type SemanticResourceRef } from "@shared/input-semantics/document"
 import { presentationTextOfNode } from "@shared/input-semantics/presentation"
 import {
     normalizeSubmittedInputs,
@@ -18,6 +18,8 @@ export interface SemanticHighlightSegment {
      * pre-message, reads as literal text and must not look like an entity.
      */
     readonly active: boolean
+    /** The stored resource a sent resource segment names, when its row recorded one. */
+    readonly resource?: SemanticResourceRef
 }
 
 /**
@@ -39,7 +41,12 @@ export function segmentSubmittedInputs(
             (segment): SemanticHighlightSegment =>
                 segment.role === "text"
                     ? { text: segment.text, role: "text", active: false }
-                    : { text: segment.text, role: segment.role, active: segment.active },
+                    : {
+                          text: segment.text,
+                          role: segment.role,
+                          active: segment.active,
+                          ...(segment.resource ? { resource: segment.resource } : {}),
+                      },
         ),
     ])
 }
@@ -100,6 +107,32 @@ export function markSubmittedEntities(
     const segments = segmentSubmittedInputs(normalizeSubmittedInputs(inputs, text))
     if (!segments?.some(isMarkedEntity)) return undefined
     return segments.map((segment, index) => (isMarkedEntity(segment) ? entityLink(segment, index) : segment.text)).join("")
+}
+
+/** A resource a sent row recorded, with the name its chip shows. */
+export interface SubmittedResource {
+    readonly displayName: string
+    readonly resource: SemanticResourceRef
+}
+
+/**
+ * The stored resources of a sent row, keyed as {@link markSubmittedEntities}
+ * keys its resource links, so the row can open the chip a link names.
+ *
+ * Only active resource segments that recorded their stored resource appear;
+ * a legacy row, or facts that do not spell the row's text, resolve nothing.
+ */
+export function submittedResourcesByKey(
+    text: string | undefined,
+    inputs: readonly SubmittedInputFacts[] | undefined,
+): ReadonlyMap<string, SubmittedResource> {
+    const resources = new Map<string, SubmittedResource>()
+    if (!text) return resources
+    segmentSubmittedInputs(normalizeSubmittedInputs(inputs, text))?.forEach((segment, index) => {
+        if (segment.role !== "resource" || !segment.active || !segment.resource) return
+        resources.set(String(index), { displayName: resourceNameOfSegment(segment.text), resource: segment.resource })
+    })
+    return resources
 }
 
 /**

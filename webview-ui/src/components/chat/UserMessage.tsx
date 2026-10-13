@@ -3,10 +3,12 @@ import { CheckpointRestoreRequest } from "@shared/proto/dline/checkpoints"
 import { ClineCheckpointRestore } from "@shared/WebviewMessage"
 import React, { forwardRef, useMemo, useRef, useState } from "react"
 import DynamicTextArea from "react-textarea-autosize"
+import { openTaskResource } from "@/components/chat/input/semantic-composer/resource-staging"
+import { type ResourceChipResolver, ResourceChipResolverContext, sentResourceNode } from "@/components/common/ResourceChip"
 import Thumbnails from "@/components/common/Thumbnails"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { CheckpointsServiceClient } from "@/services/grpc-client"
-import { markSubmittedEntities } from "@/services/input-semantics/highlight"
+import { markSubmittedEntities, type SubmittedResource, submittedResourcesByKey } from "@/services/input-semantics/highlight"
 import { UserInputMarkdownBody } from "./UserInputMarkdownBody"
 
 interface UserMessageProps {
@@ -19,6 +21,26 @@ interface UserMessageProps {
     sendMessageFromChatRow?: (text: string, images: string[], files: string[]) => void
     inputKind?: "direct" | "queued"
     queuedInputMode?: "queued" | "steering"
+}
+
+/**
+ * Resolve a sent row's resource links to the resources it recorded.
+ *
+ * Only a task-owned resource can open: the task keeps its bytes for as long
+ * as the task exists, while a draft's bytes are gone once it was sent.
+ */
+function sentResourceChipResolverOf(resources: ReadonlyMap<string, SubmittedResource>): ResourceChipResolver | undefined {
+    if (resources.size === 0) return undefined
+    return (key) => {
+        const sent = resources.get(key)
+        if (!sent) return undefined
+        const { resource } = sent
+        return {
+            node: sentResourceNode(key, sent.displayName, resource),
+            resource,
+            onOpen: resource.owner.kind === "task" ? () => void openTaskResource(resource) : undefined,
+        }
+    }
 }
 
 const UserMessage: React.FC<UserMessageProps> = ({
@@ -40,6 +62,10 @@ const UserMessage: React.FC<UserMessageProps> = ({
     // History never lexes the text again: without valid facts the row is plain Markdown.
     const marked = useMemo(() => markSubmittedEntities(text, submittedInputs), [submittedInputs, text])
     const markdown = marked ?? text
+    const resolver = useMemo(
+        () => sentResourceChipResolverOf(submittedResourcesByKey(text, submittedInputs)),
+        [submittedInputs, text],
+    )
 
     // Create refs for the buttons to check in the blur handler
     const restoreAllButtonRef = useRef<HTMLButtonElement>(null)
@@ -181,12 +207,14 @@ const UserMessage: React.FC<UserMessageProps> = ({
                     </div>
                 </>
             ) : (
-                <UserInputMarkdownBody
-                    markdown={markdown}
-                    submittedEntities={marked !== undefined}
-                    testId={queued ? "queued-input-markdown-scroll" : "user-input-markdown-scroll"}
-                    variant={queued ? "queued-history" : "direct"}
-                />
+                <ResourceChipResolverContext.Provider value={resolver}>
+                    <UserInputMarkdownBody
+                        markdown={markdown}
+                        submittedEntities={marked !== undefined}
+                        testId={queued ? "queued-input-markdown-scroll" : "user-input-markdown-scroll"}
+                        variant={queued ? "queued-history" : "direct"}
+                    />
+                </ResourceChipResolverContext.Provider>
             )}
             {((images && images.length > 0) || (files && files.length > 0)) && (
                 <Thumbnails files={files ?? []} images={images ?? []} style={{ marginTop: "8px" }} />

@@ -75,24 +75,30 @@ export type ResourceChipResolver = (key: string) => ResourceChipProps | undefine
 /** Lets the surface around rendered Markdown resolve its resource links to full resources. */
 export const ResourceChipResolverContext = createContext<ResourceChipResolver | undefined>(undefined)
 
-/**
- * A resource node rebuilt from a display name, which is all a sent row records.
- *
- * Only the name's extension is known, so a name an image format ends in is read
- * as an image and everything else as a file; the chip then shows what the name
- * says rather than what the bytes were.
- */
-function nodeFromDisplayName(key: string, displayName: string): ResourceInputNode {
+function isImageName(displayName: string): boolean {
     const dot = displayName.lastIndexOf(".")
-    const extension = dot > 0 ? displayName.slice(dot + 1).toLowerCase() : ""
-    return IMAGE_EXTENSIONS.has(extension)
-        ? { kind: "image", entityId: key, resourceId: key, displayName }
-        : { kind: "file", entityId: key, resourceId: key, fileOrigin: "uploaded_file", displayName }
+    return IMAGE_EXTENSIONS.has(dot > 0 ? displayName.slice(dot + 1).toLowerCase() : "")
+}
+
+/**
+ * A resource node rebuilt for a sent row, which records no node.
+ *
+ * A row that recorded its stored resource knows the media type; an older row
+ * knows only the display name, so a name an image format ends in is read as
+ * an image and everything else as a file, and the chip then shows what the
+ * name says rather than what the bytes were.
+ */
+export function sentResourceNode(key: string, displayName: string, resource?: SemanticResourceRef): ResourceInputNode {
+    const image = resource ? resource.mediaType.startsWith("image/") : isImageName(displayName)
+    const resourceId = resource?.resourceId ?? key
+    return image
+        ? { kind: "image", entityId: key, resourceId, displayName }
+        : { kind: "file", entityId: key, resourceId, fileOrigin: "uploaded_file", displayName }
 }
 
 /** The chip a resource link in a row's Markdown names, resolved by the surrounding surface when it can. */
 export function LinkedResourceChip({ entityKey, displayName }: { entityKey: string; displayName: string }): JSX.Element {
     const resolve = useContext(ResourceChipResolverContext)
     const resolved = resolve?.(entityKey)
-    return resolved ? <ResourceChip {...resolved} /> : <ResourceChip node={nodeFromDisplayName(entityKey, displayName)} />
+    return resolved ? <ResourceChip {...resolved} /> : <ResourceChip node={sentResourceNode(entityKey, displayName)} />
 }

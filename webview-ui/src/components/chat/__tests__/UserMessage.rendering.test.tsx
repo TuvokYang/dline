@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { FileServiceClient } from "@/services/grpc-client"
 import UserMessage from "../UserMessage"
 
 vi.mock("@/context/ExtensionStateContext", () => ({
@@ -12,6 +13,7 @@ vi.mock("@/services/grpc-client", () => ({
     FileServiceClient: {
         ifFileExistsRelativePath: vi.fn(async () => ({ value: false })),
         openFile: vi.fn(async () => undefined),
+        openInputResource: vi.fn(async () => ({})),
     },
 }))
 
@@ -78,5 +80,50 @@ describe("UserMessage rendering", () => {
         // Reading a chip is not a request to edit the message.
         fireEvent.click(chips[0])
         expect(screen.queryByRole("textbox")).toBeNull()
+    })
+
+    it("opens a sent resource the task still holds, and leaves a draft-owned one static", () => {
+        const taskImage = {
+            resourceId: "res-1",
+            expectedContentHash: "sha256:abc",
+            mediaType: "image/png",
+            byteLength: 42,
+            owner: { kind: "task" as const, taskId: "task-1" },
+            generation: 1,
+        }
+        const draftFile = {
+            ...taskImage,
+            resourceId: "res-2",
+            mediaType: "text/plain",
+            owner: { kind: "draft" as const, draftId: "d" },
+        }
+        render(
+            <UserMessage
+                submittedInputs={[
+                    {
+                        segments: [
+                            { text: "[clip]", role: "resource", active: true, resource: taskImage },
+                            { text: " ", role: "text", active: false },
+                            { text: "[notes]", role: "resource", active: true, resource: draftFile },
+                        ],
+                    },
+                ]}
+                text="[clip] [notes]"
+            />,
+        )
+
+        // The recorded media type, not the extensionless name, makes the first chip an image.
+        const open = screen.getByRole("button", { name: /clip/ })
+        expect(open.querySelector(".codicon-file-media")).not.toBeNull()
+        fireEvent.click(open)
+        expect(FileServiceClient.openInputResource).toHaveBeenCalledTimes(1)
+        expect(vi.mocked(FileServiceClient.openInputResource).mock.calls[0][0]).toMatchObject({
+            draftId: "",
+            ref: { resourceId: "res-1", owner: { taskId: "task-1" } },
+        })
+        expect(screen.queryByRole("textbox")).toBeNull()
+
+        expect(screen.queryByRole("button", { name: /notes/ })).toBeNull()
+        expect(screen.getByText("notes").closest("[data-resource-chip]")).toHaveClass("composer-chip--static")
     })
 })

@@ -21,6 +21,7 @@ import { Logger } from "@shared/services/Logger"
 import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import type { ApiConversation } from "../../storage/ApiConversation"
 import type { UIMessage } from "../../storage/UIMessage"
+import { type CommandRowSurface, settleInterruptedCommandRows } from "../activity/interruptedCommandRows"
 import { TaskActivityPersistence } from "../activity/TaskActivityPersistence"
 import { TaskActivityStore } from "../activity/TaskActivityStore"
 import { formatBackgroundCommandResult } from "../background/BackgroundContextInjector"
@@ -234,9 +235,16 @@ export class TaskSessionCompositionService {
         const activityPersistence = new TaskActivityPersistence(options.taskId)
         resources.add({ release: () => activityPersistence.close() })
         const activities = new TaskActivityStore(options.taskId, activityPersistence)
+        // Only the window holding the task lock may write. A deferred opening may
+        // be showing work another window still runs, so it settles nothing.
+        const ownsTask = !options.deferRestoredCommands
         resources.add({
             release: async () => {
                 try {
+                    // Released after the command and subagent owners, so nothing is
+                    // left that could still finish an activity in flight. The chat
+                    // store closes after this resource, so its rows can still be settled.
+                    if (ownsTask) await settleClosedActivities(activities, messages)
                     await activities.waitForPersistence()
                 } finally {
                     activities.dispose()
@@ -244,6 +252,9 @@ export class TaskSessionCompositionService {
             },
         })
         await activities.hydrate()
+        // Commands and subagents are owned by the session that started them and end
+        // with it, so a persisted in-flight activity has no owner in this one.
+        if (ownsTask) await settleOrphanedActivities(activities, messages)
         let session: ActiveTaskSession | undefined
         let collaboration: TaskCollaborationSessionOwner | undefined
         // The whole auto-condense setting group defines the trigger and the window a
@@ -1034,6 +1045,41 @@ export class TaskSessionCompositionService {
                 () => `${options.taskId}:doc:${randomUUID()}`,
             ),
             admission,
+        )
+    }
+}
+
+/**
+ * Settle activities persisted as in flight by an earlier session, and their command rows.
+ *
+ * Failures are logged rather than thrown: an unsettled row is a stale display,
+ * and must not keep the task from opening.
+ */
+async function settleOrphanedActivities(activities: TaskActivityStore, messages: CommandRowSurface): Promise<void> {
+    try {
+        const interrupted = new Set(await activities.recoverInterruptedActivities())
+        await settleInterruptedCommandRows(messages, interrupted)
+    } catch (error) {
+        Logger.warn(
+            `[TaskSessionComposition] ${activities.taskId}: could not settle orphaned activities: ${error instanceof Error ? error.message : String(error)}`,
+        )
+    }
+}
+
+/**
+ * Settle activities still in flight when the session closes, and their command rows.
+ *
+ * The next opening recovers only activities persisted as in flight, so a row
+ * left running here would stay running after its activity was settled.
+ * Failures are logged rather than thrown so the rest of the release still runs.
+ */
+async function settleClosedActivities(activities: TaskActivityStore, messages: CommandRowSurface): Promise<void> {
+    try {
+        const interrupted = new Set(activities.interruptUnsettledActivities())
+        await settleInterruptedCommandRows(messages, interrupted)
+    } catch (error) {
+        Logger.warn(
+            `[TaskSessionComposition] ${activities.taskId}: could not settle activities on close: ${error instanceof Error ? error.message : String(error)}`,
         )
     }
 }

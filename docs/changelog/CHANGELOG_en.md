@@ -13,6 +13,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Added the "Load MCP Tools on Demand" setting, on by default: instead of sending every MCP tool's full definition as a native tool with each request, the model picks tools from the prompt's MCP catalog, grouped by server with only names and bounded descriptions, loads a tool's input schema with `load_mcp`, and calls it with `use_mcp_tool`; turning it off restores native MCP tools
 - The context window panel lists MCP tool definitions as their own item instead of folding them into tool definitions
 - When a model refuses a request as longer than its context window, including after its stream has started, the oldest settled history is truncated and the request resent at once, whether or not auto-compaction is on; this spends no automatic retry and shows no countdown, and repeats until the request fits; an error appears only when nothing more can be removed, that is when a single item is larger than the whole window
+- In-work replies (Reply) and phase reports (Phase report) are now two clearly distinct minimal rows: a thin border on a faint background, each with its own icon and title, long content capped at 40% of the viewport with a themed scrollbar, and copy on hover; a phase report no longer pauses the task for acknowledgment, and acknowledgment requests recorded in older tasks still display and resume normally
 
 
 ### Fixes
@@ -29,6 +30,15 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed a completed, already billed reply being discarded with `API Request Failed` when the model produced only reasoning it keeps hidden, with no text and no tool call: such a reply is now saved and continues like any turn without a tool call; an internal failure that no domain described no longer shows only an internal reference such as `error:provider.failed:<number>` but the actual error with credentials redacted, and a failure restored after a restart shows a readable explanation
 - Fixed a transient failure while preparing a request (rebuilding the Profile's connection, validating credentials, building the prompt) surfacing at once as `API Request Failed`: it now shares the automatic retries and countdown of a failed send, as does preparing the request again after a Profile switch or a context truncation; a failure only the user can resolve, such as an invalid Profile, still shows at once
 - Fixed the API failure prompt that offers Retry showing only the raw error: it now matches the error rows in the chat, naming an exhausted balance, an organization spend limit, or a signed-out Dline account; inside that prompt the balance card no longer adds a second Retry button that bypassed the prompt
+- Fixed commands staying "Running" with no Cancel button in the Activities panel: after a window reload, an extension host exit, or a task close whose cancellation timed out, reopening the task now marks the commands and subagents that no process owns any more as interrupted, together with their chat command rows; a read-only opening (the task runs in another window) changes nothing; after a command moves to the background its Foreground/Background label updates at once instead of possibly staying on Foreground
+- Fixed turns that used MCP tools or commands without editing files showing no checkpoint in the chat: the checkpoint such calls commit later landed after the following read or search tools and was folded into their tool group, where it is not drawn; each turn's primary checkpoint now always shows on its own
+- Fixed a sent message showing an extra image thumbnail at the bottom that duplicated the chip in its text
+- Fixed image and file chips in sent messages not opening on click: a resource the task still holds now opens directly
+- Fixed the composer placeholder staying visible after the input gains focus
+- Fixed the task header's cumulative cost being lower than in the task history list: cost priced from the model's rates when the provider reports none, and subagent cost, now count toward the statistic
+- Fixed the follow-up question card (ask_followup_question) and its options appearing in the middle of the reply: when the model keeps writing after it starts the question, the card now follows the whole reply
+- Fixed earlier Thinking rows appearing twice after an API request failed or a stream dropped in the task
+- Fixed a task reopened after an abnormal exit not staying at the bottom of the conversation: a command row left "running" by the previous session no longer turns off auto-scroll when it expands itself, while expanding a row by hand still keeps your reading position
 
 ## [0.11.0]
 

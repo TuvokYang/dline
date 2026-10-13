@@ -637,8 +637,9 @@ describe("dispatchInteraction", () => {
             await dispatchInteraction(host.value as never, request)
 
             // The row is fixed from the reply itself: the barrier its owner claimed
-            // ran, and the resource is named where the user placed it. Showing it
-            // never reads the resource, so a moved or unreadable file cannot fail it.
+            // ran, and the resource is named where the user placed it, with the
+            // reference its chip opens. Showing it never reads the resource, so a
+            // moved or unreadable file cannot fail it.
             expect(host.beginDurableClineMessage).toHaveBeenCalledWith(
                 expect.objectContaining({
                     say: "user_feedback",
@@ -650,7 +651,7 @@ describe("dispatchInteraction", () => {
                             segments: [
                                 { text: "/compact", role: "command", active: true },
                                 { text: " like ", role: "text", active: false },
-                                { text: "[shot.png]", role: "resource", active: true },
+                                { text: "[shot.png]", role: "resource", active: true, resource: image.ref },
                             ],
                         },
                     ],

@@ -31,6 +31,43 @@ describe("UiMessage submitted input facts conversion", () => {
         expect(roundTripMessage.submittedInputs).toEqual(facts)
     })
 
+    it("round-trips the stored resource a sent chip opens, and drops facts whose resource lost its owner", () => {
+        const ref = {
+            resourceId: "r-1",
+            expectedContentHash: "sha256:abc",
+            mediaType: "image/png",
+            byteLength: 42,
+            owner: { kind: "task" as const, taskId: "task-1" },
+            generation: 2,
+        }
+        const withResource = [{ segments: [{ text: "[diagram.png]", role: "resource" as const, active: true, resource: ref }] }]
+        const message = {
+            ts: 95,
+            type: "say" as const,
+            say: "user_feedback" as const,
+            text: "[diagram.png]",
+            submittedInputs: withResource,
+        }
+
+        const protoMessage = convertClineMessageToProto(message)
+        expect(convertProtoToClineMessage(protoMessage).submittedInputs).toEqual(withResource)
+
+        const ownerless = {
+            ...protoMessage,
+            submittedInputs: [
+                {
+                    segments: [
+                        {
+                            ...protoMessage.submittedInputs[0].segments[0],
+                            resource: { ...protoMessage.submittedInputs[0].segments[0].resource, owner: undefined },
+                        },
+                    ],
+                },
+            ],
+        } as typeof protoMessage
+        expect(convertProtoToClineMessage(ownerless).submittedInputs).toBeUndefined()
+    })
+
     it("sends a stored row whose facts are damaged as its plain text instead of failing", () => {
         const damaged = { ts: 93, type: "say", say: "user_feedback", text: "plain", submittedInputs: [{}] } as never
 

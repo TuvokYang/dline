@@ -3,6 +3,7 @@ syntax = "proto3";
 package dline;
 
 import "dline/common.proto";
+import "dline/input.proto";
 
 option go_package = "github.com/dline/grpc-go/dline";
 option java_multiple_files = true;
@@ -313,6 +314,8 @@ message SubmittedInputSegment {
   string role = 2;
   // Whether the entity acted: a command that ran, a mention that was read, a resource that was attached.
   bool active = 3;
+  // The resource a "resource" segment names, so its chip can open it; absent on older rows.
+  optional SemanticResourceRef resource = 4;
 }
 
 // What one submitted input said and did, fixed at submission so history never re-reads it against a newer catalog.
