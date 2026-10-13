@@ -305,14 +305,15 @@ export function webviewPathsModule() {
         "/** View box of the Dline mark paths: the 32-unit design grid. */",
         `export const DLINE_MARK_VIEW_BOX = "0 0 ${GRID} ${GRID}"`,
         "",
-        // Biome keeps an over-long string initializer on its own indented line.
+        // Biome keeps an over-long string initializer on its own line, indented
+        // with the repository's four spaces.
         "/** The Dline robot; the eyes are cut-outs. */",
         "export const DLINE_MARK_PATH =",
-        `\t"${markPath()}"`,
+        `    "${markPath()}"`,
         "",
         "/** The sleepy robot shown in Lazy Teammate Mode. */",
         "export const DLINE_MARK_SLEEPY_PATH =",
-        `\t"${markPath("sleepy")}"`,
+        `    "${markPath("sleepy")}"`,
         "",
     ].join("\n")
 }

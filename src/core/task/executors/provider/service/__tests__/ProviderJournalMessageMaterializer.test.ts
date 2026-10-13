@@ -82,13 +82,15 @@ describe("ProviderJournalMessageMaterializer", () => {
         const [message] = await materializer.materialize(["ref-1"])
 
         expect(reads).toEqual([ref.resourceId])
+        // The text names the image where the user put it; its pixels follow the message.
+        const tag = `name="shot.png" id="${ref.resourceId}"`
         expect(message?.content).toEqual([
-            { type: "text", text: "<user_message>\nlook " },
+            { type: "text", text: `<user_message>\nlook <image_ref ${tag} /> here\n</user_message>\n<image ${tag}>\n` },
             {
                 type: "image",
                 source: { type: "base64", media_type: "image/png", data: Buffer.from([1, 2, 3, 4]).toString("base64") },
             },
-            { type: "text", text: " here\n</user_message>" },
+            { type: "text", text: "\n</image>" },
         ])
     })
 
@@ -352,6 +354,7 @@ describe("ProviderJournalMessageMaterializer", () => {
             type: "image",
             source: { type: "base64", media_type: "image/png", data: Buffer.from([5, 6, 7, 8]).toString("base64") },
         }
+        const imageTag = `name="shot.png" id="${imageRef.resourceId}"`
         const readsImage = {
             readBytes: async () => ({
                 ok: true as const,
@@ -376,9 +379,12 @@ describe("ProviderJournalMessageMaterializer", () => {
             const [message] = await materializer.materialize(["draft"])
 
             expect(message?.content).toEqual([
-                { type: "text", text: "<user_message>\nlike " },
+                {
+                    type: "text",
+                    text: `<user_message>\nlike <image_ref ${imageTag} /> this one\n</user_message>\n<image ${imageTag}>\n`,
+                },
                 imageBlock,
-                { type: "text", text: " this one\n</user_message>" },
+                { type: "text", text: "\n</image>" },
             ])
         })
 
@@ -418,9 +424,12 @@ describe("ProviderJournalMessageMaterializer", () => {
                     ...denied,
                     content: [
                         ...denied.content,
-                        { type: "text", text: "The user provided the following feedback:\n<feedback>\nmatch " },
+                        {
+                            type: "text",
+                            text: `The user provided the following feedback:\n<feedback>\nmatch <image_ref ${imageTag} />\n</feedback>\n<image ${imageTag}>\n`,
+                        },
                         imageBlock,
-                        { type: "text", text: "\n</feedback>" },
+                        { type: "text", text: "\n</image>" },
                     ],
                 },
             ])
