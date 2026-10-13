@@ -1143,6 +1143,14 @@ e2e(
             await expect
                 .poll(async () => (await readTaskConversationText(dlineDocsDir, taskId)).includes(planText), { timeout: 30_000 })
                 .toBe(true)
+            // The baseline checkpoint commits after the plan is on screen and then
+            // stamps its hash onto the checkpoint row. Closing does not cancel it,
+            // so wait for that write; otherwise it lands between the two snapshots.
+            await expect
+                .poll(async () => (await readTaskUiMessagesText(dlineDocsDir, taskId)).includes('"lastCheckpointHash"'), {
+                    timeout: 30_000,
+                })
+                .toBe(true)
             await closeCurrentTask(sidebar)
 
             const [uiBefore, apiBefore] = await Promise.all([

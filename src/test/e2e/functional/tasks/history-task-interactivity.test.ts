@@ -342,9 +342,11 @@ e2e(
             await expect(opened.sidebar.getByText(LEGACY_COMPLETION_TEXT, { exact: false }).last()).toBeVisible({
                 timeout: 120_000,
             })
+            // The completion dialog opens once the completion checkpoint is saved;
+            // the first one in this large project builds the shadow repository.
             await expect(
                 opened.sidebar.getByRole("contentinfo").locator('vscode-button[aria-label="Start New Task"]'),
-            ).toBeVisible()
+            ).toBeVisible({ timeout: 120_000 })
             await closeCurrentTask(opened.sidebar)
 
             const taskId = await onlyTaskId(dlineDocsDir)
