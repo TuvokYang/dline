@@ -22,7 +22,7 @@ Load `use-e2e` before executing this workflow.
 - Use **functional** for a stable focused black-box regression.
 - Use **dev** for fault injection, forensic capture, or a narrow reproduction; never use it as required-gate evidence.
 - Use **pressure** only for explicitly requested load or soak behavior.
-- Use demo, legacy, or Storybook only when their distinct product surface is the acceptance target.
+- Use demo or Storybook only when their distinct product surface is the acceptance target.
 
 Do not run the root default suite or full functional suite merely to gain confidence. Broaden only when evidence shows the change crosses the selected boundary.
 
@@ -39,22 +39,27 @@ The run ID does not isolate `dist/`. To run more than one tier at the same time,
 Use the current package scripts:
 
 ```text
-# Complete required gate
+# Complete required gate (downloads VS Code and Chromium, builds, runs every work project)
 npm run test:e2e:work
 
+# Download the pinned VS Code and Playwright Chromium once before focused runs
+npm run e2e:prepare
+
 # One work project; its configured dependencies still run
-npm run test:e2e:work -- --project "<work-project>"
+npm run e2e:work -- --project "<work-project>"
 
 # One functional file or name
-npm run test:e2e:functional -- <functional-file> --project "functional e2e tests" --workers=1 --retries=0
+npm run e2e:functional -- <functional-file> --project "functional e2e tests" --workers=1 --retries=0
 
 # One development diagnostic
 npm run e2e:dev -- <dev-file> --project "development e2e tests" --workers=1 --retries=0
 ```
 
-The work and functional tiers run in source mode against the `pree2e` dev bundle. Use `test:e2e`, `test:e2e:optimal`, or `test:e2e:pressure` when the acceptance target is the installed VSIX itself.
+Pass Playwright arguments only to the single-command `e2e:*` scripts. `test:e2e:work` and `test:e2e:functional` chain `e2e:prepare` and the tier script, so arguments after `--` are parsed by npm and never reach Playwright.
 
-Use raw `npx playwright test -c <config>` only when the required build or VSIX artifact is already current and skipping npm lifecycle hooks is intentional; note that it also bypasses the `dist/` lock, so never pair it with a concurrent build. In CI, download the package job's VSIX, normalize it to `dist/e2e.vsix`, and run only `playwright.work.config.ts`; do not rebuild a second VSIX inside E2E jobs.
+The `e2e:*` and `test:e2e:work`/`test:e2e:functional` runs use source mode against the `pree2e` dev bundle. Use `test:e2e`, `test:e2e:optimal`, or `test:e2e:pressure` when the acceptance target is the installed VSIX itself.
+
+Use raw `npx playwright test -c <config>` only when the required build or VSIX artifact is already current and skipping npm lifecycle hooks is intentional; note that it also bypasses the `dist/` lock, so never pair it with a concurrent build. Required CI packages one VSIX, normalizes it to `dist/e2e.vsix`, sets `DLINE_E2E_INSTALL_VSIX=1`, runs the work smoke on Linux, and runs each daily work project with `--no-deps` on Linux, macOS, and Windows against that artifact; do not rebuild a second VSIX inside E2E jobs.
 
 ## 4. Diagnose failures before changing code
 
@@ -73,7 +78,7 @@ Distinguish startup, fixture, locator, provider-contract, and product failures. 
 
 After a fix, rerun the original failing file or project first. Then run only the nearest functional or work coverage required by the changed shared contract.
 
-For release evidence, the passing work gate must use the same packaged VSIX later consumed by the release job. Full functional remains nightly or explicit; dev remains development-only.
+For release evidence, the passing work gate must use the same packaged VSIX later consumed by the release job. Full functional runs only in production release validation, one shard per functional folder against the release VSIX, or when explicitly requested; no scheduled workflow runs it. Dev remains development-only.
 
 ## 6. Report
 

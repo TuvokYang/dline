@@ -76,7 +76,7 @@ npm run test:e2e:work
 npm run vsix
 ```
 
-`test:e2e:work` is the required local Electron gate. Full functional E2E is not a default release prerequisite; run focused functional files when the release changes their contracts, and reserve full functional execution for nightly or explicit investigation. Dev-tier E2E never satisfies a release gate.
+`test:e2e:work` is the required local Electron gate. Full functional E2E is not a local release prerequisite: Production Release Validation runs it after the production tag is pushed, one shard per functional folder against the release VSIX. Locally, run focused functional files when the release changes their contracts, and run the full suite only on explicit request. Dev-tier E2E never satisfies a release gate.
 
 Equivalent successful CI evidence from the exact `dev` commit may satisfy a check. The reusable Tests workflow must package one VSIX before E2E, run the three-platform work smoke and four daily workflows against that exact artifact, and expose the same artifact to release jobs. Record the workflow/run, SHA, and artifact identity rather than assuming a feature-branch run covers integrated `dev`.
 

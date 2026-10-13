@@ -118,7 +118,7 @@ After changes enter `dev`, run and record the checks required by the actual blas
 - Smoke and Vitest;
 - applicable Webview, Storybook, or focused functional E2E tests;
 - one production VSIX packaged before the required E2E gate, then the three-platform work smoke and four daily workflows against that exact artifact;
-- full functional E2E only for nightly or explicit investigation, and no dev-tier E2E in required CI or release gates;
+- full functional E2E only in production release validation or explicit investigation, and no dev-tier E2E in required CI or release gates;
 - VSIX identity, content, and tested-artifact verification;
 - version, lockfile, bilingual changelog, bilingual What's New, and manifest consistency for a release candidate.
 
