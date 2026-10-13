@@ -5,9 +5,9 @@ import type { ReactNode, SVGProps } from "react"
  *
  * Each action has its own glyph so the button tells what a click will do
  * before it is pressed: send goes out now, queue appends the message to the
- * input queue of the running task, and cancel stops that task. All three share
- * one 16px grid and line icon style so swapping between them does not shift
- * the button.
+ * input queue of the running task, and cancel stops that task. All of them are
+ * drawn on one 16-unit grid in one line style and fill the button that holds
+ * them, so the button alone sets their size and swapping them does not shift it.
  */
 type IconProps = Omit<SVGProps<SVGSVGElement>, "children" | "viewBox">
 
@@ -19,7 +19,7 @@ const STROKE = {
     strokeLinejoin: "round",
 } as const
 
-function Icon({ width = 16, height = 16, ...props }: IconProps & { children: ReactNode }) {
+function Icon({ width = "100%", height = "100%", ...props }: IconProps & { children: ReactNode }) {
     return <svg aria-hidden="true" focusable="false" height={height} viewBox="0 0 16 16" width={width} {...props} />
 }
 

@@ -3,6 +3,7 @@
  * time. It is a bare icon like the other composer controls; the glyph tells the
  * actions apart, so no action paints a background, border or fill behind it.
  * The one tint is the running model's output speed, see `[data-output-speed]`.
+ * The glyph fills the button, so this box is the icon's size.
  */
 .composer-action {
     position: relative;
