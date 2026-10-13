@@ -53,15 +53,26 @@ export interface AdmittedInputContent {
     readonly opensTask: boolean
 }
 
+/** An image the message references where the user placed it and carries as its own block after the message. */
+interface ReferencedImage {
+    readonly part: AdmittedResourcePart
+    readonly block: ClineImageContentBlock
+}
+
 /**
  * Builds the content of an admitted submission in the order the user composed it.
  *
- * Text and resources interleave exactly as the parts do: an image placed between
- * two sentences is sent between them. Each resource is read from the bytes
- * admission verified, so a reopened task sends the same content even when the
- * file it came from changed or the temp directory was cleaned. A resource that
- * can no longer be read is replaced by an explicit marker instead of vanishing,
- * because the model would otherwise answer as if the user attached nothing.
+ * Text and resources keep the order of the parts. An image stays where the
+ * user placed it as an `<image_ref>` in the text, and its pixels follow the
+ * message as a separate image block inside an `<image>` tag with the same id,
+ * so the text reads whole and each image is named by the reference that
+ * points at it. Other resources are inlined where they were placed.
+ *
+ * Each resource is read from the bytes admission verified, so a reopened task
+ * sends the same content even when the file it came from changed or the temp
+ * directory was cleaned. A resource that can no longer be read is replaced by
+ * an explicit marker instead of vanishing, because the model would otherwise
+ * answer as if the user attached nothing.
  */
 export async function buildAdmittedInputContent(
     input: AdmittedInputContent,
@@ -71,9 +82,10 @@ export async function buildAdmittedInputContent(
     const context = input.context?.trim()
     const blocks: UserContentBlock[] = []
     appendText(blocks, `<${tag}>\n`)
-    await appendParts(blocks, input.parts, resources)
+    const images = await appendParts(blocks, input.parts, resources)
     if (context && !input.opensTask) appendText(blocks, `\n\n${context}`)
     appendText(blocks, `\n</${tag}>`)
+    appendReferencedImages(blocks, images)
     if (context && input.opensTask) blocks.push({ type: "text", text: `<context>\n${context}\n</context>` })
     return blocks
 }
@@ -90,7 +102,7 @@ export async function buildAdmittedToolApprovalFeedbackContent(
     resources: AdmittedResourceReader | undefined,
 ): Promise<ToolApprovalFeedbackContent> {
     const rendered: UserContentBlock[] = []
-    await appendParts(rendered, parts, resources)
+    const images = await appendParts(rendered, parts, resources)
     if (rendered.length === 0) return { blocks: [], documents: [] }
     const typed = parts.some((part) => part.kind === "text" && part.text.trim().length > 0)
     const blocks: Array<ClineTextContentBlock | ClineImageContentBlock> = []
@@ -104,40 +116,93 @@ export async function buildAdmittedToolApprovalFeedbackContent(
         else appendBlock(blocks, block)
     }
     if (typed) appendText(blocks, "\n</feedback>")
+    appendReferencedImages(blocks, images)
     return { blocks, documents }
 }
 
-/** Appends each part where the user placed it: text as typed, each resource as the blocks its bytes read as. */
+/**
+ * Appends each part where the user placed it: text as typed, an image as its
+ * reference, any other resource as the blocks its bytes read as. Returns the
+ * referenced images, whose blocks the caller sends after the message.
+ */
 async function appendParts(
     blocks: UserContentBlock[],
     parts: readonly AdmittedInputPart[],
     resources: AdmittedResourceReader | undefined,
-): Promise<void> {
+): Promise<ReferencedImage[]> {
+    const images: ReferencedImage[] = []
     for (const part of parts) {
-        if (part.kind === "text") appendText(blocks, part.text)
-        else for (const block of await resourceBlocks(part, resources)) appendBlock(blocks, block)
+        if (part.kind === "text") {
+            appendText(blocks, part.text)
+            continue
+        }
+        const content = await resourceContent(part, resources)
+        if (content.kind === "image") {
+            appendText(blocks, `<image_ref ${resourceAttributes(part)} />`)
+            images.push({ part, block: content.block })
+        } else {
+            for (const block of content.blocks) appendBlock(blocks, block)
+        }
+    }
+    return images
+}
+
+/** Sends each referenced image once, as its own block tagged with the id its references use. */
+function appendReferencedImages<Block extends UserContentBlock>(blocks: Block[], images: readonly ReferencedImage[]): void {
+    const sent = new Set<string>()
+    for (const { part, block } of images) {
+        if (sent.has(part.ref.resourceId)) continue
+        sent.add(part.ref.resourceId)
+        appendText(blocks, `\n<image ${resourceAttributes(part)}>\n`)
+        appendBlock(blocks, block as Block)
+        appendText(blocks, "\n</image>")
     }
 }
 
-async function resourceBlocks(
+type ResourceContent =
+    | { readonly kind: "image"; readonly block: ClineImageContentBlock }
+    | { readonly kind: "inline"; readonly blocks: UserContentBlock[] }
+
+async function resourceContent(
     part: AdmittedResourcePart,
     resources: AdmittedResourceReader | undefined,
-): Promise<UserContentBlock[]> {
-    if (!resources) return [unavailableResource(part, "semantic_input_resource_open_failed")]
-    const loaded = await resources.readBytes(part.ref)
-    if (!loaded.ok) return [unavailableResource(part, loaded.failure.code)]
-    const { record, bytes } = loaded.value
+): Promise<ResourceContent> {
+    const loaded = await resourceBytes(part, resources)
+    if (loaded.kind === "inline") return loaded
+    const { record, bytes } = loaded
     if (isInlineImageMediaType(record.mediaType)) {
-        return [{ type: "image", source: { type: "base64", media_type: record.mediaType, data: bytes.toString("base64") } }]
+        return {
+            kind: "image",
+            block: { type: "image", source: { type: "base64", media_type: record.mediaType, data: bytes.toString("base64") } },
+        }
     }
-    if (record.mediaType === OPAQUE_BINARY_MEDIA_TYPE) return [base64Resource(part, record.mediaType, bytes)]
-    const extracted = await extractText(part, record.mediaType, bytes)
+    return { kind: "inline", blocks: await documentBlocks(part, record.mediaType, bytes) }
+}
+
+/** The verified bytes of a resource, or the marker that stands in for one that cannot be read. */
+async function resourceBytes(
+    part: AdmittedResourcePart,
+    resources: AdmittedResourceReader | undefined,
+): Promise<
+    | { readonly kind: "bytes"; readonly record: { readonly mediaType: string }; readonly bytes: Buffer }
+    | { readonly kind: "inline"; readonly blocks: UserContentBlock[] }
+> {
+    if (!resources) return { kind: "inline", blocks: [unavailableResource(part, "semantic_input_resource_open_failed")] }
+    const loaded = await resources.readBytes(part.ref)
+    if (!loaded.ok) return { kind: "inline", blocks: [unavailableResource(part, loaded.failure.code)] }
+    return { kind: "bytes", ...loaded.value }
+}
+
+/** A non-image resource, inlined where the user placed it. */
+async function documentBlocks(part: AdmittedResourcePart, mediaType: string, bytes: Buffer): Promise<UserContentBlock[]> {
+    if (mediaType === OPAQUE_BINARY_MEDIA_TYPE) return [base64Resource(part, mediaType, bytes)]
+    const extracted = await extractText(part, mediaType, bytes)
     if (extracted.kind === "unsupported") return [unavailableResource(part, "semantic_input_resource_invalid_mime")]
     // A document whose text could not be extracted is still sent: its
     // signature matched at admission, only the extractor rejected its content.
     const resourceText =
-        extracted.kind === "text" ? attachedResource(part, extracted.text) : base64ResourceText(part, record.mediaType, bytes)
-    if (record.mediaType !== PDF_MEDIA_TYPE) return [{ type: "text", text: resourceText }]
+        extracted.kind === "text" ? attachedResource(part, extracted.text) : base64ResourceText(part, mediaType, bytes)
+    if (mediaType !== PDF_MEDIA_TYPE) return [{ type: "text", text: resourceText }]
     // The native document and its fallback come from the same bytes, so
     // whichever one a request sends describes the same attachment.
     return [
@@ -202,12 +267,15 @@ function unavailableResource(part: AdmittedResourcePart, code: string): ClineTex
  * display name are different content that must both reach the model.
  */
 function attachedResource(part: AdmittedResourcePart, content: string, extra: Readonly<Record<string, string>> = {}): string {
-    // Identity is spread last so no extra attribute can rename the resource.
+    return `<attached_resource ${resourceAttributes(part, extra)}>\n${content}\n</attached_resource>`
+}
+
+/** A resource's tag attributes; its identity is spread last so no extra attribute can rename it. */
+function resourceAttributes(part: AdmittedResourcePart, extra: Readonly<Record<string, string>> = {}): string {
     const attributes = { ...extra, name: part.displayName, id: part.ref.resourceId }
-    const rendered = Object.entries(attributes)
+    return Object.entries(attributes)
         .map(([key, value]) => `${key}="${escapeAttribute(value)}"`)
         .join(" ")
-    return `<attached_resource ${rendered}>\n${content}\n</attached_resource>`
 }
 
 function escapeAttribute(value: string): string {

@@ -52,17 +52,48 @@ function reader(entries: Record<string, { mediaType: string; bytes: Buffer }>): 
 const text = (value: string): AdmittedInputPart => ({ kind: "text", text: value })
 
 describe("buildAdmittedInputContent", () => {
-    it("places an image exactly between the sentences it was inserted between", async () => {
+    it("references an image where it was inserted and sends its pixels as a separate block after the message", async () => {
         const content = await buildAdmittedInputContent(
             { parts: [text("before "), resource("img", "image/png", "shot.png"), text(" after")], opensTask: false },
             reader({ img: { mediaType: "image/png", bytes: PNG_BYTES } }),
         )
 
         expect(content).toEqual([
-            { type: "text", text: "<user_message>\nbefore " },
+            {
+                type: "text",
+                text: '<user_message>\nbefore <image_ref name="shot.png" id="img" /> after\n</user_message>\n<image name="shot.png" id="img">\n',
+            },
             { type: "image", source: { type: "base64", media_type: "image/png", data: PNG_BYTES.toString("base64") } },
-            { type: "text", text: " after\n</user_message>" },
+            { type: "text", text: "\n</image>" },
         ])
+    })
+
+    it("sends an image referenced twice once, and each image after the whole message in reference order", async () => {
+        const content = await buildAdmittedInputContent(
+            {
+                parts: [
+                    resource("a", "image/png", "a.png"),
+                    text(" and "),
+                    resource("b", "image/png", "b.png"),
+                    text(" again "),
+                    resource("a", "image/png", "a.png"),
+                ],
+                opensTask: true,
+                context: "hook context",
+            },
+            reader({ a: { mediaType: "image/png", bytes: PNG_BYTES }, b: { mediaType: "image/png", bytes: PNG_BYTES } }),
+        )
+
+        const texts = content.flatMap((block) => (block.type === "text" ? [block.text] : []))
+        expect(texts[0]).toBe(
+            '<task>\n<image_ref name="a.png" id="a" /> and <image_ref name="b.png" id="b" /> again <image_ref name="a.png" id="a" />\n</task>\n<image name="a.png" id="a">\n',
+        )
+        expect(texts.slice(1)).toEqual([
+            '\n</image>\n<image name="b.png" id="b">\n',
+            "\n</image>",
+            "<context>\nhook context\n</context>",
+        ])
+        expect(content.filter((block) => block.type === "image")).toHaveLength(2)
     })
 
     it("sends a PDF natively and as fallback text derived from the same frozen bytes", async () => {
@@ -230,8 +261,11 @@ describe("buildAdmittedInputContent", () => {
         )
 
         expect(content.map((block) => block.type)).toEqual(["text", "image", "text", "text"])
-        expect(content[0]).toEqual({ type: "text", text: "<task>\nbuild it" })
-        expect(content[2]).toEqual({ type: "text", text: "\n</task>" })
+        expect(content[0]).toEqual({
+            type: "text",
+            text: '<task>\nbuild it<image_ref name="ui.png" id="img" />\n</task>\n<image name="ui.png" id="img">\n',
+        })
+        expect(content[2]).toEqual({ type: "text", text: "\n</image>" })
         expect(content[3]).toEqual({ type: "text", text: "<context>\nhook context\n</context>" })
     })
 
@@ -241,6 +275,9 @@ describe("buildAdmittedInputContent", () => {
             reader({ img: { mediaType: "image/png", bytes: PNG_BYTES } }),
         )
 
-        expect(content.at(-1)).toEqual({ type: "text", text: "\n\nspawn handoff\n</user_message>" })
+        expect(content[0]).toEqual({
+            type: "text",
+            text: '<user_message>\nnext<image_ref name="a.png" id="img" />\n\nspawn handoff\n</user_message>\n<image name="a.png" id="img">\n',
+        })
     })
 })
