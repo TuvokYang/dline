@@ -26,6 +26,7 @@ import {
 } from "./model"
 import type { DeleteDirection, DeleteUnit } from "./operations"
 import { useComposerState } from "./useComposerState"
+import "./composer-chip.css"
 import "./semantic-composer.css"
 
 export interface SemanticComposerEditorHandle {

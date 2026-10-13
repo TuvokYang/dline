@@ -4,6 +4,12 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { InputQueuePanel, type InputQueuePanelEntry, queuedAttachmentsOf } from "./InputQueuePanel"
 
+const { openInputResource } = vi.hoisted(() => ({ openInputResource: vi.fn(async () => ({})) }))
+
+vi.mock("@/services/grpc-client", () => ({
+    FileServiceClient: { openInputResource, openFileRelativePath: vi.fn(async () => ({})) },
+}))
+
 class TestResizeObserver implements ResizeObserver {
     disconnect = vi.fn()
     observe = vi.fn()
@@ -166,8 +172,59 @@ describe("InputQueuePanel", () => {
         const attachments = screen.getByTestId("input-queue-attachments-a")
         expect(attachments).toHaveTextContent("1 image, 1 file")
         expect(attachments).toHaveAttribute("title", "shot.png, paste.txt")
-        expect(screen.getByTestId("input-queue-markdown-a")).toHaveTextContent("look [shot.png][paste.txt]")
-        expect(screen.getByTestId("input-queue-markdown-a")).not.toHaveTextContent("r-image")
+        const body = screen.getByTestId("input-queue-markdown-a")
+        expect(body).toHaveTextContent(/^look/)
+        expect(body).not.toHaveTextContent("r-image")
+        expect(body).not.toHaveTextContent("[shot.png]")
+    })
+
+    // The queue names each resource the way the composer drew it, not as bracketed text.
+    it("draws each resource of a composed entry as its chip, in place", () => {
+        render(<InputQueuePanel entries={[entry({ id: "a", semanticInput: composedDocument() })]} {...handlers()} />)
+        fireEvent.click(screen.getByTestId("input-queue-toggle"))
+
+        const chips = Array.from(screen.getByTestId("input-queue-markdown-a").querySelectorAll("[data-resource-chip]"))
+        expect(chips.map((chip) => chip.querySelector(".composer-chip__label")?.textContent)).toEqual(["shot.png", "paste.txt"])
+        expect(chips[0].querySelector(".codicon-file-media")).not.toBeNull()
+        expect(chips[1].querySelector(".composer-chip__badge")).toHaveTextContent("TXT")
+        // Without a reference the task holds, a chip has nothing to open.
+        expect(chips.every((chip) => chip.tagName === "SPAN")).toBe(true)
+    })
+
+    it("opens a resource the task holds from its chip without touching the entry", () => {
+        const document: SemanticInputDocument = {
+            ...composedDocument(),
+            resources: [
+                {
+                    resourceId: "r-image",
+                    expectedContentHash: "hash",
+                    mediaType: "image/png",
+                    byteLength: 4,
+                    owner: { kind: "task", taskId: "task-1" },
+                    generation: 1,
+                },
+            ],
+        }
+        const props = handlers()
+        render(<InputQueuePanel entries={[entry({ id: "a", semanticInput: document })]} {...props} />)
+        fireEvent.click(screen.getByTestId("input-queue-toggle"))
+
+        fireEvent.click(screen.getByRole("button", { name: "Image shot.png, PNG" }))
+
+        expect(openInputResource).toHaveBeenCalledTimes(1)
+        expect(openInputResource.mock.calls[0]).toEqual([
+            expect.objectContaining({ ref: expect.objectContaining({ resourceId: "r-image" }) }),
+        ])
+        expect(props.onEdit).not.toHaveBeenCalled()
+    })
+
+    it("shows a legacy entry's text as written, without chips", () => {
+        render(<InputQueuePanel entries={[entry({ id: "a", text: "see [shot.png]" })]} {...handlers()} />)
+        fireEvent.click(screen.getByTestId("input-queue-toggle"))
+
+        const body = screen.getByTestId("input-queue-markdown-a")
+        expect(body).toHaveTextContent("see [shot.png]")
+        expect(body.querySelector("[data-resource-chip]")).toBeNull()
     })
 
     it("shows the flat attachments of an entry without a composed document", () => {

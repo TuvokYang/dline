@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 import { FileServiceClient } from "@/services/grpc-client"
 import { parseSubmittedEntityLink } from "@/services/input-semantics/highlight"
 import { WithCopyButton } from "./CopyButton"
+import { LinkedResourceChip } from "./ResourceChip"
 import { SubmittedEntity } from "./SubmittedEntity"
 import UnsafeImage from "./UnsafeImage"
 
@@ -463,8 +464,10 @@ const MarkdownLink = ({
     submittedEntities,
     ...props
 }: ComponentProps<"a"> & { node?: unknown; submittedEntities?: boolean }) => {
-    // A sent user row marks the commands and mentions it ran as entity links.
+    // A sent or queued user row marks its entities - commands and mentions it
+    // ran, resources it carried - as entity links.
     const entity = submittedEntities ? parseSubmittedEntityLink(href) : undefined
+    if (entity?.role === "resource") return <LinkedResourceChip displayName={entity.text} entityKey={entity.key} />
     if (entity) return <SubmittedEntity role={entity.role} text={entity.text} />
     const localPath = typeof href === "string" ? normalizeLocalPath(href) : ""
     const isLocal = isProjectRelativeLink(localPath)

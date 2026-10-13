@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import UserMessage from "../UserMessage"
 
@@ -47,5 +47,36 @@ describe("UserMessage rendering", () => {
         expect(message).not.toHaveTextContent("auxiliary alignment information")
         expect(message).not.toHaveTextContent("辅助对齐信息")
         expect(message.style.backgroundColor).toContain("--vscode-editorWidget-background")
+    })
+
+    // A sent row records only each resource's name, so the chip reads its kind from the name.
+    it("draws a sent resource as its chip inside the row's Markdown", () => {
+        render(
+            <UserMessage
+                submittedInputs={[
+                    {
+                        segments: [
+                            { text: "**see** ", role: "text", active: false },
+                            { text: "[shot.png]", role: "resource", active: true },
+                            { text: " and ", role: "text", active: false },
+                            { text: "[notes.md]", role: "resource", active: true },
+                        ],
+                    },
+                ]}
+                text="**see** [shot.png] and [notes.md]"
+            />,
+        )
+
+        const body = screen.getByTestId("user-input-markdown-scroll")
+        expect(screen.getByText("see").tagName).toBe("STRONG")
+        const chips = Array.from(body.querySelectorAll("[data-resource-chip]"))
+        expect(chips.map((chip) => chip.querySelector(".composer-chip__label")?.textContent)).toEqual(["shot.png", "notes.md"])
+        expect(chips[0].querySelector(".codicon-file-media")).not.toBeNull()
+        expect(chips[1].querySelector(".codicon-note")).not.toBeNull()
+        expect(body).not.toHaveTextContent("[shot.png]")
+
+        // Reading a chip is not a request to edit the message.
+        fireEvent.click(chips[0])
+        expect(screen.queryByRole("textbox")).toBeNull()
     })
 })

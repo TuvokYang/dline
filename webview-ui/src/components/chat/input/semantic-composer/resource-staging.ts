@@ -1,4 +1,4 @@
-import type { FileNodeOrigin } from "@shared/input-semantics/document"
+import type { FileNodeOrigin, SemanticResourceRef } from "@shared/input-semantics/document"
 import {
     InputResourceKind,
     InputResourceRequest,
@@ -384,9 +384,25 @@ export async function stageSelectedResources(
  */
 export async function openResource(draftId: string, atom: ResourceAtom): Promise<void> {
     if (atom.status !== "ready" || !atom.ref) return
+    await requestOpen(draftId, atom.ref)
+}
+
+/**
+ * Open the verified local copy of a resource the active task already holds,
+ * such as a queued entry's attachment.
+ *
+ * The host checks a task-owned reference against the task's own record, so no
+ * draft takes part; a reference still owned by a draft is not the queue's to open.
+ */
+export async function openTaskResource(ref: SemanticResourceRef): Promise<void> {
+    if (ref.owner.kind !== "task") return
+    await requestOpen("", ref)
+}
+
+async function requestOpen(draftId: string, ref: SemanticResourceRef): Promise<void> {
     try {
         const result = await FileServiceClient.openInputResource(
-            InputResourceRequest.create({ draftId, ref: toProtoSemanticResourceRef(atom.ref) }),
+            InputResourceRequest.create({ draftId, ref: toProtoSemanticResourceRef(ref) }),
         )
         if (result.error) console.warn(`Opening input resource failed: ${result.error.code}`)
     } catch (error) {

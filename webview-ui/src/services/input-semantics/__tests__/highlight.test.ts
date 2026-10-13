@@ -20,9 +20,9 @@ describe("submitted input highlight", () => {
         ])
     })
 
-    it("names a resource as plain text rather than an entity", () => {
+    it("keeps a resource as an entity, so the row draws the chip the composer showed", () => {
         expect(segmentSubmittedInputs([{ segments: [{ text: "[diagram.png]", role: "resource", active: true }] }])).toEqual([
-            { text: "[diagram.png]", role: "text", active: false },
+            { text: "[diagram.png]", role: "resource", active: true },
         ])
     })
 

@@ -46,7 +46,7 @@ const UserMessage: React.FC<UserMessageProps> = ({
     const restoreChatButtonRef = useRef<HTMLButtonElement>(null)
 
     const handleClick = (event: React.MouseEvent<HTMLElement>) => {
-        if ((event.target as HTMLElement).closest("a, button, pre, code")) return
+        if ((event.target as HTMLElement).closest("a, button, pre, code, [data-resource-chip]")) return
         if (!isEditing) {
             setIsEditing(true)
         }

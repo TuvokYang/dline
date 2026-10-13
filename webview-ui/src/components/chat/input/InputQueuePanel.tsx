@@ -1,9 +1,16 @@
-import { isResourceNode, type SemanticInputDocument } from "@shared/input-semantics/document"
-import { displayTextOf } from "@shared/input-semantics/presentation"
+import {
+    isResourceNode,
+    type ResourceInputNode,
+    resourceRefOf,
+    type SemanticInputDocument,
+} from "@shared/input-semantics/document"
 import { ChevronDownIcon, ChevronRightIcon, GripVerticalIcon, PencilIcon, RotateCcwIcon, SendIcon, XIcon } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
+import { openTaskResource } from "@/components/chat/input/semantic-composer/resource-staging"
 import { UserInputMarkdownBody } from "@/components/chat/UserInputMarkdownBody"
+import { type ResourceChipResolver, ResourceChipResolverContext } from "@/components/common/ResourceChip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { markDocumentResources } from "@/services/input-semantics/highlight"
 
 function classes(...values: Array<string | false | undefined>): string {
     return values.filter(Boolean).join(" ")
@@ -79,6 +86,42 @@ function attachmentSummary(attachments: QueuedAttachments): string | undefined {
         (part): part is string => part !== undefined,
     )
     return parts.length > 0 ? parts.join(", ") : undefined
+}
+
+/** Resolve a queued entry's resource links to the resources its document still holds. */
+function resourceChipResolverOf(document: SemanticInputDocument): ResourceChipResolver {
+    return (entityId) => {
+        const node = document.nodes.find(
+            (candidate): candidate is ResourceInputNode => isResourceNode(candidate) && candidate.entityId === entityId,
+        )
+        if (!node) return undefined
+        const resource = resourceRefOf(document, node)
+        const openable = resource?.owner.kind === "task"
+        return { node, resource, onOpen: openable ? () => void openTaskResource(resource) : undefined }
+    }
+}
+
+/**
+ * An entry's text, with each resource drawn as the chip the composer showed.
+ *
+ * The stored text names resources by stable id, which means nothing to a
+ * reader, so an entry with a document is rendered from the document. A legacy
+ * entry has only its text and shows it as written.
+ */
+function QueuedEntryBody({ entry }: { entry: InputQueuePanelEntry }) {
+    const document = entry.semanticInput
+    const markdown = useMemo(() => (document ? markDocumentResources(document) : entry.text), [document, entry.text])
+    const resolver = useMemo(() => (document ? resourceChipResolverOf(document) : undefined), [document])
+    return (
+        <ResourceChipResolverContext.Provider value={resolver}>
+            <UserInputMarkdownBody
+                markdown={markdown}
+                submittedEntities={document !== undefined}
+                testId={`input-queue-markdown-${entry.id}`}
+                variant="queued-pending"
+            />
+        </ResourceChipResolverContext.Provider>
+    )
 }
 
 /** Collapsed summary plus a portalled, collision-aware list of retained input. */
@@ -190,12 +233,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                         </span>
                                     ) : null}
                                 </header>
-                                <UserInputMarkdownBody
-                                    // The stored text names resources by stable id; a reader needs their names.
-                                    markdown={entry.semanticInput ? displayTextOf(entry.semanticInput) : entry.text}
-                                    testId={`input-queue-markdown-${entry.id}`}
-                                    variant="queued-pending"
-                                />
+                                <QueuedEntryBody entry={entry} />
                                 <footer className="mt-1 flex items-center justify-end gap-1">
                                     <button
                                         aria-label={entry.mode === "steering" ? "Return to queue" : "Send with next round"}

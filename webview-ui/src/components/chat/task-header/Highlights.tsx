@@ -1,13 +1,22 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
+import { LinkedResourceChip } from "@/components/common/ResourceChip"
 import { SubmittedEntity } from "@/components/common/SubmittedEntity"
-import { type SemanticHighlightSegment, segmentSubmittedInputs } from "@/services/input-semantics/highlight"
+import {
+    resourceNameOfSegment,
+    type SemanticHighlightSegment,
+    segmentSubmittedInputs,
+} from "@/services/input-semantics/highlight"
 
-/** Render one segment, keeping a mention clickable and everything else plain. */
+/** Render one segment: a mention stays clickable, a resource is its chip, everything else is plain. */
 function renderSegment(segment: SemanticHighlightSegment, index: number, withShadow: boolean): JSX.Element | string {
     if (!segment.active || segment.role === "text") {
         return segment.text
     }
-    return <SubmittedEntity key={`${segment.role}-${index}`} role={segment.role} text={segment.text} withShadow={withShadow} />
+    const key = `${segment.role}-${index}`
+    if (segment.role === "resource") {
+        return <LinkedResourceChip displayName={resourceNameOfSegment(segment.text)} entityKey={String(index)} key={key} />
+    }
+    return <SubmittedEntity key={key} role={segment.role} text={segment.text} withShadow={withShadow} />
 }
 
 /**

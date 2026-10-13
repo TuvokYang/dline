@@ -2,7 +2,7 @@ import { act, fireEvent, render } from "@testing-library/react"
 import { createElement } from "react"
 import { describe, expect, it, vi } from "vitest"
 import { createReadyResourceAtom, createStagingResourceAtom, failedResourceAtom } from "../atoms"
-import { describeChip } from "../chip-presentation"
+import { describeChip, describeResourceChip } from "../chip-presentation"
 import { SemanticComposerEngine } from "../engine"
 import { type CommandAtom, type ComposerSegment, caretAt, flatTextOf, type MentionAtom, type ResourceAtom } from "../model"
 import { SemanticComposerEditor } from "../SemanticComposerEditor"
@@ -221,5 +221,32 @@ describe("describeChip for commands and mentions", () => {
     ] as const)("gives a %s mention the %s icon", (mentionKind, icon) => {
         const mention = { kind: "mention", entityId: "m1", mentionKind, sourceText: "@src/a.ts" } as unknown as MentionAtom
         expect(describeChip(mention)).toMatchObject({ icon, label: "src/a.ts", tone: "mention", plainText: "@src/a.ts" })
+    })
+})
+
+describe("describeResourceChip", () => {
+    const file = {
+        kind: "file",
+        entityId: "e1",
+        resourceId: "r1",
+        fileOrigin: "pasted_text",
+        displayName: "paste.txt",
+        lineCount: 12,
+    } as const
+
+    // A chip outside the composer has nothing to remove, so it must not promise Backspace.
+    it("names only what the surrounding surface lets the user do", () => {
+        expect(describeResourceChip(file).tooltip).toBe("paste.txt (TXT, 12 lines)")
+        expect(describeResourceChip(file, undefined, "Click to open.").tooltip).toBe("paste.txt (TXT, 12 lines). Click to open.")
+    })
+
+    it("reads like the composer chip of the same resource", () => {
+        expect(describeResourceChip(file)).toMatchObject({
+            icon: "note",
+            label: "paste.txt",
+            badge: "TXT",
+            tone: "resource",
+            ariaLabel: "Text file paste.txt, TXT, 12 lines",
+        })
     })
 })

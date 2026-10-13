@@ -1,4 +1,4 @@
-import type { ResourceInputNode } from "@shared/input-semantics/document"
+import type { ResourceInputNode, SemanticResourceRef } from "@shared/input-semantics/document"
 import { describeResourcePresentation, type ResourceVisualKind } from "@shared/input-semantics/presentation"
 import type { ComposerAtom, ResourceAtom } from "./model"
 
@@ -49,6 +49,34 @@ const KIND_NAME_BY_VISUAL_KIND: Readonly<Record<ResourceVisualKind, string>> = {
     file: "File",
 }
 
+/** What a composer chip tells the user its keys do. */
+const COMPOSER_CHIP_HINT = "Press Enter to open, Backspace to remove."
+
+/**
+ * A ready resource's chip, wherever an input names it: the composer, a queued
+ * entry or a sent row.
+ *
+ * `hint` names what the surrounding surface lets the user do with the chip; a
+ * surface that offers nothing passes none, so the tooltip never promises a key
+ * or click that does not work there.
+ */
+export function describeResourceChip(node: ResourceInputNode, resource?: SemanticResourceRef, hint?: string): ChipPresentation {
+    const { visualKind, formatBadge } = describeResourcePresentation(node, resource)
+    const lineCount = node.kind === "file" ? node.lineCount : undefined
+    const lines = lineCount === undefined ? "" : `, ${lineCount} lines`
+    const summary = `${node.displayName} (${formatBadge}${lines})`
+    return {
+        icon: ICON_BY_VISUAL_KIND[visualKind],
+        label: node.displayName,
+        badge: formatBadge,
+        tone: "resource",
+        ariaLabel: `${KIND_NAME_BY_VISUAL_KIND[visualKind]} ${node.displayName}, ${formatBadge}${lines}`,
+        tooltip: hint ? `${summary}. ${hint}` : summary,
+        busy: false,
+        plainText: "",
+    }
+}
+
 function resourceNodeOf(atom: ResourceAtom): ResourceInputNode {
     return atom.nodeKind === "image"
         ? {
@@ -63,13 +91,15 @@ function resourceNodeOf(atom: ResourceAtom): ResourceInputNode {
               resourceId: atom.ref?.resourceId ?? atom.entityId,
               fileOrigin: atom.fileOrigin,
               displayName: atom.displayName,
+              lineCount: atom.lineCount,
           }
 }
 
 function describeResource(atom: ResourceAtom): ChipPresentation {
-    const { visualKind, formatBadge } = describeResourcePresentation(resourceNodeOf(atom), atom.ref)
+    const node = resourceNodeOf(atom)
+    if (atom.status === "ready") return describeResourceChip(node, atom.ref, COMPOSER_CHIP_HINT)
+    const { visualKind, formatBadge } = describeResourcePresentation(node, atom.ref)
     const kindName = KIND_NAME_BY_VISUAL_KIND[visualKind]
-    const lines = atom.lineCount === undefined ? "" : `, ${atom.lineCount} lines`
     if (atom.status === "failed") {
         const reason = atom.error?.message ?? "The attachment could not be added."
         return {
@@ -83,26 +113,14 @@ function describeResource(atom: ResourceAtom): ChipPresentation {
             plainText: "",
         }
     }
-    if (atom.status === "staging") {
-        return {
-            icon: "loading",
-            label: atom.displayName,
-            badge: formatBadge,
-            tone: "warning",
-            ariaLabel: `${kindName} ${atom.displayName}, ${formatBadge}, attaching`,
-            tooltip: `Attaching ${atom.displayName}…`,
-            busy: true,
-            plainText: "",
-        }
-    }
     return {
-        icon: ICON_BY_VISUAL_KIND[visualKind],
+        icon: "loading",
         label: atom.displayName,
         badge: formatBadge,
-        tone: "resource",
-        ariaLabel: `${kindName} ${atom.displayName}, ${formatBadge}${lines}`,
-        tooltip: `${atom.displayName} (${formatBadge}${lines}). Press Enter to open, Backspace to remove.`,
-        busy: false,
+        tone: "warning",
+        ariaLabel: `${kindName} ${atom.displayName}, ${formatBadge}, attaching`,
+        tooltip: `Attaching ${atom.displayName}…`,
+        busy: true,
         plainText: "",
     }
 }

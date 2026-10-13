@@ -1,6 +1,7 @@
+import { SEMANTIC_INPUT_SCHEMA_VERSION } from "@shared/input-semantics/document"
 import type { SubmittedInputFacts } from "@shared/input-semantics/submitted-input"
 import { describe, expect, it } from "vitest"
-import { markSubmittedEntities, parseSubmittedEntityLink } from "../highlight"
+import { markDocumentResources, markSubmittedEntities, parseSubmittedEntityLink } from "../highlight"
 
 const facts = (...segments: SubmittedInputFacts["segments"]): SubmittedInputFacts[] => [{ segments }]
 
@@ -26,6 +27,21 @@ describe("markSubmittedEntities", () => {
         })
     })
 
+    // A row whose only entity is an attachment still draws it as a chip.
+    it("marks a resource by its segment position and its display name", () => {
+        const text = "see [a_b.png]"
+        const marked = markSubmittedEntities(
+            text,
+            facts({ text: "see ", role: "text", active: false }, { text: "[a_b.png]", role: "resource", active: true }),
+        )
+        expect(marked).toBe("see [a\\_b.png](#dline-entity/resource/1/a_b.png)")
+        expect(parseSubmittedEntityLink("#dline-entity/resource/1/a_b.png")).toEqual({
+            role: "resource",
+            key: "1",
+            text: "a_b.png",
+        })
+    })
+
     it.each([
         ["a legacy row", "/compact", undefined],
         ["facts that do not spell the text", "/compact now", facts({ text: "/compact", role: "command", active: true })],
@@ -35,12 +51,39 @@ describe("markSubmittedEntities", () => {
     })
 })
 
+describe("markDocumentResources", () => {
+    it("marks each resource by its entity id and keeps every other node as the entry reads", () => {
+        const marked = markDocumentResources({
+            schemaVersion: SEMANTIC_INPUT_SCHEMA_VERSION,
+            parserVersion: "test",
+            catalogRevision: "test",
+            documentId: "doc-1",
+            rawText: "",
+            nodes: [
+                { kind: "text", text: "compare " },
+                { kind: "image", entityId: "e/1", resourceId: "r-1", displayName: "a [1].png" },
+                { kind: "text", text: " and **this**" },
+            ],
+            resources: [],
+        })
+
+        expect(marked).toBe("compare [a \\[1\\].png](#dline-entity/resource/e%2F1/a%20%5B1%5D.png) and **this**")
+        expect(parseSubmittedEntityLink("#dline-entity/resource/e%2F1/a%20%5B1%5D.png")).toEqual({
+            role: "resource",
+            key: "e/1",
+            text: "a [1].png",
+        })
+    })
+})
+
 describe("parseSubmittedEntityLink", () => {
     it.each([
         undefined,
         "https://example.com",
         "#dline-entity/resource/x",
+        "#dline-entity/resource/x/y/z",
         "#dline-entity/command/%E0%A4%A",
+        "#dline-entity/resource/1/%E0%A4%A",
     ])("ignores %s", (href) => {
         expect(parseSubmittedEntityLink(href)).toBeUndefined()
     })
