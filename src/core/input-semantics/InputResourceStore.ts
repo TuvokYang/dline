@@ -29,6 +29,7 @@ const RESOURCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 const CONTENT_HASH_PATTERN = /^[0-9a-f]{64}$/
 const TEXT_EXTENSION_PATTERN = /^[A-Za-z0-9]{1,16}$/
 const DEFAULT_TEXT_EXTENSION = "txt"
+const DEFAULT_PASTED_IMAGE_EXTENSION = "png"
 const DEFAULT_DISPLAY_NAME = "attachment"
 const MAX_CONTENT_FILE_NAME_LENGTH = 120
 const CONTENT_FILE_PREFIX = "content-"
@@ -198,8 +199,19 @@ export class InputResourceStore {
         return this.stageNamedBytes(inputResourceDisplayName(fileName), bytes)
     }
 
+    /**
+     * Stage an image pasted from the clipboard. A pasted image has no file name
+     * of its own - browsers call every one `image.png` - so it is named by when
+     * it was pasted, as pasted text is, and two pastes never share a name.
+     */
+    async stagePastedImage(fileName: string, bytes: Uint8Array): Promise<InputResourceResult<InputResourceRecord>> {
+        const resourceId = randomUUID()
+        return this.stageNamedBytes(pastedImageName(resourceId, fileName), bytes, resourceId)
+    }
+
     /** Stage a copy of a local file, so later edits of the source cannot change the input. */
     async stageFile(sourcePath: string): Promise<InputResourceResult<InputResourceRecord>> {
+        if (isResourceRecordPath(sourcePath)) return recordIsNotInput()
         const displayName = displayNameOf(path.basename(sourcePath))
         const read = await readLocalFile(sourcePath, displayName)
         if (!read.ok) return read
@@ -215,6 +227,7 @@ export class InputResourceStore {
      * reported as changed instead of being followed to another file.
      */
     async linkFile(sourcePath: string): Promise<InputResourceResult<InputResourceRecord>> {
+        if (isResourceRecordPath(sourcePath)) return recordIsNotInput()
         const displayName = displayNameOf(path.basename(sourcePath))
         let absolutePath: string
         try {
@@ -417,12 +430,16 @@ export class InputResourceStore {
         }
     }
 
-    private async stageNamedBytes(displayName: string, bytes: Uint8Array): Promise<InputResourceResult<InputResourceRecord>> {
+    private async stageNamedBytes(
+        displayName: string,
+        bytes: Uint8Array,
+        resourceId: string = randomUUID(),
+    ): Promise<InputResourceResult<InputResourceRecord>> {
         const classified = await classifyInputFile(displayName, bytes)
         if (!classified.ok) return classified
         return this.commit(
             {
-                resourceId: randomUUID(),
+                resourceId,
                 generation: FIRST_GENERATION,
                 displayName,
                 classification: classified.value,
@@ -811,6 +828,18 @@ function sourceReadFailure(displayName: string, error: unknown): InputResourceRe
         : resourceFailed("semantic_input_resource_stage_failed", `could not read ${displayName} (${errnoOf(error)})`)
 }
 
+/**
+ * Whether a path names the record of a staged resource: the store's own
+ * metadata inside a resource directory, which describes an input but never is one.
+ */
+function isResourceRecordPath(sourcePath: string): boolean {
+    return path.basename(sourcePath) === INPUT_RESOURCE_RECORD_FILE && isResourceId(path.basename(path.dirname(sourcePath)))
+}
+
+function recordIsNotInput(): InputResourceResult<never> {
+    return resourceFailed("semantic_input_resource_invalid", "an input resource record cannot itself be attached")
+}
+
 function invalidIdentity(): InputResourceResult<never> {
     return resourceFailed("semantic_input_resource_invalid", "resource reference does not carry a store-issued identity")
 }
@@ -899,10 +928,20 @@ function isPlainFileName(name: string): boolean {
  * same second apart.
  */
 function pastedTextName(resourceId: string, extension: string | undefined): string {
-    const timestamp = new Date().toISOString().replace(PASTE_TIMESTAMP_SEPARATORS, "").slice(0, 14)
-    const suffix = resourceId.replace(/-/g, "").slice(0, PASTE_SUFFIX_LENGTH)
     const safeExtension = extension && TEXT_EXTENSION_PATTERN.test(extension) ? extension : DEFAULT_TEXT_EXTENSION
-    return `input_${timestamp}_${suffix}.${safeExtension}`
+    return `input_${pasteStamp(resourceId)}.${safeExtension}`
+}
+
+/** The same naming for a pasted image, keeping the image type its clipboard name carries. */
+function pastedImageName(resourceId: string, fileName: string): string {
+    const extension = path.extname(fileName).slice(1).toLowerCase()
+    const safeExtension = TEXT_EXTENSION_PATTERN.test(extension) ? extension : DEFAULT_PASTED_IMAGE_EXTENSION
+    return `image_${pasteStamp(resourceId)}.${safeExtension}`
+}
+
+function pasteStamp(resourceId: string): string {
+    const timestamp = new Date().toISOString().replace(PASTE_TIMESTAMP_SEPARATORS, "").slice(0, 14)
+    return `${timestamp}_${resourceId.replace(/-/g, "").slice(0, PASTE_SUFFIX_LENGTH)}`
 }
 
 function samePath(left: string, right: string): boolean {

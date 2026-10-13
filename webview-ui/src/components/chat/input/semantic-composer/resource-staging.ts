@@ -275,7 +275,12 @@ export async function stageFiles(
     )
     const stageBytes = (batch: readonly File[]) => async () => {
         const payload = await Promise.all(
-            batch.map(async (file) => ({ fileName: file.name || "attachment", data: new Uint8Array(await file.arrayBuffer()) })),
+            batch.map(async (file) => ({
+                fileName: file.name || "attachment",
+                data: new Uint8Array(await file.arrayBuffer()),
+                // A pasted image only has the clipboard's generic name; the host names it instead.
+                pastedImage: origin === "pasted_file" && file.type.startsWith("image/"),
+            })),
         )
         return FileServiceClient.stageInputBytes(StageInputBytesRequest.create({ draftId, files: payload }))
     }

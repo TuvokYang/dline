@@ -218,6 +218,30 @@ describe("InputResourceStore staging", () => {
         expect(missing.ok ? "" : missing.failure.message).not.toContain(workspace)
     })
 
+    it("names each pasted image by when it was pasted instead of the clipboard's generic name", async () => {
+        const { store } = await openStore()
+
+        const first = expectStaged(await store.stagePastedImage("image.png", PNG_1X1))
+        const second = expectStaged(await store.stagePastedImage("image.png", PNG_1X1))
+
+        expect(first.displayName).toMatch(/^image_\d{14}_[0-9a-f]{8}\.png$/)
+        expect(second.displayName).toMatch(/^image_\d{14}_[0-9a-f]{8}\.png$/)
+        expect(second.displayName).not.toBe(first.displayName)
+        expect(first.kind).toBe("image")
+    })
+
+    it("refuses to attach the record of a staged resource as a new input", async () => {
+        const { store, directory } = await openStore()
+        const staged = expectStaged(await store.stagePastedImage("image.png", PNG_1X1))
+        const recordPath = path.join(directory, staged.resourceId, INPUT_RESOURCE_RECORD_FILE)
+
+        const copied = await store.stageFile(recordPath)
+        const linked = await store.linkFile(recordPath)
+
+        expect(copied.ok ? undefined : copied.failure.code).toBe("semantic_input_resource_invalid")
+        expect(linked.ok ? undefined : linked.failure.code).toBe("semantic_input_resource_invalid")
+    })
+
     it("keeps a content file apart from the record even when the name collides", async () => {
         const { store, directory } = await openStore()
 

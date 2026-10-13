@@ -263,6 +263,9 @@ message StageInputTextRequest {
 message InputResourceFile {
   string file_name = 1;
   bytes data = 2;
+  // An image pasted from the clipboard. Its name is the browser's generic one
+  // (every pasted image is "image.png"), so the Host names it by when it was pasted.
+  bool pasted_image = 3;
 }
 
 message StageInputBytesRequest {
