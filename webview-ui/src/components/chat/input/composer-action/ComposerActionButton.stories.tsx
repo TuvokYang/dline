@@ -64,7 +64,7 @@ function ComposerFrame({
                     color: "var(--vscode-input-foreground)",
                 }}>
                 {state.hasContent ? "Refactor the composer action button" : ""}
-                <div style={{ position: "absolute", right: 6, bottom: 6 }}>
+                <div style={{ position: "absolute", right: 1, bottom: 2 }}>
                     <ComposerActionButton
                         onCancel={async () => setLog("cancel")}
                         onSend={onSend}

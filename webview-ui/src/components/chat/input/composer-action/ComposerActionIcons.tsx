@@ -6,33 +6,48 @@ import type { ReactNode, SVGProps } from "react"
  * Each action has its own glyph so the button tells what a click will do
  * before it is pressed: send goes out now, queue appends the message to the
  * input queue of the running task, and cancel stops that task. All of them are
- * drawn on one 16-unit grid in one line style and fill the button that holds
- * them, so the button alone sets their size and swapping them does not shift it.
+ * drawn at one fixed pixel size, `GLYPH_PX`, with a viewBox of the same size:
+ * one grid unit is one CSS pixel and nothing is ever scaled, so the lines keep
+ * their place on the pixel grid instead of blurring. The button centers the
+ * glyph, so swapping them does not shift it.
  */
-type IconProps = Omit<SVGProps<SVGSVGElement>, "children" | "viewBox">
+type IconProps = Omit<SVGProps<SVGSVGElement>, "children" | "viewBox" | "width" | "height">
 
-/**
- * Lines keep one screen width however large the button draws the glyph:
- * a non-scaling stroke is measured in CSS pixels, not grid units.
- */
+/** Every glyph's drawn size in CSS pixels; `.composer-action` is the same size. */
+const GLYPH_PX = 20
+
 const STROKE = {
     fill: "none",
     stroke: "currentColor",
     strokeWidth: 1.5,
     strokeLinecap: "round",
     strokeLinejoin: "round",
-    vectorEffect: "non-scaling-stroke",
 } as const
 
-function Icon({ width = "100%", height = "100%", ...props }: IconProps & { children: ReactNode }) {
-    return <svg aria-hidden="true" focusable="false" height={height} viewBox="0 0 16 16" width={width} {...props} />
+function Icon(props: IconProps & { children: ReactNode }) {
+    return (
+        <svg
+            aria-hidden="true"
+            focusable="false"
+            height={GLYPH_PX}
+            viewBox={`0 0 ${GLYPH_PX} ${GLYPH_PX}`}
+            width={GLYPH_PX}
+            {...props}
+        />
+    )
 }
 
-/** Send now: one bold arrow pointing up. */
+/*
+ * One style for every glyph: outline strokes of one width inside one live area
+ * of about 13px centered on the grid. The one fill is stop's small square,
+ * which keeps cancel unmistakable at a glance.
+ */
+
+/** Send now: the return key's arrow, the key that sends. */
 export function SendIcon(props: IconProps) {
     return (
         <Icon {...props}>
-            <path d="M8 12.5v-9M4 7.5l4-4 4 4" {...STROKE} />
+            <path d="M15.5 5v5a1.5 1.5 0 0 1-1.5 1.5H4.5M8 8l-3.5 3.5L8 15" {...STROKE} />
         </Icon>
     )
 }
@@ -41,8 +56,8 @@ export function SendIcon(props: IconProps) {
 export function ResumeIcon(props: IconProps) {
     return (
         <Icon {...props}>
-            <path d="M3.5 3.5v9" {...STROKE} />
-            <path d="M7.25 3.9v8.2a.6.6 0 0 0 .92.5l6.1-4.1a.6.6 0 0 0 0-1L8.17 3.4a.6.6 0 0 0-.92.5Z" fill="currentColor" />
+            <path d="M4 4.75v10.5" {...STROKE} />
+            <path d="M8 4.75v10.5L15.875 10Z" {...STROKE} />
         </Icon>
     )
 }
@@ -51,18 +66,23 @@ export function ResumeIcon(props: IconProps) {
 export function QueueIcon(props: IconProps) {
     return (
         <Icon {...props}>
-            <path d="M2 3.5h9M2 7.75h5M2 12h5" {...STROKE} />
-            <path d="M12 13.5V7.25M9.5 9.75l2.5-2.5 2.5 2.5" {...STROKE} />
+            <path d="M3 4.5h9M3 10h5M3 15.5h5" {...STROKE} />
+            <path d="M15 16V8M12 11l3-3 3 3" {...STROKE} />
         </Icon>
     )
 }
 
-/** Stop: a ring around a solid square. */
+/**
+ * Stop: a ring around a solid square. A 1.5px ring cannot have both edges on
+ * whole pixels, so its outer edge keeps the whole-pixel radius 7 and only the
+ * inner edge, at 5.5, falls between pixels (and on whole device pixels at 2x).
+ * The square spans whole pixels.
+ */
 export function CancelIcon(props: IconProps) {
     return (
         <Icon {...props}>
-            <circle cx="8" cy="8" r="6.25" {...STROKE} strokeWidth={1.25} />
-            <rect fill="currentColor" height="5" rx="1" width="5" x="5.5" y="5.5" />
+            <circle cx="10" cy="10" r="6.25" {...STROKE} />
+            <rect fill="currentColor" height="4" rx="0.75" width="4" x="8" y="8" />
         </Icon>
     )
 }

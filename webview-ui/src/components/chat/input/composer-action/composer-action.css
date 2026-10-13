@@ -3,15 +3,20 @@
  * time. It is a bare icon like the other composer controls; the glyph tells the
  * actions apart, so no action paints a background, border or fill behind it.
  * The one tint is the running model's output speed, see `[data-output-speed]`.
- * The glyph fills the button, so this box is the icon's size.
+ * The box is exactly the glyph's pixel size (`GLYPH_PX`), so the glyph sits on
+ * the box's corner where the composer anchors it, without an inner margin.
  */
 .composer-action {
     position: relative;
-    display: inline-flex;
+    /*
+     * Block-level, so a plain wrapper is exactly the button's height: an
+     * inline box sat on a text line and kept the line's descender gap below it.
+     */
+    display: flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
+    width: 20px;
+    height: 20px;
     padding: 0;
     border: 0;
     background: transparent;

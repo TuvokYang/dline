@@ -550,7 +550,7 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                         </div>
                     )}
                     <div
-                        className="absolute flex items-end bottom-4 right-4.5 z-10 text-xs"
+                        className="absolute flex items-end bottom-[13px] right-4 z-10 text-xs"
                         style={{ height: COMPOSER_MIN_HEIGHT }}>
                         <ComposerActionButton
                             onCancel={onCancelTask}
