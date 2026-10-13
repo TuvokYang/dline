@@ -370,7 +370,8 @@ e2e(
                     reference_artifact_ids: [GENERATED_ARTIFACT_ID],
                 },
                 expectedToolResults: [{ callId: "call_hosted_generate_image", contentIncludes: "reference_artifact_ids" }],
-                expectedRequestExcludes: [PNG_1X1_BASE64, "data:image/"],
+                // A model that reads images gets the generated pixels in the tool result.
+                expectedRequestIncludes: ['"type":"input_image"', PNG_1X1_BASE64],
             },
             {
                 type: "hosted-image-generation",
@@ -550,7 +551,6 @@ e2e(
                 await Promise.all(preReadTaskTextFiles.map((filePath) => readFile(filePath, "utf8")))
             ).join("\n")
             expect(preReadTaskTextRecords).not.toContain(PNG_1X1_BASE64)
-            expect(preReadTaskTextRecords).not.toContain("<image name=")
             expect(preReadTaskTextRecords).not.toMatch(/"record_source"\s*:\s*"read_tool"/)
 
             server.enqueueResponses(
@@ -561,7 +561,6 @@ e2e(
                     name: "read_file",
                     arguments: { path: generatedImagePath },
                     expectedToolResults: [{ callId: "call_current_edit_image", contentIncludes: GENERATED_ARTIFACT_ID }],
-                    expectedRequestExcludes: [PNG_1X1_BASE64, "data:image/"],
                 },
                 {
                     type: "tool",
@@ -628,16 +627,12 @@ e2e(
             )
             expect(firstToolResult?.content).toContain("reference_artifact_ids")
             expect(firstToolResult?.content).toContain(GENERATED_ARTIFACT_ID)
-            expect(firstToolResult?.content).not.toContain(PNG_1X1_BASE64)
-            expect(firstToolResult?.content).not.toContain("data:image/")
-            // A text-only tool result reaches the Responses API as plain text, not as serialized content blocks.
-            expect(firstToolResult?.content).toMatch(/^\[generate_image\b/)
-            const firstToolResultPayload = JSON.parse(firstToolResult?.content?.split(" Result:\n")[1] ?? "{}") as {
-                artifacts?: Array<{ id?: string; path?: string }>
-            }
-            expect(firstToolResultPayload.artifacts).toEqual([
-                expect.objectContaining({ id: GENERATED_ARTIFACT_ID, path: generatedImagePath }),
-            ])
+            // The generated pixels follow the metadata, named by the Artifact ID an edit passes back.
+            expect(firstToolResult?.content).toContain(
+                `<image name="${path.basename(generatedImagePath)}" id="${GENERATED_ARTIFACT_ID}">`,
+            )
+            expect(firstToolResult?.content).toContain('"type":"input_image"')
+            expect(firstToolResult?.content).toContain(PNG_1X1_BASE64)
             const editRequest = consumptions[3].requestBody as {
                 model?: string
                 input?: unknown

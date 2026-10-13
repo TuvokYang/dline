@@ -7,6 +7,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { TaskConfig } from "../../types/TaskConfig"
 import { GenerateImageToolHandler } from "../GenerateImageToolHandler"
 
+const images = vi.hoisted(() => ({ extract: vi.fn() }))
+vi.mock("@integrations/misc/extract-images", () => ({ extractImageContent: images.extract }))
+
+const imageBlock = { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } } as const
+
 const artifact: ImageArtifact = {
     schemaVersion: 1,
     id: `image:sha256:${"b".repeat(64)}`,
@@ -41,7 +46,7 @@ const block: ToolUse = {
     dline_tid: "image-request-1",
 }
 
-function createConfig(autoApprove: boolean) {
+function createConfig(autoApprove: boolean, supportsImages = false) {
     const say = vi.fn<TaskConfig["callbacks"]["say"]>(async () => undefined)
     const operationController = new AbortController()
     const generate = vi.fn(
@@ -66,7 +71,7 @@ function createConfig(autoApprove: boolean) {
         isSubagentExecution: false,
         autoApprovalSettings: { actions: { generateImages: autoApprove }, enableNotifications: false },
         taskState: { consecutiveMistakeCount: 0, operationSignal: operationController.signal },
-        api: { getModel: () => ({ id: "chat-model" }) },
+        api: { getModel: () => ({ id: "chat-model", info: { capabilities: { supportsImages } } }) },
         services: { imageGenerationService: { resolveProfile, generate } },
         callbacks: {
             say,
@@ -135,6 +140,8 @@ describe("GenerateImageToolHandler", () => {
         ])
         expect(resultPayload.reference_artifact_ids).toEqual([artifact.id])
         expect(JSON.stringify(resultPayload)).not.toContain("base64")
+        // A model without image input gets no pixels, so the artifact is not even read.
+        expect(images.extract).not.toHaveBeenCalled()
 
         const completedMessage = JSON.parse(say.mock.calls.at(-1)?.[1] as string)
         expect(completedMessage).toMatchObject({
@@ -159,6 +166,37 @@ describe("GenerateImageToolHandler", () => {
         })
         expect(say.mock.calls.at(-1)?.[5]).toBe(block.ts)
         expect(JSON.stringify(completedMessage)).not.toContain("base64")
+    })
+
+    it("returns each generated image in the tool result for a model that reads images", async () => {
+        images.extract.mockResolvedValueOnce({ success: true, imageBlock })
+        const { config } = createConfig(true, true)
+
+        const result = await new GenerateImageToolHandler().execute(config, block)
+
+        const artifactPath = resolveTaskArtifactPath(config.taskId, artifact.relativePath)
+        expect(images.extract).toHaveBeenCalledWith(artifactPath)
+        expect(Array.isArray(result)).toBe(true)
+        const blocks = result as Exclude<typeof result, string>
+        expect(blocks).toHaveLength(4)
+        expect(blocks[0]).toMatchObject({ type: "text" })
+        expect(JSON.parse((blocks[0] as { text: string }).text).artifacts[0]).toMatchObject({
+            id: artifact.id,
+            path: artifactPath,
+        })
+        expect(blocks[1]).toEqual({ type: "text", text: `\n<image name="${"b".repeat(64)}.png" id="${artifact.id}">\n` })
+        expect(blocks[2]).toEqual(imageBlock)
+        expect(blocks[3]).toEqual({ type: "text", text: "\n</image>" })
+    })
+
+    it("keeps the metadata alone when a generated image cannot be read back", async () => {
+        images.extract.mockResolvedValueOnce({ success: false, error: "Error reading image: gone" })
+        const { config } = createConfig(true, true)
+
+        const result = await new GenerateImageToolHandler().execute(config, block)
+
+        expect(typeof result).toBe("string")
+        expect(JSON.parse(result as string).artifacts[0]).toMatchObject({ id: artifact.id })
     })
 
     it("publishes preview state without exposing raw provider payloads", async () => {

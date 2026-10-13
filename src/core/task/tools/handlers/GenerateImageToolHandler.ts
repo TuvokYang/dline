@@ -1,4 +1,6 @@
+import path from "node:path"
 import { resolveTaskArtifactPath } from "@core/artifacts/runtime"
+import type { ImageArtifact } from "@core/artifacts/TaskArtifactStore"
 import type { ToolUse } from "@core/assistant-message"
 import type {
     ImageBackground,
@@ -10,10 +12,12 @@ import type {
 import { ImageGenerationError } from "@core/image-generation/contracts"
 import { DEFAULT_IMAGE_GENERATION_SIZE } from "@core/image-generation/ImageGenerationSizes"
 import { formatResponse } from "@core/prompts/responses"
+import { extractImageContent } from "@integrations/misc/extract-images"
 import type { UiSayTool } from "@shared/ExtensionMessage"
 import { IMAGE_GENERATION_PRESENTATION_SCHEMA_VERSION, type ImageGenerationPresentationV1 } from "@shared/image-generation"
 import { DlineDefaultTool } from "@shared/tools"
 import type { ToolApprovalPresentation } from "../../executors/tool/ToolPreflight"
+import { tagAttributes } from "../../utils/tag-attributes"
 import type { IApprovalPresentingToolHandler, IDenialPresentingToolHandler, IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -106,6 +110,28 @@ function createAdmissionPresentation(block: ToolUse, status: "awaiting_approval"
         prompt: block.params.prompt?.trim() || "Image generation",
         count: presentationCount(block.params.count),
     })
+}
+
+type ToolResultBlocks = Exclude<ToolResponse, string>
+
+/**
+ * The generated pixels, for a model that reads images.
+ *
+ * Each image travels inside the tool result, wrapped in the `<image …>` tag
+ * read_file and attached images use and named by the Artifact ID a later edit
+ * passes back, so the model sees what it made and which ID to refer to. An
+ * image that cannot be read is left out; the metadata before it still lists it.
+ */
+async function generatedImageBlocks(taskId: string, artifacts: readonly ImageArtifact[]): Promise<ToolResultBlocks> {
+    const blocks: ToolResultBlocks = []
+    for (const artifact of artifacts) {
+        const artifactPath = resolveTaskArtifactPath(taskId, artifact.relativePath)
+        const image = await extractImageContent(artifactPath)
+        if (!image.success) continue
+        const attributes = tagAttributes({ name: path.basename(artifactPath), id: artifact.id })
+        blocks.push({ type: "text", text: `\n<image ${attributes}>\n` }, image.imageBlock, { type: "text", text: "\n</image>" })
+    }
+    return blocks
 }
 
 export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPresentingToolHandler, IDenialPresentingToolHandler {
@@ -272,7 +298,7 @@ export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPre
                 false,
                 block.ts,
             )
-            return formatResponse.toolResult(
+            const metadata = formatResponse.toolResult(
                 JSON.stringify({
                     requestId: result.requestId,
                     profileId: result.profileId,
@@ -292,6 +318,10 @@ export class GenerateImageToolHandler implements IFullyManagedTool, IApprovalPre
                     usage: result.usage,
                 }),
             )
+            const supportsImages = config.api.getModel().info?.capabilities?.supportsImages ?? false
+            if (!supportsImages || typeof metadata !== "string") return metadata
+            const images = await generatedImageBlocks(config.taskId, result.artifacts)
+            return images.length > 0 ? [{ type: "text", text: metadata }, ...images] : metadata
         } catch (error) {
             const safeError =
                 error instanceof ImageGenerationError
