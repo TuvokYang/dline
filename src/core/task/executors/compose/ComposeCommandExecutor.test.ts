@@ -52,10 +52,16 @@ describe("ComposeCommandExecutor", () => {
         ])
     })
 
-    it("emits a sanitized failure event", async () => {
+    // The message enters the conversation and keeps only the failure kind; the
+    // chat's error box names the actual error, with credentials redacted.
+    it("emits a sanitized failure event that the chat can still explain", async () => {
         const recorded = recorder()
         const executor = new ComposeCommandExecutor(
-            { compose: vi.fn(async () => Promise.reject(new Error("secret-token"))) },
+            {
+                compose: vi.fn(async () =>
+                    Promise.reject(new Error("Context file unreadable with Authorization: Bearer abc.def-secret")),
+                ),
+            },
             recorded.sink,
         )
         await executor.execute(command)
@@ -67,9 +73,13 @@ describe("ComposeCommandExecutor", () => {
                 originRevision: 1,
                 turnId: "turn-1",
                 message: "compose execution failed (Error)",
+                presentation: JSON.stringify({
+                    message: "Dline compose execution failed: Context file unreadable with Authorization: Bearer [REDACTED]",
+                    code: "Error",
+                }),
             },
         ])
-        expect(JSON.stringify(recorded.events)).not.toContain("secret-token")
+        expect(JSON.stringify(recorded.events)).not.toContain("abc.def-secret")
     })
 
     it("fails a round whose owed work failed, carrying its domain's own explanation", async () => {

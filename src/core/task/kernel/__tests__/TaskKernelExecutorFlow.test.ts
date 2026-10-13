@@ -219,9 +219,10 @@ describe("task kernel executor flow", () => {
                 presentationRef: '{"message":"Profile not valid","status":403}',
             }),
         ])
-        // Without a description the interaction still opens, under its own id.
+        // Without a description the interaction still opens and names the failure
+        // kind; an internal interaction id is never shown as the cause.
         const undescribed = provider()
-        expect(undescribed.state.dialog.primary?.presentationRef).toBe(undescribed.state.dialog.primary?.interactionId)
+        expect(undescribed.state.dialog.primary?.presentationRef).toBe("provider execution failed (Error)")
     })
 
     it("rejects stale, duplicate, and post-halt compose/provider feedback", () => {

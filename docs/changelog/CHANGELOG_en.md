@@ -25,6 +25,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed LaTeX formula blocks using
 - Fixed long tasks reading and rewriting the whole `messages.db` history on every update to the latest chat messages, which blocked the extension host for long periods; only the tail rows are now checked and replaced, so the cost no longer grows with task length, and the task view no longer copies every activity on each refresh
 - Fixed native MCP function names carrying a server identifier generated randomly in each process, so after a restart or in another window an MCP call made under an earlier name could not find its server and per-tool auto-approval stopped applying: the identifier is now derived from the server name, with rejected characters replaced by `_`, and a tool whose name would exceed 64 characters or holds rejected characters is named by a hash of its name instead of being dropped
+- Fixed a completed, already billed reply being discarded with `API Request Failed` when the model produced only reasoning it keeps hidden, with no text and no tool call: such a reply is now saved and continues like any turn without a tool call; an internal failure that no domain described no longer shows only an internal reference such as `error:provider.failed:<number>` but the actual error with credentials redacted, and a failure restored after a restart shows a readable explanation
 
 ## [0.11.0]
 

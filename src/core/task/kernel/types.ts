@@ -401,7 +401,7 @@ export type ProviderEvent =
           readonly type: "provider.failed"
           readonly turnId?: TurnId
           readonly message: string
-          /** The provider's own description of the failure, as the chat's error box renders it. */
+          /** The failure as the chat's error box renders it: the provider's own description, else the failure itself. */
           readonly presentation?: string
       })
 export type ToolEvent =

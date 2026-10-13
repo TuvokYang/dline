@@ -80,6 +80,44 @@ describe("ProviderCommandExecutor", () => {
         ])
     })
 
+    // A reply whose reasoning the provider keeps opaque and that adds no prose or
+    // tool call streams nothing the chat can show. It is still a completed turn.
+    it("journals a final that no partial preceded instead of finalizing an unopened stream", async () => {
+        const recorded = recorder()
+        const journal = new InMemoryConversationJournal()
+        const executor = new ProviderCommandExecutor(
+            "task-1",
+            {
+                start: () =>
+                    chunks([
+                        {
+                            kind: "final",
+                            transientId: "stream-1",
+                            turnId: "turn-request",
+                            payloadRef: "payload:final",
+                            turnPlan: { mode: "serial", blocks: [] },
+                        },
+                    ]),
+            },
+            journal,
+            new InMemoryTaskViewPort(),
+            recorded.sink,
+        )
+
+        await executor.execute(command)
+
+        expect(await journal.read()).toEqual([
+            expect.objectContaining({ kind: "message", operationId: "provider.final:provider:1", payloadRef: "payload:final" }),
+        ])
+        expect(recorded.events).toEqual([
+            expect.objectContaining({
+                type: "provider.turn_ready",
+                finalPayloadRef: "payload:final",
+                journalWatermark: { seq: 1 },
+            }),
+        ])
+    })
+
     it("finishes presentation and kernel settlement when cancellation lands after the final journal append", async () => {
         const recorded = recorder()
         const journal = new InMemoryConversationJournal()
@@ -330,7 +368,7 @@ describe("ProviderCommandExecutor", () => {
                     chunks([
                         {
                             kind: "final",
-                            turnId: "turn-1",
+                            turnId: "turn-request",
                             payloadRef: "payload:final",
                             turnPlan: { mode: "serial", blocks: [] },
                         },
@@ -351,6 +389,7 @@ describe("ProviderCommandExecutor", () => {
                 originRevision: 2,
                 turnId: "turn-request",
                 message: "provider execution failed (Error)",
+                presentation: JSON.stringify({ message: "Dline provider execution failed: ChunkAfterFinal", code: "Error" }),
             },
         ])
     })
@@ -373,6 +412,8 @@ describe("ProviderCommandExecutor", () => {
                 originRevision: 2,
                 turnId: "turn-request",
                 message: "provider execution failed (Error)",
+                // The chat names the failure itself, never only an interaction id.
+                presentation: JSON.stringify({ message: "Dline provider execution failed: MissingFinalChunk", code: "Error" }),
             },
         ])
     })

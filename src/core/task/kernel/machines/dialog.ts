@@ -153,9 +153,9 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
         const interactionId = `error:${event.type}:${nextRevision}`
         // The chat renders the presentation as the failure itself, so a domain
         // that described it (an invalid Profile, a quota, a failed compaction) is
-        // shown in its own words; the interaction id is only a fallback that
-        // names no cause.
-        const presentation = event.presentation
+        // shown in its own words. Without one the sanitized failure kind is still
+        // a cause; the interaction id would name none.
+        const presentation = event.presentation ?? event.message
         return {
             state: {
                 ...state,
@@ -165,7 +165,7 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
                     kind: "error_retry",
                     status: "planned",
                     createdRevision: nextRevision,
-                    presentationRef: presentation ?? interactionId,
+                    presentationRef: presentation,
                     actionRules: [
                         { actionId: "retry", payloadPolicy: "draft" },
                         { actionId: "start_new_task", payloadPolicy: "draft" },

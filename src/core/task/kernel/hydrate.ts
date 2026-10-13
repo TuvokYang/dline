@@ -161,6 +161,15 @@ function classify(snapshot: TaskState): Exclude<HydrateForm, "new"> {
     return "interrupted"
 }
 
+/**
+ * The error box of a failure restored after a restart.
+ *
+ * The failure's own description belonged to the dialog that did not survive, and
+ * the chat renders this text as the failure, so it says what is known instead
+ * of an internal reference.
+ */
+const RESTORED_FAILURE_PRESENTATION = "The last request failed before Dline restarted. Retry to send it again."
+
 function action(actionId: string, payloadPolicy: DialogActionRule["payloadPolicy"]): DialogActionRule {
     return { actionId, payloadPolicy }
 }
@@ -187,7 +196,7 @@ function recoveryInteraction(state: TaskState, form: Exclude<HydrateForm, "new" 
             kind: "error_retry",
             status: "planned",
             createdRevision: state.revision,
-            presentationRef: `error:${state.revision}`,
+            presentationRef: RESTORED_FAILURE_PRESENTATION,
             actionRules: [action("retry", "draft"), action("start_new_task", "draft")],
             prepareKey: `dialog.prepare:${interactionId}`,
         }

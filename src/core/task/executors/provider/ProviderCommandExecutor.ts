@@ -1,7 +1,14 @@
 import type { Command, ProviderStartCommand, ProviderTurnPlan } from "../../kernel"
 import type { CommandExecutor } from "../../runtime"
 import type { ConversationJournal, TaskViewPort } from "../../stores"
-import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort, type TaskEventSink } from "../contracts"
+import {
+    describeExecutorFailure,
+    executorFailure,
+    type HaltOrder,
+    type HaltParticipant,
+    isExecutionAbort,
+    type TaskEventSink,
+} from "../contracts"
 import { presentationOf } from "./ProviderFailure"
 import type {
     ProviderReceivingEstimate,
@@ -195,7 +202,6 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
             finalResult = (await this.recoverFinal(command)) ?? (await this.consume(command, controller.signal))
         } catch (error) {
             if (isExecutionAbort(error, controller.signal)) return
-            const presentation = presentationOf(error)
             await this.events.submit({
                 type: "provider.failed",
                 generation: command.generation,
@@ -203,7 +209,8 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                 originRevision: command.originRevision,
                 turnId: command.turnId,
                 message: executorFailure("provider", error),
-                ...(presentation === undefined ? {} : { presentation }),
+                // The provider's own explanation when it gave one, else the failure itself.
+                presentation: presentationOf(error) ?? describeExecutorFailure("provider", error),
             })
             return
         }
@@ -408,8 +415,11 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                     turnId: finalChunk.turnId,
                 },
             }
-            const appended = finalChunk.transientId
-                ? await this.journal.finalizeTransient({ ...journalInput, transientId: finalChunk.transientId })
+            // Only a stream that showed something registered its transient entry. A
+            // reply that showed nothing (reasoning the provider keeps opaque, with no
+            // prose or call) is still a completed turn and is journaled like one.
+            const appended = transientId
+                ? await this.journal.finalizeTransient({ ...journalInput, transientId })
                 : await this.journal.append(journalInput)
             durableTerminal = true
             // Settled only after the journal accepted the turn: a row shown as final

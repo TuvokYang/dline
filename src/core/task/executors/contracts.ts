@@ -1,4 +1,5 @@
 import { Logger } from "@shared/services/Logger"
+import { redactDiagnosticString } from "@shared/services/logging/safe-diagnostic-value"
 import type { HaltStopCommand, ParticipantId, TaskEvent } from "../kernel"
 import { ProfileNotValidError } from "../profile-admission"
 
@@ -48,6 +49,28 @@ export function executorFailure(domain: string, error: unknown): string {
     if (isProfileRefusal(error)) Logger.warn(failure, error)
     else Logger.error(failure, error)
     return failure
+}
+
+/** Bounds the quoted error text; a failure message can embed whatever the failing code was handling. */
+const MAX_FAILURE_DESCRIPTION_LENGTH = 1_000
+
+/**
+ * Describe an executor failure for the chat when no domain described it.
+ *
+ * `executorFailure` keeps only the failure kind because its text enters the
+ * conversation. This text is the body of the chat's error box instead, so it
+ * names the actual error: an interaction id or a bare kind cannot tell the user
+ * what went wrong. Credentials are redacted and the message is bounded.
+ *
+ * @returns A serialized error the chat's error box parses: the message plus the error name as its code.
+ */
+export function describeExecutorFailure(domain: string, error: unknown): string {
+    const name = error instanceof Error && error.name ? error.name : "Error"
+    const detail = redactDiagnosticString(error instanceof Error ? error.message : String(error)).slice(
+        0,
+        MAX_FAILURE_DESCRIPTION_LENGTH,
+    )
+    return JSON.stringify({ message: `Dline ${domain} execution failed: ${detail || name}`, code: name })
 }
 
 /** A Profile refusal, also when a provider failure carries it as its cause to describe it for the chat. */

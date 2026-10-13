@@ -9,7 +9,14 @@ import type {
     TurnContinuationReason,
 } from "../../kernel"
 import type { CommandExecutor } from "../../runtime"
-import { executorFailure, type HaltOrder, type HaltParticipant, isExecutionAbort, type TaskEventSink } from "../contracts"
+import {
+    describeExecutorFailure,
+    executorFailure,
+    type HaltOrder,
+    type HaltParticipant,
+    isExecutionAbort,
+    type TaskEventSink,
+} from "../contracts"
 import type { RetainedInputPresentationCommit } from "./RetainedInputPresentationPort"
 
 export interface ComposeRoundInput {
@@ -130,6 +137,7 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
                 originRevision: command.originRevision,
                 turnId: command.turnId,
                 message: executorFailure("compose", error),
+                presentation: describeExecutorFailure("compose", error),
                 ...(queueDisposition === undefined ? {} : { queueDisposition }),
             })
             return
