@@ -279,9 +279,15 @@ describe("TASK-107 frozen legacy golden replay", () => {
             combinedPorts,
         )
         expect(combined.kind).toBe("restored")
+        const restored = combined.kind === "restored" ? combined.snapshot : undefined
+        if (!restored) throw new Error("Combined restore saved no snapshot")
+        // The restore persists only the planned dialog; the legacy outbox command is
+        // now derived once by the reopen hydrate rather than stored beside it.
+        expect(restored.outbox).toEqual([])
+        const reopened = hydrate({ taskId: "task-1", snapshot: restored.state, journalTail: { seq: 4 }, openReason: "resume" })
         expect({
             order: combinedPorts.calls,
-            outbox: combined.kind === "restored" ? combined.snapshot?.outbox.map((command) => command.type) : [],
+            outbox: reopened.initialCommands.map((command) => command.type),
         }).toEqual({ ...expected("checkpoint.combined"), order: ["resolve", "stop", "workspace", "conversation", "save"] })
 
         const invalidPorts = checkpointPorts(createInitialTaskState("task-other"))
