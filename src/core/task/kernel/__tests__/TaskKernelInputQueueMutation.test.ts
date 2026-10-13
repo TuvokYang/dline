@@ -59,6 +59,25 @@ describe("canonical input queue mutations", () => {
         expect(pendingIntakeEntryIds(result.state.intake)).toEqual([])
     })
 
+    // A steering entry chosen at enqueue must never be visible as queued, or a
+    // turn end between two events could deliver it as the wrong kind of input.
+    it("admits an entry as steering in the enqueue itself", () => {
+        const result = accepted(
+            transition(running(), {
+                type: "input_queue.enqueued",
+                generation: 0,
+                entryId: "steer-1",
+                payloadRef: "payload:steer",
+                mode: "steering",
+            }),
+        )
+
+        expect(result.commands).toEqual([])
+        expect(result.state.intake.queued).toEqual([
+            expect.objectContaining({ entryId: "steer-1", mode: "steering", queue: { editing: false }, state: "accepted" }),
+        ])
+    })
+
     it.each(["scheduled", "running"] as const)("durably retains input while a compaction is %s", (status) => {
         const state: TaskState = {
             ...running(),

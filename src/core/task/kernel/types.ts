@@ -355,6 +355,11 @@ export type InputQueueEvent =
           readonly type: "input_queue.enqueued"
           readonly entryId: EntryId
           readonly payloadRef: string
+          /**
+           * The mode the entry is admitted in. Absent on events journaled before
+           * steering could be chosen at enqueue, which were all queued.
+           */
+          readonly mode?: "queued" | "steering"
       })
     | (EventBase & { readonly type: "input_queue.mode_toggled"; readonly entryId: EntryId })
     | (EventBase & { readonly type: "input_queue.reordered"; readonly entryId: EntryId; readonly targetIndex: number })

@@ -16,7 +16,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { usePlatform } from "@/context/PlatformContext"
 import { cn } from "@/lib/utils"
-import { composerShortcutLabels, type QueueChord, shouldSendChatInput } from "@/utils/chat-input-shortcut"
+import { composerShortcutLabels, isSteerShortcut, shouldSendChatInput } from "@/utils/chat-input-shortcut"
 import { useMetaKeyDetection, useShortcut } from "@/utils/hooks"
 import { isSafari } from "@/utils/platformUtils"
 import ClineRulesToggleModal from "../agent-capabilities/ClineRulesToggleModal"
@@ -29,7 +29,7 @@ import {
 import { ChatInputRuntimeControls } from "./input/ChatInputRuntimeControls"
 import { ComposerActionButton } from "./input/composer-action/ComposerActionButton"
 import type { ComposerSubmitKind } from "./input/composer-action/composer-action"
-import { QueueChordTracker } from "./input/queue-chord"
+import type { InputQueuePanelMode } from "./input/InputQueuePanel"
 import type { ChipAction } from "./input/semantic-composer/dom"
 import { composerHighlights } from "./input/semantic-composer/highlights"
 import {
@@ -85,10 +85,11 @@ interface ChatTextAreaProps {
     placeholderText: string
     onSend: (draft: ComposerSendDraft) => void
     /**
-     * Hands a draft to the queue: a send made while sending is disabled, or a
-     * queue chord. Absent when nothing can take it.
+     * Hands a draft to the queue in the given mode: a send made while sending is
+     * disabled waits as `queued`, the steer shortcut as `steering`. Absent when
+     * nothing can take it.
      */
-    onSendBlocked?: (draft: ComposerSendDraft) => void
+    onSendBlocked?: (draft: ComposerSendDraft, mode: InputQueuePanelMode) => void
     /** Whether a blocked send will be delivered later, so the action button offers to queue it. */
     queueAvailable?: boolean
     /** Stops the running task; absent while the task offers no cancel. */
@@ -297,7 +298,7 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                 return
             }
             if (sendingDisabled) {
-                onSendBlocked?.(capture.draft)
+                onSendBlocked?.(capture.draft, "queued")
                 return
             }
             setIsFocused(false)
@@ -305,49 +306,37 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
         }, [documentId, engine, onSend, onSendBlocked, reportSendRefusal, semanticCatalog, sendingDisabled])
 
         /**
-         * Hand the draft to the queue on purpose, as a queue chord asks, even
-         * while the task would take a send now. With nothing running to queue
-         * behind, the draft simply goes out, still as plain text if asked.
+         * Hand the draft to the queue as steering input, as the steer shortcut
+         * asks, even while the task would take a send now. With nothing running
+         * to steer, the draft simply goes out.
          */
-        const tryQueue = useCallback(
-            (chord: QueueChord) => {
-                const draftSegments = engine.getState().segments
-                if (contentLength(draftSegments) === 0) return
-                const capture = captureComposerSend(draftSegments, {
-                    catalog: semanticCatalog,
-                    documentId,
-                    plainText: chord === "queue_plain_text",
-                })
-                if (!capture.ok) {
-                    reportSendRefusal(capture.block)
-                    return
-                }
-                if (onSendBlocked && queueAvailable) {
-                    onSendBlocked(capture.draft)
-                    return
-                }
-                if (sendingDisabled) {
-                    reportSendRefusal("input_not_ready")
-                    return
-                }
-                setIsFocused(false)
-                onSend(capture.draft)
-            },
-            [documentId, engine, onSend, onSendBlocked, queueAvailable, reportSendRefusal, semanticCatalog, sendingDisabled],
-        )
-        const queueChord = useMemo(
-            () => new QueueChordTracker({ insertText: (text) => engine.apply({ type: "insert_text", text, source: "typed" }) }),
-            [engine],
-        )
+        const trySteer = useCallback(() => {
+            const draftSegments = engine.getState().segments
+            if (contentLength(draftSegments) === 0) return
+            const capture = captureComposerSend(draftSegments, { catalog: semanticCatalog, documentId })
+            if (!capture.ok) {
+                reportSendRefusal(capture.block)
+                return
+            }
+            if (onSendBlocked && queueAvailable) {
+                onSendBlocked(capture.draft, "steering")
+                return
+            }
+            if (sendingDisabled) {
+                reportSendRefusal("input_not_ready")
+                return
+            }
+            setIsFocused(false)
+            onSend(capture.draft)
+        }, [documentId, engine, onSend, onSendBlocked, queueAvailable, reportSendRefusal, semanticCatalog, sendingDisabled])
 
         const handleKeyDown = useCallback(
             (event: React.KeyboardEvent<HTMLDivElement>) => {
                 // Safari reports InputEvent.isComposing as false throughout, so keyCode 229 identifies composition there.
                 const isComposing = isSafari ? event.nativeEvent.keyCode === 229 : (event.nativeEvent?.isComposing ?? false)
-                const chord = queueChord.keyDown(event, isComposing)
-                if (chord.kind !== "pass") {
+                if (isSteerShortcut(event, isComposing)) {
                     event.preventDefault()
-                    if (chord.kind === "chord") tryQueue(chord.chord)
+                    trySteer()
                     return
                 }
                 if (menus.handleKeyDown(event, isComposing)) return
@@ -356,7 +345,7 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                     trySend()
                 }
             },
-            [chatInputSendShortcut, menus, queueChord, tryQueue, trySend],
+            [chatInputSendShortcut, menus, trySend, trySteer],
         )
 
         // --- mode switch ---
@@ -488,7 +477,6 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                         decorate={decorate}
                         engine={engine}
                         onBlur={() => {
-                            queueChord.flush()
                             menus.onEditorBlur()
                             setIsFocused(false)
                             onFocusChange?.(false)
@@ -500,7 +488,6 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                         }}
                         onHeightChange={onHeightChange}
                         onKeyDown={handleKeyDown}
-                        onKeyUp={(event) => queueChord.keyUp(event)}
                         onPaste={resourceInput.handlePaste}
                         onPasteText={resourceInput.handlePastedText}
                         placeholder={transientNotice ? "" : placeholderText}

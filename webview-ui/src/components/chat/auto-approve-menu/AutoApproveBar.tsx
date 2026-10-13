@@ -1,5 +1,5 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
-import { useRef, useState } from "react"
+import { forwardRef, useRef, useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { getAsVar, VSC_TITLEBAR_INACTIVE_FOREGROUND } from "@/utils/vscStyles"
 import AutoApproveModal from "./AutoApproveModal"
@@ -9,7 +9,8 @@ interface AutoApproveBarProps {
     style?: React.CSSProperties
 }
 
-const AutoApproveBar = ({ style }: AutoApproveBarProps) => {
+/** The ref reaches the bar's outer box, so a surface opening upward can stop above it. */
+const AutoApproveBar = forwardRef<HTMLDivElement, AutoApproveBarProps>(({ style }, ref) => {
     const { autoApprovalSettings, yoloModeToggled, navigateToSettings } = useExtensionState()
 
     const [isModalVisible, setIsModalVisible] = useState(false)
@@ -71,6 +72,7 @@ const AutoApproveBar = ({ style }: AutoApproveBarProps) => {
         return (
             <div
                 className="mx-3.5 select-none break-words relative"
+                ref={ref}
                 style={{
                     borderTop: `0.5px solid ${borderColor}`,
                     borderRadius: "4px 4px 0 0",
@@ -116,6 +118,7 @@ const AutoApproveBar = ({ style }: AutoApproveBarProps) => {
     return (
         <div
             className="mx-3.5 select-none break-words relative"
+            ref={ref}
             style={{
                 border: `0.5px solid ${borderColor}`,
                 borderRadius: "4px",
@@ -172,6 +175,8 @@ const AutoApproveBar = ({ style }: AutoApproveBarProps) => {
             />
         </div>
     )
-}
+})
+
+AutoApproveBar.displayName = "AutoApproveBar"
 
 export default AutoApproveBar

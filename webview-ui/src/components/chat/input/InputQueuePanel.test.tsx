@@ -160,7 +160,10 @@ describe("InputQueuePanel", () => {
         expect(screen.getByTestId("input-queue-root")).not.toContainElement(overlay)
         expect(overlay).toHaveAttribute("data-slot", "popover-content")
         expect(overlay).toHaveClass("w-(--radix-popover-trigger-width)", "max-h-[min(60vh,480px)]", "overflow-y-auto")
-        expect(overlay.style.backgroundColor).toContain("--vscode-editorWidget-background")
+        // The widget color is laid over the opaque editor background, so a theme
+        // whose widget token has alpha cannot let the auto-approve bar show through.
+        expect(overlay.style.backgroundColor).toContain("--vscode-editor-background")
+        expect(overlay.style.backgroundImage).toContain("--vscode-editorWidget-background")
         expect(screen.getByTestId("input-queue-markdown-a")).toHaveClass("max-h-[min(20vh,180px)]")
     })
 

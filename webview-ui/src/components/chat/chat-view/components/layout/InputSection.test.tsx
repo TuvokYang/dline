@@ -27,15 +27,18 @@ vi.mock("@/components/chat/ChatTextArea", () => {
             HTMLDivElement,
             {
                 onSend: (draft: ComposerSendDraft) => void
-                onSendBlocked?: (draft: ComposerSendDraft) => void
+                onSendBlocked?: (draft: ComposerSendDraft, mode: "queued" | "steering") => void
                 sendingDisabled: boolean
             }
         >((props, _ref) => (
             <>
                 <button
-                    onClick={() => (props.sendingDisabled ? props.onSendBlocked?.(captured) : props.onSend(captured))}
+                    onClick={() => (props.sendingDisabled ? props.onSendBlocked?.(captured, "queued") : props.onSend(captured))}
                     type="button">
                     Submit
+                </button>
+                <button onClick={() => props.onSendBlocked?.(captured, "steering")} type="button">
+                    Steer
                 </button>
                 <button onClick={() => props.onSend(modeSwitch)} type="button">
                     Complete Mode Switch
@@ -221,7 +224,26 @@ describe("InputSection deferred task submission", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "Submit" }))
 
-        expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] })
+        expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] }, "queued")
+        await settleEffects()
+        expect(onSubmit).not.toHaveBeenCalled()
+    })
+
+    it("hands a steered draft to the queue as steering input", async () => {
+        const onSubmit = vi.fn(async () => undefined)
+        const onEnqueue = vi.fn()
+        render(
+            <InputSection
+                {...props(draft("steer me"))}
+                onEnqueueInput={onEnqueue}
+                onSubmit={onSubmit}
+                submissionScope="task-1"
+            />,
+        )
+
+        fireEvent.click(screen.getByRole("button", { name: "Steer" }))
+
+        expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] }, "steering")
         await settleEffects()
         expect(onSubmit).not.toHaveBeenCalled()
     })
@@ -345,7 +367,7 @@ describe("InputSection deferred task submission", () => {
         fireEvent.click(screen.getByRole("button", { name: "Submit" }))
         await settleEffects()
 
-        expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] })
+        expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] }, "queued")
         expect(current.chatState.composer.retire).toHaveBeenCalledOnce()
     })
 
@@ -479,7 +501,7 @@ describe("InputSection deferred task submission", () => {
         fireEvent.click(screen.getByRole("button", { name: "Submit" }))
 
         expect(onCommitEdit).not.toHaveBeenCalled()
-        expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] })
+        expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] }, "queued")
     })
 
     // Cancelling releases the backend gate and drops the composer's claim, so
@@ -509,7 +531,7 @@ describe("InputSection deferred task submission", () => {
 
         expect(onCancelEdit).toHaveBeenCalledWith("entry-1")
         expect(onCommitEdit).not.toHaveBeenCalled()
-        expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] })
+        expect(onEnqueue).toHaveBeenCalledWith({ text: "captured", images: ["image"], files: ["file"] }, "queued")
     })
 
     it("allows a successor interaction while the previous submission is still settling", async () => {

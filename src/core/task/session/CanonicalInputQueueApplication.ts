@@ -51,12 +51,14 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
 
         switch (mutation.kind) {
             case "enqueue": {
-                const input = await this.inputs.materialize(mutation.draft, "queued")
+                const mode = mutation.mode ?? "queued"
+                const input = await this.inputs.materialize(mutation.draft, mode)
                 event = {
                     type: "input_queue.enqueued" as const,
                     generation: this.runtime.getState().generation,
                     entryId: input.entryId,
                     payloadRef: input.payloadRef,
+                    mode,
                 }
                 success = input.entryId
                 break

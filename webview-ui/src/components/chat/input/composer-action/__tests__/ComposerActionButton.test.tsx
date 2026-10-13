@@ -132,7 +132,7 @@ describe("ComposerActionButton", () => {
         expect(button()).toHaveAttribute("aria-disabled", "true")
     })
 
-    it("lists the queue chords next to the configured send key", () => {
+    it("lists the steer shortcut next to the configured send key", () => {
         render(
             <ComposerActionButton
                 onCancel={vi.fn(async () => {})}
@@ -143,7 +143,15 @@ describe("ComposerActionButton", () => {
         )
 
         expect(button().title).toContain("Queue message (Ctrl + Enter)")
-        expect(button().title).toContain("Queue as plain text (Shift + S + Enter)")
+        expect(button().title).toContain("Queue as steering (Ctrl + Alt + S)")
+        expect(button().title).not.toContain("plain text")
+    })
+
+    // With nothing running to steer the shortcut just sends, so the tooltip does not offer it.
+    it("does not offer steering when nothing can be queued", () => {
+        render(<ComposerActionButton onSend={vi.fn()} shortcuts={shortcuts} state={{ ...idle, canQueue: false }} />)
+
+        expect(button().title).toBe("Send message (Enter)")
     })
 
     it("tints by output speed only while a rate is given", () => {

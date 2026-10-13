@@ -424,6 +424,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     // Read at event time, so a catalog refresh does not resubscribe the stream.
     const semanticCatalogRef = useRef(semanticCatalog)
     semanticCatalogRef.current = semanticCatalog
+    // The open queue list stops above the auto-approve bar, which sits between
+    // the queue and the chat, so the bar stays visible and clickable.
+    const autoApproveBarRef = useRef<HTMLDivElement>(null)
     useEffect(() => {
         const cleanup = UiServiceClient.subscribeToAddToInput(
             {},
@@ -797,7 +800,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                 ) : visibleTask && !taskViewState ? (
                     <div role="alert">Task interaction state is unavailable</div>
                 ) : null}
-                <AutoApproveBar />
+                <AutoApproveBar ref={autoApproveBarRef} />
                 <InputSection
                     canQueueInput={visibleTask ? queueCanDeliver : false}
                     chatState={chatState}
@@ -824,6 +827,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                     onToggleQueuedMode={inputQueue.toggleMode}
                     outputTokensPerSecond={outputTokensPerSecond}
                     placeholderText={placeholderText}
+                    queueOverlayAnchorRef={autoApproveBarRef}
                     scrollBehavior={scrollBehavior}
                     semanticCatalog={semanticCatalog}
                     shouldDisableFilesAndImages={Boolean(

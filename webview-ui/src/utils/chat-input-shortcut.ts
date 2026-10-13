@@ -23,34 +23,42 @@ export function shouldSendChatInput(event: ChatInputKeyEvent, shortcut: ChatInpu
     }
 }
 
-/**
- * A key held with Shift while Enter is pressed, which hands the draft to the
- * queue instead of sending it.
- *
- * The chords are fixed rather than following the configured send shortcut, so
- * they mean the same thing whichever key sends.
- */
-export type QueueChord = "queue" | "queue_plain_text"
+/** The parts of a key press the steer shortcut reads. */
+export interface SteerShortcutKeyEvent extends ChatInputKeyEvent {
+    readonly code: string
+    getModifierState?(key: string): boolean
+}
 
-/** The `KeyboardEvent.code` of the key held for each chord, independent of keyboard layout. */
-export const QUEUE_CHORD_KEY_CODES: Readonly<Record<QueueChord, string>> = {
-    queue: "KeyQ",
-    queue_plain_text: "KeyS",
+/**
+ * Whether a key press hands the draft to the queue as steering input, which the
+ * running turn takes at its next tool round: Ctrl + Alt + S. A plain queued
+ * entry needs no shortcut of its own, since the send shortcut queues whenever
+ * the task is busy.
+ *
+ * The key is matched by its physical position, so it works on any layout. Each
+ * alternative was ruled out by how it behaved: a letter held with Shift types
+ * itself unless it is caught at exactly the right moment, Alt alone moves focus
+ * to the VS Code menu bar, and Ctrl + S reaches VS Code first. On layouts with
+ * an AltGr key, Ctrl + Alt is AltGr and may type a character, so a press with
+ * AltGr down is left to type it.
+ */
+export function isSteerShortcut(event: SteerShortcutKeyEvent, isComposing: boolean): boolean {
+    if (isComposing || event.code !== "KeyS") return false
+    if (!event.ctrlKey || !event.altKey || event.shiftKey || event.metaKey) return false
+    return !event.getModifierState?.("AltGraph")
 }
 
 /** The shortcut for each way the composer can hand a draft over, as shown to the user. */
 export interface ComposerShortcutLabels {
     readonly send: string
-    readonly queue: string
-    readonly queuePlainText: string
+    readonly steer: string
 }
 
 /** Labels for the composer's shortcuts under the configured send shortcut. */
 export function composerShortcutLabels(shortcut: ChatInputSendShortcut | undefined): ComposerShortcutLabels {
     return {
         send: getChatInputSendShortcutLabel(shortcut),
-        queue: "Shift + Q + Enter",
-        queuePlainText: "Shift + S + Enter",
+        steer: "Ctrl + Alt + S",
     }
 }
 

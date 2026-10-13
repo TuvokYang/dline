@@ -39,42 +39,6 @@ function compactAtom(): ComposerAtom {
     return command
 }
 
-describe("composeComposerSubmission as plain text", () => {
-    it("sends typed commands and chips as inert literals, keeping attachments", () => {
-        const mention = createMentionAtom(catalog, "/src/a.ts")
-        if (!mention) throw new Error("the built-in catalog must know file mentions")
-        const command = compactAtom()
-        if (command.kind !== "command") throw new Error("expected a command atom")
-        const submission = composeComposerSubmission(
-            [text("/compact "), atom(command), text(" see "), atom(mention), atom(readyImage)],
-            { ...context, plainText: true },
-        )
-
-        expect(submission.semanticInput?.nodes).toEqual([
-            { kind: "literal", text: `/compact ${command.sourceText} see ${mention.sourceText}`, source: "typed" },
-            expect.objectContaining({ kind: "image", entityId: "img-1" }),
-        ])
-        expect(submission.semanticInput?.resources).toEqual([ref])
-        expect(submission.text).toBe(submission.semanticInput?.rawText)
-        const document = submission.semanticInput
-        if (!document) throw new Error("a plain-text submission always carries its document")
-        expect(validateSemanticInputDocument(document)).toEqual([])
-        expect(documentMatchesPresentation(document)).toBe(true)
-    })
-
-    it("keeps where each piece of text came from", () => {
-        const submission = composeComposerSubmission([text("fix "), text("@/etc/passwd", "pasted")], {
-            ...context,
-            plainText: true,
-        })
-
-        expect(submission.semanticInput?.nodes).toEqual([
-            { kind: "literal", text: "fix ", source: "typed" },
-            { kind: "literal", text: "@/etc/passwd", source: "pasted" },
-        ])
-    })
-})
-
 describe("projectComposerDocument", () => {
     it("activates typed commands and sends no document for typed text alone", () => {
         const projection = projectComposerDocument([text("/compact now")], context)

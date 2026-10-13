@@ -42,7 +42,12 @@ function toDraft(wire: WireInputQueueDraft | undefined): DecodedDraft | undefine
  * missing operation by the queue itself rather than being guessed at here.
  */
 function toMutation(request: MutateInputQueueRequest): CanonicalInputQueueMutation | undefined {
-    if (request.enqueue) return { kind: "enqueue", draft: toDraft(request.enqueue.draft) ?? emptyDraft() }
+    if (request.enqueue)
+        return {
+            kind: "enqueue",
+            draft: toDraft(request.enqueue.draft) ?? emptyDraft(),
+            mode: request.enqueue.steering ? "steering" : "queued",
+        }
     if (request.toggleMode) return { kind: "toggle_mode", entryId: request.toggleMode.entryId }
     if (request.reorder) return { kind: "reorder", entryId: request.reorder.entryId, targetIndex: request.reorder.targetIndex }
     if (request.beginEdit) return { kind: "begin_edit", entryId: request.beginEdit.entryId }

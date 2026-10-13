@@ -5,16 +5,31 @@ import {
     type SemanticInputDocument,
 } from "@shared/input-semantics/document"
 import { ChevronDownIcon, ChevronRightIcon, GripVerticalIcon, PencilIcon, RotateCcwIcon, SendIcon, XIcon } from "lucide-react"
-import { useMemo, useState } from "react"
+import { type ComponentProps, type RefObject, useMemo, useState } from "react"
 import { openTaskResource } from "@/components/chat/input/semantic-composer/resource-staging"
 import { UserInputMarkdownBody } from "@/components/chat/UserInputMarkdownBody"
 import { type ResourceChipResolver, ResourceChipResolverContext } from "@/components/common/ResourceChip"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { markDocumentResources } from "@/services/input-semantics/highlight"
 
 function classes(...values: Array<string | false | undefined>): string {
     return values.filter(Boolean).join(" ")
 }
+
+/** The widget surface color, with a fallback chain for hosts that omit the more specific tokens. */
+const WIDGET_SURFACE =
+    "var(--vscode-editorWidget-background, var(--vscode-menu-background, var(--vscode-sideBar-background, rgb(30, 30, 30))))"
+
+/**
+ * The overlay's paint. It opens over the auto-approve bar and the chat, and a
+ * theme may give the widget token alpha, which let the bar show through the
+ * entries. The widget color is therefore laid over the editor background, which
+ * themes paint opaque, so nothing beneath the overlay is ever visible.
+ */
+const OPAQUE_OVERLAY_PAINT = {
+    backgroundColor: "var(--vscode-editor-background, rgb(30, 30, 30))",
+    backgroundImage: `linear-gradient(${WIDGET_SURFACE}, ${WIDGET_SURFACE})`,
+} as const
 
 /** Delivery state of a retained entry, mirrored from the backend queue. */
 export type InputQueuePanelMode = "queued" | "steering"
@@ -42,7 +57,15 @@ export interface InputQueuePanelProps {
     onCancelEdit: (id: string) => void
     onRemove: (id: string) => void
     onReorder: (id: string, targetIndex: number) => void
+    /**
+     * The control the open list stops above, such as the auto-approve bar that
+     * sits between the queue and the chat. Without it the list opens from the
+     * queue toggle and covers whatever is directly above it.
+     */
+    overlayAnchorRef?: RefObject<HTMLElement | null>
 }
+
+type PopoverVirtualRef = NonNullable<ComponentProps<typeof PopoverAnchor>["virtualRef"]>
 
 /** Display names of an entry's attachments, split by kind. */
 export interface QueuedAttachments {
@@ -125,7 +148,15 @@ function QueuedEntryBody({ entry }: { entry: InputQueuePanelEntry }) {
 }
 
 /** Collapsed summary plus a portalled, collision-aware list of retained input. */
-export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, onRemove, onReorder }: InputQueuePanelProps) {
+export function InputQueuePanel({
+    entries,
+    onToggleMode,
+    onEdit,
+    onCancelEdit,
+    onRemove,
+    onReorder,
+    overlayAnchorRef,
+}: InputQueuePanelProps) {
     const [expanded, setExpanded] = useState(false)
     const [draggingId, setDraggingId] = useState<string>()
 
@@ -138,6 +169,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
     return (
         <div className="mx-3.5" data-testid="input-queue-root">
             <Popover onOpenChange={setExpanded} open={expanded}>
+                {overlayAnchorRef ? <PopoverAnchor virtualRef={overlayAnchorRef as PopoverVirtualRef} /> : null}
                 <PopoverTrigger asChild>
                     <button
                         aria-expanded={expanded}
@@ -162,14 +194,11 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                     collisionPadding={8}
                     data-testid="input-queue-overlay"
                     // The surface is portalled out of ChatLayout's overflow-hidden tree.
-                    // An explicit fallback chain guarantees an opaque paint even when a
-                    // host theme omits one of the more specific widget tokens.
                     role="listbox"
                     side="top"
                     sideOffset={4}
                     style={{
-                        backgroundColor:
-                            "var(--vscode-editorWidget-background, var(--vscode-menu-background, var(--vscode-sideBar-background, rgb(30, 30, 30))))",
+                        ...OPAQUE_OVERLAY_PAINT,
                         borderColor:
                             "var(--vscode-editorWidget-border, var(--vscode-panel-border, var(--vscode-contrastBorder, transparent)))",
                         color: "var(--vscode-foreground)",
@@ -207,10 +236,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                     setDraggingId(undefined)
                                 }}
                                 role="option"
-                                style={{
-                                    backgroundColor:
-                                        "var(--vscode-editorWidget-background, var(--vscode-menu-background, var(--vscode-sideBar-background, rgb(30, 30, 30))))",
-                                }}
+                                style={{ backgroundColor: WIDGET_SURFACE }}
                                 // Roving tabindex: the row is programmatically focusable for
                                 // assistive tech without adding a tab stop per queue entry.
                                 tabIndex={-1}>

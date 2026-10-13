@@ -4,7 +4,7 @@ import { toProtoSemanticInputDocument } from "@shared/proto-conversions/input-se
 import { useCallback, useMemo } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { TaskServiceClient } from "@/services/grpc-client"
-import type { InputQueuePanelEntry } from "./InputQueuePanel"
+import type { InputQueuePanelEntry, InputQueuePanelMode } from "./InputQueuePanel"
 
 export interface InputQueueDraft {
     text: string
@@ -23,8 +23,8 @@ function toWireDraft(draft: InputQueueDraft) {
 
 export interface InputQueueController {
     entries: readonly InputQueuePanelEntry[]
-    /** Resolves false when the task refused the draft or could not be reached. */
-    enqueue: (draft: InputQueueDraft) => Promise<boolean>
+    /** Adds the draft in the mode it waits in. Resolves false when the task refused it or could not be reached. */
+    enqueue: (draft: InputQueueDraft, mode: InputQueuePanelMode) => Promise<boolean>
     toggleMode: (id: string) => void
     beginEdit: (id: string) => void
     /** Resolves false when the task refused the edit or could not be reached. */
@@ -89,7 +89,11 @@ export function useInputQueue(taskId: string | undefined): InputQueueController 
 
     return {
         entries,
-        enqueue: useCallback((draft: InputQueueDraft) => mutate({ enqueue: { draft: toWireDraft(draft) } }), [mutate]),
+        enqueue: useCallback(
+            (draft: InputQueueDraft, mode: InputQueuePanelMode) =>
+                mutate({ enqueue: { draft: toWireDraft(draft), steering: mode === "steering" } }),
+            [mutate],
+        ),
         toggleMode: useCallback((entryId: string) => void mutate({ toggleMode: { entryId } }), [mutate]),
         beginEdit: useCallback((entryId: string) => void mutate({ beginEdit: { entryId } }), [mutate]),
         commitEdit: useCallback(

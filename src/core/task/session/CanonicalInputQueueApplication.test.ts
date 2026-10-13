@@ -165,6 +165,23 @@ describe("CanonicalInputQueueApplication", () => {
         expect(h.runtime.submit).toHaveBeenCalledWith(expect.objectContaining({ type: "input_queue.enqueued", generation: 1 }))
     })
 
+    it("admits a steering enqueue as steering in one event", async () => {
+        const h = harness()
+        const mutation = h.application.mutate({
+            kind: "enqueue",
+            draft: { text: "steer now", images: [], files: [] },
+            mode: "steering",
+        })
+        h.durable.resolve()
+
+        await expect(mutation).resolves.toEqual({ accepted: true, result: "entry-1" })
+        expect(h.runtime.submit).toHaveBeenCalledOnce()
+        expect(h.runtime.submit).toHaveBeenCalledWith(expect.objectContaining({ type: "input_queue.enqueued", mode: "steering" }))
+        await expect(h.application.project()).resolves.toEqual([
+            expect.objectContaining({ id: "entry-1", text: "steer now", mode: "steering" }),
+        ])
+    })
+
     it("reports enqueue success only after the canonical state is durable", async () => {
         const { application, durable } = harness()
         let settled = false

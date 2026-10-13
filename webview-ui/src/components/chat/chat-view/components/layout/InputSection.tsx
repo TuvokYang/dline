@@ -1,9 +1,9 @@
 import { flushPendingTaskSettingsRequests } from "@components/settings/utils/settingsHandlers"
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
-import React, { useEffect, useRef, useState } from "react"
+import React, { type RefObject, useEffect, useRef, useState } from "react"
 import ChatTextArea from "@/components/chat/ChatTextArea"
 import type { ComposerSubmitKind } from "@/components/chat/input/composer-action/composer-action"
-import { InputQueuePanel, type InputQueuePanelEntry } from "@/components/chat/input/InputQueuePanel"
+import { InputQueuePanel, type InputQueuePanelEntry, type InputQueuePanelMode } from "@/components/chat/input/InputQueuePanel"
 import type { ComposerSegment } from "@/components/chat/input/semantic-composer/model"
 import type { ComposerSendDraft } from "@/components/chat/input/semantic-composer/send-draft"
 import QuotedMessagePreview from "@/components/chat/QuotedMessagePreview"
@@ -38,8 +38,15 @@ interface InputSectionProps {
      * from the user with no way for it to ever be sent.
      */
     canQueueInput?: boolean
-    /** Receives a send that was blocked because the task is still busy; resolves false when refused. */
-    onEnqueueInput?: (draft: import("@/components/chat/input/useInputQueue").InputQueueDraft) => Promise<boolean> | void
+    /**
+     * Receives a draft for the queue in the mode it waits in: a send blocked
+     * because the task is still busy is `queued`, the steer shortcut `steering`.
+     * Resolves false when refused.
+     */
+    onEnqueueInput?: (
+        draft: import("@/components/chat/input/useInputQueue").InputQueueDraft,
+        mode: InputQueuePanelMode,
+    ) => Promise<boolean> | void
     /** Marks an entry as being edited so it is held back from delivery. */
     onEditQueuedInput?: (id: string) => void
     /** Replaces an edited entry's content, keeping its position and mode. */
@@ -58,6 +65,8 @@ interface InputSectionProps {
     submitKind?: ComposerSubmitKind
     /** The model's output rate while a response streams, which tints the composer's action button. */
     outputTokensPerSecond?: number
+    /** The control above the queue its open list stops above, so that control stays reachable. */
+    queueOverlayAnchorRef?: RefObject<HTMLElement | null>
 }
 
 /**
@@ -89,6 +98,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
     onCancelTask,
     submitKind,
     outputTokensPerSecond,
+    queueOverlayAnchorRef,
 }) => {
     const {
         activeQuote,
@@ -183,7 +193,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
         handedToQueueRef.current = undefined
     }
 
-    const enqueueBlockedDraft = (capturedDraft: ComposerSendDraft) => {
+    const enqueueBlockedDraft = (capturedDraft: ComposerSendDraft, mode: InputQueuePanelMode) => {
         if (capturedDraft.segments === handedToQueueRef.current) {
             return
         }
@@ -232,7 +242,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
             return
         }
         handedToQueueRef.current = capturedDraft.segments
-        clearAcceptedDraft(onEnqueueInput(draft))
+        clearAcceptedDraft(onEnqueueInput(draft, mode))
     }
 
     // Every entry point — the Enter key, the send button and a resume — decides
@@ -247,7 +257,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
         // `retain` leaves the draft in the composer: nothing can carry it now,
         // so it stays where the user can still see and resend it.
         if (disposition === "enqueue" && capturedDraft) {
-            enqueueBlockedDraft(capturedDraft)
+            enqueueBlockedDraft(capturedDraft, "queued")
             return
         }
         if (capturedDraft) composer.reportSendRefusal("input_not_ready")
@@ -303,6 +313,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
                     onRemove={(id) => onRemoveQueuedInput?.(id)}
                     onReorder={(id, targetIndex) => onReorderQueuedInput?.(id, targetIndex)}
                     onToggleMode={(id) => onToggleQueuedMode?.(id)}
+                    overlayAnchorRef={queueOverlayAnchorRef}
                 />
             )}
 

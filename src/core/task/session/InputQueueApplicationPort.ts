@@ -15,7 +15,8 @@ export interface CanonicalInputQueueDraft {
 }
 
 export type CanonicalInputQueueMutation =
-    | { readonly kind: "enqueue"; readonly draft: CanonicalInputQueueDraft }
+    /** `mode` is the entry's mode from the moment it is admitted, `queued` when omitted; a steering entry never waits as queued. */
+    | { readonly kind: "enqueue"; readonly draft: CanonicalInputQueueDraft; readonly mode?: "queued" | "steering" }
     | { readonly kind: "toggle_mode"; readonly entryId: string }
     | { readonly kind: "reorder"; readonly entryId: string; readonly targetIndex: number }
     | { readonly kind: "begin_edit"; readonly entryId: string }

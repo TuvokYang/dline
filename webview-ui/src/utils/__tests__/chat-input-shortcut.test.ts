@@ -1,6 +1,12 @@
 import { type ChatInputSendShortcut, getChatInputSendShortcutLabel } from "@shared/ChatInputSendShortcut"
 import { describe, expect, it } from "vitest"
-import { type ChatInputKeyEvent, shouldCompleteMenuSelection, shouldSendChatInput } from "../chat-input-shortcut"
+import {
+    type ChatInputKeyEvent,
+    isSteerShortcut,
+    type SteerShortcutKeyEvent,
+    shouldCompleteMenuSelection,
+    shouldSendChatInput,
+} from "../chat-input-shortcut"
 
 const enterEvent = (overrides: Partial<ChatInputKeyEvent> = {}): ChatInputKeyEvent => ({
     key: "Enter",
@@ -64,6 +70,47 @@ describe("shouldCompleteMenuSelection", () => {
     it("ignores composition and unrelated keys", () => {
         expect(shouldCompleteMenuSelection(enterEvent(), "enter", true)).toBe(false)
         expect(shouldCompleteMenuSelection(enterEvent({ key: "a" }), "enter", false)).toBe(false)
+    })
+})
+
+describe("isSteerShortcut", () => {
+    const steer = (overrides: Partial<SteerShortcutKeyEvent> = {}): SteerShortcutKeyEvent => ({
+        key: "s",
+        code: "KeyS",
+        altKey: true,
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+        getModifierState: () => false,
+        ...overrides,
+    })
+
+    it("steers on Ctrl + Alt + S", () => {
+        expect(isSteerShortcut(steer(), false)).toBe(true)
+    })
+
+    // The key is matched by position, so a layout that types another letter there still steers.
+    it("matches the physical S key whatever the layout types", () => {
+        expect(isSteerShortcut(steer({ key: "ы" }), false)).toBe(true)
+        expect(isSteerShortcut(steer({ key: "s", code: "KeyQ" }), false)).toBe(false)
+    })
+
+    it.each([
+        ["Ctrl + S", { altKey: false }],
+        ["Alt + S", { ctrlKey: false }],
+        ["Ctrl + Alt + Shift + S", { shiftKey: true }],
+        ["Meta + Ctrl + Alt + S", { metaKey: true }],
+    ] as const)("leaves %s alone", (_label, overrides) => {
+        expect(isSteerShortcut(steer(overrides), false)).toBe(false)
+    })
+
+    // On AltGr layouts Ctrl + Alt is AltGr, which types a character the user meant to write.
+    it("leaves an AltGr press to type its character", () => {
+        expect(isSteerShortcut(steer({ getModifierState: (key) => key === "AltGraph" }), false)).toBe(false)
+    })
+
+    it("does not steer while composing", () => {
+        expect(isSteerShortcut(steer(), true)).toBe(false)
     })
 })
 

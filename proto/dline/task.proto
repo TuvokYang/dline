@@ -318,9 +318,11 @@ message InputQueueDraft {
   optional SemanticInputDocument semantic_input = 5;
 }
 
-// Adds a draft to the back of the queue as a queued entry
+// Adds a draft to the back of the queue, as a queued entry unless steering is set
 message EnqueueInput {
   InputQueueDraft draft = 1;
+  // Admit the entry as steering input in the same step, so it never waits as queued
+  bool steering = 2;
 }
 
 // Flips one entry between queued and steering without delivering it

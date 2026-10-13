@@ -158,7 +158,7 @@ export function reduceIntake(state: IntakeSlice, event: TaskEvent, context: Inta
                     entryId: event.entryId,
                     payloadRef: event.payloadRef,
                     source: "user",
-                    mode: "queued",
+                    mode: event.mode ?? "queued",
                     sequence: nextSequence(state.queued),
                     queue: { editing: false },
                     state: "accepted",

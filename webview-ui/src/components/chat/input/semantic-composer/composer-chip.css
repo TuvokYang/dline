@@ -22,6 +22,14 @@
      */
     line-height: 1.25;
     vertical-align: middle;
+    /*
+     * A chip is one unbreakable token. The composer and Markdown bodies wrap
+     * long words anywhere, which a chip would otherwise inherit: its badge's
+     * min-content then shrank to one letter and "PNG" broke over two lines.
+     */
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
     user-select: none;
     cursor: pointer;
 }
@@ -73,16 +81,20 @@ button.composer-chip:focus-visible {
 }
 
 .composer-chip__icon {
+    flex: none;
     font-size: 12px !important;
 }
 
+/* Only the name gives way when the chip runs out of room; it ends in an ellipsis. */
 .composer-chip__label {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .composer-chip__badge {
+    flex: none;
     padding: 0 3px;
     border-radius: 2px;
     font-size: 0.8em;
@@ -91,6 +103,7 @@ button.composer-chip:focus-visible {
 }
 
 .composer-chip__action {
+    flex: none;
     font-size: 11px !important;
     opacity: 0.6;
     cursor: pointer;

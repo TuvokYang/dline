@@ -49,15 +49,11 @@ function tooltipOf(action: ComposerAction, { shortcuts, state, revealsCancel, ou
         case "send":
         case "resume":
             lines.push(`${ACTION_LABEL[action]} (${shortcuts.send})`)
-            // With nothing running to queue behind, the plain-text chord sends right away.
-            if (state.canQueue) {
-                lines.push(`Queue instead (${shortcuts.queue})`, `Queue as plain text (${shortcuts.queuePlainText})`)
-            } else {
-                lines.push(`Send as plain text (${shortcuts.queuePlainText})`)
-            }
+            // With nothing running to steer, the steer shortcut just sends, so it is not offered.
+            if (state.canQueue) lines.push(`Queue as steering (${shortcuts.steer})`)
             break
         case "queue":
-            lines.push(`Queue message (${shortcuts.send})`, `Queue as plain text (${shortcuts.queuePlainText})`)
+            lines.push(`Queue message (${shortcuts.send})`, `Queue as steering (${shortcuts.steer})`)
             if (revealsCancel) lines.push("Keep hovering to cancel the task instead")
             break
         case "cancel":
