@@ -98,7 +98,11 @@ function subject() {
             getApiConfigurationForTask: vi.fn(() => ({})),
             flushPendingState,
         },
-        isTaskLockedByAnotherInstance: vi.fn(async () => false),
+        // An unlocked task makes this surface its owner, so the Profile binding runs.
+        lockService: {
+            instanceAddress: "this-window",
+            checkTaskLock: vi.fn(async () => ({ isLocked: false, isStale: false })),
+        },
         postStateToWebview: vi.fn(async (options?: { immediate?: boolean }) => {
             events.push(options?.immediate ? "post:immediate" : "post")
         }),
