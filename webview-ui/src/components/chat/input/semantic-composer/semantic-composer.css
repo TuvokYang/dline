@@ -31,8 +31,13 @@
     background: var(--vscode-badge-background);
     color: var(--vscode-badge-foreground);
     font-size: 0.92em;
-    line-height: 1.5;
-    vertical-align: baseline;
+    /*
+     * A fixed line box centered on the text: an inline-flex box otherwise
+     * takes its baseline from its first child, and a thumbnail has none, so
+     * an image chip rode above the text and made its line taller.
+     */
+    line-height: 1.25;
+    vertical-align: middle;
     user-select: none;
     cursor: pointer;
 }
@@ -59,8 +64,10 @@
 }
 
 .composer-chip__thumbnail {
-    width: 16px;
-    height: 16px;
+    display: block;
+    flex: none;
+    width: 14px;
+    height: 14px;
     object-fit: cover;
     border-radius: 2px;
 }

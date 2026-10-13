@@ -67,13 +67,21 @@ function chipElement(atom: ComposerAtom): HTMLElement {
     const cached = chipCache.get(atom)
     if (cached) return cached
     const chip = describeChip(atom)
-    const visual =
-        atom.kind === "resource" && atom.nodeKind === "image" && atom.status === "ready" && atom.previewUrl
-            ? element("img", { class: "composer-chip__thumbnail", src: atom.previewUrl, alt: `Thumbnail ${atom.displayName}` })
-            : element("span", {
-                  class: `codicon codicon-${chip.icon}${chip.busy ? " codicon-modifier-spin" : ""} composer-chip__icon`,
-                  "aria-hidden": "true",
-              })
+    const icon = () =>
+        element("span", {
+            class: `codicon codicon-${chip.icon}${chip.busy ? " codicon-modifier-spin" : ""} composer-chip__icon`,
+            "aria-hidden": "true",
+        })
+    let visual: HTMLElement
+    if (atom.kind === "resource" && atom.nodeKind === "image" && atom.status === "ready" && atom.previewUrl) {
+        // The chip's own label names the image, so the thumbnail is decorative;
+        // one that cannot load gives way to the icon rather than a broken glyph.
+        const thumbnail = element("img", { class: "composer-chip__thumbnail", src: atom.previewUrl, alt: "" })
+        thumbnail.addEventListener("error", () => thumbnail.replaceWith(icon()), { once: true })
+        visual = thumbnail
+    } else {
+        visual = icon()
+    }
     const parts: Node[] = [visual, element("span", { class: "composer-chip__label" }, chip.label)]
     if (chip.badge) parts.push(element("span", { class: "composer-chip__badge", "aria-hidden": "true" }, chip.badge))
     if (atom.kind === "resource" && atom.status === "failed" && atom.error?.retryable) {

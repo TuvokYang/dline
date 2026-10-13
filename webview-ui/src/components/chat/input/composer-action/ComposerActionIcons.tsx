@@ -11,12 +11,17 @@ import type { ReactNode, SVGProps } from "react"
  */
 type IconProps = Omit<SVGProps<SVGSVGElement>, "children" | "viewBox">
 
+/**
+ * Lines keep one screen width however large the button draws the glyph:
+ * a non-scaling stroke is measured in CSS pixels, not grid units.
+ */
 const STROKE = {
     fill: "none",
     stroke: "currentColor",
-    strokeWidth: 2,
+    strokeWidth: 1.5,
     strokeLinecap: "round",
     strokeLinejoin: "round",
+    vectorEffect: "non-scaling-stroke",
 } as const
 
 function Icon({ width = "100%", height = "100%", ...props }: IconProps & { children: ReactNode }) {
@@ -46,7 +51,7 @@ export function ResumeIcon(props: IconProps) {
 export function QueueIcon(props: IconProps) {
     return (
         <Icon {...props}>
-            <path d="M2 3.5h9M2 7.75h5M2 12h5" {...STROKE} strokeWidth={1.75} />
+            <path d="M2 3.5h9M2 7.75h5M2 12h5" {...STROKE} />
             <path d="M12 13.5V7.25M9.5 9.75l2.5-2.5 2.5 2.5" {...STROKE} />
         </Icon>
     )
@@ -56,7 +61,7 @@ export function QueueIcon(props: IconProps) {
 export function CancelIcon(props: IconProps) {
     return (
         <Icon {...props}>
-            <circle cx="8" cy="8" fill="none" r="6.25" stroke="currentColor" strokeWidth={1.5} />
+            <circle cx="8" cy="8" r="6.25" {...STROKE} strokeWidth={1.25} />
             <rect fill="currentColor" height="5" rx="1" width="5" x="5.5" y="5.5" />
         </Icon>
     )
