@@ -1,4 +1,3 @@
-import type { ImageBlockParam } from "@anthropic-ai/sdk/resources/messages"
 import type { TargetWindowFittingState } from "@core/context/context-management/target-window-fitting"
 import type { ContextWindowIndicatorSnapshot } from "@shared/context-window-indicator"
 import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
@@ -67,7 +66,7 @@ export interface ToolOperationState {
     cancelOperations(reason?: string): void
     isExecutingSubagent: boolean
     activeHookExecution?: HookExecution
-    fileReadCache: Map<string, { readCount: number; mtime: number; imageBlock?: ImageBlockParam }>
+    fileReadCache: Map<string, { readCount: number; mtime: number }>
     currentlySummarizing: boolean
     compactionFittingRequired: boolean
     lastAutoCompactTriggerIndex?: number
@@ -123,7 +122,7 @@ export class DefaultToolHandlerState implements ToolHandlerState {
     deferredCurrentTurn?: ToolConversationState["deferredCurrentTurn"]
     isExecutingSubagent = false
     activeHookExecution?: HookExecution
-    fileReadCache = new Map<string, { readCount: number; mtime: number; imageBlock?: ImageBlockParam }>()
+    fileReadCache = new Map<string, { readCount: number; mtime: number }>()
     currentlySummarizing = false
     compactionFittingRequired = false
     lastAutoCompactTriggerIndex?: number

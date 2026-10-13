@@ -550,7 +550,7 @@ e2e(
                 await Promise.all(preReadTaskTextFiles.map((filePath) => readFile(filePath, "utf8")))
             ).join("\n")
             expect(preReadTaskTextRecords).not.toContain(PNG_1X1_BASE64)
-            expect(preReadTaskTextRecords).not.toContain("Successfully read image")
+            expect(preReadTaskTextRecords).not.toContain("<image name=")
             expect(preReadTaskTextRecords).not.toMatch(/"record_source"\s*:\s*"read_tool"/)
 
             server.enqueueResponses(
@@ -568,7 +568,7 @@ e2e(
                     id: "call_current_image_done",
                     name: "attempt_completion",
                     arguments: { result: "E2E_CURRENT_IMAGE_OK" },
-                    expectedToolResults: [{ callId: "call_read_current_image", contentIncludes: "Successfully read image" }],
+                    expectedToolResults: [{ callId: "call_read_current_image", contentIncludes: "<image name=" }],
                 },
             )
 
@@ -649,7 +649,9 @@ e2e(
             const imageReadToolResult = consumptions[5].requestToolResults.find(
                 (entry) => entry.callId === "call_read_current_image",
             )
-            expect(imageReadToolResult?.content).toContain("Successfully read image")
+            // The read returns the pixels inside its own result, named by the file they came from.
+            expect(imageReadToolResult?.content).toContain(`<image name="${path.basename(generatedImagePath)}"`)
+            expect(imageReadToolResult?.content).toContain('"type":"input_image"')
             expect(await readFile(generatedImagePath)).toEqual(Buffer.from(PNG_1X1_BASE64, "base64"))
             const manifests = await findFiles(path.join(dlineDocsDir, "tasks"), "manifest.json")
             expect(manifests).toHaveLength(1)

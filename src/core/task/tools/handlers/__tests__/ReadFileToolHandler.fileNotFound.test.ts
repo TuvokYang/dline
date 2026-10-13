@@ -26,7 +26,7 @@ import { ReadFileToolHandler } from "../ReadFileToolHandler"
 
 let tmpDir: string
 
-function createConfig() {
+function createConfig({ supportsImages = false }: { supportsImages?: boolean } = {}) {
     const taskState = new DefaultToolHandlerState()
 
     const callbacks = {
@@ -68,7 +68,7 @@ function createConfig() {
         taskState,
         messageState: {},
         api: {
-            getModel: () => ({ id: "test-model", info: { capabilities: { supportsImages: false } } }),
+            getModel: () => ({ id: "test-model", info: { capabilities: { supportsImages } } }),
         },
         autoApprovalSettings: {
             enableNotifications: false,
@@ -249,5 +249,75 @@ describe("ReadFileToolHandler.execute – file not found", () => {
             secondRead,
             "[File already read] The file 'real-file.txt' was already read earlier in this conversation. Returning content:\n2 | beta\n\n(Showing lines 2-2 of 3 total. Use start_line=3 to continue reading.)",
         )
+    })
+})
+
+/** A valid 1x1 PNG, so the image extraction path runs on real bytes. */
+const ONE_PIXEL_PNG = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    "base64",
+)
+
+type ResultBlock = { type: string; text?: string; source?: { type: string; media_type?: string; data?: string } }
+
+describe("ReadFileToolHandler.execute – images", () => {
+    beforeEach(async () => {
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "cline-read-image-test-"))
+        vi.spyOn(pathUtils, "isLocatedInWorkspace").mockResolvedValue(true)
+        await fs.mkdir(path.join(tmpDir, "shots"))
+        await fs.writeFile(path.join(tmpDir, "shots", "a&b.png"), ONE_PIXEL_PNG)
+    })
+
+    afterEach(async () => {
+        vi.restoreAllMocks()
+        await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    })
+
+    function assertNamedImage(result: unknown, lead: string): void {
+        assert.ok(Array.isArray(result), "an image read returns content blocks, not text")
+        const blocks = result as ResultBlock[]
+        assert.equal(blocks.length, 3)
+        assert.equal(blocks[0].type, "text")
+        assert.equal(blocks[0].text, `${lead}<image name="a&amp;b.png" path="shots/a&amp;b.png">\n`)
+        assert.equal(blocks[1].type, "image")
+        assert.equal(blocks[1].source?.type, "base64")
+        assert.equal(blocks[1].source?.media_type, "image/png")
+        assert.ok((blocks[1].source?.data ?? "").length > 0)
+        assert.deepEqual(blocks[2], { type: "text", text: "\n</image>" })
+    }
+
+    // The tool result is the image's only way to the model; nothing sends a side buffer afterwards.
+    it("returns the image inside the tool result, named by the file it came from", async () => {
+        const { config, taskState, validator } = createConfig({ supportsImages: true })
+        const handler = new ReadFileToolHandler(validator)
+
+        const result = await handler.execute(config, makeBlock("shots/a&b.png"))
+
+        assertNamedImage(result, "")
+        assert.deepEqual(taskState.userMessageContent, [])
+    })
+
+    it("returns the image again on a cached reread, after the reread notice", async () => {
+        const { config, taskState, validator } = createConfig({ supportsImages: true })
+        const handler = new ReadFileToolHandler(validator)
+
+        await handler.execute(config, makeBlock("shots/a&b.png"))
+        const reread = await handler.execute(config, makeBlock("shots/a&b.png"))
+
+        assertNamedImage(
+            reread,
+            "[File already read] The file 'shots/a&b.png' was already read earlier in this conversation. Returning content:\n",
+        )
+        assert.deepEqual(taskState.userMessageContent, [])
+    })
+
+    it("still reports a model without image input as a tool error", async () => {
+        const { config, validator } = createConfig({ supportsImages: false })
+        const handler = new ReadFileToolHandler(validator)
+
+        const result = await handler.execute(config, makeBlock("shots/a&b.png"))
+
+        assert.equal(typeof result, "string")
+        assert.ok((result as string).includes("Current model does not support image input"))
     })
 })

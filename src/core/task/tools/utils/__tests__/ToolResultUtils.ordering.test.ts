@@ -34,18 +34,12 @@ function describeTool(block: ToolUse): string {
 }
 
 describe("ToolResultUtils tool_result ordering", () => {
-    it("places the tool_result before an image block pushed by the same read", () => {
-        // read_file pushes its image block into userMessageContent before the
-        // handler returns, so the result would otherwise land behind the image.
+    it("places the tool_result before a block pushed while the same call ran", () => {
+        // A block pushed into userMessageContent before the handler returns
+        // would otherwise put the result behind it.
         const userMessageContent: any[] = [{ type: "image", source: { type: "url", url: "file://a.png" } }]
 
-        ToolResultUtils.pushToolResult(
-            "Successfully read image",
-            createBlock("call-image"),
-            userMessageContent,
-            describeTool,
-            undefined,
-        )
+        ToolResultUtils.pushToolResult("result", createBlock("call-image"), userMessageContent, describeTool, undefined)
 
         assert.equal(userMessageContent[0].type, "tool_result")
         assert.equal(userMessageContent[0].function_id, "call-image")

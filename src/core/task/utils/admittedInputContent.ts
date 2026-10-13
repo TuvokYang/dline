@@ -11,6 +11,7 @@ import {
 import type { ClineImageContentBlock, ClineTextContentBlock, ClineUserAttachedDocumentBlock } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 import { type ToolApprovalFeedbackContent, toolApprovalFeedbackText } from "./buildUserFeedbackContent"
+import { tagAttributes } from "./tag-attributes"
 
 type UserContentBlock = ClineTextContentBlock | ClineImageContentBlock | ClineUserAttachedDocumentBlock
 
@@ -272,14 +273,7 @@ function attachedResource(part: AdmittedResourcePart, content: string, extra: Re
 
 /** A resource's tag attributes; its identity is spread last so no extra attribute can rename it. */
 function resourceAttributes(part: AdmittedResourcePart, extra: Readonly<Record<string, string>> = {}): string {
-    const attributes = { ...extra, name: part.displayName, id: part.ref.resourceId }
-    return Object.entries(attributes)
-        .map(([key, value]) => `${key}="${escapeAttribute(value)}"`)
-        .join(" ")
-}
-
-function escapeAttribute(value: string): string {
-    return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    return tagAttributes({ ...extra, name: part.displayName, id: part.ref.resourceId })
 }
 
 function errorName(error: unknown): string {

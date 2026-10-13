@@ -11,6 +11,7 @@ import { telemetryService } from "@/services/telemetry"
 import { MAX_TOOL_RESULT_TEXT_BYTES, TRUNCATION_MARKER_PREFIX } from "@/shared/content-limits"
 import { UiSayTool } from "@/shared/ExtensionMessage"
 import { DlineDefaultTool } from "@/shared/tools"
+import { tagAttributes } from "../../utils/tag-attributes"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { ToolValidator } from "../ToolValidator"
@@ -255,8 +256,19 @@ async function readFileForTool(
     }
 }
 
-function buildReadResponse(outcome: ReadFileOutcome, prefix?: string): string {
-    return prefix ? `${prefix}\n${outcome.text}` : outcome.text
+/**
+ * What the model reads for one read.
+ *
+ * An image travels inside the tool result itself, wrapped in the same
+ * `<image …>` tag a user's attached image uses, so the model sees which file
+ * the pixels came from. The result is the image's only carrier: nothing sends
+ * a side buffer to the model after the tool call.
+ */
+function buildReadResponse(outcome: ReadFileOutcome, displayPath: string, prefix?: string): ToolResponse {
+    const lead = prefix ? `${prefix}\n` : ""
+    if (!outcome.imageBlock) return `${lead}${outcome.text}`
+    const attributes = tagAttributes({ name: path.basename(displayPath), path: displayPath })
+    return [{ type: "text", text: `${lead}<image ${attributes}>\n` }, outcome.imageBlock, { type: "text", text: "\n</image>" }]
 }
 
 async function isProjectScopedRead(config: TaskConfig, requestedPath: string, absolutePath?: string): Promise<boolean> {
@@ -422,11 +434,6 @@ export class ReadFileToolHandler implements IFullyManagedTool {
         if (validCached) {
             validCached.readCount++
 
-            // Re-push image block for multimodal models so image context is not lost on cached reads
-            if (validCached.imageBlock) {
-                config.taskState.userMessageContent.push(validCached.imageBlock)
-            }
-
             // Re-read from disk (cache doesn't store content to save memory)
             const supportsImages = config.api.getModel().info.capabilities?.supportsImages ?? false
             let outcome: ReadFileOutcome
@@ -453,6 +460,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
                 await emitReadFileToolUiComplete(config, sharedMessageProps, block, outcome)
                 return buildReadResponse(
                     outcome,
+                    displayPath,
                     `[DUPLICATE READ] You have already read '${displayPath}' ${validCached.readCount} times in this conversation. The content has not changed since your last read. Please use the information you already have and proceed with your task.`,
                 )
             }
@@ -460,6 +468,7 @@ export class ReadFileToolHandler implements IFullyManagedTool {
             await emitReadFileToolUiComplete(config, sharedMessageProps, block, outcome)
             return buildReadResponse(
                 outcome,
+                displayPath,
                 `[File already read] The file '${displayPath}' was already read earlier in this conversation. Returning content:`,
             )
         }
@@ -501,18 +510,9 @@ export class ReadFileToolHandler implements IFullyManagedTool {
         } catch {
             // If stat fails, use 0 �?the next cache hit will evict due to mtime mismatch
         }
-        config.taskState.fileReadCache.set(cacheKey, {
-            readCount: 1,
-            mtime,
-            imageBlock: outcome.imageBlock,
-        })
-
-        // Handle image blocks separately - they need to be pushed to userMessageContent
-        if (outcome.imageBlock) {
-            config.taskState.userMessageContent.push(outcome.imageBlock)
-        }
+        config.taskState.fileReadCache.set(cacheKey, { readCount: 1, mtime })
 
         await emitReadFileToolUiComplete(config, sharedMessageProps, block, outcome)
-        return buildReadResponse(outcome)
+        return buildReadResponse(outcome, displayPath)
     }
 }
