@@ -152,7 +152,7 @@ describe("ComposerActionButton", () => {
 
         rerender(<ComposerActionButton onSend={vi.fn()} outputTokensPerSecond={150} shortcuts={shortcuts} state={busyEmpty} />)
         expect(button()).toHaveAttribute("data-output-speed", "fast")
-        expect(button().title).toContain("Model output: 150 tokens/s")
+        expect(button().title).toContain("Model output: 150 tps")
     })
 
     it("still reports an unavailable send so the composer can explain the refusal", () => {

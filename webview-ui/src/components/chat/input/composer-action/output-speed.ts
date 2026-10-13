@@ -40,5 +40,5 @@ export function tokensPerSecondFromPerMinute(tokensPerMinute: number | undefined
 /** The rate as the tooltip states it, rounded to whole tokens per second. */
 export function formatOutputSpeed(tokensPerSecond: number): string {
     const rate = Number.isFinite(tokensPerSecond) ? Math.max(0, Math.round(tokensPerSecond)) : 0
-    return `${rate} tokens/s`
+    return `${rate} tps`
 }
