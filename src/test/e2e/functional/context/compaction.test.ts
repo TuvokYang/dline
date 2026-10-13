@@ -1,7 +1,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
-import { expectComposerText } from "@e2e/utils/composer"
+import { expectComposerText, PASTED_PNG_CHIP_NAME } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import {
     pauseTaskBetweenTurns,
@@ -690,7 +690,10 @@ e2e(
             const input = sidebar.getByTestId("chat-input")
             await input.fill(continuationMarker)
             await pastePngWithTrailingBytes(input, 675_000)
-            await expect(sidebar.getByAltText("Thumbnail image-1")).toBeVisible()
+            // A resource still being staged holds the send back; wait until it may go.
+            await expect(input.getByRole("group", { name: PASTED_PNG_CHIP_NAME })).toHaveAttribute("data-status", "ready", {
+                timeout: 30_000,
+            })
             await sidebar.getByTestId("send-button").click()
             await expect(sidebar.getByText("E2E_IMAGE_PROJECTION_OK", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 

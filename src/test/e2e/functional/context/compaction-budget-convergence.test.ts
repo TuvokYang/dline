@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
-import { expectComposerText } from "@e2e/utils/composer"
+import { expectComposerText, PASTED_PNG_CHIP_NAME } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { type ElectronApplication, expect, type Frame } from "@playwright/test"
 
@@ -96,7 +96,10 @@ async function pasteLargeScreenshot(sidebar: Frame, trailingBytes: number): Prom
         },
         { encodedPng: ONE_PIXEL_PNG_BASE64, trailingBytes },
     )
-    await expect(sidebar.getByAltText("Thumbnail image-1")).toBeVisible()
+    // A resource still being staged holds the send back; wait until it may go.
+    await expect(input.getByRole("group", { name: PASTED_PNG_CHIP_NAME })).toHaveAttribute("data-status", "ready", {
+        timeout: 30_000,
+    })
 }
 
 e2e(

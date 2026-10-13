@@ -23,6 +23,15 @@ import { expect, type Frame, type Locator } from "@playwright/test"
  * re-implementing this projection.
  */
 
+/**
+ * The name a pasted image is staged under, whatever its clipboard name was:
+ * `image_<yyyyMMddHHmmss>_<id8>.<ext>`, so two pastes never share a name.
+ */
+export const PASTED_PNG_NAME = /image_\d{14}_[0-9a-f]{8}\.png/
+
+/** The accessible name of a ready pasted-PNG chip in the composer. */
+export const PASTED_PNG_CHIP_NAME = new RegExp(`^Image ${PASTED_PNG_NAME.source}, PNG`)
+
 const COMPOSER_TEXT_ATTRIBUTE = "data-composer-text"
 const COMPOSER_ATOM_ATTRIBUTE = "data-composer-atom"
 const COMPOSER_PLAIN_ATTRIBUTE = "data-plain"

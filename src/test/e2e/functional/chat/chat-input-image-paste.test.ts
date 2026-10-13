@@ -1,4 +1,4 @@
-import { expectComposerText } from "@e2e/utils/composer"
+import { expectComposerText, PASTED_PNG_CHIP_NAME, PASTED_PNG_NAME } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { type ElectronApplication, expect, type Frame, type Locator } from "@playwright/test"
 
@@ -63,9 +63,11 @@ e2e("Chat input - screenshot paste stays available while a task is running", asy
 
     const pasteObservation = await pasteScreenshot(input)
     expect(pasteObservation).toEqual({ dispatchReturned: false, observedItemTypes: ["image/png"] })
-    // The screenshot lands inline at the caret as an image chip with its preview.
-    await expect(input.getByRole("group", { name: /^Image clipboard-screenshot\.png, PNG/ })).toBeVisible()
-    await expect(input.getByAltText("Thumbnail clipboard-screenshot.png")).toBeVisible()
+    // The screenshot lands inline at the caret as an image chip with its preview,
+    // under a staged name of its own rather than the clipboard's.
+    const chip = input.getByRole("group", { name: PASTED_PNG_CHIP_NAME })
+    await expect(chip).toBeVisible({ timeout: 30_000 })
+    await expect(chip.locator("img.composer-chip__thumbnail")).toBeVisible()
     await expectComposerText(input, runningDraft)
     await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
 })
@@ -73,10 +75,12 @@ e2e("Chat input - screenshot paste stays available while a task is running", asy
 /** Paste a screenshot into the draft and wait until the composer may send it. */
 async function pasteReadyScreenshot(input: Locator): Promise<void> {
     await pasteScreenshot(input)
-    const chip = input.getByRole("group", { name: /^Image clipboard-screenshot\.png, PNG/ })
-    await expect(chip).toBeVisible()
+    const chip = input.getByRole("group", { name: PASTED_PNG_CHIP_NAME })
+    await expect(chip).toBeVisible({ timeout: 30_000 })
     await expect(chip).toHaveAttribute("data-status", "ready", { timeout: 30_000 })
 }
+
+const EXACT_PASTED_PNG_NAME = new RegExp(`^${PASTED_PNG_NAME.source}$`)
 
 async function expectQueuedScreenshot(sidebar: Frame, text: string): Promise<void> {
     const toggle = sidebar.getByTestId("input-queue-toggle")
@@ -86,9 +90,11 @@ async function expectQueuedScreenshot(sidebar: Frame, text: string): Promise<voi
     await expect(entry).toHaveCount(1)
     const attachments = entry.locator('[data-testid^="input-queue-attachments-"]')
     await expect(attachments).toHaveText("1 image")
-    await expect(attachments).toHaveAttribute("title", "clipboard-screenshot.png")
-    // The body names the screenshot as the user saw it, never by its resource id.
-    await expect(entry.locator('[data-testid^="input-queue-markdown-"]')).toContainText(`${text} [clipboard-screenshot.png]`)
+    await expect(attachments).toHaveAttribute("title", EXACT_PASTED_PNG_NAME)
+    // The body shows the screenshot as the chip the composer drew, never by its resource id.
+    const body = entry.locator('[data-testid^="input-queue-markdown-"]')
+    await expect(body).toContainText(text)
+    await expect(body.locator("[data-resource-chip] .composer-chip__label")).toHaveText(EXACT_PASTED_PNG_NAME)
     await expect(entry).not.toContainText("[image:")
     // The overlay floats above the chat; close it so it cannot cover the task controls.
     await toggle.click()

@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import type { MockApiConsumption } from "@e2e/fixtures/server"
 import { E2E_PROFILE_NAMES } from "@e2e/utils/api-profile"
-import { expectComposerText } from "@e2e/utils/composer"
+import { expectComposerText, PASTED_PNG_CHIP_NAME } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect, type Frame, type Locator } from "@playwright/test"
 import type { ElectronApplication } from "playwright"
@@ -395,9 +395,9 @@ e2e(
             const draft = `/compact ${guidance} @/${fileName} ${trailing}`
             await input.fill(draft)
             await pasteScreenshot(input)
-            const chip = input.getByRole("group", { name: /^Image compact-premessage\.png, PNG/ })
-            await expect(chip).toBeVisible()
-            await expect(input.getByAltText("Thumbnail compact-premessage.png")).toBeVisible()
+            const chip = input.getByRole("group", { name: PASTED_PNG_CHIP_NAME })
+            await expect(chip).toBeVisible({ timeout: 30_000 })
+            await expect(chip.locator("img.composer-chip__thumbnail")).toBeVisible()
             await expectComposerText(input, draft)
             // A resource still being staged holds the send back; wait until it may go.
             await expect(chip).toHaveAttribute("data-status", "ready", { timeout: 30_000 })
