@@ -1,3 +1,4 @@
+import { describeCallFormat } from "@core/prompts/turn-diagnosis"
 import type { SubagentFinishReason } from "./SubagentExecutor"
 
 /**
@@ -61,4 +62,13 @@ export function describeConvergenceTrigger(reason: SubagentFinishReason): string
         default:
             return "The user requested that the subagent finish now."
     }
+}
+
+/** The reminder injected on the turn after convergence is forced; only attempt_completion is accepted from then on. */
+export function buildFinishReminder(reason: SubagentFinishReason, usesNativeToolCalls: boolean): string {
+    return [
+        describeConvergenceTrigger(reason),
+        "Stop all further exploration. On your next response, call attempt_completion with a non-empty result that summarizes the useful findings already collected. Do not call any other tool. If the investigation is incomplete, state the remaining limitations in the result.",
+        describeCallFormat({ usesNativeToolCalls, finishing: true }),
+    ].join("\n\n")
 }

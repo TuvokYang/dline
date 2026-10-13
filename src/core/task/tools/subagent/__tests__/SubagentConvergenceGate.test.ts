@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert"
 import { describe, it } from "vitest"
 import {
     buildContextUsageSection,
+    buildFinishReminder,
     CONTEXT_CONVERGENCE_THRESHOLD,
     describeConvergenceTrigger,
     exceedsContextConvergenceThreshold,
@@ -65,5 +66,26 @@ describe("SubagentConvergenceGate", () => {
         assert.match(describeConvergenceTrigger("timeout"), /time limit/i)
         assert.match(describeConvergenceTrigger("context_pressure"), /context window usage reached 80%/i)
         assert.match(describeConvergenceTrigger("user"), /user requested/i)
+    })
+
+    // A text example in the other protocol's syntax invites the model to write the
+    // call as text, which the runtime never executes.
+    it("tells a native-tool run to finish through the native interface, without a text call example", () => {
+        const reminder = buildFinishReminder("timeout", true)
+
+        assert.match(reminder, /time limit/i)
+        assert.match(reminder, /call attempt_completion with a non-empty result/)
+        assert.match(reminder, /native tool-calling interface/)
+        assert.doesNotMatch(reminder, /attempt_completion\(/)
+        assert.doesNotMatch(reminder, /<attempt_completion>/)
+    })
+
+    it("shows an XML-tool run the XML completion call", () => {
+        const reminder = buildFinishReminder("user", false)
+
+        assert.match(reminder, /user requested/i)
+        assert.match(reminder, /<attempt_completion>\s*<result>[\s\S]*<\/result>\s*<\/attempt_completion>/)
+        assert.doesNotMatch(reminder, /attempt_completion\(/)
+        assert.doesNotMatch(reminder, /native tool-calling interface/)
     })
 })

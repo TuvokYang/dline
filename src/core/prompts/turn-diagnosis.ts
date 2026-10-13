@@ -156,7 +156,13 @@ function describeNextAction(failure: TurnFailure, context: TurnFeedbackContext):
     return `Respond with exactly one tool call.${tools} If the findings are already sufficient, call attempt_completion with them.`
 }
 
-function describeCallFormat(context: TurnFeedbackContext): string {
+/**
+ * How the model must write its next tool call, in the protocol the request actually offers.
+ *
+ * The one place that phrases call syntax for runtime feedback: an example in the other
+ * protocol's syntax invites a text-only call the runtime never executes.
+ */
+export function describeCallFormat(context: Pick<TurnFeedbackContext, "usesNativeToolCalls" | "finishing">): string {
     if (context.usesNativeToolCalls) {
         return "Use the native tool-calling interface; do not write tool calls as text."
     }

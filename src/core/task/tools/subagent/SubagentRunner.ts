@@ -70,11 +70,7 @@ import { resolveToolResultBudget } from "../utils/tool-result-budget"
 import type { AgentBaseConfig } from "./AgentConfigLoader"
 import { SUBAGENT_COMPLETION_CONTRACT, SubagentBuilder } from "./SubagentBuilder"
 import { buildContextBudgetSection, resolveFinalResultTokens } from "./SubagentContextBudget"
-import {
-    buildContextUsageSection,
-    describeConvergenceTrigger,
-    exceedsContextConvergenceThreshold,
-} from "./SubagentConvergenceGate"
+import { buildContextUsageSection, buildFinishReminder, exceedsContextConvergenceThreshold } from "./SubagentConvergenceGate"
 import type { SubagentFinishReason, SubagentProgressUpdate, SubagentRunStats } from "./SubagentExecutor"
 import {
     buildSubagentOutputBudgetPrompt,
@@ -112,8 +108,6 @@ const HOSTED_SERVER_TOOL_DEFERRED_ABANDONED_REASON =
     "The provider never ran this deferred hosted call: no later request of the subagent could resume it."
 const INITIAL_STREAM_RETRY_DELAYS_MS = [5_000, 8_000, 11_000, 14_000, 17_000] as const
 const MAX_INITIAL_STREAM_ATTEMPTS = INITIAL_STREAM_RETRY_DELAYS_MS.length + 1
-const SUBAGENT_COMPLETION_CALL_EXAMPLE =
-    'Call attempt_completion with a non-empty result, for example: attempt_completion(result="...").'
 
 export interface SubagentRunnerOptions {
     /** Keep ordinary subagents coupled to parent Task cancellation unless an explicit Activity owns their lifecycle. */
@@ -282,11 +276,6 @@ function withCurrentContextUsage(messages: ClineStorageMessage[], usageSection: 
         content: [...lastMessage.content, usageBlock],
     }
     return [...messages.slice(0, lastIndex), withUsage]
-}
-
-function buildFinishReminder(reason: SubagentFinishReason): string {
-    const trigger = describeConvergenceTrigger(reason)
-    return `${trigger}\n\nStop all further exploration. On your next response, call attempt_completion with a non-empty result that summarizes the useful findings already collected. Do not call any other tool. If the investigation is incomplete, state the remaining limitations in the result.\n\n${SUBAGENT_COMPLETION_CALL_EXAMPLE}`
 }
 
 export type SubagentRunStatus = "completed" | "failed" | "cancelled"
@@ -1073,7 +1062,7 @@ export class SubagentRunner {
                     this.activeRetryAbortController = new AbortController()
                     conversation.push({
                         role: "user",
-                        content: [{ type: "text", text: buildFinishReminder(this.finishRequested) }],
+                        content: [{ type: "text", text: buildFinishReminder(this.finishRequested, useNativeToolCalls) }],
                     })
                 }
 
@@ -1473,7 +1462,7 @@ export class SubagentRunner {
                         this.activeRetryAbortController = new AbortController()
                         conversation.push({
                             role: "user",
-                            content: [{ type: "text", text: buildFinishReminder(this.finishRequested) }],
+                            content: [{ type: "text", text: buildFinishReminder(this.finishRequested, useNativeToolCalls) }],
                         })
                         await Promise.resolve()
                         continue
