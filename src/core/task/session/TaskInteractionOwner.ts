@@ -1,7 +1,7 @@
 import { findLast } from "@shared/array"
 import type { UiAsk, UiMessage } from "@shared/ExtensionMessage"
 import { Logger } from "@shared/services/Logger"
-import { createCanonicalAskRow } from "../ask-row"
+import { commandLineOfApprovalBody, createCanonicalAskRow } from "../ask-row"
 import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
 import { type DraftAttachmentPort, resolveDraftForReceiver } from "../interaction/DraftAttachments"
 import type { InteractionKind } from "../interaction/Interaction"
@@ -215,20 +215,23 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         const definition = getInteraction(request.kind as OpenInteractionRequest["kind"])
         const ask = (request.ask ?? definition.taskAsk) as UiAsk
         // Provider streaming presents a command before its approval interaction is
-        // planned. Reuse that partial row so denial updates one command in place;
-        // appending a second ask leaves the first statusless row rendered as legacy Completed.
+        // planned. Reuse that partial row so approval and denial update one command
+        // in place; appending a second ask leaves the first statusless row rendered
+        // as legacy Completed. The streamed row holds the command line alone, while
+        // the approval body adds the working directory.
+        const commandLine = ask === "command" ? commandLineOfApprovalBody(request.body) : undefined
         const streamedCommand =
-            ask === "command"
-                ? [...currentMessages]
+            commandLine === undefined
+                ? undefined
+                : [...currentMessages]
                       .reverse()
                       .find(
                           (message) =>
                               message.type === "say" &&
                               message.say === "command" &&
                               message.partial === true &&
-                              message.text === request.body,
+                              message.text === commandLine,
                       )
-                : undefined
         // Other approval rows must sort after everything already written. Wall-clock
         // time is not enough when several rows are revealed in the same millisecond.
         await this.presentAnchor(
