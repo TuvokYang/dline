@@ -13,16 +13,23 @@ export function isInternalNativeToolName(toolName: string): boolean {
     return INTERNAL_NATIVE_TOOL_NAMES.has(toolName)
 }
 
+/** Read the function name one provider-native tool definition advertises, in any supported schema shape. */
+export function readNativeToolName(tool: ClineTool): string | undefined {
+    if ("function" in tool && typeof tool.function?.name === "string") return tool.function.name
+    if ("name" in tool && typeof tool.name === "string") return tool.name
+    return undefined
+}
+
+/** Whether a provider-native tool definition projects a connected MCP server's tool rather than a Dline tool. */
+export function isMcpNativeTool(tool: ClineTool): boolean {
+    return readNativeToolName(tool)?.includes(CLINE_MCP_TOOL_IDENTIFIER) === true
+}
+
 /** Extract the exact function names exposed to one provider request. */
 export function getAdvertisedNativeToolNames(tools: readonly ClineTool[] | undefined): ReadonlySet<string> {
     const names = new Set<string>()
     for (const tool of tools ?? []) {
-        const name =
-            "function" in tool && typeof tool.function?.name === "string"
-                ? tool.function.name
-                : "name" in tool && typeof tool.name === "string"
-                  ? tool.name
-                  : undefined
+        const name = readNativeToolName(tool)
         if (typeof name === "string" && name.length > 0) {
             names.add(normalizeNativeToolName(name))
         }

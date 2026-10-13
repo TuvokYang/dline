@@ -851,7 +851,7 @@ Invoke the operation by filling that template and emitting exactly one complete,
 ## MCP
 MCP tools connect Dline to external services, data sources, and specialized operations that are not provided by built-in tools. Use `load_mcp` to inspect one advertised MCP tool's detailed metadata and input schema before calling it. Loading does not execute the tool; use `use_mcp_tool` with the matching server and tool names when execution is required.
 
-The MCP tools available to the current task are listed below:
+The MCP tools available to the current task are listed below, grouped by server:
 - `Snapshot MCP.echo`: Returns the complete provided text.
 
 ## Skills

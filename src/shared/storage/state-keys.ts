@@ -219,6 +219,9 @@ const USER_SETTINGS_FIELDS = {
     },
     subagentsEnabled: { default: true as boolean },
     mcpEnabled: { default: true as boolean },
+    // Reach MCP tools through the capability catalog, load_mcp, and use_mcp_tool
+    // instead of sending every connected tool's schema as a native tool definition.
+    mcpToolsOnDemandEnabled: { default: true as boolean },
     imageGenerationEnabled: { default: false as boolean },
     clineWebToolsEnabled: { default: true as boolean },
     localWebSearchEngine: { default: DEFAULT_LOCAL_SEARCH_ENGINE as LocalSearchEngineId },

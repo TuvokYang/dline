@@ -49,6 +49,40 @@ function renderEntry(entry: CapabilityEntry): string {
     return `${line}\n  - Tools: ${entry.tools.join(", ")}`
 }
 
+/** Indent a rendered list item one level so it nests under the item above it. */
+function nest(rendered: string): string {
+    return rendered
+        .split("\n")
+        .map((line) => `  ${line}`)
+        .join("\n")
+}
+
+/**
+ * Render a group's entries, listing MCP tools under the server that provides
+ * them so one server's tools read as a unit. Each tool keeps its full advertised
+ * name, which is what `load_mcp` resolves.
+ */
+function renderEntries(entries: readonly CapabilityEntry[]): string {
+    const lines: string[] = []
+    const byServer = new Map<string, CapabilityEntry[]>()
+    for (const entry of entries) {
+        if (entry.server === undefined) {
+            lines.push(renderEntry(entry))
+            continue
+        }
+        const tools = byServer.get(entry.server) ?? []
+        tools.push(entry)
+        byServer.set(entry.server, tools)
+    }
+    for (const [server, tools] of byServer) {
+        lines.push(
+            assemblePromptFragments(getPrompt("mcp", "serverEntry"), { NAME: escapeName(server), COUNT: String(tools.length) }),
+            ...tools.map((tool) => nest(renderEntry(tool))),
+        )
+    }
+    return lines.join("\n")
+}
+
 /** Select model-facing purpose and usage guidance for one capability group. */
 function getGroupGuidance(group: keyof CapabilitiesSnapshot, profile: PromptProfile): string {
     switch (group) {
@@ -125,7 +159,7 @@ export function renderCapabilityGroups(
             TITLE: getPrompt("capabilityCatalog", group.titleKey),
             GUIDANCE: guidance,
             LIST_INTRODUCTION: getGroupListIntroduction(group.key, profile),
-            ENTRIES: entries.map(renderEntry).join("\n"),
+            ENTRIES: renderEntries(entries),
         })
         groups.push({ source: group.key, text: renderedGroup })
     }

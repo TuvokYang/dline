@@ -12,6 +12,8 @@ describe("production task observability wiring", () => {
         expect(source).toContain('taskTelemetry.committed("runtime.state.committed", state)')
         expect(source).toContain("persistence: runtimePersistence")
         expect(source).toContain("taskId: options.taskId")
-        expect(source).toContain("resolveMcpServerName: (key) => tool.services.mcpHub.resolveServerName(key)")
+        expect(source).toContain(
+            "resolveMcpTool: (serverKey, toolSegment) => tool.services.mcpHub.resolveNativeTool(serverKey, toolSegment)",
+        )
     })
 })

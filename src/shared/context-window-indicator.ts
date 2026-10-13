@@ -25,6 +25,7 @@ export const DURABLE_CONTEXT_PARTS = [
     "skills",
     "workflows",
     "toolDefinitions",
+    "mcpToolDefinitions",
     "conversation",
 ] as const
 
@@ -39,7 +40,15 @@ const DURABLE_CONTEXT_PREFIX_PARTS: readonly DurableContextPrefixPart[] = [
     "skills",
     "workflows",
     "toolDefinitions",
+    "mcpToolDefinitions",
 ]
+
+/**
+ * Prefix parts added after compositions were first persisted. A snapshot written
+ * before such a part existed counted its tokens under an older part, so reading
+ * the missing part as zero keeps that snapshot's total and its other parts intact.
+ */
+const LATER_PREFIX_PARTS: ReadonlySet<DurableContextPrefixPart> = new Set(["mcpToolDefinitions"])
 
 /**
  * Estimated tokens of the request prefix, split by where it comes from.
@@ -47,7 +56,9 @@ const DURABLE_CONTEXT_PREFIX_PARTS: readonly DurableContextPrefixPart[] = [
  * The prefix is absolute rather than a share of durable: compaction, folded
  * rounds, and provider rebases change only the conversation, so deriving the
  * conversation from the current durable figure keeps the split consistent
- * without re-measuring. `basePrompt` includes the MCP and subagent catalogs.
+ * without re-measuring. `basePrompt` includes the MCP and subagent catalogs;
+ * `toolDefinitions` holds Dline's own tool definitions and `mcpToolDefinitions`
+ * the native schemas of connected MCP servers' tools.
  */
 export type DurableContextComposition = Readonly<Record<DurableContextPrefixPart, number>>
 
@@ -60,7 +71,7 @@ export function readDurableContextComposition(value: unknown): DurableContextCom
     const record = value as Record<string, unknown>
     const composition: Partial<Record<DurableContextPrefixPart, number>> = {}
     for (const part of DURABLE_CONTEXT_PREFIX_PARTS) {
-        const tokens = record[part]
+        const tokens = record[part] === undefined && LATER_PREFIX_PARTS.has(part) ? 0 : record[part]
         if (typeof tokens !== "number" || !Number.isSafeInteger(tokens) || tokens < 0) return undefined
         composition[part] = tokens
     }
@@ -85,6 +96,7 @@ export function splitDurableContext(durableTokens: number, composition: DurableC
         skills: 0,
         workflows: 0,
         toolDefinitions: 0,
+        mcpToolDefinitions: 0,
         conversation: durable - sumTokens(fitted),
     }
     DURABLE_CONTEXT_PREFIX_PARTS.forEach((part, index) => {

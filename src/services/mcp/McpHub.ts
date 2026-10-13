@@ -17,7 +17,6 @@ import {
     ReadResourceResultSchema,
 } from "@modelcontextprotocol/sdk/types.js"
 import {
-    CLINE_MCP_TOOL_IDENTIFIER,
     DEFAULT_MCP_TIMEOUT_SECONDS,
     McpPrompt,
     McpPromptResponse,
@@ -29,11 +28,11 @@ import {
     McpToolCallResponse,
     MIN_MCP_TIMEOUT_SECONDS,
 } from "@shared/mcp"
+import { deriveUniqueMcpServerKey, type McpToolAddress, nativeMcpToolName, resolveMcpToolSegment } from "@shared/mcp-native-name"
 import { secondsToMs } from "@utils/time"
 import chokidar, { FSWatcher } from "chokidar"
 import deepEqual from "fast-deep-equal"
 import * as fs from "fs/promises"
-import { nanoid } from "nanoid"
 import ReconnectingEventSource from "reconnecting-eventsource"
 import { z } from "zod"
 import { HostProvider } from "@/hosts/host-provider"
@@ -248,28 +247,33 @@ export class McpHub {
         return McpHub.mcpServerKeys.get(key) || key
     }
 
-    /** Resolve a native MCP function namespace without exposing the hub's static registry. */
-    resolveServerName(key: string): string {
-        return McpHub.getMcpServerByKey(key)
+    /**
+     * Resolve the server and tool a native MCP function name addresses. The result
+     * carries the configured server name and the real tool name, which is what
+     * execution and per-tool auto-approval match against.
+     */
+    resolveNativeTool(serverKey: string, toolSegment: string): McpToolAddress {
+        const connection =
+            this.connections.find((candidate) => candidate.server.uid === serverKey) ??
+            this.connections.find((candidate) => candidate.server.name === McpHub.getMcpServerByKey(serverKey))
+        const serverName = connection?.server.name ?? McpHub.getMcpServerByKey(serverKey)
+        const toolNames = (connection?.server.tools ?? []).map((tool) => tool.name)
+        return { serverName, toolName: resolveMcpToolSegment(toolSegment, toolNames) }
     }
 
     /**
-     * Create a unique key for an MCP server based on its name.
-     * This avoids making a tool name too long while still ensuring uniqueness.
+     * Return the key native MCP function names use for a server, registering it on first use.
+     * The key is derived from the server name, so it is the same in every process.
      */
     private getMcpServerKey(server: string): string {
-        // Reuse existing key if server is already registered
         for (const [existingKey, existingServer] of McpHub.mcpServerKeys.entries()) {
             if (existingServer === server) {
                 return existingKey
             }
         }
-        // Generate a short 6-character unique ID for the server
-        // Add c prefix to ensure it starts with a letter (for compatibility with Gemini)
-        // Only use the first 5 characters of nanoid to keep it short
-        const uid = `c${nanoid(5)}`
-        McpHub.mcpServerKeys.set(uid, server)
-        return uid
+        const key = deriveUniqueMcpServerKey(server, (candidate) => McpHub.mcpServerKeys.has(candidate))
+        McpHub.mcpServerKeys.set(key, server)
+        return key
     }
 
     /**
@@ -1252,7 +1256,7 @@ export class McpHub {
                     name: `${connection.server.name}.${tool.name.trim()}`,
                     description: (tool.description ?? "").replace(/\s+/g, " ").trim().slice(0, 240),
                     contractHash: hashStableJson({
-                        nativeToolName: `${connection.server.uid ?? connection.server.name}${CLINE_MCP_TOOL_IDENTIFIER}${tool.name}`,
+                        nativeToolName: nativeMcpToolName(connection.server.uid ?? connection.server.name, tool.name),
                         inputSchema: tool.inputSchema ?? { type: "object", properties: {} },
                     }),
                 })),

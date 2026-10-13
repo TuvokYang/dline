@@ -499,6 +499,10 @@ export async function updateSettings(controller: Controller, request: UpdateSett
             controller.stateManager.setGlobalState("mcpEnabled", request.mcpEnabled)
         }
 
+        if (request.mcpToolsOnDemandEnabled !== undefined) {
+            controller.stateManager.setGlobalState("mcpToolsOnDemandEnabled", request.mcpToolsOnDemandEnabled)
+        }
+
         // Profile-driven model selection
         Logger.info("[updateSettings] received", {
             fields,

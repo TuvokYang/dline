@@ -245,6 +245,7 @@ message Settings {
   optional string error_reporting_setting = 251;
   optional int32 max_parallel_tool_calls = 252;
   optional int32 max_parallel_subagents = 253;
+  optional bool mcp_tools_on_demand_enabled = 254;
 }
 
 // Account usage quota for rate-limited providers (e.g., Codex, Copilot)
@@ -514,6 +515,7 @@ message UpdateSettingsRequest {
   optional string error_reporting_setting = 62;
   optional int32 max_parallel_tool_calls = 63;
   optional int32 max_parallel_subagents = 64;
+  optional bool mcp_tools_on_demand_enabled = 65;
 }
 
 message UpdateTerminalConnectionTimeoutRequest {

@@ -25,6 +25,7 @@ export const DURABLE_PART_LABELS: Record<DurableContextPart, string> = {
     skills: "Skills",
     workflows: "Workflows",
     toolDefinitions: "Tool definitions",
+    mcpToolDefinitions: "MCP tool definitions",
     conversation: "Conversation",
 }
 
@@ -35,6 +36,7 @@ export const DURABLE_PART_COLORS: Record<DurableContextPart, string> = {
     skills: `color-mix(in srgb, ${DURABLE_GREEN} 80%, black)`,
     workflows: `color-mix(in srgb, ${DURABLE_GREEN} 75%, white)`,
     toolDefinitions: `color-mix(in srgb, ${DURABLE_GREEN} 55%, white)`,
+    mcpToolDefinitions: `color-mix(in srgb, ${DURABLE_GREEN} 35%, white)`,
     conversation: DURABLE_GREEN,
 }
 

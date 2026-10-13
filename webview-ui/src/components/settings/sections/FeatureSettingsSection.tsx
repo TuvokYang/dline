@@ -64,6 +64,14 @@ const agentFeatures: FeatureToggle[] = [
         settingKey: "mcpEnabled",
     },
     {
+        id: "mcp-tools-on-demand",
+        label: "Load MCP Tools on Demand",
+        description:
+            "List MCP tools by server in the prompt and load a tool's input schema only when it is needed, instead of sending every MCP tool definition with each request.",
+        stateKey: "mcpToolsOnDemandEnabled",
+        settingKey: "mcpToolsOnDemandEnabled",
+    },
+    {
         id: "native-tool-call",
         label: "Native Tool Call",
         description: "Use native function calling when available",
@@ -256,6 +264,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
         useAutoCondense,
         subagentsEnabled,
         mcpEnabled,
+        mcpToolsOnDemandEnabled,
         imageGenerationEnabled,
         clineWebToolsEnabled,
         localWebSearchEngine,
@@ -309,6 +318,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
         useAutoCondense,
         subagentsEnabled,
         mcpEnabled,
+        mcpToolsOnDemandEnabled,
         imageGenerationEnabled,
         clineWebToolsEnabled: clineWebToolsEnabled?.user,
         worktreesEnabled: worktreesEnabled?.user,
@@ -322,6 +332,8 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
     // Visibility lookup for features with feature flags
     const featureVisibility: Record<string, boolean | undefined> = {
         worktreesEnabled: worktreesEnabled?.featureFlag,
+        // How MCP tools reach the model only matters while MCP itself is on.
+        mcpToolsOnDemandEnabled: mcpEnabled !== false,
     }
 
     // Handler for feature toggle changes, supports nested settings like focusChainSettings

@@ -7,6 +7,7 @@ import { apportionTokens, type DurableContextComposition } from "@shared/context
 import type { ClineStorageMessage } from "@shared/messages/content"
 import cloneDeep from "clone-deep"
 import type { CompactionProviderInput } from "./compaction/CompactionProviderInput"
+import { isMcpNativeTool } from "./tools/NativeToolAdmission"
 
 const ENVIRONMENT_DETAILS_PATTERN = /^<environment_details>[\s\S]*<\/environment_details>$/i
 
@@ -91,8 +92,10 @@ export function estimateContextWindowIndicatorSegments(
  *
  * The system prompt and the tool definitions are measured with the same
  * estimator as the request itself; the prompt's estimate is then shared out by
- * the byte sizes its generator recorded. A composition that does not describe
- * this exact prompt is ignored rather than applied to different text.
+ * the byte sizes its generator recorded. MCP tool definitions are what the
+ * prefix loses when they are left out, so they are reported apart from Dline's
+ * own tools. A composition that does not describe this exact prompt is ignored
+ * rather than applied to different text.
  */
 export function estimateDurableComposition(input: EstimateDurableCompositionInput): DurableContextComposition | undefined {
     const composition = input.systemPromptComposition
@@ -102,7 +105,8 @@ export function estimateDurableComposition(input: EstimateDurableCompositionInpu
     }
     const estimator = { providerId: input.providerId, modelId: input.modelId, tokenPerByte: input.tokenPerByte }
     const prefixTokens = estimateContextWindowCandidate({ ...input.providerInput, messages: [] }, estimator)
-    const promptTokens = Math.min(prefixTokens, estimateContextWindowCandidate({ systemPrompt, messages: [] }, estimator))
+    const withoutMcpTokens = Math.min(prefixTokens, estimatePrefixWithoutMcpTools(input.providerInput, estimator) ?? prefixTokens)
+    const promptTokens = Math.min(withoutMcpTokens, estimateContextWindowCandidate({ systemPrompt, messages: [] }, estimator))
     const measuredBytes = [
         composition.userRulesBytes,
         composition.skillsBytes,
@@ -119,9 +123,21 @@ export function estimateDurableComposition(input: EstimateDurableCompositionInpu
         userRules,
         skills,
         workflows,
-        // Native tool and server-tool definitions are what the prefix holds beyond the prompt.
-        toolDefinitions: promptToolDefinitions + Math.max(0, prefixTokens - promptTokens),
+        // Dline's native tool and server-tool definitions are what the prefix holds beyond the prompt and MCP tools.
+        toolDefinitions: promptToolDefinitions + Math.max(0, withoutMcpTokens - promptTokens),
+        mcpToolDefinitions: prefixTokens - withoutMcpTokens,
     }
+}
+
+/** The request prefix without its MCP tool definitions; undefined when it carries none. */
+function estimatePrefixWithoutMcpTools(
+    providerInput: CompactionProviderInput,
+    estimator: ContextWindowCandidateEstimator,
+): number | undefined {
+    const tools = providerInput.tools ?? []
+    const dlineTools = tools.filter((tool) => !isMcpNativeTool(tool))
+    if (dlineTools.length === tools.length) return undefined
+    return estimateContextWindowCandidate({ ...providerInput, tools: dlineTools, messages: [] }, estimator)
 }
 
 /** Re-express an estimated prefix on another scale, as when a provider count has replaced the estimate. */
@@ -134,6 +150,7 @@ export function scaleDurableComposition(composition: DurableContextComposition, 
         skills: scale(composition.skills),
         workflows: scale(composition.workflows),
         toolDefinitions: scale(composition.toolDefinitions),
+        mcpToolDefinitions: scale(composition.mcpToolDefinitions),
     }
 }
 

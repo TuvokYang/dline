@@ -5,7 +5,14 @@ import { createContextWindowIndicatorViewModel } from "./ContextWindowIndicatorV
 import ContextWindowSegmentedProgress from "./ContextWindowSegmentedProgress"
 import { ContextWindowSummary } from "./ContextWindowSummary"
 
-const COMPOSITION = { basePrompt: 20_000, userRules: 5_000, skills: 3_000, workflows: 2_000, toolDefinitions: 10_000 }
+const COMPOSITION = {
+    basePrompt: 20_000,
+    userRules: 5_000,
+    skills: 3_000,
+    workflows: 2_000,
+    toolDefinitions: 10_000,
+    mcpToolDefinitions: 8_000,
+}
 
 function snapshot(overrides: Partial<ContextWindowIndicatorSnapshot> = {}): ContextWindowIndicatorSnapshot {
     return {
@@ -40,7 +47,7 @@ function renderSummary(source: ContextWindowIndicatorSnapshot) {
 }
 
 describe("durable context breakdown", () => {
-    it("splits durable into the six sources, deriving the conversation from what remains", () => {
+    it("splits durable into its sources, deriving the conversation from what remains", () => {
         const breakdown = createContextWindowIndicatorViewModel(snapshot()).durableBreakdown
 
         expect(breakdown?.map((part) => [part.part, part.tokens])).toEqual([
@@ -49,9 +56,20 @@ describe("durable context breakdown", () => {
             ["skills", 3_000],
             ["workflows", 2_000],
             ["toolDefinitions", 10_000],
-            ["conversation", 60_000],
+            ["mcpToolDefinitions", 8_000],
+            ["conversation", 52_000],
         ])
         expect(breakdown?.reduce((total, part) => total + part.percentOfDurable, 0)).toBeCloseTo(100)
+    })
+
+    it("treats a split recorded before MCP tool definitions were counted apart as having none", () => {
+        const { mcpToolDefinitions: _absent, ...legacy } = COMPOSITION
+        const breakdown = createContextWindowIndicatorViewModel(
+            snapshot({ durableComposition: legacy as typeof COMPOSITION }),
+        ).durableBreakdown
+
+        expect(breakdown?.find((part) => part.part === "mcpToolDefinitions")?.tokens).toBe(0)
+        expect(breakdown?.find((part) => part.part === "conversation")?.tokens).toBe(60_000)
     })
 
     it("leaves the four top-level segments unchanged and omits a breakdown the snapshot cannot support", () => {
@@ -78,9 +96,13 @@ describe("durable context breakdown", () => {
         const breakdown = screen.getByTestId("context-window-durable-breakdown")
         expect(durable).toHaveAttribute("aria-expanded", "true")
         expect(durable).toHaveAttribute("aria-controls", breakdown.id)
-        expect(breakdown.querySelector('[data-durable-breakdown-part="conversation"]')).toHaveTextContent("60.0k")
+        expect(breakdown.querySelector('[data-durable-breakdown-part="conversation"]')).toHaveTextContent("52.0k")
         expect(breakdown.querySelector('[data-durable-breakdown-part="userRules"]')).toHaveTextContent("5%")
-        expect(breakdown).toHaveTextContent("Tool definitions")
+        expect(breakdown.querySelector('[data-durable-breakdown-part="toolDefinitions"]')).toHaveTextContent("Tool definitions")
+        expect(breakdown.querySelector('[data-durable-breakdown-part="mcpToolDefinitions"]')).toHaveTextContent(
+            "MCP tool definitions",
+        )
+        expect(breakdown.querySelector('[data-durable-breakdown-part="mcpToolDefinitions"]')).toHaveTextContent("8%")
 
         fireEvent.click(durable as HTMLButtonElement)
         expect(screen.queryByTestId("context-window-durable-breakdown")).not.toBeInTheDocument()
@@ -104,8 +126,9 @@ describe("durable context breakdown", () => {
         expect(durable).toHaveAttribute("data-tokens", "100000")
         expect(durable).toContainElement(stripes)
         expect(stripes).toHaveAttribute("aria-hidden", "true")
-        expect(stripes.querySelector('[data-durable-part="conversation"]')).toHaveStyle({ width: "60%" })
-        expect(stripes.querySelectorAll("[data-durable-part]")).toHaveLength(6)
+        expect(stripes.querySelector('[data-durable-part="conversation"]')).toHaveStyle({ width: "52%" })
+        expect(stripes.querySelector('[data-durable-part="mcpToolDefinitions"]')).toHaveStyle({ width: "8%" })
+        expect(stripes.querySelectorAll("[data-durable-part]")).toHaveLength(7)
 
         fireEvent.click(durable)
         expect(onDurableClick).toHaveBeenCalledTimes(1)

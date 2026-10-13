@@ -851,7 +851,7 @@ export class TaskSessionCompositionService {
                 provider: new DefaultProductionProviderService({
                     requests: providerRequests,
                     nextPresentationId,
-                    resolveMcpServerName: (key) => tool.services.mcpHub.resolveServerName(key),
+                    resolveMcpTool: (serverKey, toolSegment) => tool.services.mcpHub.resolveNativeTool(serverKey, toolSegment),
                     retry: providerRetry,
                     // Each ordinary request is one logical round for the rate metrics,
                     // however many transport attempts it takes to be answered.

@@ -52,6 +52,7 @@ export const DurableBreakdown: Story = {
                 skills: 2_300,
                 workflows: 1_700,
                 toolDefinitions: 14_600,
+                mcpToolDefinitions: 20_300,
             },
         },
     },

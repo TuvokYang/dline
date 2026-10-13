@@ -2946,6 +2946,7 @@ export class Controller {
         const doubleCheckCompletionEnabled = this.stateManager.getGlobalSettingsKey("doubleCheckCompletionEnabled")
         const lazyTeammateModeEnabled = this.stateManager.getGlobalSettingsKey("lazyTeammateModeEnabled")
         const mcpEnabled = this.stateManager.getGlobalSettingsKey("mcpEnabled")
+        const mcpToolsOnDemandEnabled = this.stateManager.getGlobalSettingsKey("mcpToolsOnDemandEnabled")
         const imageGenerationEnabled = this.stateManager.getCanonicalSettingsKey("imageGenerationEnabled")
         const showFeatureTips = this.stateManager.getGlobalSettingsKey("showFeatureTips")
         const showActiveTasksInEnvDetails = this.stateManager.getGlobalSettingsKey("showActiveTasksInEnvDetails")
@@ -3159,6 +3160,7 @@ export class Controller {
             doubleCheckCompletionEnabled,
             lazyTeammateModeEnabled,
             mcpEnabled,
+            mcpToolsOnDemandEnabled,
             imageGenerationEnabled,
             showFeatureTips,
             showActiveTasksInEnvDetails,

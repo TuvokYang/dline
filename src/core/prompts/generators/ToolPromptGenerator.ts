@@ -73,6 +73,16 @@ function projectedToolName(tool: ClineTool): string | undefined {
           : undefined
 }
 
+/**
+ * Whether each connected MCP tool travels as its own native definition. Lite has
+ * no MCP execution path, and on-demand mode leaves MCP tools to the capability
+ * catalog, `load_mcp`, and `use_mcp_tool`.
+ */
+function sendsMcpToolsNatively(profile: PromptProfile, context: SystemPromptContext): boolean {
+    if (profile === "lite" || context.mcpToolsOnDemand === true) return false
+    return context.disableTools?.includes(DlineDefaultTool.MCP_USE) !== true
+}
+
 /** Generates ordered provider-native schemas from exact profile tool descriptors. */
 export class ToolPromptGenerator {
     /** Creates a tool generator over an injected exact-profile set. */
@@ -96,7 +106,7 @@ export class ToolPromptGenerator {
             enabledSpecs.map((spec) => projectTool(spec, projectionContext, enabledToolIds)),
             projectionContext,
         )
-        if (profile === "lite" || projectionContext.disableTools?.includes(DlineDefaultTool.MCP_USE)) {
+        if (!sendsMcpToolsNatively(profile, projectionContext)) {
             return builtInTools
         }
         const mcpTools = (projectionContext.mcpHub?.getServers() ?? [])

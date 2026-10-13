@@ -26,6 +26,7 @@ const PROMPT_FRESHNESS_SETTINGS_KEYS = new Set<SettingsKey>([
     "lazyTeammateModeEnabled",
     "localWebSearchEngine",
     "mcpEnabled",
+    "mcpToolsOnDemandEnabled",
     "searxngSearchUrl",
     "subagentsEnabled",
 ])
@@ -108,7 +109,12 @@ export function buildPromptFreshnessBaseline(
         rulesHash: hashPromptVisibleRules(context),
         subagentsEnabled: subagentsVisible,
         capabilityHashes: {
-            mcp: hashCapabilityEntries(capabilities.mcp, context.enableNativeToolCalls === true),
+            // Native MCP tool names count only while they are sent, so switching to or
+            // from on-demand MCP tools reports the frozen tool list as stale.
+            mcp: hashCapabilityEntries(
+                capabilities.mcp,
+                context.enableNativeToolCalls === true && context.mcpToolsOnDemand !== true,
+            ),
             skills: standardProfile ? hashCapabilityEntries(capabilities.skills) : EMPTY_CAPABILITY_HASH,
             workflows: hashCapabilityEntries(capabilities.workflows),
             subagents: subagentsVisible ? hashCapabilityEntries(capabilities.subagents) : EMPTY_CAPABILITY_HASH,

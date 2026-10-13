@@ -383,7 +383,7 @@ Invoke the operation by filling that template and emitting exactly one complete,
 ## MCP
 MCP tools connect Dline to external services, data sources, and specialized operations that are not provided by built-in tools. This Lite profile lists connected MCP tools for awareness but does not expose MCP metadata-loading or execution tools; switch to a profile that exposes them when an MCP operation is required.
 
-The connected MCP tools known to the current task are listed below:
+The connected MCP tools known to the current task are listed below, grouped by server:
 - `Snapshot MCP.echo`: Returns the complete provided text.
 
 ## Workflows

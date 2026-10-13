@@ -431,9 +431,10 @@ describe("provider tool projector", () => {
         expect(findTool(tools, DlineDefaultTool.WEB_SEARCH)).toBeUndefined()
     })
 
-    it("appends enabled MCP schemas only to Native", () => {
-        const context = {
+    function weatherMcpContext(overrides: Partial<SystemPromptContext> = {}): SystemPromptContext {
+        return {
             ...BASE_CONTEXT,
+            ...overrides,
             mcpHub: {
                 getServers: () => [
                     {
@@ -462,6 +463,10 @@ describe("provider tool projector", () => {
                 ],
             },
         } as SystemPromptContext
+    }
+
+    it("appends enabled MCP schemas only to Native", () => {
+        const context = weatherMcpContext()
 
         const nativeTools = new ToolPromptGenerator().generate(PromptProfile.Standard, context)
         const liteTools = new ToolPromptGenerator().generate(PromptProfile.Lite, context)
@@ -478,6 +483,14 @@ describe("provider tool projector", () => {
             },
         })
         expect(findTool(liteTools, "srv0mcp0weather")).toBeUndefined()
+    })
+
+    it("leaves MCP tools to load_mcp and use_mcp_tool when they load on demand", () => {
+        const onDemand = new ToolPromptGenerator().generate(PromptProfile.Standard, weatherMcpContext({ mcpToolsOnDemand: true }))
+
+        expect(findTool(onDemand, "srv0mcp0weather")).toBeUndefined()
+        expect(findTool(onDemand, DlineDefaultTool.LOAD_MCP)).toBeDefined()
+        expect(findTool(onDemand, DlineDefaultTool.MCP_USE)).toBeDefined()
     })
 
     it("projects canonical parameters to Gemini declarations", () => {

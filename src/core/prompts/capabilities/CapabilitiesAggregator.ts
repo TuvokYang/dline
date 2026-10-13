@@ -5,7 +5,8 @@ import { getSubagentsScanDirectories, getWorkflowsScanDirectories } from "@core/
 import { parseAgentConfigFromYaml } from "@core/task/tools/subagent/AgentConfigLoader"
 import { DEFAULT_SUBAGENT_CONFIG, isDefaultSubagentName } from "@core/task/tools/subagent/DefaultSubagentConfig"
 import { sanitizeSubagentTools } from "@core/task/tools/subagent/subagent-tool-policy"
-import { CLINE_MCP_TOOL_IDENTIFIER, type McpServer } from "@shared/mcp"
+import type { McpServer } from "@shared/mcp"
+import { nativeMcpToolName } from "@shared/mcp-native-name"
 import type { GlobalInstructionsFile } from "@shared/remote-config/schema"
 import { hashStableJson } from "@shared/stable-json"
 import { fileExistsAtPath, isDirectory } from "@utils/fs"
@@ -60,6 +61,7 @@ function stableEntries(entries: CapabilityEntry[]): CapabilityEntry[] {
             description: normalizeDescription(entry.description),
             ...(entry.contentHash === undefined ? {} : { contentHash: entry.contentHash }),
             ...(entry.nativeToolHash === undefined ? {} : { nativeToolHash: entry.nativeToolHash }),
+            ...(entry.server === undefined ? {} : { server: entry.server }),
             // Rebuilding the entry field by field silently drops anything not
             // listed here, which is how the advertised allowlist went missing
             // while the renderer and the collector were both correct.
@@ -87,8 +89,9 @@ function collectMcp(mcpHub: CapabilityMcpHub | undefined): CapabilityEntry[] {
                 (server.tools ?? []).map((tool) => ({
                     name: `${server.name}.${tool.name}`,
                     description: tool.description ?? "",
+                    server: server.name,
                     contentHash: hashStableJson(tool.inputSchema ?? { type: "object", properties: {} }),
-                    nativeToolHash: hashPromptContent(`${server.uid ?? server.name}${CLINE_MCP_TOOL_IDENTIFIER}${tool.name}`),
+                    nativeToolHash: hashPromptContent(nativeMcpToolName(server.uid ?? server.name, tool.name)),
                 })),
             ),
     )

@@ -48,6 +48,7 @@ describe("collectCapabilities", () => {
                 description: "Run tool",
                 contentHash: hashStableJson({ type: "object", properties: { privateMarker: { type: "string" } } }),
                 nativeToolHash: hashPromptContent(`server${CLINE_MCP_TOOL_IDENTIFIER}tool`),
+                server: "server",
             },
         ])
         expect(snapshot.skills).toEqual([

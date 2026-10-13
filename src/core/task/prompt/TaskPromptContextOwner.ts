@@ -310,6 +310,7 @@ export class TaskPromptContextOwner {
             isSubagentRun: false,
             isCliEnvironment,
             enableNativeToolCalls: this.options.runtime.shouldUseNativeToolCalls(providerInfo),
+            mcpToolsOnDemand: this.options.stateManager.getGlobalSettingsKey("mcpToolsOnDemandEnabled") === true,
             enableParallelToolCalling: this.options.runtime.resolveParallelToolCallingEnabled(providerInfo),
             terminalExecutionMode: this.options.terminalExecutionMode,
             defaultTerminalProfile: this.options.stateManager.getGlobalSettingsKey("defaultTerminalProfile") ?? "default",

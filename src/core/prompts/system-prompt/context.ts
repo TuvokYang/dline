@@ -52,6 +52,11 @@ export interface SystemPromptContext {
     readonly isSubagentRun?: boolean
     readonly isCliEnvironment?: boolean
     readonly enableNativeToolCalls?: boolean
+    /**
+     * MCP tools are reached through the capability catalog, load_mcp, and use_mcp_tool
+     * instead of travelling as native tool definitions. Only `true` withholds them.
+     */
+    readonly mcpToolsOnDemand?: boolean
     readonly enableParallelToolCalling?: boolean
     readonly terminalExecutionMode?: "vscodeTerminal" | "backgroundExec"
     readonly defaultTerminalProfile?: string

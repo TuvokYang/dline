@@ -10,6 +10,8 @@ export interface CapabilityEntry {
     readonly contentHash?: string
     /** Optional privacy-safe fingerprint for the provider-visible native tool identity. */
     readonly nativeToolHash?: string
+    /** MCP server providing this tool; the catalog lists each server's tools under it. */
+    readonly server?: string
     /**
      * Tools this capability is actually permitted to use, when that set is
      * enforced rather than advisory.

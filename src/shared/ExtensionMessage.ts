@@ -150,6 +150,7 @@ export interface ExtensionState {
     autoCondenseMaxContextTokens?: number
     subagentsEnabled?: boolean
     mcpEnabled?: boolean
+    mcpToolsOnDemandEnabled?: boolean
     imageGenerationEnabled?: boolean
     clineWebToolsEnabled?: ClineFeatureSetting
     localWebSearchEngine?: LocalSearchEngineId

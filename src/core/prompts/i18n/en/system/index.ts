@@ -65,7 +65,7 @@ export const systemPromptModules = [
         inProgressMismatchRejected: createRuntimeContract("EXAMPLES"),
     }),
     defineLegacyModule("inputQueue", "system", inputQueue),
-    defineLegacyModule("mcp", "system", mcp),
+    defineLegacyModule("mcp", "system", mcp, { serverEntry: createRuntimeContract("NAME", "COUNT") }),
     defineLegacyModule("objective", "system", objective),
     defineLegacyModule("runtimeEnvironment", "system", runtimeEnvironment, {
         multiRootHint: createRuntimeContract("AVAILABLE_WORKSPACE_NAMES"),

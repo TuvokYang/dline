@@ -136,6 +136,30 @@ describe("PromptFreshnessProjection", () => {
         expect(comparePromptFreshness(xmlFrozen, xmlCurrent, { checkedAt: 20 }).status).toBe("fresh")
     })
 
+    it("reports MCP tools as changed when they switch to or from loading on demand", () => {
+        const capabilities = {
+            ...CAPABILITIES,
+            mcp: [{ name: "docs.search", description: "Search docs", contentHash: "sha256:schema", nativeToolHash: "sha256:id" }],
+        }
+        const native = buildPromptFreshnessBaseline(BASE_CONTEXT, capabilities)
+        const onDemand = buildPromptFreshnessBaseline({ ...BASE_CONTEXT, mcpToolsOnDemand: true }, capabilities)
+
+        expect(comparePromptFreshness(native, onDemand, { checkedAt: 20 }).changes).toEqual([
+            { kind: "mcp", summary: "MCP tools changed" },
+        ])
+        expect(comparePromptFreshness(onDemand, native, { checkedAt: 20 }).changes).toEqual([
+            { kind: "mcp", summary: "MCP tools changed" },
+        ])
+        const noMcp = { ...CAPABILITIES, mcp: [] }
+        expect(
+            comparePromptFreshness(
+                buildPromptFreshnessBaseline(BASE_CONTEXT, noMcp),
+                buildPromptFreshnessBaseline({ ...BASE_CONTEXT, mcpToolsOnDemand: true }, noMcp),
+                { checkedAt: 20 },
+            ).status,
+        ).toBe("fresh")
+    })
+
     it("ignores Skills and Subagents that are not visible in the Lite prompt", () => {
         const liteContext = { ...BASE_CONTEXT, promptProfile: PromptProfile.Lite }
         const frozen = buildPromptFreshnessBaseline(liteContext, CAPABILITIES)
@@ -211,6 +235,7 @@ describe("PromptFreshnessProjection", () => {
         expect(settingsAffectPromptFreshness(["imageGenerationEnabled"])).toBe(true)
         expect(settingsAffectPromptFreshness(["browserSettings", "chatInputSendShortcut"])).toBe(true)
         expect(settingsAffectPromptFreshness(["lazyTeammateModeEnabled"])).toBe(true)
+        expect(settingsAffectPromptFreshness(["mcpToolsOnDemandEnabled"])).toBe(true)
         expect(settingsAffectPromptFreshness(["chatInputSendShortcut", "terminalOutputLineLimit"])).toBe(false)
     })
 

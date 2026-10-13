@@ -6,6 +6,7 @@ import { parseAssistantMessage, type ToolUse } from "@core/assistant-message"
 import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
 import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@shared/mcp"
+import type { McpToolAddress } from "@shared/mcp-native-name"
 import type {
     ClineAssistantContent,
     ClineAssistantToolUseBlock,
@@ -143,8 +144,8 @@ export interface DefaultProductionProviderServiceOptions {
         bindOrdinaryAttempt<T>(turnId: string, attempt: number, stream: AsyncIterable<T>): AsyncIterable<T>
     }
     readonly serverTools?: ProviderServerToolPresentationPort
-    /** Resolve the UID/key encoded in an advertised native MCP function name. */
-    readonly resolveMcpServerName?: (key: string) => string
+    /** Resolve the server key and tool segment encoded in an advertised native MCP function name. */
+    readonly resolveMcpTool?: McpToolResolver
     readonly contextRecovery?: ProviderContextRecoveryPort
     /**
      * Receives the phase timing of each request whose stream ran to its end.
@@ -329,22 +330,32 @@ function toolParams(input: Readonly<Record<string, unknown>>): ToolUse["params"]
     ) as ToolUse["params"]
 }
 
+/** Maps the two halves of a native MCP function name to the server and tool they address. */
+export type McpToolResolver = (serverKey: string, toolSegment: string) => McpToolAddress
+
+const identityMcpToolResolver: McpToolResolver = (serverKey, toolSegment) => ({ serverName: serverKey, toolName: toolSegment })
+
+/** Split a native MCP function name at its first separator; undefined for an ordinary tool name. */
+function decodeNativeMcpToolName(name: string, resolveTool: McpToolResolver): McpToolAddress | undefined {
+    const marker = name.indexOf(CLINE_MCP_TOOL_IDENTIFIER)
+    if (marker < 0) return undefined
+    return resolveTool(name.slice(0, marker), name.slice(marker + CLINE_MCP_TOOL_IDENTIFIER.length))
+}
+
 /** Decode the native MCP function namespace into the canonical use_mcp_tool contract. */
 export function materializeNativeToolCall(
     name: string,
     argumentsValue: unknown,
-    resolveServerName: (key: string) => string = (key) => key,
+    resolveTool: McpToolResolver = identityMcpToolResolver,
 ): Pick<ToolUse, "name" | "params"> {
     const parsedArguments = parseArguments(argumentsValue)
-    const marker = name.indexOf(CLINE_MCP_TOOL_IDENTIFIER)
-    if (marker < 0) return { name: name as ToolUse["name"], params: toolParams(parsedArguments) }
-    const serverKey = name.slice(0, marker)
-    const toolName = name.slice(marker + CLINE_MCP_TOOL_IDENTIFIER.length)
+    const address = decodeNativeMcpToolName(name, resolveTool)
+    if (!address) return { name: name as ToolUse["name"], params: toolParams(parsedArguments) }
     return {
         name: DlineDefaultTool.MCP_USE,
         params: {
-            server_name: resolveServerName(serverKey),
-            tool_name: toolName,
+            server_name: address.serverName,
+            tool_name: address.toolName,
             arguments: JSON.stringify(parsedArguments),
         },
     }
@@ -354,18 +365,16 @@ export function materializeNativeToolCall(
 export function materializePartialNativeToolCall(
     name: string,
     argumentsValue: unknown,
-    resolveServerName: (key: string) => string = (key) => key,
+    resolveTool: McpToolResolver = identityMcpToolResolver,
 ): Pick<ToolUse, "name" | "params"> {
     const input = parsePartialToolInput(argumentsValue)
-    const marker = name.indexOf(CLINE_MCP_TOOL_IDENTIFIER)
-    if (marker < 0) return { name: name as ToolUse["name"], params: toolParams(input) }
-    const serverKey = name.slice(0, marker)
-    const toolName = name.slice(marker + CLINE_MCP_TOOL_IDENTIFIER.length)
+    const address = decodeNativeMcpToolName(name, resolveTool)
+    if (!address) return { name: name as ToolUse["name"], params: toolParams(input) }
     return {
         name: DlineDefaultTool.MCP_USE,
         params: {
-            server_name: resolveServerName(serverKey),
-            tool_name: toolName,
+            server_name: address.serverName,
+            tool_name: address.toolName,
             arguments: JSON.stringify(input),
         },
     }
@@ -843,7 +852,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
      */
     private previewNativeTool(tool: PendingNativeTool | undefined): ToolUse | undefined {
         if (!tool?.name) return undefined
-        const call = materializePartialNativeToolCall(tool.name, tool.arguments, this.options.resolveMcpServerName)
+        const call = materializePartialNativeToolCall(tool.name, tool.arguments, this.options.resolveMcpTool)
         if (!mayPreviewToolCall(call.name)) return undefined
         return {
             type: "tool_use",
@@ -881,7 +890,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                 ...[...tools.values()].map(
                     (tool): ToolUse => ({
                         type: "tool_use",
-                        ...materializeNativeToolCall(tool.name, tool.arguments, this.options.resolveMcpServerName),
+                        ...materializeNativeToolCall(tool.name, tool.arguments, this.options.resolveMcpTool),
                         partial: false,
                         ts: tool.presentationId,
                         isNativeToolCall: true,
