@@ -58,7 +58,7 @@ Confirm:
 - `package.json` and `package-lock.json` use `X.Y.Z`;
 - the release candidate is not marked as preview;
 - no production `vX.Y.Z` tag already exists locally or remotely;
-- any nightly tag such as `dev-vX.Y.Z` belongs to the `dev` Nightly Release chain and is never a production baseline.
+- any development release tag such as `dev-vX.Y.Z` belongs to the `dev` pre-release chain (the `Publish Pre-release` workflow) and is never a production baseline.
 
 Do not repair a version mismatch directly on `main`. Fix it on `dev` directly, or use an independent release-preparation branch and merge it into `dev` first.
 

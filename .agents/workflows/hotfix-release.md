@@ -26,7 +26,7 @@ A hotfix does not authorize direct development on `main`, a feature/bugfix PR to
 
 Dynamically discover `<repository>`, the remote containing the production refs, current `main`, current `dev`, and the latest valid production tag matching `vX.Y.Z`.
 
-Do not select `dev-vX.Y.Z` as the production baseline. It identifies a tested nightly from `dev`; verify that the chosen production tag belongs to `main` history.
+Do not select `dev-vX.Y.Z` as the production baseline. It identifies a tested pre-release from `dev`; verify that the chosen production tag belongs to `main` history.
 
 Record the production symptom, affected versions, exact fixes required, non-goals, and recovery requirements.
 
