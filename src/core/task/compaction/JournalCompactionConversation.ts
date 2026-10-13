@@ -635,7 +635,7 @@ export class JournalCompactionConversation implements CompactionConversationPort
 
     /**
      * Remove the oldest settled history after a provider refused the request as
-     * longer than its context window, the recovery used when auto-compaction is off.
+     * longer than its context window, whether or not auto-compaction sized it first.
      *
      * The opening input stays verbatim. Three quarters of the settled history
      * after it is replaced by `notice`, so the model knows history is missing

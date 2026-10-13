@@ -2,7 +2,7 @@ import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { parseImageGenerationToolText } from "@shared/image-generation"
 import { parseNewTaskAsk } from "@shared/new-task-ask"
 import { useState } from "react"
-import { ApiErrorBox } from "@/components/chat/ApiErrorBox"
+import { ApiFailureContent } from "@/components/chat/ApiFailureContent"
 import ImageGenerationRow from "@/components/chat/ImageGenerationRow"
 import NewTaskPreview from "@/components/chat/NewTaskPreview"
 import { CopyButton } from "@/components/common/CopyButton"
@@ -235,7 +235,7 @@ export function CompletionRenderer(props: PresentationProps) {
 
 /** Render API error interaction content. */
 export function ErrorRenderer(props: PresentationProps) {
-    return <ApiErrorBox error={props.message.text} testId="error-presentation-box" />
+    return <ApiFailureContent error={props.message.text} footerOwnsRetry testId="error-presentation-box" />
 }
 
 /** Render resume interaction content. */

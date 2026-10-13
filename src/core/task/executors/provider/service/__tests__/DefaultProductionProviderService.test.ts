@@ -773,7 +773,7 @@ function scripted(
         turnId: "turn-1",
         planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
     } as unknown as PreparedProviderRequest
-    const prepare = vi.fn(async () => request)
+    const prepare = vi.fn(async (_draft: ProviderDraftEnvelope, _signal?: AbortSignal) => request)
     const waits: number[] = []
     const policy: ProviderRetryPolicy = {
         maxAttempts: retry.maxAttempts ?? 5,
@@ -891,6 +891,64 @@ describe("DefaultProductionProviderService request retry", () => {
         expect(await failureOf(harness.service)).toBe(failure)
         expect(harness.api.createMessage).toHaveBeenCalledTimes(1)
         expect(harness.waits).toEqual([])
+    })
+
+    // Preparing rebuilds the handler and validates its credentials, so a dropped
+    // connection fails it as easily as a send; the user should only see the countdown.
+    it("prepares the request again after a transient preparation failure, with the same countdown", async () => {
+        const harness = scripted([{ chunks: [text("Prepared on the second try.")] }])
+        harness.prepare.mockRejectedValueOnce(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }))
+
+        const chunks = await collect(harness.service)
+
+        expect(harness.prepare).toHaveBeenCalledTimes(2)
+        expect(harness.api.createMessage).toHaveBeenCalledOnce()
+        expect(harness.waits).toEqual([1000])
+        const retries = chunks.filter((chunk) => chunk.kind === "retry")
+        expect(retries).toEqual([
+            { kind: "retry", notice: expect.objectContaining({ attempt: 1, maxAttempts: 5, delayMs: 1000 }) },
+        ])
+        expect(JSON.stringify(retries)).toContain("ECONNRESET")
+        expect(chunks.at(-1)).toMatchObject({ kind: "final", text: "Prepared on the second try." })
+    })
+
+    it("spends the budget preparation used before the first send", async () => {
+        const failure = httpError(503, "Service Unavailable")
+        const harness = scripted([{ error: failure }], { maxAttempts: 1 })
+        harness.prepare.mockRejectedValueOnce(new Error("socket hang up"))
+
+        expect(await failureOf(harness.service)).toBe(failure)
+        expect(harness.prepare).toHaveBeenCalledTimes(2)
+        expect(harness.api.createMessage).toHaveBeenCalledOnce()
+        expect(harness.waits).toEqual([1000])
+    })
+
+    it("fails a preparation the Profile cannot admit at once, with no countdown", async () => {
+        const failure = new ProfileNotValidError('Profile not valid: "openai" requires an API key.')
+        const harness = scripted([{ chunks: [text("never sent")] }])
+        harness.prepare.mockRejectedValue(failure)
+
+        expect(await failureOf(harness.service)).toBe(failure)
+        expect(harness.prepare).toHaveBeenCalledOnce()
+        expect(harness.api.createMessage).not.toHaveBeenCalled()
+        expect(harness.waits).toEqual([])
+    })
+
+    it("ends quietly when cancellation interrupts a preparation retry", async () => {
+        const controller = new AbortController()
+        const harness = scripted([{ chunks: [text("never sent")] }], {
+            wait: async () => {
+                controller.abort()
+                return "cancelled" as const
+            },
+        })
+        harness.prepare.mockRejectedValueOnce(new Error("socket hang up"))
+
+        const chunks = await collect(harness.service, controller.signal)
+
+        expect(harness.prepare).toHaveBeenCalledOnce()
+        expect(harness.api.createMessage).not.toHaveBeenCalled()
+        expect(chunks.map((chunk) => chunk.kind)).toEqual(["retry"])
     })
 
     // The chat's error box explains a failure in the provider's words. The
@@ -1067,6 +1125,50 @@ describe("DefaultProductionProviderService request retry", () => {
         if (final?.kind !== "final") throw new Error("missing final chunk")
         // Read with the target request's native tools, not the source's markup reading.
         expect(final.content).toEqual([expect.objectContaining({ type: "tool_use", function_id: "call_target" })])
+    })
+
+    it("retries a failed preparation for the handler that replaced the request's own", async () => {
+        let current = "source"
+        const requestFor = (name: string) =>
+            ({
+                api: {
+                    createMessage: vi.fn(async function* () {
+                        if (name === "source") {
+                            current = "target"
+                            throw Object.assign(new Error("Request was aborted."), { name: "AbortError" })
+                        }
+                        yield text(`answer from ${name}`)
+                    }),
+                    getModel: () => ({ id: `${name}-model`, info: {} }),
+                },
+                systemPrompt: "",
+                nativeTools: false,
+                mode: "serial",
+                profile: "standard",
+                messages: [],
+                turnId: "turn-1",
+                isCurrent: () => current === name,
+                planTool: () => ({ attempt: "attempt-1", lanes: [], turnEnding: false, approval: { kind: "none" } }),
+            }) as unknown as PreparedProviderRequest
+        const prepare = vi.fn(async () => requestFor(current))
+        prepare
+            .mockResolvedValueOnce(requestFor("source"))
+            .mockRejectedValueOnce(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }))
+        const wait = vi.fn(async () => "send" as const)
+        const service = new DefaultProductionProviderService({
+            requests: { prepare },
+            nextPresentationId: () => 1,
+            retry: { maxAttempts: 5, delayMs: () => 1000, wait },
+        })
+
+        const chunks = await collect(service)
+
+        expect(prepare).toHaveBeenCalledTimes(3)
+        expect(wait).toHaveBeenCalledOnce()
+        expect(chunks.filter((chunk) => chunk.kind === "retry")).toEqual([
+            { kind: "retry", notice: expect.objectContaining({ attempt: 1, delayMs: 1000 }) },
+        ])
+        expect(chunks.at(-1)).toMatchObject({ kind: "final", text: "answer from target" })
     })
 
     it("sends again at once, without spending a retry, when the replacement aborted the attempt", async () => {
@@ -1264,16 +1366,29 @@ describe("DefaultProductionProviderService request retry", () => {
 describe("DefaultProductionProviderService context-window recovery", () => {
     const tooLong = () => httpError(400, "This request exceeds the model's maximum context window.")
 
-    function recovery(enabled: boolean, positions: ReadonlyArray<{ seq: number } | undefined>) {
+    function recovery(positions: ReadonlyArray<{ seq: number } | undefined>) {
         let next = 0
         return {
-            enabled: () => enabled,
             truncate: vi.fn(async () => positions[Math.min(next++, positions.length - 1)]),
         }
     }
 
+    const HISTORY: ClineStorageMessage[] = Array.from({ length: 5 }, (_, index) => ({
+        role: index % 2 === 0 ? "user" : "assistant",
+        content: [{ type: "text", text: `message ${index}` }],
+    }))
+
+    /** Prepare the turn as the journal would project it: a truncation through `seq` keeps only what follows it. */
+    function projectingThrough(harness: ReturnType<typeof scripted>) {
+        harness.prepare.mockImplementation(async (draft) => ({
+            ...harness.request,
+            messages: HISTORY.slice(draft.journalThrough?.seq ?? 0),
+        }))
+        return harness
+    }
+
     it("truncates and resends at once, through the truncation, without spending a retry", async () => {
-        const port = recovery(true, [{ seq: 42 }])
+        const port = recovery([{ seq: 42 }])
         const harness = scripted([{ error: tooLong() }, { chunks: [text("Recovered answer.")] }], {}, port)
 
         const chunks = await collect(harness.service)
@@ -1289,38 +1404,91 @@ describe("DefaultProductionProviderService context-window recovery", () => {
         )
     })
 
-    it("waits out a retry before each later truncation, until the retry budget is spent", async () => {
+    // Waiting cannot make a request fit, and every truncation removes more, so a
+    // long conversation is truncated as often as it takes without a countdown.
+    it("keeps truncating at once, spending no retry, while each truncation removes more", async () => {
+        const port = recovery([{ seq: 1 }, { seq: 2 }, { seq: 3 }])
+        const harness = projectingThrough(
+            scripted(
+                [{ error: tooLong() }, { error: tooLong() }, { error: tooLong() }, { chunks: [text("Fits now.")] }],
+                { maxAttempts: 1 },
+                port,
+            ),
+        )
+
+        const chunks = await collect(harness.service)
+
+        expect(port.truncate).toHaveBeenCalledTimes(3)
+        // Every resend carries less of the conversation than the one refused before it.
+        expect(harness.sent.map((messages) => messages.length)).toEqual([5, 4, 3, 2])
+        expect(harness.sent.at(-1)?.[0]).toEqual(HISTORY[3])
+        expect(harness.waits).toEqual([])
+        expect(chunks.some((chunk) => chunk.kind === "retry")).toBe(false)
+        expect(chunks.at(-1)).toMatchObject({ kind: "final", text: "Fits now." })
+    })
+
+    // OpenRouter reports a refusal for length as a mid-stream finish_reason "error".
+    it("truncates and resends a refusal that arrives after the first chunk", async () => {
+        const port = recovery([{ seq: 2 }])
+        const harness = projectingThrough(scripted([{ chunks: [] }], {}, port))
+        let call = 0
+        ;(harness.api as { createMessage: unknown }).createMessage = vi.fn(async function* (
+            _system: string,
+            messages: ClineStorageMessage[],
+        ) {
+            harness.sent.push(structuredClone(messages))
+            call++
+            yield text(call === 1 ? "partial answer" : "Fits now.")
+            if (call === 1) throw tooLong()
+        })
+
+        const chunks = await collect(harness.service)
+
+        expect(port.truncate).toHaveBeenCalledOnce()
+        expect(harness.sent.map((messages) => messages.length)).toEqual([5, 3])
+        expect(harness.waits).toEqual([])
+        expect(chunks.some((chunk) => chunk.kind === "retry")).toBe(false)
+        const final = chunks.at(-1)
+        expect(final).toMatchObject({ kind: "final", text: "Fits now." })
+        expect(JSON.stringify(final)).not.toContain("partial answer")
+    })
+
+    it("retries a failed preparation through the truncation with the shared countdown", async () => {
+        const port = recovery([{ seq: 1 }])
+        const harness = projectingThrough(scripted([{ error: tooLong() }, { chunks: [text("Fits now.")] }], {}, port))
+        harness.prepare.mockImplementationOnce(async () => harness.request)
+        harness.prepare.mockRejectedValueOnce(new Error("socket hang up"))
+
+        const chunks = await collect(harness.service)
+
+        expect(port.truncate).toHaveBeenCalledOnce()
+        expect(harness.prepare).toHaveBeenCalledTimes(3)
+        expect(harness.waits).toEqual([1000])
+        expect(harness.sent.at(-1)?.length).toBe(4)
+        expect(chunks.filter((chunk) => chunk.kind === "retry")).toEqual([
+            { kind: "retry", notice: expect.objectContaining({ attempt: 1 }) },
+        ])
+        expect(chunks.at(-1)).toMatchObject({ kind: "final", text: "Fits now." })
+    })
+
+    it("fails with the refusal once truncation no longer moves the resend position", async () => {
         const failure = tooLong()
-        const port = recovery(true, [{ seq: 1 }, { seq: 2 }, { seq: 3 }])
-        const harness = scripted([{ error: failure }], { maxAttempts: 2 }, port)
+        const port = recovery([{ seq: 7 }, { seq: 7 }])
+        const harness = scripted([{ error: failure }], {}, port)
 
         expect(await failureOf(harness.service)).toBe(failure)
-        expect(port.truncate).toHaveBeenCalledTimes(3)
-        expect(harness.api.createMessage).toHaveBeenCalledTimes(4)
-        expect(harness.waits).toEqual([1000, 2000])
-        expect(harness.prepare).toHaveBeenLastCalledWith(
-            expect.objectContaining({ journalThrough: { seq: 3 } }),
-            expect.anything(),
-        )
+        expect(port.truncate).toHaveBeenCalledTimes(2)
+        expect(harness.api.createMessage).toHaveBeenCalledTimes(2)
+        expect(harness.waits).toEqual([])
     })
 
     it("fails with the refusal once nothing settled is left to remove", async () => {
         const failure = tooLong()
-        const port = recovery(true, [undefined])
+        const port = recovery([undefined])
         const harness = scripted([{ error: failure }], {}, port)
 
         expect(await failureOf(harness.service)).toBe(failure)
         expect(port.truncate).toHaveBeenCalledOnce()
-        expect(harness.api.createMessage).toHaveBeenCalledOnce()
-    })
-
-    it("leaves the refusal to the task when auto-compaction owns the context window", async () => {
-        const failure = tooLong()
-        const port = recovery(false, [{ seq: 1 }])
-        const harness = scripted([{ error: failure }], {}, port)
-
-        expect(await failureOf(harness.service)).toBe(failure)
-        expect(port.truncate).not.toHaveBeenCalled()
         expect(harness.api.createMessage).toHaveBeenCalledOnce()
     })
 })

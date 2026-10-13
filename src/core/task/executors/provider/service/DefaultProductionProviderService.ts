@@ -5,8 +5,6 @@ import { declaredAnthropicHostedToolNames } from "@core/api/utils/messages_api_s
 import { parseAssistantMessage, type ToolUse } from "@core/assistant-message"
 import { isDeterministicToolPairingError } from "@core/context/context-management/compaction-retryability"
 import { checkContextWindowExceededError } from "@core/context/context-management/context-error-handling"
-import { CLINE_MCP_TOOL_IDENTIFIER } from "@shared/mcp"
-import type { McpToolAddress } from "@shared/mcp-native-name"
 import type {
     ClineAssistantContent,
     ClineAssistantToolUseBlock,
@@ -17,7 +15,6 @@ import { projectInternalMessagesForProvider } from "@shared/messages/content"
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import { Logger } from "@shared/services/Logger"
 import { ClineError } from "@/services/error"
-import { DlineDefaultTool } from "@/shared/tools"
 import { isTurnEndingToolName } from "../../../assistant-message-order"
 import { isRetryableProviderError, type ProviderIdentity, waitRetryDelayUnlessAborted } from "../../../auto-retry"
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry-schedule"
@@ -31,13 +28,19 @@ import type {
     ProviderDraftEnvelope,
     ToolInvocationEnvelope,
 } from "../../../stores/payload/TaskPayloadEnvelopes"
-import { parsePartialToolInput } from "../../../tools/partial-tool-input"
+import { describeExecutorFailure } from "../../contracts"
 import type { ProductionProviderChunk, ProductionProviderService } from "../ProductionProviderAdapter"
 import { ProviderFailure } from "../ProviderFailure"
 import { closeQuietly, detachOnAbort } from "./detachOnAbort"
+import {
+    type McpToolResolver,
+    materializeNativeToolCall,
+    materializePartialNativeToolCall,
+} from "./NativeToolCallMaterialization"
 import { repairProviderPairing } from "./ProviderPairingRepair"
 import type { PreparedProviderRequest, ProviderRequestFactory, ProviderServerToolRequestContext } from "./ProviderRequest"
 import { ProviderUsageIncrements } from "./ProviderUsageIncrements"
+import { TurnRequest } from "./TurnRequest"
 import { assistantProse, mayPreviewToolCall, proseOf, XmlToolPreview } from "./XmlToolPreview"
 
 /** The automatic retries one turn may still spend, shared by every send of it. */
@@ -118,14 +121,14 @@ export type { ProviderServerToolRequestContext }
 /**
  * How a request the provider refused as longer than its context window is recovered.
  *
- * With auto-compaction off nothing shrinks the conversation ahead of the
- * request, so the refusal is the first sign it no longer fits. Truncating
- * the oldest settled history and resending at once is what the user gets
- * instead of a dead end.
+ * Auto-compaction, when it is on, sizes the conversation from an estimate
+ * before the request is sent, and nothing does when it is off; either way the
+ * refusal is the first sign the request no longer fits. A compaction cannot
+ * run inside the provider command that holds the turn, so the oldest settled
+ * history is truncated and the request resent at once, instead of the user
+ * reaching a dead end.
  */
 export interface ProviderContextRecoveryPort {
-    /** Whether this recovery applies now; auto-compaction owns the window when it is on. */
-    enabled(): boolean
     /** Remove settled history; resolves the position to resend through, or undefined when nothing is left to remove. */
     truncate(signal: AbortSignal): Promise<JournalWatermark | undefined>
 }
@@ -155,53 +158,6 @@ export interface DefaultProductionProviderServiceOptions {
      * latency. A cancelled request reports nothing.
      */
     readonly onRequestTiming?: (timing: ApiRequestTiming) => void
-}
-
-/**
- * The request one turn sends, kept frozen across its retries.
- *
- * It is replaced only when the task replaced the handler it was prepared for:
- * the frozen prompt and tools are one provider's projection, so replaying them
- * through another provider's handler loses every tool that provider cannot
- * read. The replacement is prepared from the same draft and turn, so the
- * conversation it carries is unchanged.
- *
- * The one exception is a conversation truncated to fit the context window:
- * the turn is then projected through the truncation record, and stays so.
- */
-class TurnRequest {
-    private through: JournalWatermark | undefined
-    /** Trace id of each deferred hosted call this turn resumes, by provider call id. */
-    carriedServerToolTraceIds: ReadonlyMap<string, string> = new Map()
-
-    constructor(
-        private current: PreparedProviderRequest,
-        private readonly prepareAgain: (through: JournalWatermark | undefined) => Promise<PreparedProviderRequest>,
-    ) {}
-
-    get request(): PreparedProviderRequest {
-        return this.current
-    }
-
-    /** Prepare the turn again when its handler was replaced; true when it was. */
-    async refreshIfStale(): Promise<boolean> {
-        if (this.current.isCurrent?.() !== false) return false
-        Logger.info("[provider] the task replaced its handler while the request waited; preparing it for the new handler")
-        this.current = await this.prepareAgain(this.through)
-        return true
-    }
-
-    /** Prepare the turn again over the journal through `through`, after its conversation was truncated. */
-    async projectThrough(through: JournalWatermark): Promise<void> {
-        this.through = through
-        this.current = await this.prepareAgain(through)
-    }
-
-    /** Abandoning the stream also withdraws the turn's one-shot authority. */
-    abandon(): void {
-        this.current.api.abort?.()
-        this.current.authority?.cancel()
-    }
 }
 
 /** What earlier deferred hosted calls need to know about the request this turn sends. */
@@ -248,17 +204,6 @@ function mergeArguments(current: unknown, incoming: unknown, mode: ApiStreamTool
         return `${typeof current === "string" ? current : ""}${typeof incoming === "string" ? incoming : ""}`
     if (current && incoming && typeof current === "object" && typeof incoming === "object") return { ...current, ...incoming }
     return incoming ?? current ?? {}
-}
-
-function parseArguments(value: unknown): Readonly<Record<string, unknown>> {
-    if (value && typeof value === "object" && !Array.isArray(value)) return value as Readonly<Record<string, unknown>>
-    if (typeof value !== "string" || value.trim().length === 0) return {}
-    try {
-        const parsed = JSON.parse(value)
-        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}
-    } catch {
-        return {}
-    }
 }
 
 /**
@@ -324,62 +269,6 @@ function interruptedTurn(
     return { content, text: prose, ...(reasoningText ? { reasoning: reasoningText } : {}) }
 }
 
-function toolParams(input: Readonly<Record<string, unknown>>): ToolUse["params"] {
-    return Object.fromEntries(
-        Object.entries(input).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]),
-    ) as ToolUse["params"]
-}
-
-/** Maps the two halves of a native MCP function name to the server and tool they address. */
-export type McpToolResolver = (serverKey: string, toolSegment: string) => McpToolAddress
-
-const identityMcpToolResolver: McpToolResolver = (serverKey, toolSegment) => ({ serverName: serverKey, toolName: toolSegment })
-
-/** Split a native MCP function name at its first separator; undefined for an ordinary tool name. */
-function decodeNativeMcpToolName(name: string, resolveTool: McpToolResolver): McpToolAddress | undefined {
-    const marker = name.indexOf(CLINE_MCP_TOOL_IDENTIFIER)
-    if (marker < 0) return undefined
-    return resolveTool(name.slice(0, marker), name.slice(marker + CLINE_MCP_TOOL_IDENTIFIER.length))
-}
-
-/** Decode the native MCP function namespace into the canonical use_mcp_tool contract. */
-export function materializeNativeToolCall(
-    name: string,
-    argumentsValue: unknown,
-    resolveTool: McpToolResolver = identityMcpToolResolver,
-): Pick<ToolUse, "name" | "params"> {
-    const parsedArguments = parseArguments(argumentsValue)
-    const address = decodeNativeMcpToolName(name, resolveTool)
-    if (!address) return { name: name as ToolUse["name"], params: toolParams(parsedArguments) }
-    return {
-        name: DlineDefaultTool.MCP_USE,
-        params: {
-            server_name: address.serverName,
-            tool_name: address.toolName,
-            arguments: JSON.stringify(parsedArguments),
-        },
-    }
-}
-
-/** Materialize the display-safe portion of an incomplete native tool call. */
-export function materializePartialNativeToolCall(
-    name: string,
-    argumentsValue: unknown,
-    resolveTool: McpToolResolver = identityMcpToolResolver,
-): Pick<ToolUse, "name" | "params"> {
-    const input = parsePartialToolInput(argumentsValue)
-    const address = decodeNativeMcpToolName(name, resolveTool)
-    if (!address) return { name: name as ToolUse["name"], params: toolParams(input) }
-    return {
-        name: DlineDefaultTool.MCP_USE,
-        params: {
-            server_name: address.serverName,
-            tool_name: address.toolName,
-            arguments: JSON.stringify(input),
-        },
-    }
-}
-
 /** Production provider executor: request preparation is injected; stream folding stays provider-domain local. */
 export class DefaultProductionProviderService implements ProductionProviderService {
     private readonly identities: IdentityFactory
@@ -402,14 +291,22 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         const requestStartedAtMs = performance.now()
         const clock: AttemptClock = { providerRequestStartedAtMs: requestStartedAtMs, firstChunkAtMs: requestStartedAtMs }
         let streamCompletedAtMs: number | undefined
+        // Shared by every send of this turn, before and after a first chunk.
+        // A manual Retry owns this request, so its failure returns to the user
+        // rather than opening a second automatic sequence.
+        const retryBudget: RetryBudget = { attempts: this.retry.claimManualTakeover?.() ? this.retry.maxAttempts : 0 }
         // Prepared once: every retry below replays exactly this request, so a
         // prompt refresh or a newer journal entry cannot change a turn in flight.
         // Only a replaced handler prepares it again, for the same turn.
-        const prepared = await this.options.requests.prepare(input.draft, input.signal)
-        const sameTurn = { ...input.draft, turnId: prepared.turnId }
-        const turn = new TurnRequest(prepared, (through) =>
-            this.options.requests.prepare(through ? { ...sameTurn, journalThrough: through } : sameTurn, input.signal),
-        )
+        let prepared: PreparedProviderRequest | undefined
+        try {
+            prepared = yield* this.prepareTurn(input.draft, input.signal, retryBudget)
+        } finally {
+            // A request that never reached its first send leaves no countdown behind.
+            if (!prepared) this.retry.settled?.()
+        }
+        if (!prepared) return
+        const turn = new TurnRequest(prepared, { ...input.draft, turnId: prepared.turnId })
         const transientId = `provider:${prepared.turnId}`
         let text = ""
         // What the chat shows of `text` so far; its tool markup is drawn as cards instead.
@@ -427,10 +324,6 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         const nativeTools = new Map<string, PendingNativeTool>()
         // Hosted calls the provider ran (or deferred) in this reply; later requests replay them verbatim.
         const hostedToolBlocks: ClineAssistantContent[] = []
-        // Shared by every send of this turn, before and after a first chunk.
-        // A manual Retry owns this request, so its failure returns to the user
-        // rather than opening a second automatic sequence.
-        const retryBudget: RetryBudget = { attempts: this.retry.claimManualTakeover?.() ? this.retry.maxAttempts : 0 }
         // A cancelled command cannot authorize a tool in a later turn.
         const abort = () => turn.abandon()
         input.signal.addEventListener("abort", abort, { once: true })
@@ -556,8 +449,11 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                     streamCompletedAtMs = performance.now()
                     break
                 } catch (error) {
-                    const notice = input.signal.aborted ? undefined : this.midStreamRetry(error, turn.request, retryBudget)
-                    if (!notice) throw error
+                    if (input.signal.aborted) throw error
+                    // A provider can refuse a request for length after its first chunk too.
+                    const overflow = checkContextWindowExceededError(error) && this.options.contextRecovery !== undefined
+                    const notice = overflow ? undefined : this.midStreamRetry(error, turn.request, retryBudget)
+                    if (!overflow && !notice) throw error
                     // The rows the failed stream showed are transient and keyed by this
                     // turn's stream, so the resent stream rewrites them from scratch.
                     // Nothing it streamed was acted on: tool calls only run from the
@@ -577,14 +473,16 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                     // Hosted calls the dropped stream left open get no result from it;
                     // the resent stream opens its own rows.
                     await serverTools?.finalizeOpen(DROPPED_HOSTED_CALL_REASON)
+                    if (!notice) {
+                        if (yield* this.truncateTurn(turn, input.signal, retryBudget)) continue
+                        if (input.signal.aborted) return
+                        throw error
+                    }
                     yield { kind: "retry", notice }
                     const waited = await this.retry.wait(notice.delayMs, input.signal)
-                    if (waited !== "send" || input.signal.aborted) {
-                        this.retry.settled?.()
-                        if (waited === "handed_back") throw error
-                        return
-                    }
-                    await turn.refreshIfStale()
+                    if (waited === "handed_back") throw error
+                    if (waited !== "send" || input.signal.aborted) return
+                    if (turn.stale && !(yield* this.reprepare(turn, input.signal, retryBudget))) return
                 }
             }
         } catch (error) {
@@ -600,6 +498,8 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                       : "Provider stream ended before this hosted tool call returned a result.",
             )
             input.signal.removeEventListener("abort", abort)
+            // However the stream ends, no countdown remains for the chat to show.
+            this.retry.settled?.()
         }
         if (input.signal.aborted) {
             const reasoningContent: ClineAssistantContent[] = [...reasoning.getRedactedThinking()]
@@ -695,6 +595,87 @@ export class DefaultProductionProviderService implements ProductionProviderServi
     }
 
     /**
+     * Prepare the turn's request, preparing it again while its failure may pass.
+     *
+     * Preparation rebuilds the handler, validates its credentials and resolves
+     * the prompt, so a dropped connection or a briefly unavailable owner fails
+     * it as easily as a send. It spends the turn's retry budget and shows the
+     * same countdown; a failure only the user can resolve, such as a Profile
+     * that cannot be admitted, ends the request at once. The caller settles
+     * the countdown, which may go on into the sends that follow.
+     *
+     * Returns undefined when cancellation ended it.
+     */
+    private async *prepareTurn(
+        draft: ProviderDraftEnvelope,
+        signal: AbortSignal,
+        budget: RetryBudget,
+    ): AsyncGenerator<ProductionProviderChunk, PreparedProviderRequest | undefined> {
+        for (;;) {
+            let failure: unknown
+            try {
+                return await this.options.requests.prepare(draft, signal)
+            } catch (error) {
+                failure = error
+            }
+            if (signal.aborted) return undefined
+            if (budget.attempts >= this.retry.maxAttempts || !isRetryableProviderError(failure)) throw failure
+            budget.attempts++
+            const delayMs = this.retry.delayMs(budget.attempts)
+            Logger.warn(`[provider] request preparation failed; retry ${budget.attempts} in ${delayMs}ms`, failure)
+            yield {
+                kind: "retry",
+                notice: {
+                    attempt: budget.attempts,
+                    maxAttempts: this.retry.maxAttempts,
+                    delayMs,
+                    errorMessage: describeExecutorFailure("provider", failure),
+                },
+            }
+            const waited = await this.retry.wait(delayMs, signal)
+            if (waited === "cancelled" || signal.aborted) return undefined
+            // The user took the failure back, so it ends the request as an exhausted budget would.
+            if (waited === "handed_back") throw failure
+        }
+    }
+
+    /**
+     * Prepare the same turn again and send it from now on: for the handler that
+     * replaced its own, or through `through` after a truncation. False only
+     * when cancellation ended it.
+     */
+    private async *reprepare(
+        turn: TurnRequest,
+        signal: AbortSignal,
+        budget: RetryBudget,
+        through?: JournalWatermark,
+    ): AsyncGenerator<ProductionProviderChunk, boolean> {
+        if (!through) Logger.info("[provider] the task replaced its handler; preparing the turn for the new handler")
+        const prepared = yield* this.prepareTurn(turn.draftThrough(through), signal, budget)
+        if (!prepared) return false
+        turn.adopt(prepared, through)
+        return true
+    }
+
+    /**
+     * Answer a refusal for length by removing settled history and preparing the
+     * turn through what is left. Waiting cannot make the request fit, so this
+     * spends no retry, and it repeats while each truncation removes more. False
+     * when nothing more can be removed (a single item larger than the window),
+     * or when cancellation ended it.
+     */
+    private async *truncateTurn(
+        turn: TurnRequest,
+        signal: AbortSignal,
+        budget: RetryBudget,
+    ): AsyncGenerator<ProductionProviderChunk, boolean> {
+        const through = await this.options.contextRecovery?.truncate(signal)
+        if (!through || signal.aborted || !turn.advancesTo(through)) return false
+        Logger.warn("[provider] request exceeded the context window; resending with truncated history")
+        return yield* this.reprepare(turn, signal, budget, through)
+    }
+
+    /**
      * Decide whether a stream that failed after its first chunk is sent again.
      *
      * A dropped stream is retried the same way however far it got, whether it
@@ -733,18 +714,6 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         const messagesOf = (request: PreparedProviderRequest): ClineStorageMessage[] =>
             projectForEndpoint(request, pairingRebuilt ? repairProviderPairing(request.messages) : request.messages)
         let messages = messagesOf(turn.request)
-        // The first refusal for length is truncated and resent at once; each
-        // later one waits out a retry and truncates again, until the retry
-        // budget is spent or nothing settled is left to remove.
-        let truncated = false
-        const truncate = async (): Promise<boolean> => {
-            const through = await this.options.contextRecovery?.truncate(signal)
-            if (!through || signal.aborted) return false
-            await turn.projectThrough(through)
-            messages = messagesOf(turn.request)
-            Logger.warn("[provider] request exceeded the context window; resending with truncated history")
-            return true
-        }
         for (;;) {
             const request = turn.request
             const provider: ProviderIdentity = { providerId: request.api.getProviderId?.(), modelId: request.api.getModel().id }
@@ -774,7 +743,8 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             }
             await closeQuietly(iterator)
             if (signal.aborted) return undefined
-            if (await turn.refreshIfStale()) {
+            if (turn.stale) {
+                if (!(yield* this.reprepare(turn, signal, budget))) return undefined
                 messages = messagesOf(turn.request)
                 continue
             }
@@ -785,15 +755,15 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                 Logger.warn("[provider] request rejected for tool pairing; sending it once with canonical pairing")
                 continue
             }
-            const truncates = checkContextWindowExceededError(failure) && this.options.contextRecovery?.enabled() === true
-            if (truncates && !truncated) {
-                truncated = true
-                if (await truncate()) continue
+            if (checkContextWindowExceededError(failure) && this.options.contextRecovery) {
+                if (yield* this.truncateTurn(turn, signal, budget)) {
+                    messages = messagesOf(turn.request)
+                    continue
+                }
                 if (signal.aborted) return undefined
                 throw failure
             }
-            if (budget.attempts >= this.retry.maxAttempts || !(truncates || isRetryableProviderError(failure, provider)))
-                throw failure
+            if (budget.attempts >= this.retry.maxAttempts || !isRetryableProviderError(failure, provider)) throw failure
             budget.attempts++
             const retries = budget.attempts
             const delayMs = this.retry.delayMs(retries)
@@ -812,12 +782,10 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             // The user took the failure back, so it ends the request as an
             // exhausted budget would, and the chat offers Retry for it.
             if (waited === "handed_back") throw failure
-            if (truncates) {
-                if (await truncate()) continue
-                if (signal.aborted) return undefined
-                throw failure
+            if (turn.stale) {
+                if (!(yield* this.reprepare(turn, signal, budget))) return undefined
+                messages = messagesOf(turn.request)
             }
-            if (await turn.refreshIfStale()) messages = messagesOf(turn.request)
         }
     }
 

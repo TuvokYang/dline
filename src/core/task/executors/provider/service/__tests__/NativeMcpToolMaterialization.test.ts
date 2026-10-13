@@ -1,7 +1,7 @@
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@shared/mcp"
 import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
-import { materializeNativeToolCall } from "../DefaultProductionProviderService"
+import { materializeNativeToolCall } from "../NativeToolCallMaterialization"
 
 describe("native MCP tool materialization", () => {
     it("decodes the advertised MCP namespace into the canonical handler contract", () => {

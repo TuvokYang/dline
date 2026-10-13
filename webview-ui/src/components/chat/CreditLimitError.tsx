@@ -12,6 +12,12 @@ interface CreditLimitErrorProps {
     message: string
     buyCreditsUrl?: string
     providerId?: string
+    /**
+     * Whether the card offers its own Retry; defaults to true. Off where an
+     * interaction footer owns Retry, so the request is retried through that
+     * interaction alone.
+     */
+    showRetry?: boolean
 }
 
 /**
@@ -36,6 +42,7 @@ const CreditLimitError: React.FC<CreditLimitErrorProps> = ({
     providerId,
     totalPromotions,
     totalSpent,
+    showRetry = true,
 }) => {
     const { activeOrganization } = useClineAuth()
     const [fullBuyCreditsUrl, setFullBuyCreditsUrl] = useState<string>("")
@@ -106,23 +113,25 @@ const CreditLimitError: React.FC<CreditLimitErrorProps> = ({
                 Buy Credits
             </VSCodeButtonLink>
 
-            <VSCodeButton
-                appearance="secondary"
-                className="w-full"
-                onClick={async () => {
-                    try {
-                        await TaskServiceClient.askResponse(
-                            AskResponseRequest.create({
-                                responseType: "yesButtonClicked",
-                            }),
-                        )
-                    } catch (error) {
-                        console.error("Error invoking action:", error)
-                    }
-                }}>
-                <span className="codicon codicon-refresh mr-1.5" />
-                Retry Request
-            </VSCodeButton>
+            {showRetry ? (
+                <VSCodeButton
+                    appearance="secondary"
+                    className="w-full"
+                    onClick={async () => {
+                        try {
+                            await TaskServiceClient.askResponse(
+                                AskResponseRequest.create({
+                                    responseType: "yesButtonClicked",
+                                }),
+                            )
+                        } catch (error) {
+                            console.error("Error invoking action:", error)
+                        }
+                    }}>
+                    <span className="codicon codicon-refresh mr-1.5" />
+                    Retry Request
+                </VSCodeButton>
+            ) : null}
         </div>
     )
 }
