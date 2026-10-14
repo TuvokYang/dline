@@ -13,9 +13,13 @@ function PopoverContent({
     className,
     align = "center",
     sideOffset = 4,
+    showArrow = true,
     children,
     ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+}: React.ComponentProps<typeof PopoverPrimitive.Content> & {
+    /** Draw the pointer toward the trigger; the arrow also widens the gap to the trigger by its height. */
+    showArrow?: boolean
+}) {
     // Get side prop for conditional arrow positioning
     const side = (props as any).side
 
@@ -31,12 +35,16 @@ function PopoverContent({
                 sideOffset={sideOffset}
                 {...props}>
                 {children}
-                <PopoverPrimitive.Arrow
-                    className={cn(
-                        "bg-menu fill-menu z-50 size-2.5 rotate-45 rounded-xs border-b border-r border-menu-foreground/10",
-                        side === "left" || side === "right" ? "translate-x-[calc(-50%_-_2px)]" : "translate-y-[calc(-50%_-_2px)]",
-                    )}
-                />
+                {showArrow && (
+                    <PopoverPrimitive.Arrow
+                        className={cn(
+                            "bg-menu fill-menu z-50 size-2.5 rotate-45 rounded-xs border-b border-r border-menu-foreground/10",
+                            side === "left" || side === "right"
+                                ? "translate-x-[calc(-50%_-_2px)]"
+                                : "translate-y-[calc(-50%_-_2px)]",
+                        )}
+                    />
+                )}
             </PopoverPrimitive.Content>
         </PopoverPrimitive.Portal>
     )

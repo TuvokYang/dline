@@ -210,9 +210,11 @@ export function ProviderUsageDetails({
                     </div>
                 ) : null}
                 {usage.dailyInputTokens !== undefined || usage.dailyOutputTokens !== undefined ? (
-                    <div className="grid grid-cols-2 gap-2 text-description">
-                        <span>Today In: {formatTokenMetric(usage.dailyInputTokens ?? 0)}</span>
-                        <span>Today Out: {formatTokenMetric(usage.dailyOutputTokens ?? 0)}</span>
+                    // Each metric stays on one line; a narrow tooltip moves the whole
+                    // second metric down instead of splitting a label from its value.
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-description">
+                        <span className="whitespace-nowrap">Today In: {formatTokenMetric(usage.dailyInputTokens ?? 0)}</span>
+                        <span className="whitespace-nowrap">Today Out: {formatTokenMetric(usage.dailyOutputTokens ?? 0)}</span>
                     </div>
                 ) : null}
                 {/* Filtered like the chat bar: an unusable reading rendered as

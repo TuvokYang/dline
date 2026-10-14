@@ -4,7 +4,16 @@ import {
     resourceRefOf,
     type SemanticInputDocument,
 } from "@shared/input-semantics/document"
-import { ChevronDownIcon, ChevronRightIcon, GripVerticalIcon, PencilIcon, RotateCcwIcon, SendIcon, XIcon } from "lucide-react"
+import {
+    ChevronDownIcon,
+    ChevronRightIcon,
+    GripVerticalIcon,
+    ListIcon,
+    PencilIcon,
+    RotateCcwIcon,
+    SendIcon,
+    XIcon,
+} from "lucide-react"
 import { useMemo, useState } from "react"
 import { openTaskResource } from "@/components/chat/input/semantic-composer/resource-staging"
 import { UserInputMarkdownBody } from "@/components/chat/UserInputMarkdownBody"
@@ -178,13 +187,19 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                 <PopoverContent
                     align="start"
                     aria-label="Queued input"
-                    className="max-h-[min(60vh,480px)] w-(--radix-popover-trigger-width) overflow-y-auto overscroll-contain rounded p-1 text-xs shadow-lg"
+                    // Entries are separate cards: the gap keeps one entry's border from
+                    // running into the next one's header.
+                    className="flex max-h-[min(60vh,480px)] w-(--radix-popover-trigger-width) flex-col gap-1.5 overflow-y-auto overscroll-contain rounded p-1 text-xs shadow-lg"
                     collisionPadding={8}
                     data-testid="input-queue-overlay"
                     // The surface is portalled out of ChatLayout's overflow-hidden tree.
                     role="listbox"
+                    // The list meets the queue toggle with no gap and no arrow: the auto-approve
+                    // bar sits right above the toggle, and any gap left a strip of it visible
+                    // beneath the open list.
+                    showArrow={false}
                     side="top"
-                    sideOffset={4}
+                    sideOffset={0}
                     style={{
                         ...OPAQUE_OVERLAY_PAINT,
                         borderColor:
@@ -205,7 +220,7 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                     "group rounded border bg-(--vscode-editorWidget-background,var(--vscode-sideBar-background)) px-2 py-1.5 text-xs text-(--vscode-foreground)",
                                     entry.mode === "steering"
                                         ? "border-(--vscode-charts-orange,var(--vscode-focusBorder))"
-                                        : "border-(--vscode-editorWidget-border,var(--vscode-panel-border))",
+                                        : "border-(--vscode-panel-border,var(--vscode-editorWidget-border))",
                                     entry.editing && "italic",
                                     draggingId === entry.id && "opacity-40",
                                 )}
@@ -249,13 +264,20 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                 </header>
                                 <QueuedEntryBody entry={entry} />
                                 <footer className="mt-1 flex items-center justify-end gap-1">
+                                    {/* The icon shows the entry's own mode, the list for a queued
+								    entry and the paper plane for a steering one; a click switches it. */}
                                     <button
                                         aria-label={entry.mode === "steering" ? "Return to queue" : "Send with next round"}
                                         className="input-icon-button shrink-0 appearance-none border-0 bg-transparent p-0"
                                         data-testid={`input-queue-send-${entry.id}`}
                                         onClick={() => onToggleMode(entry.id)}
+                                        title={entry.mode === "steering" ? "Return to queue" : "Send with next round"}
                                         type="button">
-                                        <SendIcon className="size-3" />
+                                        {entry.mode === "steering" ? (
+                                            <SendIcon className="size-3" data-testid={`input-queue-steer-icon-${entry.id}`} />
+                                        ) : (
+                                            <ListIcon className="size-3" data-testid={`input-queue-queue-icon-${entry.id}`} />
+                                        )}
                                     </button>
                                     {/* An entry under edit is held back from delivery, so it needs a
 								    way out that does not require sending or deleting it. */}

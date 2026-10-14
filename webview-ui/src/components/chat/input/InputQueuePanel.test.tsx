@@ -125,6 +125,22 @@ describe("InputQueuePanel", () => {
         expect(props.onToggleMode).toHaveBeenCalledWith("a")
     })
 
+    // Each entry shows the icon of its own mode: a list for queued input, a paper plane for steering input.
+    it("shows the queue icon on queued entries and the steering icon on steering entries", () => {
+        render(<InputQueuePanel entries={[entry({ id: "a" }), entry({ id: "b", mode: "steering" })]} {...handlers()} />)
+        fireEvent.click(screen.getByTestId("input-queue-toggle"))
+
+        const queuedToggle = screen.getByTestId("input-queue-send-a")
+        expect(queuedToggle).toHaveAccessibleName("Send with next round")
+        expect(queuedToggle.querySelector('[data-testid="input-queue-queue-icon-a"]')).not.toBeNull()
+        expect(queuedToggle.querySelector('[data-testid="input-queue-steer-icon-a"]')).toBeNull()
+
+        const steeringToggle = screen.getByTestId("input-queue-send-b")
+        expect(steeringToggle).toHaveAccessibleName("Return to queue")
+        expect(steeringToggle.querySelector('[data-testid="input-queue-steer-icon-b"]')).not.toBeNull()
+        expect(steeringToggle.querySelector('[data-testid="input-queue-queue-icon-b"]')).toBeNull()
+    })
+
     it("requests edit and removal for the exact entry", () => {
         const props = handlers()
         render(<InputQueuePanel entries={[entry({ id: "a" }), entry({ id: "b" })]} {...props} />)
