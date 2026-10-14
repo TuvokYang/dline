@@ -1,7 +1,8 @@
 import "@testing-library/jest-dom/vitest"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { FileServiceClient } from "@/services/grpc-client"
+import { resetResourceThumbnailsForTesting } from "../input/semantic-composer/resource-thumbnails"
 import UserMessage from "../UserMessage"
 
 vi.mock("@/context/ExtensionStateContext", () => ({
@@ -14,6 +15,7 @@ vi.mock("@/services/grpc-client", () => ({
         ifFileExistsRelativePath: vi.fn(async () => ({ value: false })),
         openFile: vi.fn(async () => undefined),
         openInputResource: vi.fn(async () => ({})),
+        readInputResourceImage: vi.fn(async () => ({ data: new Uint8Array([1, 2, 3]), mimeType: "image/png" })),
     },
 }))
 
@@ -125,5 +127,32 @@ describe("UserMessage rendering", () => {
 
         expect(screen.queryByRole("button", { name: /notes/ })).toBeNull()
         expect(screen.getByText("notes").closest("[data-resource-chip]")).toHaveClass("composer-chip--static")
+    })
+
+    it("draws a sent image chip with the thumbnail of its stored bytes", async () => {
+        resetResourceThumbnailsForTesting()
+        URL.createObjectURL = vi.fn(() => "blob:sent-thumbnail")
+        const taskImage = {
+            resourceId: "res-1",
+            expectedContentHash: "sha256:sent",
+            mediaType: "image/png",
+            byteLength: 3,
+            owner: { kind: "task" as const, taskId: "task-1" },
+            generation: 1,
+        }
+        render(
+            <UserMessage
+                submittedInputs={[{ segments: [{ text: "[shot.png]", role: "resource", active: true, resource: taskImage }] }]}
+                text="[shot.png]"
+            />,
+        )
+
+        await waitFor(() =>
+            expect(document.querySelector("img.composer-chip__thumbnail")).toHaveAttribute("src", "blob:sent-thumbnail"),
+        )
+        expect(vi.mocked(FileServiceClient.readInputResourceImage).mock.calls[0][0]).toMatchObject({
+            draftId: "",
+            ref: { resourceId: "res-1", owner: { taskId: "task-1" } },
+        })
     })
 })

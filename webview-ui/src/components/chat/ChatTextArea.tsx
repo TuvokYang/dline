@@ -204,8 +204,16 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
         },
         ref,
     ) => {
-        const { mode, modeSwitch, stateRevision, platform, chatInputSendShortcut, navigateToSettings, currentTaskItem } =
-            useExtensionState()
+        const {
+            mode,
+            modeSwitch,
+            stateRevision,
+            platform,
+            chatInputSendShortcut,
+            navigateToSettings,
+            currentTaskItem,
+            taskLockStatus,
+        } = useExtensionState()
         const { engine, draftId, documentId } = composer
         const segments = composer.state.segments
         const editorRef = useRef<SemanticComposerEditorHandle>(null)
@@ -414,7 +422,10 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
             .replace(/.$/, (match) => match.toUpperCase())
 
         const notice: { testId: string; text: string } | undefined = sendRefusal
-            ? { testId: "composer-send-blocked-notice", text: describeSendBlock(sendRefusal) }
+            ? {
+                  testId: "composer-send-blocked-notice",
+                  text: describeSendBlock(sendRefusal, { taskReadOnly: taskLockStatus?.isLocked === true }),
+              }
             : heldCandidates.length > 0
               ? {
                     testId: "pasted-candidate-notice",
@@ -424,6 +435,16 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
 
         return (
             <div>
+                {/* In the flow between the controls above and the input, so it never covers the auto-approve bar and wraps instead of being cut off. */}
+                {notice && (
+                    <div
+                        aria-live="polite"
+                        className="px-4 pt-1.5 text-xs leading-snug break-words text-(--vscode-editorWarning-foreground)"
+                        data-testid={notice.testId}
+                        role="status">
+                        {notice.text}
+                    </div>
+                )}
                 <div
                     className="relative flex transition-colors ease-in-out duration-100 px-3.5 py-2.5"
                     onDragEnter={(event) => {
@@ -525,15 +546,6 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                     {segments.length === 0 && (
                         <div className="text-xs absolute bottom-5 left-6.5 right-16 text-(--vscode-input-placeholderForeground)/50 whitespace-nowrap overflow-hidden text-ellipsis pointer-events-none z-1">
                             Type @ for context, / for slash commands & workflows, hold shift to drag in files/images
-                        </div>
-                    )}
-                    {notice && (
-                        <div
-                            aria-live="polite"
-                            className="text-xs absolute -top-5 left-4 right-4 truncate text-(--vscode-editorWarning-foreground) z-1"
-                            data-testid={notice.testId}
-                            role="status">
-                            {notice.text}
                         </div>
                     )}
                     <div

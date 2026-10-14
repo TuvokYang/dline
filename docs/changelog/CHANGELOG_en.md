@@ -13,7 +13,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Added the "Load MCP Tools on Demand" setting, on by default: instead of sending every MCP tool's full definition as a native tool with each request, the model picks tools from the prompt's MCP catalog, grouped by server with only names and bounded descriptions, loads a tool's input schema with `load_mcp`, and calls it with `use_mcp_tool`; turning it off restores native MCP tools
 - The context window panel lists MCP tool definitions as their own item instead of folding them into tool definitions
 - When a model refuses a request as longer than its context window, including after its stream has started, the oldest settled history is truncated and the request resent at once, whether or not auto-compaction is on; this spends no automatic retry and shows no countdown, and repeats until the request fits; an error appears only when nothing more can be removed, that is when a single item is larger than the whole window
-- In-work replies (Reply) and phase reports (Phase report) are now two clearly distinct minimal rows: a thin border on a faint background, each with its own icon and title, long content capped at 40% of the viewport with a themed scrollbar, and copy on hover; a phase report no longer pauses the task for acknowledgment, and acknowledgment requests recorded in older tasks still display and resume normally
+- An MCP call row stays open while the call runs; once its result arrives, the request and the response fold together into the header, which shows the tool name and reopens the row when clicked
+- In-work replies (Reply) and phase reports (Phase report) are now two clearly distinct minimal rows
 
 
 ### Fixes
@@ -26,7 +27,9 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed local token estimates staying too low once a conversation contained an image: a request carrying an image or PDF was dropped entirely from token-per-byte calibration, so an image left in the history disabled calibration for good; the separate image and PDF estimates are now subtracted and the text share is calibrated as usual
 - Fixed the MCP row of the context breakdown always reading 0: MCP tools loaded on demand send no function definitions, and the MCP catalog section of the system prompt was counted under System prompt; that section now counts toward the MCP row, which is now labelled "MCP"
 - Fixed remove, edit, mode toggle, and reorder doing nothing in the input queue of a reopened task, such as after reloading the window: the task opens as a history display, and a queue action now turns it into the writable running task before applying the change
-- Fixed a long conversation shaking continuously while scrolled to the bottom: image chips in messages switched between their icon and their thumbnail on every refresh, changing the row height and moving the list's scroll position; a thumbnail is now loaded once per content and stays in place
+- Fixed image chips in sent messages never showing a thumbnail: the thumbnail bytes were returned as a Node Buffer, which the Webview message channel serialized into a plain object the chip could not read; they are now returned as a plain byte array
+- Sending in a task that another window holds (read-only) now explains that the task is open in another Dline window and is read-only here; the notice sits between the auto-approve bar and the input instead of overlapping the bar, and wraps when long
+- Fixed a long conversation shaking continuously while scrolled to the bottom
 - The context figure computed before sending, including the compaction trigger, takes the previous request's server-reported usage as its baseline
 - Fixed only some mid-stream disconnects being retried automatically; every stream disconnect now retries
 - Fixed the model not receiving the image when `read_file` reads an image file

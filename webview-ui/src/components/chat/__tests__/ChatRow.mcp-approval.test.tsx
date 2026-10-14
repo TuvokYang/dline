@@ -1,5 +1,5 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
 import { ChatRowContent } from "../ChatRow"
@@ -87,7 +87,7 @@ describe("ChatRow MCP tool rendering", () => {
             },
         ]
 
-        render(<ChatRowContent {...baseProps} message={clineMessages[0]} />)
+        render(<ChatRowContent {...baseProps} isExpanded={true} message={clineMessages[0]} />)
 
         await screen.findByText(/first/)
         const group = screen.getByTestId("mcp-response-group")
@@ -99,6 +99,36 @@ describe("ChatRow MCP tool rendering", () => {
         // The card owns the 60vh bound, so the embedded response drops its own cap but still scrolls.
         expect(screen.getByTestId("mcp-response-card").style.maxHeight).toBe("")
         expect(screen.getByTestId("mcp-response-content").style.overflowY).toBe("auto")
+    })
+
+    // While the call runs the card shows; once its response has landed the call is
+    // final and folds to its header, request and response together.
+    it("folds a final call to its header and reopens it from there", () => {
+        clineMessages = [
+            {
+                ts: 20,
+                type: "say",
+                say: "use_mcp_server",
+                text: JSON.stringify({ type: "use_mcp_tool", serverName: "docs", toolName: "search", arguments: "{}" }),
+            },
+            {
+                ts: 21,
+                type: "say",
+                say: "mcp_server_response",
+                text: JSON.stringify({ type: "mcp_server_response", requestTs: 20, responses: ["done"] }),
+            },
+        ]
+        const onToggleExpand = vi.fn()
+
+        render(<ChatRowContent {...baseProps} message={clineMessages[0]} onToggleExpand={onToggleExpand} />)
+
+        expect(screen.queryByTestId("mcp-request-card")).not.toBeInTheDocument()
+        expect(screen.queryByText(/done/)).not.toBeInTheDocument()
+        const toggle = screen.getByTestId("mcp-call-toggle")
+        expect(toggle).toHaveAttribute("aria-expanded", "false")
+        expect(toggle).toHaveTextContent("search")
+        fireEvent.click(toggle)
+        expect(onToggleExpand).toHaveBeenCalledWith(20)
     })
 
     it("caps MCP notifications at 60vh", () => {

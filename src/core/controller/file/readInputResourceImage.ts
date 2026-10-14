@@ -29,5 +29,9 @@ export async function readInputResourceImage(controller: Controller, request: In
     if (!record.mediaType.startsWith("image/") || bytes.byteLength > MAX_THUMBNAIL_SOURCE_BYTES) {
         return InputResourceImage.create({})
     }
-    return InputResourceImage.create({ data: bytes, mimeType: record.mediaType })
+    // A plain Uint8Array, never a Node Buffer: the Webview channel serializes with
+    // JSON.stringify, which turns a Buffer into `{ type: "Buffer", data: [...] }`
+    // through its toJSON before the typed-array transfer can see it, and the chip
+    // then receives no bytes at all.
+    return InputResourceImage.create({ data: Uint8Array.from(bytes), mimeType: record.mediaType })
 }

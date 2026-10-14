@@ -1099,85 +1099,117 @@ export const ChatRowContent = memo(
             const server = mcpServers.find((server) => server.name === useMcpServer.serverName)
             const responseTexts = collectMcpResponseTexts(clineMessages, message.ts)
             const hasResponse = responseTexts.length > 0
+            // The card shows while the call is pending or running; once its response
+            // has landed the call is final and folds to its header, request and
+            // response together, and the header reopens it.
+            const mcpCallFinal = hasResponse && !isMcpServerResponding && !message.partial
+            const showMcpCard = !mcpCallFinal || isExpanded
             return (
                 <div>
-                    <div className={HEADER_CLASSNAMES}>
-                        {icon}
-                        {title}
-                    </div>
+                    {mcpCallFinal ? (
+                        <button
+                            aria-expanded={isExpanded}
+                            aria-label={isExpanded ? "Collapse MCP call" : "Expand MCP call"}
+                            className={cn(
+                                HEADER_CLASSNAMES,
+                                "w-full cursor-pointer select-none border-0 bg-transparent p-0 text-left text-inherit font-inherit",
+                                !isExpanded && "mb-0",
+                            )}
+                            data-testid="mcp-call-toggle"
+                            onClick={handleToggle}
+                            type="button">
+                            {icon}
+                            <span className="min-w-0 flex-1">{title}</span>
+                            {!isExpanded && useMcpServer.toolName ? (
+                                <code className="min-w-0 truncate font-normal text-description">{useMcpServer.toolName}</code>
+                            ) : null}
+                            {isExpanded ? (
+                                <ChevronDownIcon className="size-4 shrink-0" />
+                            ) : (
+                                <ChevronRightIcon className="size-4 shrink-0" />
+                            )}
+                        </button>
+                    ) : (
+                        <div className={HEADER_CLASSNAMES}>
+                            {icon}
+                            {title}
+                        </div>
+                    )}
 
                     {/* One 60vh card holds the request and its response. With a response the
                         request keeps at most 30vh so the response always has room; each part
                         scrolls inside its own area instead of the card growing past the cap. */}
-                    <div
-                        className="bg-code rounded-xs mt-2 flex max-h-[60vh] flex-col overflow-hidden"
-                        data-testid="mcp-request-card">
+                    {showMcpCard && (
                         <div
-                            className={cn(
-                                "min-h-0 overflow-y-auto overscroll-x-contain py-2 px-2.5",
-                                hasResponse && "max-h-[30vh] shrink-0",
-                            )}
-                            data-testid="mcp-request-body">
-                            {useMcpServer.type === "access_mcp_resource" && (
-                                <McpResourceRow
-                                    item={{
-                                        ...(findMatchingResourceOrTemplate(
-                                            useMcpServer.uri || "",
-                                            server?.resources,
-                                            server?.resourceTemplates,
-                                        ) || {
-                                            name: "",
-                                            mimeType: "",
-                                            description: "",
-                                        }),
-                                        uri: useMcpServer.uri || "",
-                                    }}
-                                />
-                            )}
+                            className="bg-code rounded-xs mt-2 flex max-h-[60vh] flex-col overflow-hidden"
+                            data-testid="mcp-request-card">
+                            <div
+                                className={cn(
+                                    "min-h-0 overflow-y-auto overscroll-x-contain py-2 px-2.5",
+                                    hasResponse && "max-h-[30vh] shrink-0",
+                                )}
+                                data-testid="mcp-request-body">
+                                {useMcpServer.type === "access_mcp_resource" && (
+                                    <McpResourceRow
+                                        item={{
+                                            ...(findMatchingResourceOrTemplate(
+                                                useMcpServer.uri || "",
+                                                server?.resources,
+                                                server?.resourceTemplates,
+                                            ) || {
+                                                name: "",
+                                                mimeType: "",
+                                                description: "",
+                                            }),
+                                            uri: useMcpServer.uri || "",
+                                        }}
+                                    />
+                                )}
 
-                            {useMcpServer.type === "use_mcp_tool" && (
-                                <div>
-                                    {/* Keeps a click inside the tool row from reaching the row's own
+                                {useMcpServer.type === "use_mcp_tool" && (
+                                    <div>
+                                        {/* Keeps a click inside the tool row from reaching the row's own
 								    expand handler. It is a propagation boundary, not a control, so
 								    it exposes no role and no keyboard handler: keyboard events do
 								    not bubble to the row the way this click does. */}
-                                    <div
-                                        onClickCapture={(e) => {
-                                            e.stopPropagation()
-                                        }}>
-                                        <McpToolRow
-                                            showAutoApprove={false}
-                                            tool={{
-                                                name: useMcpServer.toolName || "",
-                                                description:
-                                                    server?.tools?.find((tool) => tool.name === useMcpServer.toolName)
-                                                        ?.description || "",
-                                                autoApprove:
-                                                    server?.tools?.find((tool) => tool.name === useMcpServer.toolName)
-                                                        ?.autoApprove || false,
-                                            }}
-                                        />
-                                    </div>
-                                    {useMcpServer.arguments && useMcpServer.arguments !== "{}" && (
-                                        <div className="mt-2">
-                                            <div className="mb-1 opacity-80 uppercase">Arguments</div>
-                                            <CodeAccordian
-                                                code={useMcpServer.arguments}
-                                                isExpanded={true}
-                                                language="json"
-                                                onToggleExpand={handleToggle}
+                                        <div
+                                            onClickCapture={(e) => {
+                                                e.stopPropagation()
+                                            }}>
+                                            <McpToolRow
+                                                showAutoApprove={false}
+                                                tool={{
+                                                    name: useMcpServer.toolName || "",
+                                                    description:
+                                                        server?.tools?.find((tool) => tool.name === useMcpServer.toolName)
+                                                            ?.description || "",
+                                                    autoApprove:
+                                                        server?.tools?.find((tool) => tool.name === useMcpServer.toolName)
+                                                            ?.autoApprove || false,
+                                                }}
                                             />
                                         </div>
-                                    )}
+                                        {useMcpServer.arguments && useMcpServer.arguments !== "{}" && (
+                                            <div className="mt-2">
+                                                <div className="mb-1 opacity-80 uppercase">Arguments</div>
+                                                <CodeAccordian
+                                                    code={useMcpServer.arguments}
+                                                    isExpanded={true}
+                                                    language="json"
+                                                    onToggleExpand={handleToggle}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                            {hasResponse && (
+                                <div className="flex min-h-0 flex-col" data-testid="mcp-response-group">
+                                    <McpResponseDisplay embedded responseText={responseTexts.join("\n\n")} />
                                 </div>
                             )}
                         </div>
-                        {hasResponse && (
-                            <div className="flex min-h-0 flex-col" data-testid="mcp-response-group">
-                                <McpResponseDisplay embedded responseText={responseTexts.join("\n\n")} />
-                            </div>
-                        )}
-                    </div>
+                    )}
                 </div>
             )
         }

@@ -82,9 +82,20 @@ describe("captureComposerSend", () => {
 
 describe("describeSendBlock", () => {
     it("explains each block differently", () => {
-        const messages = (["staging", "failed"] as const).map(describeSendBlock)
+        const messages = (["staging", "failed"] as const).map((refusal) => describeSendBlock(refusal))
 
         expect(new Set(messages).size).toBe(2)
         for (const message of messages) expect(message.length).toBeGreaterThan(0)
+    })
+
+    // A task another window holds never becomes ready here, so it must not be told to wait.
+    it("names a read-only task instead of asking the user to wait", () => {
+        const waiting = describeSendBlock("input_not_ready")
+        const readOnly = describeSendBlock("input_not_ready", { taskReadOnly: true })
+
+        expect(waiting).toContain("cannot take input yet")
+        expect(readOnly).toContain("read-only")
+        expect(readOnly).toContain("another Dline window")
+        expect(readOnly).not.toContain("once the input is ready")
     })
 })

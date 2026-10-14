@@ -434,3 +434,27 @@ describe("typed input resource access", () => {
         expect(result.error?.code).toBe("semantic_input_resource_invalid")
     })
 })
+
+describe("input resource thumbnails", () => {
+    it("returns the bytes of an image the active task owns", async () => {
+        const { stageInputBytes, proto } = await handlers()
+        const { readInputResourceImage } = await import("../readInputResourceImage")
+        const controller = controllerWith("task-rpc-thumb")
+        const staged = stagedOf(
+            await stageInputBytes(
+                controller,
+                proto.StageInputBytesRequest.create({ files: [{ fileName: "shot.png", data: PNG_1X1 }] }),
+            ),
+        )
+
+        const image = await readInputResourceImage(controller, proto.InputResourceRequest.create({ ref: staged.ref }))
+
+        expect(image.error).toBeUndefined()
+        expect(image.mimeType).toBe("image/png")
+        expect(Buffer.from(image.data).equals(PNG_1X1)).toBe(true)
+        // The Webview channel serializes with JSON.stringify; a Buffer would arrive as
+        // `{ type: "Buffer", data }` through its toJSON instead of as transferred bytes.
+        expect(Buffer.isBuffer(image.data)).toBe(false)
+        expect(JSON.stringify(image.data)).not.toContain('"type":"Buffer"')
+    })
+})

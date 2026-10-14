@@ -78,7 +78,11 @@ export function captureComposerSend(segments: readonly ComposerSegment[], contex
 }
 
 /** The message shown while a send is refused. */
-export function describeSendBlock(refusal: ComposerSendRefusal): string {
+export function describeSendBlock(refusal: ComposerSendRefusal, context: { readonly taskReadOnly?: boolean } = {}): string {
+    // A task another window holds never takes input here, so "not ready yet" would promise a wait that never ends.
+    if (refusal === "input_not_ready" && context.taskReadOnly) {
+        return "This task is open in another Dline window and is read-only here. Your message was kept; continue the task in that window."
+    }
     switch (refusal) {
         case "staging":
             return "Attachments are still being added. Send again once they are ready."
