@@ -45,8 +45,8 @@ export function readCompletedCompactionCards(messages: readonly UiMessage[]): Co
 
 /** Derive provider context from canonical history without changing durable conversation records. */
 export function projectCompactionContext(input: CompactionContextProjectionInput): CompactionContextProjection {
-    const cards = normalizeCards(input.completedCards ?? [], input.canonicalHistory.length)
-    const deletedRanges = normalizeRanges(
+    const cards = normalizeCompletedCompactionCards(input.completedCards ?? [], input.canonicalHistory.length)
+    const deletedRanges = normalizeCanonicalMessageRanges(
         input.conversationHistoryDeletedRange ? [input.conversationHistoryDeletedRange] : [],
         input.canonicalHistory.length,
     )
@@ -92,7 +92,8 @@ export function projectCompactionContext(input: CompactionContextProjectionInput
     return { messages, canonicalMessageIndexes, sourceCanonicalRanges, canonicalRanges }
 }
 
-function normalizeCards(
+/** Keep only completed cards that can safely project the canonical conversation; later overlapping cards win. */
+export function normalizeCompletedCompactionCards(
     cards: readonly CompletedCompactionCardProjection[],
     canonicalLength: number,
 ): CompletedCompactionCardProjection[] {
@@ -113,29 +114,36 @@ function rangesOverlap(left: CanonicalMessageRange, right: CanonicalMessageRange
     return left[0] <= right[1] && right[0] <= left[1]
 }
 
-function isValidConversationRange(range: CompactionConversationRange, canonicalLength: number): boolean {
-    const [start, end] = range.apiConversationRange
-    const [turnStart, turnEnd] = range.logicalTurnRange
+function isCanonicalMessageRange(value: unknown): value is CanonicalMessageRange {
+    return Array.isArray(value) && value.length === 2 && value.every(Number.isInteger)
+}
+
+function isValidConversationRange(range: unknown, canonicalLength: number): range is CompactionConversationRange {
+    if (!range || typeof range !== "object") return false
+    const candidate = range as Partial<CompactionConversationRange>
+    if (!isCanonicalMessageRange(candidate.apiConversationRange) || !isCanonicalMessageRange(candidate.logicalTurnRange)) {
+        return false
+    }
+    const [start, end] = candidate.apiConversationRange
+    const [turnStart, turnEnd] = candidate.logicalTurnRange
     return (
-        Number.isInteger(start) &&
-        Number.isInteger(end) &&
         start >= 0 &&
         start <= end &&
         end < canonicalLength &&
-        Number.isInteger(turnStart) &&
-        Number.isInteger(turnEnd) &&
         turnStart >= 0 &&
         turnStart <= turnEnd &&
-        Number.isInteger(range.preCompactionApiEndIndex) &&
-        range.preCompactionApiEndIndex >= end &&
-        range.preCompactionApiEndIndex < canonicalLength
+        Number.isInteger(candidate.preCompactionApiEndIndex) &&
+        candidate.preCompactionApiEndIndex! >= end &&
+        candidate.preCompactionApiEndIndex! < canonicalLength
     )
 }
 
-function normalizeRanges(ranges: readonly CanonicalMessageRange[], length: number): CanonicalMessageRange[] {
+/** Clamp and merge legacy deleted ranges exactly as the provider projection does. */
+export function normalizeCanonicalMessageRanges(ranges: readonly unknown[], length: number): CanonicalMessageRange[] {
     const normalized = ranges
+        .filter(isCanonicalMessageRange)
         .map(([start, end]) => [Math.max(0, start), Math.min(length - 1, end)] as const)
-        .filter(([start, end]) => Number.isInteger(start) && Number.isInteger(end) && start <= end)
+        .filter(([start, end]) => start <= end)
         .sort(([left], [right]) => left - right)
     const merged: CanonicalMessageRange[] = []
     for (const range of normalized) {

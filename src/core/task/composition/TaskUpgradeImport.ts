@@ -74,18 +74,22 @@ export async function taskUpgradeImportPending(input: TaskUpgradeImportInput): P
     }
 }
 
-async function legacyCompactionImportPending(input: TaskUpgradeImportInput): Promise<boolean> {
-    return legacyConversationRepairPending(input.persistence.ports.journal)
-}
-
-async function importLegacyCompactionState(input: TaskUpgradeImportInput): Promise<void> {
-    await repairLegacyConversation({
+function legacyConversationRepairInput(input: TaskUpgradeImportInput) {
+    return {
         journal: input.persistence.ports.journal,
         payloads: input.persistence.payloads,
         canonicalLength: input.apiHistory.length,
         uiMessages: input.uiMessages,
         deletedRange: input.conversationHistoryDeletedRange,
-    })
+    }
+}
+
+async function legacyCompactionImportPending(input: TaskUpgradeImportInput): Promise<boolean> {
+    return legacyConversationRepairPending(legacyConversationRepairInput(input))
+}
+
+async function importLegacyCompactionState(input: TaskUpgradeImportInput): Promise<void> {
+    await repairLegacyConversation(legacyConversationRepairInput(input))
 }
 
 async function importConversation(input: TaskUpgradeImportInput): Promise<void> {

@@ -181,8 +181,9 @@ e2e(
             id: "call_legacy_compaction_resumed",
             name: "attempt_completion",
             arguments: { result: COMPLETED },
-            expectedRequestIncludes: [SUMMARY, KEPT_FOLLOW_UP, KEPT_ANSWER, RESUME_INPUT],
+            expectedRequestIncludes: ["<previous_task_compaction_summary>", SUMMARY, KEPT_FOLLOW_UP, KEPT_ANSWER, RESUME_INPUT],
             expectedRequestExcludes: [OPENING, FIRST_ANSWER, COVERED_FOLLOW_UP, COVERED_ANSWER],
+            matchRequestContract: true,
         })
 
         const app = await openVSCode(workspaceDir)
@@ -233,6 +234,7 @@ e2e(
             ],
             expectedRequestExcludes: ["E2E_LEGACY_TRUNCATE_REMOVED_USER", "E2E_LEGACY_TRUNCATE_REMOVED_ASSISTANT"],
             matchRequestContract: true,
+            requireCompleteToolPairing: true,
         })
 
         const app = await openVSCode(workspaceDir)

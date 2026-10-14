@@ -1,6 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import type { UiMessage } from "@shared/ExtensionMessage"
+import type { ClineStorageMessage } from "@shared/messages/content"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { StoredEntityClass } from "../../../storage/backend/api/EntitySchema"
 import {
@@ -13,6 +15,10 @@ import {
     openInstanceStorage,
     switchInstanceDatabaseBackend,
 } from "../../../storage/instance"
+import { repairLegacyConversation } from "../../composition/LegacyConversationRepair"
+import { importApiHistory } from "../../conversation/ApiHistoryImport"
+import { JournalConversationView } from "../../executors/provider/service/JournalConversationView"
+import { ProviderJournalMessageMaterializer } from "../../executors/provider/service/ProviderJournalMessageMaterializer"
 import type { Command } from "../../kernel"
 import { openTaskJournalStores } from "../sqlite"
 import { BackgroundDeliveryRow, CommandPublicationRow, JournalEntryRow, PayloadRow } from "../sqlite/entities"
@@ -140,6 +146,68 @@ describe("switching journal.db between SQLite and JSONL", () => {
         expect(back.entries).toHaveLength(5)
         expect(back.entries.slice(0, 4)).toEqual(before.entries)
         expect(back.payloads.slice(0, before.payloads.length)).toEqual(before.payloads)
+    })
+
+    it.each([
+        [InstanceBackend.Sqlite, InstanceBackend.Jsonl],
+        [InstanceBackend.Jsonl, InstanceBackend.Sqlite],
+    ])("preserves a repaired legacy compaction projection when switching from %s to %s", async (from, to) => {
+        vi.stubEnv(INSTANCE_BACKEND_ENV, from)
+        const taskId = `legacy-repair-${from}-${to}`
+        const layout = await ensureInstanceLayout({ taskId })
+        const writer = openInstanceStorage(layout.root)
+        const stores = await openTaskJournalStores(await writer.openDatabase(InstanceDatabase.Journal, "kernel-commit"))
+        const history: ClineStorageMessage[] = [
+            { role: "user", content: [{ type: "text", text: "legacy opening" }], ts: 1 },
+            { role: "assistant", content: [{ type: "text", text: "legacy covered answer" }], ts: 2 },
+            { role: "user", content: [{ type: "text", text: "legacy kept input" }], ts: 3 },
+        ]
+        const uiMessages: UiMessage[] = [
+            {
+                ts: 10,
+                type: "say",
+                say: "tool",
+                text: JSON.stringify({ tool: "summarizeTask", content: "legacy backend summary", compactionStatus: "completed" }),
+                compactionConversationRange: {
+                    logicalTurnRange: [0, 0],
+                    apiConversationRange: [0, 1],
+                    preCompactionApiEndIndex: 2,
+                },
+            },
+        ]
+        await importApiHistory({ journal: stores.journal, payloads: stores.payloads, history })
+        await repairLegacyConversation({
+            journal: stores.journal,
+            payloads: stores.payloads,
+            canonicalLength: history.length,
+            uiMessages,
+        })
+        const before = (
+            await new JournalConversationView(
+                stores.journal,
+                new ProviderJournalMessageMaterializer(stores.payloads),
+            ).providerMessages()
+        ).map(({ role, content }) => ({ role, content }))
+        await writer.close()
+
+        await switchInstanceDatabaseBackend(layout, InstanceDatabase.Journal, to, JOURNAL_ENTITIES)
+        const reader = openInstanceStorage(layout.root)
+        const moved = await openTaskJournalStores(await reader.openDatabase(InstanceDatabase.Journal, "reader"))
+        const after = (
+            await new JournalConversationView(
+                moved.journal,
+                new ProviderJournalMessageMaterializer(moved.payloads),
+            ).providerMessages()
+        ).map(({ role, content }) => ({ role, content }))
+        await reader.close()
+
+        expect(after).toEqual(before)
+        const serialized = JSON.stringify(after)
+        expect(serialized).toContain("<previous_task_compaction_summary>")
+        expect(serialized).toContain("legacy backend summary")
+        expect(serialized).toContain("legacy kept input")
+        expect(serialized).not.toContain("legacy opening")
+        expect(serialized).not.toContain("legacy covered answer")
     })
 
     it("refuses to switch a database that is open in this process", async () => {
