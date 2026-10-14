@@ -1434,7 +1434,7 @@ describe("SubagentRunner", () => {
         assert.equal(assistant.provider_metadata?.response_id, "successful-reasoning")
     })
 
-    it("diagnoses a reasoning-only turn as user feedback without inventing an assistant turn", async () => {
+    it("preserves a reasoning-only turn before appending user feedback", async () => {
         const createMessage = vi.fn()
         let nextRoundConversation: unknown[] = []
         createMessage.mockImplementationOnce(async function* () {
@@ -1463,16 +1463,70 @@ describe("SubagentRunner", () => {
         const result = await new SubagentRunner(createTaskConfig(true)).run("Inspect files", () => {})
 
         assert.equal(result.status, "completed", result.error)
-        // Reasoning alone is not stored, so the transcript still ends in the user turn,
-        // which now carries the diagnosis and the next step.
-        assert.equal(nextRoundConversation.length, 1)
-        const user = nextRoundConversation[0] as { role: string; content: Array<{ type: string; text?: string }> }
+        assert.equal(nextRoundConversation.length, 3)
+        const assistant = nextRoundConversation[1] as { role: string; content: Array<Record<string, unknown>> }
+        assert.equal(assistant.role, "assistant")
+        assert.deepEqual(assistant.content[0], {
+            type: "thinking",
+            thinking: "Reasoning without a response",
+            signature: "reasoning-only-signature",
+            summary: [],
+            provider_metadata: undefined,
+        })
+        const user = nextRoundConversation[2] as { role: string; content: Array<{ type: string; text?: string }> }
         assert.equal(user.role, "user")
         const feedback = user.content.map((block) => block.text ?? "").join("\n")
         assert.match(feedback, /contained only internal reasoning/)
         assert.match(feedback, /Consecutive failed responses: 1 of 5/)
         assert.match(feedback, /Do not restart or repeat earlier analysis/)
         assert.doesNotMatch(JSON.stringify(nextRoundConversation), /I did not provide a response/)
+    })
+
+    it("preserves redacted thinking continuity before appending user feedback", async () => {
+        const createMessage = vi.fn()
+        let nextRoundConversation: unknown[] = []
+        createMessage.mockImplementationOnce(async function* () {
+            yield {
+                type: "reasoning",
+                reasoning: "[Redacted thinking block]",
+                redacted_data: "opaque-anthropic-thinking",
+                redacted_phase: "final",
+            }
+        })
+        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, conversation: unknown[]) {
+            nextRoundConversation = conversation
+            yield {
+                type: "tool_calls",
+                function_id: "provider-complete-after-redacted-thinking",
+                tool_index: 0,
+                tool_call: {
+                    function: {
+                        name: DlineDefaultTool.ATTEMPT,
+                        arguments: JSON.stringify({ result: "done" }),
+                    },
+                },
+            }
+        })
+        stubSystemPrompt(true)
+        vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+        vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+        stubApiHandler(createMessage)
+        initializeHostProvider()
+
+        const result = await new SubagentRunner(createTaskConfig(true)).run("Inspect files", () => {})
+
+        assert.equal(result.status, "completed", result.error)
+        assert.equal(nextRoundConversation.length, 3)
+        const assistant = nextRoundConversation[1] as { role: string; content: Array<Record<string, unknown>> }
+        assert.equal(assistant.role, "assistant")
+        assert.deepEqual(assistant.content[0], {
+            type: "redacted_thinking",
+            data: "opaque-anthropic-thinking",
+            provider_metadata: undefined,
+        })
+        const user = nextRoundConversation[2] as { role: string; content: Array<{ type: string; text?: string }> }
+        assert.equal(user.role, "user")
+        assert.match(user.content.map((block) => block.text ?? "").join("\n"), /contained only internal reasoning/)
     })
 
     it("records structured tool calls received while non-native mode is enabled", async () => {

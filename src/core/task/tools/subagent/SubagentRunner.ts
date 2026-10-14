@@ -1498,15 +1498,10 @@ export class SubagentRunner {
                 if (useNativeToolCalls) {
                     assistantContent.push(...finalizedToolCalls.map(toAssistantToolUseBlock))
                 }
-                // Reasoning alone is not a turn worth storing: replaying it gives the
-                // model nothing it can act on, and inventing visible text in its name
-                // would teach it a failure it never wrote. The runtime feedback below
-                // explains what happened instead.
-                const hasStorableTurn =
-                    finalizedToolCalls.length > 0 ||
-                    assistantContent.some((block) => block.type !== "thinking" && block.type !== "redacted_thinking")
-
-                if (hasStorableTurn) {
+                // Preserve every provider-issued assistant block before adding runtime feedback.
+                // In particular, signed or redacted reasoning carries multi-turn continuity even
+                // when the response contains no visible text or tool call.
+                if (assistantContent.length > 0) {
                     conversation.push({
                         role: "assistant",
                         content: assistantContent,
