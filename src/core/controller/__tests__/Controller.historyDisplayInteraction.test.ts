@@ -56,6 +56,7 @@ function createPromotingController(continuation: Promise<void>): Controller {
         taskLifecycleMutex: new Mutex(),
         historyDisplaySession: {
             taskId: "task-history",
+            taskInstanceId: "opening-display",
             historyItem: { id: "task-history" },
             accepts: () => true,
             dispose: async () => undefined,
@@ -109,5 +110,22 @@ describe("Controller history display interaction", () => {
             }),
         )
         continuation.resolve()
+    })
+
+    it("promotes the display into a runtime that keeps the display's opening", async () => {
+        // A new opening identity makes the Webview drop the shown messages and the
+        // reply being sent; promotion is the same view continuing, now writable.
+        const controller = createPromotingController(Promise.resolve())
+
+        await controller.dispatchHistoryDisplayInteraction(resumeRequest())
+
+        expect(controller.initTask).toHaveBeenCalledWith(
+            undefined,
+            undefined,
+            undefined,
+            { id: "task-history" },
+            undefined,
+            expect.objectContaining({ activateHistory: true, taskInstanceId: "opening-display" }),
+        )
     })
 })

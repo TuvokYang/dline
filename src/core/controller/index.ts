@@ -196,6 +196,12 @@ type InitTaskOptions = {
     handoffSource?: TaskHandoffSource
     /** Promote a lightweight historical display into the interactive Task runtime. */
     activateHistory?: boolean
+    /**
+     * Opening identity to adopt instead of a fresh one. A promoted history display
+     * passes its own, so the Webview sees the same view continue rather than a new
+     * opening that discards the shown messages and the reply being sent.
+     */
+    taskInstanceId?: string
     /** Why an existing task is opened; defaults to an ordinary resume. */
     openReason?: "resume" | "checkpoint_restore"
     /** Process-local directory classification fixed before the session registers. */
@@ -1255,7 +1261,7 @@ export class Controller {
             })
             // This opening's identity. The session adopts it as its incarnation, so
             // every row, page and activity the session publishes is attributed to it.
-            const opening: TaskOpening = { taskId, taskInstanceId: randomUUID() }
+            const opening: TaskOpening = { taskId, taskInstanceId: options?.taskInstanceId ?? randomUUID() }
             this.handoffOpening = options?.handoffSource
                 ? { taskInstanceId: opening.taskInstanceId, source: options.handoffSource }
                 : undefined
@@ -1646,8 +1652,8 @@ export class Controller {
                     DispatchInteractionRequest.create({
                         ...request,
                         taskId: session.taskId,
-                        // The reply was rendered by the display's opening; promotion is the
-                        // one place it legitimately moves to the runtime's own opening.
+                        // The runtime adopted the display's opening, so this is the identity
+                        // the reply was rendered under; it is read from the session to stay exact.
                         taskInstanceId: session.taskInstanceId,
                         turnId: interaction.turnId,
                         interactionId: interaction.interactionId,
@@ -1680,6 +1686,9 @@ export class Controller {
                 await this.initTask(undefined, undefined, undefined, display.historyItem, undefined, {
                     skipInitialClear: true,
                     activateHistory: true,
+                    // Promotion continues the same view: keeping the opening identity keeps
+                    // the Webview's message window and the draft being sent.
+                    taskInstanceId: display.taskInstanceId,
                 })
             },
             () => this.postStateToWebview({ immediate: true }),
