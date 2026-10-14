@@ -130,17 +130,6 @@ The above scrollbar styling uses some transparent background color magic to acco
 }
 
 /*
-Thin theme-colored scrollbar for bounded scroll areas inside chat rows. The standard
-properties take precedence over webkit pseudo-elements in Chromium, and they still apply
-where no host stylesheet injects a scrollbar width (Storybook), so the thumb follows the
-active theme instead of falling back to the light system scrollbar.
-*/
-.themed-scrollbar {
-    scrollbar-width: thin;
-    scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4)) transparent;
-}
-
-/*
 Dropdown label
 https://github.com/microsoft/vscode-webview-ui-toolkit/tree/main/src/dropdown#with-label
 */

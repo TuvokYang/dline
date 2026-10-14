@@ -93,3 +93,15 @@
     white-space: pre-wrap;
     word-break: break-word;
 }
+
+/*
+ * Thin theme-colored scrollbar for bounded scroll areas inside chat rows, the same
+ * treatment as the chat input and agent update rows. The standard properties take
+ * precedence over webkit pseudo-elements in Chromium and do not depend on the scrollbar
+ * width the VS Code webview injects, so the thumb follows the active theme in Storybook
+ * too. This lives here rather than in main.css because Storybook loads only index.css.
+ */
+.themed-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4)) transparent;
+}
