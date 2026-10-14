@@ -354,7 +354,7 @@ describe("TaskContextUsageProjection", () => {
         expect(harness.target.contextWindowIndicator).toMatchObject({ contextWindow: WINDOW, mode: "plan" })
     })
 
-    it("projects the actual hidden Pass request instead of fabricating old context plus tail", async () => {
+    it("keeps the conversation it showed while a hidden Pass is sent, without adding the staged tail", async () => {
         const harness = createProjection()
         await request(harness, "turn-1", 441_433)
         harness.projection.committed({ ...running(), flow: { phase: "waiting" } })
@@ -375,6 +375,7 @@ describe("TaskContextUsageProjection", () => {
         expect(harness.target.contextWindowIndicator).toMatchObject({ phase: "stable" })
         expect(total(harness)).toBe(441_433)
 
+        // The Pass sends the conversation the provider counted at 441_433; its local estimate reads smaller.
         harness.projection.compactionPassStarted("compaction:1", 0, "pass-attempt:1", {
             durableContextTokens: 306_000,
             pendingSendTokens: 13_000,
@@ -384,11 +385,11 @@ describe("TaskContextUsageProjection", () => {
         expect(harness.target.contextWindowIndicator).toMatchObject({
             phase: "sending",
             lineage: { kind: "compaction_pass", operationId: "compaction:1", passIndex: 0 },
-            durableContextTokens: 306_000,
-            pendingSendTokens: 13_000,
+            durableContextTokens: 441_433,
+            pendingSendTokens: 0,
             environmentTokens: 0,
         })
-        expect(total(harness)).toBe(319_000)
+        expect(total(harness)).toBe(441_433)
     })
 
     it("does not invent a Sending request before the hidden Pass starts", async () => {
@@ -411,7 +412,7 @@ describe("TaskContextUsageProjection", () => {
         expect(harness.target.contextWindowIndicator?.phase).not.toBe("sending")
     })
 
-    it("shows the actual Pass instead of deriving one from the reported context and staged tail", async () => {
+    it("holds the reported figure while a Pass is sent and settles on the context a landed summary leaves", async () => {
         const harness = createProjection()
         await request(harness, "turn-1", 17_392)
         // The run continues after this report, so the figure is still receiving.
@@ -437,9 +438,9 @@ describe("TaskContextUsageProjection", () => {
         expect(harness.target.contextWindowIndicator).toMatchObject({
             phase: "sending",
             lineage: { kind: "compaction_pass" },
-            pendingSendTokens: 13_000,
+            pendingSendTokens: 0,
         })
-        expect(total(harness)).toBe(319_000)
+        expect(total(harness)).toBe(930_100)
 
         harness.projection.compacted({ contextTokens: 17_000, contextWindow: WINDOW })
         expect(total(harness)).toBe(17_000)
@@ -460,7 +461,7 @@ describe("TaskContextUsageProjection", () => {
         harness.projection.compactionPassStarted("compaction:1", 0, "pass:1", pass)
 
         harness.projection.compactionPassProjected("compaction:0", pass)
-        expect(total(harness)).toBe(405_000)
+        expect(total(harness)).toBe(930_100)
 
         harness.projection.compactionPassProjected("compaction:1", pass)
         // Settling folds the Pass's pending tail into the durable figure.
@@ -476,54 +477,6 @@ describe("TaskContextUsageProjection", () => {
         // A later Pass condenses further, so the figure keeps following it down.
         harness.projection.compactionPassProjected("compaction:1", { ...pass, durableContextTokens: 150_000 })
         expect(total(harness)).toBe(155_000)
-    })
-
-    it("draws a compaction's local estimates on the scale the provider reported", async () => {
-        const harness = createProjection()
-        // The provider counted the request at half again its local estimate.
-        await harness.projection.started({
-            turnId: "turn-1",
-            contextWindow: WINDOW,
-            opening: {
-                estimatedTokens: 400_000,
-                projectedUsageTokens: 400_000,
-                segments: {
-                    durableContextTokens: 390_000,
-                    pendingSendTokens: 6_000,
-                    environmentTokens: 4_000,
-                    totalTokens: 400_000,
-                },
-            },
-        })
-        await harness.projection.record({ turnId: "turn-1", contextTokens: 602_000, outputTokens: 2_000, contextWindow: WINDOW })
-        await drained()
-        expect(total(harness)).toBe(602_000)
-
-        // The Pass sends the same history; estimated, it would have read 400k and dropped the header by 200k.
-        harness.projection.compactionPassStarted("compaction:1", 0, "pass:1", {
-            durableContextTokens: 380_000,
-            pendingSendTokens: 16_000,
-            environmentTokens: 4_000,
-            contextWindow: WINDOW,
-        })
-        expect(harness.target.contextWindowIndicator).toMatchObject({
-            phase: "sending",
-            durableContextTokens: 570_000,
-            pendingSendTokens: 24_000,
-            environmentTokens: 6_000,
-        })
-        expect(total(harness)).toBe(600_000)
-
-        harness.projection.compactionPassProjected("compaction:1", {
-            durableContextTokens: 100_000,
-            pendingSendTokens: 0,
-            environmentTokens: 4_000,
-            contextWindow: WINDOW,
-        })
-        expect(total(harness)).toBe(156_000)
-
-        harness.projection.compacted({ contextTokens: 80_000, contextWindow: WINDOW })
-        expect(total(harness)).toBe(120_000)
     })
 
     it("drops a staged tail once an ordinary request carries it", async () => {
