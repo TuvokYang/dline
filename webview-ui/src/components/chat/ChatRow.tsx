@@ -41,11 +41,10 @@ import { OptionsButtons } from "@/components/chat/OptionsButtons"
 import { CheckmarkControl } from "@/components/common/CheckmarkControl"
 import { WithCopyButton } from "@/components/common/CopyButton"
 import McpResponseDisplay from "@/components/mcp/chat-display/McpResponseDisplay"
-import McpResourceRow from "@/components/mcp/configuration/tabs/installed/server-row/McpResourceRow"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
 import { FileServiceClient, UiServiceClient } from "@/services/grpc-client"
-import { findMatchingResourceOrTemplate, getMcpServerDisplayName } from "@/utils/mcp"
+import { getMcpServerDisplayName } from "@/utils/mcp"
 import CodeAccordian, { cleanPathPrefix } from "../common/CodeAccordian"
 import AgentUpdateRow from "./AgentUpdateRow"
 import { ApiErrorBox } from "./ApiErrorBox"
@@ -61,7 +60,7 @@ import {
     resolveApiErrorMessage,
 } from "./chat-view/utils/messageUtils"
 import { describeCompactionFailure } from "./compaction-failure-label"
-import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
+import { CHAT_ROW_HEADER_CLASSNAMES, TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
 import { DiffEditRow } from "./DiffEditRow"
 import { EditResultRow } from "./EditResultRow"
 import ErrorRow from "./ErrorRow"
@@ -73,6 +72,7 @@ import ImageGenerationRow from "./ImageGenerationRow"
 import { KillCommandRow } from "./KillCommandRow"
 import LoadCapabilityRow from "./LoadCapabilityRow"
 import { MarkdownRow } from "./MarkdownRow"
+import McpCallRow from "./McpCallRow"
 import NewTaskPreview from "./NewTaskPreview"
 import PlanCompletionOutputRow from "./PlanCompletionOutputRow"
 import QnaOutputRow from "./QnaOutputRow"
@@ -87,7 +87,7 @@ import UserMessage from "./UserMessage"
 import WebFetchRow from "./WebFetchRow"
 import WebSearchRow from "./WebSearchRow"
 
-const HEADER_CLASSNAMES = "flex items-center gap-2.5 mb-3"
+const HEADER_CLASSNAMES = CHAT_ROW_HEADER_CLASSNAMES
 
 /**
  * Read the workspace-change verdict and display text of a completion message.
@@ -1095,121 +1095,18 @@ export const ChatRowContent = memo(
 
         if (message.ask === "use_mcp_server" || message.say === "use_mcp_server") {
             const useMcpServer = JSON.parse(message.text || "{}") as UiAskUseMcpServer
-            const server = mcpServers.find((server) => server.name === useMcpServer.serverName)
             const responseTexts = collectMcpResponseTexts(clineMessages, message.ts)
-            const hasResponse = responseTexts.length > 0
-            // The card shows while the call is pending or running; once its response
-            // has landed the call is final and folds to its header, request and
-            // response together, and the header reopens it.
-            const mcpCallFinal = hasResponse && !isMcpServerResponding && !message.partial
-            const showMcpCard = !mcpCallFinal || isExpanded
-            const isMcpToolCall = useMcpServer.type === "use_mcp_tool"
-            const mcpToolDescription = isMcpToolCall
-                ? server?.tools?.find((tool) => tool.name === useMcpServer.toolName)?.description || ""
-                : ""
-            const hasMcpArguments = isMcpToolCall && !!useMcpServer.arguments && useMcpServer.arguments !== "{}"
             return (
-                <div>
-                    {mcpCallFinal ? (
-                        <button
-                            aria-expanded={isExpanded}
-                            aria-label={isExpanded ? "Collapse MCP call" : "Expand MCP call"}
-                            className={cn(
-                                HEADER_CLASSNAMES,
-                                "w-full cursor-pointer select-none border-0 bg-transparent p-0 text-left text-inherit font-inherit",
-                                !isExpanded && "mb-0",
-                            )}
-                            data-testid="mcp-call-toggle"
-                            onClick={handleToggle}
-                            type="button">
-                            {icon}
-                            <span className="min-w-0 flex-1">{title}</span>
-                            {!isExpanded && useMcpServer.toolName ? (
-                                <code className="min-w-0 truncate font-normal text-description">{useMcpServer.toolName}</code>
-                            ) : null}
-                            {isExpanded ? (
-                                <ChevronDownIcon className="size-4 shrink-0" />
-                            ) : (
-                                <ChevronRightIcon className="size-4 shrink-0" />
-                            )}
-                        </button>
-                    ) : (
-                        <div className={HEADER_CLASSNAMES}>
-                            {icon}
-                            {title}
-                        </div>
-                    )}
-
-                    {/* One 60vh card holds the request and its response. With a response the
-                        request keeps at most 30vh so the response always has room; each part
-                        scrolls inside its own area instead of the card growing past the cap.
-                        The tool name stays fixed above the scrolling description and arguments. */}
-                    {showMcpCard && (
-                        <div
-                            className="bg-code rounded-xs mt-2 flex max-h-[60vh] flex-col overflow-hidden"
-                            data-testid="mcp-request-card">
-                            {isMcpToolCall && (
-                                <div
-                                    className="flex shrink-0 items-center gap-1.5 px-2.5 pt-2 pb-1 font-medium"
-                                    data-testid="mcp-tool-title">
-                                    <span className="codicon codicon-symbol-method shrink-0" />
-                                    <span className="min-w-0 truncate">{useMcpServer.toolName || ""}</span>
-                                </div>
-                            )}
-                            <div
-                                className={cn(
-                                    "themed-scrollbar min-h-0 overflow-y-auto overscroll-x-contain px-2.5",
-                                    isMcpToolCall ? "pb-2" : "py-2",
-                                    hasResponse && "max-h-[30vh] shrink-0",
-                                    isMcpToolCall && !mcpToolDescription && !hasMcpArguments && "hidden",
-                                )}
-                                data-testid="mcp-request-body">
-                                {useMcpServer.type === "access_mcp_resource" && (
-                                    <McpResourceRow
-                                        item={{
-                                            ...(findMatchingResourceOrTemplate(
-                                                useMcpServer.uri || "",
-                                                server?.resources,
-                                                server?.resourceTemplates,
-                                            ) || {
-                                                name: "",
-                                                mimeType: "",
-                                                description: "",
-                                            }),
-                                            uri: useMcpServer.uri || "",
-                                        }}
-                                    />
-                                )}
-
-                                {isMcpToolCall && (
-                                    <div>
-                                        {mcpToolDescription && (
-                                            <div className="text-[12px] opacity-80" data-testid="mcp-tool-description">
-                                                {mcpToolDescription}
-                                            </div>
-                                        )}
-                                        {hasMcpArguments && (
-                                            <div className={cn(mcpToolDescription && "mt-2")}>
-                                                <div className="mb-1 opacity-80 uppercase">Arguments</div>
-                                                <CodeAccordian
-                                                    code={useMcpServer.arguments || ""}
-                                                    isExpanded={true}
-                                                    language="json"
-                                                    onToggleExpand={handleToggle}
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                            {hasResponse && (
-                                <div className="flex min-h-0 flex-col" data-testid="mcp-response-group">
-                                    <McpResponseDisplay embedded responseText={responseTexts.join("\n\n")} />
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
+                <McpCallRow
+                    icon={icon}
+                    isExpanded={isExpanded}
+                    isFinal={responseTexts.length > 0 && !isMcpServerResponding && !message.partial}
+                    onToggleExpand={handleToggle}
+                    request={useMcpServer}
+                    responseTexts={responseTexts}
+                    server={mcpServers.find((server) => server.name === useMcpServer.serverName)}
+                    title={title}
+                />
             )
         }
 

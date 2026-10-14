@@ -73,10 +73,47 @@ describe("ChatRow MCP tool rendering", () => {
         expect(title).toHaveClass("shrink-0")
         expect(body).not.toContainElement(title)
         expect(body).toContainElement(screen.getByTestId("mcp-tool-description"))
+        // Both detail sections carry a subheading.
+        expect(body).toHaveTextContent("Description")
         expect(body).toHaveTextContent("Arguments")
         // Without a response the request may use the whole card.
         expect(body).not.toHaveClass("max-h-[30vh]")
         expect(screen.queryByTestId("mcp-response-group")).not.toBeInTheDocument()
+    })
+
+    it("folds the tool details from the tool title and shows string arguments unescaped", () => {
+        clineMessages = []
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 1,
+                    type: "say",
+                    say: "use_mcp_server",
+                    text: JSON.stringify({
+                        type: "use_mcp_tool",
+                        serverName: "docs",
+                        toolName: "search",
+                        arguments: JSON.stringify({ logql: '{service_name="dline"} |= "error"', limit: 10 }),
+                    }),
+                }}
+            />,
+        )
+
+        const args = screen.getByTestId("mcp-tool-arguments")
+        expect(args).toHaveTextContent('logql{service_name="dline"} |= "error"')
+        expect(args).toHaveTextContent("limit10")
+        expect(args.textContent).not.toContain("\\")
+
+        const title = screen.getByTestId("mcp-tool-title")
+        expect(title).toHaveAttribute("aria-expanded", "true")
+        fireEvent.click(title)
+        expect(title).toHaveAttribute("aria-expanded", "false")
+        expect(screen.queryByTestId("mcp-request-body")).not.toBeInTheDocument()
+        // Folding the details leaves the card and the title in place.
+        expect(screen.getByTestId("mcp-request-card")).toContainElement(title)
+        fireEvent.click(title)
+        expect(screen.getByTestId("mcp-tool-description")).toHaveTextContent("Search docs")
     })
 
     it("groups every response item into the connected request card", async () => {

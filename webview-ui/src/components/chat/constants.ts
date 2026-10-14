@@ -9,6 +9,9 @@
  */
 export const HOOK_OUTPUT_STRING = "__HOOK_OUTPUT__"
 
+/** Layout of the icon-and-title header that opens a chat row. */
+export const CHAT_ROW_HEADER_CLASSNAMES = "flex items-center gap-2.5 mb-3"
+
 /** Maximum height shared by uncapped tool response surfaces. */
 export const TOOL_RESPONSE_MAX_HEIGHT = "60vh"
 
