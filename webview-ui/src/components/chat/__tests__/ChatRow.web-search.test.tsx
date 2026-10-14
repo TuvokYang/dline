@@ -344,6 +344,38 @@ describe("ChatRow hosted Web Search rendering", () => {
         expect(screen.getByText("Browser / Bing search failed: navigation timed out")).toBeInTheDocument()
     })
 
+    it("shows why a local search took over a hosted call on that call's one card", () => {
+        const notice =
+            "OpenAI hosted Web Search returned a local web_search function call; falling back to Dline local Web Search."
+        render(
+            <ChatRowContent
+                {...baseProps}
+                message={{
+                    ts: 3,
+                    type: "say",
+                    say: "tool",
+                    partial: false,
+                    text: JSON.stringify({
+                        tool: "webSearch",
+                        path: "fallback query",
+                        webSearch: {
+                            schemaVersion: 1,
+                            status: "completed",
+                            source: { id: "searxng", label: "SearXNG", execution: "dline" },
+                            query: "fallback query",
+                            items: [{ url: "https://example.com/result", title: "Result" }],
+                            notice,
+                        },
+                    }),
+                }}
+            />,
+        )
+
+        expect(screen.getAllByTestId("web-search-card")).toHaveLength(1)
+        expect(screen.getByText("SearXNG (Dline)")).toBeInTheDocument()
+        expect(screen.getByTestId("web-search-notice")).toHaveTextContent(notice)
+    })
+
     it("renders the complete URL in a pending Web Fetch approval", () => {
         const url = "https://example.com/a/long/path/to/current/api/documentation"
         render(

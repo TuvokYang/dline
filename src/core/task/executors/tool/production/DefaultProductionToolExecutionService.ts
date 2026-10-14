@@ -70,7 +70,11 @@ function canFallbackUnadvertisedWebSearch(config: TaskConfig): boolean {
     )
 }
 
-function createLocalWebSearchFallbackConfig(config: TaskConfig): TaskConfig {
+/**
+ * Hand the call to the local engine. The fallback notice travels with it so the
+ * local search, which settles the call's own row, also says why it ran.
+ */
+function createLocalWebSearchFallbackConfig(config: TaskConfig, notice: string): TaskConfig {
     const plan = config.webSearchRoutingPlan
     if (!plan) return config
     return {
@@ -81,23 +85,29 @@ function createLocalWebSearchFallbackConfig(config: TaskConfig): TaskConfig {
             localToolEnabled: true,
             serverTools: Object.freeze([]),
         }),
+        webSearchFallbackNotice: notice,
     }
 }
 
-async function presentUnadvertisedHostedWebSearch(
-    config: TaskConfig,
-    block: ToolUse,
-    fallback: boolean,
-    mode: WebToolsMode,
-): Promise<string> {
-    const providerId = config.api.getProviderId?.() ?? "provider"
-    const providerLabel = providerId === "openai" ? "OpenAI" : providerId === "deepseek" ? "DeepSeek" : providerId
-    const query = typeof block.params?.query === "string" && block.params.query.trim() ? block.params.query.trim() : "Web search"
-    const message = fallback
+function hostedSearchProvider(config: TaskConfig): { readonly id: string; readonly label: string } {
+    const id = config.api.getProviderId?.() ?? "provider"
+    return { id, label: id === "openai" ? "OpenAI" : id === "deepseek" ? "DeepSeek" : id }
+}
+
+/** What the user is told when a hosted search came back as a local function call. */
+function unadvertisedHostedWebSearchMessage(config: TaskConfig, fallback: boolean, mode: WebToolsMode): string {
+    const providerLabel = hostedSearchProvider(config).label
+    return fallback
         ? `${providerLabel} hosted Web Search returned a local web_search function call instead of a hosted search event; falling back to Dline local Web Search.`
         : mode === WebToolsMode.WEB_TOOLS_MODE_FORCE_REMOTE
           ? `${providerLabel} hosted Web Search returned a local web_search function call, but the request is configured for Force Remote. The local call was rejected.`
           : `${providerLabel} hosted Web Search returned a local web_search function call, but Auto mode has no Dline local Web Search fallback for the current prompt profile. The local call was rejected.`
+}
+
+/** End a hosted search call that cannot be answered locally on the call's own row. */
+async function presentRejectedHostedWebSearch(config: TaskConfig, block: ToolUse, message: string): Promise<void> {
+    const { id: providerId, label: providerLabel } = hostedSearchProvider(config)
+    const query = typeof block.params?.query === "string" && block.params.query.trim() ? block.params.query.trim() : "Web search"
     const presentation: UiSayTool = {
         tool: "webSearch",
         path: query,
@@ -116,8 +126,17 @@ async function presentUnadvertisedHostedWebSearch(
             error: message,
         },
     }
-    await config.callbacks.say("tool", JSON.stringify(presentation), undefined, undefined, false)
-    return message
+    await config.callbacks.say("tool", JSON.stringify(presentation), undefined, undefined, false, block.ts)
+}
+
+/**
+ * Show a refusal the call met after it was approved on the call's own row.
+ *
+ * The handler never runs, so nothing else would move the row its preview or
+ * approval drew to a terminal state; a call that drew no row gets one appended.
+ */
+async function presentBoundaryRefusal(config: TaskConfig, block: ToolUse, message: string): Promise<void> {
+    await config.callbacks.say("error", message, undefined, undefined, false, block.ts)
 }
 
 /**
@@ -296,6 +315,15 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
     ): Promise<SerializedToolResult> {
         const block = materializeToolInvocation(input.invocation)
         const description = ToolDisplayUtils.getToolDescription(block, this.options.runtime.coordinator)
+        let config: TaskConfig = {
+            ...this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator }),
+            ...(lease ? { contextBudget: lease } : {}),
+        }
+        // Every terminal write of the call, including a refusal below, lands on its approval row.
+        const approvalAnchor = config.messageState?.clineMessages.find(
+            (message) => message.interactionId === approvalInteractionId(input.invocation.dlineTid),
+        )
+        if (approvalAnchor) block.ts = approvalAnchor.ts
         const boundary = await reviewRegisteredToolBoundary(
             block,
             block.name as DlineDefaultTool,
@@ -306,32 +334,27 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
                 boundary.code === "scope_widened"
                     ? formatResponse.toolScopeWidened()
                     : formatResponse.toolCanonicalizationFailed()
+            await presentBoundaryRefusal(config, block, message)
             return serializeResult(input.invocation, formatResponse.toolError(message), description, {
                 stage: "authorization",
                 code: boundary.code,
             })
         }
-        let config: TaskConfig = {
-            ...this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator }),
-            ...(lease ? { contextBudget: lease } : {}),
-        }
-        const approvalAnchor = config.messageState?.clineMessages.find(
-            (message) => message.interactionId === approvalInteractionId(input.invocation.dlineTid),
-        )
-        if (approvalAnchor) block.ts = approvalAnchor.ts
         if (
             input.invocation.isNativeToolCall &&
             input.invocation.toolName === DlineDefaultTool.WEB_SEARCH &&
             config.webSearchRoutingPlan?.route === "hosted"
         ) {
             const fallback = canFallbackUnadvertisedWebSearch(config)
-            const message = await presentUnadvertisedHostedWebSearch(config, block, fallback, config.webSearchRoutingPlan.mode)
-            if (!fallback)
+            const message = unadvertisedHostedWebSearchMessage(config, fallback, config.webSearchRoutingPlan.mode)
+            if (!fallback) {
+                await presentRejectedHostedWebSearch(config, block, message)
                 return serializeResult(input.invocation, formatResponse.toolError(message), description, {
                     stage: "routing",
                     code: "hosted_fallback_unavailable",
                 })
-            config = createLocalWebSearchFallbackConfig(config)
+            }
+            config = createLocalWebSearchFallbackConfig(config, message)
         }
         const policyResult = await resolveToolInteractionPolicy(config, block)
         const result = normalizeToolExecutionResult(

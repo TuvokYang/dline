@@ -16,6 +16,8 @@ export interface DialogAnchorRequest {
     readonly body: string
     /** Surface ask for the row; absent means the kind's default ask. */
     readonly ask?: string
+    /** Row the dialog's call already drew; reused when it is still present. */
+    readonly row?: number
 }
 
 export interface ProductionDialogAdapterOptions {
@@ -80,6 +82,7 @@ export class ProductionDialogAdapter implements DialogExecutionPort {
             kind: input.kind,
             body: input.presentationRef,
             ...(input.presentationAsk === undefined ? {} : { ask: input.presentationAsk }),
+            ...(input.presentationRow === undefined ? {} : { row: input.presentationRow }),
         })
         if (input.signal.aborted) throw input.signal.reason
         this.options.taskView.notifyTransient(this.options.taskId, {

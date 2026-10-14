@@ -90,6 +90,8 @@ export interface TaskConfig {
     subagentsEnabled?: boolean
     /** Request-frozen route used to admit or reject local Web Search execution. */
     webSearchRoutingPlan?: WebSearchRoutingPlan
+    /** Why a hosted Web Search call is answered by the local engine; the local search shows it on the call's row. */
+    webSearchFallbackNotice?: string
     /** Request-scoped one-shot authority for explicit-only tools. */
     explicitInstructions?: ExplicitInstructionConsumePort
     /** Authorization consumed by the central gate for the current complete handler invocation. */

@@ -107,6 +107,19 @@ describe("ProductionToolHandlerRuntime approval facts", () => {
         expect(plan.approval.kind).toBe("automatic")
     })
 
+    // The approval takes over the row the call drew while it streamed, so the
+    // plan must name that row; a call that drew none leaves it to the anchor.
+    it("names the row a manually approved call drew as the approval's row", () => {
+        const toolRuntime = runtime()
+        const drawn = { ...commandBlock("true"), ts: 42 } as ToolUse
+        const plan = planProductionTool(toolRuntime.coordinator, drawn, snapshot({ executeSafeCommands: true }))
+        const unanchored = planProductionTool(toolRuntime.coordinator, commandBlock("true"), snapshot({}))
+
+        expect(plan.approval).toMatchObject({ kind: "manual", presentationRow: 42 })
+        expect(unanchored.approval.kind).toBe("manual")
+        expect(unanchored.approval).not.toHaveProperty("presentationRow")
+    })
+
     it("falls back to manual approval when an ai_approvable scope has no approver", async () => {
         const input = snapshot({})
         input.settings.ceilings = { command_all: "ai_approvable" }

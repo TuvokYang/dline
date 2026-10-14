@@ -121,6 +121,7 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
                 createdRevision: nextRevision,
                 presentationRef: block.approval.presentationRef,
                 ...(block.approval.presentationAsk === undefined ? {} : { presentationAsk: block.approval.presentationAsk }),
+                ...(block.approval.presentationRow === undefined ? {} : { presentationRow: block.approval.presentationRow }),
                 actionRules: block.approval.actionRules,
                 blockId: block.blockId,
                 prepareKey: `dialog.prepare:${block.approval.interactionId}`,

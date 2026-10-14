@@ -4,6 +4,7 @@ import path from "node:path"
 import { ContextBudgetLedger } from "@core/context/context-management/context-budget-ledger"
 import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
+import { WebToolsMode } from "@shared/proto/dline/provider/common"
 import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { replayDurableToolResult } from "../../../../DurableToolResult"
@@ -166,6 +167,9 @@ describe("DefaultProductionToolExecutionService", () => {
         expect(receivedPresentationTs).toBe(99)
     })
 
+    /** The row a manual approval drew for INVOCATION, which every terminal write of the call must reuse. */
+    const approvalRow = { ts: 99, type: "ask", ask: "tool", interactionId: "approval:dline_tid_01" }
+
     it("fails closed before the handler when a workspace junction widens to an external target", async () => {
         const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-tool-boundary-"))
         try {
@@ -176,9 +180,13 @@ describe("DefaultProductionToolExecutionService", () => {
             await fs.mkdir(external)
             await fs.symlink(external, linked, process.platform === "win32" ? "junction" : "dir")
             const executeHandler = vi.fn(async () => "must not execute")
+            const say = vi.fn(async () => 99)
             const service = new DefaultProductionToolExecutionService({
                 taskId: "task-1",
-                config: configFactory({}, workspace),
+                config: configFactory(
+                    { callbacks: { say }, messageState: { clineMessages: [approvalRow] } } as unknown as Partial<TaskConfig>,
+                    workspace,
+                ),
                 runtime: {
                     coordinator: { getHandler: () => undefined },
                     execute: executeHandler,
@@ -201,9 +209,94 @@ describe("DefaultProductionToolExecutionService", () => {
             expect(result).toMatchObject({ failed: true, failure: { stage: "authorization", code: "scope_widened" } })
             expect(JSON.stringify(replayDurableToolResult(result.content))).toContain("[scope_widened]")
             await expect(fs.stat(path.join(external, "proof.txt"))).rejects.toMatchObject({ code: "ENOENT" })
+            // The approved row shows the refusal itself instead of staying an answered approval.
+            expect(say).toHaveBeenCalledOnce()
+            expect(say).toHaveBeenCalledWith(
+                "error",
+                expect.stringContaining("[scope_widened]"),
+                undefined,
+                undefined,
+                false,
+                approvalRow.ts,
+            )
         } finally {
             await fs.rm(temporaryRoot, { recursive: true, force: true })
         }
+    })
+
+    it("ends a hosted Web Search call it cannot route on the call's own approval row", async () => {
+        const say = vi.fn(async () => 99)
+        const executeHandler = vi.fn(async () => "must not execute")
+        const service = new DefaultProductionToolExecutionService({
+            taskId: "task-1",
+            config: configFactory({
+                api: { getProviderId: () => "openai" },
+                callbacks: { say },
+                messageState: { clineMessages: [approvalRow] },
+                webSearchRoutingPlan: { route: "hosted", mode: WebToolsMode.WEB_TOOLS_MODE_FORCE_REMOTE },
+            } as unknown as Partial<TaskConfig>),
+            runtime: {
+                coordinator: { getHandler: () => undefined },
+                execute: executeHandler,
+                restoreSubagentRetry: async () => false,
+            } as unknown as ProductionToolHandlerRuntime,
+        })
+
+        const result = await service.execute({
+            command: { commandId: "command-1", turnId: "turn-1", dlineTid: INVOCATION.dlineTid, invocationRef: "ref-1" },
+            invocation: {
+                ...INVOCATION,
+                toolName: DlineDefaultTool.WEB_SEARCH,
+                input: { query: "dline" },
+                isNativeToolCall: true,
+            },
+            surface: createDeniedSurface("detached_domain"),
+        })
+
+        expect(executeHandler).not.toHaveBeenCalled()
+        expect(result).toMatchObject({ failed: true, failure: { stage: "routing", code: "hosted_fallback_unavailable" } })
+        expect(say).toHaveBeenCalledOnce()
+        expect(say).toHaveBeenCalledWith("tool", expect.stringContaining('"status":"failed"'), undefined, undefined, false, 99)
+    })
+
+    it("lets the local search that takes over a hosted call explain the fallback on the call's row", async () => {
+        const say = vi.fn(async () => 99)
+        let handedOver: TaskConfig | undefined
+        const service = new DefaultProductionToolExecutionService({
+            taskId: "task-1",
+            config: configFactory({
+                api: { getProviderId: () => "openai" },
+                callbacks: { say },
+                coordinator: { has: () => true },
+                messageState: { clineMessages: [approvalRow] },
+                webToolsEnabled: true,
+                webSearchRoutingPlan: { route: "hosted", mode: WebToolsMode.WEB_TOOLS_MODE_AUTO, localFallbackAvailable: true },
+            } as unknown as Partial<TaskConfig>),
+            runtime: {
+                coordinator: { getHandler: () => undefined },
+                execute: async (config: TaskConfig) => {
+                    handedOver = config
+                    return "local results"
+                },
+                restoreSubagentRetry: async () => false,
+            } as unknown as ProductionToolHandlerRuntime,
+        })
+
+        await service.execute({
+            command: { commandId: "command-1", turnId: "turn-1", dlineTid: INVOCATION.dlineTid, invocationRef: "ref-1" },
+            invocation: {
+                ...INVOCATION,
+                toolName: DlineDefaultTool.WEB_SEARCH,
+                input: { query: "dline" },
+                isNativeToolCall: true,
+            },
+            surface: createDeniedSurface("detached_domain"),
+        })
+
+        // No card of its own: the local search writes the call's row and carries the notice.
+        expect(say).not.toHaveBeenCalled()
+        expect(handedOver?.webSearchRoutingPlan?.route).toBe("local")
+        expect(handedOver?.webSearchFallbackNotice).toContain("falling back to Dline local Web Search")
     })
 })
 

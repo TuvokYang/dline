@@ -349,7 +349,7 @@ describe("task kernel causal dialog", () => {
         expect(state.dialog.interrupted).toBeUndefined()
     })
 
-    it("carries a planned approval's surface ask unchanged to prepare and reveal", () => {
+    it("carries a planned approval's surface ask and row unchanged to prepare and reveal", () => {
         // The kernel never interprets the ask; it only has to deliver it, because
         // the anchor row is unreadable when written with another ask than the body.
         const block: ProviderTurnBlockPlan = {
@@ -364,6 +364,8 @@ describe("task kernel causal dialog", () => {
                 interactionId: "approval:b1",
                 presentationRef: "npm test",
                 presentationAsk: "command",
+                // The row the call drew while it streamed; the anchor takes it over.
+                presentationRow: 42,
                 actionRules: [{ actionId: "approve", payloadPolicy: "draft" }],
             },
         }
@@ -388,7 +390,12 @@ describe("task kernel causal dialog", () => {
             }),
         )
         expect(ready.commands).toContainEqual(
-            expect.objectContaining({ type: "dialog.prepare", interactionId: "approval:b1", presentationAsk: "command" }),
+            expect.objectContaining({
+                type: "dialog.prepare",
+                interactionId: "approval:b1",
+                presentationAsk: "command",
+                presentationRow: 42,
+            }),
         )
         const prepare = findInteraction(ready.state, "approval:b1")?.prepare
         if (!prepare) throw new Error("Missing prepare owner for approval:b1")
@@ -403,6 +410,6 @@ describe("task kernel causal dialog", () => {
                 receiverGeneration: 0,
             }),
         )
-        expect(prepared.commands[0]).toMatchObject({ type: "dialog.reveal", presentationAsk: "command" })
+        expect(prepared.commands[0]).toMatchObject({ type: "dialog.reveal", presentationAsk: "command", presentationRow: 42 })
     })
 })

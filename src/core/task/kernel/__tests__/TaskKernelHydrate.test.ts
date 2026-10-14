@@ -159,6 +159,8 @@ describe("task kernel hydrate forms", () => {
             status: "awaiting",
             createdRevision: 3,
             presentationRef: interactionId,
+            // The call's streamed row, so a restored reveal still takes it over.
+            presentationRow: 42,
             actionRules: [{ actionId: "approve", payloadPolicy: "draft" }],
             blockId: "block-1",
             receiverGeneration: 0,
@@ -193,7 +195,7 @@ describe("task kernel hydrate forms", () => {
         })
 
         expect(result.state.dialog.approvalsByBlock["block-1"]).toMatchObject({ interactionId, status })
-        expect(result.initialCommands).toEqual([expect.objectContaining({ type: command, interactionId })])
+        expect(result.initialCommands).toEqual([expect.objectContaining({ type: command, interactionId, presentationRow: 42 })])
         // The same snapshot with its row intact is answered where it stands.
         expect(ready(snapshot).state.dialog.approvalsByBlock["block-1"]).toMatchObject({ status: "awaiting" })
     })

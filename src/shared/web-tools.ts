@@ -39,6 +39,8 @@ export interface WebSearchPresentationV1 {
     operation?: HostedWebSearchOperation
     items?: WebSearchItemPresentation[]
     error?: string
+    /** Why the call is answered another way than it asked for, such as a hosted search the local engine took over. */
+    notice?: string
     /** Present only while the row is deferred. */
     hostedCall?: HostedCallPresentation
 }

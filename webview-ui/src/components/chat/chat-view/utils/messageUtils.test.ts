@@ -338,6 +338,49 @@ describe("groupLowStakesTools", () => {
     })
 })
 
+describe("groupLowStakesTools round boundaries", () => {
+    const request = (ts: number) => ({ ts, type: "say", say: "api_req_started", text: "{}" }) as UiMessage
+    const groupMembers = (grouped: ReturnType<typeof groupLowStakesTools>) =>
+        grouped.filter(isToolGroup).map((group) => group.map((message) => message.ts))
+
+    // Each request is a round of its own: its tools never join the group of the
+    // round before, so a later round cannot change what an earlier one shows.
+    it("closes a group at the next request so each round keeps its own tools", () => {
+        const grouped = groupLowStakesTools([
+            request(1),
+            createToolMessage(2, "readFile"),
+            request(3),
+            createToolMessage(4, "searchFiles"),
+        ])
+
+        expect(groupMembers(grouped)).toEqual([
+            [1, 2],
+            [3, 4],
+        ])
+    })
+
+    it("keeps a finished round's group fixed while the next round streams", () => {
+        const finished = [request(1), createToolMessage(2, "readFile")]
+
+        const whileRequesting = groupMembers(groupLowStakesTools([...finished, request(3)]))
+        const afterNextRead = groupMembers(groupLowStakesTools([...finished, request(3), createToolMessage(4, "readFile")]))
+
+        expect(whileRequesting[0]).toEqual([1, 2])
+        expect(afterNextRead[0]).toEqual([1, 2])
+    })
+
+    it("shows the text of a later round instead of folding it into an earlier group", () => {
+        const grouped = groupLowStakesTools([
+            request(1),
+            createToolMessage(2, "readFile"),
+            request(3),
+            createTextMessage(4, "Second round answer"),
+        ])
+
+        expect(grouped.some((item) => !Array.isArray(item) && item.ts === 4)).toBe(true)
+    })
+})
+
 describe("groupLowStakesTools checkpoint visibility", () => {
     // Round checkpoints are written before each request, and an edit adds its
     // own file restore point; every one of them is a row the user can restore.

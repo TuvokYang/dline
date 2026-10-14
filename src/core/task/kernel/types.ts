@@ -20,6 +20,8 @@ export type ProviderTurnApproval =
           readonly presentationRef: string
           /** Surface ask that renders this approval; opaque to the kernel and carried as-is. */
           readonly presentationAsk?: string
+          /** Chat row the call drew while it streamed; opaque to the kernel and carried as-is. */
+          readonly presentationRow?: number
           readonly actionRules: readonly DialogActionRule[]
       }
     | {
@@ -234,6 +236,8 @@ export interface DialogInteraction {
     readonly presentationRef: string
     /** Surface ask that renders this dialog when it differs from the kind's default. */
     readonly presentationAsk?: string
+    /** Chat row the dialog takes over, when its call already drew one. */
+    readonly presentationRow?: number
     readonly actionRules: readonly DialogActionRule[]
     readonly journalRef?: string
     readonly journalWatermark?: JournalWatermark
@@ -659,6 +663,7 @@ interface DialogCommandInput {
     readonly kind: string
     readonly presentationRef: string
     readonly presentationAsk?: string
+    readonly presentationRow?: number
     readonly actionRules: readonly DialogActionRule[]
     readonly blockId?: BlockId
     readonly prepareKey: string

@@ -148,6 +148,8 @@ export class WebSearchToolHandler implements IFullyManagedTool {
                 label: LOCAL_SEARCH_ENGINE_LABELS[engineId],
                 execution: "dline" as const,
             }
+            // A hosted search this engine took over says so on the call's one row.
+            const notice = config.webSearchFallbackNotice ? { notice: config.webSearchFallbackNotice } : {}
 
             // Create message for approval with the exact engine frozen for this execution.
             const sharedMessageProps: UiSayTool = {
@@ -160,6 +162,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
                     status: "running",
                     source,
                     query,
+                    ...notice,
                 },
             }
             terminalMessage = sharedMessageProps
@@ -214,6 +217,7 @@ export class WebSearchToolHandler implements IFullyManagedTool {
                     source,
                     query,
                     items: [...items],
+                    ...notice,
                 },
             }
             await config.callbacks.say("tool", JSON.stringify(completedMessage), undefined, undefined, false, block.ts)

@@ -70,6 +70,14 @@ const WebSearchRow = ({ messageType, query, webSearch }: WebSearchRowProps) => {
                     </div>
                 ))}
                 {webSearch?.status === "deferred" && <HostedCallDeferredNotice action="search" testId="web-search-deferred" />}
+                {webSearch?.notice && (
+                    <div
+                        className="flex items-start gap-2 rounded border border-editor-widget-border/50 p-2 text-description"
+                        data-testid="web-search-notice">
+                        <TriangleAlertIcon className="mt-0.5 size-3 shrink-0" />
+                        <span className="break-words text-xs">{webSearch.notice}</span>
+                    </div>
+                )}
                 {webSearch?.error && (
                     <div className="flex items-start gap-2 rounded border border-error/40 bg-error/10 p-2 text-error">
                         <TriangleAlertIcon className="mt-0.5 size-3 shrink-0" />

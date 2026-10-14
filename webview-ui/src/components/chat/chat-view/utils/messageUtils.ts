@@ -881,14 +881,16 @@ export function groupLowStakesTools(groupedMessages: (UiMessage | UiMessage[])[]
             continue
         }
 
-        // API request - absorb if followed by low-stakes tools, otherwise render
+        // A request opens a round of its own, so the group of the round before it
+        // is final here: what the new round streams next must not reopen it.
+        // The request is then absorbed into its own round's group when that round
+        // runs only low-stakes tools, and rendered otherwise.
         if (messageType === "api_req_started") {
+            commitToolGroup()
+            flushPending()
             if (isApiReqFollowedOnlyByLowStakesTools(i, groupedMessages)) {
-                absorbPending()
                 pendingApiReq.push(message)
             } else {
-                commitToolGroup()
-                flushPending()
                 result.push(message)
             }
             continue

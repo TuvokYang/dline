@@ -1,7 +1,7 @@
 import { findLast } from "@shared/array"
 import type { UiAsk, UiMessage } from "@shared/ExtensionMessage"
 import { Logger } from "@shared/services/Logger"
-import { commandLineOfApprovalBody, createCanonicalAskRow } from "../ask-row"
+import { createCanonicalAskRow } from "../ask-row"
 import type { RetainedInputPresentationPort } from "../executors/compose/RetainedInputPresentationPort"
 import { type DraftAttachmentPort, resolveDraftForReceiver } from "../interaction/DraftAttachments"
 import type { InteractionKind } from "../interaction/Interaction"
@@ -205,6 +205,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         readonly kind: string
         readonly body: string
         readonly ask?: string
+        readonly row?: number
     }): Promise<void> {
         const currentMessages = this.messages.clineMessages
         const asks = currentMessages.filter(
@@ -214,28 +215,17 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         await this.messages.removeMessagesByTs(asks.map((message) => message.ts))
         const definition = getInteraction(request.kind as OpenInteractionRequest["kind"])
         const ask = (request.ask ?? definition.taskAsk) as UiAsk
-        // Provider streaming presents a command before its approval interaction is
-        // planned. Reuse that partial row so approval and denial update one command
-        // in place; appending a second ask leaves the first statusless row rendered
-        // as legacy Completed. The streamed row holds the command line alone, while
-        // the approval body adds the working directory.
-        const commandLine = ask === "command" ? commandLineOfApprovalBody(request.body) : undefined
-        const streamedCommand =
-            commandLine === undefined
+        // Provider streaming draws a call's card before its approval is planned.
+        // The approval takes that row over, so approval, denial and the result all
+        // update one card in place; a second row left the preview behind beside it.
+        const streamedRow =
+            request.row === undefined
                 ? undefined
-                : [...currentMessages]
-                      .reverse()
-                      .find(
-                          (message) =>
-                              message.type === "say" &&
-                              message.say === "command" &&
-                              message.partial === true &&
-                              message.text === commandLine,
-                      )
-        // Other approval rows must sort after everything already written. Wall-clock
+                : currentMessages.find((message) => message.ts === request.row && message.type === "say")
+        // A call nothing drew yet sorts after everything already written. Wall-clock
         // time is not enough when several rows are revealed in the same millisecond.
         await this.presentAnchor(
-            createCanonicalAskRow(ask, request.body, streamedCommand?.ts ?? this.nextRowTs(), request.interactionId),
+            createCanonicalAskRow(ask, request.body, streamedRow?.ts ?? this.nextRowTs(), request.interactionId),
         )
     }
 

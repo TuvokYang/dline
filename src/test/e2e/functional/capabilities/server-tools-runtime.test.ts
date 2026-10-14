@@ -870,19 +870,16 @@ e2e(
                 opened.sidebar,
                 "Use OpenAI hosted search, recover locally if the provider returns a function call, then finish.",
             )
-            await expect(opened.sidebar.getByText("OpenAI Web Search (Hosted)", { exact: true })).toBeVisible({
-                timeout: 60_000,
-            })
-            await expect(
-                opened.sidebar.getByText(
-                    "OpenAI hosted Web Search returned a local web_search function call instead of a hosted search event; falling back to Dline local Web Search.",
-                    { exact: true },
-                ),
-            ).toBeVisible({ timeout: 60_000 })
-            await expect(opened.sidebar.getByText("Dline wants to search the web for:", { exact: true })).toHaveCount(0)
-            await expect(opened.sidebar.getByText("Approve", { exact: true })).toHaveCount(0)
+            // One call keeps one card: the local search that answers it also says why it ran.
             const fallbackCard = opened.sidebar.getByTestId("web-search-card").filter({ hasText: query })
             await expect(fallbackCard.getByText("SearXNG (Dline)", { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expect(fallbackCard).toHaveCount(1)
+            await expect(fallbackCard.getByTestId("web-search-notice")).toHaveText(
+                "OpenAI hosted Web Search returned a local web_search function call instead of a hosted search event; falling back to Dline local Web Search.",
+            )
+            await expect(opened.sidebar.getByText("OpenAI Web Search (Hosted)", { exact: true })).toHaveCount(0)
+            await expect(opened.sidebar.getByText("Dline wants to search the web for:", { exact: true })).toHaveCount(0)
+            await expect(opened.sidebar.getByText("Approve", { exact: true })).toHaveCount(0)
             const fallbackToggle = fallbackCard.getByTestId("web-search-details-toggle")
             await expect(fallbackToggle).toHaveAttribute("aria-expanded", "false")
             await fallbackToggle.click()
@@ -1816,9 +1813,12 @@ webFetchE2e(
             const approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
             await expect(approveButton).toBeVisible({ timeout: 60_000 })
             await approveButton.click()
-            // The running fetch writes its prompt onto its card.
-            const runningCard = opened.sidebar.getByTestId("web-fetch-card").filter({ hasText: delayedPrompt })
-            await expect(runningCard).toBeVisible({ timeout: 30_000 })
+            // One call is one card: its streamed preview, its approval and the running fetch
+            // share the row, and the running fetch writes its prompt onto it.
+            const runningCard = opened.sidebar.getByTestId("web-fetch-card").filter({ hasText: delayedUrl })
+            await expect(runningCard).toHaveCount(1, { timeout: 30_000 })
+            await expect(runningCard).toBeVisible()
+            await expect(runningCard).toContainText(delayedPrompt, { timeout: 30_000 })
             await expect.poll(() => server.getWebFetchPageRequests().length, { timeout: 30_000 }).toBe(2)
 
             // Every request adds its own restore point, so the newest one is the round that

@@ -173,9 +173,8 @@ describe("TaskInteractionOwner", () => {
         expect(rows[0]).toMatchObject({ ts: 1, text: "kept" })
     })
 
-    // Streaming draws the command line alone; the approval body adds the working
-    // directory. Matching the two as equal texts never succeeded, so a second
-    // ask was appended and the statusless streamed row rendered as Completed.
+    // The approval names the row its call drew while streaming. Writing a second
+    // ask left the statusless streamed row behind, rendered as Completed.
     it("promotes a streamed command row into its approval anchor without appending a duplicate", async () => {
         const rows: UiMessage[] = [{ ts: 10, type: "say", say: "command", text: "npm test", partial: true }]
         const messages = createMessages(rows)
@@ -186,6 +185,7 @@ describe("TaskInteractionOwner", () => {
             kind: "tool_approval",
             ask: "command",
             body: "npm test\n\nWorking directory: /repo",
+            row: 10,
         })
 
         expect(messages.finalizeClineMessage).toHaveBeenCalledWith(
@@ -199,6 +199,42 @@ describe("TaskInteractionOwner", () => {
             }),
         )
         expect(messages.addToClineMessages).not.toHaveBeenCalled()
+    })
+
+    // Every tool streams its card before approval, not only commands: a Web Fetch
+    // preview left beside its approval was a second card for one call.
+    it("takes over the streamed card of any tool call instead of adding a second row", async () => {
+        const preview: UiMessage = {
+            ts: 10,
+            type: "say",
+            say: "tool",
+            text: '{"tool":"webFetch","path":"https://example.test"}',
+            partial: true,
+        }
+        const rows: UiMessage[] = [preview, { ts: 11, type: "say", say: "text", text: "after" }]
+        const messages = createMessages(rows)
+        const { owner } = createOwner({ messages, nextPresentationId: () => 50 })
+
+        await owner.anchor({ interactionId: "approval:tid-fetch", kind: "tool_approval", body: '{"tool":"webFetch"}', row: 10 })
+
+        expect(messages.finalizeClineMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ ts: 10, type: "ask", ask: "tool", interactionId: "approval:tid-fetch", partial: false }),
+        )
+        expect(messages.addToClineMessages).not.toHaveBeenCalled()
+    })
+
+    it("appends the approval after everything written when its call drew no row", async () => {
+        const rows: UiMessage[] = [{ ts: 11, type: "say", say: "text", text: "before" }]
+        const messages = createMessages(rows)
+        vi.mocked(messages.addToClineMessages).mockImplementation(async (row) => {
+            rows.push(row as UiMessage)
+        })
+        const { owner } = createOwner({ messages, nextPresentationId: () => 50 })
+
+        await owner.anchor({ interactionId: "approval:tid-fetch", kind: "tool_approval", body: '{"tool":"webFetch"}', row: 10 })
+
+        expect(messages.finalizeClineMessage).not.toHaveBeenCalled()
+        expect(rows.at(-1)).toMatchObject({ ts: 50, type: "ask", ask: "tool", interactionId: "approval:tid-fetch" })
     })
 
     it("keeps a single complete anchor row as it is", async () => {

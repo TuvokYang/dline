@@ -163,7 +163,7 @@ describe("ProductionDialogAdapter", () => {
         expect(taskView.transient).toHaveLength(1)
     })
 
-    it("anchors an approval with the ask its presentation body was built for", async () => {
+    it("anchors an approval with the ask its presentation body was built for, on the row its call drew", async () => {
         // A command approval's body is the plain command line. Anchoring it as the
         // kind's default `tool` row made the Webview parse it as JSON and blank out.
         const writeAnchor = vi.fn(async () => {})
@@ -175,7 +175,7 @@ describe("ProductionDialogAdapter", () => {
             readState: () => createInitialTaskState("task-1"),
             writeAnchor,
         })
-        const command = { kind: "tool_approval", presentationRef: "npm test", presentationAsk: "command" }
+        const command = { kind: "tool_approval", presentationRef: "npm test", presentationAsk: "command", presentationRow: 42 }
 
         await adapter.prepare({ ...prepare(), ...command })
         await adapter.reveal({ ...reveal(), ...command })
@@ -185,6 +185,7 @@ describe("ProductionDialogAdapter", () => {
             kind: "tool_approval",
             body: "npm test",
             ask: "command",
+            row: 42,
         })
     })
 })
