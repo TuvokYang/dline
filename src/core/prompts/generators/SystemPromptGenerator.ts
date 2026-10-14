@@ -84,6 +84,7 @@ export class SystemPromptGenerator {
                 skills: capabilityGroupText(capabilityGroups, "skills"),
                 workflows: capabilityGroupText(capabilityGroups, "workflows"),
                 toolDefinitions: xmlTools,
+                mcp: capabilityGroupText(capabilityGroups, "mcp"),
             }),
         }
     }

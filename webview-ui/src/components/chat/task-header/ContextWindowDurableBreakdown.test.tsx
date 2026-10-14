@@ -99,9 +99,7 @@ describe("durable context breakdown", () => {
         expect(breakdown.querySelector('[data-durable-breakdown-part="conversation"]')).toHaveTextContent("52.0k")
         expect(breakdown.querySelector('[data-durable-breakdown-part="userRules"]')).toHaveTextContent("5%")
         expect(breakdown.querySelector('[data-durable-breakdown-part="toolDefinitions"]')).toHaveTextContent("Tool definitions")
-        expect(breakdown.querySelector('[data-durable-breakdown-part="mcpToolDefinitions"]')).toHaveTextContent(
-            "MCP tool definitions",
-        )
+        expect(breakdown.querySelector('[data-durable-breakdown-part="mcpToolDefinitions"]')).toHaveTextContent("MCP")
         expect(breakdown.querySelector('[data-durable-breakdown-part="mcpToolDefinitions"]')).toHaveTextContent("8%")
 
         fireEvent.click(durable as HTMLButtonElement)

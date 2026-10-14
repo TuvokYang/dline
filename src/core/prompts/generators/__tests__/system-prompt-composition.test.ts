@@ -95,6 +95,7 @@ describe("system prompt composition", () => {
             skills: "5678",
             workflows: "x",
             toolDefinitions: "y",
+            mcp: "z",
         })
 
         expect(composition).toEqual({
@@ -103,6 +104,7 @@ describe("system prompt composition", () => {
             skillsBytes: 2,
             workflowsBytes: 0,
             toolDefinitionsBytes: 0,
+            mcpBytes: 0,
         })
     })
 
@@ -117,7 +119,20 @@ describe("system prompt composition", () => {
     })
 
     it("reads back a consistent persisted composition", () => {
-        const value = { totalBytes: 10, userRulesBytes: 1, skillsBytes: 2, workflowsBytes: 3, toolDefinitionsBytes: 4 }
+        const value = {
+            totalBytes: 12,
+            userRulesBytes: 1,
+            skillsBytes: 2,
+            workflowsBytes: 3,
+            toolDefinitionsBytes: 4,
+            mcpBytes: 2,
+        }
         expect(readSystemPromptComposition(value)).toEqual(value)
+    })
+
+    it("reads a composition cached before the MCP catalog was measured apart as having none", () => {
+        const legacy = { totalBytes: 10, userRulesBytes: 1, skillsBytes: 2, workflowsBytes: 3, toolDefinitionsBytes: 4 }
+        expect(readSystemPromptComposition(legacy)).toEqual({ ...legacy, mcpBytes: 0 })
+        expect(readSystemPromptComposition({ ...legacy, mcpBytes: 1 })).toBeUndefined()
     })
 })

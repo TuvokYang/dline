@@ -627,7 +627,14 @@ describe("SystemPromptCacheService", () => {
 
     it("persists the prompt composition measured by the same build", async () => {
         let saved: TaskContextCache | undefined
-        const composition = { totalBytes: 19, userRulesBytes: 4, skillsBytes: 3, workflowsBytes: 2, toolDefinitionsBytes: 0 }
+        const composition = {
+            totalBytes: 19,
+            userRulesBytes: 4,
+            skillsBytes: 3,
+            workflowsBytes: 2,
+            toolDefinitionsBytes: 0,
+            mcpBytes: 1,
+        }
         const service = new SystemPromptCacheService({
             taskId: "task-1",
             deps: {

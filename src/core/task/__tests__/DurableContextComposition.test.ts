@@ -20,6 +20,7 @@ const PROMPT_COMPOSITION: SystemPromptComposition = {
     skillsBytes: 600,
     workflowsBytes: 500,
     toolDefinitionsBytes: 0,
+    mcpBytes: 0,
 }
 const DLINE_TOOL = { name: "read_file", description: "Read a file. ".repeat(50), input_schema: { type: "object" } }
 const MCP_TOOL = {
@@ -88,6 +89,23 @@ describe("estimateDurableComposition", () => {
         expect(parts.userRules).toBeGreaterThan(parts.skills)
         expect(parts.skills).toBeGreaterThan(parts.workflows)
         expect(parts.basePrompt).toBeGreaterThan(parts.userRules)
+    })
+
+    // On-demand MCP sends no native definitions; its catalog in the prompt is what MCP occupies.
+    it("counts the MCP catalog in the prompt as MCP", () => {
+        const withCatalog = estimateDurableComposition({
+            providerInput: PROVIDER_INPUT,
+            systemPromptComposition: { ...PROMPT_COMPOSITION, mcpBytes: 1000 },
+        }) as DurableContextComposition
+        const without = estimateDurableComposition({
+            providerInput: PROVIDER_INPUT,
+            systemPromptComposition: PROMPT_COMPOSITION,
+        }) as DurableContextComposition
+
+        // The catalog and the rules each take 1000 bytes; whole-token apportioning may split them by one.
+        expect(withCatalog.mcpToolDefinitions).toBeGreaterThan(0)
+        expect(Math.abs(withCatalog.mcpToolDefinitions - withCatalog.userRules)).toBeLessThanOrEqual(1)
+        expect(Math.abs(withCatalog.basePrompt + withCatalog.mcpToolDefinitions - without.basePrompt)).toBeLessThanOrEqual(1)
     })
 
     it("reports MCP tool definitions apart from Dline's own tools", () => {

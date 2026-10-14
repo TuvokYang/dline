@@ -25,7 +25,7 @@ export const DURABLE_PART_LABELS: Record<DurableContextPart, string> = {
     skills: "Skills",
     workflows: "Workflows",
     toolDefinitions: "Tool definitions",
-    mcpToolDefinitions: "MCP tool definitions",
+    mcpToolDefinitions: "MCP",
     conversation: "Conversation",
 }
 

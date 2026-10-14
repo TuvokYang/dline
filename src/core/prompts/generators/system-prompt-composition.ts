@@ -2,7 +2,7 @@
  * UTF-8 byte sizes of the parts a generated system prompt is made of.
  *
  * Only the parts the context-window indicator breaks out are measured; the
- * rest of `totalBytes` is the base prompt, MCP and subagent catalogs included.
+ * rest of `totalBytes` is the base prompt, the subagent catalog included.
  */
 export interface SystemPromptComposition {
     readonly totalBytes: number
@@ -11,6 +11,8 @@ export interface SystemPromptComposition {
     readonly workflowsBytes: number
     /** XML tool documentation rendered into the prompt; native tool definitions travel apart from it. */
     readonly toolDefinitionsBytes: number
+    /** The MCP catalog rendered into the prompt, which is all MCP contributes while its tools load on demand. */
+    readonly mcpBytes: number
 }
 
 /** Text of the parts measured apart from the base prompt, as they were rendered into it. */
@@ -20,6 +22,7 @@ export interface SystemPromptCompositionParts {
     readonly skills: string
     readonly workflows: string
     readonly toolDefinitions: string
+    readonly mcp: string
 }
 
 const PART_KEYS = ["userRulesBytes", "skillsBytes", "workflowsBytes", "toolDefinitionsBytes"] as const
@@ -39,6 +42,7 @@ export function measureSystemPromptComposition(parts: SystemPromptCompositionPar
         skillsBytes: take(parts.skills),
         workflowsBytes: take(parts.workflows),
         toolDefinitionsBytes: take(parts.toolDefinitions),
+        mcpBytes: take(parts.mcp),
     }
 }
 
@@ -58,6 +62,10 @@ export function readSystemPromptComposition(value: unknown): SystemPromptComposi
         if (!isByteCount(bytes)) return undefined
         partsTotal += bytes
     }
+    // A prompt cached before the MCP catalog was measured apart counts it in the base prompt.
+    const mcpBytes = record.mcpBytes === undefined ? 0 : record.mcpBytes
+    if (!isByteCount(mcpBytes)) return undefined
+    partsTotal += mcpBytes
     if (partsTotal > record.totalBytes) return undefined
     return {
         totalBytes: record.totalBytes,
@@ -65,6 +73,7 @@ export function readSystemPromptComposition(value: unknown): SystemPromptComposi
         skillsBytes: record.skillsBytes as number,
         workflowsBytes: record.workflowsBytes as number,
         toolDefinitionsBytes: record.toolDefinitionsBytes as number,
+        mcpBytes,
     }
 }
 

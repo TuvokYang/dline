@@ -112,9 +112,10 @@ export function estimateDurableComposition(input: EstimateDurableCompositionInpu
         composition.skillsBytes,
         composition.workflowsBytes,
         composition.toolDefinitionsBytes,
+        composition.mcpBytes,
     ]
     const baseBytes = Math.max(0, composition.totalBytes - measuredBytes.reduce((total, bytes) => total + bytes, 0))
-    const [basePrompt = 0, userRules = 0, skills = 0, workflows = 0, promptToolDefinitions = 0] = apportionTokens(
+    const [basePrompt = 0, userRules = 0, skills = 0, workflows = 0, promptToolDefinitions = 0, promptMcp = 0] = apportionTokens(
         [baseBytes, ...measuredBytes],
         promptTokens,
     )
@@ -125,7 +126,8 @@ export function estimateDurableComposition(input: EstimateDurableCompositionInpu
         workflows,
         // Dline's native tool and server-tool definitions are what the prefix holds beyond the prompt and MCP tools.
         toolDefinitions: promptToolDefinitions + Math.max(0, withoutMcpTokens - promptTokens),
-        mcpToolDefinitions: prefixTokens - withoutMcpTokens,
+        // MCP is its catalog in the prompt plus any tool definitions sent natively.
+        mcpToolDefinitions: promptMcp + (prefixTokens - withoutMcpTokens),
     }
 }
 

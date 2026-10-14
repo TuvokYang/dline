@@ -24,7 +24,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed image chip thumbnails disappearing once the image is queued or sent, or after it is cut and pasted in the input box
 - Fixed the context bar dropping sharply when a compaction request is sent, for example from 560k to about 410k: the sending round replaced the provider's measured count of the conversation with a local estimate of the same conversation; the measured count now stays while the pass is sent and drops only once a pass is accepted and the conversation is actually condensed
 - Fixed local token estimates staying too low once a conversation contained an image: a request carrying an image or PDF was dropped entirely from token-per-byte calibration, so an image left in the history disabled calibration for good; the separate image and PDF estimates are now subtracted and the text share is calibrated as usual
-- The context figure computed before sending, including the compaction trigger, takes the previous request's server-reported usage as its baseline and estimates only the unsent content added since: added text converts at the ratio of this task's own usage to bytes, and images and PDFs keep their separate estimates, instead of a fixed 0.25 tokens per byte
+- Fixed the MCP row of the context breakdown always reading 0: MCP tools loaded on demand send no function definitions, and the MCP catalog section of the system prompt was counted under System prompt; that section now counts toward the MCP row, which is now labelled "MCP"
+- The context figure computed before sending, including the compaction trigger, takes the previous request's server-reported usage as its baseline
 - Fixed only some mid-stream disconnects being retried automatically; every stream disconnect now retries
 - Fixed the model not receiving the image when `read_file` reads an image file
 - Fixed pasted images sharing a name, and resource record files being attached as input
