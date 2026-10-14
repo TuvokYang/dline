@@ -23,6 +23,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Image chips no longer show the file name; only the thumbnail and the format badge remain
 - Fixed image chip thumbnails disappearing once the image is queued or sent, or after it is cut and pasted in the input box
 - Fixed the context bar dropping sharply when a compaction request is sent, for example from 560k to about 410k: the sending round replaced the provider's measured count of the conversation with a local estimate of the same conversation; the measured count now stays while the pass is sent and drops only once a pass is accepted and the conversation is actually condensed
+- Fixed local token estimates staying too low once a conversation contained an image: a request carrying an image or PDF was dropped entirely from token-per-byte calibration, so an image left in the history disabled calibration for good; the separate image and PDF estimates are now subtracted and the text share is calibrated as usual
 - Fixed only some mid-stream disconnects being retried automatically; every stream disconnect now retries
 - Fixed the model not receiving the image when `read_file` reads an image file
 - Fixed pasted images sharing a name, and resource record files being attached as input
