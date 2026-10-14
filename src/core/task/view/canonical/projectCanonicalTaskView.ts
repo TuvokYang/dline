@@ -90,6 +90,22 @@ function projectApprovals(state: Readonly<TaskState>): readonly CanonicalDialogP
         .map(([blockId, interaction]) => projectDialog(state, interaction, "approval", blockId))
 }
 
+/**
+ * Whether a completion is staged while its reply dialog is not waiting yet.
+ *
+ * The flow is completed as soon as the result is staged, while the checkpoint,
+ * the completion hooks and the dialog reveal still run, which can take seconds.
+ * Input sent then is queued and delivered as the reply once the dialog waits.
+ * A completion already answered no longer has its block running, so it stays closed.
+ */
+function isCompletionBeingPresented(state: Readonly<TaskState>): boolean {
+    const completionId = state.flow.completionId
+    if (state.flow.phase !== "completed" || !completionId) return false
+    if (!state.turn.executingBlockIds.includes(completionId)) return false
+    const primary = state.dialog.primary
+    return !primary || (primary.kind === "completion" && primary.status !== "failed")
+}
+
 function projectInput(
     state: Readonly<TaskState>,
     terminal: CanonicalTaskTerminal,
@@ -103,6 +119,7 @@ function projectInput(
     if (approval) {
         return { mode: "dialog", ownerInteractionId: approval.interactionId, ownerBlockId: approval.blockId }
     }
+    if (isCompletionBeingPresented(state)) return { mode: "queued" }
     if (terminal !== "active") return { mode: "disabled" }
     if (state.flow.phase === "idle") return { mode: "disabled" }
     if (state.flow.phase === "waiting" && state.flow.replyAdmission === "profile_recovery") return { mode: "reply" }

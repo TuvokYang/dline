@@ -169,7 +169,6 @@ export function InputQueuePanel({
     return (
         <div className="mx-3.5" data-testid="input-queue-root">
             <Popover onOpenChange={setExpanded} open={expanded}>
-                {overlayAnchorRef ? <PopoverAnchor virtualRef={overlayAnchorRef as PopoverVirtualRef} /> : null}
                 <PopoverTrigger asChild>
                     <button
                         aria-expanded={expanded}
@@ -186,6 +185,11 @@ export function InputQueuePanel({
                         ) : null}
                     </button>
                 </PopoverTrigger>
+                {/* Must follow the trigger. The trigger registers itself as the anchor in its
+                    mount effect and then remounts unwrapped, while the virtual anchor re-registers
+                    only when its own target changes; placed first, the list was positioned from a
+                    detached button and opened as a zero-width sliver at the top of the view. */}
+                {overlayAnchorRef ? <PopoverAnchor virtualRef={overlayAnchorRef as PopoverVirtualRef} /> : null}
 
                 <PopoverContent
                     align="start"

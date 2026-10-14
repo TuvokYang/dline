@@ -37,6 +37,37 @@ describe("projectCanonicalTaskView", () => {
         })
     })
 
+    // The completion is staged before its checkpoint, hooks and reply dialog run.
+    // Input sent in that window is queued and delivered as the reply (BUGFIX-179).
+    describe("completion still being presented", () => {
+        const presenting = (overrides: Partial<TaskState> = {}): TaskState => {
+            const base = state()
+            return state({
+                flow: { ...base.flow, phase: "completed", completionId: "block-done" },
+                turn: { ...base.turn, executingBlockIds: ["block-done"] },
+                ...overrides,
+            })
+        }
+
+        it("queues input before the reply dialog exists", () => {
+            expect(projectCanonicalTaskView(presenting()).input).toEqual({ mode: "queued" })
+        })
+
+        it("queues input while the completion dialog is still opening", () => {
+            const base = presenting()
+            const view = projectCanonicalTaskView(
+                presenting({ dialog: { ...base.dialog, primary: dialog({ kind: "completion", status: "planned" }) } }),
+            )
+            expect(view.input).toEqual({ mode: "queued" })
+        })
+
+        it("keeps input closed once the completion block has finished", () => {
+            const base = presenting()
+            const view = projectCanonicalTaskView(presenting({ turn: { ...base.turn, executingBlockIds: [] } }))
+            expect(view.input).toEqual({ mode: "disabled" })
+        })
+    })
+
     it("projects running command ownership as queued input with Cancel", () => {
         const base = state()
         const view = projectCanonicalTaskView(

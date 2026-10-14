@@ -50,11 +50,10 @@ describe("PhaseReportHandler", () => {
             params: { response: "Phase one done" },
         } as any)
 
-        expect(config.interactions.say).toHaveBeenCalledWith({
-            taskSay: "tool",
-            presentation: reportRow("Phase one done"),
-            existingTs: 102,
-        })
+        // Finalized in place under the preview's ts: an appended second row put the report
+        // after rows of later calls until a reconciliation sorted it back (BUGFIX-180).
+        expect(config.callbacks.say).toHaveBeenCalledWith("tool", reportRow("Phase one done"), undefined, undefined, false, 102)
+        expect(config.interactions.say).not.toHaveBeenCalled()
         expect(config.interactions.open).not.toHaveBeenCalled()
         expect(String(result)).toContain("[Message displayed.")
     })
@@ -75,9 +74,7 @@ describe("PhaseReportHandler", () => {
         expect(say).toHaveBeenCalledWith("tool", reportRow("Please confirm"), undefined, undefined, true, 103)
         expect(config.interactions.open).not.toHaveBeenCalled()
         expect(config.callbacks.ask).not.toHaveBeenCalled()
-        expect(config.interactions.say).toHaveBeenCalledWith(
-            expect.objectContaining({ presentation: reportRow("Please confirm") }),
-        )
+        expect(config.callbacks.say).toHaveBeenCalledWith("tool", reportRow("Please confirm"), undefined, undefined, false, 103)
         expect(String(result)).toContain("[Message displayed.")
     })
 
@@ -93,6 +90,6 @@ describe("PhaseReportHandler", () => {
         } as any)
 
         expect(String(result)).toContain("[BLOCKED]")
-        expect(config.interactions.say).not.toHaveBeenCalled()
+        expect(config.callbacks.say).not.toHaveBeenCalled()
     })
 })

@@ -1,12 +1,14 @@
-import { describeChip } from "./chip-presentation"
+import { chipLabelClass, describeChip } from "./chip-presentation"
 import {
     type ComposerAtom,
     type ComposerRange,
     type ComposerSegment,
     type ComposerSelection,
     flatTextOf,
+    type ResourceAtom,
     segmentLength,
 } from "./model"
+import { loadResourceThumbnail } from "./resource-thumbnails"
 
 /**
  * The DOM projection of a composer draft and the mapping between DOM points
@@ -63,6 +65,39 @@ function element<K extends keyof HTMLElementTagNameMap>(
     return node
 }
 
+/**
+ * The visual of a ready image chip.
+ *
+ * The chip's label still names the image for assistive tech, so the thumbnail
+ * is decorative. The staging preview is an object URL the draft revokes once
+ * the atom leaves it, so an atom cut and pasted back, or one that never had a
+ * preview, draws its thumbnail from the resource's verified bytes. Until one
+ * loads, and when none can, the chip shows its icon rather than a broken glyph.
+ */
+function imageVisual(atom: ResourceAtom, icon: () => HTMLElement): HTMLElement {
+    const fallback = icon()
+    const showVerified = () => {
+        if (!atom.ref) return
+        void loadResourceThumbnail(atom.ref).then((url) => {
+            if (url) fallback.replaceWith(thumbnailElement(url, (failed) => failed.replaceWith(icon())))
+        })
+    }
+    if (!atom.previewUrl) {
+        showVerified()
+        return fallback
+    }
+    return thumbnailElement(atom.previewUrl, (failed) => {
+        failed.replaceWith(fallback)
+        showVerified()
+    })
+}
+
+function thumbnailElement(src: string, onError: (thumbnail: HTMLElement) => void): HTMLElement {
+    const thumbnail = element("img", { class: "composer-chip__thumbnail", src, alt: "" })
+    thumbnail.addEventListener("error", () => onError(thumbnail), { once: true })
+    return thumbnail
+}
+
 function chipElement(atom: ComposerAtom): HTMLElement {
     const cached = chipCache.get(atom)
     if (cached) return cached
@@ -72,17 +107,9 @@ function chipElement(atom: ComposerAtom): HTMLElement {
             class: `codicon codicon-${chip.icon}${chip.busy ? " codicon-modifier-spin" : ""} composer-chip__icon`,
             "aria-hidden": "true",
         })
-    let visual: HTMLElement
-    if (atom.kind === "resource" && atom.nodeKind === "image" && atom.status === "ready" && atom.previewUrl) {
-        // The chip's own label names the image, so the thumbnail is decorative;
-        // one that cannot load gives way to the icon rather than a broken glyph.
-        const thumbnail = element("img", { class: "composer-chip__thumbnail", src: atom.previewUrl, alt: "" })
-        thumbnail.addEventListener("error", () => thumbnail.replaceWith(icon()), { once: true })
-        visual = thumbnail
-    } else {
-        visual = icon()
-    }
-    const parts: Node[] = [visual, element("span", { class: "composer-chip__label" }, chip.label)]
+    const visual =
+        atom.kind === "resource" && atom.nodeKind === "image" && atom.status === "ready" ? imageVisual(atom, icon) : icon()
+    const parts: Node[] = [visual, element("span", { class: chipLabelClass(chip) }, chip.label)]
     if (chip.badge) parts.push(element("span", { class: "composer-chip__badge", "aria-hidden": "true" }, chip.badge))
     if (atom.kind === "resource" && atom.status === "failed" && atom.error?.retryable) {
         parts.push(

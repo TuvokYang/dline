@@ -17,6 +17,11 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 
 ### Fixes
+- Fixed messages sent after a task completed but before the reply box was ready being refused with "Dline cannot take input yet"; input in that window is now queued and delivered as the reply
+- Fixed a phase report and the tool rows of the same turn swapping order when the report completes
+- Fixed the input queue (Queue) failing to open in the sidebar and showing only a thin scrollbar
+- Image chips no longer show the file name; only the thumbnail and the format badge remain
+- Fixed image chip thumbnails disappearing once the image is queued or sent, or after it is cut and pasted in the input box
 - Fixed only some mid-stream disconnects being retried automatically; every stream disconnect now retries
 - Fixed the model not receiving the image when `read_file` reads an image file
 - Fixed pasted images sharing a name, and resource record files being attached as input

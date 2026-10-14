@@ -524,6 +524,12 @@ export interface TaskInputViewState {
     acceptsImages: boolean
     acceptsFiles: boolean
     enterAction?: TaskViewActionType
+    /**
+     * Whether input sent now is queued and still delivered. Set by the task, so
+     * a completion whose reply dialog is still opening takes input while a
+     * finished task does not.
+     */
+    queueable?: boolean
 }
 
 /** Causal identity and presentation anchor for one active interaction. */

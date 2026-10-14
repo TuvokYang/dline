@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest"
 import { SEMANTIC_INPUT_SCHEMA_VERSION, type SemanticInputDocument } from "@shared/input-semantics/document"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import { InputQueuePanel, type InputQueuePanelEntry, queuedAttachmentsOf } from "./InputQueuePanel"
 
@@ -27,6 +27,22 @@ function entry(overrides: Partial<InputQueuePanelEntry> & { id: string }): Input
         ...overrides,
     }
 }
+
+// The list stops above the auto-approve bar. With the virtual anchor before the
+// trigger, the remounted trigger stayed the reference: a detached 0x0 node, so the
+// list opened as a zero-width sliver at the top of the view (BUGFIX-181).
+it("positions the open queue list from the overlay anchor, not the toggle", async () => {
+    const bar = document.createElement("div")
+    document.body.appendChild(bar)
+    const rect = { x: 20, y: 300, left: 20, top: 300, right: 260, bottom: 340, width: 240, height: 40, toJSON() {} }
+    const measure = vi.spyOn(bar, "getBoundingClientRect").mockReturnValue(rect as DOMRect)
+    render(<InputQueuePanel entries={[entry({ id: "a" })]} {...handlers()} overlayAnchorRef={{ current: bar }} />)
+
+    fireEvent.click(screen.getByTestId("input-queue-toggle"))
+
+    await waitFor(() => expect(measure).toHaveBeenCalled())
+    bar.remove()
+})
 
 function composedDocument(): SemanticInputDocument {
     return {

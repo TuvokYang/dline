@@ -58,7 +58,10 @@ export class PhaseReportHandler implements IToolHandler, IPartialBlockHandler {
         config.taskState.consecutiveMistakeCount = 0
 
         const toolMsg = JSON.stringify({ tool: PHASE_REPORT_ROW_KEY, content: response })
-        await config.interactions.say({ taskSay: "tool", presentation: toolMsg, existingTs: block.ts })
+        // Finalize the streamed preview in place. Appending a second row under the same ts
+        // put the report after rows of later calls that finished first, until the next
+        // reconciliation sorted it back by ts and the rows jumped.
+        await config.callbacks.say("tool", toolMsg, undefined, undefined, false, block.ts)
 
         return formatResponse.toolResult(
             `[Message displayed. Now proceed with your next tool call - ` +

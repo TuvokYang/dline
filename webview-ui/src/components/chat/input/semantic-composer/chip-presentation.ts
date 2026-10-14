@@ -12,6 +12,13 @@ export interface ChipPresentation {
     /** Codicon name, without the `codicon-` prefix. */
     readonly icon: string
     readonly label: string
+    /**
+     * Whether the label is kept off the chip's face. An image is recognized by
+     * its thumbnail and format badge, and a generated name such as
+     * `image_20261014021004_e10…` only crowds them out; the name stays in the
+     * tooltip and the accessible name.
+     */
+    readonly labelHidden: boolean
     /** Short uppercase format, e.g. "PDF"; absent for commands and mentions. */
     readonly badge?: string
     readonly tone: "command" | "mention" | "resource" | "warning" | "error"
@@ -68,6 +75,7 @@ export function describeResourceChip(node: ResourceInputNode, resource?: Semanti
     return {
         icon: ICON_BY_VISUAL_KIND[visualKind],
         label: node.displayName,
+        labelHidden: visualKind === "image",
         badge: formatBadge,
         tone: "resource",
         ariaLabel: `${KIND_NAME_BY_VISUAL_KIND[visualKind]} ${node.displayName}, ${formatBadge}${lines}`,
@@ -105,6 +113,7 @@ function describeResource(atom: ResourceAtom): ChipPresentation {
         return {
             icon: "error",
             label: atom.displayName,
+            labelHidden: visualKind === "image",
             badge: formatBadge,
             tone: "error",
             ariaLabel: `${kindName} ${atom.displayName}, ${formatBadge}, failed: ${reason}`,
@@ -116,6 +125,7 @@ function describeResource(atom: ResourceAtom): ChipPresentation {
     return {
         icon: "loading",
         label: atom.displayName,
+        labelHidden: visualKind === "image",
         badge: formatBadge,
         tone: "warning",
         ariaLabel: `${kindName} ${atom.displayName}, ${formatBadge}, attaching`,
@@ -125,12 +135,18 @@ function describeResource(atom: ResourceAtom): ChipPresentation {
     }
 }
 
+/** Class of a chip's name element; a hidden name stays readable to assistive tech. */
+export function chipLabelClass(chip: ChipPresentation): string {
+    return chip.labelHidden ? "composer-chip__label composer-chip__label--hidden" : "composer-chip__label"
+}
+
 export function describeChip(atom: ComposerAtom): ChipPresentation {
     switch (atom.kind) {
         case "command":
             return {
                 icon: "symbol-event",
                 label: atom.sourceText,
+                labelHidden: false,
                 tone: "command",
                 ariaLabel: `Command ${atom.sourceText}`,
                 tooltip: `Command ${atom.sourceText}`,
@@ -141,6 +157,7 @@ export function describeChip(atom: ComposerAtom): ChipPresentation {
             return {
                 icon: atom.mentionKind === "folder" ? "folder" : atom.mentionKind === "url" ? "link" : "mention",
                 label: atom.sourceText.slice(1),
+                labelHidden: false,
                 tone: "mention",
                 ariaLabel: `Mention ${atom.sourceText}`,
                 tooltip: atom.sourceText,

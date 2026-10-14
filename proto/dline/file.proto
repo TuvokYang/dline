@@ -55,6 +55,9 @@ service FileService {
   // Removes a draft-owned input resource the composer no longer references
   rpc removeInputResource(InputResourceRequest) returns (InputResourceOperationResult);
 
+  // Reads the verified bytes of an image input resource for its chip thumbnail
+  rpc readInputResourceImage(InputResourceRequest) returns (InputResourceImage);
+
   // Search for files in the workspace with fuzzy matching
   rpc searchFiles(FileSearchRequest) returns (FileSearchResults);
 
@@ -339,6 +342,13 @@ message InputResourceRequest {
 // The error is absent when the operation succeeded
 message InputResourceOperationResult {
   InputResourceError error = 1;
+}
+
+// The bytes of an image input resource; data is empty when the resource is not an image the chip can show
+message InputResourceImage {
+  InputResourceError error = 1;
+  bytes data = 2;
+  string mime_type = 3;
 }
 
 // Enum for file search type filtering

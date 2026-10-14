@@ -571,7 +571,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     // is still working reaches either. Compaction blocks compose, not intake:
     // input submitted while it runs must enter the durable queue and is admitted
     // after the summary lands instead of being trapped in the composer.
-    const queueCanDeliver = taskViewState ? taskPhaseStillDelivers(taskViewState.phase) : false
+    // A completion whose reply dialog is still opening reports a completed phase,
+    // yet the task still delivers what is queued as the reply; it says so itself.
+    const queueCanDeliver = taskViewState
+        ? taskViewState.input.queueable === true || taskPhaseStillDelivers(taskViewState.phase)
+        : false
     // The composer's action button cancels through the same task action the footer offers.
     const cancelAction = visibleTask ? enabledCancelAction(taskViewState) : undefined
     const cancelTask = useMemo(

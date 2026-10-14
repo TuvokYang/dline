@@ -1,6 +1,7 @@
 import type { ResourceInputNode, SemanticResourceRef } from "@shared/input-semantics/document"
 import { createContext, useContext, useState } from "react"
-import { describeResourceChip } from "@/components/chat/input/semantic-composer/chip-presentation"
+import { chipLabelClass, describeResourceChip } from "@/components/chat/input/semantic-composer/chip-presentation"
+import { useResourceThumbnail } from "@/components/chat/input/semantic-composer/resource-thumbnails"
 import "@/components/chat/input/semantic-composer/composer-chip.css"
 
 export interface ResourceChipProps {
@@ -25,18 +26,22 @@ const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set(["png", "jpg", "jpeg", "gi
  */
 export function ResourceChip({ node, resource, thumbnailUrl, onOpen }: ResourceChipProps): JSX.Element {
     const [thumbnailFailed, setThumbnailFailed] = useState(false)
+    // A queued or sent image has no preview of its own; its verified bytes provide one.
+    const loadedThumbnail = useResourceThumbnail(thumbnailUrl === undefined && node.kind === "image" ? resource : undefined)
+    const thumbnail = thumbnailUrl ?? loadedThumbnail
     const chip = describeResourceChip(node, resource, onOpen ? OPEN_HINT : undefined)
     const className = `composer-chip composer-chip--${chip.tone}`
     const content = (
         <>
-            {thumbnailUrl && !thumbnailFailed ? (
-                // The label names the image, so the thumbnail is decorative; one that
-                // cannot load gives way to the icon rather than a broken glyph.
-                <img alt="" className="composer-chip__thumbnail" onError={() => setThumbnailFailed(true)} src={thumbnailUrl} />
+            {thumbnail && !thumbnailFailed ? (
+                // The label still names the image for assistive tech, so the thumbnail
+                // is decorative; one that cannot load gives way to the icon rather than
+                // a broken glyph.
+                <img alt="" className="composer-chip__thumbnail" onError={() => setThumbnailFailed(true)} src={thumbnail} />
             ) : (
                 <span aria-hidden="true" className={`codicon codicon-${chip.icon} composer-chip__icon`} />
             )}
-            <span className="composer-chip__label">{chip.label}</span>
+            <span className={chipLabelClass(chip)}>{chip.label}</span>
             {chip.badge ? (
                 <span aria-hidden="true" className="composer-chip__badge">
                     {chip.badge}

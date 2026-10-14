@@ -159,12 +159,15 @@ export function adaptCanonicalTaskView(
     // Without its anchor row the dialog has nothing to pin its controls to, so the
     // surface falls back to task-level affordances instead of orphaned buttons.
     const anchored = Boolean(dialog && anchor)
-    const input =
+    const projectedInput =
         dialog && kind && anchored
             ? projectInteractionInput(dialog, kind)
             : !dialog && view.input.mode === "reply"
               ? { ...REPLY_INPUT }
               : DISABLED_INPUT
+    // The task decides whether queued input will still be delivered; the phase alone
+    // cannot tell a completion whose reply dialog is still opening from a finished task.
+    const input = view.input.mode === "queued" ? { ...projectedInput, queueable: true } : projectedInput
     // Truncation destroys history, so it is offered only beside the Retry it
     // replaces: the round a failed automatic compaction stopped, awaiting the user.
     const forceTruncateAvailable = truncationOffered && anchored && dialog?.kind === "error_retry" && dialog.status === "awaiting"
