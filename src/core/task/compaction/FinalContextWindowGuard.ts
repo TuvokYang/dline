@@ -5,6 +5,7 @@ import {
     computeCompactTrigger,
     computeSummarizeBudget,
 } from "@core/context/context-management/context-window-utils"
+import { resolveTokenPerByte } from "@core/context/context-management/token-estimation"
 import type { ClineStorageMessage } from "@shared/messages/content"
 import { Logger } from "@shared/services/Logger"
 import { NO_COMPLETE_LOGICAL_TURN } from "../ContextCompactionSession"
@@ -126,9 +127,20 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
         const messages: ClineStorageMessage[] =
             environment === undefined ? history : [...history, { role: "user", content: [{ type: "text", text: environment }] }]
         const estimate = await estimateFramedRequest(this.options.frames, messages, signal)
+        const requestInfos = this.options.requestPressures()
+        // The last measured request is the provider's exact count; only what was
+        // added since is estimated, at the ratio this task's own usage showed.
+        const tokenPerByte = resolveTokenPerByte(requestInfos, {
+            providerId: estimate.providerId,
+            modelId: estimate.modelId,
+            apiFormat: estimate.apiFormat,
+        })
         const projection = resolveContextWindowProjection({
-            requestInfos: this.options.requestPressures(),
+            requestInfos,
             candidateEstimatedTokens: estimate.tokens,
+            candidateTextBytes: estimate.textBytes,
+            candidateMediaTokens: estimate.mediaTokens,
+            ...(tokenPerByte === undefined ? {} : { tokenPerByte }),
             contextWindow: estimate.contextWindow,
             triggerTokens: computeCompactTrigger(estimate.contextWindow, computeSummarizeBudget(), this.options.triggerOptions()),
         })

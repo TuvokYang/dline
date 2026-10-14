@@ -71,8 +71,27 @@ export interface ResolveContextWindowProjectionInput {
     requestInfos: readonly ContextWindowRequestPressure[]
     candidateEstimatedTokens: number
     candidateDeltaTokens?: number
+    /** The candidate's text bytes and separately estimated media, so its growth is measured in bytes. */
+    candidateTextBytes?: number
+    candidateMediaTokens?: number
+    /**
+     * Text tokens per byte the provider's own usage showed for this task.
+     *
+     * Growth since the last measured request is converted with it, so only the
+     * unsent increment is estimated and it is estimated the way this
+     * conversation actually tokenizes; without it the growth is the difference
+     * of two default-ratio estimates.
+     */
+    tokenPerByte?: number
     contextWindow: number
     triggerTokens: number
+}
+
+/** One request as the local estimator measured it, the point growth is measured from or to. */
+interface GrowthAnchor {
+    readonly estimatedTokens: number
+    readonly textBytes?: number
+    readonly mediaTokens?: number
 }
 
 export interface ContextWindowProjection {
@@ -148,24 +167,30 @@ export function resolveContextWindowProjection(input: ResolveContextWindowProjec
     let pressureSource: ContextPressureSource = "unavailable"
     let previousEstimatedTokens = 0
     let hasEstimateAnchor = false
+    let previousAnchor: GrowthAnchor = { estimatedTokens: 0 }
 
     if (latestReliableIndex >= 0) {
         const reliable = input.requestInfos[latestReliableIndex]
         baselineTokens = normalizeTokens(reliable.contextTokens)
         pressureSource = "provider"
-        previousEstimatedTokens = normalizeTokens(reliable.estimatedContextTokens)
+        previousAnchor = growthAnchorOf(reliable)
+        previousEstimatedTokens = previousAnchor.estimatedTokens
         hasEstimateAnchor = previousEstimatedTokens > 0
 
         for (const requestInfo of input.requestInfos.slice(latestReliableIndex + 1)) {
-            const estimatedTokens = normalizeTokens(requestInfo.estimatedContextTokens)
-            if (estimatedTokens <= 0) continue
+            const anchor = growthAnchorOf(requestInfo)
+            if (anchor.estimatedTokens <= 0) continue
             if (!hasEstimateAnchor) {
-                previousEstimatedTokens = estimatedTokens
+                previousAnchor = anchor
+                previousEstimatedTokens = anchor.estimatedTokens
                 hasEstimateAnchor = true
                 continue
             }
-            pendingDeltaTokens += Math.max(0, estimatedTokens - previousEstimatedTokens)
-            previousEstimatedTokens = Math.max(previousEstimatedTokens, estimatedTokens)
+            pendingDeltaTokens += growthTokens(previousAnchor, anchor, input.tokenPerByte)
+            if (anchor.estimatedTokens > previousEstimatedTokens) {
+                previousAnchor = anchor
+                previousEstimatedTokens = anchor.estimatedTokens
+            }
         }
     } else {
         const latestEstimate = findLatestEstimate(input.requestInfos)
@@ -177,10 +202,17 @@ export function resolveContextWindowProjection(input: ResolveContextWindowProjec
         }
     }
 
+    const candidateAnchor: GrowthAnchor = {
+        estimatedTokens: normalizedCandidateEstimate,
+        textBytes: input.candidateTextBytes,
+        mediaTokens: input.candidateMediaTokens,
+    }
     const candidateDeltaTokens =
         input.candidateDeltaTokens === undefined
             ? hasEstimateAnchor
-                ? Math.max(0, normalizedCandidateEstimate - previousEstimatedTokens)
+                ? latestReliableIndex >= 0
+                    ? growthTokens(previousAnchor, candidateAnchor, input.tokenPerByte)
+                    : Math.max(0, normalizedCandidateEstimate - previousEstimatedTokens)
                 : latestReliableIndex < 0
                   ? normalizedCandidateEstimate
                   : Math.max(0, normalizedCandidateEstimate - baselineTokens)
@@ -198,6 +230,35 @@ export function resolveContextWindowProjection(input: ResolveContextWindowProjec
         pressureSource,
         shouldCompact: shouldCompactProjectedUsage(projectedUsageTokens, input.triggerTokens),
     }
+}
+
+function growthAnchorOf(requestInfo: ContextWindowRequestPressure): GrowthAnchor {
+    return {
+        estimatedTokens: normalizeTokens(requestInfo.estimatedContextTokens),
+        textBytes: requestInfo.estimatedTextBytes,
+        mediaTokens: requestInfo.estimatedMediaTokens,
+    }
+}
+
+/**
+ * What a request added over an earlier one, never negative.
+ *
+ * With both measured in bytes and a learned ratio, the added text converts with
+ * that ratio and added media keeps its own estimate; the provider's exact count
+ * of the earlier request is never re-estimated. Otherwise the growth is the
+ * difference of the two estimates, as before the bytes were recorded.
+ */
+function growthTokens(from: GrowthAnchor, to: GrowthAnchor, tokenPerByte: number | undefined): number {
+    const learned = typeof tokenPerByte === "number" && Number.isFinite(tokenPerByte) && tokenPerByte > 0
+    if (learned && isCount(from.textBytes) && isCount(to.textBytes) && isCount(from.mediaTokens) && isCount(to.mediaTokens)) {
+        const textGrowth = Math.round((to.textBytes - from.textBytes) * tokenPerByte)
+        return Math.max(0, textGrowth + (to.mediaTokens - from.mediaTokens))
+    }
+    return Math.max(0, to.estimatedTokens - from.estimatedTokens)
+}
+
+function isCount(value: number | undefined): value is number {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0
 }
 
 function findLatestReliableUsageIndex(requestInfos: readonly ContextWindowRequestPressure[]): number {

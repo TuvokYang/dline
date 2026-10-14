@@ -46,6 +46,32 @@ describe("context window projection", () => {
         })
     })
 
+    // 560k measured, then 40k bytes of text and one image are added: only that increment is estimated,
+    // at the ratio the task's own usage showed, never the measured history again.
+    it("adds only the unsent increment, converted at the learned ratio, to the measured usage", () => {
+        const measured = {
+            contextTokens: 560_000,
+            estimatedContextTokens: 412_000,
+            estimatedTextBytes: 1_648_000,
+            estimatedMediaTokens: 0,
+            contextTokensSource: "provider" as const,
+        }
+        const candidate = {
+            candidateEstimatedTokens: 423_600,
+            candidateTextBytes: 1_688_000,
+            candidateMediaTokens: 1_600,
+            contextWindow: 600_000,
+            triggerTokens: 551_340,
+        }
+
+        const learned = resolveContextWindowProjection({ requestInfos: [measured], ...candidate, tokenPerByte: 0.34 })
+        expect(learned).toMatchObject({ baselineTokens: 560_000, candidateDeltaTokens: 15_200, projectedUsageTokens: 575_200 })
+
+        // Without a learned ratio the growth stays the difference of the two default estimates.
+        const unlearned = resolveContextWindowProjection({ requestInfos: [measured], ...candidate })
+        expect(unlearned).toMatchObject({ candidateDeltaTokens: 11_600, projectedUsageTokens: 571_600 })
+    })
+
     it("replaces the baseline and clears covered pending growth when new reliable usage arrives", () => {
         const projection = resolveContextWindowProjection({
             requestInfos: [
