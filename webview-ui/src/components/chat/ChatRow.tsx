@@ -53,12 +53,7 @@ import CodeExecutionRow from "./CodeExecutionRow"
 import { CommandOutputContent, CommandOutputRow } from "./CommandOutputRow"
 import { CompletionOutputRow } from "./CompletionOutputRow"
 import type { RowExpansionOrigin } from "./chat-view/types/chatTypes"
-import {
-    collectMcpResponseTexts,
-    isPrimaryCheckpointForUserTurn,
-    parseMcpServerResponse,
-    resolveApiErrorMessage,
-} from "./chat-view/utils/messageUtils"
+import { collectMcpResponseTexts, parseMcpServerResponse, resolveApiErrorMessage } from "./chat-view/utils/messageUtils"
 import { describeCompactionFailure } from "./compaction-failure-label"
 import { CHAT_ROW_HEADER_CLASSNAMES, TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
 import { DiffEditRow } from "./DiffEditRow"
@@ -1235,7 +1230,6 @@ export const ChatRowContent = memo(
                     case "clineignore_error":
                         return <ErrorRow errorType="clineignore_error" message={message} />
                     case "checkpoint_created":
-                        if (!isPrimaryCheckpointForUserTurn(message.ts, clineMessages)) return <InvisibleSpacer />
                         return (
                             <CheckmarkControl
                                 hasWorkspaceCheckpoint={message.lastCheckpointHash?.some(Boolean) === true}

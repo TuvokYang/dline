@@ -21,10 +21,19 @@ function tracker(hash: string) {
     } as unknown as CheckpointTracker
 }
 
-function taskFiles(files: string[], scanRequired = false): TaskFileTracker {
+function taskFiles(
+    files: string[],
+    scanRequired = false,
+    observed: string[] = [],
+    scanAttributed = scanRequired,
+): TaskFileTracker {
     return {
         getModifiedFiles: vi.fn().mockReturnValue(files),
+        getObservedFiles: vi.fn().mockReturnValue(observed),
+        pendingWatermark: vi.fn().mockReturnValue(7),
+        settlePending: vi.fn(),
         isWorkspaceScanRequired: vi.fn().mockReturnValue(scanRequired),
+        isScanAttributedToTask: vi.fn().mockReturnValue(scanAttributed),
         dropModifiedFiles: vi.fn(),
         clearWorkspaceScanRequired: vi.fn(),
     } as unknown as TaskFileTracker
@@ -54,9 +63,45 @@ describe("CheckpointUnitCoordinator", () => {
         const references = await coordinator.commit()
 
         expect(references).toEqual({ hashes: ["hash-a", "hash-b"], workspaceRoots: [rootA, rootB] })
-        expect(trackerA.commitForFiles).toHaveBeenCalledWith([fileA], { forceWorkspaceScan: false })
-        expect(trackerB.commitForFiles).toHaveBeenCalledWith([fileB], { forceWorkspaceScan: false })
-        expect(trackedFiles.dropModifiedFiles).toHaveBeenCalledWith(expect.arrayContaining([fileA, fileB]))
+        expect(trackerA.commitForFiles).toHaveBeenCalledWith([fileA], {
+            forceWorkspaceScan: false,
+            attributeScanToTask: false,
+            observedFiles: [],
+        })
+        expect(trackerB.commitForFiles).toHaveBeenCalledWith([fileB], {
+            forceWorkspaceScan: false,
+            attributeScanToTask: false,
+            observedFiles: [],
+        })
+        expect(trackedFiles.settlePending).toHaveBeenCalledWith(expect.arrayContaining([fileA, fileB]), 7)
+    })
+
+    it("routes watched changes to the root that owns them", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const observedB = path.join(rootB, "generated.txt")
+        const trackerA = tracker("hash-a")
+        const trackerB = tracker("hash-b")
+        const trackedFiles = taskFiles([], false, [observedB])
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            taskFileTracker: trackedFiles,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
+
+        await coordinator.commit()
+
+        expect(trackerB.commitForFiles).toHaveBeenCalledWith([], {
+            forceWorkspaceScan: false,
+            attributeScanToTask: false,
+            observedFiles: [observedB],
+        })
+        expect(trackedFiles.settlePending).toHaveBeenCalledWith([observedB], 7)
     })
 
     it("keeps successful roots usable when another root cannot initialize", async () => {
@@ -157,9 +202,48 @@ describe("CheckpointUnitCoordinator", () => {
 
         await coordinator.commit()
 
-        expect(trackerA.commitForFiles).toHaveBeenCalledWith([], { forceWorkspaceScan: true })
-        expect(trackerB.commitForFiles).toHaveBeenCalledWith([], { forceWorkspaceScan: true })
+        expect(trackerA.commitForFiles).toHaveBeenCalledWith([], {
+            forceWorkspaceScan: true,
+            attributeScanToTask: true,
+            observedFiles: [],
+        })
+        expect(trackerB.commitForFiles).toHaveBeenCalledWith([], {
+            forceWorkspaceScan: true,
+            attributeScanToTask: true,
+            observedFiles: [],
+        })
         expect(trackedFiles.clearWorkspaceScanRequired).toHaveBeenCalledOnce()
+    })
+
+    // A scan standing in for the watcher finds changes that may be anyone's, so every
+    // root is told not to record them as this task's.
+    it("tells each root when the scan it runs is not the task's own", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const trackerA = tracker("hash-a")
+        const trackerB = tracker("hash-b")
+        const trackedFiles = taskFiles([], true, [], false)
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-1",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            taskFileTracker: trackedFiles,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
+
+        await coordinator.commit()
+
+        for (const rootTracker of [trackerA, trackerB]) {
+            expect(rootTracker.commitForFiles).toHaveBeenCalledWith([], {
+                forceWorkspaceScan: true,
+                attributeScanToTask: false,
+                observedFiles: [],
+            })
+            expect(rootTracker.getDiffSet).not.toHaveBeenCalled()
+        }
     })
 
     it("does not reuse a stale root revision when the current commit fails", async () => {

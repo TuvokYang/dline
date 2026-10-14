@@ -120,6 +120,17 @@ export interface CompactionProgressWithdrawalPort {
     withdraw(compactionId: string): boolean
 }
 
+/**
+ * Writes the restore point a compaction owes before it rewrites the conversation.
+ *
+ * A summary replaces the history it condenses, so the round it ends has to be
+ * restorable from a point written before the rewrite starts.
+ */
+export interface CompactionCheckpointPort {
+    /** Never rejects for a checkpoint failure; a missing restore point never costs the compaction. */
+    beforeCompaction(signal: AbortSignal): Promise<void>
+}
+
 export interface ProductionCompactionAdapterOptions {
     readonly payloads: TaskPayloadStore
     readonly service: ProductionCompactionService
@@ -135,6 +146,8 @@ export interface ProductionCompactionAdapterOptions {
     readonly failure?: CompactionFailurePresentationPort
     /** Clears the progress of a run that ended without a record; absent where no progress is shown. */
     readonly progress?: CompactionProgressWithdrawalPort
+    /** Writes the round's restore point before the rewrite; absent without workspace history. */
+    readonly checkpoint?: CompactionCheckpointPort
 }
 
 /**
@@ -151,6 +164,7 @@ export class ProductionCompactionAdapter implements CompactionPort {
 
     async run(input: CompactionExecutionInput): Promise<{ readonly resultRef: string }> {
         if (input.signal.aborted) throw input.signal.reason
+        await this.settleCheckpoint(input.signal)
         try {
             return await this.condense(input)
         } catch (error) {
@@ -169,6 +183,16 @@ export class ProductionCompactionAdapter implements CompactionPort {
             if (this.options.progress?.withdraw(input.compactionId)) {
                 input.publish({ kind: "compaction_progress", compactionId: input.compactionId, attempt: input.attempt })
             }
+        }
+    }
+
+    /** A restore point that cannot be written only costs that restore point, never the compaction. */
+    private async settleCheckpoint(signal: AbortSignal): Promise<void> {
+        if (!this.options.checkpoint) return
+        try {
+            await this.options.checkpoint.beforeCompaction(signal)
+        } catch {
+            // The port reports its own failures; the compaction proceeds either way.
         }
     }
 

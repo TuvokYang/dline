@@ -1,3 +1,4 @@
+import type { CheckpointRoundReason } from "@core/task/checkpoints/CheckpointGate"
 import type { CheckpointRestoreMode, CheckpointRestoreResult, WorkspaceRestoreResult } from "@core/task/shell/checkpoint-restore"
 import type { CheckpointReferenceSet } from "@shared/checkpoints"
 import type { CheckpointChangedFile } from "./CheckpointTracker"
@@ -6,7 +7,22 @@ import type { CheckpointChangedFile } from "./CheckpointTracker"
  * Canonical task-state checkpoint boundary consumed by the legacy presentation/file adapter.
  */
 export interface CanonicalCheckpointPort {
-    capture(input: { readonly messageTs: number; readonly workspaceRef?: string }): Promise<void>
+    /**
+     * Store the chat side of a checkpoint row.
+     *
+     * `boundary` is the conversation position the row recorded; the task state
+     * stored with it is the one current at capture, not a lagging snapshot.
+     * `anchorTs` names the round row a pre-edit row restores its chat to: that
+     * row's captured state and boundary are reused with this row's files.
+     */
+    capture(input: {
+        readonly messageTs: number
+        readonly workspaceRef?: string
+        readonly boundary?: { readonly seq: number }
+        readonly anchorTs?: number
+    }): Promise<void>
+    /** Whether anything other than a checkpoint marker was journaled after `seq`. */
+    advancedSince?(seq: number): Promise<boolean>
     restore(input: {
         readonly messageTs: number
         readonly mode: CheckpointRestoreMode
@@ -15,6 +31,12 @@ export interface CanonicalCheckpointPort {
          * instead of capturing a checkpoint (a compaction card).
          */
         readonly journalTarget?: { readonly seq: number }
+        /**
+         * Used when no checkpoint was captured for `messageTs`: the row's own
+         * conversation position and files. A checkpoint row stays restorable when
+         * its capture failed.
+         */
+        readonly fallback?: { readonly journalTarget: { readonly seq: number }; readonly workspaceRef?: string }
         readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
     }): Promise<CheckpointRestoreResult>
 }
@@ -67,16 +89,20 @@ export interface ICheckpointManager {
     commit(): Promise<CheckpointReferenceSet | undefined>
 
     /**
-     * Show the task's first restore point and start capturing the workspace it returns to.
-     * Resolves once the row exists; the baseline keeps building in the background.
+     * Before a provider request or compaction: add a checkpoint row unless the
+     * latest one still covers the conversation and the files. Never rejects;
+     * a part that fails is logged and left out.
      */
-    beginInitialCheckpoint?(): Promise<void>
+    ensureRoundCheckpoint?(reason: CheckpointRoundReason, signal?: AbortSignal): Promise<void>
 
-    /** Resolves once the baseline started by `beginInitialCheckpoint` is durable or has failed; never rejects. */
-    awaitInitialCheckpoint?(): Promise<void>
+    /**
+     * Before a named file edit: add a file restore point when the files changed
+     * since the latest checkpoint. Never rejects.
+     */
+    ensurePreEditCheckpoint?(signal?: AbortSignal): Promise<void>
 
-    /** Stop persisting checkpoint results; called before the task's stores close. */
-    dispose?(): void
+    /** Stop creating checkpoints and wait for the one in progress; called before the task's stores close. */
+    dispose?(): Promise<void>
 
     presentMultifileDiff?(messageTs: number, seeNewChangesSinceLastTaskCompletion: boolean): Promise<void>
 

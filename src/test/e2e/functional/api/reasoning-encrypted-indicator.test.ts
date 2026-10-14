@@ -103,9 +103,9 @@ e2e(
         })
         await expect(thinkingRow).toHaveCount(0, { timeout: 60_000 })
         await expect(sidebar.getByText("Thinking", { exact: true })).toHaveCount(0)
-        // Both writes commit durable restore points, but one user turn must expose
-        // only its initial restore baseline instead of one checkpoint row per edit.
-        await expect(sidebar.getByText("Checkpoint", { exact: true })).toHaveCount(1)
+        // Every request opens a round whose restore point is shown, and each write
+        // ran right after its round's commit, so neither owes a file restore point.
+        await expect(sidebar.getByText("Checkpoint", { exact: true })).toHaveCount(3)
 
         const consumptions = server.getMockConsumptions("openai-compatible-responses")
         expect(consumptions.map((consumption) => consumption.contractError)).toEqual([undefined, undefined, undefined])

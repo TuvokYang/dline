@@ -20,9 +20,6 @@ export const LANE_DIFF_EDITOR = "diff-editor"
 /** The shared browser session, which unrelated tools also close and replace. */
 export const LANE_BROWSER_SESSION = "browser-session"
 
-/** The checkpoint committer, which writes one shadow git repository. */
-export const LANE_CHECKPOINT = "checkpoint"
-
 /** The foreground terminal, which is one visible device with ordered output. */
 export const LANE_FOREGROUND_TERMINAL = "foreground-terminal"
 

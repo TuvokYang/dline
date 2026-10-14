@@ -5,7 +5,6 @@ import {
     findGroupedMessageByTs,
     groupLowStakesTools,
     groupMessages,
-    isPrimaryCheckpointForUserTurn,
     isToolGroup,
     resolveApiErrorMessage,
     resolveMessageRowExpanded,
@@ -339,83 +338,45 @@ describe("groupLowStakesTools", () => {
     })
 })
 
-describe("isPrimaryCheckpointForUserTurn", () => {
-    it("keeps the restore baseline and hides later checkpoints across opaque reasoning and file edits", () => {
-        const messages: UiMessage[] = [
-            { type: "say", say: "task", text: "update files", ts: 1 },
-            { type: "say", say: "checkpoint_created", ts: 2 },
-            { type: "say", say: "reasoning", text: "", ts: 3 },
-            createToolMessage(4, "editedExistingFile"),
-            { type: "say", say: "checkpoint_created", ts: 5 },
-            createToolMessage(6, "editedExistingFile"),
-            { type: "say", say: "checkpoint_created", ts: 7 },
-        ]
-
-        expect(isPrimaryCheckpointForUserTurn(2, messages)).toBe(true)
-        expect(isPrimaryCheckpointForUserTurn(5, messages)).toBe(false)
-        expect(isPrimaryCheckpointForUserTurn(7, messages)).toBe(false)
-    })
-
-    it("starts a new visible baseline after user feedback", () => {
-        const messages: UiMessage[] = [
-            { type: "say", say: "task", text: "first turn", ts: 1 },
-            { type: "say", say: "checkpoint_created", ts: 2 },
-            { type: "say", say: "user_feedback", text: "continue", ts: 3 },
-            { type: "say", say: "checkpoint_created", ts: 4 },
-        ]
-
-        expect(isPrimaryCheckpointForUserTurn(4, messages)).toBe(true)
-    })
-})
-
 describe("groupLowStakesTools checkpoint visibility", () => {
-    // An MCP call or a command only owes its round a restore point, which is
-    // committed later and lands after the next round's read rows.
-    const mcpTurn: UiMessage[] = [
-        { type: "say", say: "checkpoint_created", ts: 2 },
+    // Round checkpoints are written before each request, and an edit adds its
+    // own file restore point; every one of them is a row the user can restore.
+    const turn: UiMessage[] = [
         { type: "say", say: "user_feedback", text: "look it up", ts: 10 },
-        createRequestMessage(11, { cost: 0.01 }),
-        {
-            type: "say",
-            say: "use_mcp_server",
-            text: JSON.stringify({ type: "use_mcp_tool", serverName: "docs", toolName: "search", arguments: "{}" }),
-            ts: 12,
-        },
-        createRequestMessage(15, { cost: 0.01 }),
-        createToolMessage(16, "readFile"),
-        { type: "say", say: "checkpoint_created", ts: 17 },
-        createToolMessage(18, "readFile"),
-        { type: "say", say: "checkpoint_created", ts: 19 },
+        { type: "say", say: "checkpoint_created", ts: 11 },
+        createRequestMessage(12, { cost: 0.01 }),
+        createToolMessage(13, "readFile"),
+        createToolMessage(14, "readFile"),
+        { type: "say", say: "checkpoint_created", ts: 15 },
+        createRequestMessage(16, { cost: 0.01 }),
+        createToolMessage(17, "readFile"),
+        { type: "say", say: "checkpoint_created", ts: 18, checkpointAnchorTs: 15 },
+        createToolMessage(19, "editedExistingFile"),
     ]
-    const isPrimary = (ts: number) => isPrimaryCheckpointForUserTurn(ts, mcpTurn)
-    const standalone = (grouped: (UiMessage | UiMessage[])[], ts: number) =>
+    const grouped = groupLowStakesTools(groupMessages(filterVisibleMessages(turn)))
+    const standalone = (ts: number) =>
         grouped.some((item) => !Array.isArray(item) && item.say === "checkpoint_created" && item.ts === ts)
-    const grouped = (rule?: (ts: number) => boolean) => groupLowStakesTools(groupMessages(filterVisibleMessages(mcpTurn)), rule)
 
-    it("keeps a turn's primary checkpoint out of a read group, so the turn still shows one", () => {
-        expect(isPrimary(17)).toBe(true)
-
-        const result = grouped(isPrimary)
-
-        expect(standalone(result, 17)).toBe(true)
-        expect(
-            result
-                .filter(isToolGroup)
-                .flat()
-                .some((message) => message.ts === 17),
-        ).toBe(false)
+    it.each([11, 15, 18])("renders checkpoint %i as its own row", (ts) => {
+        expect(standalone(ts)).toBe(true)
     })
 
-    it("still absorbs later checkpoints of the same turn into the read group", () => {
-        const result = grouped(isPrimary)
+    it("never absorbs a checkpoint into a read group", () => {
+        const absorbed = grouped
+            .filter(isToolGroup)
+            .flat()
+            .filter((message) => message.say === "checkpoint_created")
 
-        expect(isPrimary(19)).toBe(false)
-        expect(standalone(result, 19)).toBe(false)
-        expect(
-            result
-                .filter(isToolGroup)
-                .flat()
-                .some((message) => message.ts === 19),
-        ).toBe(true)
+        expect(absorbed).toEqual([])
+    })
+
+    it("ends the read group at the checkpoint that follows it", () => {
+        const groupIndex = grouped.findIndex(
+            (item) => isToolGroup(item) && item.some((message) => message.ts === 13 || message.ts === 14),
+        )
+        const next = grouped[groupIndex + 1]
+
+        expect(groupIndex).toBeGreaterThanOrEqual(0)
+        expect(!Array.isArray(next) && next.say === "checkpoint_created" && next.ts).toBe(15)
     })
 })

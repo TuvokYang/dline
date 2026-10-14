@@ -227,6 +227,9 @@ export class CommandExecutor {
                 `[TerminalPerf] phase=execute_start taskId=${this.taskId} activityId=${activityId} terminalMode=${terminalMode}`,
             )
         }
+        // A command may write files it never names. The next checkpoint scans the
+        // workspace and attributes what changed to this task, so Restore Files can
+        // return those files too.
         this.callbacks.markWorkspaceScanRequired?.()
 
         // Get terminal and run command

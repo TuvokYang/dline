@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest"
 import type { IToolHandler } from "../ToolExecutorCoordinator"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import type { TaskConfig } from "../types/TaskConfig"
+import { NO_TOOL_RESULT } from "../utils/ToolResultUtils"
 
 function block(name: DlineDefaultTool, params: ToolUse["params"] = {}): ToolUse {
     return { type: "tool_use", name, params, partial: false } as ToolUse
@@ -27,13 +28,16 @@ function harness(name: DlineDefaultTool) {
     const updateFCListFromToolResponse = vi.fn(async () => {
         log.push("report")
     })
-    const saveCheckpoint = vi.fn(async () => {
+    const ensurePreEditCheckpoint = vi.fn(async () => {
         log.push("checkpoint")
     })
+    const saveCheckpoint = vi.fn(async () => {})
     const coordinator = new ToolExecutorCoordinator()
     coordinator.register(orderedHandler(name, log))
-    const config = { callbacks: { updateFCListFromToolResponse, saveCheckpoint } } as unknown as TaskConfig
-    return { coordinator, config, updateFCListFromToolResponse, saveCheckpoint, log }
+    const config = {
+        callbacks: { updateFCListFromToolResponse, ensurePreEditCheckpoint, saveCheckpoint },
+    } as unknown as TaskConfig
+    return { coordinator, config, updateFCListFromToolResponse, ensurePreEditCheckpoint, saveCheckpoint, log }
 }
 
 describe("ToolExecutorCoordinator task_progress", () => {
@@ -91,7 +95,7 @@ describe("ToolExecutorCoordinator task_progress", () => {
                 updateFCListFromToolResponse: vi.fn(async () => {
                     throw new Error("focus chain unavailable")
                 }),
-                saveCheckpoint: vi.fn(async () => {}),
+                ensurePreEditCheckpoint: vi.fn(async () => {}),
             },
         } as unknown as TaskConfig
 
@@ -105,93 +109,41 @@ describe("ToolExecutorCoordinator task_progress", () => {
     })
 })
 
-describe("ToolExecutorCoordinator checkpoint commit", () => {
-    it("commits a restore point after a tool that may have changed the workspace", async () => {
-        const { coordinator, config, saveCheckpoint, log } = harness(DlineDefaultTool.FILE_EDIT)
-
-        await coordinator.execute(config, block(DlineDefaultTool.FILE_EDIT))
-
-        // After, not before: the restore point must capture the state the call
-        // produced, and a checkpoint taken first would record the state the user
-        // already had.
-        expect(log).toEqual(["handler", "checkpoint"])
-        expect(saveCheckpoint).toHaveBeenCalledWith()
-    })
-
-    it.each([
-        DlineDefaultTool.BASH,
-        DlineDefaultTool.MCP_USE,
-        DlineDefaultTool.APPLY_PATCH,
-    ])("commits per call for %s when the surface has no round boundary", async (tool) => {
-        const { coordinator, config, saveCheckpoint } = harness(tool)
-
-        await coordinator.execute(config, block(tool))
-
-        // Without a round to settle the debt, deferring would leave the change
-        // without any restore point at all.
-        expect(saveCheckpoint).toHaveBeenCalledOnce()
-    })
-
-    it.each([
-        DlineDefaultTool.BASH,
-        DlineDefaultTool.MCP_USE,
-        DlineDefaultTool.MCP_ACCESS,
-    ])("defers %s to the round's single restore point", async (tool) => {
-        const log: string[] = []
-        const coordinator = new ToolExecutorCoordinator()
-        coordinator.register(orderedHandler(tool, log))
-        const saveCheckpoint = vi.fn(async () => {})
-        const deferCheckpoint = vi.fn(() => {
-            log.push("deferred")
-        })
-        const config = { callbacks: { saveCheckpoint, deferCheckpoint } } as unknown as TaskConfig
-
-        await coordinator.execute(config, block(tool))
-
-        expect(log).toEqual(["handler", "deferred"])
-        expect(saveCheckpoint).not.toHaveBeenCalled()
-    })
-
+describe("ToolExecutorCoordinator pre-edit checkpoint", () => {
     it.each([
         DlineDefaultTool.FILE_NEW,
         DlineDefaultTool.FILE_EDIT,
         DlineDefaultTool.APPLY_PATCH,
-    ])("still commits %s per call when the round can settle a debt", async (tool) => {
-        const coordinator = new ToolExecutorCoordinator()
-        coordinator.register(orderedHandler(tool, []))
-        const saveCheckpoint = vi.fn(async () => {})
-        const deferCheckpoint = vi.fn()
-        const config = { callbacks: { saveCheckpoint, deferCheckpoint } } as unknown as TaskConfig
+        DlineDefaultTool.REPLACE_TEXT,
+        DlineDefaultTool.RENAME,
+    ])("adds the file restore point before %s runs", async (tool) => {
+        const { coordinator, config, saveCheckpoint, log } = harness(tool)
 
         await coordinator.execute(config, block(tool))
 
-        expect(saveCheckpoint).toHaveBeenCalledOnce()
-        expect(deferCheckpoint).not.toHaveBeenCalled()
-    })
-
-    it.each([
-        DlineDefaultTool.LIST_FILES,
-        DlineDefaultTool.FILE_READ,
-        DlineDefaultTool.SEARCH,
-    ])("skips %s, which leaves nothing to restore", async (tool) => {
-        const { coordinator, config, saveCheckpoint } = harness(tool)
-
-        await coordinator.execute(config, block(tool))
-
+        // Before, not after: the restore point holds the files as they were
+        // before this edit, so the user can undo exactly this step.
+        expect(log).toEqual(["checkpoint", "handler"])
         expect(saveCheckpoint).not.toHaveBeenCalled()
     })
 
-    // attempt_completion commits against the completion row it publishes itself.
-    // Committing here as well would attach a second checkpoint to the same state.
+    // Whatever else a tool changes is covered by the round checkpoint the next
+    // provider request adds, so no other tool owes a restore point of its own.
     it.each([
+        DlineDefaultTool.BASH,
+        DlineDefaultTool.MCP_USE,
+        DlineDefaultTool.MCP_ACCESS,
+        DlineDefaultTool.LIST_FILES,
+        DlineDefaultTool.FILE_READ,
         DlineDefaultTool.ATTEMPT,
         DlineDefaultTool.QNA_RESPOND,
-        DlineDefaultTool.MAKE_PLAN,
-    ])("leaves %s to its own completion checkpoint", async (tool) => {
-        const { coordinator, config, saveCheckpoint } = harness(tool)
+    ])("adds no restore point around %s", async (tool) => {
+        const { coordinator, config, ensurePreEditCheckpoint, saveCheckpoint, log } = harness(tool)
 
         await coordinator.execute(config, block(tool))
 
+        expect(log).toEqual(["handler"])
+        expect(ensurePreEditCheckpoint).not.toHaveBeenCalled()
         expect(saveCheckpoint).not.toHaveBeenCalled()
     })
 
@@ -210,18 +162,47 @@ describe("ToolExecutorCoordinator checkpoint commit", () => {
         expect(log).toEqual(["handler"])
     })
 
-    it("returns the handler's result when the checkpoint cannot be saved", async () => {
+    it("still runs the edit when its restore point cannot be added", async () => {
+        const log: string[] = []
         const coordinator = new ToolExecutorCoordinator()
-        coordinator.register(orderedHandler(DlineDefaultTool.FILE_EDIT, []))
+        coordinator.register(orderedHandler(DlineDefaultTool.FILE_EDIT, log))
         const config = {
             callbacks: {
                 updateFCListFromToolResponse: vi.fn(async () => {}),
-                saveCheckpoint: vi.fn(async () => {
+                ensurePreEditCheckpoint: vi.fn(async () => {
                     throw new Error("shadow git unavailable")
                 }),
             },
         } as unknown as TaskConfig
 
+        // A checkpoint is a side feature of the task: losing one never refuses the edit.
         await expect(coordinator.execute(config, block(DlineDefaultTool.FILE_EDIT))).resolves.toBe("done")
+        expect(log).toEqual(["handler"])
+    })
+
+    it("ends the call without editing when the task stops while its restore point waits", async () => {
+        const log: string[] = []
+        const coordinator = new ToolExecutorCoordinator()
+        coordinator.register(orderedHandler(DlineDefaultTool.FILE_EDIT, log))
+        const operation = new AbortController()
+        // Stands in for a restore point queued behind another commit: the wait
+        // gives up only when the task's own operation signal aborts.
+        const ensurePreEditCheckpoint = vi.fn(
+            (signal?: AbortSignal) =>
+                new Promise<void>((_resolve, reject) => {
+                    signal?.addEventListener("abort", () => reject(new Error("checkpoint wait aborted")), { once: true })
+                }),
+        )
+        const config = {
+            callbacks: { updateFCListFromToolResponse: vi.fn(async () => {}), ensurePreEditCheckpoint },
+            taskState: { operationSignal: operation.signal },
+        } as unknown as TaskConfig
+
+        const call = coordinator.execute(config, block(DlineDefaultTool.FILE_EDIT))
+        await vi.waitFor(() => expect(ensurePreEditCheckpoint).toHaveBeenCalledWith(operation.signal))
+        operation.abort()
+
+        await expect(call).resolves.toBe(NO_TOOL_RESULT)
+        expect(log).toEqual([])
     })
 })

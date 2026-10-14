@@ -22,6 +22,13 @@ export interface CanonicalCheckpointRecord {
 export interface CaptureCanonicalCheckpointInput {
     readonly checkpointRef: string
     readonly workspaceRef?: string
+    /**
+     * The task state to store. Without it the state vault's snapshot is used,
+     * which can lag the runtime by the writes still being coalesced.
+     */
+    readonly snapshot?: DurableTaskSnapshot
+    /** The conversation position to restore to; without it, the stored state's own watermark. */
+    readonly boundary?: JournalWatermark
 }
 
 export interface CanonicalCheckpointRepositoryOptions {
@@ -76,10 +83,10 @@ export class CanonicalCheckpointRepository {
             return record
         }
 
-        const snapshot = await this.options.vault.load(this.options.taskId)
+        const snapshot = input.snapshot ?? (await this.options.vault.load(this.options.taskId))
         if (!snapshot) throw new Error("CanonicalCheckpointSnapshotMissing")
         if (snapshot.state.taskId !== this.options.taskId) throw new Error("CanonicalCheckpointIdentityMismatch")
-        const boundary = snapshot.state.journalWatermark ?? { seq: 0 }
+        const boundary = input.boundary ?? snapshot.state.journalWatermark ?? { seq: 0 }
         assertBoundary(boundary)
         if (compareJournalWatermarks(boundary, this.options.journal.watermark()) > 0) {
             throw new Error("CanonicalCheckpointBoundaryAhead")

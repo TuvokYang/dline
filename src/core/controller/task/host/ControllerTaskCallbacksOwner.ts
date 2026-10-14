@@ -13,6 +13,7 @@ import type { TaskApiHandlerOwner } from "@core/task/session/TaskApiHandlerOwner
 import type { TaskInteractionOwner } from "@core/task/session/TaskInteractionOwner"
 import type { DefaultToolHandlerState } from "@core/task/tools/state/ToolHandlerState"
 import type { TaskCallbacks } from "@core/task/tools/types/TaskConfig"
+import type { BegunCheckpointRow, CheckpointRowFields } from "@integrations/checkpoints"
 import type { ICheckpointManager } from "@integrations/checkpoints/types"
 import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import { BrowserSession } from "@services/browser/BrowserSession"
@@ -123,7 +124,7 @@ export class ControllerTaskCallbacksOwner {
             ask: (...args) => this.ask(...args),
             focusChainForceUpdate: (plan) => this.focusChain.forceReplaceFocusChain(plan),
             saveCheckpoint: (completion, ts) => this.checkpointManager?.saveCheckpoint(completion, ts) ?? Promise.resolve(),
-            awaitInitialCheckpoint: () => this.checkpointManager?.awaitInitialCheckpoint?.() ?? Promise.resolve(),
+            ensurePreEditCheckpoint: (signal) => this.checkpointManager?.ensurePreEditCheckpoint?.(signal) ?? Promise.resolve(),
             sayAndCreateMissingParamError: (tool, param, relPath, ts) => this.missingParameter(tool, param, relPath, ts),
             executeCommandTool: (command, timeout, executionOptions) =>
                 this.requireCommandExecutor().execute(command, timeout, executionOptions),
@@ -266,6 +267,30 @@ export class ControllerTaskCallbacksOwner {
             await this.addRow(message, `added ${type} row ${ts}`)
         }
         return ts
+    }
+
+    /**
+     * Register one `checkpoint_created` row in presentation order.
+     *
+     * The id is drawn and the row enters the store's write queue in one
+     * synchronous step, so no row written later can sort ahead of it. Delivery
+     * to the view follows the durable write and is not awaited as a failure.
+     */
+    beginCheckpointRow(fields: CheckpointRowFields): BegunCheckpointRow {
+        const ts = this.options.nextPresentationId()
+        const registered = this.options.messages.beginDurableClineMessage({
+            ts,
+            type: "say",
+            say: "checkpoint_created",
+            ...fields,
+        })
+        return {
+            ts,
+            persistence: registered.persistence.then((row) => {
+                void this.publishRow(row, `checkpoint row ${ts}`)
+                return row
+            }),
+        }
     }
 
     /** A user's reply row, carrying the facts of what they submitted. */

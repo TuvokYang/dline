@@ -2,7 +2,12 @@ import type { ContextManager } from "@core/context/context-management/ContextMan
 import type { FileContextTracker } from "@core/context/context-tracking/FileContextTracker"
 import type { MessageStateHandler } from "@core/task/message-state"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import { type CheckpointRuntimeState, createTaskCheckpointManager } from "@integrations/checkpoints"
+import {
+    type BegunCheckpointRow,
+    type CheckpointRowFields,
+    type CheckpointRuntimeState,
+    createTaskCheckpointManager,
+} from "@integrations/checkpoints"
 import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { CanonicalCheckpointPort, ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
@@ -26,6 +31,8 @@ type BuildArgs = {
 
     updateTaskHistory: (historyItem: any) => Promise<any[]>
     say: (...args: any[]) => Promise<number | undefined>
+    /** Register one checkpoint row in presentation order; see CheckpointManagerCallbacks.beginRow. */
+    beginRow: (fields: CheckpointRowFields) => BegunCheckpointRow
     cancelTask: () => Promise<void>
     restoreChatRuntime: (input: { apiIndex: number; editedText?: string }) => Promise<void>
     postStateToWebview: () => Promise<void>
@@ -56,6 +63,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
         canonicalCheckpoint,
         updateTaskHistory,
         say,
+        beginRow,
         cancelTask,
         restoreChatRuntime,
         postStateToWebview,
@@ -84,6 +92,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
         {
             updateTaskHistory,
             say,
+            beginRow,
             cancelTask,
             restoreChatRuntime,
             postStateToWebview,

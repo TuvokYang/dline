@@ -7,6 +7,7 @@ import {
 } from "../compaction/JournalCompactionConversation"
 import type { CompactionPort } from "../executors/compaction/CompactionCommandExecutor"
 import type {
+    CompactionCheckpointPort,
     CompactionFailurePresentationPort,
     CompactionProgressWithdrawalPort,
     CompactionReviewPort,
@@ -33,7 +34,7 @@ import {
     type ProductionApprovalPolicyAdapterOptions,
 } from "../executors/policy/ProductionApprovalPolicyAdapter"
 import { ProductionProviderAdapter, type ProductionProviderService } from "../executors/provider/ProductionProviderAdapter"
-import type { ProviderTextPresentationPort } from "../executors/provider/ProviderCommandExecutor"
+import type { ProviderRoundCheckpointPort, ProviderTextPresentationPort } from "../executors/provider/ProviderCommandExecutor"
 import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import type { ProviderRequestReportPort } from "../executors/provider/service/ProviderRequestReport"
@@ -59,8 +60,6 @@ export interface TaskCompositionServices {
     readonly tool: ProductionToolExecutionService
     readonly toolResources: OwnedToolResources
     readonly toolOperationCancellation?: ProductionToolAdapterOptions["operationCancellation"]
-    /** Settles the one restore point a round of tool calls owes; absent in headless assemblies. */
-    readonly toolRoundCheckpoint?: ProductionToolAdapterOptions["roundCheckpoint"]
     readonly toolSurface: ToolDomainSurface
     /** Task-scoped WS-072 scheduler; owned by the task so limit changes reach the active turn. */
     readonly toolScheduler: TurnToolScheduler
@@ -102,6 +101,10 @@ export interface TaskCompositionOptions {
     readonly providerPresentation?: ProviderTextPresentationPort
     /** Records what each request consumed; see ProviderRequestReportPort. */
     readonly providerRequestReport?: ProviderRequestReportPort
+    /** Writes the round's restore point before each request; see ProviderRoundCheckpointPort. */
+    readonly providerCheckpoint?: ProviderRoundCheckpointPort
+    /** Writes the round's restore point before a compaction rewrites history; see CompactionCheckpointPort. */
+    readonly compactionCheckpoint?: CompactionCheckpointPort
     /** Reads the task's model-mistake counter and live user-configured ceiling. */
     readonly readMistakeLimit?: () => { readonly count: number; readonly limit: number }
     /**
@@ -127,6 +130,8 @@ export interface TaskCompositionOptions {
      * Absent, one is built over the journal the shell opens.
      */
     readonly conversationView?: JournalConversationView
+    /** Task-scoped approval outcome/feedback ledger shared with the handler owner. */
+    readonly approvalFeedback?: ToolApprovalFeedbackLedger
     /**
      * Carries out what a tool result commits the task to, such as the handoff
      * of a `new_task` block; see PostCommitPublisher.
@@ -166,7 +171,7 @@ function bindToolSequence(port: ProductionComposeAdapter, sequence: ToolSequence
 export async function composeTask(options: TaskCompositionOptions): Promise<TaskCompositionResult> {
     let runtime: TaskRuntime | undefined
     let conversation: JournalCompactionConversation | undefined
-    const approvalFeedback = new InMemoryToolApprovalFeedbackLedger()
+    const approvalFeedback = options.approvalFeedback ?? new InMemoryToolApprovalFeedbackLedger()
     const opened = await openTaskShell({
         ...options,
         execution: ({ initialState, persistence }) => {
@@ -189,6 +194,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
                     }),
                     presentation: options.providerPresentation,
                     report: options.providerRequestReport,
+                    checkpoint: options.providerCheckpoint,
                 },
                 compose: bindToolSequence(
                     new ProductionComposeAdapter({
@@ -215,6 +221,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
                         review: options.compactionReview,
                         failure: options.compactionFailure,
                         progress: options.compactionProgress,
+                        checkpoint: options.compactionCheckpoint,
                     }),
                     options.compactionSettlement,
                 ),
@@ -237,7 +244,6 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
                     approvalFeedback,
                     resources: options.services.toolResources,
                     operationCancellation: options.services.toolOperationCancellation,
-                    roundCheckpoint: options.services.toolRoundCheckpoint,
                     surface: options.services.toolSurface,
                     service: options.services.tool,
                     scheduler: options.services.toolScheduler,

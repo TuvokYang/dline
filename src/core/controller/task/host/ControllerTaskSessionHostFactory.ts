@@ -187,6 +187,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
             taskFileTracker,
             diffViewProvider,
             say: callbackOwner.callbacks.say,
+            beginRow: (fields) => callbackOwner.beginCheckpointRow(fields),
             workspaceManager: this.options.workspaceManager,
             conversationRewind: context.conversationRewind,
             checkpoints: context.checkpoints,
@@ -219,8 +220,8 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
             releases: [
                 { release: () => callbackOwner.dispose() },
                 { release: async () => fileContextTracker.dispose() },
-                // Released with the tool owners, before storage closes, so a baseline
-                // still building cannot write into a closed message store.
+                // Released with the tool owners, before storage closes: disposal waits for
+                // the checkpoint in progress, so it cannot write into a closed message store.
                 { release: async () => checkpointOwner.manager.dispose?.() },
             ],
         }

@@ -11,7 +11,7 @@ vi.unmock("@integrations/checkpoints")
 import { GitOperations } from "../CheckpointGitOperations"
 import CheckpointTracker from "../CheckpointTracker"
 import { getShadowGitPath, hashWorkingDir } from "../CheckpointUtils"
-import { createTaskCheckpointManager } from "../index"
+import { type CheckpointRowFields, createTaskCheckpointManager } from "../index"
 import { TaskFileTracker } from "../TaskFileTracker"
 import { WorkspaceFileRegistry } from "../WorkspaceFileRegistry"
 
@@ -50,7 +50,11 @@ async function createUnbornSandbox(): Promise<CheckpointSandbox> {
     }
 }
 
+/** Managers watch their workspace; each is released before its sandbox is deleted under the watcher. */
+const openManagers: Array<{ dispose(): Promise<void> }> = []
+
 async function disposeSandbox(input: CheckpointSandbox): Promise<void> {
+    await Promise.all(openManagers.splice(0).map((manager) => manager.dispose()))
     if (input.previousDocumentsPath === undefined) delete process.env.DLINE_DOCS_DIR
     else process.env.DLINE_DOCS_DIR = input.previousDocumentsPath
     await fs.rm(input.sandbox, { recursive: true, force: true })
@@ -77,6 +81,11 @@ function createManagerHarness(input: {
         }
         input.messages.push(message)
         return message.ts
+    })
+    const beginRow = vi.fn((fields: CheckpointRowFields) => {
+        const message: UiMessage = { ts: ++nextMessageTs, type: "say", say: "checkpoint_created", ...fields }
+        input.messages.push(message)
+        return { ts: message.ts, persistence: Promise.resolve(message) }
     })
     const manager = createTaskCheckpointManager(
         { taskId: input.taskId, controller: {} } as never,
@@ -108,11 +117,13 @@ function createManagerHarness(input: {
             cancelTask: vi.fn().mockResolvedValue(undefined),
             restoreChatRuntime: vi.fn().mockResolvedValue(undefined),
             say,
+            beginRow,
             postStateToWebview: vi.fn().mockResolvedValue(undefined),
             publishMessage: vi.fn().mockResolvedValue(undefined),
         } as never,
         {},
     )
+    openManagers.push(manager)
 
     return { manager, setCheckpointTracker, updateTaskHistory }
 }
@@ -440,6 +451,32 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
         }
     })
 
+    it("commits watched changes the shadow keeps and leaves out the ones it excludes", async () => {
+        const sandbox = await createUnbornSandbox()
+        const kept = path.join(sandbox.workspacePath, "watched.txt")
+        const excluded = path.join(sandbox.workspacePath, "watched.log")
+        try {
+            const tracker = await CheckpointTracker.create("task-watched", true, sandbox.workspacePath)
+            if (!tracker) throw new Error("checkpoint_tracker_missing")
+            const taskFiles = new TaskFileTracker("task-watched")
+            tracker.setTaskFileTracker(taskFiles)
+            await fs.writeFile(kept, "seen by the watcher")
+            await fs.writeFile(excluded, "log output")
+            taskFiles.notePendingChange(kept)
+            taskFiles.notePendingChange(excluded)
+
+            const checkpointHash = await tracker.commit()
+
+            expectCheckpointHash(checkpointHash)
+            const shadowGit = simpleGit(path.dirname(await getShadowGitPath(hashWorkingDir(sandbox.workspacePath))))
+            expect(await shadowGit.show([`${checkpointHash}:watched.txt`])).toBe("seen by the watcher")
+            await expect(shadowGit.show([`${checkpointHash}:watched.log`])).rejects.toThrow()
+            expect(taskFiles.hasPendingChanges()).toBe(false)
+        } finally {
+            await disposeSandbox(sandbox)
+        }
+    })
+
     it("records command-scanned files as task-owned so selective restore includes them", async () => {
         const sandbox = await createUnbornSandbox()
         const taskId = "task-command-scan-restore"
@@ -528,6 +565,8 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
                 taskFileTracker: taskFiles,
                 messages,
             })
+            // A reopened task scans once; this case is about staging the paths it tracks.
+            taskFiles.clearWorkspaceScanRequired()
 
             await harness.manager.saveCheckpoint()
 
@@ -714,6 +753,115 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
         } finally {
             WorkspaceFileRegistry.getInstance().releaseTask(taskAId)
             WorkspaceFileRegistry.getInstance().releaseTask(taskBId)
+            await disposeSandbox(sandbox)
+        }
+    })
+
+    it("restores a watched path another writer changed without reporting it as this task's change", async () => {
+        const sandbox = await createUnbornSandbox()
+        const taskId = "task-observed-owner"
+        try {
+            const tracker = await CheckpointTracker.create(taskId, true, sandbox.workspacePath)
+            if (!tracker) throw new Error("checkpoint_tracker_missing")
+            const taskFiles = new TaskFileTracker(taskId)
+            tracker.setTaskFileTracker(taskFiles)
+            const shadowGit = simpleGit(path.dirname(await getShadowGitPath(hashWorkingDir(sandbox.workspacePath))))
+            const taskStartHash = (await shadowGit.revparse(["HEAD"])).trim()
+
+            await fs.writeFile(sandbox.staleFile, "written by another task")
+            taskFiles.notePendingChange(sandbox.staleFile)
+            const observedHash = await tracker.commit()
+
+            expectCheckpointHash(observedHash)
+            expect(await shadowGit.show([`${observedHash}:stale_test.txt`])).toBe("written by another task")
+            expect(await tracker.getTaskDiffSet(taskStartHash, observedHash)).toEqual([])
+
+            await fs.writeFile(sandbox.staleFile, "written again by another task")
+            taskFiles.notePendingChange(sandbox.staleFile)
+            taskFiles.trackModification(sandbox.trackedFile)
+            await fs.writeFile(sandbox.trackedFile, "task change")
+            const mixedHash = await tracker.commit()
+
+            expectCheckpointHash(mixedHash)
+            expect(await shadowGit.show([`${mixedHash}:stale_test.txt`])).toBe("written again by another task")
+            expect(await shadowGit.show([`${mixedHash}:write_test.txt`])).toBe("task change")
+            expect(await tracker.getTaskDiffSet(taskStartHash, mixedHash)).toEqual([
+                expect.objectContaining({ relativePath: "write_test.txt", after: "task change" }),
+            ])
+            expect(await tracker.getTaskDiffCount(taskStartHash, mixedHash)).toBe(1)
+            expect(taskFiles.hasPendingChanges()).toBe(false)
+        } finally {
+            WorkspaceFileRegistry.getInstance().releaseTask(taskId)
+            await disposeSandbox(sandbox)
+        }
+    })
+
+    // The shadow index is shared, so an attempt that failed between staging and
+    // committing leaves paths behind; they must not ride on the next commit's subject.
+    it("leaves paths an earlier attempt staged out of the next commit", async () => {
+        const sandbox = await createUnbornSandbox()
+        const taskId = "task-staged-residue"
+        try {
+            const tracker = await CheckpointTracker.create(taskId, true, sandbox.workspacePath)
+            if (!tracker) throw new Error("checkpoint_tracker_missing")
+            const taskFiles = new TaskFileTracker(taskId)
+            tracker.setTaskFileTracker(taskFiles)
+            const shadowGit = simpleGit(path.dirname(await getShadowGitPath(hashWorkingDir(sandbox.workspacePath))))
+            const taskStartHash = (await shadowGit.revparse(["HEAD"])).trim()
+            await fs.writeFile(sandbox.staleFile, "staged by an interrupted attempt")
+            await shadowGit.add(["stale_test.txt"])
+
+            taskFiles.trackModification(sandbox.trackedFile)
+            await fs.writeFile(sandbox.trackedFile, "task change")
+            const checkpointHash = await tracker.commit()
+
+            expectCheckpointHash(checkpointHash)
+            expect(await shadowGit.show([`${checkpointHash}:stale_test.txt`])).toBe("before deletion")
+            expect(await tracker.getTaskDiffSet(taskStartHash, checkpointHash)).toEqual([
+                expect.objectContaining({ relativePath: "write_test.txt", after: "task change" }),
+            ])
+        } finally {
+            WorkspaceFileRegistry.getInstance().releaseTask(taskId)
+            await disposeSandbox(sandbox)
+        }
+    })
+
+    // A scan standing in for the watcher (the task was closed, or the watcher
+    // failed) finds changes that may be anyone's.
+    it("restores what a stand-in scan finds without reporting it as this task's change", async () => {
+        const sandbox = await createUnbornSandbox()
+        const taskId = "task-unattributed-scan"
+        try {
+            const tracker = await CheckpointTracker.create(taskId, true, sandbox.workspacePath)
+            if (!tracker) throw new Error("checkpoint_tracker_missing")
+            const taskFiles = new TaskFileTracker(taskId)
+            tracker.setTaskFileTracker(taskFiles)
+            const shadowGit = simpleGit(path.dirname(await getShadowGitPath(hashWorkingDir(sandbox.workspacePath))))
+            const taskStartHash = (await shadowGit.revparse(["HEAD"])).trim()
+
+            await fs.writeFile(sandbox.staleFile, "written while nothing watched")
+            taskFiles.markWorkspaceScanRequired({ attributeToTask: false })
+            const scanHash = await tracker.commit()
+
+            expectCheckpointHash(scanHash)
+            expect(await shadowGit.show([`${scanHash}:stale_test.txt`])).toBe("written while nothing watched")
+            expect(await tracker.getTaskDiffCount(taskStartHash, scanHash)).toBe(0)
+
+            await fs.writeFile(sandbox.staleFile, "written again while unwatched")
+            taskFiles.trackModification(sandbox.trackedFile)
+            await fs.writeFile(sandbox.trackedFile, "task change")
+            taskFiles.markWorkspaceScanRequired({ attributeToTask: false })
+            const mixedHash = await tracker.commit()
+
+            expectCheckpointHash(mixedHash)
+            expect(await shadowGit.show([`${mixedHash}:stale_test.txt`])).toBe("written again while unwatched")
+            expect(await shadowGit.show([`${mixedHash}:write_test.txt`])).toBe("task change")
+            expect(await tracker.getTaskDiffSet(taskStartHash, mixedHash)).toEqual([
+                expect.objectContaining({ relativePath: "write_test.txt", after: "task change" }),
+            ])
+            expect(taskFiles.hasPendingChanges()).toBe(false)
+        } finally {
+            WorkspaceFileRegistry.getInstance().releaseTask(taskId)
             await disposeSandbox(sandbox)
         }
     })

@@ -437,98 +437,21 @@ export function findApiReqInfoForCheckpoint(
 }
 
 /**
- * Check if a checkpoint at the given index would be displayed (not absorbed into a tool group).
- * A checkpoint is absorbed if it's PRECEDED by low-stakes tools (meaning we're in a tool group).
- * A checkpoint is displayed if it's preceded by non-tool content (meaning no active tool group).
- */
-function isDisplayedCheckpoint(checkpointIndex: number, allMessages: UiMessage[]): boolean {
-    // Look BACKWARDS to see if we're in a tool group
-    // A checkpoint is absorbed if the previous meaningful content was a low-stakes tool
-    for (let i = checkpointIndex - 1; i >= 0; i--) {
-        const msg = allMessages[i]
-
-        // Skip api_req messages - they don't affect tool group status
-        if (msg.say === "api_req_started" || msg.say === "api_req_finished") {
-            continue
-        }
-
-        // Skip reasoning messages
-        if (msg.say === "reasoning") {
-            continue
-        }
-
-        // Skip other checkpoints - they don't end tool groups
-        if (msg.say === "checkpoint_created") {
-            continue
-        }
-
-        // If preceded by a low-stakes tool, this checkpoint is in the tool group (absorbed)
-        if (msg.say === "tool" || msg.ask === "tool") {
-            try {
-                const tool = JSON.parse(msg.text || "{}") as UiSayTool
-                if (LOW_STAKES_TOOLS.has(tool.tool)) {
-                    return false // absorbed into tool group
-                }
-            } catch {
-                // Can't parse, treat as displayed
-            }
-        }
-
-        // Any other content before this checkpoint ends the tool group, so this is displayed
-        return true
-    }
-
-    // Start of messages - checkpoint is displayed (no preceding tool group)
-    return true
-}
-
-/**
- * Keep one visible restore baseline per user-authored turn.
- *
- * File-mutating tools still commit every durable checkpoint, but showing each
- * autonomous edit as another full-width checkpoint row floods the timeline.
- * Opaque reasoning and provider request rows are implementation detail and do
- * not start a new user turn, so later checkpoints remain available to recovery
- * code without being rendered as duplicate controls.
- */
-export function isPrimaryCheckpointForUserTurn(checkpointTs: number, allMessages: UiMessage[]): boolean {
-    const checkpointIndex = allMessages.findIndex(
-        (message) => message.ts === checkpointTs && message.say === "checkpoint_created",
-    )
-    if (checkpointIndex === -1) return false
-    for (let index = checkpointIndex - 1; index >= 0; index--) {
-        const message = allMessages[index]
-        if (message.say === "checkpoint_created") return false
-        if (message.say === "task" || message.say === "user_feedback") return true
-    }
-    return true
-}
-
-/**
  * Find the total cost for the segment starting at a checkpoint.
- * Looks FORWARD from the checkpoint to the next DISPLAYED checkpoint (skipping absorbed ones).
+ * Looks FORWARD from the checkpoint to the next checkpoint, every one of which is its own row.
  * Sums all api_req_started costs in between.
- * Returns undefined if the segment is incomplete (no next displayed checkpoint yet).
  */
 export function findNextSegmentCost(checkpointTs: number, allMessages: UiMessage[]): number | undefined {
     const checkpointIndex = allMessages.findIndex((m) => m.ts === checkpointTs && m.say === "checkpoint_created")
     if (checkpointIndex === -1) {
         return undefined
     }
-    // Find the next DISPLAYED checkpoint (skip absorbed ones)
-    let nextDisplayedCheckpointIndex = -1
-    for (let i = checkpointIndex + 1; i < allMessages.length; i++) {
-        if (allMessages[i].say === "checkpoint_created") {
-            if (isDisplayedCheckpoint(i, allMessages)) {
-                nextDisplayedCheckpointIndex = i
-                break
-            }
-            // Otherwise continue looking for next displayed checkpoint
-        }
-    }
+    const nextCheckpointIndex = allMessages.findIndex(
+        (message, index) => index > checkpointIndex && message.say === "checkpoint_created",
+    )
 
-    // If no next displayed checkpoint, sum to end of messages (in-progress segment)
-    const endIndex = nextDisplayedCheckpointIndex === -1 ? allMessages.length : nextDisplayedCheckpointIndex
+    // If no next checkpoint, sum to end of messages (in-progress segment)
+    const endIndex = nextCheckpointIndex === -1 ? allMessages.length : nextCheckpointIndex
 
     // Sum all api_req_started costs between this checkpoint and the end
     let totalCost = 0
@@ -798,9 +721,9 @@ export function isApiReqAbsorbable(apiReqTs: number, allMessages: UiMessage[]): 
             continue
         }
 
-        // Checkpoints do not affect absorbability
+        // A checkpoint is always its own row, so it ends the run the request could join
         if (msg.say === "checkpoint_created") {
-            continue
+            break
         }
 
         // Text is allowed (we still want to absorb api_req into the tool group)
@@ -854,9 +777,9 @@ function isApiReqFollowedOnlyByLowStakesTools(index: number, messages: (UiMessag
             hasLowStakesTool = true
             continue
         }
-        // Checkpoint is OK
+        // A checkpoint is always its own row, so it ends the run the request could join
         if (msg.say === "checkpoint_created") {
-            continue
+            break
         }
         // Text is OK - it will render separately, but we still absorb api_req
         if (msg.say === "text") {
@@ -873,26 +796,15 @@ function isApiReqFollowedOnlyByLowStakesTools(index: number, messages: (UiMessag
 
 /**
  * Group consecutive low-stakes tools (and their reasoning) into arrays.
- * Also filters out checkpoints that follow low-stakes tool groups.
  * Absorbs api_req_started messages that are followed only by low-stakes tools.
  * Only creates tool groups when there's at least one actual tool - reasoning-only groups are dropped.
  * Should be called after groupMessages.
  *
- * A group never draws the checkpoints it holds, so a checkpoint the row
- * renderer treats as its turn's primary one must stay outside the group. A
- * restore point an MCP call or a command only owes its round is committed
- * later and can land after the next round's read rows; absorbing it there
- * left the turn without any visible checkpoint, because the renderer hides
- * every later checkpoint of the turn as non-primary.
- *
- * @param isPrimaryCheckpoint The renderer's primary-checkpoint rule, evaluated
- *   against the same messages it reads; without it every checkpoint inside a
- *   group is absorbed.
+ * A group never draws what it holds, so a checkpoint is never absorbed: every
+ * checkpoint the task wrote is a restore point the user can reach, and it ends
+ * the group it follows to render as its own row.
  */
-export function groupLowStakesTools(
-    groupedMessages: (UiMessage | UiMessage[])[],
-    isPrimaryCheckpoint?: (checkpointTs: number) => boolean,
-): (UiMessage | UiMessage[])[] {
+export function groupLowStakesTools(groupedMessages: (UiMessage | UiMessage[])[]): (UiMessage | UiMessage[])[] {
     const result: (UiMessage | UiMessage[])[] = []
     let toolGroup: UiMessage[] = []
     let pendingReasoning: UiMessage[] = []
@@ -979,12 +891,6 @@ export function groupLowStakesTools(
                 flushPending()
                 result.push(message)
             }
-            continue
-        }
-
-        // Checkpoint - absorb into active tool group, unless it is the one its turn shows
-        if (messageType === "checkpoint_created" && hasTools && !isPrimaryCheckpoint?.(message.ts)) {
-            toolGroup.push(message)
             continue
         }
 

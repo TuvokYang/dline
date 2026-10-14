@@ -1729,6 +1729,7 @@ webFetchE2e(
         await prepareWebFetchBrowser(dlineDir, dlineHomeDir, webFetchChromiumSeed)
         const warmUrl = `${server.baseUrl}/mock/web-fetch/page`
         const delayedUrl = `${server.baseUrl}/mock/web-fetch/page?delayMs=30000`
+        const delayedPrompt = "Remain in flight until checkpoint restore cancels this request"
         const resumeDraft = "E2E_WEB_FETCH_RESTORE_FIRST_RESUME_DRAFT"
         const completion = "E2E_WEB_FETCH_RESTORE_FIRST_RESUME_OK"
         server.enqueueResponses(
@@ -1765,7 +1766,7 @@ webFetchE2e(
                 type: "tool",
                 id: "call_web_fetch_restore_in_flight",
                 name: "web_fetch",
-                arguments: { url: delayedUrl, prompt: "Remain in flight until checkpoint restore cancels this request" },
+                arguments: { url: delayedUrl, prompt: delayedPrompt },
             },
             {
                 type: "tool",
@@ -1796,7 +1797,7 @@ webFetchE2e(
             })
 
             const checkpointLabels = opened.sidebar.getByText("Checkpoint", { exact: true })
-            // The task-start baseline checkpoint plus the checkpoint committed after the approved write.
+            // One restore point per request: the task-start baseline, then the round after the approved write.
             await expect.poll(() => checkpointLabels.count(), { timeout: 30_000 }).toBe(2)
             const input = opened.sidebar.getByTestId("chat-input")
             await input.fill("E2E_WARM_WEB_FETCH")
@@ -1815,10 +1816,13 @@ webFetchE2e(
             const approveButton = opened.sidebar.getByRole("contentinfo").getByText("Approve", { exact: true })
             await expect(approveButton).toBeVisible({ timeout: 60_000 })
             await approveButton.click()
-            const runningCard = opened.sidebar.getByTestId("web-fetch-card").filter({ hasText: delayedUrl })
+            // The running fetch writes its prompt onto its card.
+            const runningCard = opened.sidebar.getByTestId("web-fetch-card").filter({ hasText: delayedPrompt })
             await expect(runningCard).toBeVisible({ timeout: 30_000 })
             await expect.poll(() => server.getWebFetchPageRequests().length, { timeout: 30_000 }).toBe(2)
 
+            // Every request adds its own restore point, so the newest one is the round that
+            // started this fetch. The list is virtualized, so earlier rows may not be mounted.
             const restoreCheckpointControl = checkpointLabels.last().locator("..").locator("..")
             await restoreCheckpointControl.scrollIntoViewIfNeeded()
             await restoreCheckpointControl.hover()

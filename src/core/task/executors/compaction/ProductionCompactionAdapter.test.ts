@@ -41,6 +41,43 @@ describe("ProductionCompactionAdapter", () => {
         })
     })
 
+    it("writes the round's restore point before the summary is requested, and still compacts when it fails", async () => {
+        const payloads = new MemoryPayloads()
+        const context: CompactionContextEnvelope = { kind: "compaction_context", context: { messages: 3 } }
+        const contextRef = await payloads.put(encodeTaskPayload(context))
+        const order: string[] = []
+        const run = (beforeCompaction: () => Promise<void>) =>
+            new ProductionCompactionAdapter({
+                payloads,
+                service: {
+                    run: async ({ context: decoded }) => {
+                        order.push("summary")
+                        return { summary: decoded }
+                    },
+                },
+                checkpoint: { beforeCompaction },
+            }).run({
+                compactionId: "compact-1",
+                attempt: "attempt-1",
+                contextRef,
+                signal: new AbortController().signal,
+                publish: () => undefined,
+            })
+
+        await run(async () => {
+            order.push("checkpoint")
+        })
+        expect(order).toEqual(["checkpoint", "summary"])
+
+        order.length = 0
+        await expect(
+            run(async () => {
+                throw new Error("shadow git unavailable")
+            }),
+        ).resolves.toMatchObject({ resultRef: expect.any(String) })
+        expect(order).toEqual(["summary"])
+    })
+
     it("truncates through the pairing-safe canonical truncation port without asking the provider or reviewer", async () => {
         const payloads = new MemoryPayloads()
         const span = { from: { seq: 2 }, to: { seq: 4 } }

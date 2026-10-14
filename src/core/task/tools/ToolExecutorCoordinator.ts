@@ -43,11 +43,12 @@ import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
 import { WorkingRespondHandler } from "./handlers/WorkingRespondHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
-import { applyToolCallSideEffects, awaitToolCallPreconditions, resolveToolCallSideEffects } from "./ToolCallSideEffects"
+import { applyToolCallSideEffects, ensureToolCallCheckpoint, resolveToolCallSideEffects } from "./ToolCallSideEffects"
 import type { ToolHandlerResult } from "./ToolExecutionResult"
 import { ToolValidator } from "./ToolValidator"
 import type { TaskConfig } from "./types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "./types/UIHelpers"
+import { NO_TOOL_RESULT } from "./utils/ToolResultUtils"
 
 export interface IToolHandler {
     readonly name: DlineDefaultTool
@@ -369,9 +370,11 @@ export class ToolExecutorCoordinator {
         // decides which of them it has, so a task with no checklist and no
         // workspace history runs the same tools without supplying either.
         const effects = resolveToolCallSideEffects(config)
-        await awaitToolCallPreconditions(effects, handler.name)
+        // A stop that lands while the edit waits for its restore point ends the call
+        // there: the edit must not start after the task that owned it was halted.
+        if (!(await ensureToolCallCheckpoint(effects, handler.name, config.taskState?.operationSignal))) return NO_TOOL_RESULT
         const result = await handler.execute(authorized.config, block)
-        await applyToolCallSideEffects(effects, block, handler.name)
+        await applyToolCallSideEffects(effects, block)
         return result
     }
 

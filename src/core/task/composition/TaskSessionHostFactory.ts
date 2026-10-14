@@ -23,12 +23,23 @@ import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import type { TaskCallbacks, TaskServices } from "../tools/types/TaskConfig"
 
 export interface TaskSessionCheckpointPort {
-    capture(input: { readonly messageTs: number; readonly workspaceRef?: string }): Promise<void>
+    capture(input: {
+        readonly messageTs: number
+        readonly workspaceRef?: string
+        /** The conversation position the row recorded; the current task state is stored with it. */
+        readonly boundary?: { readonly seq: number }
+        /** A pre-edit row restores the conversation of this round row. */
+        readonly anchorTs?: number
+    }): Promise<void>
+    /** Whether anything other than a checkpoint marker was journaled after `seq`. */
+    advancedSince(seq: number): Promise<boolean>
     restore(input: {
         readonly messageTs: number
         readonly mode: CheckpointRestoreMode
         /** Restore to this journal position instead of a checkpoint captured at `messageTs`. */
         readonly journalTarget?: { readonly seq: number }
+        /** The row's own position and files, used when no checkpoint was captured for it. */
+        readonly fallback?: { readonly journalTarget: { readonly seq: number }; readonly workspaceRef?: string }
         readonly restoreWorkspace: (workspaceRef: string) => Promise<WorkspaceRestoreResult>
     }): Promise<{ readonly result: CheckpointRestoreResult; readonly fence?: CheckpointRestoreFence }>
 }

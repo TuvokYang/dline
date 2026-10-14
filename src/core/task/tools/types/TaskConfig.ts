@@ -29,6 +29,7 @@ import type { StateManager } from "../../../storage/StateManager"
 import type { TaskActivityStore } from "../../activity/TaskActivityStore"
 import type { BackgroundResultDeliveryPort } from "../../background/BackgroundResultDeliveryPort"
 import type { PeerTaskSpawnPort } from "../../executors/spawn/PeerTaskSpawnPort"
+import type { ToolAdmissionOutcome } from "../../executors/tool/ToolApprovalFeedbackLedger"
 import type { ToolBlockStatePort } from "../../executors/tool/ToolBlockStatePort"
 import type {
     CompleteInteractionRequest,
@@ -114,8 +115,8 @@ export interface TaskConfig {
 
     // Typed interaction boundary
     interactions: TaskInteractionPorts
-    /** Structured manual-admission outcomes keyed by canonical block identity. */
-    admissionOutcomes?: ReadonlyMap<string, InteractionOutcome>
+    /** Manual approval outcome delivered once to this handler invocation. */
+    admissionOutcome?: ToolAdmissionOutcome
 
     // Callbacks (strongly typed)
     callbacks: TaskCallbacks
@@ -226,20 +227,13 @@ export interface TaskCallbacks {
     saveCheckpoint?: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
 
     /**
-     * Record that the current round owes a restore point without committing one.
+     * Before a named file edit runs: add a file restore point when the files
+     * changed since the latest checkpoint. Never rejects; a checkpoint that
+     * cannot be made is left out and the edit runs.
      *
-     * Present only where a round boundary settles the debt with a single commit;
-     * without it, a tool that may change the workspace commits per call instead.
+     * Optional like `saveCheckpoint`: only a surface with workspace history has one.
      */
-    deferCheckpoint?: () => void
-
-    /**
-     * Wait until the task's baseline restore point exists.
-     *
-     * Optional like `saveCheckpoint`: only a surface with workspace history
-     * builds a baseline while the first request is in flight.
-     */
-    awaitInitialCheckpoint?: () => Promise<void>
+    ensurePreEditCheckpoint?: (signal?: AbortSignal) => Promise<void>
 
     sayAndCreateMissingParamError: (
         toolName: DlineDefaultTool,

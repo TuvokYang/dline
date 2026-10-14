@@ -7,7 +7,7 @@ import type { UiMessage, UiSay } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
 
-import { createTaskCheckpointManager } from "../index"
+import { type CheckpointRowFields, createTaskCheckpointManager } from "../index"
 
 function createHarness(
     createCheckpointTracker: (taskId: string, enabled: boolean, root: string) => Promise<CheckpointTracker | undefined>,
@@ -56,7 +56,14 @@ function createHarness(
             taskFileTracker: {
                 getModifiedFiles: vi.fn().mockReturnValue([]),
                 getAllModifiedFiles: vi.fn().mockReturnValue([]),
+                getObservedFiles: vi.fn().mockReturnValue([]),
                 isWorkspaceScanRequired: vi.fn().mockReturnValue(false),
+                isScanAttributedToTask: vi.fn().mockReturnValue(false),
+                markWorkspaceScanRequired: vi.fn(),
+                notePendingChange: vi.fn(),
+                hasPendingChanges: vi.fn().mockReturnValue(true),
+                pendingWatermark: vi.fn().mockReturnValue(0),
+                settlePending: vi.fn(),
                 dropModifiedFiles: vi.fn(),
                 clearWorkspaceScanRequired: vi.fn(),
             },
@@ -77,6 +84,11 @@ function createHarness(
                 const message: UiMessage = { ts: nextMessageTs++, type: "say", say }
                 messages.push(message)
                 return message.ts
+            }),
+            beginRow: vi.fn((fields: CheckpointRowFields) => {
+                const message: UiMessage = { ts: nextMessageTs++, type: "say", say: "checkpoint_created", ...fields }
+                messages.push(message)
+                return { ts: message.ts, persistence: Promise.resolve(message) }
             }),
             postStateToWebview: vi.fn().mockResolvedValue(undefined),
         } as never,
@@ -125,10 +137,8 @@ describe("TaskCheckpointManager multi-root", () => {
                 checkpointWorkspaceRoots: [harness.rootA, harness.rootB],
             }),
         )
-        expect(harness.updateClineMessage).toHaveBeenCalledWith(0, {
-            lastCheckpointHash: ["hash-a", "hash-b"],
-            checkpointWorkspaceRoots: [harness.rootA, harness.rootB],
-        })
+        // The row is written after the commit, so it is born with every root's revision.
+        expect(harness.updateClineMessage).not.toHaveBeenCalled()
     })
 
     it("returns Task-owned changes across every referenced workspace root", async () => {

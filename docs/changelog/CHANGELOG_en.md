@@ -45,7 +45,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed a transient failure while preparing a request (rebuilding the Profile's connection, validating credentials, building the prompt) surfacing at once as `API Request Failed`: it now shares the automatic retries and countdown of a failed send, as does preparing the request again after a Profile switch or a context truncation; a failure only the user can resolve, such as an invalid Profile, still shows at once
 - Fixed the API failure prompt that offers Retry showing only the raw error: it now matches the error rows in the chat, naming an exhausted balance, an organization spend limit, or a signed-out Dline account; inside that prompt the balance card no longer adds a second Retry button that bypassed the prompt
 - Fixed commands staying "Running" with no Cancel button in the Activities panel: after a window reload, an extension host exit, or a task close whose cancellation timed out, reopening the task now marks the commands and subagents that no process owns any more as interrupted, together with their chat command rows; a read-only opening (the task runs in another window) changes nothing; after a command moves to the background its Foreground/Background label updates at once instead of possibly staying on Foreground
-- Fixed turns that used MCP tools or commands without editing files showing no checkpoint in the chat: the checkpoint such calls commit later landed after the following read or search tools and was folded into their tool group, where it is not drawn; each turn's primary checkpoint now always shows on its own
+- Fixed many checkpoints going missing: checkpoints are now committed and shown in step with the conversation. One is added before each model request and before context compaction whenever the conversation moved on or files changed, and a file-editing tool adds a restore point for the files it is about to change before it runs. Workspace changes come from the existing file watcher, whichever tool or person made them; changes by other tasks or by you can be restored but are not reported as this task's changes. The chat no longer hides or merges any checkpoint
 - Fixed a sent message showing an extra image thumbnail at the bottom that duplicated the chip in its text
 - Fixed image and file chips in sent messages not opening on click: a resource the task still holds now opens directly
 - Fixed the composer placeholder staying visible after the input gains focus
@@ -53,6 +53,11 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed the follow-up question card (ask_followup_question) and its options appearing in the middle of the reply: when the model keeps writing after it starts the question, the card now follows the whole reply
 - Fixed earlier Thinking rows appearing twice after an API request failed or a stream dropped in the task
 - Fixed a task reopened after an abnormal exit not staying at the bottom of the conversation: a command row left "running" by the previous session no longer turns off auto-scroll when it expands itself, while expanding a row by hand still keeps your reading position
+- Fixed the first message sent in a task opened from History (including one reopened after an interruption) clearing and reloading the chat, and a rejected send losing the typed input: the task keeps the same opening identity when the history view turns into the running task, so the conversation stays in place
+- Fixed a strip of the auto-approve bar still showing under the open input queue: the queue list now opens flush against the Queue bar, with no gap or arrow
+- Input queue entries are now separated from each other; queued entries show a list icon and steering entries a paper-plane icon
+- Fixed the MCP response display-mode dropdown staying dark in a light theme
+- Fixed the Claude usage tooltip splitting "Today Out:" from its value across two lines
 
 ## [0.11.0]
 

@@ -88,7 +88,14 @@ function createHarness(
             ...(canonicalCheckpoint === undefined ? {} : { canonicalCheckpoint }),
             ...(trackedFiles === undefined
                 ? {}
-                : { taskFileTracker: { getAllModifiedFiles: vi.fn().mockReturnValue(trackedFiles) } }),
+                : {
+                      taskFileTracker: {
+                          getAllModifiedFiles: vi.fn().mockReturnValue(trackedFiles),
+                          markWorkspaceScanRequired: vi.fn(),
+                          notePendingChange: vi.fn(),
+                          hasPendingChanges: vi.fn().mockReturnValue(true),
+                      },
+                  }),
             ...(workspacePath
                 ? {
                       workspaceManager: {
@@ -567,6 +574,60 @@ describe("TaskCheckpointManager restore isolation", () => {
         )
         expect(order).toEqual(["canonical", "clear-transient"])
         expect(harness.restoreChatRuntime).toHaveBeenCalledWith({ apiIndex: 1 })
+    })
+
+    it("restores a pre-edit row's files with the chat of the checkpoint it is anchored to", async () => {
+        const canonicalRestore = vi.fn(async () => ({ kind: "restored" as const, diagnostics: [] }))
+        const harness = createHarness(
+            [
+                { ts: 42, type: "say", say: "checkpoint_created", conversationHistoryIndex: 0, conversationJournalSeq: 7 },
+                { ts: 43, type: "say", say: "text" },
+                {
+                    ts: 44,
+                    type: "say",
+                    say: "checkpoint_created",
+                    checkpointAnchorTs: 42,
+                    conversationHistoryIndex: 0,
+                    conversationJournalSeq: 7,
+                    lastCheckpointHash: ["pre-edit-hash"],
+                },
+                { ts: 45, type: "say", say: "tool" },
+            ],
+            undefined,
+            2,
+            { rewindTo: vi.fn() },
+            { capture: vi.fn(), restore: canonicalRestore },
+        )
+
+        await harness.manager.restoreCheckpoint(44, "taskAndWorkspace")
+
+        // The clicked row's bundle holds its own files and the anchor's conversation;
+        // without that bundle the row's own position and files still restore it.
+        expect(canonicalRestore).toHaveBeenCalledWith(
+            expect.objectContaining({
+                messageTs: 44,
+                mode: "combined",
+                fallback: { journalTarget: { seq: 7 }, workspaceRef: "pre-edit-hash" },
+            }),
+        )
+        // The chat is cut right after the anchor, so the round's later rows go with it.
+        expect(harness.truncateUiHistory).toHaveBeenCalledWith(1)
+    })
+
+    it("refuses a pre-edit row whose anchor is no longer in the chat", async () => {
+        const canonicalRestore = vi.fn()
+        const harness = createHarness(
+            [{ ts: 44, type: "say", say: "checkpoint_created", checkpointAnchorTs: 42, lastCheckpointHash: ["pre-edit-hash"] }],
+            undefined,
+            2,
+            { rewindTo: vi.fn() },
+            { capture: vi.fn(), restore: canonicalRestore },
+        )
+
+        const update = await harness.manager.restoreCheckpoint(44, "task")
+
+        expect(update.checkpointManagerErrorMessage).toContain("anchor")
+        expect(canonicalRestore).not.toHaveBeenCalled()
     })
 
     it("leaves legacy stores untouched when canonical validation rejects the restore", async () => {

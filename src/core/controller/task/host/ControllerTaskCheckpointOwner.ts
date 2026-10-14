@@ -8,6 +8,7 @@ import type { CheckpointRestoreFence } from "@core/task/session/ActiveTaskSessio
 import type { DefaultToolHandlerState } from "@core/task/tools/state/ToolHandlerState"
 import type { TaskCallbacks } from "@core/task/tools/types/TaskConfig"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
+import type { BegunCheckpointRow, CheckpointRowFields } from "@integrations/checkpoints"
 import { buildCheckpointManager } from "@integrations/checkpoints/factory"
 import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
@@ -29,6 +30,8 @@ export interface ControllerTaskCheckpointOwnerOptions {
     readonly taskFileTracker: TaskFileTracker
     readonly diffViewProvider: DiffViewProvider
     readonly say: TaskCallbacks["say"]
+    /** Registers a checkpoint row in presentation order. */
+    readonly beginRow: (fields: CheckpointRowFields) => BegunCheckpointRow
     readonly workspaceManager?: WorkspaceRootManager
     readonly conversationRewind?: ConversationRewindPort
     readonly checkpoints: TaskSessionCheckpointPort
@@ -62,6 +65,7 @@ export class ControllerTaskCheckpointOwner {
             conversationRewind: options.conversationRewind,
             canonicalCheckpoint: {
                 capture: (input) => options.checkpoints.capture(input),
+                advancedSince: (seq) => options.checkpoints.advancedSince(seq),
                 restore: async (input) => {
                     const restored = await options.checkpoints.restore(input)
                     if (restored.result.kind === "restored") {
@@ -73,6 +77,7 @@ export class ControllerTaskCheckpointOwner {
             },
             updateTaskHistory: (historyItem) => options.controller.updateTaskHistory(historyItem),
             say: (...args) => options.say(...(args as Parameters<TaskCallbacks["say"]>)),
+            beginRow: (fields) => options.beginRow(fields),
             cancelTask: () => options.controller.cancelTask(),
             restoreChatRuntime: (input) => this.reopenAfterChatRestore(input),
             postStateToWebview: () => options.controller.postStateToWebview(),

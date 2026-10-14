@@ -450,6 +450,69 @@ describe("ProviderCommandExecutor", () => {
     })
 })
 
+describe("ProviderCommandExecutor round checkpoint", () => {
+    const finalTurn: ProviderExecutionChunk = {
+        kind: "final",
+        turnId: "turn-request",
+        payloadRef: "payload:final",
+        turnPlan: { mode: "serial", blocks: [] },
+    }
+
+    it("writes the round's restore point before the request opens its own row", async () => {
+        const order: string[] = []
+        const executor = new ProviderCommandExecutor(
+            "task-1",
+            {
+                start: () => {
+                    order.push("request")
+                    return chunks([finalTurn])
+                },
+            },
+            new InMemoryConversationJournal(),
+            new InMemoryTaskViewPort(),
+            recorder().sink,
+            undefined,
+            {
+                begin: vi.fn(async () => {
+                    order.push("request_row")
+                    return { settle: vi.fn(async () => {}) }
+                }),
+            },
+            {
+                beforeRequest: vi.fn(async () => {
+                    order.push("checkpoint")
+                }),
+            },
+        )
+
+        await executor.execute(command)
+
+        expect(order).toEqual(["checkpoint", "request_row", "request"])
+    })
+
+    it("still sends the request when the restore point cannot be written", async () => {
+        const recorded = recorder()
+        const executor = new ProviderCommandExecutor(
+            "task-1",
+            { start: () => chunks([finalTurn]) },
+            new InMemoryConversationJournal(),
+            new InMemoryTaskViewPort(),
+            recorded.sink,
+            undefined,
+            undefined,
+            {
+                beforeRequest: vi.fn(async () => {
+                    throw new Error("shadow git unavailable")
+                }),
+            },
+        )
+
+        await executor.execute(command)
+
+        expect(recorded.events).toEqual([expect.objectContaining({ type: "provider.turn_ready" })])
+    })
+})
+
 describe("ProviderCommandExecutor request reporting", () => {
     function reporter() {
         const settle = vi.fn(async () => {})

@@ -117,10 +117,18 @@ export class CheckpointUnitCoordinator {
             return undefined
         }
         await this.initialize()
+        // Read before the paths: a change recorded while the roots commit stays owed.
+        const watermark = this.options.taskFileTracker?.pendingWatermark()
         const modifiedFiles = this.options.taskFileTracker?.getModifiedFiles() ?? []
+        const observedFiles = this.options.taskFileTracker?.getObservedFiles() ?? []
         const scanRequired = this.options.taskFileTracker?.isWorkspaceScanRequired() ?? false
+        // Only a scan this task's own command asked for finds files the task wrote.
+        const attributeScan = this.options.taskFileTracker?.isScanAttributedToTask?.() ?? scanRequired
         const filesByRoot = this.groupFilesByRoot(modifiedFiles)
+        const observedByRoot = this.groupFilesByRoot(observedFiles)
+        const hasPendingPaths = modifiedFiles.length > 0 || observedFiles.length > 0
         const successfullyRecordedFiles: string[] = []
+        const scannedOwnedFiles: string[] = []
         const checkpointHashes = this.units.map(() => "")
         let everyReadyUnitSucceeded = true
 
@@ -132,19 +140,24 @@ export class CheckpointUnitCoordinator {
                     return
                 }
                 const files = filesByRoot.get(index) ?? []
-                if (unit.currentHash && modifiedFiles.length > 0 && files.length === 0 && !scanRequired) {
+                const observed = observedByRoot.get(index) ?? []
+                if (unit.currentHash && hasPendingPaths && files.length === 0 && observed.length === 0 && !scanRequired) {
                     checkpointHashes[index] = unit.currentHash
                     return
                 }
                 const previousHash = unit.currentHash
                 try {
-                    const hash = await tracker.commitForFiles(files, { forceWorkspaceScan: scanRequired })
+                    const hash = await tracker.commitForFiles(files, {
+                        forceWorkspaceScan: scanRequired,
+                        attributeScanToTask: attributeScan,
+                        observedFiles: observed,
+                    })
                     if (!hash) {
                         everyReadyUnitSucceeded = false
                         return
                     }
                     const scannedFiles =
-                        scanRequired && previousHash && previousHash !== hash ? await tracker.getDiffSet(previousHash, hash) : []
+                        attributeScan && previousHash && previousHash !== hash ? await tracker.getDiffSet(previousHash, hash) : []
                     const ownedScannedFiles = scannedFiles
                         .filter((file) => this.findOwnerIndex(file.absolutePath) === index)
                         .map((file) => file.absolutePath)
@@ -153,7 +166,8 @@ export class CheckpointUnitCoordinator {
                     }
                     unit.currentHash = hash
                     checkpointHashes[index] = hash
-                    successfullyRecordedFiles.push(...files, ...ownedScannedFiles)
+                    successfullyRecordedFiles.push(...files, ...observed)
+                    scannedOwnedFiles.push(...ownedScannedFiles)
                 } catch (error) {
                     everyReadyUnitSucceeded = false
                     Logger.error(`[CheckpointUnitCoordinator] Failed to checkpoint workspace ${unit.root.path}:`, error)
@@ -161,8 +175,12 @@ export class CheckpointUnitCoordinator {
             }),
         )
 
-        if (successfullyRecordedFiles.length > 0) {
-            this.options.taskFileTracker?.dropModifiedFiles(successfullyRecordedFiles)
+        if (successfullyRecordedFiles.length > 0 && watermark !== undefined) {
+            this.options.taskFileTracker?.settlePending(successfullyRecordedFiles, watermark)
+        }
+        // Recorded by the scan above, after the watermark, and already committed.
+        if (scannedOwnedFiles.length > 0) {
+            this.options.taskFileTracker?.dropModifiedFiles(scannedOwnedFiles)
         }
         if (scanRequired && everyReadyUnitSucceeded) {
             this.options.taskFileTracker?.clearWorkspaceScanRequired()

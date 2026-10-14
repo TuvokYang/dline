@@ -63,6 +63,7 @@ import { canonicalizeAttemptCompletionParams } from "../attempt-completion-param
 import { partitionDeferredHostedCalls } from "../deferred-hosted-rows"
 import { type DeferredServerToolCall, ServerToolLifecycle } from "../ServerToolLifecycle"
 import { DefaultToolHandlerState, type ToolHandlerState } from "../state/ToolHandlerState"
+import { ensureToolCallCheckpoint, resolveToolCallSideEffects } from "../ToolCallSideEffects"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -1692,7 +1693,21 @@ export class SubagentRunner {
                                     `Tool '${toolName}' requires ${admission.decision.kind} approval for ${admission.decision.scope}, which is unavailable inside a subagent run.`,
                                 )
                             }
-                            toolResult = await this.executeToolWithInterruption(admission.run)
+                            const run = admission.run
+                            // A subagent's file edit is the parent task's change, so it gets
+                            // the same file restore point an edit in the parent's own turn does.
+                            toolResult = await this.executeToolWithInterruption(async () => {
+                                const proceed = await ensureToolCallCheckpoint(
+                                    resolveToolCallSideEffects(subagentConfig),
+                                    handler.name,
+                                    this.interruptionController?.signal,
+                                )
+                                // The run was interrupted while the edit waited for its restore
+                                // point and has already reported itself cancelled; this closure
+                                // is abandoned, and the edit must not start behind that report.
+                                if (!proceed) throw new SubagentToolInterruptedError()
+                                return run()
+                            })
                         } catch (error) {
                             // An interrupted wait is not a tool failure: fall through to the
                             // abort check below so the run reports `cancelled`.

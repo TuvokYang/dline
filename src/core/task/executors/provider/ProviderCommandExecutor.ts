@@ -98,6 +98,19 @@ export interface ProviderTextPresentationPort {
     }): Promise<void>
 }
 
+/**
+ * Settles the restore point owed before the conversation moves on.
+ *
+ * Every provider request starts a new round, so the round's restore point is
+ * written right before the request's own row: it holds the workspace and the
+ * conversation exactly as the model is about to see them. Declared as a port
+ * because a headless assembly keeps no workspace history.
+ */
+export interface ProviderRoundCheckpointPort {
+    /** Never rejects for a checkpoint failure; a missing restore point never costs the turn. */
+    beforeRequest(signal: AbortSignal): Promise<void>
+}
+
 export interface ProviderExecutionInput {
     readonly draftRef: string
     readonly turnId?: string
@@ -156,6 +169,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
         private readonly events: TaskEventSink,
         private readonly presentation?: ProviderTextPresentationPort,
         private readonly report?: ProviderRequestReportPort,
+        private readonly checkpoint?: ProviderRoundCheckpointPort,
     ) {}
 
     execute(command: Command): Promise<void> {
@@ -243,6 +257,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
     }
 
     private async consume(command: ProviderStartCommand, signal: AbortSignal): Promise<ProviderTurnOutcome | undefined> {
+        await this.settleRoundCheckpoint(signal)
         const record = await this.openRequestRecord(command)
         const usage: UsageAccumulator = {}
         // A stream that neither yields a turn nor throws was abandoned, which only
@@ -259,6 +274,16 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
             // Settles on every exit, cancellation and failure included, so a request
             // never stays open as a turn the user is still waiting on.
             await this.closeRequestRecord(record, usage, outcome)
+        }
+    }
+
+    /** A restore point that cannot be written only costs that restore point, never the turn. */
+    private async settleRoundCheckpoint(signal: AbortSignal): Promise<void> {
+        if (!this.checkpoint) return
+        try {
+            await this.checkpoint.beforeRequest(signal)
+        } catch {
+            // The port reports its own failures; the request proceeds either way.
         }
     }
 

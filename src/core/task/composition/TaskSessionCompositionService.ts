@@ -37,12 +37,14 @@ import { MessageStateCompactionCards } from "../compaction/MessageStateCompactio
 import { MessageStateCompactionFailure } from "../compaction/MessageStateCompactionFailure"
 import { MessageStateCompactionLanding } from "../compaction/MessageStateCompactionLanding"
 import { ProviderCompactionService } from "../compaction/ProviderCompactionService"
+import { approvalPolicySnapshotOf } from "../executors/policy/ProductionApprovalPolicyAdapter"
 import { DefaultProductionProviderService } from "../executors/provider/service/DefaultProductionProviderService"
 import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import { ProviderRetryGate } from "../executors/provider/service/ProviderRetryGate"
 import { DefaultProductionToolExecutionService } from "../executors/tool/production/DefaultProductionToolExecutionService"
 import { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
+import { InMemoryToolApprovalFeedbackLedger } from "../executors/tool/ToolApprovalFeedbackLedger"
 import { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
 import type { TaskCompletionProjection, TaskCompletionProjectionUpdate } from "../history/TaskCompletionProjector"
 import { TaskCompletionProjector } from "../history/TaskCompletionProjector"
@@ -60,7 +62,6 @@ import { createRequestApiScope } from "../RequestApiScope"
 import { LoggingRuntimeDiagnostics } from "../runtime"
 import type { ActiveTaskSession } from "../session/ActiveTaskSession"
 import { HostedServerToolPresenter } from "../session/HostedServerToolPresenter"
-import { InitialCheckpointRequestReporter } from "../session/InitialCheckpointRequestReporter"
 import { createPresentationIdSequence } from "../session/PresentationIdSequence"
 import { createHostPresentationPacing, ProviderTextPresenter } from "../session/ProviderTextPresenter"
 import type { RealtimeMessagePublisher } from "../session/RealtimeMessagePublisher"
@@ -90,7 +91,6 @@ import { InMemoryBackgroundDeliveryLedger, type TaskViewPort } from "../stores"
 import { JournalConversationRewind } from "../stores/JournalConversationRewind"
 import { TaskStateManager } from "../TaskStateManager"
 import { withTerminateTimeout } from "../TaskTerminateTimeout"
-import { RoundCheckpointLedger } from "../tools/RoundCheckpointLedger"
 import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { ToolValidator } from "../tools/ToolValidator"
 import type { TaskSessionHostFactory } from "./TaskSessionHostFactory"
@@ -453,10 +453,28 @@ export class TaskSessionCompositionService {
             readState,
             checkpoints: {
                 capture: async (input) => {
+                    // A pre-edit row restores the conversation of its round row: that
+                    // row's stored state and position, with this row's files.
+                    const anchor =
+                        input.anchorTs === undefined
+                            ? undefined
+                            : await checkpointRepository
+                                  .resolve(canonicalCheckpointRef(options.taskId, input.anchorTs))
+                                  .catch(() => undefined)
+                    // The runtime state, not the vault's coalesced snapshot, which can lag
+                    // the conversation position the row recorded.
+                    const snapshot = anchor?.snapshot ?? (input.boundary ? { state: readState(), outbox: [] } : undefined)
+                    const boundary = anchor?.boundary ?? input.boundary
                     await checkpointRepository.capture({
                         checkpointRef: canonicalCheckpointRef(options.taskId, input.messageTs),
                         ...(input.workspaceRef === undefined ? {} : { workspaceRef: input.workspaceRef }),
+                        ...(snapshot === undefined ? {} : { snapshot }),
+                        ...(boundary === undefined ? {} : { boundary }),
                     })
+                },
+                advancedSince: async (seq) => {
+                    const entries = await persistence.ports.journal.read({ seq })
+                    return entries.some((entry) => entry.kind !== "checkpoint_marker")
                 },
                 restore: async (input) => {
                     const checkpointRef = canonicalCheckpointRef(options.taskId, input.messageTs)
@@ -469,10 +487,21 @@ export class TaskSessionCompositionService {
                                     `checkpoint.restore:${input.messageTs}:${randomUUID()}`,
                                 )
                             },
-                            resolve: () =>
-                                input.journalTarget
-                                    ? checkpointRepository.resolveAt(input.journalTarget)
-                                    : checkpointRepository.resolve(checkpointRef),
+                            resolve: async () => {
+                                if (input.journalTarget) return checkpointRepository.resolveAt(input.journalTarget)
+                                try {
+                                    return await checkpointRepository.resolve(checkpointRef)
+                                } catch (error) {
+                                    // A row whose capture failed is still restorable from the
+                                    // position it recorded and the files it holds.
+                                    const missing = error instanceof Error && error.message === "CanonicalCheckpointNotFound"
+                                    if (!missing || !input.fallback) throw error
+                                    const record = await checkpointRepository.resolveAt(input.fallback.journalTarget)
+                                    return input.fallback.workspaceRef === undefined
+                                        ? record
+                                        : { ...record, workspaceRef: input.fallback.workspaceRef }
+                                }
+                            },
                             restoreWorkspace: input.restoreWorkspace,
                             applyConversationBoundary: async (boundary) => {
                                 await conversationRewind.rewindTo({
@@ -515,19 +544,17 @@ export class TaskSessionCompositionService {
                     acknowledge: () => undefined,
                 }),
         })
+        const approvalFeedback = new InMemoryToolApprovalFeedbackLedger()
         const toolRuntime = new ProductionToolHandlerRuntime(new ToolValidator(options.prompt.ignoreController))
         // One owner per task session: the provider request grants the turn's
         // authority and the tool gate reads it back under the same turn identity.
         const turnAuthority = new TaskTurnAuthority()
-        // File edits commit a restore point per call; commands, MCP calls and other
-        // workspace-affecting tools share one restore point per round, settled by
-        // the tool executor at the round boundary.
-        const roundCheckpoints = new RoundCheckpointLedger(() => tool.callbacks.saveCheckpoint?.() ?? Promise.resolve())
         const toolExecution = new TaskToolExecutionOwner({
             taskId: options.taskId,
             taskIncarnationId,
             cwd: options.cwd,
             toolRuntime,
+            approvalFeedback,
             stateManager: options.stateManager,
             settings,
             messages,
@@ -538,7 +565,7 @@ export class TaskSessionCompositionService {
             toolState,
             services: tool.services,
             interactions,
-            callbacks: roundCheckpoints.bind(tool.callbacks),
+            callbacks: tool.callbacks,
             readState,
             readCapabilityToggles: options.prompt.readCapabilityToggles,
             readTurnAuthority: (turnId) => turnAuthority.read(turnId),
@@ -712,6 +739,7 @@ export class TaskSessionCompositionService {
         })
         const opened = await openActiveTaskSession({
             taskId: options.taskId,
+            approvalFeedback,
             openReason: options.openReason,
             deferRestoredCommands: options.deferRestoredCommands,
             upgradeImportPending,
@@ -809,51 +837,54 @@ export class TaskSessionCompositionService {
                 count: toolState.consecutiveMistakeCount,
                 limit: options.stateManager.getGlobalSettingsKey("maxConsecutiveMistakes") ?? 3,
             }),
+            // Every request and every compaction opens a round, and the round's
+            // restore point is written first: its row lands before the request's
+            // own, holding the workspace and conversation the model is about to see.
+            providerCheckpoint: tool.checkpoints && {
+                beforeRequest: (signal) => tool.checkpoints?.ensureRoundCheckpoint?.("round_start", signal) ?? Promise.resolve(),
+            },
+            compactionCheckpoint: tool.checkpoints && {
+                beforeCompaction: (signal) =>
+                    tool.checkpoints?.ensureRoundCheckpoint?.("pre_compaction", signal) ?? Promise.resolve(),
+            },
             // Every request records what it consumed, which is the only fact the
-            // task has about context pressure, cache health and cost. The first one
-            // also opens the baseline restore point the workspace can return to.
-            providerRequestReport: new InitialCheckpointRequestReporter(
-                new TaskPerformanceRequestReporter(
-                    new TaskProviderRequestReporter({
-                        // Compaction is the only consumer that acts on context pressure, and
-                        // it can only learn it from the request that reported its usage.
-                        pressure: compaction,
-                        usage: contextUsage,
-                        messages,
-                        nextPresentationId,
-                        api: () => api.current(),
-                        promptCache,
-                        compactTriggerOptions: readCompactTriggerOptions,
-                        admittedRequest: () => contextWindowGuard.admittedRequest(),
-                        // Retries happen before the stream says anything, so each attempt's
-                        // card has to be delivered to the chat rather than left for the countdown.
-                        // The state goes out immediately: a coalesced post would let the card's
-                        // partial row reach a Webview that has not yet adopted this opening.
-                        retryView: {
-                            showRow: (row) => options.prompt.ports.presentation.publish(row),
-                            publishState: () => options.publishState({ immediate: true }),
+            // task has about context pressure, cache health and cost.
+            providerRequestReport: new TaskPerformanceRequestReporter(
+                new TaskProviderRequestReporter({
+                    // Compaction is the only consumer that acts on context pressure, and
+                    // it can only learn it from the request that reported its usage.
+                    pressure: compaction,
+                    usage: contextUsage,
+                    messages,
+                    nextPresentationId,
+                    api: () => api.current(),
+                    promptCache,
+                    compactTriggerOptions: readCompactTriggerOptions,
+                    admittedRequest: () => contextWindowGuard.admittedRequest(),
+                    // Retries happen before the stream says anything, so each attempt's
+                    // card has to be delivered to the chat rather than left for the countdown.
+                    // The state goes out immediately: a coalesced post would let the card's
+                    // partial row reach a Webview that has not yet adopted this opening.
+                    retryView: {
+                        showRow: (row) => options.prompt.ports.presentation.publish(row),
+                        publishState: () => options.publishState({ immediate: true }),
+                    },
+                    // Subscriptions report no token counts, so today's figures on the
+                    // usage surfaces are counted here, against the Profile that served the request.
+                    profileTokens: {
+                        activeProfileId: () => activeProfile().profileId,
+                        record: (profileId, increment) => {
+                            void options.prompt.ports.profileUsage
+                                .record(profileId, increment)
+                                .catch((error) =>
+                                    Logger.debug(
+                                        `[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
+                                    ),
+                                )
                         },
-                        // Subscriptions report no token counts, so today's figures on the
-                        // usage surfaces are counted here, against the Profile that served the request.
-                        profileTokens: {
-                            activeProfileId: () => activeProfile().profileId,
-                            record: (profileId, increment) => {
-                                void options.prompt.ports.profileUsage
-                                    .record(profileId, increment)
-                                    .catch((error) =>
-                                        Logger.debug(
-                                            `[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
-                                        ),
-                                    )
-                            },
-                        },
-                    }),
-                    performance,
-                ),
-                {
-                    checkpoints: tool.checkpoints,
-                    hasRequested: () => messages.clineMessages.some((message) => message.say === "api_req_started"),
-                },
+                    },
+                }),
+                performance,
             ),
             services: {
                 // One sequence for both producers: chat rows are ordered by this id,
@@ -904,7 +935,6 @@ export class TaskSessionCompositionService {
                     cancel: (reason) => toolState.cancelOperations(reason),
                     reset: () => toolState.resetOperationCancellation(),
                 },
-                toolRoundCheckpoint: roundCheckpoints,
                 toolSurface: tool.surface,
                 toolScheduler: toolExecution.turnScheduler,
                 environment,
@@ -935,13 +965,11 @@ export class TaskSessionCompositionService {
                             contextUsage.compactionPassProjected(compactionId, projection),
                     },
                 }),
-                readApprovalPolicy: () => ({
-                    settings: options.stateManager.getGlobalSettingsKey("autoApprovalSettings"),
-                    blanket: {
+                readApprovalPolicy: () =>
+                    approvalPolicySnapshotOf(options.stateManager.getGlobalSettingsKey("autoApprovalSettings"), {
                         yoloMode: options.stateManager.getGlobalSettingsKey("yoloModeToggled") === true,
                         approveAll: options.stateManager.getGlobalSettingsKey("autoApproveAllToggled") === true,
-                    },
-                }),
+                    }),
             },
             releases: [resources],
         })

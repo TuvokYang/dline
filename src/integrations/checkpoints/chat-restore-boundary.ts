@@ -1,3 +1,4 @@
+import { findLastIndex } from "@shared/array"
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 
 /** A position in the task's conversation journal. */
@@ -18,6 +19,31 @@ export interface ChatRestoreBoundary {
      * lives in the journal; the legacy API rows are then left untouched.
      */
     readonly journalTarget?: ConversationJournalPosition
+}
+
+/** A row together with its index in the durable chat sequence. */
+export interface ChatRestoreRow {
+    readonly message: UiMessage
+    readonly index: number
+}
+
+/**
+ * The row whose chat state a restore of `messages[messageIndex]` returns to.
+ *
+ * A checkpoint added before a file edit is a file restore point only: its chat
+ * part is the checkpoint it was anchored to, written before the round's request.
+ * Returning the chat to the edit's own position would keep the round's later
+ * rows on screen while the conversation no longer holds them, so the chat is
+ * cut at the anchor instead. Every other row is its own chat restore point.
+ */
+export function chatRestoreRow(messages: readonly UiMessage[], messageIndex: number): ChatRestoreRow {
+    const message = messages[messageIndex]
+    if (!message) throw new Error(`Restore message index ${messageIndex} is unavailable`)
+    const anchorTs = message.checkpointAnchorTs
+    if (anchorTs === undefined) return { message, index: messageIndex }
+    const anchorIndex = findLastIndex(messages.slice(0, messageIndex), (row) => row.ts === anchorTs)
+    if (anchorIndex < 0) throw new Error("Restore checkpoint anchor is unavailable")
+    return { message: messages[anchorIndex], index: anchorIndex }
 }
 
 /** Resolve and validate every chat rewind boundary before any store is mutated. */

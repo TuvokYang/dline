@@ -46,7 +46,14 @@ export const DIAGNOSTIC_KINDS = {
         // pool was empty in the first place.
         "prewarm_failed",
     ],
-    [DiagnosticDomain.Checkpoint]: ["baseline_rebuilt", "paths_unstageable", "nested_repository_skipped", "add_failed"],
+    [DiagnosticDomain.Checkpoint]: [
+        "baseline_rebuilt",
+        "paths_unstageable",
+        "nested_repository_skipped",
+        "add_failed",
+        // A checkpoint was kept without one of its parts (file, row or bundle).
+        "gate_part_failed",
+    ],
     [DiagnosticDomain.Hook]: ["discovery_cache_miss", "discovery_cache_invalidated", "execution_skipped"],
     [DiagnosticDomain.Settings]: ["reconcile_conflict", "listener_failure", "broadcast_skipped"],
     [DiagnosticDomain.Task]: ["history_truncated", "context_window_exceeded", "stream_retry", "resume_interrupted"],

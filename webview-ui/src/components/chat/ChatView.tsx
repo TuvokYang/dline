@@ -47,7 +47,6 @@ import {
     groupLowStakesTools,
     groupMessages,
     InputSection,
-    isPrimaryCheckpointForUserTurn,
     MessagesArea,
     TaskSection,
     useChatState,
@@ -473,9 +472,8 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     }, [focusChainSettings.enabled, lastProgressMessageText])
 
     const groupedMessages = useMemo(() => {
-        // ChatRow decides which checkpoint a turn shows from the same messages.
-        return groupLowStakesTools(groupMessages(visibleMessages), (ts) => isPrimaryCheckpointForUserTurn(ts, messages))
-    }, [messages, visibleMessages])
+        return groupLowStakesTools(groupMessages(visibleMessages))
+    }, [visibleMessages])
 
     // Use scroll behavior hook
     const scrollBehavior = useScrollBehavior(messages, visibleMessages, groupedMessages, expandedRows, setExpandedRows)

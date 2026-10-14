@@ -73,8 +73,24 @@ export type CheckpointChangedFile = {
 }
 
 export interface CheckpointCommitOptions {
-    /** Force a guarded full-workspace scan for writes that cannot be tracked per file, such as terminal commands. */
+    /** Force a guarded full-workspace scan, for changes no pending set can name. */
     forceWorkspaceScan?: boolean
+    /**
+     * Paths the workspace watcher saw change. Unlike `files`, which a tool edited
+     * on purpose, they are staged only where the shadow repository would keep them.
+     */
+    observedFiles?: readonly string[]
+    /**
+     * Whether a scan's findings are this task's changes. True only for a scan the
+     * task's own command asked for; a scan that stands in for the watcher finds
+     * changes that may be anyone's. Defaults to the task file tracker's record.
+     */
+    attributeScanToTask?: boolean
+}
+
+/** The identity under which the pending sets compare a path. */
+function pathKey(candidate: string): string {
+    return path.resolve(candidate).toLowerCase()
 }
 
 /**
@@ -296,7 +312,7 @@ class CheckpointTracker {
     public async commit(): Promise<string | undefined> {
         // Use tracked files for incremental checkpoint when available.
         const trackedFiles = this.taskFileTracker?.getModifiedFiles() ?? []
-        return this.commitForFiles(trackedFiles)
+        return this.commitForFiles(trackedFiles, { observedFiles: this.taskFileTracker?.getObservedFiles() ?? [] })
     }
 
     /**
@@ -311,7 +327,11 @@ class CheckpointTracker {
      * - Releases folder lock after completion
      *
      * Commit structure:
-     * - Commit message: "checkpoint-{cwdHash}-{taskId}"
+     * - Paths this task changed, and a scan its own command asked for:
+     *   "checkpoint-{cwdHash}-{taskId}"
+     * - Paths only the workspace watcher reported, and a scan standing in for the
+     *   watcher, committed apart: "checkpoint-{cwdHash}-observed", which no
+     *   task's change set claims
      * - Reuses the current shadow revision when staging is unchanged
      *
      * @param files - List of file paths to include in this checkpoint.
@@ -600,17 +620,36 @@ class CheckpointTracker {
         const gitPath = this.shadowGitPath
         const git = simpleGit(path.dirname(gitPath))
         const requiresWorkspaceScan = options.forceWorkspaceScan || (this.taskFileTracker?.isWorkspaceScanRequired() ?? false)
+        const attributeScan = options.attributeScanToTask ?? this.taskFileTracker?.isScanAttributedToTask() ?? true
+        // Read before the paths are staged: a change recorded while this commit
+        // runs is not in it, so the next checkpoint must still owe that path.
+        const watermark = this.taskFileTracker?.pendingWatermark()
+        const observedFiles = options.observedFiles ?? []
+        const offeredFiles = [...files, ...observedFiles]
+        const settleOffered = () => {
+            if (watermark !== undefined) this.taskFileTracker?.settlePending(offeredFiles, watermark)
+        }
 
         Logger.trace(`[Task ${this.taskId}] Using shadow git at: ${gitPath}`)
+        await this.resetIndexToHead(git)
 
+        // The subject of the last commit, which holds whatever the branches below left staged.
+        let finalMessage = this.getTaskCheckpointCommitMessage()
         if (requiresWorkspaceScan) {
             const hasWorkspaceChanges = await this.gitOperations.hasWorkspaceChanges(git, this.taskId)
             if (!hasWorkspaceChanges) {
                 this.taskFileTracker?.clearWorkspaceScanRequired()
-                Logger.debug(
-                    `[CheckpointTracker] No workspace changes after command for task ${this.taskId}; reusing shadow HEAD`,
-                )
+                settleOffered()
+                Logger.debug(`[CheckpointTracker] No workspace changes for task ${this.taskId}; reusing shadow HEAD`)
                 return this.getCurrentRestorePoint(git)
+            }
+            if (!attributeScan) {
+                // The scan may find anyone's changes. The files this task edited are
+                // committed first under its own subject, and the rest goes apart.
+                if (files.length > 0 && !(await this.commitPaths(git, files, this.getTaskCheckpointCommitMessage()))) {
+                    return undefined
+                }
+                finalMessage = this.getObservedChangesCommitMessage()
             }
             const addFilesResult = await this.gitOperations.addCheckpointFiles({
                 git,
@@ -626,41 +665,106 @@ class CheckpointTracker {
                 return undefined
             }
             this.consecutiveStagingFailures = 0
-        } else if (files.length > 0) {
-            Logger.debug(`[CheckpointTracker] doCommitFiles: tracked add ${files.length} file(s) for task ${this.taskId}`)
-            const addFilesResult = await this.gitOperations.addCheckpointFiles({
-                git,
-                mode: "tracked",
-                fileList: files,
-                taskId: this.taskId,
-            })
-            // Paths Git cannot stage must leave the pending set even when the whole
-            // attempt failed. Retaining them replays the same rejected batch on every
-            // later checkpoint and disables checkpoints for the rest of the task.
-            this.dropUnstageablePaths(addFilesResult.rejectedPaths)
-            if (!addFilesResult.success) {
-                this.consecutiveStagingFailures += 1
-                Logger.error(
-                    `[CheckpointTracker] Failed to stage ${files.length} tracked file(s) for task ${this.taskId} ` +
-                        `(consecutive failures: ${this.consecutiveStagingFailures}). ` +
-                        `Skipping commit to avoid an empty checkpoint.`,
-                )
+        } else {
+            const ownedKeys = new Set(files.map(pathKey))
+            const observedOnly = (await this.gitOperations.stageableObservedPaths(git, observedFiles)).filter(
+                (file) => !ownedKeys.has(pathKey(file)),
+            )
+            if (files.length === 0 && observedOnly.length === 0) {
+                // Every watched path is one the shadow excludes, so nothing is owed.
+                settleOffered()
+                return this.getCurrentRestorePoint(git)
+            }
+            // A watched path may have been written by another task or by the user.
+            // It is committed on its own, under a subject no task claims, so the
+            // checkpoint can restore it without reporting it as this task's change.
+            if (observedOnly.length > 0 && !(await this.commitPaths(git, observedOnly, this.getObservedChangesCommitMessage()))) {
                 return undefined
             }
-            this.consecutiveStagingFailures = 0
-        } else {
-            return this.getCurrentRestorePoint(git)
+            if (files.length > 0 && !(await this.stageTrackedFiles(git, files))) return undefined
         }
 
-        const hasStagedChanges = await this.gitOperations.hasStagedChanges(git, this.taskId)
-        if (!hasStagedChanges) {
-            this.taskFileTracker?.clearModifiedFiles()
+        const commitHash = await this.commitStaged(git, finalMessage)
+        if (commitHash === undefined) {
+            settleOffered()
             this.taskFileTracker?.clearWorkspaceScanRequired()
-            Logger.debug(`[CheckpointTracker] No staged changes for task ${this.taskId}; reusing shadow HEAD`)
+            Logger.debug(`[CheckpointTracker] No staged task changes for task ${this.taskId}; reusing shadow HEAD`)
             return this.getCurrentRestorePoint(git)
         }
 
-        const commitMessage = this.getTaskCheckpointCommitMessage()
+        // Clear tracked files after a successful commit so the next
+        // checkpoint only captures newly modified files.
+        if (commitHash) {
+            settleOffered()
+            this.taskFileTracker?.clearWorkspaceScanRequired()
+            Logger.debug(`[CheckpointTracker] Cleared tracked files after successful commit for task ${this.taskId}`)
+        }
+
+        return commitHash
+    }
+
+    /**
+     * Make the shadow index equal to HEAD, leaving the worktree alone.
+     *
+     * Every task on this workspace shares the index, and a commit files whatever
+     * is staged under its own subject. An attempt that failed or was interrupted
+     * between staging and committing, or a diff that staged the workspace, would
+     * otherwise hand its paths to the next commit, which may claim them for the
+     * wrong owner. Each commit therefore stages only what it attributes.
+     */
+    private async resetIndexToHead(git: SimpleGit): Promise<void> {
+        await git.raw(["read-tree", "--reset", "HEAD"])
+    }
+
+    /**
+     * Commit the given paths on their own under `commitMessage`.
+     *
+     * @returns false when staging failed; unchanged paths commit nothing and still succeed
+     */
+    private async commitPaths(git: SimpleGit, paths: string[], commitMessage: string): Promise<boolean> {
+        if (!(await this.stageTrackedFiles(git, paths))) return false
+        await this.commitStaged(git, commitMessage)
+        return true
+    }
+
+    /**
+     * Stage paths in tracked mode.
+     *
+     * @returns false when staging failed, in which case no commit may follow
+     */
+    private async stageTrackedFiles(git: SimpleGit, stageFiles: string[]): Promise<boolean> {
+        Logger.debug(`[CheckpointTracker] doCommitFiles: tracked add ${stageFiles.length} file(s) for task ${this.taskId}`)
+        const addFilesResult = await this.gitOperations.addCheckpointFiles({
+            git,
+            mode: "tracked",
+            fileList: stageFiles,
+            taskId: this.taskId,
+        })
+        // Paths Git cannot stage must leave the pending set even when the whole
+        // attempt failed. Retaining them replays the same rejected batch on every
+        // later checkpoint and disables checkpoints for the rest of the task.
+        this.dropUnstageablePaths(addFilesResult.rejectedPaths)
+        if (!addFilesResult.success) {
+            this.consecutiveStagingFailures += 1
+            Logger.error(
+                `[CheckpointTracker] Failed to stage ${stageFiles.length} tracked file(s) for task ${this.taskId} ` +
+                    `(consecutive failures: ${this.consecutiveStagingFailures}). ` +
+                    `Skipping commit to avoid an empty checkpoint.`,
+            )
+            return false
+        }
+        this.consecutiveStagingFailures = 0
+        return true
+    }
+
+    /**
+     * Commit whatever is staged under the given subject.
+     *
+     * @returns The new commit hash, "" when Git reported none, or undefined when
+     *   nothing was staged
+     */
+    private async commitStaged(git: SimpleGit, commitMessage: string): Promise<string | undefined> {
+        if (!(await this.gitOperations.hasStagedChanges(git, this.taskId))) return undefined
 
         // Ensure shadow git identity is set before committing to prevent
         // leaking the user's global git name/email into checkpoint history.
@@ -672,15 +776,6 @@ class CheckpointTracker {
         })
         const commitHash = (result.commit || "").replace(/^HEAD\s+/, "")
         Logger.warn(`[Task ${this.taskId}] Checkpoint commit created: ${commitHash}`)
-
-        // Clear tracked files after a successful commit so the next
-        // checkpoint only captures newly modified files.
-        if (commitHash) {
-            this.taskFileTracker?.clearModifiedFiles()
-            this.taskFileTracker?.clearWorkspaceScanRequired()
-            Logger.debug(`[CheckpointTracker] Cleared tracked files after successful commit for task ${this.taskId}`)
-        }
-
         return commitHash
     }
 
@@ -957,6 +1052,11 @@ class CheckpointTracker {
 
     private getTaskCheckpointCommitMessage(): string {
         return `checkpoint-${this.cwdHash}-${this.taskId}`
+    }
+
+    /** The subject of a commit holding changes no task can claim, such as watcher-reported paths. */
+    private getObservedChangesCommitMessage(): string {
+        return `checkpoint-${this.cwdHash}-observed`
     }
 
     /**

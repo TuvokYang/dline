@@ -14,7 +14,7 @@ vi.unmock("@integrations/checkpoints")
 
 import { createCheckpointReferenceSet } from "@shared/checkpoints"
 import { encodeCheckpointWorkspaceRef } from "../checkpoint-references"
-import { createTaskCheckpointManager } from "../index"
+import { type CheckpointRowFields, createTaskCheckpointManager } from "../index"
 import type { CanonicalCheckpointPort } from "../types"
 
 /** The canonical reference a single-root workspace binds to its shadow commit. */
@@ -40,10 +40,12 @@ function createManager(
     }
     const setCheckpointTracker = vi.fn()
     const postStateToWebview = vi.fn().mockResolvedValue(undefined)
-    const say = vi.fn(async () => {
-        const message: UiMessage = { ts: 42, type: "say", say: "checkpoint_created" }
+    const say = vi.fn(async () => undefined)
+    let nextRowTs = 41
+    const beginRow = vi.fn((fields: CheckpointRowFields) => {
+        const message: UiMessage = { ts: ++nextRowTs, type: "say", say: "checkpoint_created", ...fields }
         messages.push(message)
-        return message.ts
+        return { ts: message.ts, persistence: Promise.resolve(message) }
     })
     const updateClineMessage = vi.fn(async (index: number, updates: Partial<UiMessage>) => {
         Object.assign(messages[index], updates)
@@ -72,6 +74,7 @@ function createManager(
             cancelTask: vi.fn(),
             restoreChatRuntime: vi.fn(),
             say,
+            beginRow,
             postStateToWebview,
             publishMessage,
         } as never,
@@ -82,6 +85,7 @@ function createManager(
     )
     return {
         manager,
+        beginRow,
         taskState,
         setCheckpointTracker,
         postStateToWebview,
@@ -202,7 +206,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42 })
     })
 
-    it("binds the first chat checkpoint to the initialized shadow baseline when no files were tracked", async () => {
+    it("writes the round row after the shadow commit, so the row is born with its files", async () => {
         const messages: UiMessage[] = []
         const baselineHash = "shadow-baseline-hash"
         const tracker = {
@@ -227,51 +231,29 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
                 checkpointWorkspaceRoots: ["C:/workspace"],
             }),
         ])
-        expect(harness.updateClineMessage).toHaveBeenCalledWith(0, {
-            lastCheckpointHash: [baselineHash],
-            checkpointWorkspaceRoots: ["C:/workspace"],
-        })
-        expect(harness.flushMessageUpdate).toHaveBeenCalledWith(0)
-        expect(harness.updateClineMessage.mock.invocationCallOrder[0]).toBeLessThan(
-            harness.flushMessageUpdate.mock.invocationCallOrder[0],
-        )
-        expect(harness.flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(
-            harness.postStateToWebview.mock.invocationCallOrder[0],
-        )
-        // The row is already on screen without a hash; only republishing it
-        // lets the view offer the file restore for this checkpoint.
-        expect(harness.publishMessage).toHaveBeenCalledExactlyOnceWith(
-            expect.objectContaining({ ts: 42, say: "checkpoint_created", lastCheckpointHash: [baselineHash] }),
-        )
-        expect(harness.flushMessageUpdate.mock.invocationCallOrder[0]).toBeLessThan(
-            harness.publishMessage.mock.invocationCallOrder[0],
-        )
+        // Nothing is patched afterwards: the view never shows the row without its files.
+        expect(harness.updateClineMessage).not.toHaveBeenCalled()
         expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42, workspaceRef: singleRootWorkspaceRef(baselineHash) })
     })
 
-    it("keeps a durable checkpoint hash when republishing its row fails", async () => {
-        const messages: UiMessage[] = []
+    it("keeps a durable completion hash when republishing its row fails", async () => {
+        const completionMessage: UiMessage = { ts: 84, type: "say", say: "completion_result" }
+        const messages = [completionMessage]
         const tracker = {
             setTaskFileTracker: vi.fn(),
-            commit: vi.fn().mockResolvedValue("baseline-hash"),
+            commit: vi.fn().mockResolvedValue("completion-hash"),
             getConsecutiveStagingFailures: vi.fn().mockReturnValue(0),
         } as unknown as CheckpointTracker
-        const capture = vi.fn(async () => undefined)
         const harness = createManager(vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker), undefined, {
             messages,
             tracker,
-            canonicalCheckpoint: { capture, restore: vi.fn() },
         })
         harness.publishMessage.mockRejectedValueOnce(new Error("webview closed"))
 
-        await harness.manager.saveCheckpoint()
+        await harness.manager.saveCheckpoint(true, completionMessage.ts)
 
-        expect(messages[0]).toMatchObject({ lastCheckpointHash: ["baseline-hash"] })
+        expect(messages[0]).toMatchObject({ lastCheckpointHash: ["completion-hash"] })
         expect(harness.postStateToWebview).toHaveBeenCalled()
-        expect(capture).toHaveBeenCalledExactlyOnceWith({
-            messageTs: 42,
-            workspaceRef: singleRootWorkspaceRef("baseline-hash"),
-        })
     })
 
     it("durably binds a completion checkpoint before posting its updated UI state", async () => {
@@ -341,11 +323,22 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
                     updateTaskHistory: vi.fn(),
                     cancelTask: vi.fn(),
                     restoreChatRuntime: vi.fn(),
-                    say: async () => {
+                    say: vi.fn(),
+                    beginRow: (fields: CheckpointRowFields) => {
                         const ts = ++nextMessageTs
-                        await messageStateHandler.addToClineMessages({ ts, type: "say", say: "checkpoint_created" })
-                        await postStateToWebview()
-                        return ts
+                        const registered = messageStateHandler.beginDurableClineMessage({
+                            ts,
+                            type: "say",
+                            say: "checkpoint_created",
+                            ...fields,
+                        })
+                        return {
+                            ts,
+                            persistence: registered.persistence.then(async (row) => {
+                                await postStateToWebview()
+                                return row
+                            }),
+                        }
                     },
                     postStateToWebview,
                     publishMessage: vi.fn().mockResolvedValue(undefined),
@@ -366,7 +359,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         }
     })
 
-    it("shows the baseline row before the shadow commit finishes and lets a writer wait for it", async () => {
+    it("holds the round until the shadow commit finishes, then writes the row", async () => {
         const messages: UiMessage[] = []
         let releaseCommit: (hash: string) => void = () => undefined
         const tracker = {
@@ -376,22 +369,21 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
         const harness = createManager(create, undefined, { messages, tracker })
 
-        await harness.manager.beginInitialCheckpoint()
-
-        expect(messages).toEqual([expect.objectContaining({ say: "checkpoint_created" })])
         let settled = false
-        const waiting = harness.manager.awaitInitialCheckpoint().then(() => {
+        const round = harness.manager.ensureRoundCheckpoint("round_start").then(() => {
             settled = true
         })
         await vi.waitFor(() => expect(tracker.commit).toHaveBeenCalledOnce())
+        // Synchronous with the conversation: the request waits, and no row exists yet.
         expect(settled).toBe(false)
+        expect(messages).toEqual([])
 
         releaseCommit("baseline-hash")
-        await waiting
-        expect(messages[0]).toMatchObject({ lastCheckpointHash: ["baseline-hash"] })
+        await round
+        expect(messages).toEqual([expect.objectContaining({ lastCheckpointHash: ["baseline-hash"] })])
     })
 
-    it("starts only one baseline and never rejects a waiter when the commit fails", async () => {
+    it("still writes the chat row and never rejects when the commit fails", async () => {
         const messages: UiMessage[] = []
         const tracker = {
             setTaskFileTracker: vi.fn(),
@@ -400,16 +392,13 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
         const harness = createManager(create, undefined, { messages, tracker })
 
-        await harness.manager.beginInitialCheckpoint()
-        await harness.manager.beginInitialCheckpoint()
+        await expect(harness.manager.ensureRoundCheckpoint("round_start")).resolves.toBeUndefined()
 
-        await expect(harness.manager.awaitInitialCheckpoint()).resolves.toBeUndefined()
-        expect(messages.filter((message) => message.say === "checkpoint_created")).toHaveLength(1)
-        expect(tracker.commit).toHaveBeenCalledOnce()
+        expect(messages).toEqual([expect.objectContaining({ say: "checkpoint_created" })])
         expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
     })
 
-    it("stops persisting a baseline that finishes after the task released its stores", async () => {
+    it("finishes the checkpoint in progress on dispose and starts none afterwards", async () => {
         const messages: UiMessage[] = []
         let releaseCommit: (hash: string) => void = () => undefined
         const tracker = {
@@ -424,31 +413,43 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
             canonicalCheckpoint: { capture, restore: vi.fn() },
         })
 
-        await harness.manager.beginInitialCheckpoint()
+        const round = harness.manager.ensureRoundCheckpoint("round_start")
         await vi.waitFor(() => expect(tracker.commit).toHaveBeenCalledOnce())
-        harness.manager.dispose()
-        releaseCommit("late-baseline-hash")
-        await harness.manager.awaitInitialCheckpoint()
+        let disposed = false
+        const disposal = harness.manager.dispose().then(() => {
+            disposed = true
+        })
+        await Promise.resolve()
+        expect(disposed).toBe(false)
 
-        expect(harness.updateClineMessage).not.toHaveBeenCalled()
-        expect(capture).not.toHaveBeenCalled()
-        expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
+        releaseCommit("late-baseline-hash")
+        await round
+        await disposal
+        // The admitted checkpoint is complete, so no row is left without its bundle.
+        expect(messages).toEqual([expect.objectContaining({ lastCheckpointHash: ["late-baseline-hash"] })])
+        expect(capture).toHaveBeenCalledOnce()
+
+        await harness.manager.ensureRoundCheckpoint("round_start")
+        expect(messages).toHaveLength(1)
+        expect(tracker.commit).toHaveBeenCalledOnce()
     })
 
-    it("does not open a baseline when checkpoints are disabled", async () => {
+    it("adds no checkpoint when checkpoints are disabled", async () => {
         const messages: UiMessage[] = []
         const create = vi.fn<CreateCheckpointTracker>()
+        const beginRow = vi.fn()
         const disabled = createTaskCheckpointManager(
             { taskId: "task-1", controller: {} } as never,
             { enableCheckpoints: false, createCheckpointTracker: create },
             { messageStateHandler: { clineMessages: messages } } as never,
-            { say: vi.fn() } as never,
+            { say: vi.fn(), beginRow } as never,
             {},
         )
 
-        await disabled.beginInitialCheckpoint()
+        await disabled.ensureRoundCheckpoint("round_start")
+        await disabled.ensurePreEditCheckpoint()
 
-        await expect(disabled.awaitInitialCheckpoint()).resolves.toBeUndefined()
+        expect(beginRow).not.toHaveBeenCalled()
         expect(messages).toEqual([])
         expect(create).not.toHaveBeenCalled()
     })

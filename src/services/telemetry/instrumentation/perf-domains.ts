@@ -61,7 +61,20 @@ export const PERF_PHASES = {
     // shared shadow repository, and `commit` only the Git work that runs once
     // exclusive access was granted. An attempt refused the lock never reaches
     // `commit`, so only `commit_attempt` counts every attempt.
-    [PerfDomain.Checkpoint]: ["existing_shadow_baseline", "add", "commit", "commit_attempt", "commit_lock", "restore"],
+    // `gate_wait`, `gate_ensure` and `gate_commit` describe one checkpoint check
+    // of a task: the wait for the task's checkpoint lock, the time it held it,
+    // and the shadow commit inside it, each with reason, outcome and failed part.
+    [PerfDomain.Checkpoint]: [
+        "existing_shadow_baseline",
+        "add",
+        "commit",
+        "commit_attempt",
+        "commit_lock",
+        "restore",
+        "gate_wait",
+        "gate_ensure",
+        "gate_commit",
+    ],
     [PerfDomain.HookDiscovery]: ["file_check", "has_hook_scan", "global_directory", "directories", "workspace_directories"],
     [PerfDomain.Settings]: ["controller_callback", "sync_callback", "sync_broadcast", "state_flush", "rpc_complete", "rpc_error"],
     [PerfDomain.SettingsRepository]: ["mutate_complete", "reconcile", "listener", "publish"],

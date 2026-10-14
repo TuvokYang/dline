@@ -346,6 +346,11 @@ export interface UiMessage {
      * through the same length more than once. Backend-only; never sent to the Webview.
      */
     conversationJournalSeq?: number
+    /**
+     * On a pre-edit checkpoint row: the round checkpoint row whose conversation
+     * this row restores. Its own hash restores the files to just before the edit.
+     */
+    checkpointAnchorTs?: number
     conversationHistoryDeletedRange?: [number, number] // for when conversation history is truncated for API requests
     /** Canonical pre-compaction range stored only on a durable completed compaction card. */
     compactionConversationRange?: CompactionConversationRange

@@ -667,6 +667,33 @@ export class GitOperations {
         return { stagedCount, rejectedPaths }
     }
 
+    /**
+     * The observed paths this worktree's checkpoint would keep on its own.
+     *
+     * A path the workspace watcher reported may have been written by anyone, so
+     * unlike a file a tool edited on purpose it must not be force-staged: a path
+     * the shadow repository excludes or the workspace ignores stays out, exactly
+     * as a workspace scan would leave it out. Paths outside this worktree, and
+     * paths that no longer exist anywhere Git can see, are dropped by the
+     * tracked staging that follows, not here.
+     *
+     * @returns Absolute paths, in their canonical spelling, that are not ignored
+     */
+    public async stageableObservedPaths(git: SimpleGit, absolutePaths: readonly string[]): Promise<string[]> {
+        if (absolutePaths.length === 0) return []
+        const resolved = (await Promise.all(absolutePaths.map((file) => resolveCheckpointWorktreePath(this.cwd, file)))).filter(
+            (file): file is CheckpointWorktreePath => file !== undefined,
+        )
+        if (resolved.length === 0) return []
+        const ignored = new Set<string>()
+        for (const batch of this.splitIntoPathspecBatches(resolved.map((file) => file.relative))) {
+            // Without --no-index a path the shadow already tracks is never reported,
+            // so a tracked file keeps being checkpointed as it was before.
+            for (const match of await git.checkIgnore(batch)) ignored.add(this.normalizeGitPath(match))
+        }
+        return resolved.filter((file) => !ignored.has(this.normalizeGitPath(file.relative))).map((file) => file.absolute)
+    }
+
     /** Split paths so each batch stays within the count and command-line budgets. */
     private splitIntoPathspecBatches(relativePaths: string[]): string[][] {
         const batches: string[][] = []
