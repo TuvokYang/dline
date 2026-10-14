@@ -478,6 +478,54 @@ describe("TaskContextUsageProjection", () => {
         expect(total(harness)).toBe(155_000)
     })
 
+    it("draws a compaction's local estimates on the scale the provider reported", async () => {
+        const harness = createProjection()
+        // The provider counted the request at half again its local estimate.
+        await harness.projection.started({
+            turnId: "turn-1",
+            contextWindow: WINDOW,
+            opening: {
+                estimatedTokens: 400_000,
+                projectedUsageTokens: 400_000,
+                segments: {
+                    durableContextTokens: 390_000,
+                    pendingSendTokens: 6_000,
+                    environmentTokens: 4_000,
+                    totalTokens: 400_000,
+                },
+            },
+        })
+        await harness.projection.record({ turnId: "turn-1", contextTokens: 602_000, outputTokens: 2_000, contextWindow: WINDOW })
+        await drained()
+        expect(total(harness)).toBe(602_000)
+
+        // The Pass sends the same history; estimated, it would have read 400k and dropped the header by 200k.
+        harness.projection.compactionPassStarted("compaction:1", 0, "pass:1", {
+            durableContextTokens: 380_000,
+            pendingSendTokens: 16_000,
+            environmentTokens: 4_000,
+            contextWindow: WINDOW,
+        })
+        expect(harness.target.contextWindowIndicator).toMatchObject({
+            phase: "sending",
+            durableContextTokens: 570_000,
+            pendingSendTokens: 24_000,
+            environmentTokens: 6_000,
+        })
+        expect(total(harness)).toBe(600_000)
+
+        harness.projection.compactionPassProjected("compaction:1", {
+            durableContextTokens: 100_000,
+            pendingSendTokens: 0,
+            environmentTokens: 4_000,
+            contextWindow: WINDOW,
+        })
+        expect(total(harness)).toBe(156_000)
+
+        harness.projection.compacted({ contextTokens: 80_000, contextWindow: WINDOW })
+        expect(total(harness)).toBe(120_000)
+    })
+
     it("drops a staged tail once an ordinary request carries it", async () => {
         const harness = createProjection()
         await request(harness, "turn-1", 500_000)

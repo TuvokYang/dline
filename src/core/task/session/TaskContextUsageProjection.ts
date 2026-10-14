@@ -118,6 +118,18 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
     private streamingRedrawQueued = false
     /** Tokens the conversation gained after the last provider report, not yet carried by any request. */
     private pendingTail = 0
+    /**
+     * Provider tokens per locally estimated token, as the last measured ordinary request showed.
+     *
+     * A compaction is drawn from local estimates - each Pass's input, the request
+     * an accepted Pass projects, the history a landed summary leaves - while every
+     * other figure is the provider's own count. The two tokenize differently, so
+     * an unscaled estimate dropped the header by that gap the moment a
+     * compaction began, before anything was condensed.
+     */
+    private providerScale = 1
+    /** The local estimate of the ordinary request in flight, which its report measures the scale against. */
+    private openingEstimate: number | undefined
 
     constructor(private readonly options: TaskContextUsageProjectionOptions) {
         const restored = options.restored
@@ -167,6 +179,7 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
                 authoritativeContextTokens: usage.contextTokens,
             }),
         )
+        this.measureProviderScale(usage)
         this.publish()
     }
 
@@ -282,12 +295,13 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
             attemptIndex: 0,
             attemptId,
         }
+        const scaled = this.onProviderScale(pass)
         this.show(
             indicator.beginSend({
                 lineage: this.lineage,
-                durableContextTokens: pass.durableContextTokens,
-                pendingSendTokens: pass.pendingSendTokens,
-                environmentTokens: pass.environmentTokens,
+                durableContextTokens: scaled.durableContextTokens,
+                pendingSendTokens: scaled.pendingSendTokens,
+                environmentTokens: scaled.environmentTokens,
                 contextWindow: pass.contextWindow,
                 profileId: scope.profileId,
                 profileName: scope.profileName,
@@ -318,12 +332,13 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
         const indicator = this.indicator
         if (!indicator || this.lineage.kind !== "compaction_pass" || this.lineage.operationId !== compactionId) return
         const scope = this.options.scope()
+        const scaled = this.onProviderScale(pass)
         this.show(
             indicator.commit({
                 lineage: this.lineage,
-                durableContextTokens: pass.durableContextTokens,
-                pendingSendTokens: pass.pendingSendTokens,
-                environmentTokens: pass.environmentTokens,
+                durableContextTokens: scaled.durableContextTokens,
+                pendingSendTokens: scaled.pendingSendTokens,
+                environmentTokens: scaled.environmentTokens,
                 contextWindow: pass.contextWindow,
                 profileId: scope.profileId,
                 profileName: scope.profileName,
@@ -350,7 +365,7 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
         this.pendingTail = 0
         const scope = this.options.scope()
         const measured = {
-            durableContextTokens: input.contextTokens,
+            durableContextTokens: this.scaleEstimate(input.contextTokens),
             pendingSendTokens: 0,
             environmentTokens: 0,
             contextWindow: input.contextWindow,
@@ -393,6 +408,36 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
             })
     }
 
+    /**
+     * Measures how the provider counts against the local estimate, from a request that carried both.
+     *
+     * The report's input is what the request sent; its output is the response,
+     * which the estimate of the request never included.
+     */
+    private measureProviderScale(usage: { readonly contextTokens: number; readonly outputTokens: number }): void {
+        const estimate = this.openingEstimate
+        const sent = usage.contextTokens - Math.max(0, usage.outputTokens)
+        if (estimate === undefined || !(estimate > 0) || !Number.isFinite(sent) || sent <= 0) return
+        this.providerScale = sent / estimate
+    }
+
+    /** A local estimate on the scale of the provider-reported figures it is drawn beside. */
+    private scaleEstimate(tokens: number): number {
+        return Number.isFinite(tokens) && tokens > 0 ? Math.round(tokens * this.providerScale) : 0
+    }
+
+    private onProviderScale(segments: {
+        readonly durableContextTokens: number
+        readonly pendingSendTokens: number
+        readonly environmentTokens: number
+    }): { durableContextTokens: number; pendingSendTokens: number; environmentTokens: number } {
+        return {
+            durableContextTokens: this.scaleEstimate(segments.durableContextTokens),
+            pendingSendTokens: this.scaleEstimate(segments.pendingSendTokens),
+            environmentTokens: this.scaleEstimate(segments.environmentTokens),
+        }
+    }
+
     private compactionShown(): boolean {
         const phase = this.indicator?.getSnapshot().phase
         return this.lineage.kind === "compaction_pass" && (phase === "sending" || phase === "receiving")
@@ -429,6 +474,7 @@ export class TaskContextUsageProjection implements ContextUsageObserverPort {
     }): void {
         // An ordinary request carries the tail and reports it as part of its own occupancy.
         this.pendingTail = 0
+        this.openingEstimate = request.opening?.estimatedTokens
         const indicator = this.indicatorFor(request.contextWindow)
         const scope = this.options.scope()
         const segments = openingSegments(indicator.getSnapshot(), request.opening)
