@@ -42,7 +42,6 @@ import { CheckmarkControl } from "@/components/common/CheckmarkControl"
 import { WithCopyButton } from "@/components/common/CopyButton"
 import McpResponseDisplay from "@/components/mcp/chat-display/McpResponseDisplay"
 import McpResourceRow from "@/components/mcp/configuration/tabs/installed/server-row/McpResourceRow"
-import McpToolRow from "@/components/mcp/configuration/tabs/installed/server-row/McpToolRow"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
 import { FileServiceClient, UiServiceClient } from "@/services/grpc-client"
@@ -1104,6 +1103,11 @@ export const ChatRowContent = memo(
             // response together, and the header reopens it.
             const mcpCallFinal = hasResponse && !isMcpServerResponding && !message.partial
             const showMcpCard = !mcpCallFinal || isExpanded
+            const isMcpToolCall = useMcpServer.type === "use_mcp_tool"
+            const mcpToolDescription = isMcpToolCall
+                ? server?.tools?.find((tool) => tool.name === useMcpServer.toolName)?.description || ""
+                : ""
+            const hasMcpArguments = isMcpToolCall && !!useMcpServer.arguments && useMcpServer.arguments !== "{}"
             return (
                 <div>
                     {mcpCallFinal ? (
@@ -1138,15 +1142,26 @@ export const ChatRowContent = memo(
 
                     {/* One 60vh card holds the request and its response. With a response the
                         request keeps at most 30vh so the response always has room; each part
-                        scrolls inside its own area instead of the card growing past the cap. */}
+                        scrolls inside its own area instead of the card growing past the cap.
+                        The tool name stays fixed above the scrolling description and arguments. */}
                     {showMcpCard && (
                         <div
                             className="bg-code rounded-xs mt-2 flex max-h-[60vh] flex-col overflow-hidden"
                             data-testid="mcp-request-card">
+                            {isMcpToolCall && (
+                                <div
+                                    className="flex shrink-0 items-center gap-1.5 px-2.5 pt-2 pb-1 font-medium"
+                                    data-testid="mcp-tool-title">
+                                    <span className="codicon codicon-symbol-method shrink-0" />
+                                    <span className="min-w-0 truncate">{useMcpServer.toolName || ""}</span>
+                                </div>
+                            )}
                             <div
                                 className={cn(
-                                    "min-h-0 overflow-y-auto overscroll-x-contain py-2 px-2.5",
+                                    "themed-scrollbar min-h-0 overflow-y-auto overscroll-x-contain px-2.5",
+                                    isMcpToolCall ? "pb-2" : "py-2",
                                     hasResponse && "max-h-[30vh] shrink-0",
+                                    isMcpToolCall && !mcpToolDescription && !hasMcpArguments && "hidden",
                                 )}
                                 data-testid="mcp-request-body">
                                 {useMcpServer.type === "access_mcp_resource" && (
@@ -1166,34 +1181,18 @@ export const ChatRowContent = memo(
                                     />
                                 )}
 
-                                {useMcpServer.type === "use_mcp_tool" && (
+                                {isMcpToolCall && (
                                     <div>
-                                        {/* Keeps a click inside the tool row from reaching the row's own
-								    expand handler. It is a propagation boundary, not a control, so
-								    it exposes no role and no keyboard handler: keyboard events do
-								    not bubble to the row the way this click does. */}
-                                        <div
-                                            onClickCapture={(e) => {
-                                                e.stopPropagation()
-                                            }}>
-                                            <McpToolRow
-                                                showAutoApprove={false}
-                                                tool={{
-                                                    name: useMcpServer.toolName || "",
-                                                    description:
-                                                        server?.tools?.find((tool) => tool.name === useMcpServer.toolName)
-                                                            ?.description || "",
-                                                    autoApprove:
-                                                        server?.tools?.find((tool) => tool.name === useMcpServer.toolName)
-                                                            ?.autoApprove || false,
-                                                }}
-                                            />
-                                        </div>
-                                        {useMcpServer.arguments && useMcpServer.arguments !== "{}" && (
-                                            <div className="mt-2">
+                                        {mcpToolDescription && (
+                                            <div className="text-[12px] opacity-80" data-testid="mcp-tool-description">
+                                                {mcpToolDescription}
+                                            </div>
+                                        )}
+                                        {hasMcpArguments && (
+                                            <div className={cn(mcpToolDescription && "mt-2")}>
                                                 <div className="mb-1 opacity-80 uppercase">Arguments</div>
                                                 <CodeAccordian
-                                                    code={useMcpServer.arguments}
+                                                    code={useMcpServer.arguments || ""}
                                                     isExpanded={true}
                                                     language="json"
                                                     onToggleExpand={handleToggle}

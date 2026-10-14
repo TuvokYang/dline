@@ -65,7 +65,15 @@ describe("ChatRow MCP tool rendering", () => {
         expect(screen.getByText(/Dline is using the/)).toBeInTheDocument()
         expect(screen.getByTestId("mcp-request-card")).toHaveClass("max-h-[60vh]", "flex", "flex-col", "overflow-hidden")
         const body = screen.getByTestId("mcp-request-body")
-        expect(body).toHaveClass("min-h-0", "overflow-y-auto", "overscroll-x-contain")
+        expect(body).toHaveClass("min-h-0", "overflow-y-auto", "overscroll-x-contain", "themed-scrollbar")
+        // The tool name is a fixed title outside the scroll area; only the
+        // description and arguments scroll.
+        const title = screen.getByTestId("mcp-tool-title")
+        expect(title).toHaveTextContent("search")
+        expect(title).toHaveClass("shrink-0")
+        expect(body).not.toContainElement(title)
+        expect(body).toContainElement(screen.getByTestId("mcp-tool-description"))
+        expect(body).toHaveTextContent("Arguments")
         // Without a response the request may use the whole card.
         expect(body).not.toHaveClass("max-h-[30vh]")
         expect(screen.queryByTestId("mcp-response-group")).not.toBeInTheDocument()

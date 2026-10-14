@@ -272,7 +272,10 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText, e
                 </ResponseHeader>
 
                 {isExpanded && (
-                    <div className="response-content" data-testid="mcp-response-content" style={{ overflowY: "auto" }}>
+                    <div
+                        className="response-content themed-scrollbar"
+                        data-testid="mcp-response-content"
+                        style={{ overflowY: "auto" }}>
                         {renderContent()}
                     </div>
                 )}
@@ -294,7 +297,10 @@ const McpResponseDisplay: React.FC<McpResponseDisplayProps> = ({ responseText, e
                     </div>
                 </ResponseHeader>
                 {isExpanded && (
-                    <div className="response-content" data-testid="mcp-response-content" style={{ overflowY: "auto" }}>
+                    <div
+                        className="response-content themed-scrollbar"
+                        data-testid="mcp-response-content"
+                        style={{ overflowY: "auto" }}>
                         <div style={{ color: "var(--vscode-errorForeground)" }}>Error parsing response:</div>
                         <UrlText>{responseText}</UrlText>
                     </div>
