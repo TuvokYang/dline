@@ -11,6 +11,7 @@ import {
     findHandlerlessExplicitRefusal,
 } from "../explicit-instructions/explicit-tool-gate"
 import type { ExplicitInstructionFailureCode } from "../explicit-instructions/types"
+import { ToolExecutionObservation } from "../observability/tool-execution-observation"
 import { AccessMcpResourceHandler } from "./handlers/AccessMcpResourceHandler"
 import { ApplyPatchHandler } from "./handlers/ApplyPatchHandler"
 import { AskFollowupQuestionToolHandler } from "./handlers/AskFollowupQuestionToolHandler"
@@ -293,6 +294,17 @@ export class ToolExecutorCoordinator {
                       snapshot.settings.enableNotifications,
                   )
                 : undefined
+        const observedRun = snapshot.inheritsApproval
+            ? () =>
+                  new ToolExecutionObservation({
+                      taskId: snapshot.taskId,
+                      toolName: canonicalToolName,
+                      turnId: "",
+                      native: false,
+                      scope: "subagent",
+                      parent: "ambient",
+                  }).run(run)
+            : run
         return prepareRegisteredToolAdmission({
             canonicalToolName: canonicalToolName as DlineDefaultTool,
             block,
@@ -300,7 +312,7 @@ export class ToolExecutorCoordinator {
             snapshot,
             snapshotProvider,
             presentation,
-            run,
+            run: observedRun,
         })
     }
 

@@ -3,7 +3,12 @@ import * as nodeMachineId from "node-machine-id"
 import { afterEach, beforeEach, describe, it, vi, expect as vitestExpect } from "vitest"
 // sinon import removed
 import { HostProvider } from "@/hosts/host-provider"
-import { _GENERATED_MACHINE_ID_KEY, getDistinctId, initializeDistinctId, setDistinctId } from "@/services/logging/distinctId"
+import {
+    _GENERATED_MACHINE_ID_KEY,
+    getDistinctId,
+    initializeDistinctId,
+    setDistinctIdForTesting,
+} from "@/services/logging/distinctId"
 import { StorageContext } from "@/shared/storage"
 
 describe("distinctId", () => {
@@ -59,7 +64,7 @@ describe("distinctId", () => {
         mockStorage = { globalState: mockGlobalState } as unknown as StorageContext
 
         // Reset the distinctId module state
-        setDistinctId("")
+        setDistinctIdForTesting("")
     })
 
     afterEach(() => {

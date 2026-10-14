@@ -146,7 +146,12 @@ function closeForNewTask(controller: Controller, session: NonNullable<Controller
         .runTaskLifecycleOperation(async (scope) => {
             // A lifecycle operation queued earlier may already have replaced the task.
             if (controller.task !== session) return
-            await scope.clearTask({ clearPanelState: true, preserveCompletedState: true, deferTeardown: true })
+            await scope.clearTask({
+                clearPanelState: true,
+                preserveCompletedState: true,
+                deferTeardown: true,
+                closeReason: "handoff",
+            })
         })
         .catch((error: unknown) => {
             Logger.warn(

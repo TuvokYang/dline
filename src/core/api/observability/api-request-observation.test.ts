@@ -231,9 +231,43 @@ describe("API and Task turn trace correlation", () => {
         await stream.return(undefined)
         await env.flush()
         expect(closed).toBe(true)
+        const [cancelled] = env.logs.getFinishedLogRecords().filter((log) => log.body === "api.request.cancelled")
+        expect(cancelled?.attributes.cancel_reason).toBe("consumer_closed")
         expect(env.logs.getFinishedLogRecords().filter((log) => log.body === "api.request.cancelled")).toHaveLength(1)
         expect(env.logs.getFinishedLogRecords().filter((log) => log.body === "api.request.failed")).toHaveLength(0)
         expect(env.histograms).toHaveLength(1)
+    })
+
+    it("records handler abort and AbortError as distinct cancellation reasons", async () => {
+        const env = setup()
+        const abort = vi.fn()
+        const api = handler(
+            async function* () {
+                yield { type: "text", text: "private" }
+            },
+            "task-a",
+            abort,
+        )
+        const stream = api.createMessage("", [])
+        await stream.next()
+        api.abort?.()
+        await stream.return(undefined)
+
+        const abortError = Object.assign(new Error("private"), { name: "AbortError" })
+        const abortedApi = handler(async function* () {
+            throw abortError
+        }, "task-b")
+        await expect(abortedApi.createMessage("", []).next()).rejects.toBe(abortError)
+        await env.flush()
+
+        expect(abort).toHaveBeenCalledOnce()
+        const reasons = env.logs
+            .getFinishedLogRecords()
+            .filter((log) => log.body === "api.request.cancelled")
+            .map((log) => log.attributes.cancel_reason)
+            .sort()
+        expect(reasons).toEqual(["abort_error", "handler_abort"])
+        expect(env.logs.getFinishedLogRecords().filter((log) => log.body === "api.request.failed")).toHaveLength(0)
     })
 
     it("does not record when diagnostics consent is disabled", async () => {

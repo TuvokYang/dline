@@ -8,7 +8,7 @@ import { ClineAPI } from "./cline"
 export function createClineAPI(sidebarController: Controller): ClineAPI {
     const api: ClineAPI = {
         startNewTask: async (task?: string, images?: string[]) => {
-            await sidebarController.clearTask({ clearPanelState: true })
+            await sidebarController.clearTask({ clearPanelState: true, closeReason: "task_switch" })
             await sidebarController.postStateToWebview()
 
             await sendChatButtonClickedEvent(sidebarController)

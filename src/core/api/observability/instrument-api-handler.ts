@@ -56,7 +56,7 @@ export function instrumentApiHandler(handler: ApiHandler, context: ApiHandlerCon
     }
     if (abort) {
         handler.abort = () => {
-            for (const observation of active) observation.cancel()
+            for (const observation of active) observation.cancel("handler_abort")
             abort()
         }
     }

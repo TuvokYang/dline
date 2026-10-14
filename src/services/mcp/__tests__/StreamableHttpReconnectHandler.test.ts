@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import "should"
 // sinon import removed: using vitest globals
+import type { McpTransportLifecycleEvent } from "../mcp-transport-observation"
 import {
     DEFAULT_RECONNECT_CONFIG,
     ReconnectCallbacks,
@@ -38,6 +39,10 @@ function makeCallbacks(connection?: ReturnType<typeof makeConnection>): Reconnec
 }
 
 /** A config with a small max so tests don't loop many times. */
+function makeObserver() {
+    return { record: vi.fn<(event: McpTransportLifecycleEvent) => void>() }
+}
+
 const TEST_CONFIG: ReconnectConfig = {
     maxAttempts: 3,
     getDelayMs: (attempt) => 100 * 2 ** attempt, // 100, 200, 400
@@ -281,6 +286,37 @@ describe("StreamableHttpReconnectHandler", () => {
 
         handler.resetAttempts()
         handler.attemptCount.should.equal(0)
+    })
+
+    it("classifies retry and recovery without reporting a fatal transport error", async () => {
+        const conn = makeConnection()
+        const cbs = makeCallbacks(conn)
+        cbs.stubs.connectToServer.mockRejectedValueOnce(new Error("fail")).mockResolvedValue(undefined)
+        const observer = makeObserver()
+        const handler = new StreamableHttpReconnectHandler("test-server", cbs, TEST_CONFIG, observer)
+
+        await handler.handleError(new TypeError("terminated"))
+
+        const outcomes = observer.record.mock.calls.map(([event]) => event.outcome)
+        outcomes.should.deepEqual(["scheduled", "retry_failed", "recovered"])
+        observer.record.mock.calls.some(([event]) => event.classification === "exhausted").should.be.false()
+    })
+
+    it("records exhaustion only after the reconnect budget is consumed", async () => {
+        const conn = makeConnection()
+        const cbs = makeCallbacks(conn)
+        cbs.stubs.connectToServer.mockRejectedValue(new Error("fail"))
+        const observer = makeObserver()
+        const handler = new StreamableHttpReconnectHandler("test-server", cbs, TEST_CONFIG, observer)
+
+        await handler.handleError(new Error("transport error"))
+
+        observer.record.mock.calls.at(-1)?.[0].should.match({
+            transport: "streamableHttp",
+            classification: "exhausted",
+            outcome: "exhausted",
+            attempt: TEST_CONFIG.maxAttempts,
+        })
     })
 
     // ── error message formatting ────────────────────────────────────────

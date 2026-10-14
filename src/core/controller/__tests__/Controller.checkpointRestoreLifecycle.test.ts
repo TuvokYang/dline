@@ -28,6 +28,7 @@ describe("Controller checkpoint restore lifecycle", () => {
         expect(clearTask).toHaveBeenCalledExactlyOnceWith({
             suppressPostState: true,
             checkpointRestoreFence: fence,
+            closeReason: "checkpoint_restore",
         })
         await vi.waitFor(() => {
             expect(initTask).toHaveBeenCalledWith(undefined, undefined, undefined, { id: "task-1" }, undefined, {

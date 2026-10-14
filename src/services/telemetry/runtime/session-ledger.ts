@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto"
+import fsSync from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { normalizeRuntimeError } from "./error-normalizer"
+import type { RuntimeOperationDescriptor } from "./operation-registry"
 
-const SCHEMA_VERSION = 1 as const
+const LEGACY_SCHEMA_VERSION = 1 as const
+const SCHEMA_VERSION = 2 as const
 const HEARTBEAT_INTERVAL_MS = 10_000
 const ACTIVE_HEARTBEAT_MS = 30_000
 const REPORT_CLAIM_STALE_MS = 30_000
@@ -10,25 +14,86 @@ const REPORT_CLAIM_SEPARATOR = ".report-claim-"
 const REPORT_LOCK_SUFFIX = ".report-lock"
 const RETENTION_SUMMARY_FILE = ".retention-summary"
 const MAX_LEDGER_FILES = 20
+const MAX_ACTIVE_TASKS = 8
+const MAX_ACTIVE_OPERATIONS = 16
+const MAX_TASK_ID_LENGTH = 128
+const MAX_PHASE_LENGTH = 64
 let temporaryFileSequence = 0
 
-export interface RuntimeSessionLedgerDocument {
-    schemaVersion: typeof SCHEMA_VERSION
-    sessionId: string
-    pid: number
-    startedAt: number
-    heartbeatAt: number
-    stage?: string
-    deactivationCompletedAt?: number
-    /** Terminal previous-session reconciliation has been admitted to consented telemetry. */
-    reconciliationReportedAt?: number
+export type RuntimeSessionStage = "activation_started" | "running" | "shutdown_started" | "deactivation_completed"
+
+export interface RuntimeSessionActiveTask {
+    readonly taskId: string
+    readonly phase?: string
 }
+
+export interface RuntimeSessionHealth {
+    readonly sampledAt: number
+    readonly eventLoopDelayMs: number
+    readonly cpuUtilizationRatio: number
+    readonly heapUsedBytes: number
+    readonly rssBytes: number
+    readonly queueDepth: number
+    readonly droppedEvents: number
+}
+
+export interface RuntimeSessionTerminationHint {
+    readonly kind: "uncaught_exception" | "process_exit" | "process_exit_nonzero"
+    readonly recordedAt: number
+    readonly exitCode?: number
+    readonly origin?: string
+    readonly errorName?: string
+    readonly errorCode?: string
+    readonly errorFingerprint?: string
+}
+
+export interface RuntimeSessionLedgerDocumentV1 {
+    readonly schemaVersion: typeof LEGACY_SCHEMA_VERSION
+    readonly sessionId: string
+    readonly pid: number
+    readonly startedAt: number
+    readonly heartbeatAt: number
+    readonly stage?: string
+    readonly deactivationCompletedAt?: number
+    readonly reconciliationReportedAt?: number
+}
+
+export interface RuntimeSessionLedgerDocumentV2 {
+    readonly schemaVersion: typeof SCHEMA_VERSION
+    readonly sessionId: string
+    readonly pid: number
+    readonly startedAt: number
+    readonly heartbeatAt: number
+    readonly stage?: RuntimeSessionStage
+    readonly activeTasks?: readonly RuntimeSessionActiveTask[]
+    readonly activeTasksTruncated?: boolean
+    readonly activeOperations?: readonly RuntimeOperationDescriptor[]
+    readonly activeOperationsTruncated?: boolean
+    readonly lastHealth?: RuntimeSessionHealth
+    readonly terminationHint?: RuntimeSessionTerminationHint
+    readonly deactivationCompletedAt?: number
+    /** Terminal previous-session reconciliation has been admitted to consented telemetry. */
+    readonly reconciliationReportedAt?: number
+}
+
+export type RuntimeSessionLedgerDocument = RuntimeSessionLedgerDocumentV1 | RuntimeSessionLedgerDocumentV2
+
+export type RuntimeSessionHealthInput = Omit<RuntimeSessionHealth, "sampledAt">
 
 export type PreviousSessionOutcome = "deactivation_completed" | "still_active" | "unclean_inferred" | "stale_unknown" | "corrupt"
 
 export interface PreviousSessionReconciliation {
     readonly outcome: PreviousSessionOutcome
     readonly ageMs?: number
+    readonly sessionId?: string
+    readonly pid?: number
+    readonly stage?: string
+    readonly activeTasks?: readonly RuntimeSessionActiveTask[]
+    readonly activeTasksTruncated?: boolean
+    readonly activeOperations?: readonly RuntimeOperationDescriptor[]
+    readonly activeOperationsTruncated?: boolean
+    readonly lastHealth?: RuntimeSessionHealth
+    readonly terminationHint?: RuntimeSessionTerminationHint
 }
 
 interface PendingTerminalReconciliation {
@@ -59,6 +124,9 @@ export interface RuntimeSessionLedgerOptions {
     readonly pid?: number
     readonly processAlive?: (pid: number) => boolean | undefined
     readonly heartbeatIntervalMs?: number
+    readonly activeTaskIds?: () => readonly string[]
+    readonly activeOperations?: () => readonly RuntimeOperationDescriptor[]
+    readonly installProcessListeners?: boolean
     /** Test seam for deterministic transient-write failures. */
     readonly writeDocument?: (filePath: string, document: RuntimeSessionLedgerDocument) => Promise<void>
 }
@@ -80,33 +148,155 @@ export function classifyPreviousSession(input: {
     now: number
     processAlive: boolean | undefined
 }): PreviousSessionReconciliation {
+    const metadata = previousSessionMetadata(input.document)
     if (input.document.deactivationCompletedAt !== undefined) {
-        return { outcome: "deactivation_completed", ageMs: Math.max(0, input.now - input.document.deactivationCompletedAt) }
+        return {
+            ...metadata,
+            outcome: "deactivation_completed",
+            ageMs: Math.max(0, input.now - input.document.deactivationCompletedAt),
+        }
     }
     const ageMs = Math.max(0, input.now - input.document.heartbeatAt)
-    if (input.processAlive === true && ageMs <= ACTIVE_HEARTBEAT_MS) return { outcome: "still_active", ageMs }
-    if (input.processAlive === false) return { outcome: "unclean_inferred", ageMs }
-    return { outcome: "stale_unknown", ageMs }
+    if (input.processAlive === true && ageMs <= ACTIVE_HEARTBEAT_MS) {
+        return { ...metadata, outcome: "still_active", ageMs }
+    }
+    if (input.processAlive === false) return { ...metadata, outcome: "unclean_inferred", ageMs }
+    return { ...metadata, outcome: "stale_unknown", ageMs }
+}
+
+function previousSessionMetadata(
+    document: RuntimeSessionLedgerDocument,
+): Omit<PreviousSessionReconciliation, "outcome" | "ageMs"> {
+    return {
+        sessionId: document.sessionId,
+        pid: document.pid,
+        ...(document.stage === undefined ? {} : { stage: document.stage }),
+        ...(document.schemaVersion === SCHEMA_VERSION && document.activeTasks
+            ? { activeTasks: document.activeTasks.map((task) => ({ ...task })) }
+            : {}),
+        ...(document.schemaVersion === SCHEMA_VERSION && document.activeTasksTruncated !== undefined
+            ? { activeTasksTruncated: document.activeTasksTruncated }
+            : {}),
+        ...(document.schemaVersion === SCHEMA_VERSION && document.activeOperations
+            ? { activeOperations: document.activeOperations.map((operation) => ({ ...operation })) }
+            : {}),
+        ...(document.schemaVersion === SCHEMA_VERSION && document.activeOperationsTruncated !== undefined
+            ? { activeOperationsTruncated: document.activeOperationsTruncated }
+            : {}),
+        ...(document.schemaVersion === SCHEMA_VERSION && document.lastHealth ? { lastHealth: { ...document.lastHealth } } : {}),
+        ...(document.schemaVersion === SCHEMA_VERSION && document.terminationHint
+            ? { terminationHint: { ...document.terminationHint } }
+            : {}),
+    }
 }
 
 function isNonNegativeFinite(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value) && value >= 0
 }
 
-function isDocument(value: unknown): value is RuntimeSessionLedgerDocument {
-    if (!value || typeof value !== "object") return false
-    const candidate = value as Partial<RuntimeSessionLedgerDocument>
+function isBoundedString(value: unknown, maxLength: number): value is string {
+    return typeof value === "string" && value.length > 0 && value.length <= maxLength
+}
+
+function isStage(value: unknown): value is RuntimeSessionStage {
     return (
-        candidate.schemaVersion === SCHEMA_VERSION &&
-        typeof candidate.sessionId === "string" &&
-        candidate.sessionId.length > 0 &&
+        value === "activation_started" ||
+        value === "running" ||
+        value === "shutdown_started" ||
+        value === "deactivation_completed"
+    )
+}
+
+function isActiveTask(value: unknown): value is RuntimeSessionActiveTask {
+    if (!value || typeof value !== "object") return false
+    const candidate = value as Partial<RuntimeSessionActiveTask>
+    return (
+        isBoundedString(candidate.taskId, MAX_TASK_ID_LENGTH) &&
+        (candidate.phase === undefined || isBoundedString(candidate.phase, MAX_PHASE_LENGTH))
+    )
+}
+
+function isOperation(value: unknown): value is RuntimeOperationDescriptor {
+    if (!value || typeof value !== "object") return false
+    const candidate = value as Partial<RuntimeOperationDescriptor>
+    return (
+        isBoundedString(candidate.operationId, 128) &&
+        (candidate.kind === "api" ||
+            candidate.kind === "tool" ||
+            candidate.kind === "subagent" ||
+            candidate.kind === "mcp_transport") &&
+        isBoundedString(candidate.name, 128) &&
+        isNonNegativeFinite(candidate.startedAt) &&
+        (candidate.taskId === undefined || isBoundedString(candidate.taskId, MAX_TASK_ID_LENGTH))
+    )
+}
+
+function isHealth(value: unknown): value is RuntimeSessionHealth {
+    if (!value || typeof value !== "object") return false
+    const candidate = value as Partial<RuntimeSessionHealth>
+    return (
+        isNonNegativeFinite(candidate.sampledAt) &&
+        isNonNegativeFinite(candidate.eventLoopDelayMs) &&
+        isNonNegativeFinite(candidate.cpuUtilizationRatio) &&
+        isNonNegativeFinite(candidate.heapUsedBytes) &&
+        isNonNegativeFinite(candidate.rssBytes) &&
+        Number.isSafeInteger(candidate.queueDepth) &&
+        (candidate.queueDepth ?? -1) >= 0 &&
+        Number.isSafeInteger(candidate.droppedEvents) &&
+        (candidate.droppedEvents ?? -1) >= 0
+    )
+}
+
+function isTerminationHint(value: unknown): value is RuntimeSessionTerminationHint {
+    if (!value || typeof value !== "object") return false
+    const candidate = value as Partial<RuntimeSessionTerminationHint>
+    return (
+        (candidate.kind === "uncaught_exception" ||
+            candidate.kind === "process_exit" ||
+            candidate.kind === "process_exit_nonzero") &&
+        isNonNegativeFinite(candidate.recordedAt) &&
+        (candidate.exitCode === undefined || Number.isSafeInteger(candidate.exitCode)) &&
+        (candidate.origin === undefined || isBoundedString(candidate.origin, 64)) &&
+        (candidate.errorName === undefined || isBoundedString(candidate.errorName, 128)) &&
+        (candidate.errorCode === undefined || isBoundedString(candidate.errorCode, 128)) &&
+        (candidate.errorFingerprint === undefined || isBoundedString(candidate.errorFingerprint, 128))
+    )
+}
+
+function hasValidBaseDocument(candidate: Record<string, unknown>): boolean {
+    return (
+        isBoundedString(candidate.sessionId, 256) &&
         Number.isSafeInteger(candidate.pid) &&
-        (candidate.pid ?? 0) > 0 &&
+        (candidate.pid as number) > 0 &&
         isNonNegativeFinite(candidate.startedAt) &&
         isNonNegativeFinite(candidate.heartbeatAt) &&
-        (candidate.stage === undefined || typeof candidate.stage === "string") &&
         (candidate.deactivationCompletedAt === undefined || isNonNegativeFinite(candidate.deactivationCompletedAt)) &&
         (candidate.reconciliationReportedAt === undefined || isNonNegativeFinite(candidate.reconciliationReportedAt))
+    )
+}
+
+function isDocument(value: unknown): value is RuntimeSessionLedgerDocument {
+    if (!value || typeof value !== "object") return false
+    const candidate = value as Record<string, unknown>
+    if (!hasValidBaseDocument(candidate)) return false
+    if (candidate.schemaVersion === LEGACY_SCHEMA_VERSION) {
+        return candidate.stage === undefined || typeof candidate.stage === "string"
+    }
+    if (candidate.schemaVersion !== SCHEMA_VERSION) return false
+    return (
+        (candidate.stage === undefined || isStage(candidate.stage)) &&
+        (candidate.activeTasks === undefined ||
+            (Array.isArray(candidate.activeTasks) &&
+                candidate.activeTasks.length <= MAX_ACTIVE_TASKS &&
+                candidate.activeTasks.every(isActiveTask))) &&
+        (candidate.activeTasksTruncated === undefined || typeof candidate.activeTasksTruncated === "boolean") &&
+        (candidate.activeOperations === undefined ||
+            (Array.isArray(candidate.activeOperations) &&
+                candidate.activeOperations.length <= MAX_ACTIVE_OPERATIONS &&
+                candidate.activeOperations.every(isOperation))) &&
+        (candidate.activeOperationsTruncated === undefined || typeof candidate.activeOperationsTruncated === "boolean") &&
+        (candidate.lastHealth === undefined || isHealth(candidate.lastHealth)) &&
+        (candidate.terminationHint === undefined || isTerminationHint(candidate.terminationHint))
     )
 }
 
@@ -132,12 +322,38 @@ export class RuntimeSessionLedger {
     private readonly processAlive: (pid: number) => boolean | undefined
     private readonly heartbeatIntervalMs: number
     private readonly writeLedgerDocument: (filePath: string, document: RuntimeSessionLedgerDocument) => Promise<void>
-    private document: RuntimeSessionLedgerDocument
+    private document: RuntimeSessionLedgerDocumentV2
     private heartbeatTimer?: NodeJS.Timeout
     private writeChain: Promise<void> = Promise.resolve()
     private pendingNonterminalReconciliations: PreviousSessionReconciliation[] = []
     private readonly pendingTerminalReconciliations = new Map<string, PendingTerminalReconciliation>()
     private readonly claimedTerminalReconciliations = new Map<string, ClaimedTerminalReconciliation>()
+    private processListenersInstalled = false
+
+    private readonly handleUncaughtExceptionMonitor = (error: Error, origin: string): void => {
+        const normalized = normalizeRuntimeError(error)
+        this.recordTerminationHint({
+            kind: "uncaught_exception",
+            recordedAt: this.now(),
+            origin,
+            errorName: normalized.name,
+            ...(normalized.code === undefined ? {} : { errorCode: normalized.code }),
+            errorFingerprint: normalized.fingerprint,
+        })
+    }
+
+    private readonly handleProcessExit = (exitCode: number): void => {
+        if (this.document.deactivationCompletedAt !== undefined) return
+        if (this.document.terminationHint?.kind === "uncaught_exception") {
+            this.persistSynchronously()
+            return
+        }
+        this.recordTerminationHint({
+            kind: exitCode === 0 ? "process_exit" : "process_exit_nonzero",
+            recordedAt: this.now(),
+            exitCode,
+        })
+    }
 
     constructor(private readonly options: RuntimeSessionLedgerOptions) {
         this.directory = path.join(options.dataDir, "runtime", "session-ledgers")
@@ -154,16 +370,21 @@ export class RuntimeSessionLedger {
             pid: this.pid,
             startedAt: now,
             heartbeatAt: now,
+            stage: "activation_started",
         }
+        this.refreshActiveTasks()
+        this.refreshActiveOperations()
     }
 
     async startAndReconcile(): Promise<PreviousSessionReconciliation[]> {
         await fs.mkdir(this.directory, { recursive: true, mode: 0o700 })
         await this.recoverAbandonedClaims()
         const reconciliations = await this.reconcilePrevious()
+        this.refreshHeartbeat()
         await this.persist()
+        this.installProcessListeners()
         this.heartbeatTimer = setInterval(() => {
-            this.document = { ...this.document, heartbeatAt: this.now() }
+            this.refreshHeartbeat()
             void this.persist().catch(() => undefined)
         }, this.heartbeatIntervalMs)
         this.heartbeatTimer.unref?.()
@@ -171,9 +392,23 @@ export class RuntimeSessionLedger {
         return reconciliations
     }
 
-    markStage(stage: string): Promise<void> {
+    markStage(stage: RuntimeSessionStage): Promise<void> {
+        this.refreshActiveTasks()
         this.document = { ...this.document, stage, heartbeatAt: this.now() }
         return this.persist()
+    }
+
+    updateHealth(health: RuntimeSessionHealthInput): void {
+        const snapshot: RuntimeSessionHealth = { ...health, sampledAt: this.now() }
+        if (!isHealth(snapshot)) return
+        this.document = { ...this.document, lastHealth: snapshot }
+    }
+
+    recordTerminationHint(hint: RuntimeSessionTerminationHint): void {
+        if (this.document.deactivationCompletedAt !== undefined || !isTerminationHint(hint)) return
+        if (this.document.terminationHint?.kind === "uncaught_exception" && hint.kind !== "uncaught_exception") return
+        this.document = { ...this.document, heartbeatAt: this.now(), terminationHint: { ...hint } }
+        this.persistSynchronously()
     }
 
     /**
@@ -207,9 +442,11 @@ export class RuntimeSessionLedger {
         if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
         this.heartbeatTimer = undefined
         const now = this.now()
+        this.refreshActiveTasks()
         this.document = { ...this.document, stage: "deactivation_completed", heartbeatAt: now, deactivationCompletedAt: now }
         await this.persist()
         await this.writeChain
+        this.uninstallProcessListeners()
     }
 
     private async reconcilePrevious(): Promise<PreviousSessionReconciliation[]> {
@@ -369,6 +606,74 @@ export class RuntimeSessionLedger {
                 if (code !== "ENOENT") continue
             }
             await fs.rename(claimPath, sourcePath).catch(() => undefined)
+        }
+    }
+
+    private refreshHeartbeat(): void {
+        this.refreshActiveTasks()
+        this.refreshActiveOperations()
+        this.document = { ...this.document, heartbeatAt: this.now() }
+    }
+
+    private refreshActiveTasks(): void {
+        let taskIds: readonly string[]
+        try {
+            taskIds = this.options.activeTaskIds?.() ?? []
+        } catch {
+            return
+        }
+        const unique = [...new Set(taskIds.filter((taskId) => isBoundedString(taskId, MAX_TASK_ID_LENGTH)))]
+        this.document = {
+            ...this.document,
+            activeTasks: unique.slice(0, MAX_ACTIVE_TASKS).map((taskId) => ({ taskId })),
+            ...(unique.length > MAX_ACTIVE_TASKS ? { activeTasksTruncated: true } : { activeTasksTruncated: false }),
+        }
+    }
+
+    private refreshActiveOperations(): void {
+        let operations: readonly RuntimeOperationDescriptor[]
+        try {
+            operations = this.options.activeOperations?.() ?? []
+        } catch {
+            return
+        }
+        const valid = operations.filter(isOperation)
+        this.document = {
+            ...this.document,
+            activeOperations: valid.slice(0, MAX_ACTIVE_OPERATIONS).map((operation) => ({ ...operation })),
+            activeOperationsTruncated: valid.length > MAX_ACTIVE_OPERATIONS,
+        }
+    }
+
+    private installProcessListeners(): void {
+        if (this.processListenersInstalled || this.options.installProcessListeners === false || this.pid !== process.pid) return
+        process.on("uncaughtExceptionMonitor", this.handleUncaughtExceptionMonitor)
+        process.on("exit", this.handleProcessExit)
+        this.processListenersInstalled = true
+    }
+
+    private uninstallProcessListeners(): void {
+        if (!this.processListenersInstalled) return
+        process.off("uncaughtExceptionMonitor", this.handleUncaughtExceptionMonitor)
+        process.off("exit", this.handleProcessExit)
+        this.processListenersInstalled = false
+    }
+
+    private persistSynchronously(): void {
+        const temporary = `${this.filePath}.tmp-${process.pid}-${++temporaryFileSequence}`
+        try {
+            fsSync.mkdirSync(this.directory, { recursive: true, mode: 0o700 })
+            fsSync.writeFileSync(temporary, JSON.stringify(this.document), { encoding: "utf8", mode: 0o600 })
+            fsSync.renameSync(temporary, this.filePath)
+        } catch {
+            // A fatal-path breadcrumb is best-effort and must not replace the
+            // process error that caused it.
+        } finally {
+            try {
+                fsSync.rmSync(temporary, { force: true })
+            } catch {
+                // Ignore cleanup failures in a process termination path.
+            }
         }
     }
 

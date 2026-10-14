@@ -99,6 +99,8 @@ export interface RuntimeTelemetryLifecycleOptions {
     readonly onEvent?: (event: RuntimeTelemetryEvent) => void
     /** Best-effort observer for work that may only run after consent becomes enabled. */
     readonly onEnabled?: () => void | Promise<void>
+    /** Low-frequency process health breadcrumb owned by the session ledger. */
+    readonly onSnapshot?: (snapshot: RuntimeSnapshot, queueDepth: number, droppedEvents: number) => void
     /** Supplied by the host composition root; runtime never imports task/controller owners. */
     readonly activeTaskIds?: () => readonly string[]
     /**
@@ -383,6 +385,11 @@ export class RuntimeTelemetryLifecycle {
     }
 
     private publishSnapshot(snapshot: RuntimeSnapshot): void {
+        try {
+            this.options.onSnapshot?.(snapshot, this.bus.peek().length, this.bus.drops.total)
+        } catch {
+            // Session evidence is best-effort and must not break the sampler.
+        }
         recordRuntimeGauge(RUNTIME_METRICS.eventLoopDelayMs, snapshot.eventLoopDelayMs, "Event loop delay in milliseconds")
         recordRuntimeGauge(RUNTIME_METRICS.cpuUtilizationRatio, snapshot.cpuUtilizationRatio, "CPU utilisation ratio")
         recordRuntimeGauge(RUNTIME_METRICS.heapGrowthBytes, snapshot.heapGrowthBytes, "Heap growth in bytes")

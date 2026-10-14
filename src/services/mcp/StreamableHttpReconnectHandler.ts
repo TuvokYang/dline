@@ -1,4 +1,5 @@
 import { Logger } from "@/shared/services/Logger"
+import { type McpTransportObserver, mcpTransportObserver } from "./mcp-transport-observation"
 
 /**
  * Callbacks that the reconnect handler uses to interact with McpHub.
@@ -55,7 +56,12 @@ export class StreamableHttpReconnectHandler {
     private readonly config: ReconnectConfig
     private readonly callbacks: ReconnectCallbacks
 
-    constructor(serverName: string, callbacks: ReconnectCallbacks, config: ReconnectConfig = DEFAULT_RECONNECT_CONFIG) {
+    constructor(
+        serverName: string,
+        callbacks: ReconnectCallbacks,
+        config: ReconnectConfig = DEFAULT_RECONNECT_CONFIG,
+        private readonly observer: McpTransportObserver = mcpTransportObserver,
+    ) {
         this.serverName = serverName
         this.callbacks = callbacks
         this.config = config
@@ -75,24 +81,34 @@ export class StreamableHttpReconnectHandler {
      * Handle a transport error. Call this from `transport.onerror`.
      */
     async handleError(error: unknown): Promise<void> {
-        Logger.error(`Transport error for "${this.serverName}":`, error)
-
         const connection = this.callbacks.findConnection()
         if (!connection) {
+            this.observer.record({ transport: "streamableHttp", classification: "expected", outcome: "stale", error })
             return
         }
 
         // Don't retry if intentionally disabled or already mid-reconnect
         if (connection.server.disabled || connection.server.status === "connecting") {
+            this.observer.record({
+                transport: "streamableHttp",
+                classification: "expected",
+                outcome: connection.server.disabled ? "skipped_disabled" : "skipped_connecting",
+                error,
+            })
             return
         }
 
         if (this.attempts >= this.config.maxAttempts) {
             // Max retries exhausted
-            Logger.error(
-                `StreamableHTTP max reconnect attempts (${this.config.maxAttempts}) ` +
-                    `exhausted for "${this.serverName}". Server marked as disconnected.`,
-            )
+            this.observer.record({
+                transport: "streamableHttp",
+                classification: "exhausted",
+                outcome: "exhausted",
+                attempt: this.attempts,
+                maxAttempts: this.config.maxAttempts,
+                error,
+            })
+            Logger.error(`StreamableHTTP reconnect exhausted after ${this.config.maxAttempts} attempts.`)
             connection.server.status = "disconnected"
             this.callbacks.deleteServerKey(connection.server.uid || this.serverName)
             this.callbacks.appendErrorMessage(connection, error instanceof Error ? error.message : `${error}`)
@@ -104,6 +120,15 @@ export class StreamableHttpReconnectHandler {
         // Subsequent attempts (on connectToServer failure) just backoff + connect.
         const initialDelay = this.config.getDelayMs(this.attempts)
         this.attempts++
+        this.observer.record({
+            transport: "streamableHttp",
+            classification: "transient",
+            outcome: "scheduled",
+            attempt: this.attempts,
+            maxAttempts: this.config.maxAttempts,
+            delayMs: initialDelay,
+            error,
+        })
         Logger.log(
             `StreamableHTTP transport error for "${this.serverName}", attempting reconnect ` +
                 `${this.attempts}/${this.config.maxAttempts} in ${initialDelay / 1000}s...`,
@@ -117,6 +142,13 @@ export class StreamableHttpReconnectHandler {
         // Verify connection still exists and hasn't been replaced during the delay
         const currentConnection = this.callbacks.findConnection()
         if (!currentConnection || currentConnection !== connection) {
+            this.observer.record({
+                transport: "streamableHttp",
+                classification: "expected",
+                outcome: "superseded",
+                attempt: this.attempts,
+                maxAttempts: this.config.maxAttempts,
+            })
             return
         }
 
@@ -126,14 +158,31 @@ export class StreamableHttpReconnectHandler {
         // established, which would silently break the retry chain.
         await this.callbacks.deleteConnection()
 
+        let lastReconnectError: unknown = error
         while (this.attempts <= this.config.maxAttempts) {
             try {
                 await this.callbacks.connectToServer()
                 Logger.log(`StreamableHTTP reconnect succeeded for "${this.serverName}"`)
+                this.observer.record({
+                    transport: "streamableHttp",
+                    classification: "transient",
+                    outcome: "recovered",
+                    attempt: this.attempts,
+                    maxAttempts: this.config.maxAttempts,
+                })
                 this.attempts = 0
                 return
             } catch (reconnectError) {
-                Logger.error(`StreamableHTTP reconnect failed for "${this.serverName}":`, reconnectError)
+                lastReconnectError = reconnectError
+                this.observer.record({
+                    transport: "streamableHttp",
+                    classification: "transient",
+                    outcome: "retry_failed",
+                    attempt: this.attempts,
+                    maxAttempts: this.config.maxAttempts,
+                    error: reconnectError,
+                })
+                Logger.warn(`StreamableHTTP reconnect attempt ${this.attempts}/${this.config.maxAttempts} failed.`)
                 if (this.attempts < this.config.maxAttempts) {
                     const retryDelay = this.config.getDelayMs(this.attempts)
                     this.attempts++
@@ -149,10 +198,15 @@ export class StreamableHttpReconnectHandler {
         }
 
         // All retry attempts exhausted during the connect loop.
-        Logger.error(
-            `StreamableHTTP max reconnect attempts (${this.config.maxAttempts}) ` +
-                `exhausted for "${this.serverName}". Server marked as disconnected.`,
-        )
+        this.observer.record({
+            transport: "streamableHttp",
+            classification: "exhausted",
+            outcome: "exhausted",
+            attempt: this.attempts,
+            maxAttempts: this.config.maxAttempts,
+            error: lastReconnectError,
+        })
+        Logger.error(`StreamableHTTP reconnect exhausted after ${this.config.maxAttempts} attempts.`)
         // The old connection was deleted; check if connectToServer left a partial one.
         const exhaustedConnection = this.callbacks.findConnection()
         if (exhaustedConnection) {

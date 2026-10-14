@@ -3,13 +3,15 @@ import { getProcessTelemetrySessionId } from "../journal"
 import { clearRuntimeDiagnoses, recordRuntimeDiagnosis, setRuntimeTelemetryLifecycle } from "./host"
 import { createRuntimeTelemetryBus, setRuntimeTelemetryBus } from "./index"
 import { RuntimeTelemetryLifecycle, type RuntimeTelemetryLifecycleOptions } from "./lifecycle"
-import { RuntimeSessionLedger } from "./session-ledger"
+import { type RuntimeOperationKind, runtimeOperationRegistry } from "./operation-registry"
+import { type PreviousSessionReconciliation, RuntimeSessionLedger, type RuntimeSessionStage } from "./session-ledger"
 import {
     drainBootstrapSignalsInto,
     installRuntimeSignalPipeline,
     resetRuntimeSignalRecording,
     uninstallRuntimeSignalPipeline,
 } from "./signal-pipeline"
+import { RuntimeEventPriority } from "./types"
 
 /**
  * Starts and stops the runtime telemetry pipeline for one extension host.
@@ -36,7 +38,71 @@ const pendingSessionLedgerCompletions = new Set<RuntimeSessionLedger>()
 let sessionLedgerCompletionInFlight: Promise<void> | undefined
 let runtimeActivationTransition: Promise<void> = Promise.resolve()
 
-export async function markRuntimeSessionStage(stage: "shutdown_started"): Promise<void> {
+function previousSessionAttributes(previous: PreviousSessionReconciliation): Readonly<Record<string, unknown>> {
+    const activeTasks = previous.activeTasks ?? []
+    return {
+        component: "runtime",
+        operation: "session_reconcile",
+        outcome: previous.outcome,
+        ...(previous.ageMs === undefined ? {} : { ageMs: previous.ageMs }),
+        ...(previous.sessionId === undefined ? {} : { previous_session_id: previous.sessionId }),
+        ...(previous.pid === undefined ? {} : { previous_pid: previous.pid }),
+        ...(previous.stage === undefined ? {} : { previous_stage: previous.stage }),
+        previous_active_task_count: activeTasks.length,
+        previous_active_operation_count: previous.activeOperations?.length ?? 0,
+        ...(previous.activeOperationsTruncated === undefined
+            ? {}
+            : { previous_active_operations_truncated: previous.activeOperationsTruncated }),
+        ...(previous.activeTasksTruncated === undefined
+            ? {}
+            : { previous_active_tasks_truncated: previous.activeTasksTruncated }),
+        ...Object.fromEntries(activeTasks.map((task, index) => [`active_task_ids.${index}`, task.taskId])),
+        ...(previous.terminationHint
+            ? {
+                  previous_termination_kind: previous.terminationHint.kind,
+                  ...(previous.terminationHint.exitCode === undefined
+                      ? {}
+                      : { previous_exit_code: previous.terminationHint.exitCode }),
+                  ...(previous.terminationHint.origin === undefined
+                      ? {}
+                      : { previous_termination_origin: previous.terminationHint.origin }),
+                  ...(previous.terminationHint.errorName === undefined
+                      ? {}
+                      : { previous_error_name: previous.terminationHint.errorName }),
+                  ...(previous.terminationHint.errorCode === undefined
+                      ? {}
+                      : { previous_error_code: previous.terminationHint.errorCode }),
+                  ...(previous.terminationHint.errorFingerprint === undefined
+                      ? {}
+                      : { previous_error_fingerprint: previous.terminationHint.errorFingerprint }),
+              }
+            : {}),
+        ...(previous.lastHealth
+            ? {
+                  previous_health_sampled_at: previous.lastHealth.sampledAt,
+                  previous_event_loop_delay_ms: previous.lastHealth.eventLoopDelayMs,
+                  previous_cpu_utilization_ratio: previous.lastHealth.cpuUtilizationRatio,
+                  previous_heap_used_bytes: previous.lastHealth.heapUsedBytes,
+                  previous_rss_bytes: previous.lastHealth.rssBytes,
+                  previous_queue_depth: previous.lastHealth.queueDepth,
+                  previous_dropped_events: previous.lastHealth.droppedEvents,
+              }
+            : {}),
+    }
+}
+
+function previousSessionPriority(outcome: PreviousSessionReconciliation["outcome"]): RuntimeEventPriority {
+    return outcome === "unclean_inferred" || outcome === "corrupt" ? RuntimeEventPriority.Error : RuntimeEventPriority.Info
+}
+
+function inferredOperationEventName(kind: RuntimeOperationKind): string {
+    if (kind === "api") return "task.api.interrupted_inferred"
+    if (kind === "tool") return "task.tool.interrupted_inferred"
+    if (kind === "subagent") return "task.subagent.interrupted_inferred"
+    return "mcp.transport.interrupted_inferred"
+}
+
+export async function markRuntimeSessionStage(stage: RuntimeSessionStage): Promise<void> {
     await activeSessionLedger?.markStage(stage)
 }
 
@@ -115,7 +181,12 @@ async function activateRuntimeTelemetryNow(options: RuntimeTelemetryActivationOp
     const sessionId = options.sessionId ?? getProcessTelemetrySessionId()
     let sessionLedger: RuntimeSessionLedger | undefined
     try {
-        sessionLedger = new RuntimeSessionLedger({ dataDir: options.dataDir, sessionId })
+        sessionLedger = new RuntimeSessionLedger({
+            dataDir: options.dataDir,
+            sessionId,
+            activeTaskIds: options.activeTaskIds,
+            activeOperations: () => runtimeOperationRegistry.snapshot(),
+        })
         await sessionLedger.startAndReconcile()
         activeSessionLedger = sessionLedger
     } catch {
@@ -131,13 +202,56 @@ async function activateRuntimeTelemetryNow(options: RuntimeTelemetryActivationOp
         const admission = (async () => {
             const sessions = (await sessionLedger?.claimReconciliationsForReporting()) ?? []
             for (const previous of sessions) {
-                const admitted = lifecycle.service.recordInfoAdmitted("runtime.previous_session_reconciled", {
-                    component: "runtime",
-                    operation: "session_reconcile",
-                    outcome: previous.outcome,
-                    ...(previous.ageMs === undefined ? {} : { ageMs: previous.ageMs }),
-                })
+                const admitted =
+                    bus.record({
+                        name: "runtime.previous_session_reconciled",
+                        priority: previousSessionPriority(previous.outcome),
+                        attributes: previousSessionAttributes(previous),
+                        processScoped: true,
+                    }) !== undefined
                 if (!admitted) throw new Error("Previous-session reconciliation was not admitted to the runtime event bus")
+                if (previous.outcome === "unclean_inferred") {
+                    for (const task of previous.activeTasks ?? []) {
+                        if (
+                            !bus.record({
+                                name: "task.session.interrupted_inferred",
+                                priority: RuntimeEventPriority.Error,
+                                attributes: {
+                                    component: "task",
+                                    operation: "session_recover",
+                                    interruption_source: "previous_session_unclean",
+                                    previous_session_id: previous.sessionId ?? "unknown",
+                                    previous_pid: previous.pid ?? 0,
+                                    ...(previous.stage ? { previous_stage: previous.stage } : {}),
+                                },
+                                context: { taskId: task.taskId },
+                            })
+                        ) {
+                            throw new Error("Previous-session task interruption was not admitted to the runtime event bus")
+                        }
+                    }
+                    for (const operation of previous.activeOperations ?? []) {
+                        if (
+                            !bus.record({
+                                name: inferredOperationEventName(operation.kind),
+                                priority: RuntimeEventPriority.Error,
+                                attributes: {
+                                    component: operation.kind,
+                                    operation: operation.name,
+                                    outcome: "interrupted_inferred",
+                                    interruption_source: "previous_session_unclean",
+                                    previous_session_id: previous.sessionId ?? "unknown",
+                                    previous_pid: previous.pid ?? 0,
+                                    operation_id: operation.operationId,
+                                    operation_started_at: operation.startedAt,
+                                },
+                                ...(operation.taskId ? { context: { taskId: operation.taskId } } : { processScoped: true }),
+                            })
+                        ) {
+                            throw new Error("Previous-session operation interruption was not admitted to the runtime event bus")
+                        }
+                    }
+                }
                 await previous.commit()
             }
         })().finally(() => {
@@ -156,6 +270,16 @@ async function activateRuntimeTelemetryNow(options: RuntimeTelemetryActivationOp
         drainIntervalMs: options.drainIntervalMs,
         onEvent: options.onEvent,
         onEnabled: admitPreviousSessions,
+        onSnapshot: (snapshot, queueDepth, droppedEvents) => {
+            sessionLedger?.updateHealth({
+                eventLoopDelayMs: snapshot.eventLoopDelayMs,
+                cpuUtilizationRatio: snapshot.cpuUtilizationRatio,
+                heapUsedBytes: snapshot.heapUsedBytes,
+                rssBytes: snapshot.rssBytes,
+                queueDepth,
+                droppedEvents,
+            })
+        },
         activeTaskIds: options.activeTaskIds,
         // Diagnoses go to the process-wide store the export reads, and are
         // also recorded as events so the session journal carries the
@@ -188,6 +312,7 @@ async function activateRuntimeTelemetryNow(options: RuntimeTelemetryActivationOp
     // during startup be admitted. Draining earlier would record them before
     // consent; never draining would make the buffer pointless.
     drainBootstrapSignalsInto(bus, lifecycle.isEnabled)
+    await sessionLedger?.markStage("running").catch(() => undefined)
 
     return lifecycle
 }

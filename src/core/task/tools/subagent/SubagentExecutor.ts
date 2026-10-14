@@ -1,3 +1,5 @@
+import { SubagentRunObservation } from "../../observability/subagent-run-observation"
+
 export type SubagentExecStatus = "completed" | "failed" | "timeout" | "cancelled"
 
 export interface SubagentRuntimeConfig {
@@ -84,6 +86,7 @@ export interface RunSubagentInput {
  * @returns Completed, failed, timeout, or cancelled execution result.
  */
 export async function runSubagent(input: RunSubagentInput): Promise<SubagentExecResult> {
+    const observation = new SubagentRunObservation(input.timeoutSeconds)
     let timeoutHandle: NodeJS.Timeout | undefined
     if (input.timeoutSeconds > 0) {
         timeoutHandle = setTimeout(() => {
@@ -91,7 +94,7 @@ export async function runSubagent(input: RunSubagentInput): Promise<SubagentExec
         }, input.timeoutSeconds * 1000)
     }
     try {
-        return await input.runner.run(input.prompt, input.onProgress)
+        return await observation.run(() => input.runner.run(input.prompt, input.onProgress))
     } finally {
         if (timeoutHandle) clearTimeout(timeoutHandle)
     }

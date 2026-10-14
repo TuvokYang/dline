@@ -1,7 +1,7 @@
 import { PostHog } from "posthog-node"
 import { HostProvider } from "@/hosts/host-provider"
 import { getErrorLevelFromString } from "@/services/error"
-import { getDistinctId, setDistinctId } from "@/services/logging/distinctId"
+import { getDistinctId } from "@/services/logging/distinctId"
 import { fetch } from "@/shared/net"
 import { Setting } from "@/shared/proto/dline/host"
 import { Logger } from "@/shared/services/Logger"
@@ -96,21 +96,18 @@ export class PostHogTelemetryProvider implements ITelemetryProvider {
     }
 
     public identifyUser(userInfo: ClineAccountUserInfo, properties: TelemetryProperties = {}): void {
-        const distinctId = getDistinctId()
-        // Only identify user if telemetry is enabled and user ID is different than the currently set distinct ID
-        if (this.isEnabled() && userInfo && userInfo?.id !== distinctId) {
-            this.client.identify({
-                distinctId: userInfo.id,
-                properties: {
-                    uuid: userInfo.id,
-                    name: userInfo.displayName,
-                    ...properties,
-                    alias: distinctId,
-                },
-            })
-            // Ensure distinct ID is updated so that we will not identify the user again
-            setDistinctId(userInfo.id)
-        }
+        if (!this.isEnabled() || !userInfo?.id) return
+
+        // Account identity stays in PostHog's identity record. Ordinary product
+        // events continue to use the device-scoped distinct_id and are never
+        // aliased to the account.
+        this.client.identify({
+            distinctId: userInfo.id,
+            properties: {
+                account_id: userInfo.id,
+                ...properties,
+            },
+        })
     }
 
     public isEnabled(): boolean {

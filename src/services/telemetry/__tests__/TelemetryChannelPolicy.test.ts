@@ -52,6 +52,18 @@ describe("TelemetryChannelPolicy", () => {
         expect(logRequired).not.toHaveBeenCalled()
     })
 
+    it("routes account identity through usage consent rather than error consent", () => {
+        const usageAllowed = new TelemetryChannelPolicy({
+            readConsents: () => ({ usage: "enabled", error: "disabled" }),
+        })
+        const errorOnly = new TelemetryChannelPolicy({
+            readConsents: () => ({ usage: "disabled", error: "enabled" }),
+        })
+
+        expect(usageAllowed.isChannelEnabled("account")).toBe(true)
+        expect(errorOnly.isChannelEnabled("account")).toBe(false)
+    })
+
     it("routes runtime traces through error consent without requiring an event capability", () => {
         const end = vi.fn()
         const startSpan = vi.fn(() => spanHandle(end))

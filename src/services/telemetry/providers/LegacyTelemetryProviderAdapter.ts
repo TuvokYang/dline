@@ -15,7 +15,7 @@ export interface LegacyTelemetryProviderAdapterOptions {
 const TEST_SINK: TelemetrySinkDescriptor = {
     kind: "test",
     origin: "test",
-    channels: ["usage"],
+    channels: ["usage", "account"],
 }
 
 /**

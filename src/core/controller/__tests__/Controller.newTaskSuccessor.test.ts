@@ -24,7 +24,7 @@ describe("Controller New Task successor ownership", () => {
         })
 
         expect(taskId).toBe("task-new")
-        expect(clearTask).toHaveBeenCalledWith({ suppressPostState: true })
+        expect(clearTask).toHaveBeenCalledWith({ suppressPostState: true, closeReason: "handoff" })
         expect(initTask).toHaveBeenCalledWith(
             "Successor task",
             undefined,

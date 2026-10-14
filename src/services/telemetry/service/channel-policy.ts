@@ -56,7 +56,18 @@ export class TelemetryChannelPolicy {
             return this.rawArtifactAllowed()
         }
         const consents = this.readConsents()
-        return isReportingAllowed(channel === "usage" ? consents.usage : consents.error)
+        switch (channel) {
+            case "usage":
+            case "account":
+                return isReportingAllowed(consents.usage)
+            case "error":
+            case "runtime":
+                return isReportingAllowed(consents.error)
+            default: {
+                const unhandled: never = channel
+                return unhandled
+            }
+        }
     }
 }
 

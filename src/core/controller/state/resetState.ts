@@ -18,7 +18,7 @@ export async function resetState(controller: Controller, request: ResetStateRequ
         // Closed through the controller's lifecycle lane, which also stops the lock
         // heartbeat, releases the task lock and clears the task's settings; disposing
         // the session directly left the lock held until this window closed.
-        await controller.clearTask({ suppressPostState: true })
+        await controller.clearTask({ suppressPostState: true, closeReason: "state_reset" })
         if (request.global) {
             HostProvider.window.showMessage({
                 type: ShowMessageType.INFORMATION,

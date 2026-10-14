@@ -65,7 +65,7 @@ type PendingDelivery =
       }
     | {
           kind: "identify"
-          channel: "usage"
+          channel: "account"
           severity: "info"
           userInfo: ClineAccountUserInfo
           properties: PropertiesThunk
@@ -214,7 +214,7 @@ export class TelemetryProviderRegistry {
     }
 
     identifyUser(userInfo: ClineAccountUserInfo, properties: PropertiesThunk): void {
-        this.dispatch({ kind: "identify", channel: "usage", severity: "info", userInfo, properties })
+        this.dispatch({ kind: "identify", channel: "account", severity: "info", userInfo, properties })
     }
 
     recordCounter(

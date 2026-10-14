@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { EXCEPTION_ATTRIBUTE_KEYS, RUNTIME_ATTRIBUTE_KEYS } from "../../otel-semantics"
 import { RuntimeEventPriority, type RuntimeTelemetryEvent } from "../../types"
-import { SessionJournal } from "../session-journal"
+import { DEFAULT_SESSION_JOURNAL_MAX_BYTES, SessionJournal } from "../session-journal"
 
 /**
  * The journal is the only durable record of a session's runtime events. These
@@ -49,6 +49,10 @@ async function readSequences(path: string): Promise<number[]> {
 }
 
 describe("SessionJournal persistence", () => {
+    it("keeps the default journal budget small enough for collector-less operation", () => {
+        expect(DEFAULT_SESSION_JOURNAL_MAX_BYTES).toBe(1 * 1024 * 1024)
+    })
+
     let directory: string
     let journal: SessionJournal
 

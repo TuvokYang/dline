@@ -31,7 +31,7 @@ export async function initializeDistinctId(storage: StorageContext, uuid: () => 
         storage.globalState.update(_GENERATED_MACHINE_ID_KEY, distinctId)
     }
 
-    setDistinctId(distinctId)
+    setDeviceDistinctId(distinctId)
 
     await HostRegistryInfo.init(distinctId)
 
@@ -54,21 +54,24 @@ async function getMachineId(): Promise<string | undefined> {
     }
 }
 
-/*
- * Set the distinct ID for logging and telemetry.
- * This is updated to Cline User ID when authenticated.
- */
-export function setDistinctId(newId: string) {
+/** Set the device-scoped identifier during initialization. */
+function setDeviceDistinctId(newId: string): void {
     if (_distinctId && _distinctId !== newId) {
-        Logger.log("[DistinctId] Updating...", `From ${_distinctId} to ${newId}`)
+        Logger.log("[DistinctId] Updating device identity", `From ${_distinctId} to ${newId}`)
     }
     _distinctId = newId
 }
 
-/*
- * Unique identifier for the current user
- * If authenticated, this will be the Cline User ID.
- * Else, this will be the machine ID, or the anonymous ID as a fallback.
+/** Test seam. Production account flows must never mutate the device identity. */
+export function setDistinctIdForTesting(newId: string): void {
+    setDeviceDistinctId(newId)
+}
+
+/**
+ * Stable identifier for this local device or installation.
+ *
+ * Account identity is recorded through the telemetry account channel and never
+ * replaces this value.
  */
 export function getDistinctId() {
     if (!_distinctId) {

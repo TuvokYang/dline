@@ -3,7 +3,7 @@ import type { SignalSpanContext, SignalSpanHandle } from "../service/pipeline-po
 import type { ITelemetryProvider, TelemetryProperties, TelemetrySettings } from "./ITelemetryProvider"
 
 /** Consent channel carried by every canonical telemetry signal. */
-export type TelemetryChannel = "usage" | "error" | "runtime" | "raw-artifact"
+export type TelemetryChannel = "usage" | "account" | "error" | "runtime" | "raw-artifact"
 
 /** Severity used for host-level filtering without inspecting event names. */
 export type TelemetrySeverity = "debug" | "info" | "warn" | "error" | "fatal"

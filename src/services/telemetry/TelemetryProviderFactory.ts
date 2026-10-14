@@ -110,7 +110,7 @@ export class TelemetryProviderFactory {
             }
             case "no-op":
                 return adaptLegacyTelemetryProvider(new NoOpTelemetryProvider(), {
-                    sink: { kind: "test", origin: "test", channels: ["usage"] },
+                    sink: { kind: "test", origin: "test", channels: ["usage", "account"] },
                 })
             default: {
                 const unhandled: never = config
@@ -132,7 +132,7 @@ export class TelemetryProviderFactory {
                 sink: {
                     kind: "loopback",
                     origin: "default",
-                    channels: ["usage", "runtime"],
+                    channels: ["usage", "account", "runtime"],
                     endpoint: DEFAULT_LOOPBACK_OTLP_ENDPOINT,
                     enhancement: isTelemetryDevelopmentMode() ? "debug" : "standard",
                 },

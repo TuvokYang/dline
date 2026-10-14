@@ -1,5 +1,4 @@
 import type { ClineAccountUserInfo } from "@/services/auth/AuthService"
-import { setDistinctId } from "../../logging/distinctId"
 import type { TelemetryContext } from "../context/telemetry-context"
 import type { TelemetryCategory } from "../events/catalog"
 import type { TelemetryProperties } from "../providers/ITelemetryProvider"
@@ -43,18 +42,14 @@ export class TelemetrySignalDispatcher implements TelemetrySignalSink {
     }
 
     /**
-     * Attach an identity to this session and forward it to providers.
+     * Forward account identity through the dedicated account channel.
      *
-     * The distinct id is also published to the logging package: error reports
-     * raised outside the telemetry path must correlate with the same user, and
-     * without this they would carry an unrelated anonymous id.
+     * The device-scoped `distinct_id` is deliberately untouched. Providers that
+     * need account identity must opt into the account channel and keep it out of
+     * ordinary usage, error, and runtime records.
      */
     identifyUser(userInfo: ClineAccountUserInfo): void {
-        this.context.identify(userInfo)
         this.providers.identifyUser(userInfo, () => this.context.eventProperties())
-        if (userInfo.id) {
-            setDistinctId(userInfo.id)
-        }
     }
 
     isCategoryEnabled(category: TelemetryCategory): boolean {

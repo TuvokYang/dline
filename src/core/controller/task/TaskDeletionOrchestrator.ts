@@ -101,7 +101,7 @@ export class TaskDeletionOrchestrator {
         try {
             // Phase 2: Clear active task on this controller
             if (taskId === this.controller.task?.taskId) {
-                await this.controller.clearTask({ clearPanelState: true })
+                await this.controller.clearTask({ clearPanelState: true, closeReason: "task_delete" })
                 Logger.debug(`[TaskDeletion] Cleared active task ${taskId}`)
             }
 
@@ -197,7 +197,7 @@ export class TaskDeletionOrchestrator {
             return false
         }
 
-        await localController.clearTask({ clearPanelState: true })
+        await localController.clearTask({ clearPanelState: true, closeReason: "task_delete" })
         await this.lockService.releaseTaskLock(taskId)
         Logger.debug(`[TaskDeletion] Released local lock for task ${taskId}`)
         return true

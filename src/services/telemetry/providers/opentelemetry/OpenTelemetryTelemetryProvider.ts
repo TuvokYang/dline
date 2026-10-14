@@ -4,10 +4,11 @@ import { LoggerProvider } from "@opentelemetry/sdk-logs"
 import { MeterProvider } from "@opentelemetry/sdk-metrics"
 import { HostProvider } from "@/hosts/host-provider"
 import { getErrorLevelFromString } from "@/services/error"
-import { getDistinctId, setDistinctId } from "@/services/logging/distinctId"
+import { getDistinctId } from "@/services/logging/distinctId"
 import { Setting } from "@/shared/proto/dline/host"
 import { Logger } from "@/shared/services/Logger"
 import type { ClineAccountUserInfo } from "../../../auth/AuthService"
+import { TELEMETRY_EVENTS } from "../../events/catalog"
 import { logRecordFields } from "../../otel/log-record"
 import { USAGE_SCOPE_NAME } from "../../otel/scopes"
 import { RuntimeContentPolicy } from "../../runtime/content-policy"
@@ -75,7 +76,7 @@ export class OpenTelemetryTelemetryProvider implements ITelemetryProvider {
     private meter: Meter | null = null
     private logger: OTELLogger | null = null
     private telemetrySettings: TelemetrySettings
-    private userAttributes: Record<string, string> = {}
+    private identifiedAccountId: string | undefined
     private readonly contentPolicy = new RuntimeContentPolicy()
     private readonly eventContentPolicy = RuntimeContentPolicy.forEvents()
     // Lazy instrument caches for metrics
@@ -189,56 +190,24 @@ export class OpenTelemetryTelemetryProvider implements ITelemetryProvider {
         }
     }
 
-    public identifyUser(userInfo: ClineAccountUserInfo, properties: TelemetryProperties = {}): void {
-        if (!this.isEnabled() || !userInfo) {
+    public identifyUser(userInfo: ClineAccountUserInfo, _properties: TelemetryProperties = {}): void {
+        if (!this.isEnabled() || !this.logger || !userInfo.id || this.identifiedAccountId === userInfo.id) {
             return
         }
 
-        // Always refresh cached user/org attributes so subsequent logs
-        // include up-to-date organization context (e.g. after org switch
-        // or extension restart with the same user ID).
-        this.userAttributes = this.buildUserAttributes(userInfo, properties)
-
-        const distinctId = getDistinctId()
-
-        // Only emit identification event and update distinct ID when the
-        // user ID actually changes (first login or user switch).
-        if (userInfo.id !== distinctId) {
-            if (this.logger) {
-                this.logger.emit({
-                    severityText: "INFO",
-                    body: "user_identified",
-                    attributes: this.canonicalAttributes({
-                        ...this.userAttributes,
-                        alias: distinctId,
-                    }),
-                })
-            }
-
-            // Ensure distinct ID is updated so that we will not identify the user again
-            setDistinctId(userInfo.id)
-        }
-    }
-
-    /**
-     * Build a flat record of user and organization attributes for use as
-     * OpenTelemetry log/event attributes.
-     */
-    private buildUserAttributes(userInfo: ClineAccountUserInfo, properties: TelemetryProperties = {}): Record<string, string> {
-        const activeOrg = userInfo.organizations?.find((org) => org.active)
-
-        return {
-            user_id: userInfo.id,
-            user_name: userInfo.displayName || "",
-
-            ...(activeOrg && {
-                organization_id: activeOrg.organizationId,
-                organization_name: activeOrg.name,
-                member_id: activeOrg.memberId,
-                member_role: activeOrg.roles[0] || "member",
-            }),
-            ...properties,
-        }
+        // Account identity is a dedicated log channel. It is intentionally not
+        // attached to ordinary events or metrics and never replaces the
+        // device-scoped distinct_id.
+        this.logger.emit({
+            severityText: "INFO",
+            body: TELEMETRY_EVENTS.USER.ACCOUNT_IDENTIFIED,
+            attributes: {
+                telemetry_channel: "account",
+                telemetry_severity: "info",
+                account_id: userInfo.id,
+            },
+        })
+        this.identifiedAccountId = userInfo.id
     }
 
     private canonicalAttributes(properties?: TelemetryProperties): Record<string, string | number | boolean> {
@@ -251,7 +220,6 @@ export class OpenTelemetryTelemetryProvider implements ITelemetryProvider {
             ...canonicalizeTelemetryProperties(
                 {
                     ...(required ? { _required: true } : {}),
-                    ...this.userAttributes,
                     ...properties,
                 },
                 this.eventContentPolicy,

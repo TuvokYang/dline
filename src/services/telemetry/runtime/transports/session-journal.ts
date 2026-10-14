@@ -23,8 +23,13 @@ import type { RuntimeTelemetryEvent } from "../types"
  * so every failure is counted rather than propagated.
  */
 
-/** Keep a session's journal small enough to attach to a bug report. */
-const DEFAULT_MAX_BYTES = 4 * 1024 * 1024
+/**
+ * Keep only the recent tail needed for crash diagnosis.
+ *
+ * The runtime journal is not an offline delivery spool. A missing Collector
+ * must not turn one long-running extension host into a large local log file.
+ */
+export const DEFAULT_SESSION_JOURNAL_MAX_BYTES = 1 * 1024 * 1024
 
 /** Flush cadence. Batching avoids one syscall per recorded event. */
 const DEFAULT_FLUSH_INTERVAL_MS = 2_000
@@ -64,7 +69,7 @@ export class SessionJournal {
 
     constructor(options: SessionJournalOptions) {
         this.path = join(options.directory, `${options.sessionId}.jsonl`)
-        this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
+        this.maxBytes = options.maxBytes ?? DEFAULT_SESSION_JOURNAL_MAX_BYTES
         this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS
     }
 

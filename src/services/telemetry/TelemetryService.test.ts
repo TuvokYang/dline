@@ -168,15 +168,16 @@ describe("Telemetry system is abstracted and can easily switch between providers
             assert.deepStrictEqual(userInfo, MOCK_USER_INFO, "User info should match")
             assert.deepStrictEqual(metadata, MOCK_METADATA, "Identify user should include only the expected metadata properties")
 
-            // Test org attributes are included in standard attributes (metrics)
+            // Ordinary metrics must not inherit account or organization identity.
             telemetryService.captureToolUsage("task-456", "write_to_file", "gpt-4", "openai", false, true)
 
             assert.ok(recordCounterSpy.mock.calls.length > 0, "recordCounter should be called for tool usage")
             const recordCounterArgs = recordCounterSpy.mock.calls[0]
             const recordCounterAttributes = recordCounterArgs[2] as Record<string, unknown>
-            assert.strictEqual(recordCounterAttributes.organization_id, "org-123")
-            assert.strictEqual(recordCounterAttributes.organization_name, "Test Org")
-            assert.strictEqual(recordCounterAttributes.member_id, "member-456")
+            assert.strictEqual(recordCounterAttributes.userId, undefined)
+            assert.strictEqual(recordCounterAttributes.organization_id, undefined)
+            assert.strictEqual(recordCounterAttributes.organization_name, undefined)
+            assert.strictEqual(recordCounterAttributes.member_id, undefined)
 
             // Test direct provider calls don't include metadata
             noOpProvider.log("direct_event", { custom: "data" })
@@ -262,7 +263,7 @@ describe("Telemetry system is abstracted and can easily switch between providers
             const [config] = TelemetryProviderFactory.getDefaultConfigs()
             assert.strictEqual(config.type, "opentelemetry")
             if (config.type !== "opentelemetry") throw new Error("Expected OpenTelemetry config")
-            assert.deepStrictEqual(config.sink.channels, ["usage", "runtime"])
+            assert.deepStrictEqual(config.sink.channels, ["usage", "account", "runtime"])
             assert.strictEqual(config.sink.kind, "loopback")
         })
     })
@@ -362,7 +363,7 @@ describe("Telemetry system is abstracted and can easily switch between providers
             if (configs[0].type !== "opentelemetry") throw new Error("Expected OpenTelemetry config")
             assert.strictEqual(configs[0].sink.kind, "loopback")
             assert.strictEqual(configs[0].sink.endpoint, "http://127.0.0.1:4318")
-            assert.deepStrictEqual(configs[0].sink.channels, ["usage", "runtime"])
+            assert.deepStrictEqual(configs[0].sink.channels, ["usage", "account", "runtime"])
         })
 
         it("does not use NoOp as the normal factory fallback", () => {

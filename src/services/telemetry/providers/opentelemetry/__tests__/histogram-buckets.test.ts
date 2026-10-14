@@ -16,7 +16,10 @@ import { describe, expect, it, vi } from "vitest"
 
 vi.mock("@/hosts/host-provider", () => ({ HostProvider: {} }))
 vi.mock("@/services/error", () => ({ getErrorLevelFromString: () => undefined }))
-vi.mock("@/services/logging/distinctId", () => ({ getDistinctId: () => "test", setDistinctId: () => {} }))
+vi.mock("@/services/logging/distinctId", () => ({
+    getDistinctId: () => "test",
+    setDistinctIdForTesting: () => {},
+}))
 vi.mock("@/shared/proto/dline/host", () => ({ Setting: {} }))
 vi.mock("@/shared/services/Logger", () => ({
     Logger: {

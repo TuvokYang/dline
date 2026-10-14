@@ -1,3 +1,4 @@
+import { type RuntimeOperationHandle, runtimeOperationRegistry } from "@/services/telemetry/runtime/operation-registry"
 import {
     emitSignal,
     isSignalRecordingEnabled,
@@ -13,6 +14,7 @@ import type { ApiProviderStreamChunk, ApiStream } from "../transform/stream"
 import { ApiRequestProgress } from "./api-request-snapshot"
 
 type RequestOutcome = "completed" | "failed" | "cancelled"
+export type ApiCancellationReason = "handler_abort" | "consumer_closed" | "abort_error" | "unknown"
 
 /** Observes one adapter invocation, not a logical request or each SDK retry. */
 export class ApiRequestObservation {
@@ -20,16 +22,22 @@ export class ApiRequestObservation {
     private readonly progress = new ApiRequestProgress(this.startedAt)
     private span: SignalSpanHandle | undefined
     private terminal = false
-    private abortRequested = false
+    private cancellationReason: ApiCancellationReason | undefined
     private task: TaskTraceSource | undefined
     private parent: SignalSpanHandle | undefined
     private receivedChunk = false
+    private readonly runtimeOperation: RuntimeOperationHandle
 
     constructor(
         private readonly metadata: ObservabilityAttributes,
         private readonly taskId: string | undefined,
         private readonly onTerminal: () => void,
     ) {
+        this.runtimeOperation = runtimeOperationRegistry.begin({
+            kind: "api",
+            name: "api.request",
+            ...(taskId ? { taskId } : {}),
+        })
         this.safely(() => {
             this.task = taskTraceSource(taskId)
             this.task?.event("task.api.started", metadata)
@@ -56,8 +64,11 @@ export class ApiRequestObservation {
                 try {
                     source ??= send()
                     const result = await action(source)
-                    if (result.done) this.finish(this.abortRequested || closing ? "cancelled" : "completed")
-                    else
+                    if (result.done) {
+                        if (this.cancellationReason) this.finish("cancelled", undefined, this.cancellationReason)
+                        else if (closing) this.finish("cancelled", undefined, "consumer_closed")
+                        else this.finish("completed")
+                    } else
                         this.safely(() => {
                             this.progress.observe(result.value, performance.now())
                             if (!this.receivedChunk) {
@@ -69,7 +80,9 @@ export class ApiRequestObservation {
                         })
                     return result
                 } catch (error: unknown) {
-                    this.finish(this.abortRequested || isAbortError(error) ? "cancelled" : "failed", error)
+                    const cancellationReason = this.cancellationReason ?? cancellationReasonFor(error)
+                    if (cancellationReason) this.finish("cancelled", undefined, cancellationReason)
+                    else this.finish("failed", error)
                     throw error
                 }
             })
@@ -90,14 +103,15 @@ export class ApiRequestObservation {
         }
     }
 
-    cancel(): void {
-        this.abortRequested = true
-        this.finish("cancelled")
+    cancel(reason: ApiCancellationReason = "handler_abort"): void {
+        this.cancellationReason = reason
+        this.finish("cancelled", undefined, reason)
     }
 
-    private finish(outcome: RequestOutcome, error?: unknown): void {
+    private finish(outcome: RequestOutcome, error?: unknown, cancellationReason?: ApiCancellationReason): void {
         if (this.terminal) return
         this.terminal = true
+        this.runtimeOperation.complete()
         this.onTerminal()
         const duration = Math.max(0, performance.now() - this.startedAt)
         this.safely(() => {
@@ -107,6 +121,7 @@ export class ApiRequestObservation {
                 ...this.taskAttributes(),
                 ...this.progress.attributes(performance.now()),
                 outcome,
+                ...(outcome === "cancelled" ? { cancel_reason: cancellationReason ?? "unknown" } : {}),
             }
             this.run(() => {
                 if (outcome === "failed") this.safely(() => this.span?.recordException(error))
@@ -133,7 +148,12 @@ export class ApiRequestObservation {
         })
         this.safely(() => this.span?.end(outcome === "completed" ? "success" : outcome === "failed" ? "failure" : "cancelled"))
         this.safely(() => {
-            const fields = { ...this.metadata, ...this.progress.attributes(performance.now()), outcome }
+            const fields = {
+                ...this.metadata,
+                ...this.progress.attributes(performance.now()),
+                outcome,
+                ...(outcome === "cancelled" ? { cancel_reason: cancellationReason ?? "unknown" } : {}),
+            }
             if (outcome === "failed") this.task?.failure(error, fields, this.parent)
             else this.task?.event(`task.api.${outcome}`, fields)
         })
@@ -161,6 +181,10 @@ export class ApiRequestObservation {
     }
 }
 
-function isAbortError(error: unknown): boolean {
-    return error instanceof Error && (error.name === "AbortError" || error.name === "APIUserAbortError")
+function cancellationReasonFor(error: unknown): ApiCancellationReason | undefined {
+    if (typeof error === "string" && /(?:abort|cancel|terminate)/i.test(error)) return "abort_error"
+    if (!(error instanceof Error)) return undefined
+    return error.name === "AbortError" || error.name === "APIUserAbortError" || error.name === "CanceledError"
+        ? "abort_error"
+        : undefined
 }

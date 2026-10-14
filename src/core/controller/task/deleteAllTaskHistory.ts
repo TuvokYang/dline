@@ -18,7 +18,7 @@ import { Controller } from ".."
 export async function deleteAllTaskHistory(controller: Controller): Promise<DeleteAllTaskHistoryCount> {
     try {
         // Clear current task first
-        await controller.clearTask({ clearPanelState: true })
+        await controller.clearTask({ clearPanelState: true, closeReason: "task_delete" })
 
         // Get existing task history
         const taskHistory = controller.stateManager.getGlobalStateKey("taskHistory")

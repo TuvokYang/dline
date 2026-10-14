@@ -208,15 +208,34 @@ type PostStateOptions = {
     immediate?: boolean
 }
 
+export type ControllerCloseReason =
+    | "user_clear"
+    | "controller_dispose"
+    | "task_switch"
+    | "checkpoint_restore"
+    | "lock_lost"
+    | "handoff"
+    | "task_delete"
+    | "state_reset"
+    | "unknown"
+
+type TaskClearWithinLifecycleOptions = {
+    clearPanelState?: boolean
+    preserveCompletedState?: boolean
+    suppressPostState?: boolean
+    deferTeardown?: boolean
+    checkpointRestoreFence?: CheckpointRestoreFence
+    closeReason?: ControllerCloseReason
+}
+
+type TaskClearOptions = TaskClearWithinLifecycleOptions & {
+    /** Clear only while this opening is still the one shown. */
+    expectedOpening?: TaskOpening
+}
+
 export type TaskLifecycleScope = {
     /** Clear the active task while already holding the controller lifecycle lock. */
-    clearTask(options?: {
-        clearPanelState?: boolean
-        preserveCompletedState?: boolean
-        suppressPostState?: boolean
-        deferTeardown?: boolean
-        checkpointRestoreFence?: CheckpointRestoreFence
-    }): Promise<void>
+    clearTask(options?: TaskClearWithinLifecycleOptions): Promise<void>
 }
 
 /*
@@ -998,7 +1017,7 @@ export class Controller {
             void ignoreController.dispose().catch((error) => Logger.error("[Controller] Failed to dispose ignore rules:", error))
         }
 
-        await this.clearTask()
+        await this.clearTask({ closeReason: "controller_dispose" })
         // Window shutdown is the one path that must observe a fully closed task:
         // its stores and locks may not outlive this process.
         await this.pendingTaskTeardown
@@ -1115,7 +1134,10 @@ export class Controller {
             // Opening a task from History replaces one visible task with another:
             // the empty surface in between must not reach the Webview, or it shows
             // the home view until the history display publishes its first frame.
-            await this.clearTask(historyItem ? { suppressPostState: true } : undefined)
+            await this.clearTask({
+                ...(historyItem ? { suppressPostState: true } : {}),
+                closeReason: "task_switch",
+            })
             logInitStage("initial_clear")
         }
 
@@ -1723,7 +1745,11 @@ export class Controller {
                 throw new Error(`Checkpoint restore session changed for task ${taskId}`)
             }
             const history = await this.getTaskWithId(taskId)
-            await scope.clearTask({ suppressPostState: true, checkpointRestoreFence: pending.fence })
+            await scope.clearTask({
+                suppressPostState: true,
+                checkpointRestoreFence: pending.fence,
+                closeReason: "checkpoint_restore",
+            })
             await this.initTask(undefined, undefined, undefined, history.historyItem, undefined, {
                 activateHistory: true,
                 openReason: "checkpoint_restore",
@@ -3488,7 +3514,7 @@ export class Controller {
             await this.openingHandoff.run(
                 async () => {
                     const history = await this.getTaskWithId(taskId)
-                    await scope.clearTask({ suppressPostState: true })
+                    await scope.clearTask({ suppressPostState: true, closeReason: "task_switch" })
                     await this.initTask(undefined, undefined, undefined, history.historyItem, undefined, {
                         activateHistory: true,
                         skipInitialClear: true,
@@ -3547,7 +3573,7 @@ export class Controller {
                     if (held || this.lockHeartbeatLease !== lease || opening?.taskId !== taskId) return
                     // Another instance owns the lock now, so this opening must stop writing.
                     Logger.warn(`[Lock] Ownership lost for task ${taskId}`)
-                    void this.clearTask({ expectedOpening: opening }).catch((error) =>
+                    void this.clearTask({ expectedOpening: opening, closeReason: "lock_lost" }).catch((error) =>
                         Logger.error("[Lock] Failed to close lock-lost task:", error),
                     )
                 })
@@ -3630,7 +3656,7 @@ export class Controller {
     ): Promise<string | undefined> {
         return this.runTaskLifecycleOperation(async (scope) => {
             if (!this.isCurrentOpening(source)) return undefined
-            await scope.clearTask({ suppressPostState: true })
+            await scope.clearTask({ suppressPostState: true, closeReason: "handoff" })
             return this.initTask(handoff.task, undefined, undefined, undefined, handoff.taskSettings, {
                 context: [handoff.context],
                 startInBackground: true,
@@ -3640,14 +3666,7 @@ export class Controller {
         })
     }
 
-    async clearTask(options?: {
-        clearPanelState?: boolean
-        preserveCompletedState?: boolean
-        suppressPostState?: boolean
-        deferTeardown?: boolean
-        /** Clear only while this opening is still the one shown. */
-        expectedOpening?: TaskOpening
-    }) {
+    async clearTask(options?: TaskClearOptions) {
         return this.runTaskLifecycleOperation((scope) => {
             if (options?.expectedOpening && !this.isCurrentOpening(options.expectedOpening)) return Promise.resolve()
             return scope.clearTask(options)
@@ -3659,13 +3678,7 @@ export class Controller {
         return current?.taskId === opening.taskId && current.taskInstanceId === opening.taskInstanceId
     }
 
-    private async clearTaskWithinLifecycle(options?: {
-        clearPanelState?: boolean
-        preserveCompletedState?: boolean
-        suppressPostState?: boolean
-        deferTeardown?: boolean
-        checkpointRestoreFence?: CheckpointRestoreFence
-    }) {
+    private async clearTaskWithinLifecycle(options?: TaskClearWithinLifecycleOptions) {
         const startedAt = performance.now()
         let stageStartedAt = startedAt
         const task = this.task
@@ -3673,18 +3686,27 @@ export class Controller {
         const taskId = task?.taskId ?? historyDisplay?.taskId
         // An unlocked history display holds the task lock without an interactive session.
         const holdsLock = this.taskLockAcquired
+        const closeReason = options?.closeReason ?? "unknown"
         const logCloseStage = (phase: string, details = "") => {
             const now = performance.now()
             recordPerfPhase(
                 PerfDomain.ControllerClose,
                 "stage",
                 now - stageStartedAt,
-                { stage: phase, elapsedMs: Math.round(now - startedAt) },
+                {
+                    stage: phase,
+                    elapsedMs: Math.round(now - startedAt),
+                    closeReason,
+                    hadTask: task !== undefined,
+                    heldLock: holdsLock,
+                    deferredTeardown: options?.deferTeardown === true,
+                    preserveCompletedState: options?.preserveCompletedState === true,
+                },
                 { taskId },
             )
             if (Logger.isDebugEnabled()) {
                 Logger.debug(
-                    `[ControllerClosePerf] phase=${phase} taskId=${taskId ?? "none"} durationMs=${Math.round(now - stageStartedAt)} elapsedMs=${Math.round(now - startedAt)}${details ? ` ${details}` : ""}`,
+                    `[ControllerClosePerf] phase=${phase} closeReason=${closeReason} taskId=${taskId ?? "none"} durationMs=${Math.round(now - stageStartedAt)} elapsedMs=${Math.round(now - startedAt)}${details ? ` ${details}` : ""}`,
                 )
             }
             stageStartedAt = now

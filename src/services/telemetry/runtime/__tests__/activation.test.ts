@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -103,10 +104,76 @@ describe("activateRuntimeTelemetry", () => {
             component: "runtime",
             operation: "session_reconcile",
             outcome: "deactivation_completed",
+            previous_session_id: "previous-session",
+            previous_pid: process.pid,
+            previous_active_task_count: 0,
+            previous_active_operation_count: 0,
         })
-        expect(Object.keys(event?.attributes ?? {}).sort()).toEqual(["ageMs", "component", "operation", "outcome"])
+        expect(Object.keys(event?.attributes ?? {}).sort()).toEqual([
+            "ageMs",
+            "component",
+            "operation",
+            "outcome",
+            "previous_active_operation_count",
+            "previous_active_task_count",
+            "previous_pid",
+            "previous_session_id",
+        ])
         expect(JSON.stringify(event?.attributes)).not.toContain(dataDir)
         expect(JSON.parse(readFileSync(previousFile, "utf8")).reconciliationReportedAt).toEqual(expect.any(Number))
+    })
+
+    it("projects an unclean previous task and operation as inferred interruptions", async () => {
+        const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" })
+        await new Promise<void>((resolve, reject) => {
+            child.once("error", reject)
+            child.once("exit", () => resolve())
+        })
+        const directory = path.join(dataDir, "runtime", "session-ledgers")
+        mkdirSync(directory, { recursive: true })
+        writeFileSync(
+            path.join(directory, "unclean-session.json"),
+            JSON.stringify({
+                schemaVersion: 2,
+                sessionId: "unclean-session",
+                pid: child.pid,
+                startedAt: 100,
+                heartbeatAt: 200,
+                stage: "running",
+                activeTasks: [{ taskId: "task-crashed" }],
+                activeTasksTruncated: false,
+                activeOperations: [
+                    {
+                        operationId: "operation-crashed",
+                        kind: "tool",
+                        name: "read_file",
+                        startedAt: 180,
+                        taskId: "task-crashed",
+                    },
+                ],
+                activeOperationsTruncated: false,
+            }),
+            "utf8",
+        )
+
+        await activate("enabled", dataDir)
+
+        const events = getRuntimeTelemetryBus().peek()
+        expect(events.find((event) => event.name === "runtime.previous_session_reconciled")?.attributes).toMatchObject({
+            outcome: "unclean_inferred",
+            previous_session_id: "unclean-session",
+            previous_active_task_count: 1,
+            previous_active_operation_count: 1,
+        })
+        expect(events.find((event) => event.name === "task.session.interrupted_inferred")?.context.taskId).toBe("task-crashed")
+        expect(events.find((event) => event.name === "task.tool.interrupted_inferred")).toMatchObject({
+            context: { taskId: "task-crashed" },
+            attributes: {
+                outcome: "interrupted_inferred",
+                operation: "read_file",
+                operation_id: "operation-crashed",
+            },
+        })
     })
 
     it("keeps a claim replayable when the bounded event bus rejects admission", async () => {

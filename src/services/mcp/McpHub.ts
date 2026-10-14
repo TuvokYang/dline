@@ -47,6 +47,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS, MCP_CONNECT_TIMEOUT_MS } from "./constants"
 import { McpOAuthManager } from "./McpOAuthManager"
 import { resolveMcpToolAutoApprove, updateMcpToolAutoApproveConfig } from "./mcp-auto-approval"
 import { McpCallObservation } from "./mcp-call-observation"
+import { mcpTransportObserver } from "./mcp-transport-observation"
 import { StreamableHttpReconnectHandler } from "./StreamableHttpReconnectHandler"
 import { BaseConfigSchema, McpSettingsSchema, ServerConfigSchema } from "./schemas"
 import { McpConnection, McpServerConfig, Transport } from "./types"
@@ -534,7 +535,13 @@ export class McpHub {
 
                     transport.onerror = async (error) => {
                         Logger.debug(`[MCP ${name}] transport onerror:`, error)
-                        Logger.error(`Transport error for "${name}":`, error)
+                        mcpTransportObserver.record({
+                            transport: "stdio",
+                            classification: "exhausted",
+                            outcome: "exhausted",
+                            error,
+                        })
+                        Logger.error(`MCP stdio transport failed.`)
                         const connection = this.findConnection(name, source)
                         if (connection) {
                             connection.server.status = "disconnected"
@@ -623,7 +630,13 @@ export class McpHub {
                     })
 
                     transport.onerror = async (error) => {
-                        Logger.error(`Transport error for "${name}":`, error)
+                        mcpTransportObserver.record({
+                            transport: "sse",
+                            classification: "transient",
+                            outcome: "scheduled",
+                            error,
+                        })
+                        Logger.warn(`MCP SSE transport interrupted; the EventSource will attempt recovery.`)
                         const connection = this.findConnection(name, source)
                         if (connection) {
                             connection.server.status = "disconnected"

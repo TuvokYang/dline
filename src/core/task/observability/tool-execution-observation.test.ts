@@ -89,4 +89,30 @@ describe("ToolExecutionObservation", () => {
             failure_code: "remote_tool_error",
         })
     })
+
+    it("records an aborted tool as cancelled exactly once", async () => {
+        const { exporter, provider } = setupTraceExporter()
+        const tool = new ToolExecutionObservation({
+            taskId: "task-cancelled",
+            toolName: "execute_command",
+            turnId: "turn-cancelled",
+            native: false,
+        })
+        const error = Object.assign(new Error("private"), { name: "AbortError" })
+
+        await expect(
+            tool.run(async () => {
+                throw error
+            }),
+        ).rejects.toBe(error)
+        await provider.forceFlush()
+
+        const [span] = exporter.getFinishedSpans().filter((candidate) => candidate.name === "tool.execution")
+        expect(span?.attributes).toMatchObject({
+            outcome: "cancelled",
+            tool_outcome: "cancelled",
+            cancellation_reason: "abort_error",
+        })
+        expect(span?.events.filter((event) => event.name === "tool.execution.cancelled")).toHaveLength(1)
+    })
 })

@@ -45,6 +45,7 @@ export const TELEMETRY_EVENTS = {
         AUTH_SUCCEEDED: "user.auth_succeeded",
         AUTH_FAILED: "user.auth_failed",
         AUTH_LOGGED_OUT: "user.auth_logged_out",
+        ACCOUNT_IDENTIFIED: "account.identified",
         ONBOARDING_PROGRESS: "user.onboarding_progress",
     },
     // Workspace-related events for multi-root support

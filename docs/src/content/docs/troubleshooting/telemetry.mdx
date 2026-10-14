@@ -1,47 +1,132 @@
 ---
-title: Telemetry and Diagnostics
-description: Learn how Dline asks for consent for usage data and error reports, where the data goes by default, what is masked, and how to export a diagnostic bundle.
+title: Telemetry, Privacy, and Issue Diagnostics
+description: Understand Dline's reporting levels, data purposes, identity separation, local retention, and the planned otel.dline.cc and Issue authorization flow.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Dline asks for consent to "usage data" and "error reports" separately. Neither kind of data is sent without your consent.
-
-## Consent settings
-
-**Settings → About** has two independent options:
-
-- **Allow usage reporting** for usage data;
-- **Allow error reporting** for error reports.
-
-Both are unchecked by default. Only an explicit check counts as consent; while an option is unchecked (including when it was never set), that category is neither collected nor sent. Your organization's remote configuration can turn telemetry off, but cannot turn it on for you.
-
-When VS Code's own telemetry setting (`telemetry.telemetryLevel`) is off, Dline does not send telemetry to remote endpoints either.
-
-## Where the data goes
-
-- By default, consented data is sent in OpenTelemetry format (OTLP over HTTP/protobuf) to `http://127.0.0.1:4318` on **your own machine**. The data is received only if you run an OTLP collector locally.
-- Your organization can point it at a different OTLP endpoint through remote configuration.
-- With consent, Dline also writes local session journals in JSONL format for diagnostics.
+Dline asks for consent to product usage reporting and error/runtime diagnostics separately. The two checkboxes define the effective reporting level, but they remain independent permissions.
 
 <Aside>
-By default, Dline does not send telemetry to any fixed external service.
+The unified journal migration, `otel.dline.cc` delivery, and Issue diagnostics authorization described as planned on this page are not active in the current build.
 </Aside>
 
-## What is masked
+## Reporting levels
 
-Before sending, Dline masks:
+Open **Settings → About** to find **Allow usage reporting** and **Allow error reporting**. Both are unchecked by default. `unset` and `disabled` deny the corresponding channel; only an explicit check grants consent.
 
-- prompts, commands, and command output;
-- credentials;
-- identity-related fields.
+| Effective level | Usage | Errors | Data and purpose |
+|---|---:|---:|---|
+| **Level 0: Off** | Off | Off | No consent-gated usage or diagnostic signals enter telemetry journals or OTLP sinks. A small local process ledger remains for crash recovery. |
+| **Level 1: Usage** | On | Off | Content-free product events and aggregate measurements for adoption, compatibility, request/tool trends, token/cache/cost totals, and regressions. |
+| **Level 2: Diagnostics** | Off | On | Crash, exception, health, and lifecycle signals. It also enables manual export of a local diagnostic bundle. |
+| **Level 3: Usage + Diagnostics** | On | On | The union of Levels 1 and 2. It does not authorize prompts, files, commands, model responses, or raw artifacts. |
 
-What is kept includes provider and model names, numeric values such as token usage, and other length-limited structured fields.
+Current organization policy has one telemetry-disable switch. It can force both channels off but cannot turn either on. VS Code's `telemetry.telemetryLevel` can further restrict remote delivery; it never expands Dline consent.
+
+Account identity is a separate channel governed by usage consent. It is not attached to ordinary usage, error, runtime, or metric records.
+
+## Data categories and purposes
+
+Usage reporting can contain bounded dimensions and numbers such as versions, host and operating-system type, provider/model/API format, Task/turn/tool/MCP/Subagent outcomes, duration, throughput, retries, token/cache/cost totals, and feature counts. It does not contain the conversation or Task body and cannot reconstruct them.
+
+Diagnostics can contain exception type and safe code, severity, Extension Host/Controller/Task/API/Tool/Subagent/MCP lifecycle reasons, CPU/memory/event-loop/queue numbers, and previous-process interruption evidence. Native abort and `SIGKILL` do not guarantee a recoverable stack trace.
+
+The separate `account` channel emits an `account.identified` record containing the account ID only. Display name, email, organization, and membership are not copied into ordinary telemetry. The channel is enabled by usage consent and delivered only to sinks that explicitly declare account support.
+
+## Current destinations
+
+- Canonical Event, Metric, and Trace records can be written as local OTLP-shaped JSONL.
+- The default network sink is the local OTLP/HTTP endpoint `http://127.0.0.1:4318`.
+- The default loopback sink accepts `usage`, `account`, and `runtime`; account records remain separate from ordinary records.
+- An organization-configured OTLP endpoint currently accepts consented `usage` Event and Metric signals only. It is not an account, error/runtime, or Trace sink.
+- The current build contains no `https://otel.dline.cc` delivery implementation and no hidden fallback to it.
 
 <Aside type="caution">
-Consented events include an anonymous installation identifier (`distinct_id`) that tells installations apart and is not masked. Do not assume telemetry contains no identifier at all.
+A non-loopback endpoint sends data outside your machine. Review its retention, access-control, and legal policies before enabling reporting.
 </Aside>
 
-## Exporting a diagnostic bundle
+## Device and account identity
 
-With **Allow error reporting** checked, **Settings → About** shows **Export diagnostic bundle**. It creates a ZIP file locally, redacts it again before writing, and does not upload it. When you run into a problem, you can review the bundle before deciding whether to attach it to an issue.
+`distinct_id` is now a device/installation identifier only. It is initialized from a stored device ID, machine ID, or locally generated UUID and is not changed by sign-in, sign-out, or account switching.
+
+Ordinary OpenTelemetry events can carry this stable device `distinct_id`. Account ID is emitted separately as `account.identified` and is never used as `distinct_id`, aliased to it, or inherited by ordinary Event/Metric attributes. The current organization usage OTLP sink does not opt into the account channel.
+
+The planned `otel.dline.cc` diagnostic profiles exclude both `distinct_id` and account identity. Any future account telemetry destination requires an explicit account-capable sink and its own documented retention and access policy.
+
+## Current local storage and limits
+
+All journal files are below the Dline data root in `telemetry/sessions/`.
+
+| Artifact | Current behavior |
+|---|---|
+| Process session ledger | At most 20 small JSON records containing bounded process/session, active-operation, health, and termination metadata. |
+| Canonical OTLP journals | Per process session, `usage`, `metrics`, and `traces` files each retain a newest tail up to 4 MiB. Account identity is not written through this journal capability. |
+| Runtime compatibility journal | While error reporting is enabled, one unprefixed runtime file retains a newest tail up to 1 MiB. |
+| Diagnostic ZIP | Created only by a manual export and never uploaded automatically. |
+
+Current cleanup is file-based, not session-based. When the error-reporting lifecycle starts, it scans every `.jsonl` in the shared directory, protects only the active unprefixed runtime file, keeps up to eight other eligible files, and removes eligible files older than 3 days. Prefixed files are counted independently and usage-only sessions do not start this cleanup. Therefore canonical journals do not currently have a reliable global cross-session byte ceiling.
+
+Exporter queues remain bounded in memory when no Collector exists. The current build does not create a long-lived disk remote-retry spool.
+
+Enabling error reporting also creates an owner-only legacy pairing credential in local secret storage. No current transport sends or consumes it. Planned Issue diagnostics must migrate or discard it and cannot treat it as Issue authorization without a new explicit user action.
+
+## One telemetry mechanism target
+
+The target is one canonical mechanism:
+
+- normal signals and authoritative usage settlement enter one admission boundary through typed ingress ports;
+- one consent/profile resolver, channel/severity catalog, canonicalization boundary, and content policy govern admitted data;
+- sink-specific policy may only reduce fields or density;
+- one provider registry owns local, loopback, planned `otel.dline.cc`, account-capable, and test sinks;
+- one local journal owner replaces duplicate production writing only after parity is proven;
+- Issue diagnostics is a temporary profile overlay, not another recorder;
+- the process ledger remains a crash capsule outside the telemetry stream.
+
+The migration must first reproduce the current byte limits, file-selection cleanup, ordering, crash evidence, cancellation, bundle export, and restart recovery. Only then may production stop duplicate runtime-journal writes. Changing grouping, retention count, active-file protection, age, or byte budgets is a separate storage-policy decision; this work does not authorize deleting or shrinking existing telemetry files.
+
+## Privacy filtering
+
+Canonical policy blocks or masks prompts, model output, messages, source and file content, patches/diffs, paths, commands, terminal input/output, MCP arguments/results, credentials, and identity fields supplied to ordinary events or metrics. It retains bounded operational fields such as versions, provider/model names, enums, counts, durations, token/cache/cost numbers, outcomes, and safe fingerprints.
+
+Development mode can retain extra local correlation fields. Development mode is not remote authorization.
+
+## Diagnostic bundles and current `/reportbug`
+
+**Export diagnostic bundle** writes a redacted ZIP locally while error reporting is enabled. Review it before attaching it anywhere.
+
+The current `/reportbug` handler requires `api_request_output` and `additional_context`. The values appear in Dline's approval preview. After approval, `api_request_output` is placed in the prefilled GitHub Issue `logs` field and passed through the browser URL. GitHub receives the Issue only after you review the browser form and press submit, so you can edit or remove the field first. This does not authorize `otel.dline.cc` or upload journals or ZIP files.
+
+## Planned `otel.dline.cc` measures
+
+The planned provider is a sink inside the same canonical mechanism, not a second telemetry system.
+
+| Profile | Authorization | Data |
+|---|---|---|
+| `usage` | Usage reporting | Provider-reported per-request token/cache/cost totals without content, plus low-cardinality aggregates |
+| `production` | Error reporting | Content-safe `error`/`runtime` logs, metrics, and traces |
+| `issue_diagnostic` | Error reporting plus an active per-Issue grant | A higher-frequency view of the same diagnostic categories |
+| `development` | Matching consent plus valid development enrollment | Development-only streams unavailable to ordinary users |
+
+Before rollout, the client and service must enforce fixed HTTPS origin, rejected redirects, proxy-aware transport, finite timeout and cancellation, bounded responses and outboxes, owner-only credentials, policy epochs, privacy canaries, and server policy that can only narrow consent. Ordinary signals and authoritative usage settlements must pass the same canonical privacy admission.
+
+Usage delivery plans sealed 60-second windows, no empty heartbeat, at most ten combined windows, and oldest-window drop at the bound. Diagnostic outbox count, byte, and age limits must be fixed before release. Outboxes are sink-owned delivery state and never use forensic journals as upload queues.
+
+Disabling a channel must stop capture and sends, abort in-flight requests, delete that channel's unsent remote outbox and local remote token, and leave the other channel unchanged. It cannot delete data already accepted by the service. Server-side retention, access, and deletion policy must be published before production rollout.
+
+## Planned Issue diagnostics flow
+
+1. You open `/reportbug` or **Settings → Support & Diagnostics**. An ordinary Issue does not require remote diagnostics.
+2. Only after **Request detailed diagnostic authorization** does the host create a one-time pairing secret and public support code.
+3. Pairing secret, support code, and consent marker are handled by deterministic host code and are not added to model conversation context. The support code alone cannot retrieve diagnostics.
+4. You review and submit the GitHub Issue. Raw API output, journals, and ZIP files are not attached automatically.
+5. You provide the Issue URL or number and explicitly request one authorization check. There is no background polling or automatic retry loop.
+6. After a maintainer approves a time-bounded grant, Dline exchanges the host-held secret for an Issue token. The UI shows server-provided expiry and a local stop action. The support service associates the Issue and account context with the pseudonymous machine principal.
+7. Only the Issue `error`/`runtime` stream starts. Usage remains independent. Denied, expired, malformed, or out-of-contract authorization leaves the Issue stream off and does not change the base production profile.
+8. Expiry, **Stop Issue diagnostics on this device**, disabling error reporting, host/organization restriction, or server kill switch stops local capture and sends, aborts in-flight Issue requests, and deletes the local Issue token, pairing secret, and unsent Issue outbox.
+
+The service currently has no client revoke endpoint. A local stop does not revoke the server grant, which remains valid until server expiry, and does not delete data already uploaded.
+
+<Aside type="caution">
+Issue diagnostics is not a raw-log mode. Prompts, code, command text, model output, MCP payloads, credentials, stable user/Task/workspace identity, and raw artifacts remain prohibited.
+</Aside>

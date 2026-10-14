@@ -18,6 +18,11 @@ export async function clearTask(controller: Controller, _request: EmptyRequest):
     // release and registry cleanup are deferred: they no longer change what is
     // rendered, and the controller still drains them before the next Task
     // starts or the window shuts down.
-    await controller.clearTask({ clearPanelState: true, preserveCompletedState: true, deferTeardown: true })
+    await controller.clearTask({
+        clearPanelState: true,
+        preserveCompletedState: true,
+        deferTeardown: true,
+        closeReason: "user_clear",
+    })
     return Empty.create()
 }

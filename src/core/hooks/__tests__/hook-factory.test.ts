@@ -3,7 +3,7 @@ import path from "path"
 import should from "should"
 import { afterEach, beforeEach, describe, it } from "vitest"
 // sinon import removed: using vitest globals
-import { setDistinctId } from "@/services/logging/distinctId"
+import { setDistinctIdForTesting } from "@/services/logging/distinctId"
 import { HookFactory } from "../hook-factory"
 import { createHookTestEnv, HookTestEnv, stubHookDirs, withPlatform, writeHookScriptForPlatform } from "./test-utils"
 
@@ -20,7 +20,7 @@ describe("Hook System", () => {
     }
 
     beforeEach(async () => {
-        setDistinctId("test-id")
+        setDistinctIdForTesting("test-id")
         hookTestEnv = await createHookTestEnv()
         tempDir = hookTestEnv.tempDir
         sandbox = hookTestEnv.sandbox

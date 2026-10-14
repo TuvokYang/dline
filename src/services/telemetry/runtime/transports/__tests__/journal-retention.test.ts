@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { enforceJournalRetention } from "../journal-retention"
+import { enforceJournalRetention, MAX_AGE_DAYS, MAX_SESSIONS } from "../journal-retention"
 
 /**
  * Retention deletes from a user data directory, so these tests pin the exact
@@ -31,6 +31,13 @@ beforeEach(async () => {
 
 afterEach(async () => {
     await rm(directory, { recursive: true, force: true })
+})
+
+describe("journal retention defaults", () => {
+    it("bounds collector-less history to eight recent sessions over three days", () => {
+        expect(MAX_SESSIONS).toBe(8)
+        expect(MAX_AGE_DAYS).toBe(3)
+    })
 })
 
 describe("journal retention by count", () => {

@@ -19,7 +19,9 @@ describe("clearTask handler", () => {
 
         await clearTask(controller, EmptyRequest.create())
 
-        expect(clearTaskSpy).toHaveBeenCalledWith(expect.objectContaining({ preserveCompletedState: true }))
+        expect(clearTaskSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ preserveCompletedState: true, closeReason: "user_clear" }),
+        )
     })
 
     it("still clears the panel state so the closed task leaves no visible session", async () => {

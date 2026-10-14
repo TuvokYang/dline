@@ -12,11 +12,16 @@ import { join } from "node:path"
  * The two limits are independent and both apply.
  */
 
-/** Journals kept, newest first. */
-export const MAX_SESSIONS = 100
+/**
+ * Journals kept, newest first.
+ *
+ * With the default 1 MiB per-session cap this limits retained runtime event
+ * history to roughly 8 MiB even when no Collector has ever existed.
+ */
+export const MAX_SESSIONS = 8
 
 /** Journals older than this are removed regardless of how few there are. */
-export const MAX_AGE_DAYS = 30
+export const MAX_AGE_DAYS = 3
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 

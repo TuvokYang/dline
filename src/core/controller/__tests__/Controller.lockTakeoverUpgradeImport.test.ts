@@ -67,7 +67,7 @@ describe("Controller lock takeover of a task with data from an earlier version",
 
         await takeOver()
 
-        expect(clearTask).toHaveBeenCalledExactlyOnceWith({ suppressPostState: true })
+        expect(clearTask).toHaveBeenCalledExactlyOnceWith({ suppressPostState: true, closeReason: "task_switch" })
         expect(controller.initTask).toHaveBeenCalledExactlyOnceWith(
             undefined,
             undefined,

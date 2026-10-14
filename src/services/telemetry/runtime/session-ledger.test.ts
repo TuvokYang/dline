@@ -3,13 +3,31 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { classifyPreviousSession, RuntimeSessionLedger, type RuntimeSessionLedgerDocument } from "./session-ledger"
+import {
+    classifyPreviousSession,
+    RuntimeSessionLedger,
+    type RuntimeSessionLedgerDocument,
+    type RuntimeSessionLedgerDocumentV1,
+    type RuntimeSessionLedgerDocumentV2,
+} from "./session-ledger"
 
 const roots: string[] = []
 afterEach(async () => Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true }))))
 
-function document(overrides: Partial<RuntimeSessionLedgerDocument> = {}): RuntimeSessionLedgerDocument {
+function document(overrides: Partial<RuntimeSessionLedgerDocumentV1> = {}): RuntimeSessionLedgerDocumentV1 {
     return { schemaVersion: 1, sessionId: "previous", pid: 123, startedAt: 100, heartbeatAt: 200, ...overrides }
+}
+
+function documentV2(overrides: Partial<RuntimeSessionLedgerDocumentV2> = {}): RuntimeSessionLedgerDocumentV2 {
+    return {
+        schemaVersion: 2,
+        sessionId: "previous-v2",
+        pid: 124,
+        startedAt: 100,
+        heartbeatAt: 200,
+        stage: "running",
+        ...overrides,
+    }
 }
 
 describe("classifyPreviousSession", () => {
@@ -19,6 +37,8 @@ describe("classifyPreviousSession", () => {
         ).toEqual({
             outcome: "deactivation_completed",
             ageMs: 50,
+            sessionId: "previous",
+            pid: 123,
         })
         expect(classifyPreviousSession({ document: document(), now: 300, processAlive: true }).outcome).toBe("still_active")
         expect(classifyPreviousSession({ document: document(), now: 300, processAlive: false }).outcome).toBe("unclean_inferred")
@@ -59,7 +79,12 @@ describe("RuntimeSessionLedger", () => {
         const saved = JSON.parse(await fs.readFile(path.join(directory, "current.json"), "utf8"))
         expect(saved.deactivationCompletedAt).toBe(2_000)
         expect(saved.stage).toBe("deactivation_completed")
+        expect(saved.schemaVersion).toBe(2)
         expect(Object.keys(saved).sort()).toEqual([
+            "activeOperations",
+            "activeOperationsTruncated",
+            "activeTasks",
+            "activeTasksTruncated",
             "deactivationCompletedAt",
             "heartbeatAt",
             "pid",
@@ -68,6 +93,111 @@ describe("RuntimeSessionLedger", () => {
             "stage",
             "startedAt",
         ])
+    })
+
+    it("projects bounded v2 crash evidence into previous-session reconciliation", async () => {
+        const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "runtime-ledger-v2-"))
+        roots.push(dataDir)
+        const directory = path.join(dataDir, "runtime", "session-ledgers")
+        await fs.mkdir(directory, { recursive: true })
+        await fs.writeFile(
+            path.join(directory, "previous-v2.json"),
+            JSON.stringify(
+                documentV2({
+                    activeTasks: [{ taskId: "task-a" }, { taskId: "task-b", phase: "running" }],
+                    activeTasksTruncated: true,
+                    activeOperations: [
+                        {
+                            operationId: "operation-1",
+                            kind: "tool",
+                            name: "read_file",
+                            startedAt: 180,
+                            taskId: "task-a",
+                        },
+                    ],
+                    activeOperationsTruncated: false,
+                    lastHealth: {
+                        sampledAt: 190,
+                        eventLoopDelayMs: 11,
+                        cpuUtilizationRatio: 1.5,
+                        heapUsedBytes: 200,
+                        rssBytes: 300,
+                        queueDepth: 4,
+                        droppedEvents: 2,
+                    },
+                    terminationHint: {
+                        kind: "uncaught_exception",
+                        recordedAt: 210,
+                        origin: "uncaughtException",
+                        errorName: "Error",
+                        errorCode: "ERR_TEST",
+                        errorFingerprint: "fingerprint",
+                    },
+                }),
+            ),
+            "utf8",
+        )
+        const ledger = new RuntimeSessionLedger({
+            dataDir,
+            sessionId: "current",
+            now: () => 1_000,
+            pid: 999,
+            processAlive: () => false,
+            heartbeatIntervalMs: 0x7fffffff,
+        })
+
+        const [reconciliation] = await ledger.startAndReconcile()
+        expect(reconciliation).toMatchObject({
+            outcome: "unclean_inferred",
+            ageMs: 800,
+            sessionId: "previous-v2",
+            pid: 124,
+            stage: "running",
+            activeTasks: [{ taskId: "task-a" }, { taskId: "task-b", phase: "running" }],
+            activeTasksTruncated: true,
+            activeOperations: [{ operationId: "operation-1", kind: "tool", name: "read_file", taskId: "task-a" }],
+            activeOperationsTruncated: false,
+            terminationHint: { kind: "uncaught_exception", errorCode: "ERR_TEST" },
+            lastHealth: { queueDepth: 4, droppedEvents: 2 },
+        })
+        await ledger.complete()
+    })
+
+    it("bounds active task snapshots and persists the latest health and termination hint", async () => {
+        const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "runtime-ledger-current-v2-"))
+        roots.push(dataDir)
+        let now = 1_000
+        const ledger = new RuntimeSessionLedger({
+            dataDir,
+            sessionId: "current",
+            now: () => now,
+            pid: 999,
+            heartbeatIntervalMs: 0x7fffffff,
+            activeTaskIds: () => Array.from({ length: 10 }, (_, index) => `task-${index}`),
+        })
+        await ledger.startAndReconcile()
+        ledger.updateHealth({
+            eventLoopDelayMs: 12,
+            cpuUtilizationRatio: 2,
+            heapUsedBytes: 300,
+            rssBytes: 400,
+            queueDepth: 5,
+            droppedEvents: 6,
+        })
+        now = 1_100
+        await ledger.markStage("running")
+        ledger.recordTerminationHint({ kind: "process_exit_nonzero", recordedAt: 1_101, exitCode: 9 })
+
+        const saved = JSON.parse(await fs.readFile(path.join(dataDir, "runtime", "session-ledgers", "current.json"), "utf8"))
+        expect(saved).toMatchObject({
+            schemaVersion: 2,
+            stage: "running",
+            activeTasksTruncated: true,
+            lastHealth: { sampledAt: 1_000, queueDepth: 5, droppedEvents: 6 },
+            terminationHint: { kind: "process_exit_nonzero", exitCode: 9 },
+        })
+        expect(saved.activeTasks).toHaveLength(8)
+        await ledger.complete()
     })
 
     it("does not acknowledge active or indeterminate sessions as terminal", async () => {
@@ -85,7 +215,9 @@ describe("RuntimeSessionLedger", () => {
             heartbeatIntervalMs: 0x7fffffff,
         })
 
-        expect(await ledger.startAndReconcile()).toEqual([{ outcome: "still_active", ageMs: 10 }])
+        expect(await ledger.startAndReconcile()).toEqual([
+            { outcome: "still_active", ageMs: 10, sessionId: "previous", pid: 123 },
+        ])
         const claimed = await ledger.claimReconciliationsForReporting()
         expect(claimed.map(({ outcome, ageMs }) => ({ outcome, ageMs }))).toEqual([{ outcome: "still_active", ageMs: 10 }])
         await Promise.all(claimed.map((result) => result.commit()))
@@ -121,7 +253,9 @@ describe("RuntimeSessionLedger", () => {
             processAlive: () => false,
             heartbeatIntervalMs: 0x7fffffff,
         })
-        expect(await ledger.startAndReconcile()).toContainEqual({ outcome: "unclean_inferred", ageMs: 800 })
+        expect(await ledger.startAndReconcile()).toContainEqual(
+            expect.objectContaining({ outcome: "unclean_inferred", ageMs: 800, sessionId: "abrupt" }),
+        )
         await ledger.complete()
     })
 
@@ -188,7 +322,9 @@ describe("RuntimeSessionLedger", () => {
             heartbeatIntervalMs: 0x7fffffff,
         })
         const reconciled = await second.startAndReconcile()
-        expect(reconciled).toContainEqual({ outcome: "unclean_inferred", ageMs: 1_800 })
+        expect(reconciled).toContainEqual(
+            expect.objectContaining({ outcome: "unclean_inferred", ageMs: 1_800, sessionId: "previous" }),
+        )
         const replayed = await second.claimReconciliationsForReporting()
         await Promise.all(replayed.map((result) => result.commit()))
         await Promise.all([first.complete(), second.complete()])
@@ -213,7 +349,7 @@ describe("RuntimeSessionLedger", () => {
         })
 
         await expect(ledger.startAndReconcile()).rejects.toThrow("transient write failure")
-        await expect(ledger.markStage("retry")).resolves.toBeUndefined()
+        await expect(ledger.markStage("running")).resolves.toBeUndefined()
         await expect(ledger.complete()).resolves.toBeUndefined()
         expect(attempts).toBeGreaterThanOrEqual(3)
     })
