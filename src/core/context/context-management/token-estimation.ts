@@ -19,9 +19,13 @@ export const MAX_PLAUSIBLE_TOKEN_PER_BYTE = 1
 /**
  * Resolve text tokens per UTF-8 byte from exact input usage reported by one Provider scope.
  *
- * Mixed-media samples are excluded because images and documents use independent token models;
- * including them would distort every later text estimate. Implausible ratios are excluded for
- * the same reason.
+ * Images and documents use independent token models, so a sample's estimated
+ * media tokens are taken out of its reported input and only the text share is
+ * measured against the text bytes. Dropping such samples instead left a task
+ * with one image anywhere in its history - which every later request carries -
+ * without any calibration, and its estimates fell back to the default ratio.
+ * Implausible ratios are excluded because they describe something other than
+ * the request text.
  */
 export function resolveTokenPerByte(
     pressures: readonly ContextWindowRequestPressure[],
@@ -29,11 +33,12 @@ export function resolveTokenPerByte(
 ): number | undefined {
     const samples = pressures
         .filter((pressure) => sameScope(pressure, scope))
-        .filter((pressure) => pressure.estimatedMediaTokens === 0)
+        // A row without a media estimate predates the split and cannot separate its text share.
+        .filter((pressure) => pressure.estimatedMediaTokens !== undefined)
         .flatMap((pressure) => {
             const bytes = positive(pressure.estimatedTextBytes)
-            const tokens = positive(pressure.actualInputTokens)
-            return bytes > 0 && tokens > 0 ? [tokens / bytes] : []
+            const textTokens = positive(pressure.actualInputTokens) - positive(pressure.estimatedMediaTokens)
+            return bytes > 0 && textTokens > 0 ? [textTokens / bytes] : []
         })
         .filter(isPlausibleTokenPerByte)
         .slice(-MAX_RECENT_SAMPLES)

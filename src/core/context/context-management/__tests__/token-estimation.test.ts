@@ -17,10 +17,10 @@ describe("token estimation", () => {
         expect(tokenPerByte).toBe(0.19)
     })
 
-    it("excludes mixed-media and different-provider samples", () => {
+    it("excludes different-provider samples and rows without a media estimate", () => {
         const tokenPerByte = resolveTokenPerByte(
             [
-                { ...SCOPE, estimatedTextBytes: 1_000, estimatedMediaTokens: 600, actualInputTokens: 900 },
+                { ...SCOPE, estimatedTextBytes: 1_000, actualInputTokens: 300 },
                 {
                     providerId: "other",
                     modelId: SCOPE.modelId,
@@ -34,6 +34,20 @@ describe("token estimation", () => {
         )
 
         expect(tokenPerByte).toBeUndefined()
+    })
+
+    // A screenshot stays in the history, so every later request carries media; dropping those
+    // samples left such a task uncalibrated and its estimates a quarter token per byte.
+    it("measures the text share of a request that also carries media", () => {
+        const tokenPerByte = resolveTokenPerByte(
+            [
+                { ...SCOPE, estimatedTextBytes: 1_000_000, estimatedMediaTokens: 1_600, actualInputTokens: 341_600 },
+                { ...SCOPE, estimatedTextBytes: 1_000, estimatedMediaTokens: 900, actualInputTokens: 900 },
+            ],
+            SCOPE,
+        )
+
+        expect(tokenPerByte).toBe(0.34)
     })
 
     it("ignores ratios no tokenizer produces, such as 13.5 tokens per byte", () => {
