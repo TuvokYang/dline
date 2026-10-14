@@ -33,6 +33,9 @@ function hasPayload(entry: JournalEntry): entry is PayloadEntry {
  */
 export class JournalConversationView implements ConversationHistoryReader {
     private readonly rendered = new Map<string, Promise<MaterializedPayload>>()
+    private readonly entrySnapshots = new Map<number, Promise<ConversationViewEntry[]>>()
+    private readonly messageSnapshots = new Map<number, Promise<ClineStorageMessage[]>>()
+    private readonly providerSnapshots = new Map<number, Promise<ClineStorageMessage[]>>()
     private latestSize = 0
     /** Journal position `latestSize` was counted at; -1 before the first count. */
     private countedThrough = -1
@@ -49,20 +52,23 @@ export class JournalConversationView implements ConversationHistoryReader {
      * as a span a summary replaced; an older position renders them again on demand.
      */
     async entries(through?: JournalWatermark): Promise<ConversationViewEntry[]> {
-        const projection = await this.journal.project(through)
-        const visible = projection.visibleMessages.filter(hasPayload)
-        const entries: ConversationViewEntry[] = []
-        // Sequential on purpose: a first render of a long history may read many
-        // attachments, and the order they are read in must not depend on timing.
-        for (const entry of visible) entries.push({ entry, ...(await this.render(entry.payloadRef)) })
-        const superseded = new Set(entries.flatMap((item) => [...(item.supersededPayloadRefs ?? [])]))
-        const canonical = entries.filter((item) => !superseded.has(item.entry.payloadRef))
-        if (this.isLatest(projection.through)) {
-            this.retainOnly(canonical.map((item) => item.entry))
-            this.latestSize = canonical.reduce((count, item) => count + item.messages.length, 0)
-            this.countedThrough = projection.through.seq
-        }
-        return canonical
+        const seq = through?.seq ?? this.journal.watermark().seq
+        return this.cached(this.entrySnapshots, seq, async () => {
+            const projection = await this.journal.project(through)
+            const visible = projection.visibleMessages.filter(hasPayload)
+            const entries: ConversationViewEntry[] = []
+            // Sequential on purpose: a first render of a long history may read many
+            // attachments, and the order they are read in must not depend on timing.
+            for (const entry of visible) entries.push({ entry, ...(await this.render(entry.payloadRef)) })
+            const superseded = new Set(entries.flatMap((item) => [...(item.supersededPayloadRefs ?? [])]))
+            const canonical = entries.filter((item) => !superseded.has(item.entry.payloadRef))
+            if (this.isLatest(projection.through)) {
+                this.retainOnly(canonical.map((item) => item.entry))
+                this.latestSize = canonical.reduce((count, item) => count + item.messages.length, 0)
+                this.countedThrough = projection.through.seq
+            }
+            return canonical
+        })
     }
 
     /**
@@ -87,7 +93,10 @@ export class JournalConversationView implements ConversationHistoryReader {
 
     /** The provider messages through `through`, in journal order. */
     async messages(through?: JournalWatermark): Promise<ClineStorageMessage[]> {
-        return (await this.entries(through)).flatMap((item) => [...item.messages])
+        const seq = through?.seq ?? this.journal.watermark().seq
+        return this.cached(this.messageSnapshots, seq, async () =>
+            (await this.entries(through)).flatMap((item) => [...item.messages]),
+        )
     }
 
     /**
@@ -98,7 +107,8 @@ export class JournalConversationView implements ConversationHistoryReader {
      * before sizing or sending it so both paths see the same valid conversation.
      */
     async providerMessages(through?: JournalWatermark): Promise<ClineStorageMessage[]> {
-        return repairProviderPairing(await this.messages(through))
+        const seq = through?.seq ?? this.journal.watermark().seq
+        return this.cached(this.providerSnapshots, seq, async () => repairProviderPairing(await this.messages(through)))
     }
 
     read(): Promise<ClineStorageMessage[]> {
@@ -116,6 +126,18 @@ export class JournalConversationView implements ConversationHistoryReader {
 
     position(): number {
         return this.journal.watermark().seq
+    }
+
+    private cached<T>(cache: Map<number, Promise<T>>, seq: number, create: () => Promise<T>): Promise<T> {
+        const existing = cache.get(seq)
+        if (existing) return existing
+        const pending = create()
+        cache.set(seq, pending)
+        pending.catch(() => {
+            if (cache.get(seq) === pending) cache.delete(seq)
+        })
+        while (cache.size > 16) cache.delete(cache.keys().next().value!)
+        return pending
     }
 
     private render(payloadRef: string): Promise<MaterializedPayload> {

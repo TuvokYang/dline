@@ -80,21 +80,23 @@ interface Harness {
     readonly guard: FinalContextWindowGuard
     readonly compactForAdmission: ReturnType<typeof vi.fn>
     readonly present: ReturnType<typeof vi.fn>
+    readonly frame: ReturnType<typeof vi.fn>
 }
 
 function harness(options: { compaction?: AdmissionCompaction; withCompaction?: boolean } = {}): Harness {
     const compactForAdmission = vi.fn(async () => options.compaction ?? ({ kind: "completed" } as const))
     const present = vi.fn(async () => undefined)
+    const frame = vi.fn(async () => FRAME)
     const guard = new FinalContextWindowGuard({
         taskId: "task-1",
-        frames: { frame: async () => FRAME },
+        frames: { frame },
         conversation: { messages: async () => [...HISTORY] },
         requestPressures: () => [],
         triggerOptions: () => ({}),
         ...(options.withCompaction === false ? {} : { compaction: { compactForAdmission } }),
         failure: { present },
     })
-    return { guard, compactForAdmission, present }
+    return { guard, compactForAdmission, present, frame }
 }
 
 function lastText(messages: ClineStorageMessage[] | undefined): string {
@@ -196,7 +198,7 @@ describe("FinalContextWindowGuard", () => {
 
     it("warns inside the request's environment once less than 10% of the window remains", async () => {
         estimates.push(950, 960)
-        const { guard } = harness({ withCompaction: false })
+        const { guard, frame } = harness({ withCompaction: false })
 
         const admission = await guard.admit({ signal: new AbortController().signal, environment: ENVIRONMENT })
 
@@ -208,6 +210,7 @@ describe("FinalContextWindowGuard", () => {
         // The warning is part of what is sent, so the admitted estimate includes it.
         expect(lastText(measuredMessages[1])).toBe(environment)
         expect(guard.admittedEstimate()).toBe(960)
+        expect(frame).toHaveBeenCalledTimes(1)
     })
 
     it("does not repeat a warning the environment already carries", async () => {

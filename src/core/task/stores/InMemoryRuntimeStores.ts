@@ -15,7 +15,7 @@ import type {
     TaskViewPort,
 } from "./contracts"
 import { journalOperationFingerprint } from "./JournalOperationIdentity"
-import { compareJournalWatermarks, rebuildJournalProjection } from "./JournalProjection"
+import { compareJournalWatermarks, JournalProjectionIndex } from "./JournalProjection"
 import { assertTaskPayloadRef, taskPayloadRef } from "./payload/TaskPayloadRef"
 
 export class InMemoryStateVault implements StateVault {
@@ -108,6 +108,7 @@ export class InMemoryConversationJournal implements ConversationJournal {
     private current: JournalWatermark = { seq: 0 }
     private readonly entries: JournalEntry[] = []
     private readonly operations = new Map<string, { readonly fingerprint: string; readonly entry: JournalEntry }>()
+    private projection: JournalProjectionIndex | undefined = new JournalProjectionIndex()
     private readonly transient = new Set<string>()
 
     watermark(): JournalWatermark {
@@ -123,11 +124,9 @@ export class InMemoryConversationJournal implements ConversationJournal {
     }
 
     async read(after?: JournalWatermark, through?: JournalWatermark): Promise<readonly JournalEntry[]> {
-        return this.entries.filter(
-            (entry) =>
-                (!after || compareJournalWatermarks(entry.watermark, after) > 0) &&
-                (!through || compareJournalWatermarks(entry.watermark, through) <= 0),
-        )
+        const start = Math.min(this.entries.length, Math.max(0, after?.seq ?? 0))
+        const end = Math.min(this.entries.length, Math.max(start, through?.seq ?? this.entries.length))
+        return this.entries.slice(start, end)
     }
 
     async findByOperation(operationId: string): Promise<JournalEntry | undefined> {
@@ -135,7 +134,7 @@ export class InMemoryConversationJournal implements ConversationJournal {
     }
 
     async project(through = this.current) {
-        return rebuildJournalProjection(this.entries, through)
+        return this.ensureProjection().project(through)
     }
 
     appendTransient(transientId: string): void {
@@ -208,6 +207,10 @@ export class InMemoryConversationJournal implements ConversationJournal {
         return { watermark: existing.entry.watermark, disposition: "existing" }
     }
 
+    private ensureProjection(): JournalProjectionIndex {
+        return (this.projection ??= new JournalProjectionIndex(this.entries))
+    }
+
     private record(
         kind: JournalEntryKind,
         operationId: string,
@@ -218,6 +221,11 @@ export class InMemoryConversationJournal implements ConversationJournal {
         this.current = { seq: this.current.seq + 1 }
         const recorded: JournalEntry = { ...entry, version: 1, operationId, kind, watermark: this.current }
         this.entries.push(recorded)
+        try {
+            this.projection?.append(recorded)
+        } catch {
+            this.projection = undefined
+        }
         this.operations.set(operationId, { fingerprint: journalOperationFingerprint(kind, entry), entry: recorded })
         return { watermark: this.current, disposition: "appended" }
     }

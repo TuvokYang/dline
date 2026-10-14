@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { JournalEntry } from "../contracts"
-import { rebuildJournalProjection } from "../JournalProjection"
+import { JournalProjectionIndex, rebuildJournalProjection } from "../JournalProjection"
 
 function entry(seq: number, kind: JournalEntry["kind"], fields: Partial<JournalEntry> = {}): JournalEntry {
     return {
@@ -210,5 +210,60 @@ describe("rebuildJournalProjection", () => {
         expect(() =>
             rebuildJournalProjection([entry(1, "message", { payloadRef: "one" }), entry(2, "tombstone", { target: { seq: 9 } })]),
         ).toThrow("JournalMarkerTargetMissing")
+    })
+})
+
+describe("JournalProjectionIndex", () => {
+    it("advances the latest projection incrementally and reuses immutable snapshots", () => {
+        const entries = [
+            entry(1, "message", { payloadRef: "task" }),
+            entry(2, "message", { payloadRef: "answer" }),
+            entry(3, "supersede_range", {
+                range: { from: { seq: 1 }, to: { seq: 2 } },
+                payloadRef: "summary",
+            }),
+        ]
+        const index = new JournalProjectionIndex(entries.slice(0, 2), { checkpointInterval: 2 })
+        const before = index.project()
+
+        expect(index.project()).toBe(before)
+        index.append(entries[2]!)
+        const after = index.project()
+
+        expect(after).not.toBe(before)
+        expect(after.visibleMessages.map((item) => item.payloadRef)).toEqual(["summary"])
+        expect(after).toEqual(rebuildJournalProjection(entries))
+    })
+
+    it("bounds historical replay from sparse checkpoints and caches the result", () => {
+        const entries = Array.from({ length: 10_000 }, (_, offset) =>
+            entry(offset + 1, "message", { payloadRef: `payload:${offset + 1}` }),
+        )
+        const index = new JournalProjectionIndex(entries, { checkpointInterval: 256, historicalCacheSize: 4 })
+        const through = { seq: 9_777 }
+        const projected = index.project(through)
+
+        expect(projected).toEqual(rebuildJournalProjection(entries, through))
+        expect(index.project(through)).toBe(projected)
+        expect(index.diagnostics().lastReplayEntries).toBeLessThanOrEqual(256)
+    })
+
+    it("keeps rewind and later marker semantics equal to a full rebuild", () => {
+        const entries = [
+            entry(1, "message", { payloadRef: "task" }),
+            entry(2, "message", { payloadRef: "answer" }),
+            entry(3, "supersede_range", {
+                range: { from: { seq: 1 }, to: { seq: 2 } },
+                payloadRef: "summary",
+            }),
+            entry(4, "rewind", { target: { seq: 2 } }),
+            entry(5, "message", { payloadRef: "continued" }),
+            entry(6, "tombstone", { target: { seq: 2 } }),
+        ]
+        const index = new JournalProjectionIndex([], { checkpointInterval: 2 })
+        for (const item of entries) index.append(item)
+
+        expect(index.project()).toEqual(rebuildJournalProjection(entries))
+        expect(index.project({ seq: 3 })).toEqual(rebuildJournalProjection(entries, { seq: 3 }))
     })
 })

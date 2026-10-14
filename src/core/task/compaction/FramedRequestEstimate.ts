@@ -2,7 +2,7 @@ import { estimateContextWindowCandidateBreakdown } from "@core/context/context-m
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
 import type { SystemPromptComposition } from "@core/prompts/generators/system-prompt-composition"
 import type { ClineStorageMessage } from "@shared/messages/content"
-import type { ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
+import type { ProviderRequestFrame, ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
 import type { CompactionProviderInput } from "./CompactionProviderInput"
 
 /** What one provider request would occupy, and the window it is measured against. */
@@ -32,7 +32,13 @@ export async function estimateFramedRequest(
     messages: ClineStorageMessage[],
     signal: AbortSignal,
 ): Promise<FramedRequestEstimate> {
-    const frame = await frames.frame(signal)
+    return estimateFramedRequestWithFrame(await frames.frame(signal), messages)
+}
+
+export function estimateFramedRequestWithFrame(
+    frame: ProviderRequestFrame,
+    messages: ClineStorageMessage[],
+): FramedRequestEstimate {
     const model = frame.api.getModel()
     const providerId = frame.api.getProviderId?.()
     const input: CompactionProviderInput = {

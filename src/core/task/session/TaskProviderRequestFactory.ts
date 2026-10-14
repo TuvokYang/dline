@@ -26,6 +26,15 @@ import type { ProviderDraftEnvelope } from "../stores/payload/TaskPayloadEnvelop
 import type { TaskStateManager } from "../TaskStateManager"
 import type { TaskApiHandlerOwner } from "./TaskApiHandlerOwner"
 
+interface RequestFrameCandidate {
+    readonly frame: ProviderRequestFrame
+    readonly api: ReturnType<TaskApiHandlerOwner["current"]>
+    readonly mode: TaskStateManager["mode"]
+    readonly customPrompt: string | undefined
+    readonly webToolsEnabled: boolean
+    readonly imageGenerationEnabled: boolean
+}
+
 export interface TaskProviderRequestFactoryOptions {
     readonly taskId: string
     readonly stateManager: StateManager
@@ -46,6 +55,8 @@ export interface TaskProviderRequestFactoryOptions {
 
 /** Freezes one provider request from task-scoped owners and durable journal content. */
 export class TaskProviderRequestFactory implements ProviderRequestFactory, ProviderRequestFramePort {
+    private frameCandidate: RequestFrameCandidate | undefined
+
     constructor(private readonly options: TaskProviderRequestFactoryOptions) {}
 
     async prepare(draft: ProviderDraftEnvelope, signal: AbortSignal): Promise<PreparedProviderRequest> {
@@ -53,7 +64,7 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
         // secret, or the model's window may have changed since the handler was built.
         if (signal.aborted) throw signal.reason
         await this.options.api.rebuild({ validateCredentials: true })
-        const frame = await this.buildFrame(signal, false)
+        const frame = this.takeFrameCandidate() ?? (await this.buildFrame(signal, false))
         const messages = await this.conversationOf(draft)
         const turnId = draft.turnId ?? randomUUID()
         // Authority is derived from the durable admitted input, so a recovered or
@@ -96,8 +107,50 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
      * compaction and the request it exists to serve. A scope resolves the frame
      * the task will use once it adopts that handler and Mode instead.
      */
-    frame(signal: AbortSignal, scope?: ProviderRequestScope): Promise<ProviderRequestFrame> {
-        return this.buildFrame(signal, true, scope)
+    async frame(signal: AbortSignal, scope?: ProviderRequestScope): Promise<ProviderRequestFrame> {
+        if (scope) return this.buildFrame(signal, true, scope)
+        const before = this.frameInputs()
+        const pendingRefresh = this.options.prompt.getPendingRefreshReason()
+        const frame = await this.buildFrame(signal, true)
+        const after = this.frameInputs()
+        if (
+            !pendingRefresh &&
+            !this.options.prompt.getPendingRefreshReason() &&
+            this.sameFrameInputs(before, after) &&
+            frame.api === after.api
+        ) {
+            this.frameCandidate = { frame, ...after }
+        } else {
+            this.frameCandidate = undefined
+        }
+        return frame
+    }
+
+    private takeFrameCandidate(): ProviderRequestFrame | undefined {
+        const candidate = this.frameCandidate
+        this.frameCandidate = undefined
+        if (!candidate || this.options.prompt.getPendingRefreshReason()) return undefined
+        return this.sameFrameInputs(candidate, this.frameInputs()) ? candidate.frame : undefined
+    }
+
+    private frameInputs(): Omit<RequestFrameCandidate, "frame"> {
+        return {
+            api: this.options.api.current(),
+            mode: this.options.settings.mode,
+            customPrompt: this.options.stateManager.getGlobalSettingsKey("customPrompt"),
+            webToolsEnabled: this.options.stateManager.getGlobalSettingsKey("clineWebToolsEnabled") === true,
+            imageGenerationEnabled: this.options.stateManager.getCanonicalSettingsKey("imageGenerationEnabled") === true,
+        }
+    }
+
+    private sameFrameInputs(left: Omit<RequestFrameCandidate, "frame">, right: Omit<RequestFrameCandidate, "frame">): boolean {
+        return (
+            left.api === right.api &&
+            left.mode === right.mode &&
+            left.customPrompt === right.customPrompt &&
+            left.webToolsEnabled === right.webToolsEnabled &&
+            left.imageGenerationEnabled === right.imageGenerationEnabled
+        )
     }
 
     private async buildFrame(signal: AbortSignal, preview: boolean, scope?: ProviderRequestScope): Promise<ProviderRequestFrame> {

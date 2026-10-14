@@ -67,11 +67,13 @@ describe("JournalConversationView", () => {
         await write(journal, payloads, "intake:1", { kind: "user_input", text: "first" })
         await write(journal, payloads, "provider:1", { kind: "provider_final", text: "answer" }, "provider")
 
-        await view.messages()
+        const firstRound = await view.messages()
+        expect(await view.messages()).toBe(firstRound)
         const afterFirstRound = payloads.totalReads()
         await write(journal, payloads, "intake:2", { kind: "user_input", text: "second" })
         const messages = await view.messages()
 
+        expect(messages).not.toBe(firstRound)
         expect(textsOf(messages)).toEqual(["first", "answer", "second"])
         // Only the new entry was read; the history came from memory.
         expect(payloads.totalReads()).toBe(afterFirstRound + 1)

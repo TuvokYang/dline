@@ -14,7 +14,7 @@ import type {
     TaskPayloadStore,
 } from "../contracts"
 import { journalOperationFingerprint } from "../JournalOperationIdentity"
-import { compareJournalWatermarks, rebuildJournalProjection } from "../JournalProjection"
+import { compareJournalWatermarks, JournalProjectionIndex } from "../JournalProjection"
 import { assertTaskPayloadRef, taskPayloadRef } from "../payload/TaskPayloadRef"
 import { BackgroundDeliveryRow, CommandPublicationRow, JournalEntryRow, PayloadRow } from "./entities"
 
@@ -45,6 +45,7 @@ export class SqliteConversationJournal implements ConversationJournal {
     private current: JournalWatermark = { seq: 0 }
     private readonly entries: JournalEntry[] = []
     private readonly operations = new Map<string, { readonly fingerprint: string; readonly entry: JournalEntry }>()
+    private projection: JournalProjectionIndex | undefined = new JournalProjectionIndex()
     private readonly transient = new Set<string>()
     private writeTail: Promise<void> = Promise.resolve()
 
@@ -55,7 +56,7 @@ export class SqliteConversationJournal implements ConversationJournal {
         const journal = new SqliteConversationJournal(store)
         const { records } = await store.query()
         for (const row of records) journal.adopt(row.toEntry())
-        rebuildJournalProjection(journal.entries, journal.current)
+        journal.ensureProjection()
         return journal
     }
 
@@ -75,11 +76,9 @@ export class SqliteConversationJournal implements ConversationJournal {
 
     async read(after?: JournalWatermark, through?: JournalWatermark): Promise<readonly JournalEntry[]> {
         await this.writeTail
-        return this.entries.filter(
-            (entry) =>
-                (!after || compareJournalWatermarks(entry.watermark, after) > 0) &&
-                (!through || compareJournalWatermarks(entry.watermark, through) <= 0),
-        )
+        const start = Math.min(this.entries.length, Math.max(0, after?.seq ?? 0))
+        const end = Math.min(this.entries.length, Math.max(start, through?.seq ?? this.entries.length))
+        return this.entries.slice(start, end)
     }
 
     async findByOperation(operationId: string): Promise<JournalEntry | undefined> {
@@ -89,7 +88,7 @@ export class SqliteConversationJournal implements ConversationJournal {
 
     async project(through?: JournalWatermark) {
         await this.writeTail
-        return rebuildJournalProjection(this.entries, through ?? this.current)
+        return this.ensureProjection().project(through ?? this.current)
     }
 
     appendTransient(transientId: string): void {
@@ -151,8 +150,18 @@ export class SqliteConversationJournal implements ConversationJournal {
     private adopt(entry: JournalEntry): void {
         if (this.operations.has(entry.operationId)) throw new Error(`DuplicateJournalOperation: ${entry.operationId}`)
         this.entries.push(entry)
+        try {
+            this.projection?.append(entry)
+        } catch {
+            // The row is already durable. Rebuild lazily rather than reporting a committed append as failed.
+            this.projection = undefined
+        }
         this.operations.set(entry.operationId, { fingerprint: fingerprintOf(entry.kind, contentOf(entry)), entry })
         this.current = entry.watermark
+    }
+
+    private ensureProjection(): JournalProjectionIndex {
+        return (this.projection ??= new JournalProjectionIndex(this.entries))
     }
 
     private enqueue<T>(work: () => Promise<T> | T): Promise<T> {

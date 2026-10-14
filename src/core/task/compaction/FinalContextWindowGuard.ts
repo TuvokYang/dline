@@ -17,9 +17,9 @@ import {
 import { getHighContextPressureWarning, withHighContextPressureWarning } from "../environment-context"
 import type { CompactionFailurePresentationPort } from "../executors/compaction/ProductionCompactionAdapter"
 import type { ComposeContextWindowGuardPort, ContextWindowAdmission } from "../executors/compose/ProductionComposeAdapter"
-import type { ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
+import type { ProviderRequestFrame, ProviderRequestFramePort } from "../executors/provider/service/ProviderRequest"
 import { AUTOMATIC_COMPACTION_FAILED, AUTOMATIC_COMPACTION_WITHDRAWN } from "./CompactionRoundBarrier"
-import { estimateFramedRequest, type FramedRequestEstimate } from "./FramedRequestEstimate"
+import { estimateFramedRequestWithFrame, type FramedRequestEstimate } from "./FramedRequestEstimate"
 
 type RequestPressures = Parameters<typeof resolveContextWindowProjection>[0]["requestInfos"]
 type Projection = ReturnType<typeof resolveContextWindowProjection>
@@ -95,7 +95,8 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
 
     async admit(input: { readonly signal: AbortSignal; readonly environment?: string }): Promise<ContextWindowAdmission> {
         let environment = input.environment
-        let measured = await this.measure(input.signal, environment)
+        const frame = await this.options.frames.frame(input.signal)
+        let measured = await this.measure(frame, environment)
         if (measured.projection.shouldCompact && this.options.compaction) {
             const compaction = await this.options.compaction.compactForAdmission(input.signal)
             if (compaction.kind === "nothing_to_compact") return await this.refuseUncompactable()
@@ -103,7 +104,7 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
             if (compaction.kind === "failed") {
                 return { kind: "failed", reason: AUTOMATIC_COMPACTION_FAILED, presentation: compaction.error }
             }
-            if (compaction.kind === "completed") measured = await this.measure(input.signal, environment)
+            if (compaction.kind === "completed") measured = await this.measure(frame, environment)
         }
         const warning = getHighContextPressureWarning({
             contextWindow: measured.estimate.contextWindow,
@@ -114,7 +115,7 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
             const warned = withHighContextPressureWarning(environment, warning)
             if (warned !== environment) {
                 environment = warned
-                measured = await this.measure(input.signal, environment)
+                measured = await this.measure(frame, environment)
             }
         }
         this.admitted = this.admission(measured)
@@ -122,11 +123,11 @@ export class FinalContextWindowGuard implements ComposeContextWindowGuardPort {
         return { kind: "ready", ...(environment === undefined ? {} : { environment }) }
     }
 
-    private async measure(signal: AbortSignal, environment: string | undefined): Promise<Measurement> {
+    private async measure(frame: ProviderRequestFrame, environment: string | undefined): Promise<Measurement> {
         const history = await this.options.conversation.messages()
         const messages: ClineStorageMessage[] =
             environment === undefined ? history : [...history, { role: "user", content: [{ type: "text", text: environment }] }]
-        const estimate = await estimateFramedRequest(this.options.frames, messages, signal)
+        const estimate = estimateFramedRequestWithFrame(frame, messages)
         const requestInfos = this.options.requestPressures()
         // The last measured request is the provider's exact count; only what was
         // added since is estimated, at the ratio this task's own usage showed.
