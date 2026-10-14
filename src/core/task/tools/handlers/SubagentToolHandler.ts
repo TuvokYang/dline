@@ -694,7 +694,7 @@ async function presentSubagentUse(
     const apiConfig = config.services.stateManager.getApiConfiguration()
     const currentMode = config.services.stateManager.getGlobalSettingsKey("mode")
     const provider = resolveProvider(apiConfig, currentMode)
-    const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+    const outcome = config.admissionOutcome
     await config.callbacks.say("use_subagents", approvalBody, undefined, undefined, false, block.ts)
     captureToolTelemetry(config, toolName, provider, outcome === undefined, true, block.isNativeToolCall)
 }

@@ -1,4 +1,5 @@
 import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
+import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 
 /** Feedback the user typed while approving or rejecting one tool block. */
 export interface ToolApprovalFeedback {
@@ -23,9 +24,15 @@ export interface ToolApprovalFeedback {
  * other's feedback, and taken exactly once so a replayed or duplicated response
  * cannot repeat it in a later turn.
  */
+export interface ToolAdmissionOutcome extends InteractionOutcome {
+    readonly source: "manual"
+}
+
 export interface ToolApprovalFeedbackLedger {
     record(blockId: string, feedback: ToolApprovalFeedback): void
     take(blockId: string): ToolApprovalFeedback | undefined
+    recordOutcome(blockId: string, outcome: ToolAdmissionOutcome): void
+    takeOutcome(blockId: string): ToolAdmissionOutcome | undefined
     clear(): void
 }
 
@@ -42,6 +49,7 @@ export function hasApprovalFeedback(feedback: ToolApprovalFeedback): boolean {
 /** Task-scoped in-memory ledger; feedback lives only until its block reports a result. */
 export class InMemoryToolApprovalFeedbackLedger implements ToolApprovalFeedbackLedger {
     private readonly entries = new Map<string, ToolApprovalFeedback>()
+    private readonly outcomes = new Map<string, ToolAdmissionOutcome>()
 
     record(blockId: string, feedback: ToolApprovalFeedback): void {
         if (!hasApprovalFeedback(feedback)) return
@@ -54,7 +62,18 @@ export class InMemoryToolApprovalFeedbackLedger implements ToolApprovalFeedbackL
         return entry
     }
 
+    recordOutcome(blockId: string, outcome: ToolAdmissionOutcome): void {
+        this.outcomes.set(blockId, outcome)
+    }
+
+    takeOutcome(blockId: string): ToolAdmissionOutcome | undefined {
+        const outcome = this.outcomes.get(blockId)
+        this.outcomes.delete(blockId)
+        return outcome
+    }
+
     clear(): void {
         this.entries.clear()
+        this.outcomes.clear()
     }
 }

@@ -19,9 +19,11 @@ import { ToolDisplayUtils } from "../../../tools/utils/ToolDisplayUtils"
 import { type ToolResultBudget, ToolResultUtils } from "../../../tools/utils/ToolResultUtils"
 import { resolveToolResultBudget } from "../../../tools/utils/tool-result-budget"
 import type { ProductionToolExecutionService } from "../ProductionToolAdapter"
+import { reviewRegisteredToolBoundary, type ToolAdmissionSnapshot } from "../ToolAdmissionRegistry"
 import type { ToolDomainSurface } from "../ToolDomainSurface"
 import type { ToolRunCommand } from "../ToolExecutionDomain"
 import type { ProductionToolHandlerRuntime } from "./ProductionToolHandlerRuntime"
+import { resolveToolInteractionPolicy } from "./ToolInteractionPolicy"
 
 export interface ProductionToolConfigFactoryInput {
     readonly command: ToolRunCommand
@@ -32,6 +34,8 @@ export interface ProductionToolConfigFactoryInput {
 
 export interface ProductionToolConfigFactory {
     create(input: ProductionToolConfigFactoryInput): TaskConfig
+    /** Value-only snapshot used by the post-approval canonical boundary review. */
+    readAdmissionSnapshot(block: ToolUse): ToolAdmissionSnapshot
 }
 
 export interface DefaultProductionToolExecutionServiceOptions {
@@ -290,16 +294,31 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
         },
         lease: ContextBudgetLease | undefined,
     ): Promise<SerializedToolResult> {
+        const block = materializeToolInvocation(input.invocation)
+        const description = ToolDisplayUtils.getToolDescription(block, this.options.runtime.coordinator)
+        const boundary = await reviewRegisteredToolBoundary(
+            block,
+            block.name as DlineDefaultTool,
+            this.options.config.readAdmissionSnapshot(block),
+        )
+        if (boundary.outcome === "rejected") {
+            const message =
+                boundary.code === "scope_widened"
+                    ? formatResponse.toolScopeWidened()
+                    : formatResponse.toolCanonicalizationFailed()
+            return serializeResult(input.invocation, formatResponse.toolError(message), description, {
+                stage: "authorization",
+                code: boundary.code,
+            })
+        }
         let config: TaskConfig = {
             ...this.options.config.create({ ...input, coordinator: this.options.runtime.coordinator }),
             ...(lease ? { contextBudget: lease } : {}),
         }
-        const block = materializeToolInvocation(input.invocation)
         const approvalAnchor = config.messageState?.clineMessages.find(
             (message) => message.interactionId === approvalInteractionId(input.invocation.dlineTid),
         )
         if (approvalAnchor) block.ts = approvalAnchor.ts
-        const description = ToolDisplayUtils.getToolDescription(block, this.options.runtime.coordinator)
         if (
             input.invocation.isNativeToolCall &&
             input.invocation.toolName === DlineDefaultTool.WEB_SEARCH &&
@@ -314,7 +333,10 @@ export class DefaultProductionToolExecutionService implements ProductionToolExec
                 })
             config = createLocalWebSearchFallbackConfig(config)
         }
-        const result = normalizeToolExecutionResult(await this.options.runtime.execute(config, block))
+        const policyResult = await resolveToolInteractionPolicy(config, block)
+        const result = normalizeToolExecutionResult(
+            policyResult === undefined ? await this.options.runtime.execute(config, block) : policyResult,
+        )
         const response = await this.deferWithoutRoom(
             config,
             input.invocation,

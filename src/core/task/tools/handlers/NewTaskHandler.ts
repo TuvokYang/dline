@@ -1,15 +1,13 @@
 import type { ToolUse } from "@core/assistant-message"
-import { showSystemNotification } from "@integrations/notifications"
 import { encodeNewTaskAsk } from "@shared/new-task-ask"
 import { DlineDefaultTool } from "@/shared/tools"
-import { declinedNewTaskResponse, newTaskCreatedResponse, successorDirective } from "../../new-task/new-task-answer"
-import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
-import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
-import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
+import { declinedNewTaskDenialResponse, newTaskCreatedResponse, successorDirective } from "../../new-task/new-task-answer"
+import type { ToolHandlerResult } from "../ToolExecutionResult"
+import type { IDenialDescribingToolHandler, IPartialBlockHandler } from "../ToolExecutorCoordinator"
+import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
-import { attachToolFeedbackFiles, sayFeedbackOnce } from "../utils/UserFeedbackUtils"
 
-export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
+export class NewTaskHandler implements IDenialDescribingToolHandler, IPartialBlockHandler {
     readonly name = DlineDefaultTool.NEW_TASK
 
     getDescription(block: ToolUse): string {
@@ -42,39 +40,13 @@ export class NewTaskHandler implements IToolHandler, IPartialBlockHandler {
         }
 
         config.taskState.consecutiveMistakeCount = 0
-
-        if (config.autoApprovalSettings.enableNotifications) {
-            showSystemNotification({
-                subtitle: "Dline wants to start a new task...",
-                message: `Dline is suggesting to start a new task with: ${task}`,
-            })
+        return {
+            response: newTaskCreatedResponse(),
+            postCommit: successorDirective({ task, context, functionId: block.function_id, dlineTid: block.dline_tid }),
         }
+    }
 
-        // Handing the conversation to a successor is the user's call even when
-        // tools are auto-approved, so the choice is this tool's own interaction.
-        const outcome = await config.interactions.open({
-            turnId: interactionTurnId(block),
-            interactionId: interactionId(block),
-            kind: "new_task",
-            presentation: encodeNewTaskAsk({ task, context }),
-            existingTs: block.ts,
-        })
-        if (outcome.actionId === "approve") {
-            return {
-                response: newTaskCreatedResponse(),
-                postCommit: successorDirective({ task, context, functionId: block.function_id, dlineTid: block.dline_tid }),
-            }
-        }
-        if (outcome.actionId !== "reject") {
-            throw new Error(`Unsupported New Task action: ${outcome.actionId}`)
-        }
-
-        const text = outcome.draft?.text ?? ""
-        const images = outcome.draft?.images
-        const files = outcome.draft?.files
-        const attachments = await attachToolFeedbackFiles(files)
-
-        await sayFeedbackOnce(config, "noButtonClicked", text, images, files, outcome)
-        return withToolDocuments(declinedNewTaskResponse(text, images, attachments.text), attachments.documents)
+    async describeDenial(_config: TaskConfig, _block: ToolUse): Promise<string> {
+        return declinedNewTaskDenialResponse()
     }
 }

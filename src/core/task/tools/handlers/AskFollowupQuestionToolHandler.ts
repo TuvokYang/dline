@@ -1,4 +1,4 @@
-import { getPrompt, renderPrompt } from "@core/prompts/i18n"
+import { getPrompt } from "@core/prompts/i18n"
 import { showSystemNotification } from "@integrations/notifications"
 import { findLastIndex, parsePartialArrayString } from "@shared/array"
 import { UiAsk, UiAskQuestion } from "@shared/ExtensionMessage"
@@ -41,15 +41,6 @@ export class AskFollowupQuestionToolHandler implements IToolHandler, IPartialBlo
             return await config.callbacks.sayAndCreateMissingParamError(this.name, "question", undefined, block.ts)
         }
         config.taskState.consecutiveMistakeCount = 0
-
-        // In yolo mode, don't wait for user input - instruct AI to use tools instead
-        if (config.yoloModeToggled) {
-            // Log the question that was asked but auto-respond
-            const truncatedQuestion = `${question.substring(0, 100)}${question.length > 100 ? "..." : ""}`
-            await config.callbacks.say("info", renderPrompt("toolHandlers", "yoloAutoRespond", { QUESTION: truncatedQuestion }))
-
-            return formatResponse.toolResult(renderPrompt("toolHandlers", "yoloToolResult", { QUESTION: question }))
-        }
 
         // Show notification if enabled
         if (config.autoApprovalSettings.enableNotifications) {

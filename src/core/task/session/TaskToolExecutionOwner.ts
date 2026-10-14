@@ -9,6 +9,7 @@ import type { TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import { DlineDefaultTool } from "@shared/tools"
 import type { TaskActivityStore } from "../activity/TaskActivityStore"
 import type { BackgroundResultDeliveryPort } from "../background/BackgroundResultDeliveryPort"
+import { approvalPolicySnapshotOf } from "../executors/policy/ProductionApprovalPolicyAdapter"
 import type { PeerTaskSpawnPort } from "../executors/spawn/PeerTaskSpawnPort"
 import type {
     ProductionToolConfigFactory,
@@ -17,6 +18,7 @@ import type {
 import { materializeToolInvocation } from "../executors/tool/production/DefaultProductionToolExecutionService"
 import type { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
 import type { ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
+import type { ToolApprovalFeedbackLedger } from "../executors/tool/ToolApprovalFeedbackLedger"
 import type { ToolBlockStatePort } from "../executors/tool/ToolBlockStatePort"
 import { TurnToolScheduler } from "../executors/tool/TurnToolScheduler"
 import type { ExplicitInstructionConsumePort } from "../explicit-instructions/types"
@@ -59,6 +61,7 @@ export interface TaskToolExecutionOwnerOptions {
     readonly peerTaskSpawner: PeerTaskSpawnPort
     readonly terminalExecutionMode: "vscodeTerminal" | "backgroundExec"
     readonly toolRuntime: ProductionToolHandlerRuntime
+    readonly approvalFeedback: ToolApprovalFeedbackLedger
     /** The same predicate the prompt and provider request use, so a Web call runs where the model was told it would. */
     readonly usesNativeToolCalls: NativeToolCallsPredicate
 }
@@ -158,7 +161,8 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
      * without inventing a synthetic tool command.
      */
     create(
-        input: Pick<ProductionToolConfigFactoryInput, "coordinator"> & Partial<Pick<ProductionToolConfigFactoryInput, "command">>,
+        input: Pick<ProductionToolConfigFactoryInput, "coordinator"> &
+            Partial<Pick<ProductionToolConfigFactoryInput, "command" | "invocation">>,
     ): TaskConfig {
         const api = this.options.api.current()
         const mode = this.options.settings.mode
@@ -201,6 +205,9 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
             // so it is denied instead of inheriting someone else's authorization.
             explicitInstructions: this.options.readTurnAuthority(input.command?.turnId),
             interactions: this.options.interactions,
+            ...(input.invocation
+                ? { admissionOutcome: this.options.approvalFeedback.takeOutcome(input.invocation.dlineTid) }
+                : {}),
             callbacks: this.options.callbacks,
             coordinator: input.coordinator,
             identityFactory: this.identities,
@@ -221,6 +228,10 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
                       ?.find((connection) => connection.server.name === block.params.server_name)
                       ?.server.tools?.find((tool) => tool.name === block.params.tool_name)?.autoApprove === true
                 : undefined
+        const policy = approvalPolicySnapshotOf(this.options.stateManager.getGlobalSettingsKey("autoApprovalSettings"), {
+            yoloMode: this.options.stateManager.getGlobalSettingsKey("yoloModeToggled") === true,
+            approveAll: this.options.stateManager.getGlobalSettingsKey("autoApproveAllToggled") === true,
+        })
         return {
             taskId: this.options.taskId,
             cwd: this.options.cwd,
@@ -231,11 +242,8 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
             })),
             primaryWorkspaceRoot: this.options.workspaceManager?.getPrimaryRoot()?.path,
             isMultiRootEnabled: isMultiRootEnabled(this.options.stateManager),
-            settings: this.options.stateManager.getGlobalSettingsKey("autoApprovalSettings"),
-            blanket: {
-                yoloMode: this.options.stateManager.getGlobalSettingsKey("yoloModeToggled") === true,
-                approveAll: this.options.stateManager.getGlobalSettingsKey("autoApproveAllToggled") === true,
-            },
+            settings: policy.settings,
+            blanket: policy.blanket ?? {},
             mcpToolAutoApprove,
         }
     }

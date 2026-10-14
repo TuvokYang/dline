@@ -267,7 +267,7 @@ export class WriteToFileToolHandler implements IFullyManagedTool {
             } satisfies UiSayTool)
 
             await config.callbacks.say("tool", completeMessage, undefined, undefined, false, block.ts)
-            const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+            const outcome = config.admissionOutcome
 
             telemetryService.captureToolUsage(
                 config.ulid ?? "",

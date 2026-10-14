@@ -25,7 +25,7 @@ export class FocusChainHandler implements IToolHandler {
             return getPrompt("focusChain", "focusChainChangeMissing")
         }
 
-        const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+        const outcome = config.admissionOutcome
         const approvedPlan = outcome ? this.selectPlan(newPlan, outcome.selection?.values ?? []) : newPlan
 
         // Clean approvedPlan for focus chain file:

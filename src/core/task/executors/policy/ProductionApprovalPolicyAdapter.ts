@@ -1,3 +1,4 @@
+import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import {
     type AutoApprovalSettingsLike,
     type ConfigurableCeilings,
@@ -14,6 +15,14 @@ export interface ApprovalPolicySnapshot {
 
 export interface ProductionApprovalPolicyAdapterOptions {
     readonly readSnapshot: () => ApprovalPolicySnapshot | Promise<ApprovalPolicySnapshot>
+}
+
+/** Build the value-only policy snapshot from the same settings shape admission consumes. */
+export function approvalPolicySnapshotOf<T extends AutoApprovalSettings>(
+    settings: T,
+    blanket: ApprovalPolicySnapshot["blanket"],
+): ApprovalPolicySnapshot & { readonly settings: T } {
+    return { settings, ceilings: settings.ceilings, blanket }
 }
 
 function booleanFact(facts: ApprovalPolicyInput["riskFacts"], key: string): boolean | undefined {

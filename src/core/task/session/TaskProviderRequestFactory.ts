@@ -16,6 +16,7 @@ import type {
     ProviderRequestScope,
 } from "../executors/provider/service/ProviderRequest"
 import type { ProductionToolHandlerRuntime } from "../executors/tool/production/ProductionToolHandlerRuntime"
+import { planProductionTool } from "../executors/tool/production/ProductionToolPlanner"
 import type { ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
 import type { TaskTurnAuthority } from "../explicit-instructions/TurnAuthority"
 import { deriveNewTaskFeedbackContinuationFromConversation } from "../new-task/new-task-continuation"
@@ -89,7 +90,8 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
             // Every Profile, Mode or configuration change ends in a handler rebuild,
             // so handler identity is what tells whether this projection still applies.
             isCurrent: () => this.options.api.current() === frame.api,
-            planTool: (tool: ToolUse) => this.options.tools.plan(tool, this.options.readAdmissionSnapshot(tool)),
+            planTool: async (tool: ToolUse) =>
+                planProductionTool(this.options.tools.coordinator, tool, this.options.readAdmissionSnapshot(tool)),
         }
     }
 

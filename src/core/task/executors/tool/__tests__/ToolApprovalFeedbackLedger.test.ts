@@ -39,13 +39,30 @@ describe("InMemoryToolApprovalFeedbackLedger", () => {
         expect(ledger.take("block-1")).toEqual({ text: "", images: ["image-1"], files: [] })
     })
 
+    it("delivers one structured manual approval outcome exactly once", () => {
+        const ledger = new InMemoryToolApprovalFeedbackLedger()
+        const outcome = {
+            source: "manual" as const,
+            actionId: "approve" as const,
+            draft: { text: "review first", images: [], files: [] },
+            selection: { values: ["1"] },
+        }
+
+        ledger.recordOutcome("block-1", outcome)
+
+        expect(ledger.takeOutcome("block-1")).toEqual(outcome)
+        expect(ledger.takeOutcome("block-1")).toBeUndefined()
+    })
+
     it("drops everything when the task clears the ledger", () => {
         const ledger = new InMemoryToolApprovalFeedbackLedger()
 
         ledger.record("block-1", { text: "note" })
+        ledger.recordOutcome("block-1", { source: "manual", actionId: "approve" })
         ledger.clear()
 
         expect(ledger.take("block-1")).toBeUndefined()
+        expect(ledger.takeOutcome("block-1")).toBeUndefined()
     })
 })
 

@@ -38,6 +38,15 @@ export function successorDirective(call: NewTaskCall): StartSuccessorTaskPostCom
     }
 }
 
+function newTaskDeclinedText(feedback: string): string {
+    return `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\n${formatResponse.newTaskDeclinedFeedback(feedback)}`
+}
+
+/** Denial wording used when the external approval owner refuses the handoff. */
+export function declinedNewTaskDenialResponse(): string {
+    return newTaskDeclinedText("")
+}
+
 /**
  * The source's tool result once the user declined the handoff with feedback.
  *
@@ -46,11 +55,7 @@ export function successorDirective(call: NewTaskCall): StartSuccessorTaskPostCom
  * `/newtask`; see `deriveNewTaskFeedbackContinuation`.
  */
 export function declinedNewTaskResponse(feedback: string, images?: string[], fileContent?: string): ToolResponse {
-    return formatResponse.toolResult(
-        `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\n${formatResponse.newTaskDeclinedFeedback(feedback)}`,
-        images,
-        fileContent,
-    )
+    return formatResponse.toolResult(newTaskDeclinedText(feedback), images, fileContent)
 }
 
 /**

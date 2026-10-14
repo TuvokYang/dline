@@ -1,10 +1,8 @@
 import type { ToolUse } from "@core/assistant-message"
 import { getPrompt, renderPrompt } from "@core/prompts/i18n"
 import { formatResponse } from "@core/prompts/responses"
-import { findLast } from "@shared/array"
 import { telemetryService } from "@/services/telemetry"
 import type { UiMakePlanResponse } from "@/shared/ExtensionMessage"
-import { Logger } from "@/shared/services/Logger"
 import { DlineDefaultTool } from "@/shared/tools"
 import type { InteractionOutcome } from "../../interaction/InteractionProtocol"
 import { type ToolHandlerResult, withToolDocuments } from "../ToolExecutionResult"
@@ -54,26 +52,6 @@ export class MakePlanHandler implements IToolHandler, IPartialBlockHandler {
         }
 
         const sharedMessage = { response } satisfies UiMakePlanResponse
-
-        // Auto-switch to Act mode while in yolo mode
-        if (config.mode === "plan" && config.yoloModeToggled) {
-            // Trigger automatic mode switch
-            const switchSuccessful = await config.callbacks.switchToActMode()
-
-            if (switchSuccessful) {
-                // Complete the plan mode response tool call (this is a unique case where we auto-respond to the user with an ask response)
-                const lastPlanMessage = findLast(config.messageState.clineMessages, (message) => message.ask === MAKE_PLAN_ASK)
-                if (lastPlanMessage) {
-                    lastPlanMessage.text = JSON.stringify(sharedMessage)
-                    lastPlanMessage.partial = false
-                    await config.messageState.updateTaskHistory()
-                }
-
-                // No user response content is needed after the automatic mode switch.
-                return formatResponse.toolResult(getPrompt("toolHandlers", "planYoloSwitchToAct"))
-            }
-            Logger.warn(getPrompt("toolHandlers", "planYoloSwitchFailed"))
-        }
 
         // Set awaiting plan response state
         config.taskState.isAwaitingPlanResponse = true

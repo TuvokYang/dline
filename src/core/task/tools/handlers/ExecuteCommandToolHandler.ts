@@ -265,7 +265,7 @@ export class ExecuteCommandToolHandler implements IFullyManagedTool {
             )
         }
 
-        const admissionOutcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+        const admissionOutcome = config.admissionOutcome
 
         if (!config.isSubagentExecution) {
             await config.callbacks.say(

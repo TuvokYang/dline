@@ -272,12 +272,31 @@ export async function dispatchInteraction(
     // produced without it, and undone below if the runtime refuses the response.
     const feedbackBlockId = approvalEntry && request.draft ? approvalEntry[0] : undefined
     const priorFeedback = feedbackBlockId ? session.approvalFeedback.take(feedbackBlockId) : undefined
+    const outcomeBlockId = approvalEntry && request.actionId === "approve" ? approvalEntry[0] : undefined
+    const priorOutcome = outcomeBlockId ? session.approvalFeedback.takeOutcome(outcomeBlockId) : undefined
     if (feedbackBlockId && request.draft) {
         session.approvalFeedback.record(feedbackBlockId, {
             text: draftText ?? request.draft.text,
             images: [...attachments.images],
             files: [...attachments.files],
             ...partsFieldOf(attachments),
+        })
+    }
+    if (outcomeBlockId) {
+        session.approvalFeedback.recordOutcome(outcomeBlockId, {
+            source: "manual",
+            actionId: "approve",
+            ...(request.draft
+                ? {
+                      draft: {
+                          text: draftText ?? request.draft.text,
+                          images: [...attachments.images],
+                          files: [...attachments.files],
+                      },
+                  }
+                : {}),
+            ...(request.selection ? { selection: { values: [...request.selection.values] } } : {}),
+            ...(showsReply ? { feedbackPresented: true } : {}),
         })
     }
     const result = approvalEntry
@@ -311,6 +330,10 @@ export async function dispatchInteraction(
             session.approvalFeedback.take(feedbackBlockId)
             if (priorFeedback) session.approvalFeedback.record(feedbackBlockId, priorFeedback)
         }
+        if (outcomeBlockId) {
+            session.approvalFeedback.takeOutcome(outcomeBlockId)
+            if (priorOutcome) session.approvalFeedback.recordOutcome(outcomeBlockId, priorOutcome)
+        }
         return response(false, normalizeResult(result.reason))
     }
     try {
@@ -319,6 +342,10 @@ export async function dispatchInteraction(
         if (feedbackBlockId) {
             session.approvalFeedback.take(feedbackBlockId)
             if (priorFeedback) session.approvalFeedback.record(feedbackBlockId, priorFeedback)
+        }
+        if (outcomeBlockId) {
+            session.approvalFeedback.takeOutcome(outcomeBlockId)
+            if (priorOutcome) session.approvalFeedback.recordOutcome(outcomeBlockId, priorOutcome)
         }
         Logger.error(
             `dispatchInteraction: accepted reply was not durable for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,

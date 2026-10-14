@@ -1,11 +1,20 @@
+import fs from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import { ContextBudgetLedger } from "@core/context/context-management/context-budget-ledger"
+import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { MAX_TOOL_RESULT_TEXT_BYTES } from "@shared/content-limits"
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { replayDurableToolResult } from "../../../../DurableToolResult"
 import type { ToolInvocationEnvelope } from "../../../../stores/payload/TaskPayloadEnvelopes"
 import type { TaskConfig } from "../../../../tools/types/TaskConfig"
 import { createDeniedSurface } from "../../ToolDomainSurface"
-import { applyRepeatedCallGuard, DefaultProductionToolExecutionService } from "../DefaultProductionToolExecutionService"
+import {
+    applyRepeatedCallGuard,
+    DefaultProductionToolExecutionService,
+    type ProductionToolConfigFactory,
+} from "../DefaultProductionToolExecutionService"
 import type { ProductionToolHandlerRuntime } from "../ProductionToolHandlerRuntime"
 
 const REFUSAL = "Explicit-only tool 'summarize_task' was rejected: explicit_instruction_missing."
@@ -29,6 +38,19 @@ function toolConfig(extra: Partial<TaskConfig> = {}): TaskConfig {
     } as unknown as TaskConfig
 }
 
+function configFactory(extra: Partial<TaskConfig> = {}, cwd = process.cwd()): ProductionToolConfigFactory {
+    return {
+        create: () => toolConfig(extra),
+        readAdmissionSnapshot: () => ({
+            taskId: "task-1",
+            cwd,
+            workspaceRoots: [cwd],
+            settings: DEFAULT_AUTO_APPROVAL_SETTINGS,
+            blanket: {},
+        }),
+    }
+}
+
 /** A handler runtime whose gate refuses every call, as the central explicit-only gate does. */
 function refusingRuntime(): ProductionToolHandlerRuntime {
     return {
@@ -41,7 +63,7 @@ function refusingRuntime(): ProductionToolHandlerRuntime {
 async function execute(invocation: ToolInvocationEnvelope): Promise<string> {
     const service = new DefaultProductionToolExecutionService({
         taskId: "task-1",
-        config: { create: () => toolConfig() },
+        config: configFactory(),
         runtime: refusingRuntime(),
     })
     const result = await service.execute({
@@ -83,7 +105,7 @@ describe("DefaultProductionToolExecutionService", () => {
         const reply = `<feedback>\n${"x".repeat(MAX_TOOL_RESULT_TEXT_BYTES * 2)}\n</feedback>`
         const service = new DefaultProductionToolExecutionService({
             taskId: "task-1",
-            config: { create: () => toolConfig() },
+            config: configFactory(),
             runtime: {
                 coordinator: { getHandler: () => undefined },
                 execute: async () => reply,
@@ -117,6 +139,7 @@ describe("DefaultProductionToolExecutionService", () => {
         const service = new DefaultProductionToolExecutionService({
             taskId: "task-1",
             config: {
+                ...configFactory(),
                 create: () =>
                     toolConfig({
                         messageState: {
@@ -142,6 +165,46 @@ describe("DefaultProductionToolExecutionService", () => {
 
         expect(receivedPresentationTs).toBe(99)
     })
+
+    it("fails closed before the handler when a workspace junction widens to an external target", async () => {
+        const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-tool-boundary-"))
+        try {
+            const workspace = path.join(temporaryRoot, "workspace")
+            const external = path.join(temporaryRoot, "external")
+            const linked = path.join(workspace, "linked-outside")
+            await fs.mkdir(workspace)
+            await fs.mkdir(external)
+            await fs.symlink(external, linked, process.platform === "win32" ? "junction" : "dir")
+            const executeHandler = vi.fn(async () => "must not execute")
+            const service = new DefaultProductionToolExecutionService({
+                taskId: "task-1",
+                config: configFactory({}, workspace),
+                runtime: {
+                    coordinator: { getHandler: () => undefined },
+                    execute: executeHandler,
+                    restoreSubagentRetry: async () => false,
+                } as unknown as ProductionToolHandlerRuntime,
+            })
+            const invocation: ToolInvocationEnvelope = {
+                ...INVOCATION,
+                toolName: DlineDefaultTool.FILE_NEW,
+                input: { path: path.relative(workspace, path.join(linked, "proof.txt")), content: "proof" },
+            }
+
+            const result = await service.execute({
+                command: { commandId: "command-1", turnId: "turn-1", dlineTid: invocation.dlineTid, invocationRef: "ref-1" },
+                invocation,
+                surface: createDeniedSurface("detached_domain"),
+            })
+
+            expect(executeHandler).not.toHaveBeenCalled()
+            expect(result).toMatchObject({ failed: true, failure: { stage: "authorization", code: "scope_widened" } })
+            expect(JSON.stringify(replayDurableToolResult(result.content))).toContain("[scope_widened]")
+            await expect(fs.stat(path.join(external, "proof.txt"))).rejects.toMatchObject({ code: "ENOENT" })
+        } finally {
+            await fs.rm(temporaryRoot, { recursive: true, force: true })
+        }
+    })
 })
 
 describe("DefaultProductionToolExecutionService context budget", () => {
@@ -165,7 +228,7 @@ describe("DefaultProductionToolExecutionService context budget", () => {
         let call = 0
         const service = new DefaultProductionToolExecutionService({
             taskId: "task-1",
-            config: { create: () => toolConfig(options.config) },
+            config: configFactory(options.config),
             runtime: {
                 coordinator: { getHandler: () => undefined },
                 execute: async (config: TaskConfig) => {

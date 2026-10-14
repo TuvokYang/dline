@@ -1,4 +1,3 @@
-import fs from "node:fs/promises"
 import path from "node:path"
 import { isTaskReadScopePath } from "@core/artifacts/runtime"
 import type { ToolUse } from "@core/assistant-message"
@@ -7,17 +6,12 @@ import { formatCommandApprovalBody } from "@core/task/ask-row"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import { type BrowserAction, browserActions, type UiAsk, type UiSayTool } from "@shared/ExtensionMessage"
 import { DlineDefaultTool } from "@shared/tools"
+import { CanonicalPathBoundary, isPathInsideRoot } from "@/core/workspace/CanonicalPathBoundary"
 import { normalizeWorkspaceRelativeInputPath } from "@/core/workspace/utils/normalizeWorkspaceRelativeInputPath"
 import { parseWorkspaceInlinePath } from "@/core/workspace/utils/parseWorkspaceInlinePath"
 import { DlineRuntimeFileManager } from "@/services/runtime-files/DlineRuntimeFileManager"
 import { PATCH_MARKERS } from "@/shared/Patch"
-import {
-    type ConfigurableCeilings,
-    PATH_SCOPED_TOOLS,
-    type PermissionScopeContext,
-    resolveLaneContext,
-    type ToolLaneContext,
-} from "../../kernel"
+import { type ConfigurableCeilings, type PermissionScopeContext, resolveLaneContext, type ToolLaneContext } from "../../kernel"
 import { findReplaceTextFiles } from "../../tools/utils/replace-text-files"
 import { declaresWritePath, resolveToolPathParam } from "../../tools/utils/tool-path-params"
 import {
@@ -211,11 +205,6 @@ function declaredPath(block: ToolUse, toolName?: DlineDefaultTool): string | und
     return declaredPaths(block, toolName)[0]
 }
 
-function isInsideRoot(target: string, root: string): boolean {
-    const relative = path.relative(path.resolve(root), path.resolve(target))
-    return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-}
-
 function resolveLexicalPath(candidate: string | undefined, snapshot: ToolAdmissionSnapshot): string | undefined {
     if (!candidate) return undefined
     const normalizedInput = normalizeWorkspaceRelativeInputPath(candidate)
@@ -283,7 +272,7 @@ function resolveScopeContext(
             (absolutePath) =>
                 absolutePath !== undefined &&
                 !isTrustedTaskRead(toolName, absolutePath, snapshot) &&
-                !roots.some((root) => isInsideRoot(absolutePath, root)),
+                !roots.some((root) => isPathInsideRoot(absolutePath, root)),
         ),
         isSafeCommand: toolName === DlineDefaultTool.BASH ? !requiresApproval : false,
         isToolAutoApproveEnabled: resolveToolAutoApprove(toolName, snapshot),
@@ -302,28 +291,23 @@ function resolveToolAutoApprove(toolName: DlineDefaultTool, snapshot: ToolAdmiss
     return undefined
 }
 
-async function canonicalizePath(target: string): Promise<string | undefined> {
-    let candidate = path.resolve(target)
-    const missingSegments: string[] = []
-    while (true) {
-        try {
-            const canonical = await fs.realpath(candidate)
-            return path.resolve(canonical, ...missingSegments)
-        } catch (error) {
-            const code = (error as NodeJS.ErrnoException).code
-            if (code !== "ENOENT" && code !== "ENOTDIR") return undefined
-            const parent = path.dirname(candidate)
-            if (parent === candidate) return undefined
-            missingSegments.unshift(path.basename(candidate))
-            candidate = parent
-        }
-    }
-}
+const canonicalPathBoundary = new CanonicalPathBoundary()
 
 interface ConfirmedScopeContext {
     scope: PermissionScopeContext
     canonicalPaths: string[]
     confirmationFailed: boolean
+}
+
+export type RegisteredToolBoundaryReview =
+    | { readonly outcome: "approved"; readonly canonicalPaths: readonly string[] }
+    | { readonly outcome: "rejected"; readonly code: "canonicalization_failed" | "scope_widened" }
+
+export class ToolBoundaryReviewError extends Error {
+    constructor(readonly code: Extract<RegisteredToolBoundaryReview, { outcome: "rejected" }>["code"]) {
+        super(code)
+        this.name = "ToolBoundaryReviewError"
+    }
 }
 
 /**
@@ -361,27 +345,39 @@ async function confirmScopeContext(
     }
     if (absolutePaths.length === 0) return { scope: lexical, canonicalPaths: [], confirmationFailed: false }
 
-    const canonicalPaths = await Promise.all(absolutePaths.map(canonicalizePath))
-    if (canonicalPaths.some((candidate) => candidate === undefined)) {
+    const reviewed = await canonicalPathBoundary.review({ targets: absolutePaths, roots: projectRoots(snapshot) })
+    if (reviewed.outcome === "failed") {
         return { scope: { ...lexical, isExternalPath: true }, canonicalPaths: [], confirmationFailed: true }
     }
-    const resolvedPaths = canonicalPaths.filter((candidate): candidate is string => candidate !== undefined)
-    const roots = projectRoots(snapshot)
-    const canonicalRoots = await Promise.all(roots.map(async (root) => (await canonicalizePath(root)) ?? path.resolve(root)))
     return {
         scope: {
             ...lexical,
-            isExternalPath: resolvedPaths.some(
+            isExternalPath: reviewed.canonicalTargets.some(
                 (canonicalPath) =>
                     !isTrustedTaskRead(toolName, canonicalPath, snapshot) &&
-                    !canonicalRoots.some((root) => isInsideRoot(canonicalPath, root)),
+                    !reviewed.canonicalRoots.some((root) => isPathInsideRoot(canonicalPath, root)),
             ),
         },
         // The anchor was canonicalized to classify the scope; reporting it as the
         // write set would understate which files actually need a lane.
-        canonicalPaths: anchorIsNotTheWriteSet ? [] : resolvedPaths,
+        canonicalPaths: anchorIsNotTheWriteSet ? [] : [...reviewed.canonicalTargets],
         confirmationFailed: false,
     }
+}
+
+/** Recheck canonical path scope after approval and reject any widening without reopening approval. */
+export async function reviewRegisteredToolBoundary(
+    block: ToolUse,
+    toolName: DlineDefaultTool,
+    snapshot: ToolAdmissionSnapshot,
+): Promise<RegisteredToolBoundaryReview> {
+    const lexical = resolveScopeContext(block, toolName, snapshot)
+    const confirmed = await confirmScopeContext(block, toolName, snapshot)
+    if (confirmed.confirmationFailed) return { outcome: "rejected", code: "canonicalization_failed" }
+    if (lexical.isExternalPath !== true && confirmed.scope.isExternalPath === true) {
+        return { outcome: "rejected", code: "scope_widened" }
+    }
+    return { outcome: "approved", canonicalPaths: confirmed.canonicalPaths }
 }
 
 function approvalAsk(toolName: DlineDefaultTool, block: ToolUse): UiAsk {
@@ -465,7 +461,12 @@ export function prepareRegisteredToolAdmission<T>(input: RegisteredToolAdmission
         lanes: ToolLaneContext,
         confirm?: () => Promise<ToolPreflightResult<T>>,
     ): ToolPreflightAdmission<T> => {
-        const refreshDecision = () => admissionFor(input.snapshotProvider?.() ?? snapshot, scope, lanes)
+        const refreshDecision = () => admissionFor(input.snapshotProvider?.() ?? snapshot, scope, lanes, confirm)
+        const run = async () => {
+            const boundary = await reviewRegisteredToolBoundary(input.block, input.canonicalToolName, snapshot)
+            if (boundary.outcome === "rejected") throw new ToolBoundaryReviewError(boundary.code)
+            return input.run()
+        }
         return admitToolCall(
             {
                 toolName: input.canonicalToolName,
@@ -476,35 +477,19 @@ export function prepareRegisteredToolAdmission<T>(input: RegisteredToolAdmission
                 blanket: snapshot.blanket,
                 inheritsApproval: snapshot.inheritsApproval,
             },
-            input.run,
+            run,
             presentation,
             confirm,
             refreshDecision,
         )
     }
-    // A declared path is confirmed before scheduling so an alias resolves to the
-    // scope that actually governs the call. replace_text names a pattern rather
-    // than a path, so it confirms on its own.
+    const scope = resolveScopeContext(input.block, input.canonicalToolName, input.snapshot)
     const declared = declaredPaths(input.block, input.canonicalToolName)
+    // Kept as a pure compatibility hook for callers that still separate planning
+    // and decision refresh. Canonical target access is owned by the guarded run.
     const confirm =
         declared.length > 0 || input.canonicalToolName === DlineDefaultTool.REPLACE_TEXT
-            ? async () => {
-                  const confirmed = await confirmScopeContext(input.block, input.canonicalToolName, input.snapshot)
-                  const lanes: ToolLaneContext = {
-                      ...baseLaneContext,
-                      canonicalWritePaths:
-                          PATH_SCOPED_TOOLS.has(input.canonicalToolName) && !confirmed.confirmationFailed
-                              ? confirmed.canonicalPaths
-                              : undefined,
-                      conservativeWriteFanout: PATH_SCOPED_TOOLS.has(input.canonicalToolName) && confirmed.confirmationFailed,
-                  }
-                  return admissionFor(input.snapshot, confirmed.scope, lanes)
-              }
+            ? async () => admissionFor(input.snapshot, scope, baseLaneContext)
             : undefined
-    return admissionFor(
-        input.snapshot,
-        resolveScopeContext(input.block, input.canonicalToolName, input.snapshot),
-        baseLaneContext,
-        confirm,
-    )
+    return admissionFor(input.snapshot, scope, baseLaneContext, confirm)
 }

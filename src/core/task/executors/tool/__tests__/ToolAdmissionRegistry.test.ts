@@ -8,7 +8,11 @@ import { describe, expect, it, vi } from "vitest"
 import { resolvePermissionScope } from "../../../kernel/turn/approval-kind"
 import { GenerateImageToolHandler } from "../../../tools/handlers/GenerateImageToolHandler"
 import { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
-import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../ToolAdmissionRegistry"
+import {
+    prepareRegisteredToolAdmission,
+    reviewRegisteredToolBoundary,
+    type ToolAdmissionSnapshot,
+} from "../ToolAdmissionRegistry"
 
 function snapshot(overrides: Partial<ToolAdmissionSnapshot> = {}): ToolAdmissionSnapshot {
     return {
@@ -194,7 +198,7 @@ describe("ToolAdmissionRegistry", () => {
         expect(run).not.toHaveBeenCalled()
     })
 
-    it("reclassifies a workspace junction by its canonical external target before execution", async () => {
+    it("keeps junction planning lexical and rejects canonical widening only when execution starts", async () => {
         const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-admission-junction-"))
         try {
             const workspaceDir = path.join(temporaryRoot, "workspace")
@@ -224,11 +228,37 @@ describe("ToolAdmissionRegistry", () => {
             })
 
             expect(result).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope: "edit_workspace" } })
-            if (result.outcome !== "admitted" || !result.confirm) throw new Error("expected scope confirmation")
+            if (result.outcome !== "admitted" || !result.confirm) throw new Error("expected pure confirmation hook")
             const confirmed = await result.confirm()
-            if (confirmed.outcome !== "admitted") throw new Error("expected confirmed admission")
-            expect(confirmed.decision).toMatchObject({ kind: "manual", scope: "edit_external", ceiling: "manual_only" })
+            expect(confirmed).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope: "edit_workspace" } })
+            await expect(result.run()).rejects.toMatchObject({ code: "scope_widened" })
             expect(run).not.toHaveBeenCalled()
+        } finally {
+            await fs.rm(temporaryRoot, { recursive: true, force: true })
+        }
+    })
+
+    it("fails closed after approval when a canonical target widens beyond lexical workspace scope", async () => {
+        const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-boundary-review-junction-"))
+        try {
+            const workspaceDir = path.join(temporaryRoot, "workspace")
+            const externalDir = path.join(temporaryRoot, "external")
+            const linkedDir = path.join(workspaceDir, "linked-outside")
+            await fs.mkdir(workspaceDir)
+            await fs.mkdir(externalDir)
+            await fs.symlink(externalDir, linkedDir, process.platform === "win32" ? "junction" : "dir")
+            const toolBlock = block(DlineDefaultTool.FILE_NEW, {
+                path: path.relative(workspaceDir, path.join(linkedDir, "proof.txt")),
+                content: "proof",
+            })
+
+            await expect(
+                reviewRegisteredToolBoundary(
+                    toolBlock,
+                    DlineDefaultTool.FILE_NEW,
+                    snapshot({ cwd: workspaceDir, workspaceRoots: [workspaceDir] }),
+                ),
+            ).resolves.toEqual({ outcome: "rejected", code: "scope_widened" })
         } finally {
             await fs.rm(temporaryRoot, { recursive: true, force: true })
         }
@@ -271,7 +301,7 @@ describe("ToolAdmissionRegistry", () => {
         }
     })
 
-    it("reclassifies replace_text targets reached through a workspace junction before execution", async () => {
+    it("keeps replace_text planning lexical and rejects canonical widening only when execution starts", async () => {
         const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dline-replace-text-junction-"))
         try {
             const workspaceDir = path.join(temporaryRoot, "workspace")
@@ -303,10 +333,10 @@ describe("ToolAdmissionRegistry", () => {
             })
 
             expect(result).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope: "edit_workspace" } })
-            if (result.outcome !== "admitted" || !result.confirm) throw new Error("expected replace_text scope confirmation")
+            if (result.outcome !== "admitted" || !result.confirm) throw new Error("expected pure confirmation hook")
             const confirmed = await result.confirm()
-            if (confirmed.outcome !== "admitted") throw new Error("expected confirmed replace_text admission")
-            expect(confirmed.decision).toMatchObject({ kind: "manual", scope: "edit_external", ceiling: "manual_only" })
+            expect(confirmed).toMatchObject({ outcome: "admitted", decision: { kind: "automatic", scope: "edit_workspace" } })
+            await expect(result.run()).rejects.toMatchObject({ code: "scope_widened" })
             expect(run).not.toHaveBeenCalled()
         } finally {
             await fs.rm(temporaryRoot, { recursive: true, force: true })

@@ -105,6 +105,12 @@ Always adhere to this format for all tool uses to ensure proper parsing and exec
     newTaskCreated: "The user has created a new task with the provided context.",
     newTaskDeclinedFeedback: "The user provided feedback instead of creating a new task:\n<feedback>\n@FEEDBACK@\n</feedback>",
 
+    // ApprovedToolBoundary
+    toolScopeWidened:
+        "[scope_widened] Tool execution was refused because the canonical target escapes the scope approved for this call. Retry with the canonical external path so the correct approval can be requested.",
+    toolCanonicalizationFailed:
+        "[canonicalization_failed] Tool execution was refused because the target's canonical path could not be verified after approval.",
+
     // ProductionToolAdapter: a tool whose effect follows its result, such as new_task's handoff
     postCommitRefused: "The task was stopped before this tool call could take effect, so it did not happen.",
 

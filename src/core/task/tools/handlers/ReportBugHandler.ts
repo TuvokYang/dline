@@ -86,7 +86,7 @@ export class ReportBugHandler implements IToolHandler, IPartialBlockHandler {
             cline_version: clineVersion,
         })
 
-        const outcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+        const outcome = config.admissionOutcome
         await config.callbacks.say("tool", bugReportData, undefined, undefined, false, block.ts)
         const draft = outcome?.draft
 

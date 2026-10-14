@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../../../new-task/new-task-continuation"
 import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import type { TaskConfig } from "../../types/TaskConfig"
-import { sayFeedbackOnce } from "../../utils/UserFeedbackUtils"
 import { NewTaskHandler } from "../NewTaskHandler"
 
 vi.mock("@core/prompts/i18n", () => ({
@@ -92,21 +91,12 @@ describe("NewTaskHandler", () => {
         vi.clearAllMocks()
     })
 
-    it("hands the successor exactly the task and context, ignoring any draft on approve", async () => {
-        const config = createConfig({
-            actionId: "approve",
-            text: "This draft must not travel",
-            images: ["data:image/png;base64,AAAA"],
-            files: ["/workspace/notes.pdf"],
-        })
+    it("executes an externally approved handoff without opening a second interaction", async () => {
+        const config = createConfig({ actionId: "approve" })
 
         const result = await new NewTaskHandler().execute(config, createBlock(SUCCESSOR))
 
-        expect(config.interactions.open).toHaveBeenCalledWith(
-            expect.objectContaining({ kind: "new_task", interactionId: "tid-new-task", existingTs: 100 }),
-        )
-        const presentation = vi.mocked(config.interactions.open).mock.calls[0][0].presentation
-        expect(parseNewTaskAsk(presentation)).toEqual(SUCCESSOR)
+        expect(config.interactions.open).not.toHaveBeenCalled()
         expect(result).toEqual({
             response: "New task confirmed",
             postCommit: {
@@ -117,40 +107,15 @@ describe("NewTaskHandler", () => {
                 dlineTid: "tid-new-task",
             },
         })
-        expect(sayFeedbackOnce).not.toHaveBeenCalled()
     })
 
-    it("returns Regenerate Context feedback to the model as a marked result instead of handing off", async () => {
-        const config = createConfig({ actionId: "reject", text: "Narrow the scope", files: ["/workspace/a.md"] })
+    it("describes an external rejection with the continuation marker", async () => {
+        const handler = new NewTaskHandler()
+        const denial = await handler.describeDenial(createConfig({ actionId: "reject" }), createBlock(SUCCESSOR))
 
-        const result = await new NewTaskHandler().execute(config, createBlock(SUCCESSOR))
-
-        expect(result).not.toHaveProperty("postCommit")
-        expect(result).toEqual([
-            {
-                type: "text",
-                text: `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\nNarrow the scope\n</feedback>`,
-            },
-        ])
-        expect(sayFeedbackOnce).toHaveBeenCalledWith(
-            config,
-            "noButtonClicked",
-            "Narrow the scope",
-            [],
-            ["/workspace/a.md"],
-            expect.objectContaining({ actionId: "reject" }),
+        expect(denial).toBe(
+            `${NEW_TASK_FEEDBACK_CONTINUATION_MARKER}\nThe user provided feedback instead of creating a new task:\n<feedback>\n\n</feedback>`,
         )
-    })
-
-    it("keeps attached PDFs of the feedback as documents beside the current task's tool result", async () => {
-        const config = createConfig({ actionId: "reject", text: "See the spec", files: ["/workspace/spec.pdf"] })
-
-        const result = await new NewTaskHandler().execute(config, createBlock(SUCCESSOR))
-
-        expect(result).not.toHaveProperty("postCommit")
-        expect(result).toMatchObject({
-            documents: [{ type: "document", source: { data: "/workspace/spec.pdf" } }],
-        })
     })
 
     it.each([

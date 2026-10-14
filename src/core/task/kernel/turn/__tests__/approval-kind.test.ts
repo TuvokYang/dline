@@ -360,17 +360,16 @@ describe("approval kind", () => {
             }
         })
 
-        it("lets new_task present its own approve or feedback interaction", () => {
-            // new_task asks the user to confirm the successor task; a separate
-            // subagent-scope approval would either skip that choice or ask twice.
+        it("forces new_task through external manual approval even under blanket grants", () => {
             for (const settings of [allApproved(), noneApproved()]) {
-                const decision = resolveApprovalKind({
-                    toolName: DlineDefaultTool.NEW_TASK,
-                    settings,
-                    ceilings: { subagent: "manual_only" },
-                })
-                expect(decision.kind).toBe("none")
-                expect(decision.scope).toBe("conversational")
+                for (const blanket of [{}, { approveAll: true }, { yoloMode: true }]) {
+                    const decision = resolveApprovalKind({
+                        toolName: DlineDefaultTool.NEW_TASK,
+                        settings,
+                        blanket,
+                    })
+                    expect(decision).toEqual({ kind: "manual", scope: "subagent", ceiling: "auto" })
+                }
             }
         })
 

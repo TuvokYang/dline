@@ -61,6 +61,10 @@ export const formatResponse = {
     newTaskDeclinedFeedback: (feedback: string) =>
         generateToolResponse("toolHandlers", "newTaskDeclinedFeedback", { FEEDBACK: feedback }),
 
+    toolScopeWidened: () => generateToolResponse("toolHandlers", "toolScopeWidened"),
+
+    toolCanonicalizationFailed: () => generateToolResponse("toolHandlers", "toolCanonicalizationFailed"),
+
     postCommitRefused: () => generateToolResponse("toolHandlers", "postCommitRefused"),
 
     missingToolParameterError: (paramName: string) =>

@@ -2,7 +2,13 @@
  * Workspace module exports for multi-workspace support
  */
 
+export type {
+    CanonicalPathBoundaryOptions,
+    CanonicalPathBoundaryReview,
+    CanonicalPathBoundaryReviewInput,
+} from "./CanonicalPathBoundary"
 // Export workspace path parsing utilities
+export { CanonicalPathBoundary, isPathInsideRoot } from "./CanonicalPathBoundary"
 export type { ParsedWorkspacePath } from "./utils/parseWorkspaceInlinePath"
 export {
     addWorkspaceHint,

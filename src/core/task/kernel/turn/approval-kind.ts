@@ -100,16 +100,20 @@ export type ConfigurableCeilings = Partial<Record<PermissionScope, ApprovalCeili
  * interaction the tool has not been allowed to present. `phase_report`, also
  * under its former `status_update` name, joins the conversational set because
  * it likewise owns whether to block, which is the same rule the existing
- * runtime applies. `new_task` presents its own approve-or-feedback interaction
- * before the successor task starts.
+ * runtime applies. `new_task` is deliberately excluded: creating a peer task is
+ * an external approval decision, not an interaction owned by its handler.
  */
 function ownsItsInteraction(tool: KernelToolId): boolean {
     return (
         tool === KernelToolId.PHASE_REPORT ||
         tool === KernelToolId.LEGACY_STATUS_UPDATE ||
-        tool === KernelToolId.NEW_TASK ||
         KERNEL_CONVERSATIONAL_TOOL_IDS.has(tool)
     )
+}
+
+/** Tools whose product contract always requires an external human decision. */
+function forcesManualApproval(tool: KernelToolId): boolean {
+    return tool === KernelToolId.NEW_TASK
 }
 
 /**
@@ -221,6 +225,7 @@ const DIRECT_SCOPES: Partial<Record<KernelToolId, PermissionScope>> = {
     [KernelToolId.GENERATE_IMAGE]: "generate_image",
     [KernelToolId.TODO]: "focus_chain",
     [KernelToolId.CHANGE_TODO_LIST]: "focus_chain",
+    [KernelToolId.NEW_TASK]: "subagent",
     [KernelToolId.SPAWN_TASK]: "subagent",
     [KernelToolId.USE_SUBAGENT]: "subagent",
     [KernelToolId.USE_SUBAGENTS]: "subagent",
@@ -355,7 +360,7 @@ export function resolveApprovalKind(input: ApprovalKindInput): ApprovalDecision 
     const scope = resolvePermissionScope(input.toolName, input.context)
     const ceiling = resolveApprovalCeiling(scope, input.ceilings)
 
-    if (ceiling === "manual_only") {
+    if (ceiling === "manual_only" || forcesManualApproval(tool)) {
         return { kind: "manual", scope, ceiling }
     }
     if (input.inheritsApproval === true) {

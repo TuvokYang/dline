@@ -65,16 +65,12 @@ function config(
         isSubagentExecution: false,
         taskState: Object.assign(new DefaultToolHandlerState(), { lastToolName: "read_file" }),
         interactions: { open, complete: open, say: vi.fn(async () => undefined) },
-        admissionOutcomes: new Map([
-            [
-                `tid-${DlineDefaultTool.CHANGE_TODO_LIST}`,
-                {
-                    actionId: outcome.actionId,
-                    draft: { text: outcome.text ?? "", images: [], files: [] },
-                    selection: outcome.selection ? { values: outcome.selection } : undefined,
-                },
-            ],
-        ]),
+        admissionOutcome: {
+            source: "manual",
+            actionId: outcome.actionId,
+            draft: { text: outcome.text ?? "", images: [], files: [] },
+            selection: outcome.selection ? { values: outcome.selection } : undefined,
+        },
         callbacks: {
             askAsk: vi.fn(async () => {
                 throw new Error("legacy ask must not be called")

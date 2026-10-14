@@ -81,7 +81,7 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
             block.name,
             config.api.getModel().id,
             provider ?? "",
-            !block.dline_tid || !config.admissionOutcomes?.has(block.dline_tid),
+            config.admissionOutcome === undefined,
             true,
             undefined,
             block.isNativeToolCall,

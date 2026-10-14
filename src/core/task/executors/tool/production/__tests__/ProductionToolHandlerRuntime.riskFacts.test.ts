@@ -4,8 +4,10 @@ import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
 import { ToolValidator } from "../../../../tools/ToolValidator"
 import { ProductionApprovalPolicyAdapter } from "../../../policy/ProductionApprovalPolicyAdapter"
+import type { PlannedProviderTool } from "../../../provider/service/ProviderRequest"
 import type { ToolAdmissionSnapshot } from "../../ToolAdmissionRegistry"
 import { ProductionToolHandlerRuntime } from "../ProductionToolHandlerRuntime"
+import { planProductionTool } from "../ProductionToolPlanner"
 
 /**
  * The planner and the policy must reach the same verdict for one call.
@@ -36,10 +38,7 @@ function runtime(): ProductionToolHandlerRuntime {
     return new ProductionToolHandlerRuntime(new ToolValidator({ validateAccess: () => true } as unknown as IgnoreController))
 }
 
-async function policyVerdict(
-    approval: Awaited<ReturnType<ProductionToolHandlerRuntime["plan"]>>["approval"],
-    actions: Record<string, boolean>,
-): Promise<boolean> {
+async function policyVerdict(approval: PlannedProviderTool["approval"], actions: Record<string, boolean>): Promise<boolean> {
     if (approval.kind !== "automatic") throw new Error(`expected an automatic approval, received ${approval.kind}`)
     const adapter = new ProductionApprovalPolicyAdapter({
         readSnapshot: () => ({ settings: { actions } }),
@@ -58,20 +57,23 @@ async function policyVerdict(
 describe("ProductionToolHandlerRuntime approval facts", () => {
     it("keeps a safe command approved when the policy re-resolves it", async () => {
         const actions = { executeSafeCommands: true }
-        const plan = await runtime().plan(commandBlock("false"), snapshot(actions))
+        const toolRuntime = runtime()
+        const plan = planProductionTool(toolRuntime.coordinator, commandBlock("false"), snapshot(actions))
 
         expect(plan.approval.kind).toBe("automatic")
         await expect(policyVerdict(plan.approval, actions)).resolves.toBe(true)
     })
 
     it("does not let a safe-command grant approve a command that asked for approval", async () => {
-        const plan = await runtime().plan(commandBlock("true"), snapshot({ executeSafeCommands: true }))
+        const toolRuntime = runtime()
+        const plan = planProductionTool(toolRuntime.coordinator, commandBlock("true"), snapshot({ executeSafeCommands: true }))
 
         expect(plan.approval.kind).toBe("manual")
     })
 
     it("publishes the classification facts rather than the resolved scope", async () => {
-        const plan = await runtime().plan(commandBlock("false"), snapshot({ executeSafeCommands: true }))
+        const toolRuntime = runtime()
+        const plan = planProductionTool(toolRuntime.coordinator, commandBlock("false"), snapshot({ executeSafeCommands: true }))
 
         if (plan.approval.kind !== "automatic") throw new Error("expected an automatic approval")
         expect(plan.approval.riskFacts).toMatchObject({
@@ -83,7 +85,7 @@ describe("ProductionToolHandlerRuntime approval facts", () => {
         expect(plan.approval.riskFacts).not.toHaveProperty("ceiling")
     })
 
-    it("uses the confirmed canonical admission before publishing lanes and approval", async () => {
+    it("publishes lexical admission without touching the target during planning", async () => {
         const toolRuntime = runtime()
         const confirm = vi.fn(async () => ({
             outcome: "admitted",
@@ -98,10 +100,20 @@ describe("ProductionToolHandlerRuntime approval facts", () => {
             confirm,
         } as never)
 
-        const plan = await toolRuntime.plan(commandBlock("false"), snapshot({ executeSafeCommands: true }))
+        const plan = planProductionTool(toolRuntime.coordinator, commandBlock("false"), snapshot({ executeSafeCommands: true }))
 
-        expect(confirm).toHaveBeenCalledOnce()
-        expect(plan.lanes).toEqual(["confirmed:external"])
+        expect(confirm).not.toHaveBeenCalled()
+        expect(plan.lanes).toEqual(["lexical:workspace"])
+        expect(plan.approval.kind).toBe("automatic")
+    })
+
+    it("falls back to manual approval when an ai_approvable scope has no approver", async () => {
+        const input = snapshot({})
+        input.settings.ceilings = { command_all: "ai_approvable" }
+
+        const toolRuntime = runtime()
+        const plan = planProductionTool(toolRuntime.coordinator, commandBlock("true"), input)
+
         expect(plan.approval.kind).toBe("manual")
     })
 })

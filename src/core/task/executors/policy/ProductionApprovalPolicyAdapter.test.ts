@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { ProductionApprovalPolicyAdapter } from "./ProductionApprovalPolicyAdapter"
+import { approvalPolicySnapshotOf, ProductionApprovalPolicyAdapter } from "./ProductionApprovalPolicyAdapter"
 
 const signal = new AbortController().signal
 const input = {
@@ -12,6 +12,16 @@ const input = {
 }
 
 describe("ProductionApprovalPolicyAdapter", () => {
+    it("projects configured ceilings from the admission settings snapshot", () => {
+        expect(
+            approvalPolicySnapshotOf({ actions: {}, ceilings: { read_workspace: "manual_only" } } as never, { approveAll: true }),
+        ).toMatchObject({
+            settings: { ceilings: { read_workspace: "manual_only" } },
+            ceilings: { read_workspace: "manual_only" },
+            blanket: { approveAll: true },
+        })
+    })
+
     it("approves enabled automatic scopes and keeps manual ceilings closed", async () => {
         const automatic = new ProductionApprovalPolicyAdapter({
             readSnapshot: () => ({ settings: { actions: { readFiles: true } } }),

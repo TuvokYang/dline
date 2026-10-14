@@ -88,7 +88,7 @@ e2e(
 )
 
 e2e(
-    "write_to_file charges a project junction to external-edit approval by its canonical target",
+    "write_to_file fails closed when a project junction widens to an external canonical target",
     async ({ helper, server, sidebar, userDataDir, workspaceDir }) => {
         e2e.setTimeout(180_000)
         await helper.signin(sidebar)
@@ -118,11 +118,11 @@ e2e(
                 type: "tool",
                 id: "call_junction_external_write_completion",
                 name: "attempt_completion",
-                arguments: { result: "E2E_JUNCTION_EXTERNAL_WRITE_REJECTED" },
+                arguments: { result: "E2E_JUNCTION_SCOPE_WIDENING_REJECTED" },
                 expectedToolResults: [
                     {
                         callId: "call_junction_external_write",
-                        contentIncludes: "The user denied this operation.",
+                        contentIncludes: "[scope_widened]",
                     },
                 ],
             },
@@ -130,23 +130,13 @@ e2e(
 
         await sendTask(sidebar, "Write through the requested project path and finish.")
 
-        // The declared path is lexically inside the workspace, so only realpath
-        // confirmation can charge it to the external scope it actually reaches.
-        const rejectButton = sidebar.getByText("Reject", { exact: true })
-        await expect(rejectButton).toBeVisible({ timeout: 60_000 })
-        await expect(sidebar.getByText("Approve", { exact: true })).toBeVisible()
-        await expect
-            .poll(() =>
-                readFile(externalPath, "utf8")
-                    .then(() => true)
-                    .catch(() => false),
-            )
-            .toBe(false)
-
-        await rejectButton.click()
-        await expect(sidebar.getByText("E2E_JUNCTION_EXTERNAL_WRITE_REJECTED", { exact: false }).last()).toBeVisible({
+        // Planning is lexical and auto-approves the apparent project write. The
+        // post-approval realpath review must fail closed instead of reopening approval.
+        await expect(sidebar.getByText("E2E_JUNCTION_SCOPE_WIDENING_REJECTED", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
+        await expect(sidebar.getByText("Approve", { exact: true })).toHaveCount(0)
+        await expect(sidebar.getByText("Reject", { exact: true })).toHaveCount(0)
         await expect
             .poll(() =>
                 readFile(externalPath, "utf8")

@@ -178,7 +178,7 @@ export class ApplyPatchHandler implements IFullyManagedTool {
             const finalResponses = []
             const applyResults: Record<string, FileOpsResult> = {}
             const fileOutcomes: ApplyPatchFileOutcome[] = []
-            const admissionOutcome = block.dline_tid ? config.admissionOutcomes?.get(block.dline_tid) : undefined
+            const admissionOutcome = config.admissionOutcome
 
             // Create a mapping from message path to original commit change key
             // (needed because for move operations, message.path is the new path, but commit.changes key is the old path)

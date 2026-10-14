@@ -470,7 +470,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
             block.name,
             config.api.getModel().id,
             provider ?? "",
-            !block.dline_tid || !config.admissionOutcomes?.has(block.dline_tid),
+            config.admissionOutcome === undefined,
             true,
             workspaceContext,
             block.isNativeToolCall,

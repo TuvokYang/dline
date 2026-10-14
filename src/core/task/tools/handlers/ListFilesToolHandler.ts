@@ -107,7 +107,7 @@ export class ListFilesToolHandler implements IFullyManagedTool {
                 operationIsLocatedInWorkspace,
             })
 
-        const wasAutoApproved = !block.dline_tid || !config.admissionOutcomes?.has(block.dline_tid)
+        const wasAutoApproved = config.admissionOutcome === undefined
 
         // Run PreToolUse hook after approval but before execution
         try {
