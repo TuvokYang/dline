@@ -9,7 +9,7 @@ interface AutoApproveBarProps {
     style?: React.CSSProperties
 }
 
-/** The ref reaches the bar's outer box, so a surface opening upward can stop above it. */
+/** The ref reaches the bar's outer box. */
 const AutoApproveBar = forwardRef<HTMLDivElement, AutoApproveBarProps>(({ style }, ref) => {
     const { autoApprovalSettings, yoloModeToggled, navigateToSettings } = useExtensionState()
 

@@ -28,20 +28,18 @@ function entry(overrides: Partial<InputQueuePanelEntry> & { id: string }): Input
     }
 }
 
-// The list stops above the auto-approve bar. With the virtual anchor before the
-// trigger, the remounted trigger stayed the reference: a detached 0x0 node, so the
-// list opened as a zero-width sliver at the top of the view (BUGFIX-181).
-it("positions the open queue list from the overlay anchor, not the toggle", async () => {
-    const bar = document.createElement("div")
-    document.body.appendChild(bar)
-    const rect = { x: 20, y: 300, left: 20, top: 300, right: 260, bottom: 340, width: 240, height: 40, toJSON() {} }
-    const measure = vi.spyOn(bar, "getBoundingClientRect").mockReturnValue(rect as DOMRect)
-    render(<InputQueuePanel entries={[entry({ id: "a" })]} {...handlers()} overlayAnchorRef={{ current: bar }} />)
+// The open list sits directly above the queue bar and covers the auto-approve
+// bar; it is positioned from the queue toggle, never from another control.
+it("positions the open queue list from the queue toggle", async () => {
+    render(<InputQueuePanel entries={[entry({ id: "a" })]} {...handlers()} />)
+    const toggle = screen.getByTestId("input-queue-toggle")
+    const rect = { x: 20, y: 300, left: 20, top: 300, right: 260, bottom: 320, width: 240, height: 20, toJSON() {} }
+    const measure = vi.spyOn(toggle, "getBoundingClientRect").mockReturnValue(rect as DOMRect)
 
-    fireEvent.click(screen.getByTestId("input-queue-toggle"))
+    fireEvent.click(toggle)
 
     await waitFor(() => expect(measure).toHaveBeenCalled())
-    bar.remove()
+    expect(screen.getByTestId("input-queue-overlay")).toHaveAttribute("data-side", "top")
 })
 
 function composedDocument(): SemanticInputDocument {

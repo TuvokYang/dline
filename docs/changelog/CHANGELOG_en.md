@@ -25,11 +25,13 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed the context bar dropping sharply when a compaction request is sent, for example from 560k to about 410k: the sending round replaced the provider's measured count of the conversation with a local estimate of the same conversation; the measured count now stays while the pass is sent and drops only once a pass is accepted and the conversation is actually condensed
 - Fixed local token estimates staying too low once a conversation contained an image: a request carrying an image or PDF was dropped entirely from token-per-byte calibration, so an image left in the history disabled calibration for good; the separate image and PDF estimates are now subtracted and the text share is calibrated as usual
 - Fixed the MCP row of the context breakdown always reading 0: MCP tools loaded on demand send no function definitions, and the MCP catalog section of the system prompt was counted under System prompt; that section now counts toward the MCP row, which is now labelled "MCP"
+- Fixed remove, edit, mode toggle, and reorder doing nothing in the input queue of a reopened task, such as after reloading the window: the task opens as a history display, and a queue action now turns it into the writable running task before applying the change
+- Fixed a long conversation shaking continuously while scrolled to the bottom: image chips in messages switched between their icon and their thumbnail on every refresh, changing the row height and moving the list's scroll position; a thumbnail is now loaded once per content and stays in place
 - The context figure computed before sending, including the compaction trigger, takes the previous request's server-reported usage as its baseline
 - Fixed only some mid-stream disconnects being retried automatically; every stream disconnect now retries
 - Fixed the model not receiving the image when `read_file` reads an image file
 - Fixed pasted images sharing a name, and resource record files being attached as input
-- Fixed the expanded input queue covering the auto-approve bar and making it unclickable; the queue list now opens above the auto-approve bar on an opaque background
+- Fixed the auto-approve bar showing through the expanded input queue; the queue list opens directly above the queue bar and covers the auto-approve bar on an opaque background
 - Fixed the format badge in resource chips, such as PNG, wrapping onto two lines when space runs short
 - Fixed a command that needs approval showing an extra Completed command card, whether it was approved or rejected
 - Fixed tasks with more than 500 messages failing with `API Request Failed` (`timestamp ... already exists`) and asking for a manual retry when a deferred hosted tool call was resumed: saved messages are no longer mistaken for new ones, and such a local save failure no longer fails the API request

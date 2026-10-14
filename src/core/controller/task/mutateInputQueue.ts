@@ -72,11 +72,19 @@ function emptyDraft(): DecodedDraft {
  * The task id is checked so a change composed against an older task cannot land
  * on whatever task happens to be active now; the queue is per-task state and
  * silently retargeting it would deliver the user's text to the wrong place.
+ *
+ * A task reopened from history is first shown as a lightweight display that
+ * still lists its persisted queue. A queue control acting on it promotes that
+ * display into the writable runtime first, as the compaction and activity
+ * controls do; otherwise every change would be refused as a missing task.
  */
 export async function mutateInputQueue(
     controller: Controller,
     request: MutateInputQueueRequest,
 ): Promise<MutateInputQueueResponse> {
+    if (request.taskId && controller.task?.taskId !== request.taskId) {
+        await controller.promoteHistoryDisplayForActivityControl(request.taskId)
+    }
     const task = controller.task
     if (!task || (request.taskId && task.taskId !== request.taskId)) {
         return MutateInputQueueResponse.create({ accepted: false, result: "missing_task" })

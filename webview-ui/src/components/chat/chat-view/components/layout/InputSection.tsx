@@ -1,6 +1,6 @@
 import { flushPendingTaskSettingsRequests } from "@components/settings/utils/settingsHandlers"
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
-import React, { type RefObject, useEffect, useRef, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import ChatTextArea from "@/components/chat/ChatTextArea"
 import type { ComposerSubmitKind } from "@/components/chat/input/composer-action/composer-action"
 import { InputQueuePanel, type InputQueuePanelEntry, type InputQueuePanelMode } from "@/components/chat/input/InputQueuePanel"
@@ -65,8 +65,6 @@ interface InputSectionProps {
     submitKind?: ComposerSubmitKind
     /** The model's output rate while a response streams, which tints the composer's action button. */
     outputTokensPerSecond?: number
-    /** The control above the queue its open list stops above, so that control stays reachable. */
-    queueOverlayAnchorRef?: RefObject<HTMLElement | null>
 }
 
 /**
@@ -98,7 +96,6 @@ export const InputSection: React.FC<InputSectionProps> = ({
     onCancelTask,
     submitKind,
     outputTokensPerSecond,
-    queueOverlayAnchorRef,
 }) => {
     const {
         activeQuote,
@@ -313,7 +310,6 @@ export const InputSection: React.FC<InputSectionProps> = ({
                     onRemove={(id) => onRemoveQueuedInput?.(id)}
                     onReorder={(id, targetIndex) => onReorderQueuedInput?.(id, targetIndex)}
                     onToggleMode={(id) => onToggleQueuedMode?.(id)}
-                    overlayAnchorRef={queueOverlayAnchorRef}
                 />
             )}
 

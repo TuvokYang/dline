@@ -5,11 +5,11 @@ import {
     type SemanticInputDocument,
 } from "@shared/input-semantics/document"
 import { ChevronDownIcon, ChevronRightIcon, GripVerticalIcon, PencilIcon, RotateCcwIcon, SendIcon, XIcon } from "lucide-react"
-import { type ComponentProps, type RefObject, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { openTaskResource } from "@/components/chat/input/semantic-composer/resource-staging"
 import { UserInputMarkdownBody } from "@/components/chat/UserInputMarkdownBody"
 import { type ResourceChipResolver, ResourceChipResolverContext } from "@/components/common/ResourceChip"
-import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { markDocumentResources } from "@/services/input-semantics/highlight"
 
 function classes(...values: Array<string | false | undefined>): string {
@@ -57,15 +57,7 @@ export interface InputQueuePanelProps {
     onCancelEdit: (id: string) => void
     onRemove: (id: string) => void
     onReorder: (id: string, targetIndex: number) => void
-    /**
-     * The control the open list stops above, such as the auto-approve bar that
-     * sits between the queue and the chat. Without it the list opens from the
-     * queue toggle and covers whatever is directly above it.
-     */
-    overlayAnchorRef?: RefObject<HTMLElement | null>
 }
-
-type PopoverVirtualRef = NonNullable<ComponentProps<typeof PopoverAnchor>["virtualRef"]>
 
 /** Display names of an entry's attachments, split by kind. */
 export interface QueuedAttachments {
@@ -147,16 +139,13 @@ function QueuedEntryBody({ entry }: { entry: InputQueuePanelEntry }) {
     )
 }
 
-/** Collapsed summary plus a portalled, collision-aware list of retained input. */
-export function InputQueuePanel({
-    entries,
-    onToggleMode,
-    onEdit,
-    onCancelEdit,
-    onRemove,
-    onReorder,
-    overlayAnchorRef,
-}: InputQueuePanelProps) {
+/**
+ * Collapsed summary plus a portalled, collision-aware list of retained input.
+ *
+ * The open list is anchored to the queue bar itself and opens directly above
+ * it, covering the auto-approve bar and the bottom of the chat.
+ */
+export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, onRemove, onReorder }: InputQueuePanelProps) {
     const [expanded, setExpanded] = useState(false)
     const [draggingId, setDraggingId] = useState<string>()
 
@@ -185,11 +174,6 @@ export function InputQueuePanel({
                         ) : null}
                     </button>
                 </PopoverTrigger>
-                {/* Must follow the trigger. The trigger registers itself as the anchor in its
-                    mount effect and then remounts unwrapped, while the virtual anchor re-registers
-                    only when its own target changes; placed first, the list was positioned from a
-                    detached button and opened as a zero-width sliver at the top of the view. */}
-                {overlayAnchorRef ? <PopoverAnchor virtualRef={overlayAnchorRef as PopoverVirtualRef} /> : null}
 
                 <PopoverContent
                     align="start"
