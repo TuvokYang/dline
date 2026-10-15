@@ -224,13 +224,16 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup }: T
     // Filter out tools in the "current activities" range (being shown in loading state)
     const filteredMessages = useMemo(() => getToolsNotInCurrentActivities(messages, allMessages), [messages, allMessages])
 
-    // Get current activities (active reading/exploring) - only for last group
+    // Get current activities (active reading/exploring) - only for last group.
+    // Only calls this group holds are drawn here: an approval the list draws as
+    // its own row must not also appear as this group's active entry.
     const currentActivities = useMemo(() => {
         if (!isLastGroup) {
             return []
         }
-        return getCurrentActivities(allMessages)
-    }, [allMessages, isLastGroup])
+        const members = new Set(messages.map((message) => message.ts))
+        return getCurrentActivities(allMessages).filter((message) => members.has(message.ts))
+    }, [allMessages, isLastGroup, messages])
 
     // Build completed tool items
     const completedTools = useMemo(() => buildToolsWithReasoning(filteredMessages), [filteredMessages])
@@ -251,16 +254,13 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup }: T
             .filter((item) => item.activityText)
     }, [currentActivities])
 
-    // Merge: completed items first, then active items (active only added to last group)
-    // Deduplicate - exclude completed items that match active items by path
+    // Merge: completed items first, then active items (active only added to last group).
+    // An active call replaces its own completed entry. Matching is by row identity,
+    // so another call on the same path keeps its entry.
     const allTools = useMemo(() => {
-        // Get paths of active items
-        const activePaths = new Set(activeTools.map((item) => item.parsedTool.path).filter(Boolean))
-
-        // Filter out completed items that are also being actively read
-        const dedupedCompleted = completedTools.filter((item) => !activePaths.has(item.parsedTool.path))
-
-        return [...dedupedCompleted, ...activeTools]
+        const activeRows = new Set(activeTools.map((item) => item.tool.ts))
+        const completed = completedTools.filter((item) => !activeRows.has(item.tool.ts))
+        return [...completed, ...activeTools]
     }, [completedTools, activeTools])
 
     const summary = getToolGroupSummaryFromParsedTools(completedTools.map((item) => item.parsedTool))

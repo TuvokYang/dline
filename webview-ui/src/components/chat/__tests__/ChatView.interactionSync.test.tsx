@@ -190,8 +190,7 @@ vi.mock("../chat-view", () => {
         WelcomeSection: () => <div>Welcome</div>,
         convertHtmlToMarkdown: async (value: string) => value,
         filterVisibleMessages: (messages: UiMessage[]) => messages,
-        groupLowStakesTools: (messages: UiMessage[]) => messages,
-        groupMessages: (messages: UiMessage[]) => messages,
+        groupChatRows: (_messages: UiMessage[], visibleMessages: UiMessage[]) => visibleMessages,
         useChatState: mocks.useChatState,
         useMessageHandlers: () => ({
             handleSendMessage: vi.fn(async () => undefined),

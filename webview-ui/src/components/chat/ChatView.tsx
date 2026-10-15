@@ -44,8 +44,7 @@ import {
     ChatLayout,
     convertHtmlToMarkdown,
     filterVisibleMessages,
-    groupLowStakesTools,
-    groupMessages,
+    groupChatRows,
     InputSection,
     MessagesArea,
     TaskSection,
@@ -471,9 +470,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         return focusChainSettings.enabled && !lastProgressMessageText
     }, [focusChainSettings.enabled, lastProgressMessageText])
 
-    const groupedMessages = useMemo(() => {
-        return groupLowStakesTools(groupMessages(visibleMessages))
-    }, [visibleMessages])
+    const groupedMessages = useMemo(() => groupChatRows(modifiedMessages, visibleMessages), [modifiedMessages, visibleMessages])
 
     // Use scroll behavior hook
     const scrollBehavior = useScrollBehavior(messages, visibleMessages, groupedMessages, expandedRows, setExpandedRows)

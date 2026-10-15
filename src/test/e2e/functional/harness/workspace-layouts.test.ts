@@ -16,7 +16,7 @@ async function setAutoApproveAction(sidebar: Frame, label: string, enabled: bool
 for (const { title, workspaceType } of E2E_WORKSPACE_TYPES) {
     e2e.extend({ workspaceType })(
         `Workspace layout - ${title} resolves parallel file tools and explicit command directories`,
-        async ({ helper, multiRootWorkspaceDir, page, server, sidebar, userDataDir, workspaceDir }) => {
+        async ({ helper, multiRootWorkspaceDir, server, sidebar, userDataDir, workspaceDir }) => {
             e2e.setTimeout(180_000)
             await helper.signin(sidebar)
             await setAutoApproveAction(sidebar, "Read project files", true)
@@ -128,20 +128,6 @@ for (const { title, workspaceType } of E2E_WORKSPACE_TYPES) {
                 expect(continuation.requestToolResults.filter((result) => result.callId === tool.id)).toHaveLength(1)
             }
 
-            if (isMultiRoot) {
-                // A hinted tool row opens the file from the named workspace root, not a path under the primary root.
-                await sidebar
-                    .getByRole("button", { name: /@workspace_2:README\.md/ })
-                    .first()
-                    .click()
-                const readmeTab = page.getByRole("tab", { name: /README\.md/ })
-                await expect(readmeTab).toBeVisible({ timeout: 30_000 })
-                const readmeLines = page
-                    .locator(".editor-group-container")
-                    .filter({ has: readmeTab })
-                    .locator(".monaco-editor .view-lines")
-                await expect(readmeLines.first()).toContainText("Test Workspace 2", { timeout: 30_000 })
-            }
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         },
     )

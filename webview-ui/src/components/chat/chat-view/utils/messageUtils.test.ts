@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
     filterVisibleMessages,
     findGroupedMessageByTs,
+    groupChatRows,
     groupLowStakesTools,
     groupMessages,
     isToolGroup,
@@ -378,6 +379,67 @@ describe("groupLowStakesTools round boundaries", () => {
         ])
 
         expect(grouped.some((item) => !Array.isArray(item) && item.ts === 4)).toBe(true)
+    })
+})
+
+describe("groupChatRows request rounds", () => {
+    const completedRequest = (ts: number) => createRequestMessage(ts, { cost: 0.01 })
+    const streamingRequest = (ts: number) => createRequestMessage(ts, {})
+    const groupMembers = (grouped: ReturnType<typeof groupChatRows>) =>
+        grouped.filter(isToolGroup).map((group) => group.map((message) => message.ts))
+
+    // A successful request draws no row, so it is gone from the visible list
+    // before grouping. Rounds therefore come from the whole transcript: two
+    // rounds stay apart even when no checkpoint row was written between them.
+    it("keeps each round's tools in their own group when no checkpoint separates the rounds", () => {
+        const transcript = [
+            completedRequest(1),
+            createToolMessage(2, "readFile"),
+            completedRequest(3),
+            createToolMessage(4, "searchFiles"),
+        ]
+
+        expect(groupMembers(groupChatRows(transcript))).toEqual([[2], [4]])
+    })
+
+    it("keeps a finished round's group fixed while the next round streams", () => {
+        const finished = [completedRequest(1), createToolMessage(2, "readFile"), createToolMessage(3, "readFile")]
+
+        const before = groupMembers(groupChatRows(finished))
+        const whileStreaming = groupMembers(groupChatRows([...finished, streamingRequest(4), createToolMessage(5, "readFile")]))
+
+        expect(whileStreaming[0]).toEqual(before[0])
+        expect(whileStreaming).toEqual([[2, 3], [5]])
+    })
+
+    it("shows a later round's text after an earlier round's group", () => {
+        const transcript = [
+            completedRequest(1),
+            createToolMessage(2, "readFile"),
+            completedRequest(3),
+            createTextMessage(4, "Second round answer"),
+        ]
+
+        expect(groupChatRows(transcript).some((item) => !Array.isArray(item) && item.ts === 4)).toBe(true)
+    })
+
+    it("keeps a failed request of an earlier round out of the next round's group", () => {
+        const transcript = [
+            createRequestMessage(1, { streamingFailedMessage: "stream dropped" }),
+            completedRequest(2),
+            createToolMessage(3, "readFile"),
+        ]
+
+        const grouped = groupChatRows(transcript)
+
+        expect(groupMembers(grouped)).toEqual([[3]])
+        expect(grouped[0]).toMatchObject({ ts: 1, say: "api_req_started" })
+    })
+
+    it("still groups the tools of one round together", () => {
+        const transcript = [completedRequest(1), createToolMessage(2, "readFile"), createToolMessage(3, "searchFiles")]
+
+        expect(groupMembers(groupChatRows(transcript))).toEqual([[2, 3]])
     })
 })
 

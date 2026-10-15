@@ -142,6 +142,47 @@ describe("ToolGroupRenderer rows", () => {
         expect(disconnect).toHaveBeenCalled()
     })
 
+    it("keeps a completed read while another read of the same path is active", () => {
+        const finishedRequest: UiMessage = { ts: 1, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 0.01 }) }
+        const request: UiMessage = { ts: 2, type: "say", say: "api_req_started", text: "{}" }
+        const completed = toolMessage(3, { tool: "readFile", path: "src/a.ts" })
+        const active: UiMessage = {
+            ts: 4,
+            type: "ask",
+            ask: "tool",
+            partial: true,
+            text: JSON.stringify({ tool: "readFile", path: "src/a.ts" }),
+        }
+        render(
+            <ToolGroupRenderer
+                allMessages={[finishedRequest, request, completed, active]}
+                isLastGroup
+                messages={[completed, active]}
+            />,
+        )
+
+        const rows = screen.getAllByRole("button")
+        expect(rows).toHaveLength(2)
+        expect(rows.filter((row) => row.getAttribute("aria-busy") === "true")).toHaveLength(1)
+    })
+
+    it("does not draw an active row for a call the group does not hold", () => {
+        const request: UiMessage = { ts: 1, type: "say", say: "api_req_started", text: "{}" }
+        const member = toolMessage(2, { tool: "readFile", path: "src/b.ts" })
+        // Drawn on its own as the approval card, outside this group.
+        const approval: UiMessage = {
+            ts: 3,
+            type: "ask",
+            ask: "tool",
+            text: JSON.stringify({ tool: "readFile", path: "src/c.ts" }),
+        }
+        render(<ToolGroupRenderer allMessages={[request, member, approval]} isLastGroup messages={[member]} />)
+
+        const rows = screen.getAllByRole("button")
+        expect(rows).toHaveLength(1)
+        expect(rows[0]).not.toHaveAttribute("aria-busy")
+    })
+
     it("still expands search results rather than opening the abbreviated directory", () => {
         renderTool({
             tool: "searchFiles",

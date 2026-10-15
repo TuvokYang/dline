@@ -752,8 +752,16 @@ export function isApiReqAbsorbable(apiReqTs: number, allMessages: UiMessage[]): 
  * (regardless of whether it also produces text).
  * If so, it should be absorbed into the tool group rather than rendered separately.
  * The key is: no HIGH-stakes tools (write, edit, command, etc.) AND no reasoning
+ * Only the request's own round is scanned; `rounds` supplies the boundaries
+ * of requests that visibility filtering removed.
  */
-function isApiReqFollowedOnlyByLowStakesTools(index: number, messages: (UiMessage | UiMessage[])[]): boolean {
+function isApiReqFollowedOnlyByLowStakesTools(
+    index: number,
+    messages: (UiMessage | UiMessage[])[],
+    rounds?: RequestRounds,
+): boolean {
+    const request = messages[index]
+    const requestRound = Array.isArray(request) ? undefined : rounds?.get(request.ts)
     let hasLowStakesTool = false
     let hasReasoning = false
     for (let i = index + 1; i < messages.length; i++) {
@@ -765,6 +773,11 @@ function isApiReqFollowedOnlyByLowStakesTools(index: number, messages: (UiMessag
         const msg = item
         // Another api_req_started - stop checking
         if (msg.say === "api_req_started") {
+            break
+        }
+        // A later round, whose request row was filtered out - stop checking
+        const round = rounds?.get(msg.ts)
+        if (requestRound !== undefined && round !== undefined && round !== requestRound) {
             break
         }
         // Reasoning - mark it but don't absorb if present
@@ -794,23 +807,52 @@ function isApiReqFollowedOnlyByLowStakesTools(index: number, messages: (UiMessag
     return hasLowStakesTool && !hasReasoning
 }
 
+/** The request round of each message, keyed by message ts. */
+export type RequestRounds = ReadonlyMap<number, number>
+
+/**
+ * Number the request rounds of a transcript: each api_req_started opens the
+ * next round, and every message belongs to the round open when it was written.
+ *
+ * Index the full transcript, not the visible list: a successful request draws
+ * no row and is filtered out before grouping, so the visible list has lost the
+ * boundaries between most rounds.
+ */
+export function indexRequestRounds(messages: readonly UiMessage[]): RequestRounds {
+    const rounds = new Map<number, number>()
+    let round = 0
+    for (const message of messages) {
+        if (message.say === "api_req_started") {
+            round += 1
+        }
+        rounds.set(message.ts, round)
+    }
+    return rounds
+}
+
 /**
  * Group consecutive low-stakes tools (and their reasoning) into arrays.
  * Absorbs api_req_started messages that are followed only by low-stakes tools.
  * Only creates tool groups when there's at least one actual tool - reasoning-only groups are dropped.
  * Should be called after groupMessages.
  *
+ * A group holds the tools of one request round only. `rounds` must be indexed
+ * on the full transcript (see indexRequestRounds); without it, only request
+ * rows still present in `groupedMessages` separate rounds.
+ *
  * A group never draws what it holds, so a checkpoint is never absorbed: every
  * checkpoint the task wrote is a restore point the user can reach, and it ends
  * the group it follows to render as its own row.
  */
-export function groupLowStakesTools(groupedMessages: (UiMessage | UiMessage[])[]): (UiMessage | UiMessage[])[] {
+export function groupLowStakesTools(
+    groupedMessages: (UiMessage | UiMessage[])[],
+    rounds?: RequestRounds,
+): (UiMessage | UiMessage[])[] {
     const result: (UiMessage | UiMessage[])[] = []
     let toolGroup: UiMessage[] = []
     let pendingReasoning: UiMessage[] = []
     let pendingApiReq: UiMessage[] = []
     let hasTools = false
-    const pendingTools: UiMessage[] = []
 
     const flushPending = () => {
         pendingApiReq.forEach((m) => result.push(m))
@@ -838,6 +880,12 @@ export function groupLowStakesTools(groupedMessages: (UiMessage | UiMessage[])[]
         }
     }
 
+    // The round the open group, or the request waiting to join it, belongs to.
+    const openRound = (): number | undefined => {
+        const first = hasTools ? toolGroup[0] : pendingApiReq[0]
+        return first ? rounds?.get(first.ts) : undefined
+    }
+
     for (let i = 0; i < groupedMessages.length; i++) {
         const item = groupedMessages[i]
 
@@ -853,6 +901,24 @@ export function groupLowStakesTools(groupedMessages: (UiMessage | UiMessage[])[]
         const messageType = message.say
         const isLast = i === groupedMessages.length - 1
 
+        // What a later round writes never joins the group of an earlier round,
+        // nor takes in a request row that an earlier round left waiting.
+        const round = rounds?.get(message.ts)
+        const open = openRound()
+        if (round !== undefined && open !== undefined && round !== open) {
+            commitToolGroup()
+            flushPending()
+        }
+
+        // A settled ask at the end is the call's approval card. It is drawn on
+        // its own, so it must not also be an entry of the group before it.
+        if (isLowStakesTool(message) && message.type === "ask" && !message.partial && isLast) {
+            commitToolGroup()
+            flushPending()
+            result.push(message)
+            continue
+        }
+
         // Low-stakes tool - absorb pending and add to group
         if (isLowStakesTool(message)) {
             // Keep reasoning visible as its own row when it happens before a tool group.
@@ -863,11 +929,6 @@ export function groupLowStakesTools(groupedMessages: (UiMessage | UiMessage[])[]
             absorbPending()
             hasTools = true
             toolGroup.push(message)
-            // If the streaming has stopped and the last message is still an ask,
-            // this means the tool requires user approval - show the old tool block UI.
-            if (message.type === "ask" && !message.partial && isLast) {
-                pendingTools.push(message)
-            }
             continue
         }
 
@@ -888,7 +949,7 @@ export function groupLowStakesTools(groupedMessages: (UiMessage | UiMessage[])[]
         if (messageType === "api_req_started") {
             commitToolGroup()
             flushPending()
-            if (isApiReqFollowedOnlyByLowStakesTools(i, groupedMessages)) {
+            if (isApiReqFollowedOnlyByLowStakesTools(i, groupedMessages, rounds)) {
                 pendingApiReq.push(message)
             } else {
                 result.push(message)
@@ -917,11 +978,21 @@ export function groupLowStakesTools(groupedMessages: (UiMessage | UiMessage[])[]
     commitToolGroup()
     flushPending()
 
-    if (pendingTools.length > 0) {
-        result.push(...pendingTools)
-    }
-
     return result
+}
+
+/**
+ * Build the chat's rows from the full transcript.
+ *
+ * Grouping needs the request rounds of the full transcript, while only the
+ * visible messages become rows; pass `visibleMessages` when the caller already
+ * filtered `messages`.
+ */
+export function groupChatRows(
+    messages: UiMessage[],
+    visibleMessages: UiMessage[] = filterVisibleMessages(messages),
+): (UiMessage | UiMessage[])[] {
+    return groupLowStakesTools(groupMessages(visibleMessages), indexRequestRounds(messages))
 }
 
 export function getIconByToolName(toolName: string) {
