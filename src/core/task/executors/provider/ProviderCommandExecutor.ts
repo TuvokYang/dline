@@ -116,7 +116,7 @@ export interface ProviderTextPresentationPort {
  */
 export interface ProviderRoundCheckpointPort {
     /** Never rejects for a checkpoint failure; a missing restore point never costs the turn. */
-    beforeRequest(signal: AbortSignal): Promise<void>
+    beforeRequest(turnId: string, signal: AbortSignal): Promise<void>
 }
 
 export interface ProviderExecutionInput {
@@ -265,7 +265,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
     }
 
     private async consume(command: ProviderStartCommand, signal: AbortSignal): Promise<ProviderTurnOutcome | undefined> {
-        await this.settleRoundCheckpoint(signal)
+        await this.settleRoundCheckpoint(command.turnId ?? command.commandId, signal)
         const record = await this.openRequestRecord(command)
         const usage: UsageAccumulator = {}
         // A stream that neither yields a turn nor throws was abandoned, which only
@@ -286,10 +286,10 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
     }
 
     /** A restore point that cannot be written only costs that restore point, never the turn. */
-    private async settleRoundCheckpoint(signal: AbortSignal): Promise<void> {
+    private async settleRoundCheckpoint(turnId: string, signal: AbortSignal): Promise<void> {
         if (!this.checkpoint) return
         try {
-            await this.checkpoint.beforeRequest(signal)
+            await this.checkpoint.beforeRequest(turnId, signal)
         } catch {
             // The port reports its own failures; the request proceeds either way.
         }

@@ -1,5 +1,6 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { fetchedCopySupersedes } from "@/context/messageWindowSync"
+import { rowIdentity } from "./rowCoordinate"
 
 export type BottomFollowIntent = "follow" | "none"
 
@@ -117,12 +118,7 @@ function areMessageWindowsEqual(left: UiMessage[], right: UiMessage[]): boolean 
  */
 export function buildMessageRowKey(row: UiMessage | UiMessage[], fallbackIndex: number): string {
     if (Array.isArray(row)) {
-        const firstTs = row.at(0)?.ts
-        const lastTs = row.at(-1)?.ts
-        if (firstTs != null && lastTs != null) {
-            return `group:${firstTs}-${lastTs}:${row.length}`
-        }
-        return `group:fallback-${fallbackIndex}:${row.length}`
+        return row.length > 0 ? `group:${rowIdentity(row)}` : `group:fallback-${fallbackIndex}:0`
     }
 
     if (row.ts != null) {

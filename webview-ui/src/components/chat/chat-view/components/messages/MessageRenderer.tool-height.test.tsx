@@ -8,7 +8,7 @@ import { MessageRenderer } from "./MessageRenderer"
 void React
 
 vi.mock("@/context/ExtensionStateContext", () => ({
-    useExtensionState: () => ({ mode: "act" }),
+    useExtensionState: () => ({ mode: "act", onRelinquishControl: () => () => undefined }),
 }))
 
 vi.mock("@/components/chat/BrowserSessionRow", () => ({
@@ -36,6 +36,47 @@ const messageHandlers: MessageHandlers = {
 }
 
 describe("MessageRenderer tool-group height boundary", () => {
+    it("attaches a pre-edit checkpoint to its source tool card", () => {
+        const tool: UiMessage = {
+            ts: 70,
+            type: "say",
+            say: "tool",
+            text: JSON.stringify({ tool: "editedExistingFile", path: "src/example.ts" }),
+        }
+        const checkpoint: UiMessage = {
+            ts: 71,
+            type: "say",
+            say: "checkpoint_created",
+            checkpointSource: {
+                kind: "pre_edit",
+                toolTs: 70,
+                toolName: "replace_in_file",
+                dlineTid: "tool-70",
+            },
+        }
+
+        render(
+            <MessageRenderer
+                checkpointAttachments={new Map([[70, [checkpoint]]])}
+                expandedRows={{}}
+                footerActive={false}
+                groupedMessages={[tool]}
+                index={0}
+                messageHandlers={messageHandlers}
+                messageOrGroup={tool}
+                modifiedMessages={[tool, checkpoint]}
+                onAddToInput={vi.fn()}
+                onFollowupOptionSelect={vi.fn(async () => undefined)}
+                onHeightChange={vi.fn()}
+                onSetQuote={vi.fn()}
+                onToggleExpand={vi.fn()}
+            />,
+        )
+
+        expect(screen.getByTestId("chat-row")).toBeInTheDocument()
+        expect(screen.getByText("Before replace_in_file")).toBeInTheDocument()
+    })
+
     it("caps grouped tool rows at 60vh without modifying ToolGroupRenderer", () => {
         const group: UiMessage[] = [
             { ts: 1, type: "say", say: "tool", text: JSON.stringify({ tool: "readFile", path: "src/example.ts" }) },
@@ -43,6 +84,7 @@ describe("MessageRenderer tool-group height boundary", () => {
 
         render(
             <MessageRenderer
+                checkpointAttachments={new Map()}
                 expandedRows={{}}
                 footerActive={false}
                 groupedMessages={[group]}

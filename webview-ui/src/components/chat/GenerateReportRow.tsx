@@ -23,7 +23,7 @@ const GenerateReportRow = memo(({ title, content, headClassNames }: GenerateRepo
                 </div>
             </div>
             <div className="w-full relative border-t-1 border-slate-300/20 dark:border-slate-700/20 rounded-b-sm">
-                <div className="plan-completion-content p-2 pt-3 w-full [&_hr]:opacity-20 [&_p:last-child]:mb-0 max-h-[80vh] overflow-y-auto">
+                <div className="plan-completion-content p-2 pt-3 w-full [&_hr]:opacity-20 [&_p:last-child]:mb-0 max-h-[50vh] overflow-y-auto overscroll-contain">
                     <div className="wrap-anywhere [&_hr]:opacity-20">
                         <MarkdownBlock markdown={content} />
                     </div>

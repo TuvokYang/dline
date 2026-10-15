@@ -372,7 +372,7 @@ export class ToolExecutorCoordinator {
         const effects = resolveToolCallSideEffects(config)
         // A stop that lands while the edit waits for its restore point ends the call
         // there: the edit must not start after the task that owned it was halted.
-        if (!(await ensureToolCallCheckpoint(effects, handler.name, config.taskState?.operationSignal))) return NO_TOOL_RESULT
+        if (!(await ensureToolCallCheckpoint(effects, block, config.taskState?.operationSignal))) return NO_TOOL_RESULT
         const result = await handler.execute(authorized.config, block)
         await applyToolCallSideEffects(effects, block)
         return result

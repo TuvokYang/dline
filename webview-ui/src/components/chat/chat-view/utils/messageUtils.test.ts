@@ -485,3 +485,65 @@ describe("groupLowStakesTools checkpoint visibility", () => {
         expect(!Array.isArray(next) && next.say === "checkpoint_created" && next.ts).toBe(15)
     })
 })
+
+describe("pre-edit checkpoint card association", () => {
+    const tool = createToolMessage(50, "editedExistingFile")
+    const checkpoint: UiMessage = {
+        type: "say",
+        say: "checkpoint_created",
+        ts: 51,
+        checkpointSource: {
+            kind: "pre_edit",
+            toolTs: 50,
+            toolName: "replace_in_file",
+            dlineTid: "tool-50",
+        },
+    }
+
+    it("does not allocate another rendered row when the source tool is loaded", () => {
+        expect(filterVisibleMessages([tool, checkpoint])).toEqual([tool])
+        expect(groupChatRows([tool, checkpoint])).toHaveLength(1)
+    })
+
+    it("keeps the restore row when paging omitted the source tool", () => {
+        expect(filterVisibleMessages([checkpoint])).toEqual([checkpoint])
+    })
+
+    it("hides only the checkpoint row when another message shares the checkpoint timestamp", () => {
+        const sameTimestamp: UiMessage = { ts: 51, type: "say", say: "text", text: "keep this row" }
+
+        expect(filterVisibleMessages([tool, sameTimestamp, checkpoint])).toEqual([tool, sameTimestamp])
+    })
+
+    it("does not attach to an unrelated or backend-only row that merely shares the timestamp", () => {
+        const unrelated: UiMessage = { ts: 50, type: "say", say: "text", text: "not a tool" }
+        const backendOnly: UiMessage = { ts: 50, type: "say", say: "state_snapshot" }
+
+        expect(filterVisibleMessages([unrelated, checkpoint])).toEqual([unrelated, checkpoint])
+        expect(filterVisibleMessages([backendOnly, checkpoint])).toEqual([checkpoint])
+    })
+
+    it("keeps the restore row when duplicate completed tool presentations make the owner ambiguous", () => {
+        const duplicate = { ...tool, text: JSON.stringify({ tool: "newFileCreated", path: "src/other.ts" }) }
+
+        expect(filterVisibleMessages([tool, duplicate, checkpoint])).toContain(checkpoint)
+    })
+
+    it("associates a completed tool update when its earlier partial has the same timestamp", () => {
+        const partial = { ...tool, partial: true }
+        const complete = { ...tool, partial: false }
+
+        expect(filterVisibleMessages([partial, complete, checkpoint])).not.toContain(checkpoint)
+    })
+
+    it("keeps round checkpoints independent even when a tool shares their window", () => {
+        const round: UiMessage = {
+            type: "say",
+            say: "checkpoint_created",
+            ts: 52,
+            checkpointSource: { kind: "round_start", turnId: "turn-52" },
+        }
+
+        expect(filterVisibleMessages([tool, round])).toEqual([tool, round])
+    })
+})

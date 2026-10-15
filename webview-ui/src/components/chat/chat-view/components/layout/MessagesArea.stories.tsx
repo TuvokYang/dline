@@ -7,6 +7,7 @@ import { TaskServiceClient } from "@/services/grpc-client"
 import { useChatState } from "../../hooks/useChatState"
 import { useScrollBehavior } from "../../hooks/useScrollBehavior"
 import type { MessageHandlers } from "../../types/chatTypes"
+import { filterVisibleMessages, groupChatRows } from "../../utils/messageUtils"
 import { MessagesArea } from "./MessagesArea"
 
 const TASK: UiMessage = { ts: 1, type: "say", say: "task", text: "Scroll regression fixture" }
@@ -16,6 +17,20 @@ const INITIAL_MESSAGES: UiMessage[] = Array.from({ length: 80 }, (_, index) => (
     say: "text",
     text: `SCROLL_ROW_${index}\n\n${"A stable paragraph for real row measurement.\n\n".repeat(4)}`,
 }))
+const LONG_REPORT: UiMessage = {
+    ts: 10_000,
+    type: "ask",
+    ask: "generate_report",
+    text: JSON.stringify({
+        title: "Long investigation report",
+        content: Array.from(
+            { length: 120 },
+            (_, index) =>
+                `## Finding ${index + 1}\n\nA long report paragraph that exercises measured markdown height at task open.`,
+        ).join("\n\n"),
+    }),
+}
+
 const HANDLERS: MessageHandlers = {
     handleSendMessage: async () => {},
     handleTaskCloseButtonClick: async () => {},
@@ -23,14 +38,26 @@ const HANDLERS: MessageHandlers = {
 }
 const selectOption = async () => {}
 
+interface ScrollFixtureProps {
+    initialMessages?: UiMessage[]
+}
+
 /** Real chat rendering and scroll logic; only the message transport is controlled. */
-function ScrollFixture() {
+function ScrollFixture({ initialMessages = INITIAL_MESSAGES }: ScrollFixtureProps) {
     const base = useExtensionState()
-    const [messages, setMessages] = useState(INITIAL_MESSAGES)
+    const [messages, setMessages] = useState(() => initialMessages)
     const [firstItemIndex, setFirstItemIndex] = useState(0)
     const [height, setHeight] = useState(480)
+    const visibleMessages = useMemo(() => filterVisibleMessages(messages), [messages])
+    const groupedMessages = useMemo(() => groupChatRows(messages, visibleMessages), [messages, visibleMessages])
     const chatState = useChatState(messages, "scroll-regression-fixture")
-    const scroll = useScrollBehavior(messages, messages, messages, chatState.expandedRows, chatState.setExpandedRows)
+    const scroll = useScrollBehavior(
+        messages,
+        visibleMessages,
+        groupedMessages,
+        chatState.expandedRows,
+        chatState.setExpandedRows,
+    )
     const context = useMemo(
         () => ({
             ...base,
@@ -102,7 +129,7 @@ function ScrollFixture() {
                 <div data-testid="scroll-fixture" style={{ height }}>
                     <MessagesArea
                         chatState={chatState}
-                        groupedMessages={messages}
+                        groupedMessages={groupedMessages}
                         messageHandlers={HANDLERS}
                         modifiedMessages={messages}
                         onFollowupOptionSelect={selectOption}
@@ -123,3 +150,6 @@ const meta: Meta<typeof ScrollFixture> = {
 export default meta
 type Story = StoryObj<typeof ScrollFixture>
 export const Interactive: Story = {}
+export const LongReportTail: Story = {
+    args: { initialMessages: [...INITIAL_MESSAGES, LONG_REPORT] },
+}

@@ -1,4 +1,5 @@
 import type { ToolUse } from "@core/assistant-message"
+import type { CheckpointSource } from "@shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
 import { DlineDefaultTool } from "@/shared/tools"
 import type { TaskConfig } from "./types/TaskConfig"
@@ -24,7 +25,10 @@ export interface ToolCallSideEffectPort {
      * Add a file restore point before a named file edit, for a surface that
      * tracks workspace history. Never rejects.
      */
-    readonly ensurePreEditCheckpoint?: (signal?: AbortSignal) => Promise<void>
+    readonly ensurePreEditCheckpoint?: (
+        source?: Extract<CheckpointSource, { kind: "pre_edit" }>,
+        signal?: AbortSignal,
+    ) => Promise<void>
 }
 
 /** Tools whose whole effect is a change to files they name. */
@@ -63,7 +67,10 @@ export function resolveToolCallSideEffects(config: TaskConfig): ToolCallSideEffe
             : { reportProgress: (progress: string) => callbacks.updateFCListFromToolResponse!(progress) }),
         ...(callbacks?.ensurePreEditCheckpoint === undefined
             ? {}
-            : { ensurePreEditCheckpoint: (signal?: AbortSignal) => callbacks.ensurePreEditCheckpoint!(signal) }),
+            : {
+                  ensurePreEditCheckpoint: (source?: Extract<CheckpointSource, { kind: "pre_edit" }>, signal?: AbortSignal) =>
+                      callbacks.ensurePreEditCheckpoint!(source, signal),
+              }),
     }
 }
 
@@ -82,14 +89,24 @@ export function resolveToolCallSideEffects(config: TaskConfig): ToolCallSideEffe
  */
 export async function ensureToolCallCheckpoint(
     port: ToolCallSideEffectPort,
-    tool: DlineDefaultTool,
+    block: ToolUse,
     signal?: AbortSignal,
+    association: "tool" | "standalone" = "tool",
 ): Promise<boolean> {
-    if (!port.ensurePreEditCheckpoint || !toolEditsNamedFiles(tool)) return true
+    if (!port.ensurePreEditCheckpoint || !toolEditsNamedFiles(block.name)) return true
     try {
-        await port.ensurePreEditCheckpoint(signal)
+        const source =
+            association === "tool"
+                ? {
+                      kind: "pre_edit" as const,
+                      toolTs: block.ts,
+                      toolName: block.name,
+                      ...(block.dline_tid ? { dlineTid: block.dline_tid } : {}),
+                  }
+                : undefined
+        await port.ensurePreEditCheckpoint(source, signal)
     } catch (error) {
-        Logger.error(`Pre-edit checkpoint failed before ${tool}`, error instanceof Error ? error : undefined)
+        Logger.error(`Pre-edit checkpoint failed before ${block.name}`, error instanceof Error ? error : undefined)
     }
     return !signal?.aborted
 }

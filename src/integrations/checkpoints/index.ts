@@ -8,6 +8,7 @@ import {
     type CheckpointGateObservation,
     type CheckpointGateState,
     type CheckpointRoundReason,
+    type CheckpointRoundSource,
     type CheckpointRow,
 } from "@core/task/checkpoints/CheckpointGate"
 import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
@@ -24,7 +25,7 @@ import {
 } from "@shared/checkpoints"
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
-import { UiApiReqInfo, UiMessage, UiSay } from "@shared/ExtensionMessage"
+import { type CheckpointSource, UiApiReqInfo, UiMessage, UiSay } from "@shared/ExtensionMessage"
 import { getApiMetrics } from "@shared/getApiMetrics"
 import { HistoryItem } from "@shared/HistoryItem"
 import { ClineCheckpointRestore } from "@shared/WebviewMessage"
@@ -111,6 +112,7 @@ export type CheckpointRowFields = Pick<
     | "lastCheckpointHash"
     | "checkpointWorkspaceRoots"
     | "checkpointAnchorTs"
+    | "checkpointSource"
     | "conversationJournalSeq"
     | "conversationHistoryIndex"
     | "conversationHistoryDeletedRange"
@@ -287,15 +289,32 @@ export class TaskCheckpointManager implements ICheckpointManager {
      * Before a provider request or compaction: add a checkpoint row unless the
      * latest one still covers the conversation and the files.
      */
-    async ensureRoundCheckpoint(reason: CheckpointRoundReason, signal?: AbortSignal): Promise<void> {
+    async ensureRoundCheckpoint(
+        reason: CheckpointRoundReason,
+        sourceOrSignal?: CheckpointSource | AbortSignal,
+        signal?: AbortSignal,
+    ): Promise<void> {
         if (!this.config.enableCheckpoints || this.disposed) return
-        await this.gate.ensureRound(reason, signal)
+        const source = sourceOrSignal instanceof AbortSignal ? undefined : sourceOrSignal
+        const operationSignal = sourceOrSignal instanceof AbortSignal ? sourceOrSignal : signal
+        if (reason === "round_start" && source?.kind === "round_start") {
+            await this.gate.ensureRound(reason, source, operationSignal)
+        } else if (reason === "pre_compaction" && source?.kind === "pre_compaction") {
+            await this.gate.ensureRound(reason, source, operationSignal)
+        } else {
+            await this.gate.ensureRound(reason, operationSignal)
+        }
     }
 
     /** Before a named file edit: add a file restore point when the files changed since the latest checkpoint. */
-    async ensurePreEditCheckpoint(signal?: AbortSignal): Promise<void> {
+    async ensurePreEditCheckpoint(
+        sourceOrSignal?: Extract<CheckpointSource, { kind: "pre_edit" }> | AbortSignal,
+        signal?: AbortSignal,
+    ): Promise<void> {
         if (!this.config.enableCheckpoints || this.disposed) return
-        await this.gate.ensurePreEdit(signal)
+        const source = sourceOrSignal instanceof AbortSignal ? undefined : sourceOrSignal
+        const operationSignal = sourceOrSignal instanceof AbortSignal ? sourceOrSignal : signal
+        await this.gate.ensurePreEdit(source ?? operationSignal, source ? operationSignal : undefined)
     }
 
     /**
@@ -331,6 +350,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
     private async writeCheckpointRow(input: {
         readonly refs?: CheckpointReferenceSet
         readonly anchor?: CheckpointRow
+        readonly source?: CheckpointSource
     }): Promise<CheckpointRow> {
         if (this.disposed) throw new Error("The task is closing")
         const messages = this.services.messageStateHandler.clineMessages
@@ -341,6 +361,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
         const anchor = input.anchor
         const anchorRow = anchor && messages.find((message) => message.ts === anchor.ts)
         const begun = this.callbacks.beginRow({
+            ...(input.source ? { checkpointSource: input.source } : {}),
             ...(input.refs ? { lastCheckpointHash: input.refs.hashes, checkpointWorkspaceRoots: input.refs.workspaceRoots } : {}),
             ...(anchor
                 ? {
@@ -383,8 +404,12 @@ export class TaskCheckpointManager implements ICheckpointManager {
         )
         const latestFiles = findLast(messages, (message) => hasFileCheckpoint(readCheckpointReferenceSet(message)))
         const latestRefs = latestFiles ? readCheckpointReferenceSet(latestFiles) : undefined
+        const latestSource = latestRound?.checkpointSource
+        const latestRoundSource: CheckpointRoundSource | undefined =
+            latestSource?.kind === "round_start" || latestSource?.kind === "pre_compaction" ? latestSource : undefined
         return {
             ...(latestRound ? { latestChat: { ts: latestRound.ts, position: latestRound.conversationJournalSeq } } : {}),
+            ...(latestRoundSource ? { latestSource: latestRoundSource } : {}),
             ...(latestRefs ? { latestRefs } : {}),
         }
     }

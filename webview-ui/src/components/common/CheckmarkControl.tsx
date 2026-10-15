@@ -1,4 +1,5 @@
 import { flip, offset, shift, useFloating } from "@floating-ui/react"
+import type { CheckpointSource } from "@shared/ExtensionMessage"
 import { CheckpointRestoreRequest } from "@shared/proto/dline/checkpoints"
 import { Int64Request } from "@shared/proto/dline/common"
 import { ClineCheckpointRestore } from "@shared/WebviewMessage"
@@ -25,6 +26,7 @@ interface CheckmarkControlProps {
     compactionRestore?: CompactionRestoreReference
     hasWorkspaceCheckpoint?: boolean
     workspaceCheckpointCoverage?: { available: number; total: number }
+    source?: CheckpointSource
 }
 
 export const CheckmarkControl = ({
@@ -33,6 +35,7 @@ export const CheckmarkControl = ({
     compactionRestore,
     hasWorkspaceCheckpoint = true,
     workspaceCheckpointCoverage,
+    source,
 }: CheckmarkControlProps) => {
     const [compareDisabled, setCompareDisabled] = useState(false)
     const [restoreTaskDisabled, setRestoreTaskDisabled] = useState(false)
@@ -46,13 +49,21 @@ export const CheckmarkControl = ({
         workspaceCheckpointCoverage !== undefined &&
         workspaceCheckpointCoverage.total > 1 &&
         workspaceCheckpointCoverage.available < workspaceCheckpointCoverage.total
+    const sourceLabel =
+        source?.kind === "pre_edit"
+            ? `Before ${source.toolName}`
+            : source?.kind === "round_start"
+              ? "Round checkpoint"
+              : source?.kind === "pre_compaction"
+                ? "Pre-compaction checkpoint"
+                : undefined
     const checkpointLabel = compactionRestore
         ? "Compaction checkpoint"
         : partialCoverage
-          ? `Checkpoint (${workspaceCheckpointCoverage.available}/${workspaceCheckpointCoverage.total} workspaces${isCheckpointCheckedOut ? ", restored" : ""})`
+          ? `${sourceLabel ?? "Checkpoint"} (${workspaceCheckpointCoverage.available}/${workspaceCheckpointCoverage.total} workspaces${isCheckpointCheckedOut ? ", restored" : ""})`
           : isCheckpointCheckedOut
-            ? "Checkpoint (restored)"
-            : "Checkpoint"
+            ? `${sourceLabel ?? "Checkpoint"} (restored)`
+            : (sourceLabel ?? "Checkpoint")
 
     // Clear "Restore Files" button when checkpoint is no longer checked out
     useEffect(() => {
@@ -200,14 +211,14 @@ export const CheckmarkControl = ({
                     "text-link": isCheckpointCheckedOut,
                 })}
             />
+            <span
+                className={cn("text-[9px] text-description shrink-0", {
+                    "text-link": isCheckpointCheckedOut,
+                })}>
+                {checkpointLabel}
+            </span>
             <DottedLine $isCheckedOut={isCheckpointCheckedOut} className="hover-show-inverse" />
             <div className="hover-content">
-                <span
-                    className={cn("text-[9px] text-description shrink-0", {
-                        "text-link": isCheckpointCheckedOut,
-                    })}>
-                    {checkpointLabel}
-                </span>
                 <DottedLine $isCheckedOut={isCheckpointCheckedOut} />
                 <ButtonGroup>
                     {workspaceCheckpointAvailable && (

@@ -2,6 +2,7 @@ import {
     UiAsk as AppClineAsk,
     UiMessage as AppClineMessage,
     UiSay as AppClineSay,
+    type CheckpointSource,
     type CommandStatus,
 } from "@shared/ExtensionMessage"
 import {
@@ -33,6 +34,38 @@ function copySubmittedInputs(inputs: unknown, text: string | undefined): Submitt
     return normalizeSubmittedInputs(inputs, text)?.map((input) => ({
         segments: input.segments.map((segment) => ({ ...segment })),
     }))
+}
+
+function convertCheckpointSource(source: CheckpointSource | undefined) {
+    if (!source) return undefined
+    if (source.kind === "round_start") return { kind: source.kind, turnId: source.turnId }
+    if (source.kind === "pre_compaction") return { kind: source.kind }
+    return {
+        kind: source.kind,
+        toolTs: source.toolTs,
+        toolName: source.toolName,
+        ...(source.dlineTid ? { dlineTid: source.dlineTid } : {}),
+    }
+}
+
+function parseCheckpointSource(source: {
+    kind: string
+    turnId?: string
+    toolTs?: number
+    toolName?: string
+    dlineTid?: string
+}): CheckpointSource | undefined {
+    if (source.kind === "round_start" && source.turnId) return { kind: source.kind, turnId: source.turnId }
+    if (source.kind === "pre_compaction") return { kind: source.kind }
+    if (source.kind === "pre_edit" && source.toolTs !== undefined && source.toolName) {
+        return {
+            kind: source.kind,
+            toolTs: source.toolTs,
+            toolName: source.toolName,
+            ...(source.dlineTid ? { dlineTid: source.dlineTid } : {}),
+        }
+    }
+    return undefined
 }
 
 function convertSubmittedInputsToProto(inputs: unknown, text: string | undefined): ProtoSubmittedInput[] {
@@ -329,6 +362,7 @@ export function convertClineMessageToProto(message: AppClineMessage): ProtoCline
         queuedInputMode: message.queuedInputMode ?? "",
         imageGeneration: convertImageGenerationToProto(imageGeneration),
         submittedInputs: convertSubmittedInputsToProto(message.submittedInputs, message.text),
+        checkpointSource: convertCheckpointSource(message.checkpointSource),
     }
 
     return protoMessage
@@ -380,6 +414,9 @@ export function convertProtoToClineMessage(protoMessage: ProtoClineMessage): App
     }
     if (protoMessage.checkpointWorkspaceRoots.length > 0) {
         message.checkpointWorkspaceRoots = protoMessage.checkpointWorkspaceRoots
+    }
+    if (protoMessage.checkpointSource) {
+        message.checkpointSource = parseCheckpointSource(protoMessage.checkpointSource)
     }
     if (protoMessage.isCheckpointCheckedOut) {
         message.isCheckpointCheckedOut = protoMessage.isCheckpointCheckedOut

@@ -36,7 +36,6 @@ import {
     TriangleAlertIcon,
 } from "lucide-react"
 import { MouseEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useSize } from "react-use"
 import { OptionsButtons } from "@/components/chat/OptionsButtons"
 import { CheckmarkControl } from "@/components/common/CheckmarkControl"
 import { WithCopyButton } from "@/components/common/CopyButton"
@@ -112,7 +111,6 @@ interface ChatRowProps {
     onToggleExpand: (ts: number, origin?: RowExpansionOrigin) => void
     lastModifiedMessage?: UiMessage
     isLast: boolean
-    onHeightChange: (isTaller: boolean) => void
     onFollowupOptionSelect?: (message: UiMessage, option: string) => Promise<void>
     sendMessageFromChatRow?: (text: string, images: string[], files: string[]) => void
     onAddToInput?: (text: string) => void
@@ -129,7 +127,7 @@ export interface QuoteButtonState {
     selectedText: string
 }
 
-interface ChatRowContentProps extends Omit<ChatRowProps, "onHeightChange"> {}
+interface ChatRowContentProps extends ChatRowProps {}
 
 export const ProgressIndicator = () => <LoaderCircleIcon className="size-2 mr-2 animate-spin" />
 const InvisibleSpacer = () => <div aria-hidden className="h-px" />
@@ -198,35 +196,11 @@ function AutoRetryErrorBox({ info, startedAt }: { info: AutoRetryInfo; startedAt
 }
 
 const ChatRow = memo(
-    (props: ChatRowProps) => {
-        const { isLast, onHeightChange } = props
-        // Store the previous height to compare with the current height
-        // This allows us to detect changes without causing re-renders
-        const prevHeightRef = useRef(0)
-
-        const [chatrow, { height }] = useSize(
-            <div className="relative pt-2.5 px-4">
-                <ChatRowContent {...props} />
-            </div>,
-        )
-
-        useEffect(() => {
-            // used for partials command output etc.
-            // NOTE: it's important we don't distinguish between partial or complete here since our scroll effects in chatview need to handle height change during partial -> complete
-            const isInitialRender = prevHeightRef.current === 0 // prevents scrolling when new element is added since we already scroll for that
-            // height starts off at Infinity
-            if (isLast && height !== 0 && height !== Number.POSITIVE_INFINITY && height !== prevHeightRef.current) {
-                if (!isInitialRender) {
-                    onHeightChange(height > prevHeightRef.current)
-                }
-                prevHeightRef.current = height
-            }
-        }, [height, isLast, onHeightChange])
-
-        // we cannot return null as virtuoso does not support it so we use a separate visibleMessages array to filter out messages that should not be rendered
-        return chatrow
-    },
-    // memo does shallow comparison of props, so we need to do deep comparison of arrays/objects whose properties might change
+    (props: ChatRowProps) => (
+        <div className="relative pt-2.5 px-4">
+            <ChatRowContent {...props} />
+        </div>
+    ),
     deepEqual,
 )
 
@@ -1235,6 +1209,7 @@ export const ChatRowContent = memo(
                                 hasWorkspaceCheckpoint={message.lastCheckpointHash?.some(Boolean) === true}
                                 isCheckpointCheckedOut={message.isCheckpointCheckedOut}
                                 messageTs={message.ts}
+                                source={message.checkpointSource}
                                 workspaceCheckpointCoverage={{
                                     available: message.lastCheckpointHash?.filter(Boolean).length ?? 0,
                                     total: message.checkpointWorkspaceRoots?.length ?? message.lastCheckpointHash?.length ?? 0,

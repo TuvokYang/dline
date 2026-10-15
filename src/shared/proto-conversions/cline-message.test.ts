@@ -199,6 +199,31 @@ describe("UiMessage command identity conversion", () => {
         expect(roundTripMessage).toMatchObject(applicationMessage)
     })
 
+    it("preserves checkpoint producer identity across the proto boundary", () => {
+        const applicationMessage: UiMessage = {
+            ts: 1035,
+            type: "say",
+            say: "checkpoint_created",
+            checkpointSource: {
+                kind: "pre_edit",
+                toolTs: 1020,
+                toolName: "replace_in_file",
+                dlineTid: "tool-1020",
+            },
+        }
+
+        const protoMessage = convertClineMessageToProto(applicationMessage)
+        const roundTripMessage = convertProtoToClineMessage(protoMessage)
+
+        expect(protoMessage.checkpointSource).toEqual({
+            kind: "pre_edit",
+            toolTs: 1020,
+            toolName: "replace_in_file",
+            dlineTid: "tool-1020",
+        })
+        expect(roundTripMessage.checkpointSource).toEqual(applicationMessage.checkpointSource)
+    })
+
     it("preserves multi-root checkpoint references across the proto boundary", () => {
         const applicationMessage: UiMessage = {
             ts: 104,

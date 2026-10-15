@@ -370,7 +370,8 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         const harness = createManager(create, undefined, { messages, tracker })
 
         let settled = false
-        const round = harness.manager.ensureRoundCheckpoint("round_start").then(() => {
+        const source = { kind: "round_start" as const, turnId: "turn-baseline" }
+        const round = harness.manager.ensureRoundCheckpoint("round_start", source).then(() => {
             settled = true
         })
         await vi.waitFor(() => expect(tracker.commit).toHaveBeenCalledOnce())
@@ -380,7 +381,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 
         releaseCommit("baseline-hash")
         await round
-        expect(messages).toEqual([expect.objectContaining({ lastCheckpointHash: ["baseline-hash"] })])
+        expect(messages).toEqual([expect.objectContaining({ lastCheckpointHash: ["baseline-hash"], checkpointSource: source })])
     })
 
     it("still writes the chat row and never rejects when the commit fails", async () => {

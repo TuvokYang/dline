@@ -52,6 +52,7 @@ const renderConversation = (messages: UiMessage[]) => {
         <div>
             {grouped.map((item, index) => (
                 <MessageRenderer
+                    checkpointAttachments={new Map()}
                     expandedRows={{}}
                     footerActive={false}
                     groupedMessages={grouped}

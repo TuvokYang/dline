@@ -84,8 +84,15 @@ describe("buildMessageRowKey", () => {
         const keyBefore = buildMessageRowKey([createMessage(100), createMessage(200, "draft", true)], 9)
         const keyAfter = buildMessageRowKey([createMessage(100), createMessage(200, "final", false)], 9)
 
-        expect(keyBefore).toBe("group:100-200:2")
+        expect(keyBefore).toBe("group:100,200")
         expect(keyAfter).toBe(keyBefore)
+    })
+
+    it("distinguishes regrouped rows whose middle membership changed", () => {
+        const first = buildMessageRowKey([createMessage(100), createMessage(150), createMessage(200)], 9)
+        const second = buildMessageRowKey([createMessage(100), createMessage(175), createMessage(200)], 9)
+
+        expect(first).not.toBe(second)
     })
 
     it("builds a stable key for a single final row", () => {

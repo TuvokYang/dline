@@ -1698,8 +1698,9 @@ export class SubagentRunner {
                             toolResult = await this.executeToolWithInterruption(async () => {
                                 const proceed = await ensureToolCallCheckpoint(
                                     resolveToolCallSideEffects(subagentConfig),
-                                    handler.name,
+                                    toolCallBlock,
                                     this.interruptionController?.signal,
+                                    "standalone",
                                 )
                                 // The run was interrupted while the edit waited for its restore
                                 // point and has already reported itself cancelled; this closure

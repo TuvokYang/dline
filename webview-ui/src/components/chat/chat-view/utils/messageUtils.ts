@@ -182,12 +182,62 @@ export function collectMcpResponseTexts(messages: UiMessage[], requestTs: number
     })
 }
 
+/** Select one visible tool presentation from same-ts partial/final updates; ambiguity stays standalone. */
+function resolveToolPresentation(candidates: readonly UiMessage[]): UiMessage | undefined {
+    const complete = candidates.filter((candidate) => candidate.partial !== true)
+    if (complete.length === 1) return complete[0]
+    if (complete.length > 1) return undefined
+    return candidates.length === 1 ? candidates[0] : undefined
+}
+
+/**
+ * Index pre-edit checkpoints whose unique source tool card is present in this loaded window.
+ *
+ * Both filtering and rendering consume this map, so a checkpoint cannot be hidden
+ * by a looser rule than the one that attaches it. Any missing or ambiguous owner
+ * leaves the restore point standalone.
+ */
+export function indexPreEditCheckpointAttachments(messages: readonly UiMessage[]): ReadonlyMap<number, UiMessage[]> {
+    const toolCandidates = new Map<number, UiMessage[]>()
+    for (const message of messages) {
+        if (message.ask !== "tool" && message.say !== "tool") continue
+        const candidates = toolCandidates.get(message.ts) ?? []
+        candidates.push(message)
+        toolCandidates.set(message.ts, candidates)
+    }
+
+    const ownerTimestamps = new Set<number>()
+    for (const [toolTs, candidates] of toolCandidates) {
+        if (resolveToolPresentation(candidates)) ownerTimestamps.add(toolTs)
+    }
+
+    const checkpoints = new Map<number, UiMessage[]>()
+    for (const message of messages) {
+        const source = message.say === "checkpoint_created" ? message.checkpointSource : undefined
+        if (source?.kind !== "pre_edit" || !ownerTimestamps.has(source.toolTs)) continue
+        const attached = checkpoints.get(source.toolTs) ?? []
+        attached.push(message)
+        checkpoints.set(source.toolTs, attached)
+    }
+    return checkpoints
+}
+
 /**
  * Filter messages that should be visible in the chat
  */
 export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
+    const attachedCheckpointTimestamps = new Set(
+        Array.from(indexPreEditCheckpointAttachments(messages).values(), (checkpoints) =>
+            checkpoints.map((message) => message.ts),
+        ).flat(),
+    )
     return messages.filter((message, index, arr) => {
         const hasNoVisibleContent = !message.text?.trim() && !message.images?.length && !message.files?.length
+        if (message.say === "checkpoint_created" && attachedCheckpointTimestamps.has(message.ts)) {
+            // The restore point renders with its owning tool card. If that card is
+            // outside this paged window, the index omits it and this row remains.
+            return false
+        }
         // Older runtimes persisted empty intake and turn-ending presentation rows.
         // Keep them as recovery evidence, but never allocate a virtualized item for
         // a content-only row that cannot render any user-visible content.

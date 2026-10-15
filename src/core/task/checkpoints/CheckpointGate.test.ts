@@ -1,3 +1,4 @@
+import type { CheckpointSource } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
 import { CheckpointGate, type CheckpointGateObservation, type CheckpointGateState, type CheckpointRow } from "./CheckpointGate"
 
@@ -10,7 +11,7 @@ type Refs = string
 function harness(options: { initialState?: () => CheckpointGateState<Refs> } = {}) {
     const journal: Array<"message" | "marker"> = []
     const workspace = { dirty: true, head: 0, commitError: undefined as Error | undefined, commits: 0 }
-    const rows: Array<{ row: CheckpointRow; refs?: Refs; anchor?: CheckpointRow }> = []
+    const rows: Array<{ row: CheckpointRow; refs?: Refs; anchor?: CheckpointRow; source?: CheckpointSource }> = []
     const bundles: Array<{ row: CheckpointRow; refs?: Refs; anchor?: CheckpointRow }> = []
     const observations: CheckpointGateObservation[] = []
     const failures = {
@@ -84,14 +85,41 @@ describe("CheckpointGate", () => {
             const subject = harness()
             subject.say()
 
-            const first = await subject.gate.ensureRound("round_start")
-            const second = await subject.gate.ensureRound("round_start")
+            const source = { kind: "round_start" as const, turnId: "turn-1" }
+            const first = await subject.gate.ensureRound("round_start", source)
+            const second = await subject.gate.ensureRound("round_start", source)
 
             expect(first.outcome).toBe("created")
             expect(second.outcome).toBe("covered")
             expect(subject.rows).toHaveLength(1)
-            expect(subject.rows[0]).toMatchObject({ refs: "refs-0", row: { position: 1 } })
+            expect(subject.rows[0]).toMatchObject({ refs: "refs-0", row: { position: 1 }, source })
             expect(subject.bundles).toEqual([{ row: subject.rows[0].row, refs: "refs-0" }])
+        })
+
+        it("keeps distinct round and pre-compaction boundaries even when nothing changed between them", async () => {
+            const subject = harness()
+            subject.say()
+            await subject.gate.ensureRound("round_start", { kind: "round_start", turnId: "turn-1" })
+
+            const result = await subject.gate.ensureRound("pre_compaction", { kind: "pre_compaction" })
+
+            expect(result.outcome).toBe("created")
+            expect(subject.workspace.commits).toBe(1)
+            expect(subject.rows.map((entry) => entry.source)).toEqual([
+                { kind: "round_start", turnId: "turn-1" },
+                { kind: "pre_compaction" },
+            ])
+        })
+
+        it("keeps different provider turn identities even when the conversation boundary did not advance", async () => {
+            const subject = harness()
+            subject.say()
+            await subject.gate.ensureRound("round_start", { kind: "round_start", turnId: "turn-1" })
+
+            const result = await subject.gate.ensureRound("round_start", { kind: "round_start", turnId: "turn-2" })
+
+            expect(result.outcome).toBe("created")
+            expect(subject.rows.at(-1)?.source).toEqual({ kind: "round_start", turnId: "turn-2" })
         })
 
         it("adds a row for a round that only talked, reusing the files without committing", async () => {
@@ -261,10 +289,21 @@ describe("CheckpointGate", () => {
             subject.say()
             subject.write()
 
-            const result = await subject.gate.ensurePreEdit()
+            const source = {
+                kind: "pre_edit" as const,
+                toolTs: 260,
+                toolName: "replace_in_file",
+                dlineTid: "tool-260",
+            }
+            const result = await subject.gate.ensurePreEdit(source)
 
             expect(result.outcome).toBe("created")
-            expect(subject.rows[1]).toMatchObject({ refs: "refs-1", anchor: round.row, row: { position: round.row?.position } })
+            expect(subject.rows[1]).toMatchObject({
+                refs: "refs-1",
+                anchor: round.row,
+                row: { position: round.row?.position },
+                source,
+            })
             expect(subject.bundles[1]).toEqual({ row: subject.rows[1].row, refs: "refs-1", anchor: round.row })
         })
 
@@ -394,6 +433,23 @@ describe("CheckpointGate", () => {
     })
 
     describe("reopened task", () => {
+        it("restores source identity so a different boundary is not merged after reopen", async () => {
+            const subject = harness({
+                initialState: () => ({
+                    latestChat: { ts: 1, position: 1 },
+                    latestSource: { kind: "round_start", turnId: "turn-1" },
+                    latestRefs: "refs-0",
+                }),
+            })
+            subject.say()
+            subject.journal.push("marker")
+
+            const result = await subject.gate.ensureRound("pre_compaction", { kind: "pre_compaction" })
+
+            expect(result.outcome).toBe("created")
+            expect(subject.rows.at(-1)?.source).toEqual({ kind: "pre_compaction" })
+        })
+
         it("continues from the latest checkpoint instead of adding a duplicate", async () => {
             const subject = harness({ initialState: () => ({ latestChat: { ts: 1, position: 1 }, latestRefs: "refs-0" }) })
             subject.say()

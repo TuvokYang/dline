@@ -323,6 +323,16 @@ message SubmittedInput {
   repeated SubmittedInputSegment segments = 1;
 }
 
+// Stable producer identity for a checkpoint presentation row.
+message CheckpointSource {
+  // One of "round_start", "pre_compaction" or "pre_edit".
+  string kind = 1;
+  optional string turn_id = 2;
+  optional int64 tool_ts = 3;
+  optional string tool_name = 4;
+  optional string dline_tid = 5;
+}
+
 // Main ClineMessage type
 message ClineMessage {
   int64 ts = 1;
@@ -372,6 +382,7 @@ message ClineMessage {
   optional string task_instance_id = 40;
   // One entry per input a user row shows; empty for a legacy row, which renders as plain text.
   repeated SubmittedInput submitted_inputs = 41;
+  optional CheckpointSource checkpoint_source = 42;
 }
 
 message ShowWebviewEvent {

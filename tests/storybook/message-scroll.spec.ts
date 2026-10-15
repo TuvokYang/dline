@@ -1,6 +1,7 @@
 import { expect, type Page, test } from "@playwright/test"
 
 const STORY = "/iframe.html?id=regression-message-scrolling--interactive&viewMode=story"
+const LONG_REPORT_STORY = "/iframe.html?id=regression-message-scrolling--long-report-tail&viewMode=story"
 const SCROLLER = '[data-virtuoso-scroller="true"]'
 
 async function geometry(page: Page) {
@@ -35,6 +36,45 @@ test.beforeAll(async ({ browser }) => {
     } finally {
         await page.close()
     }
+})
+
+test("opening a task with an oversized report settles once at the absolute bottom", async ({ page }, testInfo) => {
+    await page.goto(LONG_REPORT_STORY, { waitUntil: "domcontentloaded" })
+    await expect(page.getByTestId("scroll-fixture")).toBeVisible({ timeout: 120_000 })
+    const report = page.getByTestId("generate-report-row")
+    await expect(report).toBeVisible()
+    await expect.poll(async () => (await geometry(page)).gap).toBeLessThanOrEqual(10)
+
+    const reportScroller = report.locator(".plan-completion-content")
+    const reportGeometry = await reportScroller.evaluate((element) => ({
+        height: element.clientHeight,
+        content: element.scrollHeight,
+        limit: window.innerHeight * 0.5,
+    }))
+    expect(reportGeometry.height).toBeLessThanOrEqual(reportGeometry.limit + 1)
+    expect(reportGeometry.content).toBeGreaterThan(reportGeometry.height)
+
+    const samples = await page.locator(SCROLLER).evaluate(async (element) => {
+        const scroller = element as HTMLElement
+        const values: Array<{ top: number; gap: number }> = []
+        for (let index = 0; index < 90; index++) {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+            values.push({
+                top: scroller.scrollTop,
+                gap: scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+            })
+        }
+        return values
+    })
+    await testInfo.attach("long-report-bottom-samples.json", {
+        body: JSON.stringify({ reportGeometry, samples }, null, 2),
+        contentType: "application/json",
+    })
+
+    expect(Math.max(...samples.map((sample) => sample.gap))).toBeLessThanOrEqual(10)
+    expect(
+        Math.max(...samples.map((sample) => sample.top)) - Math.min(...samples.map((sample) => sample.top)),
+    ).toBeLessThanOrEqual(2)
 })
 
 test("message refresh must not undo small downward or upward browsing movements", async ({ page }, testInfo) => {

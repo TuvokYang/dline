@@ -4,17 +4,41 @@ import { useMemo } from "react"
 import BrowserSessionRow from "@/components/chat/BrowserSessionRow"
 import ChatRow from "@/components/chat/ChatRow"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "@/components/chat/constants"
+import { CheckmarkControl } from "@/components/common/CheckmarkControl"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
 import type { MessageHandlers, RowExpansionOrigin } from "../../types/chatTypes"
-import { isTextMessagePendingToolCall, isToolGroup, resolveMessageRowExpanded } from "../../utils/messageUtils"
+import {
+    indexPreEditCheckpointAttachments,
+    isTextMessagePendingToolCall,
+    isToolGroup,
+    resolveMessageRowExpanded,
+} from "../../utils/messageUtils"
 import { ToolGroupRenderer } from "./ToolGroupRenderer"
+
+function AttachedCheckpoint({ message }: { message: UiMessage }) {
+    return (
+        <div className="px-4">
+            <CheckmarkControl
+                hasWorkspaceCheckpoint={message.lastCheckpointHash?.some(Boolean) === true}
+                isCheckpointCheckedOut={message.isCheckpointCheckedOut}
+                messageTs={message.ts}
+                source={message.checkpointSource}
+                workspaceCheckpointCoverage={{
+                    available: message.lastCheckpointHash?.filter(Boolean).length ?? 0,
+                    total: message.checkpointWorkspaceRoots?.length ?? message.lastCheckpointHash?.length ?? 0,
+                }}
+            />
+        </div>
+    )
+}
 
 interface MessageRendererProps {
     index: number
     messageOrGroup: UiMessage | UiMessage[]
     groupedMessages: (UiMessage | UiMessage[])[]
     modifiedMessages: UiMessage[]
+    checkpointAttachments: ReadonlyMap<number, UiMessage[]>
     expandedRows: Record<number, boolean>
     onToggleExpand: (ts: number, origin?: RowExpansionOrigin) => void
     onHeightChange: (isTaller: boolean) => void
@@ -34,6 +58,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     messageOrGroup,
     groupedMessages,
     modifiedMessages,
+    checkpointAttachments,
     expandedRows,
     onToggleExpand,
     onHeightChange,
@@ -46,6 +71,14 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     const { mode } = useExtensionState()
 
     const isLastMessage = useMemo(() => index === groupedMessages?.length - 1, [groupedMessages, index])
+    const rowMessageTimestamps = useMemo(
+        () => new Set((Array.isArray(messageOrGroup) ? messageOrGroup : [messageOrGroup]).map((message) => message.ts)),
+        [messageOrGroup],
+    )
+    const attachedCheckpoints = useMemo(
+        () => Array.from(rowMessageTimestamps).flatMap((toolTs) => checkpointAttachments.get(toolTs) ?? []),
+        [checkpointAttachments, rowMessageTimestamps],
+    )
 
     // Check if a text message is waiting for tool call completion
     const isRequestInProgress = useMemo(() => {
@@ -73,8 +106,13 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
 
     if (isToolGroup(messageOrGroup)) {
         return (
-            <div className={TOOL_RESPONSE_SCROLL_CLASS} data-testid="tool-group-scroll">
-                <ToolGroupRenderer allMessages={modifiedMessages} isLastGroup={isLastToolGroup} messages={messageOrGroup} />
+            <div>
+                <div className={TOOL_RESPONSE_SCROLL_CLASS} data-testid="tool-group-scroll">
+                    <ToolGroupRenderer allMessages={modifiedMessages} isLastGroup={isLastToolGroup} messages={messageOrGroup} />
+                </div>
+                {attachedCheckpoints.map((checkpoint) => (
+                    <AttachedCheckpoint key={checkpoint.ts} message={checkpoint} />
+                ))}
             </div>
         )
     }
@@ -112,10 +150,12 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
                 mode={mode}
                 onAddToInput={onAddToInput}
                 onFollowupOptionSelect={onFollowupOptionSelect}
-                onHeightChange={onHeightChange}
                 onSetQuote={onSetQuote}
                 onToggleExpand={onToggleExpand}
             />
+            {attachedCheckpoints.map((checkpoint) => (
+                <AttachedCheckpoint key={checkpoint.ts} message={checkpoint} />
+            ))}
         </div>
     )
 }
@@ -136,8 +176,10 @@ export const createMessageRenderer = (
     messageHandlers: MessageHandlers,
     footerActive: boolean,
 ) => {
+    const checkpointAttachments = indexPreEditCheckpointAttachments(modifiedMessages)
     return (index: number, messageOrGroup: UiMessage | UiMessage[]) => (
         <MessageRenderer
+            checkpointAttachments={checkpointAttachments}
             expandedRows={expandedRows}
             footerActive={footerActive}
             groupedMessages={groupedMessages}

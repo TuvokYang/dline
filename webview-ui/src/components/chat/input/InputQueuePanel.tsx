@@ -4,22 +4,14 @@ import {
     resourceRefOf,
     type SemanticInputDocument,
 } from "@shared/input-semantics/document"
-import {
-    ChevronDownIcon,
-    ChevronRightIcon,
-    GripVerticalIcon,
-    ListIcon,
-    PencilIcon,
-    RotateCcwIcon,
-    SendIcon,
-    XIcon,
-} from "lucide-react"
+import { ChevronDownIcon, ChevronRightIcon, GripVerticalIcon, PencilIcon, RotateCcwIcon, XIcon } from "lucide-react"
 import { useMemo, useState } from "react"
 import { openTaskResource } from "@/components/chat/input/semantic-composer/resource-staging"
 import { UserInputMarkdownBody } from "@/components/chat/UserInputMarkdownBody"
 import { type ResourceChipResolver, ResourceChipResolverContext } from "@/components/common/ResourceChip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { markDocumentResources } from "@/services/input-semantics/highlight"
+import { QueueModeIcon, SteeringModeIcon } from "./InputQueueModeIcons"
 
 function classes(...values: Array<string | false | undefined>): string {
     return values.filter(Boolean).join(" ")
@@ -28,6 +20,9 @@ function classes(...values: Array<string | false | undefined>): string {
 /** The widget surface color, with a fallback chain for hosts that omit the more specific tokens. */
 const WIDGET_SURFACE =
     "var(--vscode-editorWidget-background, var(--vscode-menu-background, var(--vscode-sideBar-background, rgb(30, 30, 30))))"
+
+/** Shared visible red for steering text and controls. */
+const STEERING_ACCENT = "color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 55%, var(--vscode-editor-background, #1e1e1e))"
 
 /**
  * The overlay's paint. It opens over the auto-approve bar and the chat, and a
@@ -176,8 +171,13 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                         {expanded ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}
                         <span>Queue {entries.length}</span>
                         {steeringCount > 0 ? (
-                            <span className="text-(--vscode-charts-orange,var(--vscode-foreground))">
-                                {" "}
+                            <span
+                                className="rounded-[3px] px-1 leading-[14px]"
+                                style={{
+                                    backgroundColor: "var(--vscode-input-background, rgba(0, 0, 0, 0.18))",
+                                    boxShadow: "inset 0 1px 2px rgba(0, 0, 0, 0.35)",
+                                    color: STEERING_ACCENT,
+                                }}>
                                 {steeringCount} steering
                             </span>
                         ) : null}
@@ -264,20 +264,45 @@ export function InputQueuePanel({ entries, onToggleMode, onEdit, onCancelEdit, o
                                 </header>
                                 <QueuedEntryBody entry={entry} />
                                 <footer className="mt-1 flex items-center justify-end gap-1">
-                                    {/* The icon shows the entry's own mode, the list for a queued
-								    entry and the paper plane for a steering one; a click switches it. */}
+                                    {/* The icon shows the entry's current delivery mode; clicking switches it. */}
                                     <button
                                         aria-label={entry.mode === "steering" ? "Return to queue" : "Send with next round"}
-                                        className="input-icon-button shrink-0 appearance-none border-0 bg-transparent p-0"
+                                        className={classes(
+                                            "input-icon-button relative grid size-[18px] shrink-0 place-items-center rounded-[3px] appearance-none border-0 p-0 transition-[background-color,color,box-shadow] duration-200 ease-out",
+                                            entry.mode === "steering"
+                                                ? "text-(--vscode-button-foreground,#fff)"
+                                                : "bg-transparent",
+                                        )}
                                         data-testid={`input-queue-send-${entry.id}`}
                                         onClick={() => onToggleMode(entry.id)}
+                                        style={
+                                            entry.mode === "steering"
+                                                ? {
+                                                      backgroundColor: STEERING_ACCENT,
+                                                      boxShadow: "inset 0 1px 2px rgba(0, 0, 0, 0.4)",
+                                                  }
+                                                : undefined
+                                        }
                                         title={entry.mode === "steering" ? "Return to queue" : "Send with next round"}
                                         type="button">
-                                        {entry.mode === "steering" ? (
-                                            <SendIcon className="size-3" data-testid={`input-queue-steer-icon-${entry.id}`} />
-                                        ) : (
-                                            <ListIcon className="size-3" data-testid={`input-queue-queue-icon-${entry.id}`} />
-                                        )}
+                                        <QueueModeIcon
+                                            className={classes(
+                                                "col-start-1 row-start-1 size-4 transition-[opacity,transform] duration-200 ease-out",
+                                                entry.mode === "steering"
+                                                    ? "-translate-x-1 scale-90 opacity-0"
+                                                    : "translate-x-0 scale-100 opacity-100",
+                                            )}
+                                            data-testid={`input-queue-queue-icon-${entry.id}`}
+                                        />
+                                        <SteeringModeIcon
+                                            className={classes(
+                                                "col-start-1 row-start-1 size-4 transition-[opacity,transform] duration-200 ease-out",
+                                                entry.mode === "steering"
+                                                    ? "translate-x-0 scale-100 opacity-100"
+                                                    : "translate-x-1 scale-90 opacity-0",
+                                            )}
+                                            data-testid={`input-queue-steer-icon-${entry.id}`}
+                                        />
                                     </button>
                                     {/* An entry under edit is held back from delivery, so it needs a
 								    way out that does not require sending or deleting it. */}

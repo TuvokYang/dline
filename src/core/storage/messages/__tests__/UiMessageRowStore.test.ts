@@ -46,6 +46,25 @@ describe("UI message rows", () => {
         expect(decodeUiMessage(row, attachments)).toEqual(message)
     })
 
+    it("persists checkpoint source identity through the schema-compatible extra document", () => {
+        const message: UiMessage = {
+            ts: 55,
+            type: "say",
+            say: "checkpoint_created",
+            checkpointSource: {
+                kind: "pre_edit",
+                toolTs: 54,
+                toolName: "replace_in_file",
+                dlineTid: "tool-54",
+            },
+        }
+
+        const { row, attachments } = encodeUiMessage(message, 2)
+
+        expect(row.extra).toEqual({ checkpointSource: message.checkpointSource })
+        expect(decodeUiMessage(row, attachments)).toEqual(message)
+    })
+
     it("keeps the facts a user row was submitted with without a schema change", () => {
         const message = {
             ts: 6,

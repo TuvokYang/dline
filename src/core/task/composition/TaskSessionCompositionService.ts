@@ -841,11 +841,14 @@ export class TaskSessionCompositionService {
             // restore point is written first: its row lands before the request's
             // own, holding the workspace and conversation the model is about to see.
             providerCheckpoint: tool.checkpoints && {
-                beforeRequest: (signal) => tool.checkpoints?.ensureRoundCheckpoint?.("round_start", signal) ?? Promise.resolve(),
+                beforeRequest: (turnId, signal) =>
+                    tool.checkpoints?.ensureRoundCheckpoint?.("round_start", { kind: "round_start", turnId }, signal) ??
+                    Promise.resolve(),
             },
             compactionCheckpoint: tool.checkpoints && {
                 beforeCompaction: (signal) =>
-                    tool.checkpoints?.ensureRoundCheckpoint?.("pre_compaction", signal) ?? Promise.resolve(),
+                    tool.checkpoints?.ensureRoundCheckpoint?.("pre_compaction", { kind: "pre_compaction" }, signal) ??
+                    Promise.resolve(),
             },
             // Every request records what it consumed, which is the only fact the
             // task has about context pressure, cache health and cost.

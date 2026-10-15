@@ -14,7 +14,7 @@ import type { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import type { McpHub } from "@services/mcp/McpHub"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import type { BrowserSettings } from "@shared/BrowserSettings"
-import type { CommandStatus, UiAsk, UiSay } from "@shared/ExtensionMessage"
+import type { CheckpointSource, CommandStatus, UiAsk, UiSay } from "@shared/ExtensionMessage"
 import type { FocusChainSettings } from "@shared/FocusChainSettings"
 import type { SubmittedInputRow } from "@shared/input-semantics/submitted-input"
 import type { ClineContent, ClineToolResponseContent } from "@shared/messages/content"
@@ -235,7 +235,7 @@ export interface TaskCallbacks {
      *
      * Optional like `saveCheckpoint`: only a surface with workspace history has one.
      */
-    ensurePreEditCheckpoint?: (signal?: AbortSignal) => Promise<void>
+    ensurePreEditCheckpoint?: (source?: Extract<CheckpointSource, { kind: "pre_edit" }>, signal?: AbortSignal) => Promise<void>
 
     sayAndCreateMissingParamError: (
         toolName: DlineDefaultTool,

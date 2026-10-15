@@ -289,6 +289,17 @@ export interface CompactionConversationRange {
     preCompactionApiEndIndex: number
 }
 
+/** Stable producer identity for a checkpoint presentation row. */
+export type CheckpointSource =
+    | { readonly kind: "round_start"; readonly turnId: string }
+    | { readonly kind: "pre_compaction" }
+    | {
+          readonly kind: "pre_edit"
+          readonly toolTs: number
+          readonly toolName: string
+          readonly dlineTid?: string
+      }
+
 export interface UiMessage {
     ts: number
     type: "ask" | "say"
@@ -351,6 +362,8 @@ export interface UiMessage {
      * this row restores. Its own hash restores the files to just before the edit.
      */
     checkpointAnchorTs?: number
+    /** Producer identity used to associate a restore point with its owning turn or tool card. */
+    checkpointSource?: CheckpointSource
     conversationHistoryDeletedRange?: [number, number] // for when conversation history is truncated for API requests
     /** Canonical pre-compaction range stored only on a durable completed compaction card. */
     compactionConversationRange?: CompactionConversationRange

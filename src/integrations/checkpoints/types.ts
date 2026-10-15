@@ -1,6 +1,7 @@
 import type { CheckpointRoundReason } from "@core/task/checkpoints/CheckpointGate"
 import type { CheckpointRestoreMode, CheckpointRestoreResult, WorkspaceRestoreResult } from "@core/task/shell/checkpoint-restore"
 import type { CheckpointReferenceSet } from "@shared/checkpoints"
+import type { CheckpointSource } from "@shared/ExtensionMessage"
 import type { CheckpointChangedFile } from "./CheckpointTracker"
 
 /**
@@ -93,13 +94,20 @@ export interface ICheckpointManager {
      * latest one still covers the conversation and the files. Never rejects;
      * a part that fails is logged and left out.
      */
-    ensureRoundCheckpoint?(reason: CheckpointRoundReason, signal?: AbortSignal): Promise<void>
+    ensureRoundCheckpoint?(
+        reason: CheckpointRoundReason,
+        sourceOrSignal?: CheckpointSource | AbortSignal,
+        signal?: AbortSignal,
+    ): Promise<void>
 
     /**
      * Before a named file edit: add a file restore point when the files changed
      * since the latest checkpoint. Never rejects.
      */
-    ensurePreEditCheckpoint?(signal?: AbortSignal): Promise<void>
+    ensurePreEditCheckpoint?(
+        sourceOrSignal?: Extract<CheckpointSource, { kind: "pre_edit" }> | AbortSignal,
+        signal?: AbortSignal,
+    ): Promise<void>
 
     /** Stop creating checkpoints and wait for the one in progress; called before the task's stores close. */
     dispose?(): Promise<void>

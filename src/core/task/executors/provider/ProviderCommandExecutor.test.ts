@@ -460,6 +460,9 @@ describe("ProviderCommandExecutor round checkpoint", () => {
 
     it("writes the round's restore point before the request opens its own row", async () => {
         const order: string[] = []
+        const beforeRequest = vi.fn(async (_turnId: string) => {
+            order.push("checkpoint")
+        })
         const executor = new ProviderCommandExecutor(
             "task-1",
             {
@@ -478,16 +481,13 @@ describe("ProviderCommandExecutor round checkpoint", () => {
                     return { settle: vi.fn(async () => {}) }
                 }),
             },
-            {
-                beforeRequest: vi.fn(async () => {
-                    order.push("checkpoint")
-                }),
-            },
+            { beforeRequest },
         )
 
         await executor.execute(command)
 
         expect(order).toEqual(["checkpoint", "request_row", "request"])
+        expect(beforeRequest).toHaveBeenCalledWith("turn-request", expect.any(AbortSignal))
     })
 
     it("still sends the request when the restore point cannot be written", async () => {
