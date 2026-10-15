@@ -7,7 +7,6 @@ import {
     localizeHostedWebRoutes,
     type WebSearchRoutingPlan,
 } from "@core/api/server-tools"
-import { isOutputLimitExceededError } from "@core/api/stream/OutputLimitExceededError"
 import { createIdentityFactory, type IdentityFactory } from "@core/api/transform/block-identity"
 import type { ApiProviderStreamChunk, ApiStopReason } from "@core/api/transform/stream"
 import { createStreamNormalizer, normalizeApiStream } from "@core/api/transform/stream-identity-normalizer"
@@ -26,6 +25,7 @@ import {
     type TurnFailure,
     type TurnFailureKind,
 } from "@core/prompts/turn-diagnosis"
+import { isRetryableProviderError } from "@core/task/auto-retry"
 import type { ProviderRequestRoundAdmission } from "@core/task/performance/provider-request-round-port"
 import { resolveRequestWebSearchRoutingPlan } from "@core/task/RequestApiScope"
 import { StreamResponseHandler } from "@core/task/StreamResponseHandler"
@@ -54,7 +54,6 @@ import {
     shouldCompactProjectedUsage,
 } from "@/core/context/context-management/context-window-utils"
 import { HostRegistryInfo } from "@/registry"
-import { ClineError, ClineErrorType } from "@/services/error"
 import { boundToolText, MAX_TOOL_RESULT_TEXT_BYTES } from "@/shared/content-limits"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { calculateApiCostAnthropic } from "@/utils/cost"
@@ -398,10 +397,17 @@ function formatToolCallPreview(toolName: string, params: Partial<Record<string, 
  * Treating every non-usage chunk as observable disabled the whole backoff sequence for
  * adaptive-thinking models, because the scaffolding always precedes the failure.
  */
+function isAttemptCommitChunk(
+    chunk: ApiProviderStreamChunk,
+): chunk is Extract<ApiProviderStreamChunk, { type: "usage" | "tool_calls" }> {
+    return chunk.type === "usage" || chunk.type === "tool_calls"
+}
+
 function producesUnreplayableOutput(chunk: ApiProviderStreamChunk): boolean {
     switch (chunk.type) {
-        // Attempt-local accounting; already buffered and replayed by the caller.
+        // Attempt-local accounting and native tool deltas are committed only after EOF.
         case "usage":
+        case "tool_calls":
             return false
         // Forwarded to progress only and never written back into the conversation.
         case "reasoning":
@@ -413,8 +419,6 @@ function producesUnreplayableOutput(chunk: ApiProviderStreamChunk): boolean {
         // already forwarded to progress and counted in the tool-call stats, so replaying the
         // attempt would duplicate both the rendered row and the count.
         case "server_tool":
-            return true
-        default:
             return true
     }
 }
@@ -1884,68 +1888,9 @@ export class SubagentRunner {
         }
     }
 
-    /**
-     * Decide whether one failed Provider stream attempt may be retried.
-     *
-     * The main Task loop treats Provider failures as retryable by default and
-     * only excludes account-level errors that cannot recover by waiting
-     * (see `getStreamRetryDecision`). Subagents previously used an enumerated
-     * allow-list instead, so any upstream code outside that list - for example
-     * `stream_read_error` or `upstream_error` - silently skipped the whole
-     * backoff sequence. This method now mirrors the main loop: deny-list only.
-     */
+    /** Use the same deny-list classifier as the main Task retry owner. */
     private shouldRetryStreamError(error: unknown, providerId: string, modelId: string): boolean {
-        // A cancelled run is not a provider failure and must not be replayed here.
-        if (error instanceof Error && error.name === "AbortError") return false
-        // The provider refused to continue generating; replaying repeats the same limit.
-        if (isOutputLimitExceededError(error)) return false
-
-        const raw = error !== null && typeof error === "object" ? (error as Record<string, unknown>) : undefined
-        const messageRecord =
-            error instanceof Error
-                ? (() => {
-                      try {
-                          const parsed = JSON.parse(error.message) as unknown
-                          return parsed !== null && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined
-                      } catch {
-                          return undefined
-                      }
-                  })()
-                : undefined
-        const asRecord = (value: unknown): Record<string, unknown> | undefined =>
-            value !== null && typeof value === "object" ? (value as Record<string, unknown>) : undefined
-        const rawError = asRecord(raw?.error)
-        const rawNestedError = asRecord(rawError?.error)
-        const messageError = asRecord(messageRecord?.error)
-        const messageNestedError = asRecord(messageError?.error)
-        const parsedError = ClineError.transform(error, modelId, providerId)
-        // Providers nest the transport status differently; probe the known shapes
-        // so an auth classification can still be separated from a transient state.
-        const status =
-            raw?.status ??
-            raw?.statusCode ??
-            asRecord(raw?.response)?.status ??
-            rawError?.status ??
-            rawNestedError?.status ??
-            messageRecord?.status ??
-            messageRecord?.statusCode ??
-            asRecord(messageRecord?.response)?.status ??
-            messageError?.status ??
-            messageNestedError?.status ??
-            parsedError._error.status
-        const numericStatus = typeof status === "number" ? status : Number(status)
-        // 408/409/425 are transport-level request states that can accompany an auth
-        // classification without meaning the credentials themselves are rejected.
-        const isRetryableRequestStatus = numericStatus === 408 || numericStatus === 409 || numericStatus === 425
-
-        // Deny-list: only account-level failures that cannot recover by waiting.
-        const isNonRetryableError =
-            parsedError.isErrorType(ClineErrorType.Balance) ||
-            parsedError.isErrorType(ClineErrorType.SpendLimit) ||
-            parsedError.isErrorType(ClineErrorType.QuotaExceeded) ||
-            (parsedError.isErrorType(ClineErrorType.Auth) && !isRetryableRequestStatus)
-
-        return !isNonRetryableError
+        return isRetryableProviderError(error, { providerId, modelId })
     }
 
     private compactConversationForContextWindow(
@@ -2084,30 +2029,32 @@ export class SubagentRunner {
             )
             const stream = providerRequestRound?.bindAttempt(providerStream, attempt - 1) ?? providerStream
             const iterator = stream[Symbol.asyncIterator]()
-            const bufferedUsageChunks: Array<Extract<ApiProviderStreamChunk, { type: "usage" }>> = []
+            const bufferedCommitChunks: Array<Extract<ApiProviderStreamChunk, { type: "usage" | "tool_calls" }>> = []
             let didYieldUnreplayableOutput = false
 
             try {
                 while (true) {
                     const nextChunk = await iterator.next()
                     if (nextChunk.done) {
-                        for (const usageChunk of bufferedUsageChunks) yield usageChunk
+                        for (const bufferedChunk of bufferedCommitChunks) yield bufferedChunk
                         return
                     }
-                    if (nextChunk.value.type === "usage") {
-                        bufferedUsageChunks.push(nextChunk.value)
+                    if (isAttemptCommitChunk(nextChunk.value)) {
+                        // Native tool deltas have no business side effects until the complete
+                        // response is finalized. Keep them before the normalizer so a failed
+                        // attempt cannot pollute tool identity, parser or Session state.
+                        bufferedCommitChunks.push(nextChunk.value)
                         continue
                     }
                     if (!producesUnreplayableOutput(nextChunk.value)) {
-                        // Forward replayable scaffolding for live progress, but keep usage buffered
-                        // until this attempt commits. The caller resets attempt-local accumulators
-                        // if a retry discards the attempt.
+                        // Forward replayable scaffolding for live progress. The caller resets
+                        // attempt-local accumulators if a retry discards the attempt.
                         yield nextChunk.value
                         continue
                     }
 
                     didYieldUnreplayableOutput = true
-                    for (const usageChunk of bufferedUsageChunks) yield usageChunk
+                    for (const bufferedChunk of bufferedCommitChunks) yield bufferedChunk
                     yield nextChunk.value
                     yield* { [Symbol.asyncIterator]: () => iterator }
                     return

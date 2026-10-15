@@ -2282,6 +2282,76 @@ describe("SubagentRunner", () => {
         assert.equal(progressEvents.filter((event) => event.kind === "tool_call").length, 1)
     })
 
+    it("discards a native tool call from an HTTP/2-failed attempt before retrying the same request", async () => {
+        const createMessage = vi
+            .fn()
+            .mockImplementationOnce(async function* () {
+                yield { type: "usage", inputTokens: 999, outputTokens: 0 }
+                yield {
+                    type: "tool_calls",
+                    function_id: "abandoned-call",
+                    tool_index: 0,
+                    tool_call: { function: { name: DlineDefaultTool.LIST_FILES, arguments: '{"path":".' } },
+                }
+                throw Object.assign(new Error("Upstream HTTP/2 stream failed"), {
+                    code: "upstream_http2_stream_error",
+                    status: 502,
+                    error: { code: "upstream_http2_stream_error", type: "upstream_error" },
+                })
+            })
+            .mockImplementationOnce(async function* () {
+                yield { type: "usage", inputTokens: 10, outputTokens: 1 }
+                yield {
+                    type: "tool_calls",
+                    function_id: "successful-completion",
+                    tool_index: 0,
+                    tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: '{"result":"rec' } },
+                }
+                yield {
+                    type: "tool_calls",
+                    function_id: "successful-completion",
+                    tool_index: 0,
+                    tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: 'overed"}' } },
+                }
+            })
+        const setTimeoutSpy = vi.spyOn(global, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void) => {
+            queueMicrotask(callback)
+            return {} as NodeJS.Timeout
+        }) as typeof setTimeout)
+        stubSystemPrompt(false)
+        vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+        vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+        stubApiHandler(createMessage)
+        initializeHostProvider()
+
+        const progressEvents: Array<Record<string, unknown>> = []
+        const result = await new SubagentRunner(createTaskConfig(false)).run("Recover a partial native tool call", (update) => {
+            if (update.event) progressEvents.push(update.event as unknown as Record<string, unknown>)
+        })
+
+        assert.equal(result.status, "completed", result.error)
+        assert.equal(result.result, "recovered")
+        assert.equal(result.stats.inputTokens, 10)
+        assert.equal(result.stats.toolCalls, 1)
+        assert.equal(createMessage.mock.calls.length, 2)
+        assert.deepEqual(
+            createMessage.mock.calls.map((call) => call.slice(0, 3)),
+            [createMessage.mock.calls[0].slice(0, 3), createMessage.mock.calls[0].slice(0, 3)],
+        )
+        assert.deepEqual(
+            setTimeoutSpy.mock.calls.map(([, timeout]) => timeout),
+            [5_000],
+        )
+        assert.deepEqual(
+            progressEvents.filter((event) => event.kind === "retry"),
+            [{ kind: "retry", retryAttempt: 1, maxRetries: 5, delayMs: 5_000, cumulativeDelayMs: 5_000 }],
+        )
+        assert.deepEqual(
+            progressEvents.filter((event) => event.kind === "tool_call").map((event) => event.toolName),
+            [DlineDefaultTool.ATTEMPT],
+        )
+    })
+
     it("retries retryable initial API failures five times with cumulative progress events", async () => {
         const createMessage = vi.fn().mockImplementation(async function* () {
             yield* []

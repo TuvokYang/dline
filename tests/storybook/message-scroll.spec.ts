@@ -199,3 +199,37 @@ test("long tool content keeps its height cap and consumes scrolling before its b
     await expect.poll(() => card.evaluate((element) => element.scrollTop)).toBeGreaterThan(innerTop + 30)
     expect(Math.abs((await geometry(page)).top - outer.top)).toBeLessThanOrEqual(2)
 })
+
+test("a wheel with remaining nested distance finishes the card without leaking into the conversation", async ({
+    page,
+}, testInfo) => {
+    await openFixture(page)
+    await page.getByRole("button", { name: "Append long card" }).evaluate((button: HTMLButtonElement) => button.click())
+    const card = page.getByTestId("completion-output-scroll")
+    await expect(card).toBeVisible()
+    await card.evaluate((element) => {
+        element.scrollTop = element.scrollHeight - element.clientHeight - 20
+    })
+    await card.hover()
+    await settleFrames(page)
+
+    const outerBefore = await geometry(page)
+    const innerBefore = await card.evaluate((element) => ({
+        top: element.scrollTop,
+        max: element.scrollHeight - element.clientHeight,
+    }))
+    await page.mouse.wheel(0, 120)
+    await settleFrames(page)
+    const outerAfterFirstWheel = await geometry(page)
+    const innerAfterFirstWheel = await card.evaluate((element) => ({
+        top: element.scrollTop,
+        max: element.scrollHeight - element.clientHeight,
+    }))
+
+    await testInfo.attach("nested-wheel-boundary-probe.json", {
+        body: JSON.stringify({ outerBefore, innerBefore, outerAfterFirstWheel, innerAfterFirstWheel }, null, 2),
+        contentType: "application/json",
+    })
+    expect(innerAfterFirstWheel.max - innerAfterFirstWheel.top).toBeLessThanOrEqual(1)
+    expect(Math.abs(outerAfterFirstWheel.top - outerBefore.top)).toBeLessThanOrEqual(2)
+})

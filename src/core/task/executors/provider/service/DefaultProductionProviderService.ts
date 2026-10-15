@@ -338,6 +338,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         let usage = new ProviderUsageIncrements()
         let receivingTokens = 0
         let authoritativeContextTokens = 0
+        let replyRows: Extract<ProductionProviderChunk, { kind: "partial" }>["replyRows"]
 
         try {
             serverTools = this.options.serverTools?.begin(turn.request.serverToolContext)
@@ -403,6 +404,13 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 }
                                 break
                             case "tool_calls":
+                                // Reserve the canonical reply order before the call takes its row id.
+                                // Providers may emit reasoning after tool deltas even though the final
+                                // turn still orders reasoning and prose before its calls.
+                                replyRows ??= {
+                                    reasoning: this.nextPresentationId(),
+                                    text: this.nextPresentationId(),
+                                }
                                 this.consumeNativeTool(nativeTools, chunk)
                                 const partialBlock = this.previewNativeTool(nativeTools.get(chunk.dline_tid))
                                 // The completed chunk may omit the name, so it is read from the call
@@ -413,9 +421,11 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                     kind: "partial",
                                     transientId,
                                     text: prose,
+                                    replyRows,
                                     projection: {
                                         kind: "provider.tool_partial",
                                         dlineTid: chunk.dline_tid,
+                                        provisional: true,
                                         ...(partialBlock ? { block: partialBlock } : {}),
                                     },
                                 }

@@ -224,6 +224,7 @@ export type OpenAiMockResponse =
           failureCode?: string
           failureMessage?: string
           prefixText?: string
+          prefixTool?: MockToolCall
           requestId?: string
       } & MockResponseOptions)
     | {
@@ -1705,6 +1706,42 @@ export class ClineApiServerMock {
                                     },
                                     "response.output_text.delta",
                                 )
+                            }
+                            if (scriptedResponse.prefixTool) {
+                                const toolItemId = `item_${generationId}_partial_tool`
+                                const toolCallId = scriptedResponse.prefixTool.id ?? `call_${generationId}_partial_tool`
+                                const toolArguments = JSON.stringify(scriptedResponse.prefixTool.arguments)
+                                writeSse(
+                                    {
+                                        type: "response.output_item.added",
+                                        sequence_number: sequenceNumber++,
+                                        output_index: 0,
+                                        item: {
+                                            id: toolItemId,
+                                            type: "function_call",
+                                            status: "in_progress",
+                                            call_id: toolCallId,
+                                            name: scriptedResponse.prefixTool.name,
+                                            arguments: "",
+                                        },
+                                    },
+                                    "response.output_item.added",
+                                )
+                                for (const argumentChunk of splitStreamText(
+                                    toolArguments,
+                                    scriptedResponse.toolArgumentChunkSize,
+                                )) {
+                                    writeSse(
+                                        {
+                                            type: "response.function_call_arguments.delta",
+                                            sequence_number: sequenceNumber++,
+                                            item_id: toolItemId,
+                                            output_index: 0,
+                                            delta: argumentChunk,
+                                        },
+                                        "response.function_call_arguments.delta",
+                                    )
+                                }
                             }
                             writeSse({
                                 type: "error",

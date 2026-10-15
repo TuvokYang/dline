@@ -376,6 +376,45 @@ describe("ProviderTextPresenter pacing", () => {
         const prose = [...messages.rows.values()].find((row) => row.say === "text")
         expect(prose?.ts).toBeLessThan(cardRow)
     })
+
+    it("reserves reply rows before a native card so late reasoning still sorts above it", async () => {
+        const messages = createMessages()
+        let next = 0
+        const ids = () => ++next
+        const presentToolPartial = vi.fn(async (): Promise<void> => undefined)
+        const presenter = new ProviderTextPresenter(messages.handler, ids, undefined, presentToolPartial, UNPACED)
+
+        const replyRows = { reasoning: ids(), text: ids() }
+        const cardRow = ids()
+        presenter.showPartial({
+            transientId: "provider:turn-1",
+            text: "",
+            replyRows,
+            projection: {
+                ...toolProjection("native-1", "done"),
+                provisional: true,
+                block: {
+                    type: "tool_use",
+                    name: "attempt_completion",
+                    params: { result: "done" },
+                    partial: true,
+                    ts: cardRow,
+                },
+            },
+        })
+        presenter.showPartial({ transientId: "provider:turn-1", text: "", reasoning: "LATE_THOUGHT" })
+        await drawn()
+        await presenter.commit({
+            transientId: "provider:turn-1",
+            text: "",
+            reasoning: "LATE_THOUGHT",
+            toolRows: [cardRow],
+        })
+
+        const reasoning = messages.committed.find((row) => row.say === "reasoning")
+        expect(reasoning?.ts).toBeLessThan(cardRow)
+        expect(messages.withdrawn).toEqual([])
+    })
 })
 
 /**

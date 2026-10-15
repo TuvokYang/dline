@@ -1319,6 +1319,41 @@ describe("DefaultProductionProviderService request retry", () => {
         expect(final).toMatchObject({ kind: "final", text: "Recovered answer.", blocks: [] })
     })
 
+    it("marks native previews provisional so a failed attempt cannot leave a duplicate card", async () => {
+        const harness = scripted([{ chunks: [] }])
+        Object.assign(harness.request, { nativeTools: true })
+        let call = 0
+        ;(harness.api as { createMessage: unknown }).createMessage = vi.fn(async function* () {
+            call++
+            yield {
+                type: "tool_calls",
+                phase: call === 1 ? "delta" : "completed",
+                function_id: `fn-${call}`,
+                dline_tid: `tid-${call}`,
+                argumentsMode: "snapshot",
+                tool_call: {
+                    function: { id: `fn-${call}`, name: "read_file", arguments: '{"path":"README.md"}' },
+                },
+            } as unknown as ApiStreamChunk
+            if (call === 1) throw socketDrop()
+        })
+
+        const chunks = await collect(harness.service)
+        const previews = chunks.filter((chunk) => chunk.kind === "partial" && chunk.projection?.kind === "provider.tool_partial")
+        const final = chunks.at(-1)
+
+        expect(call).toBe(2)
+        expect(previews).toHaveLength(2)
+        expect(previews).toEqual([
+            expect.objectContaining({ projection: expect.objectContaining({ provisional: true }) }),
+            expect.objectContaining({ projection: expect.objectContaining({ provisional: true }) }),
+        ])
+        const settledRow = (previews[1] as Extract<ProductionProviderChunk, { kind: "partial" }>).projection?.block as {
+            ts?: number
+        }
+        expect(final).toMatchObject({ kind: "final", toolRows: [settledRow.ts] })
+    })
+
     it("fails a stream dropped mid tool call once the retry budget is spent", async () => {
         const failure = socketDrop()
         let call = 0

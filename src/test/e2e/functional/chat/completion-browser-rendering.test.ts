@@ -79,14 +79,16 @@ e2e(
             id: "call_reasoning_completion_order",
             name: "attempt_completion",
             arguments: { result: completionMarker },
-            reasoning: reasoningMarker,
+            afterToolCompletionReasoning: reasoningMarker,
+            afterToolCompletionDelayMs: 20,
         })
 
         await sendTask(sidebar, taskText)
         const thinking = sidebar.getByRole("button", { name: "Thinking", exact: true }).last()
-        const completion = sidebar.getByText(completionMarker, { exact: false }).last()
+        const completionCards = sidebar.getByTestId("completion-output-scroll").filter({ hasText: completionMarker })
         await expect(thinking).toBeVisible({ timeout: 60_000 })
-        await expect(completion).toBeVisible({ timeout: 60_000 })
+        await expect(completionCards).toHaveCount(1, { timeout: 60_000 })
+        const completion = completionCards.first()
 
         const reasoningPrecedesCompletion = await thinking.evaluate(
             (thinkingElement, completionElement) => {
@@ -104,9 +106,10 @@ e2e(
         const requestsBeforeReopen = server.getRequestCount("openai-compatible-responses")
         await closeAndReopenTask(page, sidebar, taskText)
         const restoredThinking = sidebar.getByRole("button", { name: "Thinking", exact: true }).last()
-        const restoredCompletion = sidebar.getByText(completionMarker, { exact: false }).last()
+        const restoredCompletionCards = sidebar.getByTestId("completion-output-scroll").filter({ hasText: completionMarker })
         await expect(restoredThinking).toBeVisible()
-        await expect(restoredCompletion).toBeVisible()
+        await expect(restoredCompletionCards).toHaveCount(1)
+        const restoredCompletion = restoredCompletionCards.first()
         const restoredReasoningPrecedesCompletion = await restoredThinking.evaluate(
             (thinkingElement, completionElement) => {
                 if (!(completionElement instanceof Node)) return false

@@ -26,6 +26,7 @@ import {
 import { buildMessageRowKey, getBottomFollowIntent, mergeMessageWindow } from "../../utils/messageWindowUtils"
 import { advanceRowCoordinate, ROW_INDEX_BASE, type RowCoordinate } from "../../utils/rowCoordinate"
 import { LAYOUT_SETTLE_RETRY_MS } from "../../utils/scrollArbiter"
+import { nestedScrollerConsumesWheel } from "../../utils/scrollUtils"
 import { findFirstVisibleMessage } from "../../utils/viewportRowAnchor"
 import { decideWindowGrowth, SCROLL_SETTLE_MS } from "../../utils/windowGrowthTiming"
 import { createMessageRenderer } from "../messages/MessageRenderer"
@@ -963,9 +964,12 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             showButton()
         }
 
+        const el = container.querySelector('[data-virtuoso-scroller="true"]') as HTMLElement | null
+
         // Wheel event carries deltaY — use it to determine scroll direction
         const onWheel = (e: WheelEvent) => {
             if (Math.abs(e.deltaY) < 5) return // ignore micro-scrolls / trackpad noise
+            if (nestedScrollerConsumesWheel(e.target, el, e.deltaY)) return
             const direction = e.deltaY < 0 ? "up" : "down"
             userScrollIntentRef.current = { direction, recordedAt: Date.now() }
             if (direction === "up") {
@@ -979,7 +983,6 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             showButton()
         }
 
-        const el = container.querySelector('[data-virtuoso-scroller="true"]') as HTMLElement | null
         if (el) {
             el.addEventListener("scroll", onScroll, { passive: true })
             el.addEventListener("wheel", onWheel, { passive: true })
@@ -992,7 +995,14 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
             }
             if (hideBtnTimerRef.current) clearTimeout(hideBtnTimerRef.current)
         }
-    }, [cancelProgrammaticScroll, disableAutoScrollRef, scrollContainerRef, isAtBottomRef, virtuosoInstanceKey])
+    }, [
+        cancelProgrammaticScroll,
+        disableAutoScrollRef,
+        scrollContainerRef,
+        isAtBottomRef,
+        virtuosoInstanceKey,
+        scheduleDeferredWindowGrowth,
+    ])
 
     return (
         <div className="overflow-hidden flex flex-col h-full relative">

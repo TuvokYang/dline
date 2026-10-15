@@ -326,4 +326,48 @@ describe("useScrollBehavior bottom restoration across visibility changes", () =>
         expect(scrollToIndex).toHaveBeenCalledTimes(attemptsBeforeTakeover)
         expect(result.current.disableAutoScrollRef.current).toBe(false)
     })
+
+    it("keeps session ownership unchanged while a nested card can consume an upward wheel", () => {
+        const { result } = renderScrollBehavior()
+        const boundary = document.createElement("div")
+        const cardScroller = document.createElement("div")
+        cardScroller.style.overflowY = "auto"
+        Object.defineProperties(cardScroller, {
+            clientHeight: { configurable: true, value: 100 },
+            scrollHeight: { configurable: true, value: 300 },
+        })
+        cardScroller.scrollTop = 80
+        boundary.append(cardScroller)
+        document.body.append(boundary)
+        result.current.scrollContainerRef.current = boundary
+
+        act(() => {
+            cardScroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -40 }))
+        })
+
+        expect(result.current.disableAutoScrollRef.current).toBe(false)
+        boundary.remove()
+    })
+
+    it("hands an upward wheel to the chat session once the nested card reaches its top edge", () => {
+        const { result } = renderScrollBehavior()
+        const boundary = document.createElement("div")
+        const cardScroller = document.createElement("div")
+        cardScroller.style.overflowY = "auto"
+        Object.defineProperties(cardScroller, {
+            clientHeight: { configurable: true, value: 100 },
+            scrollHeight: { configurable: true, value: 300 },
+        })
+        cardScroller.scrollTop = 0
+        boundary.append(cardScroller)
+        document.body.append(boundary)
+        result.current.scrollContainerRef.current = boundary
+
+        act(() => {
+            cardScroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -40 }))
+        })
+
+        expect(result.current.disableAutoScrollRef.current).toBe(true)
+        boundary.remove()
+    })
 })

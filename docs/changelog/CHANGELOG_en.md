@@ -32,6 +32,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed a long conversation shaking continuously while scrolled to the bottom
 - The context figure computed before sending, including the compaction trigger, takes the previous request's server-reported usage as its baseline
 - Fixed only some mid-stream disconnects being retried automatically; every stream disconnect now retries
+- Fixed subagents failing immediately when an upstream HTTP/2 stream dropped while native tool arguments were still arriving: uncommitted, unexecuted tool calls are now discarded with the failed request and the same request is retried automatically, without executing a tool twice or counting the failed request's usage
 - Fixed the model not receiving the image when `read_file` reads an image file
 - Fixed pasted images sharing a name, and resource record files being attached as input
 - Fixed the auto-approve bar showing through the expanded input queue; the queue list opens directly above the queue bar and covers the auto-approve bar on an opaque background
@@ -62,6 +63,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed tool groups jumping while later rounds run: groups of tools such as read and search are now closed at each request round, so the next round's tools no longer join the previous round's group, a finished group's members and counts no longer change while a later round streams, and whether a checkpoint row was written between two rounds no longer affects grouping
 - Fixed file links shown as `@<workspace>:<path>` in multi-root workspaces (tool group rows, diff edit rows, edit results, Markdown links, and so on) not opening: a link now opens the file under the named workspace root and jumps to its line number when one is given; `@<workspace>:<path>` and `<path>:<line>` written as inline code in a reply also open on click
 - Fixed tool groups not actually being closed at each request round in the chat: successful request rows are hidden before grouping, so when no checkpoint row was written between two rounds, the next round's read and search calls still joined the previous round's group and a finished group's members and counts kept changing; rounds are now taken from the full message record, whether or not a checkpoint was written. Also fixed a low-stakes tool that needs approval, such as reading a file outside the workspace, appearing both in the tool group and as an approval card when it is the last message, and an earlier read disappearing from the tool group while the same file is read again in the same round
+- Fixed Thinking from the same turn appearing after a turn-ending card such as `attempt_completion`, and a single call producing duplicate cards after a provider retry, message-window resynchronization, or reopening a completed task: reply rows now keep an order ahead of tool cards, provisional cards from failed requests are withdrawn, authoritative window sync removes stale partials, and restored completion interactions reuse their durable completion row
+- Fixed long cards such as `attempt_completion` being impossible to read because the chat session stole their internal scrolling: a wheel gesture stays with a card while that card can still scroll, then hands off to the outer conversation at the card's edge
 
 ## [0.11.0]
 

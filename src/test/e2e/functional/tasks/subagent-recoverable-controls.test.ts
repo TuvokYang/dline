@@ -637,6 +637,7 @@ e2e(
         const agentName = "e2e-upstream-http2-retry"
         const childTask = "E2E_SUBAGENT_UPSTREAM_HTTP2_TASK"
         const childResult = "E2E_SUBAGENT_UPSTREAM_HTTP2_RECOVERED"
+        const abandonedResult = "E2E_SUBAGENT_UPSTREAM_HTTP2_ABANDONED"
         const diagnostic = "Upstream HTTP/2 stream failed"
         await writeResponsesSubagent(workspaceDir, agentName, "E2E upstream HTTP/2 retry agent")
 
@@ -665,11 +666,19 @@ e2e(
         server.enqueueResponses(
             "openai-compatible-responses",
             {
-                type: "error",
-                status: 400,
-                code: "upstream_error",
+                type: "responses-stream-error",
+                status: 502,
+                code: "upstream_http2_stream_error",
                 message: diagnostic,
+                failureCode: "upstream_error",
+                failureMessage: "Upstream request failed",
                 requestId: "req_upstream_http2_1",
+                prefixTool: {
+                    id: "call_upstream_http2_abandoned",
+                    name: "attempt_completion",
+                    arguments: { result: abandonedResult },
+                },
+                toolArgumentChunkSize: 7,
             },
             {
                 type: "tool",
@@ -695,9 +704,11 @@ e2e(
 
         const childConsumptions = server.getMockConsumptions("openai-compatible-responses")
         expect(childConsumptions).toHaveLength(2)
-        expect(childConsumptions[0]).toMatchObject({ responseType: "error", status: 400 })
+        expect(childConsumptions[0]).toMatchObject({ responseType: "responses-stream-error", status: 502 })
         expect(childConsumptions[1]).toMatchObject({ responseType: "tool", toolName: "attempt_completion" })
+        expect(childConsumptions[1].requestBody).toEqual(childConsumptions[0].requestBody)
         expect(childConsumptions.every((entry) => entry.contractError === undefined)).toBe(true)
+        await expect(sidebar.getByText(abandonedResult, { exact: false })).toHaveCount(0)
         await expect(sidebar.getByText(diagnostic, { exact: false })).toHaveCount(0)
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/Upstream HTTP\/2 stream failed/])
     },

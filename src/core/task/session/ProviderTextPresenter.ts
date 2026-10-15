@@ -1,5 +1,5 @@
 import { Logger } from "@shared/services/Logger"
-import type { ProviderTextPresentationPort } from "../executors/provider/ProviderCommandExecutor"
+import type { ProviderReplyPresentationRows, ProviderTextPresentationPort } from "../executors/provider/ProviderCommandExecutor"
 import { getPresentationCadenceMs, isRemoteWorkspaceEnvironment } from "../latency"
 import type { MessageStateHandler } from "../message-state"
 import type { PresentationPriority } from "../presentation-types"
@@ -100,6 +100,7 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
         readonly transientId: string
         readonly text: string
         readonly reasoning?: string
+        readonly replyRows?: ProviderReplyPresentationRows
         readonly projection?: ToolProjection
     }): void {
         const frame = this.frameFor(input.transientId)
@@ -142,7 +143,18 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
      * Rows sort by id, and a tool card the stream draws right after this chunk
      * reserves its own id at once. Reasoning first, then prose, then the cards.
      */
-    private claimRows(transientId: string, input: { readonly text: string; readonly reasoning?: string }): void {
+    private claimRows(
+        transientId: string,
+        input: {
+            readonly text: string
+            readonly reasoning?: string
+            readonly replyRows?: ProviderReplyPresentationRows
+        },
+    ): void {
+        if (input.replyRows) {
+            this.reserveRow(transientId, "reasoning", input.replyRows.reasoning)
+            this.reserveRow(transientId, "text", input.replyRows.text)
+        }
         if (input.reasoning !== undefined) this.rowId(transientId, "reasoning")
         if (input.text) this.rowId(transientId, "text")
     }
@@ -259,6 +271,12 @@ export class ProviderTextPresenter implements ProviderTextPresentationPort {
             partial: false,
         })
         this.realtime?.publish(committed)
+    }
+
+    /** Accept a row id the provider reserved before allocating a following tool card. */
+    private reserveRow(transientId: string, row: ReplyRow, id: number): void {
+        const key = rowKey(transientId, row)
+        if (!this.rows.has(key)) this.rows.set(key, id)
     }
 
     /** The row a stream owns, allocated once so later chunks update rather than append. */

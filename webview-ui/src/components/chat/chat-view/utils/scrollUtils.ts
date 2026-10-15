@@ -5,6 +5,8 @@
 import debounce from "debounce"
 import { VirtuosoHandle } from "react-virtuoso"
 
+const SCROLL_EDGE_EPSILON_PX = 1
+
 /**
  * Create a debounced smooth scroll function
  */
@@ -47,6 +49,48 @@ export function createWheelHandler(
             }
         }
     }
+}
+
+function elementFromTarget(target: EventTarget | null): HTMLElement | null {
+    if (target instanceof HTMLElement) return target
+    if (target instanceof Node) return target.parentElement
+    return null
+}
+
+function hasScrollableOverflow(element: HTMLElement): boolean {
+    const overflowY = getComputedStyle(element).overflowY
+    return (
+        (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") &&
+        element.scrollHeight > element.clientHeight + SCROLL_EDGE_EPSILON_PX
+    )
+}
+
+function canConsumeVerticalDelta(element: HTMLElement, deltaY: number): boolean {
+    if (!hasScrollableOverflow(element)) return false
+    if (deltaY < 0) return element.scrollTop > SCROLL_EDGE_EPSILON_PX
+    if (deltaY > 0) {
+        return element.scrollTop + element.clientHeight < element.scrollHeight - SCROLL_EDGE_EPSILON_PX
+    }
+    return false
+}
+
+/**
+ * Whether a nested vertical scroller owns this wheel delta before the chat list.
+ *
+ * The boundary itself is excluded: reaching a card's edge deliberately hands the
+ * gesture back to the Virtuoso scroller, while a card that can still move keeps
+ * session follow/browsing ownership unchanged.
+ */
+export function nestedScrollerConsumesWheel(target: EventTarget | null, boundary: HTMLElement | null, deltaY: number): boolean {
+    if (!boundary || deltaY === 0) return false
+    let element = elementFromTarget(target)
+    if (!element || !boundary.contains(element)) return false
+
+    while (element && element !== boundary) {
+        if (canConsumeVerticalDelta(element, deltaY)) return true
+        element = element.parentElement
+    }
+    return false
 }
 
 /**

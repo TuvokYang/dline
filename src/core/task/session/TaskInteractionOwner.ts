@@ -222,11 +222,21 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             request.row === undefined
                 ? undefined
                 : currentMessages.find((message) => message.ts === request.row && message.type === "say")
+        // A completed task restored from an older snapshot may retain its durable
+        // completion row without the dialog's presentationRow. Reuse that row so
+        // recovery does not append a second completion card with an internal ref.
+        const recoveredCompletionRow =
+            request.row === undefined && request.kind === "completion"
+                ? [...currentMessages]
+                      .reverse()
+                      .find((message) => message.type === "say" && message.say === "completion_result" && Boolean(message.text))
+                : undefined
+        const sourceRow = streamedRow ?? recoveredCompletionRow
+        const body = recoveredCompletionRow?.text ?? request.body
         // A call nothing drew yet sorts after everything already written. Wall-clock
         // time is not enough when several rows are revealed in the same millisecond.
-        await this.presentAnchor(
-            createCanonicalAskRow(ask, request.body, streamedRow?.ts ?? this.nextRowTs(), request.interactionId),
-        )
+        const anchor = createCanonicalAskRow(ask, body, sourceRow?.ts ?? this.nextRowTs(), request.interactionId)
+        await this.presentAnchor(sourceRow ? { ...sourceRow, ...anchor } : anchor)
     }
 
     /**

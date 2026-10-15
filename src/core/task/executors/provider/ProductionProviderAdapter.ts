@@ -7,7 +7,12 @@ import type {
     ProviderFinalEnvelope,
     ProviderInterruptedEnvelope,
 } from "../../stores/payload/TaskPayloadEnvelopes"
-import type { ProviderExecutionChunk, ProviderExecutionInput, ProviderExecutionPort } from "./ProviderCommandExecutor"
+import type {
+    ProviderExecutionChunk,
+    ProviderExecutionInput,
+    ProviderExecutionPort,
+    ProviderReplyPresentationRows,
+} from "./ProviderCommandExecutor"
 import type { ProviderReceivingEstimate, ProviderRetryNotice } from "./service/ProviderRequestReport"
 
 export type ProductionProviderChunk =
@@ -17,6 +22,7 @@ export type ProductionProviderChunk =
           readonly text: string
           /** The reasoning streamed so far, shown while the model thinks. */
           readonly reasoning?: string
+          readonly replyRows?: ProviderReplyPresentationRows
           readonly projection?: Readonly<Record<string, unknown>>
       }
     | { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
@@ -104,6 +110,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
                     // interrupted replies receive durable payload references.
                     text: chunk.text,
                     ...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
+                    ...(chunk.replyRows === undefined ? {} : { replyRows: chunk.replyRows }),
                     ...(chunk.projection === undefined ? {} : { projection: chunk.projection }),
                 }
                 continue

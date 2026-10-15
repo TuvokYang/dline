@@ -120,6 +120,8 @@ export interface MessageWindowReconciliationOptions {
     localTimestampsAtFetchStart?: ReadonlySet<number>
     /** Keep in-flight rows while the task is actively streaming. */
     preserveOmittedPartials?: boolean
+    /** The backend explicitly changed window membership, so omissions are deletions. */
+    authoritativeOmissions?: boolean
 }
 
 /**
@@ -187,7 +189,8 @@ export function reconcileMessageWindow(
         const beyondFetchedTail = fetchedReachesBackendTail && message.ts > newestFetchedTs
         const arrivedAfterFetchStarted = options.localTimestampsAtFetchStart?.has(message.ts) === false
         const preserveOmittedMessage =
-            arrivedAfterFetchStarted || (message.partial === true && options.preserveOmittedPartials === true)
+            arrivedAfterFetchStarted ||
+            (options.authoritativeOmissions !== true && message.partial === true && options.preserveOmittedPartials === true)
         if ((withinFetchedSpan || beyondFetchedTail) && !authoritativeTs.has(message.ts) && !preserveOmittedMessage) {
             removed = true
             continue

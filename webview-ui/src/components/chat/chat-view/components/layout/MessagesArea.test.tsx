@@ -407,6 +407,27 @@ describe("MessagesArea sliding-window integration", () => {
         expect(mocks.scrollToIndex).toHaveBeenCalledWith({ index: 5, align: "start", behavior: "auto", offset: 20 })
     })
 
+    it("does not claim session scrolling while a nested card can consume the wheel", () => {
+        mocks.initialMessages = createMessages(800, 200)
+        mocks.initialFirstItemIndex = 800
+        mocks.totalMessageCount = 1000
+        const scrollBehavior = renderMessagesArea()
+        const innerScroller = document.createElement("div")
+        innerScroller.style.overflowY = "auto"
+        Object.defineProperties(innerScroller, {
+            scrollHeight: { configurable: true, value: 1000 },
+            clientHeight: { configurable: true, value: 200 },
+            scrollTop: { configurable: true, value: 300, writable: true },
+        })
+        screen.getByTestId("virtuoso").append(innerScroller)
+        const cancellationsBeforeWheel = vi.mocked(scrollBehavior.cancelProgrammaticScroll).mock.calls.length
+
+        fireEvent.wheel(innerScroller, { deltaY: -100 })
+
+        expect(scrollBehavior.disableAutoScrollRef.current).toBe(false)
+        expect(vi.mocked(scrollBehavior.cancelProgrammaticScroll).mock.calls.length).toBe(cancellationsBeforeWheel)
+    })
+
     it("does not surrender browsing ownership to a transient at-bottom report", () => {
         mocks.initialMessages = createMessages(800, 200)
         mocks.initialFirstItemIndex = 800

@@ -6,6 +6,7 @@ import { ListRange, VirtuosoHandle } from "react-virtuoso"
 import { type RowExpansionOrigin, ScrollBehavior } from "../types/chatTypes"
 import { findGroupedMessageByTs, resolveMessageRowExpanded, toggleMessageRowExpansion } from "../utils/messageUtils"
 import { createScrollArbiter, LAYOUT_SETTLE_RETRY_MS, type ScrollRequest } from "../utils/scrollArbiter"
+import { nestedScrollerConsumesWheel } from "../utils/scrollUtils"
 
 // Height of the sticky user message header (padding + content)
 const STICKY_HEADER_HEIGHT = 32
@@ -418,8 +419,10 @@ export function useScrollBehavior(
     const handleWheel = useCallback(
         (event: Event) => {
             const wheelEvent = event as WheelEvent
+            const boundary = scrollContainerRef.current
             if (wheelEvent.deltaY && wheelEvent.deltaY < 0) {
-                if (scrollContainerRef.current?.contains(wheelEvent.target as Node)) {
+                if (boundary?.contains(wheelEvent.target as Node)) {
+                    if (nestedScrollerConsumesWheel(wheelEvent.target, boundary, wheelEvent.deltaY)) return
                     // User intent outranks every pending layout/follow retry.
                     disableAutoScrollRef.current = true
                     cancelProgrammaticScroll()

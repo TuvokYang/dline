@@ -112,11 +112,12 @@ const applyFetchedMessageWindow = (
     total?: number,
     localTimestampsAtFetchStart?: ReadonlySet<number>,
     preserveOmittedPartials?: boolean,
+    authoritativeOmissions?: boolean,
 ): { messages: UiMessage[]; startIndex: number } => {
     const reconciled = reconcileMessageWindow(
         { messages: existing, startIndex: existingStartIndex },
         { messages: fetched, startIndex: fetchedStartIndex, total },
-        { localTimestampsAtFetchStart, preserveOmittedPartials },
+        { localTimestampsAtFetchStart, preserveOmittedPartials, authoritativeOmissions },
     )
     return { messages: reconciled.messages, startIndex: reconciled.startIndex }
 }
@@ -538,7 +539,11 @@ export const ExtensionStateContextProvider: React.FC<{
         const fetchCurrentMessages = (referenceIndex: number, count: number) =>
             fetchTaskMessages(state.taskViewState, referenceIndex, count)
 
-        const fetchLatestWindow = (scheduledTaskViewKey: string | undefined, expectedInteraction?: ActiveInteractionView) => {
+        const fetchLatestWindow = (
+            scheduledTaskViewKey: string | undefined,
+            expectedInteraction?: ActiveInteractionView,
+            authoritativeOmissions = false,
+        ) => {
             const scheduledGeneration = messageFetchGenerationRef.current
             // The key records that this interaction's anchor is now *hydrated*,
             // so it is written only once the committed window actually contains
@@ -602,6 +607,7 @@ export const ExtensionStateContextProvider: React.FC<{
                         responseTotal,
                         localTimestampsAtFetchStart,
                         preserveOmittedPartials,
+                        authoritativeOmissions,
                     )
                     commitMessageWindow(reconciled.messages, reconciled.startIndex, base)
                     if (expectedInteraction) {
@@ -663,7 +669,7 @@ export const ExtensionStateContextProvider: React.FC<{
             const owner = Symbol("deferred-reconciliation")
             refetchAfterUnlockRef.current = false
             refetchLockRef.current = owner
-            void fetchLatestWindow(scheduledTaskViewKey).finally(() => {
+            void fetchLatestWindow(scheduledTaskViewKey, undefined, true).finally(() => {
                 if (refetchLockRef.current !== owner) return
                 refetchLockRef.current = null
                 runDeferredWindowReconciliation()
@@ -685,7 +691,11 @@ export const ExtensionStateContextProvider: React.FC<{
          * it. A reader that trimmed the window ends the chase and keeps the
          * browsing classification.
          */
-        const syncTailWindow = async (scheduledTaskViewKey: string | undefined, firstStep: TailSyncFirstStep) => {
+        const syncTailWindow = async (
+            scheduledTaskViewKey: string | undefined,
+            firstStep: TailSyncFirstStep,
+            authoritativeOmissions = false,
+        ) => {
             const owner = Symbol("tail-sync")
             const scheduledGeneration = messageFetchGenerationRef.current
             refetchLockRef.current = owner
@@ -725,6 +735,7 @@ export const ExtensionStateContextProvider: React.FC<{
                             Number(resp.totalCount ?? 0),
                             localTimestampsAtFetchStart,
                             preserveOmittedPartials,
+                            authoritativeOmissions,
                         )
                         commitMessageWindow(reconciled.messages, reconciled.startIndex, base)
                         progressed = firstStepPending || windowEnd() > knownEnd
@@ -843,7 +854,7 @@ export const ExtensionStateContextProvider: React.FC<{
                     }
                     // The latest page takes over any sync in flight, which would
                     // otherwise keep merging against a window the total contradicts.
-                    void syncTailWindow(scheduledTaskViewKey, "latest")
+                    void syncTailWindow(scheduledTaskViewKey, "latest", true)
                 }, 200)
             }
         }

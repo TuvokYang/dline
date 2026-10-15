@@ -19,6 +19,11 @@ import type {
 } from "./service/ProviderRequestReport"
 import { mergeProviderUsage, sumAttemptUsage } from "./service/ProviderRequestReport"
 
+export interface ProviderReplyPresentationRows {
+    readonly reasoning: number
+    readonly text: number
+}
+
 export type ProviderExecutionChunk =
     | {
           readonly kind: "partial"
@@ -27,6 +32,8 @@ export type ProviderExecutionChunk =
           readonly text?: string
           /** The reasoning streamed so far, for presentation. */
           readonly reasoning?: string
+          /** Reply rows reserved before a native tool card takes the next presentation id. */
+          readonly replyRows?: ProviderReplyPresentationRows
           readonly projection?: Readonly<Record<string, unknown>>
       }
     | { readonly kind: "usage"; readonly usage: Readonly<Record<string, number>> }
@@ -81,6 +88,7 @@ export interface ProviderTextPresentationPort {
         readonly transientId: string
         readonly text: string
         readonly reasoning?: string
+        readonly replyRows?: ProviderReplyPresentationRows
         readonly projection?: Readonly<Record<string, unknown>>
     }): void
     /**
@@ -405,6 +413,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                         transientId: chunk.transientId,
                         text: chunk.text ?? "",
                         ...(chunk.reasoning === undefined ? {} : { reasoning: chunk.reasoning }),
+                        ...(chunk.replyRows === undefined ? {} : { replyRows: chunk.replyRows }),
                         ...(chunk.projection === undefined ? {} : { projection: chunk.projection }),
                     })
                     continue

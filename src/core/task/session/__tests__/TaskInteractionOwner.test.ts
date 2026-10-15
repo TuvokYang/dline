@@ -237,6 +237,38 @@ describe("TaskInteractionOwner", () => {
         expect(rows.at(-1)).toMatchObject({ ts: 50, type: "ask", ask: "tool", interactionId: "approval:tid-fetch" })
     })
 
+    it("reuses the durable completion row when completed-task recovery has no presentation row", async () => {
+        const rows: UiMessage[] = [
+            {
+                ts: 7,
+                type: "say",
+                say: "completion_result",
+                text: "Recovered completion",
+                completionHasChanges: true,
+                lastCheckpointHash: ["checkpoint-1"],
+            },
+        ]
+        const messages = createMessages(rows)
+        const { owner } = createOwner({ messages, nextPresentationId: () => 50 })
+
+        await owner.anchor({
+            interactionId: "completed:task-1:9",
+            kind: "completion",
+            body: "completion:completion-1",
+        })
+
+        expect(messages.finalizeClineMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                ts: 7,
+                type: "ask",
+                ask: "completion_result",
+                text: "Recovered completion",
+                interactionId: "completed:task-1:9",
+            }),
+        )
+        expect(messages.addToClineMessages).not.toHaveBeenCalled()
+    })
+
     it("keeps a single complete anchor row as it is", async () => {
         const anchor: UiMessage = { ts: 10, type: "ask", ask: "tool", text: "{}", partial: false, interactionId: "approval-1" }
         const messages = createMessages([anchor])
