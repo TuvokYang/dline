@@ -46,7 +46,7 @@ jobs:
 
       - name: Upload failed pressure artifacts
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: pressure-e2e-artifacts-${{ github.sha }}
           path: tmp/test-result/

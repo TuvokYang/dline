@@ -113,7 +113,7 @@ jobs:
 
       - name: Upload verified registry package
         if: steps.trigger.outputs.eligible == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: registry-vsix-${{ github.event.workflow_run.head_sha }}
           path: tested-artifact/${{ steps.vsix.outputs.asset_name }}

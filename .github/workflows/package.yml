@@ -198,7 +198,7 @@ jobs:
           echo "sha256=$(sha256sum "$vsix_path" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Upload tested VSIX
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.package.outputs.artifact_name }}
           path: dist/${{ steps.artifact.outputs.asset_name }}
@@ -283,7 +283,7 @@ jobs:
           echo "sha256=$(sha256sum "$VSIX_PATH" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Upload release VSIX
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.package.outputs.artifact_name }}
           path: dist/${{ steps.package.outputs.filename }}
