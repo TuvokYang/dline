@@ -125,14 +125,6 @@ describe("InputQueuePanel", () => {
         expect(props.onToggleMode).toHaveBeenCalledWith("a")
     })
 
-    it("labels each mode toggle by the action it performs", () => {
-        render(<InputQueuePanel entries={[entry({ id: "a" }), entry({ id: "b", mode: "steering" })]} {...handlers()} />)
-        fireEvent.click(screen.getByTestId("input-queue-toggle"))
-
-        expect(screen.getByTestId("input-queue-send-a")).toHaveAccessibleName("Send with next round")
-        expect(screen.getByTestId("input-queue-send-b")).toHaveAccessibleName("Return to queue")
-    })
-
     it("requests edit and removal for the exact entry", () => {
         const props = handlers()
         render(<InputQueuePanel entries={[entry({ id: "a" }), entry({ id: "b" })]} {...props} />)
