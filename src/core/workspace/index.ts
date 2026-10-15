@@ -9,6 +9,8 @@ export type {
 } from "./CanonicalPathBoundary"
 // Export workspace path parsing utilities
 export { CanonicalPathBoundary, isPathInsideRoot } from "./CanonicalPathBoundary"
+export type { WorkspaceLinkContext, WorkspaceLinkTarget } from "./resolveWorkspaceLinkTarget"
+export { resolveWorkspaceLinkTarget } from "./resolveWorkspaceLinkTarget"
 export type { ParsedWorkspacePath } from "./utils/parseWorkspaceInlinePath"
 export {
     addWorkspaceHint,

@@ -60,6 +60,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed the Claude usage tooltip splitting "Today Out:" from its value across two lines
 - Fixed a tool call that needs approval, such as Web Fetch, showing two cards in the chat: the approval now takes over the card the call drew while streaming, so one call stays one row from preview through approval and running to its result, for every tool instead of only for commands; a call refused by the path boundary check after approval shows the refusal on that row; when hosted Web Search falls back to local search, the reason is shown on the local search card instead of on a separate failure card
 - Fixed tool groups jumping while later rounds run: groups of tools such as read and search are now closed at each request round, so the next round's tools no longer join the previous round's group, a finished group's members and counts no longer change while a later round streams, and whether a checkpoint row was written between two rounds no longer affects grouping
+- Fixed file links shown as `@<workspace>:<path>` in multi-root workspaces (tool group rows, diff edit rows, edit results, Markdown links, and so on) not opening: a link now opens the file under the named workspace root and jumps to its line number when one is given; `@<workspace>:<path>` and `<path>:<line>` written as inline code in a reply also open on click
 
 ## [0.11.0]
 

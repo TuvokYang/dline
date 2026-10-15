@@ -1,7 +1,12 @@
 import { Controller } from "@core/controller"
+import { WorkspaceRootManager } from "@core/workspace"
+import { VcsType } from "@shared/multi-root/types"
 import { BooleanResponse, StringRequest } from "@shared/proto/dline/common"
 import * as pathUtils from "@utils/path"
 import { expect } from "chai"
+import * as fs from "fs"
+import * as os from "os"
+import * as path from "path"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 // sinon import removed
 import { ifFileExistsRelativePath } from "../ifFileExistsRelativePath"
@@ -91,5 +96,49 @@ describe("ifFileExistsRelativePath", () => {
 
         // Verify that getWorkspacePath was called for each path
         expect(getWorkspacePathStub.mock.calls.length).to.equal(validPaths.length)
+    })
+
+    describe("multi-root workspace links", () => {
+        let tempDir: string
+        let primaryRoot: string
+        let secondaryRoot: string
+
+        beforeEach(() => {
+            tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "dline-link-exists-"))
+            primaryRoot = path.join(tempDir, "dline")
+            secondaryRoot = path.join(tempDir, "dline-web")
+            fs.mkdirSync(path.join(secondaryRoot, "app"), { recursive: true })
+            fs.mkdirSync(primaryRoot, { recursive: true })
+            fs.writeFileSync(path.join(secondaryRoot, "app", "main.ts"), "export {}\n")
+
+            const manager = new WorkspaceRootManager(
+                [
+                    { path: primaryRoot, name: "dline", vcs: VcsType.None },
+                    { path: secondaryRoot, name: "dline-web", vcs: VcsType.None },
+                ],
+                0,
+            )
+            mockController = { ensureWorkspaceManager: vi.fn(async () => manager) } as unknown as Controller
+            getWorkspacePathStub.mockResolvedValue(primaryRoot)
+        })
+
+        afterEach(() => {
+            fs.rmSync(tempDir, { recursive: true, force: true })
+        })
+
+        it("finds a file named by a hinted link with a line in the hinted root", async () => {
+            const result = await ifFileExistsRelativePath(
+                mockController,
+                StringRequest.create({ value: "@dline-web:app/main.ts:3" }),
+            )
+
+            expect(result).to.deep.equal(BooleanResponse.create({ value: true }))
+        })
+
+        it("does not find the same path unhinted when it only exists in another root", async () => {
+            const result = await ifFileExistsRelativePath(mockController, StringRequest.create({ value: "app/main.ts" }))
+
+            expect(result).to.deep.equal(BooleanResponse.create({ value: false }))
+        })
     })
 })

@@ -42,6 +42,22 @@ describe("MarkdownBlock links", () => {
         expect(FileServiceClient.openFileRelativePath).toHaveBeenCalledWith(expect.objectContaining({ value: filePath }))
     })
 
+    it.each([
+        "@dline-web:app/backend/main.ts",
+        "@dline-web:app/backend/main.ts:31",
+        "@dline web:app/main.ts",
+        "@/workspaces/dline-web:app/main.ts",
+        "src/main.ts:31",
+    ])("offers inline code %s as a file link and opens it unchanged", async (filePath) => {
+        vi.mocked(FileServiceClient.ifFileExistsRelativePath).mockResolvedValueOnce({ value: true } as never)
+        render(<MarkdownBlock markdown={`See \`${filePath}\``} />)
+
+        fireEvent.click(await screen.findByRole("button", { name: filePath }))
+
+        expect(FileServiceClient.ifFileExistsRelativePath).toHaveBeenCalledWith(expect.objectContaining({ value: filePath }))
+        expect(FileServiceClient.openFileRelativePath).toHaveBeenCalledWith(expect.objectContaining({ value: filePath }))
+    })
+
     it("decodes percent-encoded project-relative paths before opening", () => {
         render(<MarkdownBlock markdown="[screenshot](test-results/foo%20bar.png)" />)
 

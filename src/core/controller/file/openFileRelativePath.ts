@@ -1,41 +1,30 @@
-import { workspaceResolver } from "@core/workspace"
 import { openFile as openFileIntegration } from "@integrations/misc/open-file"
 import { Empty, StringRequest } from "@shared/proto/dline/common"
-import { getWorkspacePath } from "@utils/path"
 import { Logger } from "@/shared/services/Logger"
-import { Controller } from ".."
+import type { Controller } from ".."
+import { resolveWorkspaceLink } from "./resolveWorkspaceLink"
 
 /**
- * Opens a file in the editor by a relative path
+ * Opens a file link from chat in the editor.
+ *
+ * The link is workspace-relative, may carry a multi-root `@<workspace>:` hint,
+ * and may end with `:<line>`, e.g. `@frontend:src/index.ts:42`.
+ *
  * @param controller The controller instance
- * @param request The request message containing the relative file path in the 'value' field
+ * @param request The request message containing the link in the 'value' field
  * @returns Empty response
  */
-export async function openFileRelativePath(_controller: Controller, request: StringRequest): Promise<Empty> {
-    const workspacePath = await getWorkspacePath()
+export async function openFileRelativePath(controller: Controller, request: StringRequest): Promise<Empty> {
+    if (!request.value) {
+        return Empty.create()
+    }
 
-    if (!workspacePath) {
+    const target = await resolveWorkspaceLink(controller, request.value)
+    if (!target) {
         Logger.error("Error in openFileRelativePath: No workspace path available")
         return Empty.create()
     }
 
-    if (request.value) {
-        // Parse optional line number suffix: "path/to/file.ts:42"
-        let filePath = request.value
-        let lineNumber: number | undefined
-        const lineMatch = filePath.match(/^(.+):(\d+)$/)
-        if (lineMatch) {
-            filePath = lineMatch[1]
-            lineNumber = Number.parseInt(lineMatch[2], 10)
-        }
-
-        // Resolve the relative path to absolute path
-        const resolvedPath = workspaceResolver.resolveWorkspacePath(workspacePath, filePath, "Controller.openFileRelativePath")
-        const absolutePath = typeof resolvedPath === "string" ? resolvedPath : resolvedPath.absolutePath
-
-        // Open the file using the existing integration
-        openFileIntegration(absolutePath, false, false, lineNumber)
-    }
-
+    openFileIntegration(target.absolutePath, false, false, target.line)
     return Empty.create()
 }

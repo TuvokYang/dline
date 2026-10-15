@@ -490,8 +490,11 @@ const MarkdownLink = ({
     )
 }
 
-// Regex to detect potential file paths (used in both remark plugin and component)
-const FILE_PATH_REGEX = /^(?!\/)[\w\-./]+(?<!\/)$/
+// Regex to detect potential file paths (used in both remark plugin and component).
+// It accepts the link grammar the extension resolves: an optional multi-root
+// `@<workspace>:` hint (a workspace name or path, as tools emit it) and an
+// optional `:<line>` suffix. The extension's existence check stays authoritative.
+const FILE_PATH_REGEX = /^(?:@[^:\n]+:)?(?!\/)[\w\-./]+(?<!\/)(?::\d+)?$/
 
 /**
  * Custom remark plugin that marks potential file paths in inline code blocks

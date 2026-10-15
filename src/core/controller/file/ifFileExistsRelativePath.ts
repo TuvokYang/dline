@@ -1,38 +1,32 @@
-import { workspaceResolver } from "@core/workspace"
 import { BooleanResponse, StringRequest } from "@shared/proto/dline/common"
-import { getWorkspacePath } from "@utils/path"
 import * as fs from "fs"
-import { Controller } from ".."
+import type { Controller } from ".."
+import { resolveWorkspaceLink } from "./resolveWorkspaceLink"
 
 /**
- * Check if a file exists in the project using a relative path
+ * Checks whether a file link from chat names an existing file.
+ *
+ * Resolves the link exactly as openFileRelativePath does, including a
+ * multi-root `@<workspace>:` hint and a trailing `:<line>`, so a link is only
+ * offered when opening it would succeed.
+ *
  * @param controller The controller instance
- * @param request The request containing the relative file path to check
+ * @param request The request containing the link to check
  * @returns BooleanResponse indicating whether the file exists
  */
-export async function ifFileExistsRelativePath(_controller: Controller, request: StringRequest): Promise<BooleanResponse> {
-    const workspacePath = await getWorkspacePath()
-
-    if (!workspacePath) {
-        // If no workspace is open, return false
-        return BooleanResponse.create({ value: false })
-    }
-
+export async function ifFileExistsRelativePath(controller: Controller, request: StringRequest): Promise<BooleanResponse> {
     if (!request.value) {
-        // If no path provided, return false
         return BooleanResponse.create({ value: false })
     }
 
-    // Resolve the relative path to absolute path
-    const resolvedPath = workspaceResolver.resolveWorkspacePath(
-        workspacePath,
-        request.value,
-        "Controller.ifFileExistsRelativePath",
-    )
-    const absolutePath = typeof resolvedPath === "string" ? resolvedPath : resolvedPath.absolutePath
-    // Check if the file exists
+    const target = await resolveWorkspaceLink(controller, request.value)
+    if (!target) {
+        // No workspace is open
+        return BooleanResponse.create({ value: false })
+    }
+
     try {
-        return BooleanResponse.create({ value: fs.statSync(absolutePath).isFile() })
+        return BooleanResponse.create({ value: fs.statSync(target.absolutePath).isFile() })
     } catch {
         return BooleanResponse.create({ value: false })
     }
