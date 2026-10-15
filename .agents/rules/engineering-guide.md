@@ -45,6 +45,17 @@ Before editing, inspect the owning implementation, tests, generated contracts, a
 
 Check `package.json` before choosing a verification command. Current primary scripts include `check-types`, `lint`, `format`, `test:smoke`, `test:run`, `test:e2e:work`, `protos`, `package`, and `vsix`.
 
+## Test assertion quality
+
+Every test must have an independent behavioral oracle and must fail for a plausible defect in the contract it claims to protect. Do not add tests merely to increase counts or freeze implementation-owned spelling.
+
+- Do not assert prose, labels, tags, HTML, generated prompt text, or serialized output only with `contains`, `toContain`, substring search, or equivalent text matching. Such assertions are allowed only when the exact token is itself a public parser, protocol, compatibility, or accessibility contract and the test demonstrates that boundary rather than restating a source literal.
+- Do not create self-fulfilling assertions such as assigning the same source value to `a` and `b` and asserting `a === b`, deriving expected and actual values through the same implementation, returning a value from a mock and only asserting that value, or copying production constants/logic into the test.
+- Do not use tag-presence or string snapshots as a substitute for semantic verification. Parse structured output and assert its schema, ordering, identity, behavior, state transition, error path, or observable side effect. Repository-owned generated snapshots may record intentional aggregate output, but they do not replace focused behavioral assertions.
+- Prefer real inputs and outputs at the smallest stable boundary. A useful test distinguishes success from failure, covers meaningful edge or recovery paths, and proves ownership or side effects where those are the contract.
+- Before adding a test, state the defect or mutation it would catch. If no plausible incorrect implementation would make the assertion fail, omit the test.
+- When a touched scope already contains a low-value assertion of these forms, remove it or replace it with a behavioral test; do not preserve it merely as historical coverage.
+
 ## E2E validation tiers
 
 Load `use-e2e` for test selection and diagnostics, and load `e2e-validation` for the ordered validation procedure.

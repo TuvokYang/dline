@@ -252,14 +252,14 @@
     "type": "function",
     "function": {
       "name": "execute_command",
-      "description": "Request to execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does. For command chaining, use the appropriate chaining syntax for the user's shell. Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Commands default to the current workspace; set workdirectory when a command must run elsewhere.",
+      "description": "Request to execute a CLI command on the system. Use this when you need to perform system operations or run specific commands to accomplish any step in the user's task. You must tailor your command to the user's system and provide a clear explanation of what the command does. For command chaining, use the appropriate chaining syntax for the user's shell. Prefer to execute complex CLI commands over creating executable scripts, as they are more flexible and easier to run. Commands default to the current workspace; set workdirectory when a command must run elsewhere. The user can see command output in real time. Keep normal stdout and stderr visible by default; do not truncate, suppress, or filter output preemptively. Dline already bounds UI and model-visible presentation, creates a Dline-owned full log for tracked background commands and large foreground output, and retains task logs under a size budget. Do not redirect stdout or stderr to a file, or use tee/Out-File/Tee-Object, solely to preserve logs or avoid output limits: redirection hides output from Dline, while tee duplicates it outside Dline's retention controls. When filtering is genuinely necessary, prefer command-native stdout/stderr, log-level, quiet, error-only, failure-only, or reporter options that preserve the real exit code and useful diagnostics.",
       "strict": false,
       "parameters": {
         "type": "object",
         "properties": {
           "command": {
             "type": "string",
-            "description": "The CLI command to execute. Write it in the syntax of the shell reported under SYSTEM INFORMATION, not in whichever shell syntax comes to mind first: heredocs, piping into text filters, conditional chaining, inline environment variables and quoting all differ between shells, and a mismatch fails outright rather than degrading. When a command fails on syntax, re-check it against the reported shell before retrying. Ensure the command is properly formatted and does not contain any harmful instructions. Do not use the ~ character or $HOME to refer to the home directory. Do not prepend cd solely to select the execution directory; use workdirectory instead."
+            "description": "The CLI command to execute. Write it in the syntax of the shell reported under SYSTEM INFORMATION, not in whichever shell syntax comes to mind first: heredocs, piping into text filters, conditional chaining, inline environment variables and quoting all differ between shells, and a mismatch fails outright rather than degrading. When a command fails on syntax, re-check it against the reported shell before retrying. Ensure the command is properly formatted and does not contain any harmful instructions. Do not use the ~ character or $HOME to refer to the home directory. Do not prepend cd solely to select the execution directory; use workdirectory instead. Keep ordinary stdout and stderr intact so the user can follow execution in real time; Dline manages bounded presentation and full command logs automatically. Do not add shell redirection or tee merely to capture output or avoid output limits. Filter only when it is necessary for the task, preferably with command-native stdout/stderr, log-level, quiet, error-only, failure-only, selector, or reporter options. If a shell pipeline is unavoidable, ensure it does not replace or mask the original command's failure status or discard relevant stderr diagnostics."
           },
           "workdirectory": {
             "type": "string",
@@ -271,11 +271,11 @@
           },
           "background": {
             "type": "boolean",
-            "description": "Optional boolean. Set true to start the command immediately as a Dline-owned background process, return control immediately, and keep its output and cancellation lifecycle tracked. The result includes the function_id required to terminate that process later with kill_command. This takes precedence over synchronous. Defaults to false."
+            "description": "Optional boolean. Set true to start the command immediately as a Dline-owned background process, return control after startup is observed, and track its real-time output, final status, and cancellation lifecycle. The user can continue to see output, and background tracking creates or continues a Dline-owned full log automatically; do not add redirection, truncation, or tee merely to retain output or avoid limits. The result includes the function_id required to terminate that process later with kill_command. This takes precedence over synchronous. Defaults to false."
           },
           "synchronous": {
             "type": "boolean",
-            "description": "Optional boolean. Set true to keep the command in the foreground beyond the default 10-second background handoff, waiting until the process exits or its timeout terminates it. Defaults to false. Ignored when background is true."
+            "description": "Optional boolean. Set true to keep the command in the foreground beyond the default 10-second background handoff, waiting until the process exits or its timeout terminates it. The user continues to see real-time output, while Dline applies bounded presentation and automatic full logging for large output; do not truncate, filter, or redirect merely to avoid limits. Defaults to false. Ignored when background is true."
           },
           "timeout": {
             "type": "integer",
@@ -283,7 +283,7 @@
           },
           "mute_stdout": {
             "type": "boolean",
-            "description": "Optional boolean. Set true only when you are certain the command's stdout is not needed for any later reasoning or action. After a successful exit, Dline omits stdout from the tool result returned to you and returns only the successful exit status, which can save context tokens. On failure, Dline still returns captured diagnostics and the error code. The user interface, Activities, and command logs retain the full output. If you are unsure whether stdout is needed, omit this parameter or set false."
+            "description": "Optional boolean. Set true only when successful stdout is not needed for later reasoning or action. On a verified successful exit, Dline omits stdout from the model-visible tool result and returns the success status; failures, signals, timeouts, and captured diagnostics are still returned. This option does not disable execution capture: the UI and Activities retain their bounded projections, and tracked background or large foreground output remains available through a Dline-owned log. Small foreground commands do not necessarily create a log file. If unsure, omit this parameter or set false."
           }
         },
         "required": [
