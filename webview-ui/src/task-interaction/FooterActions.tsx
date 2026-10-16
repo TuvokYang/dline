@@ -29,6 +29,22 @@ function errorMessage(error: unknown): string {
     return error instanceof Error && error.message ? error.message : "The action could not be completed."
 }
 
+/** Turn stable dispatch outcomes into recovery guidance instead of exposing protocol enums. */
+function rejectedInteractionMessage(result: string): string {
+    switch (result) {
+        case "stale_interaction":
+            return "This action is no longer current. Reopen the task and try again."
+        case "invalid_runtime_event":
+            return "Dline could not continue the task. Your message was restored; try again."
+        case "task_read_only":
+            return "This task is open in another window and cannot be changed here."
+        case "invalid_payload":
+            return "This response could not be read. Your message was restored; review its attachments and try again."
+        default:
+            return `Interaction was not accepted: ${result || "unknown error"}`
+    }
+}
+
 /** Render and dispatch footer actions without inspecting message history. */
 export function FooterActions({
     view,
@@ -125,7 +141,7 @@ export function FooterActions({
                                 void dispatch(request)
                                     .then((response) => {
                                         if (!response.accepted) {
-                                            setError(`Interaction was not accepted: ${response.result || "unknown error"}`)
+                                            setError(rejectedInteractionMessage(response.result))
                                             if (carriesDraft) {
                                                 onDraftRejected?.(settlement)
                                             }

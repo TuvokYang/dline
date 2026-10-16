@@ -70,12 +70,14 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
         // Validate required parameters
         if (!result) {
             config.taskState.consecutiveMistakeCount++
+            await this.discardUncommittedPreview(config, block)
             return await config.callbacks.sayAndCreateMissingParamError(this.name, "result", undefined, block.ts)
         }
 
         const unfinishedChecklist = readUnfinishedFocusChecklist(config)
         if (unfinishedChecklist) {
             config.taskState.consecutiveMistakeCount++
+            await this.discardUncommittedPreview(config, block)
             return formatResponse.toolError(
                 `${getPrompt("focusChain", "attemptCompletionBlocked")}\n\nCurrent checklist:\n${unfinishedChecklist}`,
             )
@@ -86,10 +88,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
         // Double-check completion: reject attempt_completion calls that haven't been re-verified
         if (config.doubleCheckCompletionEnabled && !config.taskState.doubleCheckCompletionPending) {
             config.taskState.doubleCheckCompletionPending = true
-            // Use block.ts to remove the partial completion_result from handlePartialBlock
-            if (block.ts !== undefined) {
-                await config.callbacks.say("completion_result", "", undefined, undefined, false, block.ts)
-            }
+            await this.discardUncommittedPreview(config, block)
 
             const taskPreview = getInitialTaskPreview(config)
             const taskSection = taskPreview ? `\n\n<initial_task>\n${taskPreview}\n</initial_task>` : ""
@@ -108,6 +107,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
         } catch (error) {
             const { PreToolUseHookCancellationError } = await import("@core/hooks/PreToolUseHookCancellationError")
             if (error instanceof PreToolUseHookCancellationError) {
+                await this.discardUncommittedPreview(config, block)
                 return formatResponse.toolDenied()
             }
             throw error
@@ -122,6 +122,12 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
         }
 
         return this.commitAndPresentCompletion(config, block)
+    }
+
+    /** Settle a streamed completion preview before a deliberate pre-commit rejection. */
+    private async discardUncommittedPreview(config: TaskConfig, block: ToolUse): Promise<void> {
+        if (block.ts === undefined) return
+        await config.callbacks.say("completion_result", "", undefined, undefined, false, block.ts)
     }
 
     private async commitAndPresentCompletion(config: TaskConfig, block: ToolUse): Promise<ToolHandlerResult> {

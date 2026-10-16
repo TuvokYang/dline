@@ -279,7 +279,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
      * is what left a reopened task paused with no dialog and a dead composer, so
      * an unowned answer retires only once the continuation accepts it.
      */
-    resolve(interactionId: string, outcome: InteractionOutcome): void {
+    async resolve(interactionId: string, outcome: InteractionOutcome): Promise<boolean> {
         const pending = this.pending.get(interactionId)
         if (pending) {
             this.pending.delete(interactionId)
@@ -287,18 +287,20 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             // journaled its result. Terminal tool feedback retires this owner.
             if (this.session?.state().dialog.primary?.acceptedResponse?.queuedInput) {
                 pending.resolve(outcome)
-                return
+                return true
             }
             // A normal turn-ending handler may launch the next provider round as
             // soon as its await resolves. Keep it parked until the old dialog is
             // durably retired, otherwise the next dialog races the still-primary one
             // and is rejected with phase_invalid.
-            void this.retire(interactionId).then(() => pending.resolve(outcome))
-            return
+            await this.retire(interactionId)
+            pending.resolve(outcome)
+            return true
         }
-        // Read the kind before retiring: the continuation needs to know what it is
-        // resuming from, and retiring clears the dialog from state.
-        void this.settleUnowned(interactionId, this.dialogKind(interactionId) ?? "", outcome)
+        // Read the kind while the resolving interaction still exists: a failed
+        // continuation must reopen that same owner rather than recreate it after
+        // dialog.resolved has removed it from the kernel.
+        return this.settleUnowned(interactionId, this.dialogKind(interactionId) ?? "", outcome)
     }
 
     /**
@@ -540,7 +542,7 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
      * retiring it anyway would record a consumed answer the task never acted on
      * and remove the only control the user has left.
      */
-    private async settleUnowned(interactionId: string, kind: string, answered: InteractionOutcome): Promise<void> {
+    private async settleUnowned(interactionId: string, kind: string, answered: InteractionOutcome): Promise<boolean> {
         const session = this.session
         const generation = session?.state().generation
         const isCurrent = () =>
@@ -550,10 +552,19 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             session.state().halt.status === "idle"
         const queuedInput = session?.state().dialog.primary?.acceptedResponse?.queuedInput
         const currentBeforeResolve = isCurrent()
-        const outcome = await this.forReceiver(answered)
+        let outcome: InteractionOutcome
+        try {
+            outcome = await this.forReceiver(answered)
+        } catch (error) {
+            Logger.error(
+                `Failed to resolve unowned interaction ${interactionId}: ${error instanceof Error ? error.message : error}`,
+            )
+            if (currentBeforeResolve && isCurrent()) await this.reopen(interactionId, generation)
+            return false
+        }
         // Resolving the reply's resources reads files; a task that moved on
         // meanwhile must not be continued with an answer meant for its past.
-        if (currentBeforeResolve && !isCurrent()) return
+        if (currentBeforeResolve && !isCurrent()) return false
         const resolution: UnownedDialogResolution = {
             interactionId,
             kind,
@@ -562,18 +573,37 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         }
         const accepted = this.unownedContinuation?.accepts(resolution) ?? false
         let continuation: UnownedDialogOutcome = "declined"
-        let retired = false
         if (accepted) {
-            // A restored tool stages its paired result before retirement so a crash
-            // between these awaits never loses both the answer and its owner.
-            const prepared = (await this.unownedContinuation?.prepare?.(resolution)) ?? true
-            if (!isCurrent()) return
-            if (prepared) {
-                retired = await this.retire(interactionId, generation)
-                if (!isCurrent()) return
-                continuation = retired ? await this.carryOn(resolution) : "failed"
-            } else continuation = "failed"
+            try {
+                // A restored tool stages its paired result while the interaction is
+                // still resolving. If preparation fails, dialog.reopened remains a
+                // legal recovery event because the interaction has not been retired.
+                const prepared = (await this.unownedContinuation?.prepare?.(resolution)) ?? true
+                if (!isCurrent()) return false
+                if (prepared) continuation = await this.carryOn(resolution)
+                else continuation = "failed"
+            } catch (error) {
+                Logger.error(
+                    `Failed to prepare unowned interaction ${interactionId}: ${error instanceof Error ? error.message : error}`,
+                )
+                continuation = "failed"
+            }
         }
+
+        if (continuation === "continued") {
+            // user.submit is already accepted and its compose round is queued. Retire
+            // the old dialog now, before that asynchronous round can reveal another.
+            const retired = await this.retire(interactionId, generation)
+            if (!retired) {
+                Logger.warn(`Continued interaction ${interactionId} could not be retired`)
+            }
+        } else if (isCurrent()) {
+            // The interaction is still resolving, so this is a valid state-machine
+            // transition. Reopening after dialog.resolved can never work because the
+            // resolved event removes the interaction entirely.
+            await this.reopen(interactionId, generation)
+        }
+
         // Recorded for every unowned answer, not only the ones that went nowhere.
         // Whether a restored dialog resumed the task or was left answerable is
         // the difference between a task that continues and one that appears to
@@ -584,24 +614,28 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             message: `Interaction ${interactionId} (${kind}) answered with ${outcome.actionId} was ${continuation}`,
             severity: continuation === "failed" ? "failure" : "observation",
         })
-        // The answer reached nothing, so the question it answered is still open.
-        // Reopening keeps it answerable instead of leaving the task paused with
-        // no dialog, which is what disabled the composer for good.
-        if (continuation === "failed" && retired) await this.reopen(interactionId)
+        return continuation === "continued"
     }
 
-    /** Put a retired interaction back in play after its continuation failed. */
-    private async reopen(interactionId: string): Promise<void> {
+    /** Put a still-resolving interaction back in play after its continuation failed. */
+    private async reopen(interactionId: string, generation = this.session?.state().generation): Promise<boolean> {
         const session = this.session
-        if (!session) return
+        if (!session || generation === undefined) return false
         try {
-            await session.assembly.runtime.submit({
+            const result = await session.assembly.runtime.submit({
                 type: "dialog.reopened",
-                generation: session.state().generation,
+                generation,
                 interactionId,
             })
+            if (result.kind === "rejected") {
+                Logger.warn(`Failed to reopen interaction ${interactionId}: ${result.reason}`)
+                return false
+            }
+            await result.receipt?.durable
+            return true
         } catch (error) {
             Logger.warn(`Failed to reopen interaction ${interactionId}: ${error instanceof Error ? error.message : error}`)
+            return false
         }
     }
 

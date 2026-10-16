@@ -211,6 +211,34 @@ export class CheckpointGate<Refs> {
         await pending
     }
 
+    /**
+     * Enter one bounded workspace mutation in the same ordering sequence as checkpoints.
+     *
+     * A mutation admitted after a round waits for that baseline. A later round waits
+     * for the returned settlement callback, so it observes and attaches the file
+     * delta to the row that preceded the mutation rather than creating a chat-only row.
+     */
+    async beginMutation(): Promise<() => void> {
+        if (this.holding.getStore()) return () => undefined
+        const previous = this.tail
+        let release!: () => void
+        const own = new Promise<void>((resolve) => {
+            release = resolve
+        })
+        this.tail = previous.then(() => own)
+        await previous
+        if (this.closed) {
+            release()
+            return () => undefined
+        }
+        let settled = false
+        return () => {
+            if (settled) return
+            settled = true
+            release()
+        }
+    }
+
     /** Refuse new work and wait for the work already admitted, so no row is left without its bundle. */
     async close(): Promise<void> {
         this.closed = true

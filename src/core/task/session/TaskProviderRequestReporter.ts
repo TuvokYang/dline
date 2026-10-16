@@ -388,7 +388,10 @@ class RetryCard {
         this.ts = ts
         this.notice = notice
         await this.present(() => this.view?.publishState())
-        await this.present(() => this.view?.showRow(this.storedRow(ts) ?? row))
+        const delivered = await this.present(() => this.view?.showRow(this.storedRow(ts) ?? row))
+        // The row is already durable. If direct delivery failed, publish the
+        // changed message count again so the chat reconciles it before Retry appears.
+        if (!delivered) await this.present(() => this.view?.publishState())
     }
 
     async withdraw(): Promise<void> {
@@ -420,11 +423,13 @@ class RetryCard {
     }
 
     /** A card the chat could not receive costs visibility only, never the request's settlement. */
-    private async present(deliver: () => Promise<void> | undefined): Promise<void> {
+    private async present(deliver: () => Promise<void> | undefined): Promise<boolean> {
         try {
             await deliver()
+            return true
         } catch (error) {
             Logger.debug(`[provider] retry card could not reach the chat: ${String(error)}`)
+            return false
         }
     }
 }

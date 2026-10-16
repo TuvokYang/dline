@@ -228,8 +228,8 @@ export interface TaskCallbacks {
      */
     saveCheckpoint?: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
 
-    /** Wait for the already-started round baseline before a tool mutates workspace files. */
-    awaitRoundCheckpointBeforeMutation?: () => Promise<void>
+    /** Enter a bounded mutation after the prior baseline; settle it when the tool stops writing. */
+    beginWorkspaceMutation?: () => Promise<() => void>
 
     sayAndCreateMissingParamError: (
         toolName: DlineDefaultTool,

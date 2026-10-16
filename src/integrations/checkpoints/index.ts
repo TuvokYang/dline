@@ -311,10 +311,10 @@ export class TaskCheckpointManager implements ICheckpointManager {
         }
     }
 
-    /** Keep a workspace mutation behind the round baseline already started for this turn. */
-    async awaitRoundCheckpointBeforeMutation(): Promise<void> {
-        if (!this.config.enableCheckpoints || this.disposed) return
-        await this.gate.waitForPendingWork()
+    /** Order one workspace mutation after the prior baseline and before the next round. */
+    async beginWorkspaceMutation(): Promise<() => void> {
+        if (!this.config.enableCheckpoints || this.disposed) return () => undefined
+        return await this.gate.beginMutation()
     }
 
     /**

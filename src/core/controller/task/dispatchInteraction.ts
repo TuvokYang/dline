@@ -425,10 +425,11 @@ export async function dispatchInteraction(
     // submit the note as new input, composing a round before the tool result
     // exists. Start New Task ends the task instead of answering the dialog.
     // Every other dialog still reaches its receiver or continuation.
+    let interactionSettled = true
     if (!approvalEntry && request.actionId === START_NEW_TASK_ACTION) closeForNewTask(controller, session)
-    else if (!approvalEntry) session.owners.interactions.resolve(request.interactionId, outcome)
+    else if (!approvalEntry) interactionSettled = await session.owners.interactions.resolve(request.interactionId, outcome)
     await Promise.all([consumedRow, denialPresentation])
-    return response(true, "accepted")
+    return interactionSettled ? response(true, "accepted") : response(false, "invalid_runtime_event")
 }
 
 function hasDraftContent(draft: DispatchInteractionRequest["draft"], attachments: ReplyAttachments): boolean {

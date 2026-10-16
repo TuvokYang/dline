@@ -383,26 +383,29 @@ export class ToolExecutorCoordinator {
             // from a spent one instead of retrying a call that can never run.
             return formatResponse.toolError(explicitToolRefusalMessage(block.name, authorized.code))
         }
-        // The request is already on the provider wire. Only file mutation waits for
-        // the baseline that request started; waiting here cannot delay provider
-        // admission and does not create a tool-local checkpoint.
+        // The request is already on the provider wire. A file mutation enters the
+        // checkpoint sequence after the admitted round baseline and settles before
+        // a later round may inspect workspace changes.
+        let settleMutation: (() => void) | undefined
         if (mayMutateWorkspace(block)) {
             try {
-                await authorized.config.callbacks.awaitRoundCheckpointBeforeMutation?.()
+                settleMutation = await authorized.config.callbacks.beginWorkspaceMutation?.()
             } catch (error) {
-                // Checkpoints are a side feature. A failed baseline loses restore
+                // Checkpoints are a side feature. A failed ticket loses restore
                 // coverage, but must not turn an admitted file tool into a deadlock.
-                Logger.warn(
-                    "[ToolExecutorCoordinator] Round checkpoint mutation barrier failed; continuing tool execution",
-                    error,
-                )
+                Logger.warn("[ToolExecutorCoordinator] Workspace mutation ticket failed; continuing tool execution", error)
             }
         }
         // Effects that ride on a call without belonging to any tool. The surface
         // decides which of them it has, so a task with no checklist and no
         // workspace history runs the same tools without supplying either.
         const effects = resolveToolCallSideEffects(config)
-        const result = await handler.execute(authorized.config, block)
+        let result: ToolHandlerResult
+        try {
+            result = await handler.execute(authorized.config, block)
+        } finally {
+            settleMutation?.()
+        }
         await applyToolCallSideEffects(effects, block)
         return result
     }

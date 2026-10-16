@@ -515,21 +515,18 @@ describe("TaskInteractionOwner", () => {
             state: () => restoredPrimary("i-restored", "completion"),
         })
 
-        owner.resolve("i-restored", { actionId: "reply" })
-        await vi.waitFor(() =>
-            expect(continuation.continue).toHaveBeenCalledWith(
-                expect.objectContaining({ interactionId: "i-restored", kind: "completion" }),
-            ),
+        await expect(owner.resolve("i-restored", { actionId: "reply" })).resolves.toBe(true)
+        expect(continuation.continue).toHaveBeenCalledWith(
+            expect.objectContaining({ interactionId: "i-restored", kind: "completion" }),
         )
 
-        // Retired before the continuation ran, because the round it opens needs
-        // the dialog slot the retire releases.
+        // The continuation accepts its input before the old dialog retires; the
+        // runtime event lane then releases the slot ahead of the new round's reply.
         expect(submitted).toEqual(["dialog.resolved"])
     })
 
-    // Retiring a dialog nothing acted on told the kernel the answer was
-    // consumed while the task stayed paused with no dialog at all, which is
-    // what left the composer permanently disabled after reopening a task.
+    // A continuation that declines the answer must reopen the still-resolving
+    // interaction; resolving it first would remove the only state that can reopen.
     it("keeps a restored dialog answerable when nothing carried the task on", async () => {
         const continuation = continuationPort("declined")
         const { owner, submitted, recorded } = createOwner({
@@ -537,14 +534,11 @@ describe("TaskInteractionOwner", () => {
             state: () => restoredPrimary("i-restored", "completion"),
         })
 
-        owner.resolve("i-restored", { actionId: "start_new_task" })
-        await vi.waitFor(() =>
-            expect(recorded).toContainEqual(
-                expect.objectContaining({ source: "dialog", code: "unowned_dialog_settled", severity: "observation" }),
-            ),
+        await expect(owner.resolve("i-restored", { actionId: "reply" })).resolves.toBe(false)
+        expect(recorded).toContainEqual(
+            expect.objectContaining({ source: "dialog", code: "unowned_dialog_settled", severity: "observation" }),
         )
-
-        expect(submitted).toEqual([])
+        expect(submitted).toEqual(["dialog.reopened"])
     })
 
     // Every unowned answer is reported, because "the task resumed" and "the
@@ -555,11 +549,9 @@ describe("TaskInteractionOwner", () => {
             state: () => restoredPrimary("i-restored", "completion"),
         })
 
-        owner.resolve("i-restored", { actionId: "reply" })
-        await vi.waitFor(() =>
-            expect(recorded).toContainEqual(
-                expect.objectContaining({ code: "unowned_dialog_settled", message: expect.stringContaining("continued") }),
-            ),
+        await expect(owner.resolve("i-restored", { actionId: "reply" })).resolves.toBe(true)
+        expect(recorded).toContainEqual(
+            expect.objectContaining({ code: "unowned_dialog_settled", message: expect.stringContaining("continued") }),
         )
     })
 
@@ -571,8 +563,8 @@ describe("TaskInteractionOwner", () => {
             state: () => restoredPrimary("i-restored", "completion"),
         })
 
-        owner.resolve("i-restored", { actionId: "reply" })
-        await vi.waitFor(() => expect(submitted).toEqual(["dialog.resolved", "dialog.reopened"]))
+        await expect(owner.resolve("i-restored", { actionId: "reply" })).resolves.toBe(false)
+        expect(submitted).toEqual(["dialog.reopened"])
     })
 
     // A receiver is the one that acts on the answer, so its dialog retires on

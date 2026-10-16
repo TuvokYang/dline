@@ -836,6 +836,56 @@ e2e(
 )
 
 e2e(
+    "Mistake limit - live Process Anyway starts the next provider round with the submitted feedback",
+    async ({ helper, server, sidebar, userDataDir }) => {
+        e2e.setTimeout(180_000)
+        await helper.signin(sidebar)
+        server.resetOpenAiMock()
+        server.enqueueOpenAiResponses(
+            { type: "message", text: "E2E_LIVE_MISTAKE_LIMIT_NO_TOOL_1" },
+            { type: "message", text: "E2E_LIVE_MISTAKE_LIMIT_NO_TOOL_2" },
+            { type: "message", text: "E2E_LIVE_MISTAKE_LIMIT_NO_TOOL_3" },
+            {
+                type: "message",
+                text: "E2E_LIVE_MISTAKE_LIMIT_AFTER_RESET",
+                expectedRequestIncludes: ["E2E_LIVE_MISTAKE_LIMIT_FEEDBACK"],
+            },
+            {
+                type: "tool",
+                name: "attempt_completion",
+                arguments: { result: "E2E_LIVE_MISTAKE_LIMIT_RESET_OK" },
+            },
+            {
+                type: "error",
+                status: 500,
+                code: "unexpected_additional_request",
+                message: "Unexpected request after live mistake-limit recovery",
+            },
+        )
+
+        await sendTask(sidebar, "E2E_LIVE_MISTAKE_LIMIT_TASK")
+        const footer = sidebar.getByRole("contentinfo")
+        const processAnyway = footer.locator('vscode-button[aria-label="Process Anyway"]')
+        await expect(processAnyway).toBeVisible({ timeout: 60_000 })
+
+        const input = sidebar.getByTestId("chat-input")
+        await input.fill("E2E_LIVE_MISTAKE_LIMIT_FEEDBACK")
+        await processAnyway.click()
+
+        await expectComposerText(input, "")
+        await expectSingleUserFeedback(sidebar, "E2E_LIVE_MISTAKE_LIMIT_FEEDBACK")
+        await expect(sidebar.getByText("E2E_LIVE_MISTAKE_LIMIT_RESET_OK", { exact: false }).last()).toBeVisible({
+            timeout: 60_000,
+        })
+        await expect.poll(() => server.openAiRequestCount).toBe(5)
+        expect(server.getMockConsumptions("openai-compatible-chat").every((entry) => entry.contractError === undefined)).toBe(
+            true,
+        )
+        await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+    },
+)
+
+e2e(
     "Mistake limit - footer recovery stays actionable and Process Anyway resets the counter",
     async ({ helper, server, sidebar, userDataDir }) => {
         e2e.setTimeout(180_000)

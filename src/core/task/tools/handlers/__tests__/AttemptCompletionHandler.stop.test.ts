@@ -127,12 +127,8 @@ describe("AttemptCompletionHandler stop behavior", () => {
         assert.match(result as string, /ATTEMPT_COMPLETION BLOCKED/)
         assert.match(result as string, /Current checklist:\n# Plan\n- \[x\] Inspect\n- \[ \] Verify/)
         assert.equal(taskState.consecutiveMistakeCount, 1)
-        // The refused call must not publish a completion row.
-        const sayCalls = (config.callbacks.say as ReturnType<typeof vi.fn>).mock.calls
-        assert.equal(
-            sayCalls.some(([type]) => type === "completion_result"),
-            false,
-        )
+        // The refused call must settle the streamed preview at its original identity.
+        expect(config.callbacks.say).toHaveBeenCalledWith("completion_result", "", undefined, undefined, false, 123)
     })
 
     it("completes once every checklist item is checked", async () => {

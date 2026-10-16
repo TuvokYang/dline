@@ -1,3 +1,4 @@
+import type { ProviderRetryPhase } from "@core/task/executors/provider/service/ProviderRetryGate"
 import type { InteractionKind } from "@core/task/interaction/Interaction"
 import { getInteraction, INTERACTION_KINDS } from "@core/task/interaction/InteractionRegistry"
 import type {
@@ -104,7 +105,7 @@ export function adaptCanonicalTaskView(
     view: CanonicalTaskViewProjection,
     messages: readonly UiMessage[] = [],
     handoff?: BackgroundHandoffAvailabilityPort,
-    automaticRetry = false,
+    retryPhase: ProviderRetryPhase = "idle",
     truncationOffered = false,
 ): TaskViewState {
     const dialog = owningDialog(view)
@@ -152,9 +153,9 @@ export function adaptCanonicalTaskView(
     // background instead of cancelled, so that choice is offered before Cancel.
     // The affordance disappears again once the executor no longer owns it.
     const handoffAction = cancelActions.length > 0 ? projectBackgroundHandoffAction(handoff) : undefined
-    // While an automatic retry owns the request, Retry sends the next attempt
-    // now instead of waiting out the countdown, as the previous runtime offered.
-    const retryActions: TaskViewAction[] = automaticRetry ? [{ ...AUTOMATIC_RETRY_ACTION }] : []
+    // Retry releases a live countdown. The sequence remains active while the next
+    // attempt is in flight, but there is no wait for a second click to release.
+    const retryActions: TaskViewAction[] = retryPhase === "waiting" ? [{ ...AUTOMATIC_RETRY_ACTION }] : []
     const taskActions: TaskViewAction[] = [...retryActions, ...(handoffAction ? [handoffAction] : []), ...cancelActions]
     // Without its anchor row the dialog has nothing to pin its controls to, so the
     // surface falls back to task-level affordances instead of orphaned buttons.

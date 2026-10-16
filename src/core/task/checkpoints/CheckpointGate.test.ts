@@ -352,6 +352,30 @@ describe("CheckpointGate", () => {
             await expect(running).resolves.toMatchObject({ outcome: "created" })
         })
 
+        it("holds the next round behind a started mutation so its file delta attaches to the preceding row", async () => {
+            const subject = harness()
+            subject.say()
+            await subject.gate.ensureRound("round_start")
+
+            const settleMutation = await subject.gate.beginMutation()
+            subject.write()
+            subject.say()
+            let roundSettled = false
+            const nextRound = subject.gate.ensureRound("round_start").then((result) => {
+                roundSettled = true
+                return result
+            })
+            await Promise.resolve()
+
+            expect(roundSettled).toBe(false)
+            expect(subject.rows).toHaveLength(1)
+            settleMutation()
+            await expect(nextRound).resolves.toMatchObject({ outcome: "created" })
+
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", undefined])
+            expect(subject.bundles.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
+        })
+
         it("lets a cancelled caller leave the queue without letting two holders run", async () => {
             const subject = harness()
             subject.say()

@@ -123,6 +123,49 @@ describe("FooterActions", () => {
         expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled()
     })
 
+    it("explains a failed Process Anyway continuation and restores its draft", async () => {
+        const dispatch = vi.fn(async () => ({ accepted: false, result: "invalid_runtime_event" }))
+        const onDraftAccepted = vi.fn()
+        const onDraftRejected = vi.fn()
+        const view = approvalView()
+        if (!view.activeInteraction) throw new Error("Expected active interaction")
+        view.activeInteraction = {
+            ...view.activeInteraction,
+            kind: "mistake_limit",
+            presentationKind: "mistake_limit",
+            taskAsk: "mistake_limit_reached",
+        }
+        view.footer.actions = [
+            {
+                type: "process_anyway",
+                label: "Process Anyway",
+                appearance: "primary",
+                enabled: true,
+                payloadPolicy: "draft",
+                dispatchTarget: "interaction",
+            },
+        ]
+
+        render(
+            <FooterActions
+                dispatch={dispatch}
+                draft={{ text: "try smaller steps", images: [], files: [] }}
+                onDraftAccepted={onDraftAccepted}
+                onDraftRejected={onDraftRejected}
+                view={view}
+            />,
+        )
+
+        fireEvent.click(screen.getByRole("button", { name: "Process Anyway" }))
+
+        await waitFor(() => expect(onDraftRejected).toHaveBeenCalledOnce())
+        expect(onDraftAccepted).toHaveBeenCalledOnce()
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "Dline could not continue the task. Your message was restored; try again.",
+        )
+        expect(screen.getByRole("button", { name: "Process Anyway" })).toBeEnabled()
+    })
+
     it("hands the draft back when the dispatch itself fails", async () => {
         const dispatch = vi.fn(async () => {
             throw new Error("transport failed")

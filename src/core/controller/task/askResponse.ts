@@ -53,6 +53,7 @@ export async function askResponse(controller: Controller, request: AskResponseRe
                 ? state.dialog.primary
                 : Object.values(state.dialog.approvalsByBlock).find((candidate) => candidate.status === "awaiting")
         if (!interaction) {
+            if (request.responseType === "retry") throw new Error("Retry is no longer waiting")
             if (request.responseType === "messageResponse" && (request.text || request.images.length || request.files.length)) {
                 const input = await session.inputs.materialize({
                     text: request.text,

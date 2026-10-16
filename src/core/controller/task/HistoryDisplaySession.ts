@@ -538,7 +538,7 @@ export class HistoryDisplaySession {
                 view,
                 evidence,
                 undefined,
-                false,
+                "idle",
                 automaticCompactionFailureAwaitsRecovery(display.state),
             )
             if (adapted.activeInteraction || owningInteractionId === undefined) {
@@ -565,7 +565,7 @@ export class HistoryDisplaySession {
             projectCanonicalTaskView(state),
             messages,
             undefined,
-            false,
+            "idle",
             automaticCompactionFailureAwaitsRecovery(state),
         )
     }

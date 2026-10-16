@@ -370,10 +370,11 @@ describe("TaskProviderRequestReporter", () => {
 
     // A retry happens before the stream produces anything, and replacing the card
     // keeps the row count unchanged, so only a delivered row shows the next attempt.
-    function reporterWithView(options: { failDelivery?: boolean } = {}) {
+    function reporterWithView(options: { failDelivery?: boolean; failRowAttempts?: number } = {}) {
         const state = messageState()
         const delivered: string[] = []
         let next = 100
+        let remainingRowFailures = options.failRowAttempts ?? 0
         const reporter = new TaskProviderRequestReporter({
             messages: state.handler,
             nextPresentationId: () => ++next,
@@ -382,7 +383,7 @@ describe("TaskProviderRequestReporter", () => {
             usageTelemetry: { record: () => {} },
             retryView: {
                 showRow: async (row) => {
-                    if (options.failDelivery) throw new Error("webview gone")
+                    if (options.failDelivery || remainingRowFailures-- > 0) throw new Error("webview gone")
                     const card = JSON.parse(row.text ?? "{}")
                     delivered.push(`row:${row.ts}:attempt:${card.attempt}${card.failed ? ":failed" : ""}`)
                 },
@@ -416,6 +417,18 @@ describe("TaskProviderRequestReporter", () => {
         await record.settle({ outcome: "failed" })
 
         expect(harness.delivered).toEqual(["state:card", "row:102:attempt:5", "row:102:attempt:5:failed"])
+    })
+
+    it("re-publishes durable state when direct retry-card delivery fails", async () => {
+        const harness = reporterWithView({ failRowAttempts: 1 })
+        const record = await harness.reporter.begin({ turnId: "turn-1" })
+
+        await record.retrying?.({ attempt: 1, maxAttempts: 5, delayMs: 3000, errorMessage: "first" })
+
+        // The first state publication exposes the new row count. When direct row
+        // delivery fails, a second publication reconciles that durable row before
+        // the retry action can be projected.
+        expect(harness.delivered).toEqual(["state:card", "state:card"])
     })
 
     it("keeps retrying and settling when the chat cannot receive the card", async () => {

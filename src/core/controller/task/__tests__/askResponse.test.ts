@@ -109,4 +109,14 @@ describe("askResponse legacy boundary", () => {
         expect(idle.session.inputs.materialize).not.toHaveBeenCalled()
         expect(idle.session.task.submitInput).not.toHaveBeenCalled()
     })
+
+    it("rejects a stale task-level Retry instead of acknowledging a no-op", async () => {
+        const idle = controller()
+        Object.assign(idle.session.owners, { providerRetry: { retryNow: vi.fn(() => false) } })
+
+        await expect(askResponse(idle.value as never, AskResponseRequest.create({ responseType: "retry" }))).rejects.toThrow(
+            "Retry is no longer waiting",
+        )
+        expect(idle.session.task.submitInput).not.toHaveBeenCalled()
+    })
 })

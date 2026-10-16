@@ -1,6 +1,8 @@
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry-schedule"
 import type { ProviderRetryPolicy, ProviderRetryWait } from "./DefaultProductionProviderService"
 
+export type ProviderRetryPhase = "idle" | "waiting" | "sending"
+
 /**
  * The automatic retry schedule, with the user able to cut a wait short.
  *
@@ -14,16 +16,26 @@ import type { ProviderRetryPolicy, ProviderRetryWait } from "./DefaultProduction
  */
 export class ProviderRetryGate implements ProviderRetryPolicy {
     readonly maxAttempts = MAX_AUTO_RETRY_ATTEMPTS
-    private sequence = false
+    private currentPhase: ProviderRetryPhase = "idle"
     private release: ((outcome: ProviderRetryWait) => void) | undefined
     private takeover = false
 
     /** @param onChange Publishes the footer when the sequence starts or ends. */
     constructor(private readonly onChange?: () => void) {}
 
+    /** Current lifecycle of the automatic retry sequence. */
+    get phase(): ProviderRetryPhase {
+        return this.currentPhase
+    }
+
     /** Whether an automatic retry sequence currently owns the request. */
     get active(): boolean {
-        return this.sequence
+        return this.currentPhase !== "idle"
+    }
+
+    /** Whether Retry can release a countdown right now. */
+    get retryAvailable(): boolean {
+        return this.currentPhase === "waiting"
     }
 
     delayMs(attempt: number): number {
@@ -38,6 +50,7 @@ export class ProviderRetryGate implements ProviderRetryPolicy {
                 clearTimeout(timer)
                 signal.removeEventListener("abort", onAbort)
                 if (this.release === finish) this.release = undefined
+                this.setPhase("sending")
                 resolve(outcome)
             }
             const onAbort = () => finish("cancelled")
@@ -46,7 +59,7 @@ export class ProviderRetryGate implements ProviderRetryPolicy {
             this.release = finish
             // Publish only after Retry can release the wait. The Webview may render
             // and click the button synchronously from this notification.
-            this.setSequence(true)
+            this.setPhase("waiting")
         })
     }
 
@@ -90,7 +103,7 @@ export class ProviderRetryGate implements ProviderRetryPolicy {
 
     /** The request produced its stream or failed for good, so the sequence is over. */
     settled(): void {
-        this.setSequence(false)
+        this.setPhase("idle")
     }
 
     private end(outcome: ProviderRetryWait): boolean {
@@ -100,9 +113,9 @@ export class ProviderRetryGate implements ProviderRetryPolicy {
         return true
     }
 
-    private setSequence(active: boolean): void {
-        if (this.sequence === active) return
-        this.sequence = active
+    private setPhase(phase: ProviderRetryPhase): void {
+        if (this.currentPhase === phase) return
+        this.currentPhase = phase
         this.onChange?.()
     }
 }

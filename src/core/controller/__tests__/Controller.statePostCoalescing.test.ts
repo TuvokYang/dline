@@ -102,6 +102,22 @@ describe("Controller state publication coalescing", () => {
         }
     })
 
+    it("coalesces transient Task view publications without building full state", async () => {
+        const { controller, buildState } = createController("task-a")
+        const publishPatch = vi.spyOn(controller, "postTaskViewPatchToWebview").mockResolvedValue(undefined)
+        const transient = controller as unknown as { scheduleTaskViewPatch(): void }
+
+        transient.scheduleTaskViewPatch()
+        transient.scheduleTaskViewPatch()
+        transient.scheduleTaskViewPatch()
+        await Promise.resolve()
+        await Promise.resolve()
+
+        expect(publishPatch).toHaveBeenCalledTimes(1)
+        expect(buildState).not.toHaveBeenCalled()
+        expect(sendStateUpdate).not.toHaveBeenCalled()
+    })
+
     it("publishes an interaction-critical Task view without building full state", async () => {
         const { controller, buildState, setActiveTaskId } = createController("task-a")
         const taskViewState = { taskId: "task-a", stateRevision: 7 } as TaskViewState

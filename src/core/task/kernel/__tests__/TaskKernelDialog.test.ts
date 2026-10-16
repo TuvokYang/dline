@@ -93,6 +93,15 @@ describe("task kernel causal dialog", () => {
         ).state
         const first = accepted(transition(state, response(1)))
         expect(first.state.dialog.primary).toMatchObject({ status: "resolving", acceptedResponse: { actionId: "reply" } })
+        const reopened = accepted(
+            transition(first.state, {
+                type: "dialog.reopened",
+                generation: first.state.generation,
+                interactionId: "i-1",
+            }),
+        )
+        expect(reopened.state.dialog.primary).toMatchObject({ interactionId: "i-1", status: "awaiting" })
+        expect(reopened.state.dialog.primary?.acceptedResponse).toBeUndefined()
         const duplicate = transition(first.state, response(first.state.revision))
         expect(duplicate).toMatchObject({ kind: "rejected", reason: "duplicate" })
         expect(duplicate.state).toBe(first.state)

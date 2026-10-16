@@ -19,7 +19,7 @@ async function submitFeedback(sidebar: Frame, text: string): Promise<void> {
 }
 
 e2e(
-    "API retry - Retry takes over an in-flight automatic retry and terminal failure renders once",
+    "API retry - sending hides stale Retry, accepts queued input, and the next countdown remains actionable",
     async ({ helper, server, sidebar, userDataDir }) => {
         e2e.setTimeout(180_000)
         server.resetOpenAiMock()
@@ -42,15 +42,23 @@ e2e(
                 name: "attempt_completion",
                 arguments: { result: "E2E_MANUAL_RETRY_RECOVERED" },
             },
+            {
+                type: "tool",
+                name: "attempt_completion",
+                arguments: { result: "E2E_MANUAL_RETRY_QUEUE_CONSUMED" },
+                expectedRequestIncludes: ["E2E_RETRY_IN_FLIGHT_QUEUE"],
+            },
         )
         await helper.signin(sidebar)
         await sendTask(sidebar, "Exercise manual takeover of automatic API retry.")
 
         await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 60_000 }).toBe(2)
         const retry = sidebar.locator('vscode-button[aria-label="Retry"]')
-        await expect(retry).toBeVisible()
-        await expect(retry).toBeEnabled()
-        await retry.click()
+        // The first countdown already sent request two. No wait remains for a
+        // stale Retry click, but input must still enter the durable queue.
+        await expect(retry).toHaveCount(0)
+        await submitFeedback(sidebar, "E2E_RETRY_IN_FLIGHT_QUEUE")
+        await expect(sidebar.getByRole("button", { name: "Queue 1", exact: true })).toBeVisible()
 
         const errorCards = sidebar.locator(
             '[data-testid="api-error-box"], [data-testid="error-message-box"], [data-testid="error-presentation-box"], [data-testid="error-retry-box"]',
@@ -62,10 +70,14 @@ e2e(
         await expect(sidebar.getByText("Automatic retry stopped", { exact: true })).toHaveCount(0)
         expect(server.getRequestCount("openai-compatible-chat")).toBe(2)
 
+        await expect(retry).toBeVisible()
         await expect(retry).toBeEnabled()
         await retry.click()
-        await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 30_000 }).toBe(3)
-        await expect(sidebar.getByText("E2E_MANUAL_RETRY_RECOVERED", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+        await expect.poll(() => server.getRequestCount("openai-compatible-chat"), { timeout: 30_000 }).toBeGreaterThanOrEqual(3)
+        await expect(sidebar.getByText("E2E_MANUAL_RETRY_QUEUE_CONSUMED", { exact: false }).last()).toBeVisible({
+            timeout: 60_000,
+        })
+        await expect.poll(() => server.getRequestCount("openai-compatible-chat")).toBe(4)
         await expect(errorCards).toHaveCount(0)
         expect(await readBlankMessageRows(sidebar)).toEqual([])
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [

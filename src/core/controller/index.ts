@@ -336,6 +336,8 @@ export class Controller {
     private publicationSequence = 0
     /** Pending coalescing window for non-immediate state publications. */
     private pendingStatePostTimer?: ReturnType<typeof setTimeout>
+    /** Whether a latest-wins transient Task view patch is already queued. */
+    private taskViewPatchScheduled = false
     /**
      * Last history projection, keyed by the array it was computed from.
      *
@@ -1258,8 +1260,11 @@ export class Controller {
 
             const terminalExecutionMode = vscodeTerminalExecutionMode ?? "vscodeTerminal"
             const taskView = new KernelTaskViewPort({
-                publishCommitted: async () => this.postStateToWebview(),
-                publishTransient: () => void this.postStateToWebview(),
+                // CommitPipeline invokes this only after the canonical state is durable.
+                publishCommitted: async () => this.postTaskViewPatchToWebview(),
+                // Streaming projections are superseded by the newest projection in
+                // the same microtask instead of rebuilding the full ExtensionState.
+                publishTransient: () => this.scheduleTaskViewPatch(),
             })
             // This opening's identity. The session adopts it as its incarnation, so
             // every row, page and activity the session publishes is attributed to it.
@@ -2761,6 +2766,19 @@ export class Controller {
         await this.publishState(options)
     }
 
+    /** Queue one latest-wins patch for a burst of transient Task view changes. */
+    private scheduleTaskViewPatch(): void {
+        if (this.taskViewPatchScheduled) return
+        this.taskViewPatchScheduled = true
+        queueMicrotask(() => {
+            this.taskViewPatchScheduled = false
+            if (!this.isUiAttached()) return
+            this.postTaskViewPatchToWebview().catch((error: unknown) => {
+                Logger.error("[Controller] Transient Task view publication failed:", error)
+            })
+        })
+    }
+
     /** Publish the interaction-critical Task view without paying for a full ExtensionState build. */
     async postTaskViewPatchToWebview(): Promise<void> {
         if (this.uiDetached || this.disposed || !this.getCurrentTaskId()) {
@@ -2879,7 +2897,7 @@ export class Controller {
             session.projectView(),
             rows,
             composeBackgroundHandoffAvailability(session.owners.commands, session.owners.activities),
-            session.owners.providerRetry?.active === true,
+            session.owners.providerRetry?.phase ?? "idle",
             session.owners.compactionRecovery?.truncationOffered() === true,
         )
         // Another window owns the task: show it, but offer nothing that would write.

@@ -197,4 +197,16 @@ describe("adaptCanonicalTaskView", () => {
 
         expect(view.footer.actions.map((action) => action.type)).toEqual(["cancel"])
     })
+
+    it("offers Retry only while the countdown is actionable and keeps sending input queueable", () => {
+        const projection = runningCommandProjection()
+
+        const waiting = adaptCanonicalTaskView(projection, [], undefined, "waiting")
+        expect(waiting.footer.actions.map((action) => action.type)).toEqual(["retry", "cancel"])
+        expect(waiting.input.queueable).toBe(true)
+
+        const sending = adaptCanonicalTaskView(projection, [], undefined, "sending")
+        expect(sending.footer.actions.map((action) => action.type)).toEqual(["cancel"])
+        expect(sending.input.queueable).toBe(true)
+    })
 })

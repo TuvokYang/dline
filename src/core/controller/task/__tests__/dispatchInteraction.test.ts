@@ -61,10 +61,14 @@ interface ControllerOptions {
     readonly writable?: boolean
     /** Resolves a reply's resource parts for its chat row. */
     readonly draftAttachments?: DraftAttachmentPort
+    /** Whether the interaction owner actually carried an unowned answer on. */
+    readonly continuationAccepted?: boolean
 }
 
 function controller(taskState: TaskState = state(), options: ControllerOptions = {}) {
-    const resolve = vi.fn()
+    const resolve = vi.fn<(interactionId: string, outcome: unknown) => Promise<boolean>>(
+        async () => options.continuationAccepted ?? true,
+    )
     const presentDenial = vi.fn(async () => undefined)
     let releaseResponseWrite = () => {}
     const responseWritten = new Promise<void>((release) => {
@@ -203,6 +207,32 @@ function compactReply(text = "/compact keep the API notes") {
 }
 
 describe("dispatchInteraction", () => {
+    it("reports a rejected continuation instead of acknowledging a Process Anyway no-op", async () => {
+        const host = controller(state("mistake_limit", "process_anyway"), { continuationAccepted: false })
+
+        const result = await dispatchInteraction(
+            host.value as never,
+            DispatchInteractionRequest.create({
+                taskId: "task-1",
+                taskInstanceId: "open-1",
+                turnId: "turn-1",
+                interactionId: "interaction-1",
+                actionId: "process_anyway",
+                stateRevision: 12,
+                draft: { text: "try smaller steps", images: [], files: [] },
+            }),
+        )
+
+        expect(result).toMatchObject({ accepted: false, result: "invalid_runtime_event" })
+        expect(host.resolve).toHaveBeenCalledWith(
+            "interaction-1",
+            expect.objectContaining({
+                actionId: "process_anyway",
+                draft: expect.objectContaining({ text: "try smaller steps" }),
+            }),
+        )
+    })
+
     it("refuses a reply in a window that does not own the task before storing anything", async () => {
         const host = controller(state(), { writable: false })
         const result = await dispatchInteraction(
@@ -261,7 +291,12 @@ describe("dispatchInteraction", () => {
     })
 
     describe("Start New Task", () => {
-        const CLOSE_OPTIONS = { clearPanelState: true, preserveCompletedState: true, deferTeardown: true }
+        const CLOSE_OPTIONS = {
+            clearPanelState: true,
+            preserveCompletedState: true,
+            deferTeardown: true,
+            closeReason: "handoff",
+        }
 
         function startNewTask() {
             return DispatchInteractionRequest.create({
@@ -503,7 +538,10 @@ describe("dispatchInteraction", () => {
             host.clineMessages.push(row)
             return { message: row, persistence: new Promise((settle) => setTimeout(() => settle(row), 0)) }
         })
-        host.resolve.mockImplementation(() => order.push("resolve"))
+        host.resolve.mockImplementation(async () => {
+            order.push("resolve")
+            return true
+        })
 
         const result = await dispatchInteraction(host.value as never, compactReply())
 

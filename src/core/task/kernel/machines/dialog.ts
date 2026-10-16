@@ -62,7 +62,8 @@ function updateInteraction(
                 event.stage === "reveal" && interaction.reveal ? { ...interaction.reveal, status: "failed" } : interaction.reveal,
         }
     }
-    if (event.type === "dialog.reopened") return { ...interaction, status: "awaiting", createdRevision }
+    if (event.type === "dialog.reopened")
+        return { ...interaction, status: "awaiting", createdRevision, acceptedResponse: undefined }
     return {
         ...interaction,
         status: "resolving",

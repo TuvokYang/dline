@@ -29,18 +29,20 @@ function harness(name: DlineDefaultTool) {
         log.push("report")
     })
     const saveCheckpoint = vi.fn(async () => {})
-    const awaitRoundCheckpointBeforeMutation = vi.fn(async () => {})
+    const settleWorkspaceMutation = vi.fn()
+    const beginWorkspaceMutation = vi.fn<() => Promise<() => void>>(async () => settleWorkspaceMutation)
     const coordinator = new ToolExecutorCoordinator()
     coordinator.register(orderedHandler(name, log))
     const config = {
-        callbacks: { updateFCListFromToolResponse, saveCheckpoint, awaitRoundCheckpointBeforeMutation },
+        callbacks: { updateFCListFromToolResponse, saveCheckpoint, beginWorkspaceMutation },
     } as unknown as TaskConfig
     return {
         coordinator,
         config,
         updateFCListFromToolResponse,
         saveCheckpoint,
-        awaitRoundCheckpointBeforeMutation,
+        beginWorkspaceMutation,
+        settleWorkspaceMutation,
         log,
     }
 }
@@ -120,48 +122,49 @@ describe("ToolExecutorCoordinator checkpoint ownership", () => {
         DlineDefaultTool.APPLY_PATCH,
         DlineDefaultTool.REPLACE_TEXT,
         DlineDefaultTool.RENAME,
-    ])("waits for the admitted round baseline before %s without creating a tool-local checkpoint", async (tool) => {
-        const { coordinator, config, saveCheckpoint, awaitRoundCheckpointBeforeMutation, log } = harness(tool)
+    ])("bounds %s with one workspace mutation ticket without creating a tool-local checkpoint", async (tool) => {
+        const { coordinator, config, saveCheckpoint, beginWorkspaceMutation, settleWorkspaceMutation, log } = harness(tool)
 
         await coordinator.execute(config, block(tool))
 
-        expect(awaitRoundCheckpointBeforeMutation).toHaveBeenCalledOnce()
+        expect(beginWorkspaceMutation).toHaveBeenCalledOnce()
         expect(log).toEqual(["handler"])
+        expect(settleWorkspaceMutation).toHaveBeenCalledOnce()
         expect(saveCheckpoint).not.toHaveBeenCalled()
     })
 
     it("waits before an explicitly authorized new_rule mutation", async () => {
-        const { coordinator, config, awaitRoundCheckpointBeforeMutation, log } = harness(DlineDefaultTool.NEW_RULE)
+        const { coordinator, config, beginWorkspaceMutation, log } = harness(DlineDefaultTool.NEW_RULE)
         const authority = new TaskTurnAuthority()
         authority.grant("turn-1", [{ type: "new_rule", source: "slash_command", targetTool: DlineDefaultTool.NEW_RULE }])
         config.explicitInstructions = authority.read("turn-1")
 
         await coordinator.execute(config, block(DlineDefaultTool.NEW_RULE))
 
-        expect(awaitRoundCheckpointBeforeMutation).toHaveBeenCalledOnce()
+        expect(beginWorkspaceMutation).toHaveBeenCalledOnce()
         expect(log).toEqual(["handler"])
     })
 
     it("does not enter a file barrier for a non-mutating tool", async () => {
-        const { coordinator, config, awaitRoundCheckpointBeforeMutation, log } = harness(DlineDefaultTool.LIST_FILES)
+        const { coordinator, config, beginWorkspaceMutation, log } = harness(DlineDefaultTool.LIST_FILES)
 
         await coordinator.execute(config, block(DlineDefaultTool.LIST_FILES))
 
-        expect(awaitRoundCheckpointBeforeMutation).not.toHaveBeenCalled()
+        expect(beginWorkspaceMutation).not.toHaveBeenCalled()
         expect(log).toEqual(["handler"])
     })
 
     it.each([DlineDefaultTool.REPLACE_TEXT, DlineDefaultTool.RENAME])("does not wait for a dry-run %s", async (tool) => {
-        const { coordinator, config, awaitRoundCheckpointBeforeMutation } = harness(tool)
+        const { coordinator, config, beginWorkspaceMutation } = harness(tool)
 
         await coordinator.execute(config, block(tool, { dry_run: "true" }))
 
-        expect(awaitRoundCheckpointBeforeMutation).not.toHaveBeenCalled()
+        expect(beginWorkspaceMutation).not.toHaveBeenCalled()
     })
 
     it("does not let a degraded checkpoint barrier block the admitted file mutation", async () => {
-        const { coordinator, config, awaitRoundCheckpointBeforeMutation, log } = harness(DlineDefaultTool.FILE_NEW)
-        awaitRoundCheckpointBeforeMutation.mockRejectedValueOnce(new Error("checkpoint unavailable"))
+        const { coordinator, config, beginWorkspaceMutation, log } = harness(DlineDefaultTool.FILE_NEW)
+        beginWorkspaceMutation.mockRejectedValueOnce(new Error("checkpoint unavailable"))
 
         await expect(coordinator.execute(config, block(DlineDefaultTool.FILE_NEW))).resolves.toBe("done")
 
@@ -169,15 +172,17 @@ describe("ToolExecutorCoordinator checkpoint ownership", () => {
     })
 
     it("does not start the handler until the existing round checkpoint settles", async () => {
-        const { coordinator, config, awaitRoundCheckpointBeforeMutation, log } = harness(DlineDefaultTool.FILE_EDIT)
-        let release!: () => void
-        awaitRoundCheckpointBeforeMutation.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)))
+        const { coordinator, config, beginWorkspaceMutation, log } = harness(DlineDefaultTool.FILE_EDIT)
+        let admit!: () => void
+        beginWorkspaceMutation.mockImplementationOnce(
+            () => new Promise<() => void>((resolve) => (admit = () => resolve(() => undefined))),
+        )
 
         const execution = coordinator.execute(config, block(DlineDefaultTool.FILE_EDIT))
-        await vi.waitFor(() => expect(release).toBeDefined())
+        await vi.waitFor(() => expect(admit).toBeDefined())
         expect(log).toEqual([])
 
-        release()
+        admit()
         await execution
         expect(log).toEqual(["handler"])
     })

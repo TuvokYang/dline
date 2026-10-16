@@ -259,21 +259,27 @@ async function appendPersistedTimelineTail(dlineDocsDir: string, taskId: string,
 }
 
 e2e(
-    "Checkpoint - Compare opens the real diff and Restore All stops at Resume before continuing",
-    async ({ helper, page, server, sidebar, userDataDir, workspaceDir }) => {
+    "Checkpoint - replace binds its file baseline to the preceding round and Restore All restores it",
+    async ({ dlineDocsDir, helper, page, server, sidebar, userDataDir, workspaceDir }) => {
         e2e.setTimeout(240_000)
         await helper.signin(sidebar)
+        const beforeTaskIds = await taskDirectoryIds(dlineDocsDir)
+        const filePath = path.join(workspaceDir, "checkpoint-e2e.txt")
+        await writeFile(filePath, "before checkpoint replace\n", "utf8")
         server.resetOpenAiMock()
         server.enqueueOpenAiResponses(
             {
                 type: "tool",
-                name: "write_to_file",
-                arguments: { path: "checkpoint-e2e.txt", content: "checkpoint content\n" },
+                name: "replace_in_file",
+                arguments: {
+                    path: "checkpoint-e2e.txt",
+                    diff: "------- SEARCH\nbefore checkpoint replace\n=======\nafter checkpoint replace\n+++++++ REPLACE",
+                },
             },
             {
                 type: "tool",
                 name: "attempt_completion",
-                arguments: { result: "E2E_CHECKPOINT_WRITE_COMPLETE" },
+                arguments: { result: "E2E_CHECKPOINT_REPLACE_COMPLETE" },
             },
             {
                 type: "tool",
@@ -282,15 +288,26 @@ e2e(
             },
         )
 
-        await sendTask(sidebar, "Create a file so checkpoint Compare and Restore can be exercised.")
+        await sendTask(sidebar, "Replace a file while the round checkpoint is settling, then verify Restore All.")
+        const taskId = await E2ETestHelper.waitForValue(async () => {
+            const ids = await taskDirectoryIds(dlineDocsDir)
+            return ids.find((id) => !beforeTaskIds.includes(id))
+        }, 30_000)
         await sidebar.getByText("Approve", { exact: true }).click()
-        const filePath = path.join(workspaceDir, "checkpoint-e2e.txt")
-        // Provider wire is intentionally independent, but the first workspace mutation
-        // waits for the already-started round baseline so that a new file cannot enter it.
-        await expect.poll(() => pathExists(filePath), { timeout: 30_000 }).toBe(true)
-        await expect(sidebar.getByText("E2E_CHECKPOINT_WRITE_COMPLETE", { exact: false }).last()).toBeVisible({
+        await expect
+            .poll(async () => (await readFile(filePath, "utf8")).replaceAll("\r\n", "\n"), { timeout: 30_000 })
+            .toBe("after checkpoint replace\n")
+        await expect(sidebar.getByText("E2E_CHECKPOINT_REPLACE_COMPLETE", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })
+        await expect
+            .poll(async () => {
+                const firstRound = (await readTaskUiMessages(dlineDocsDir, taskId)).find(
+                    (message) => message.say === "checkpoint_created",
+                )
+                return Boolean(firstRound?.lastCheckpointHash)
+            })
+            .toBe(true)
         await page.waitForTimeout(1_000)
 
         const checkpointLabels = sidebar.getByText("Checkpoint", { exact: true })
@@ -328,7 +345,9 @@ e2e(
         await restoreButton.click()
         await expect(restoreAllButton).toBeVisible()
         await restoreAllButton.click()
-        await expect.poll(() => pathExists(filePath)).toBe(false)
+        await expect
+            .poll(async () => (await readFile(filePath, "utf8")).replaceAll("\r\n", "\n"))
+            .toBe("before checkpoint replace\n")
 
         const resumeButton = sidebar.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })

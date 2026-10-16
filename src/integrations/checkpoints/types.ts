@@ -100,8 +100,8 @@ export interface ICheckpointManager {
         signal?: AbortSignal,
     ): Promise<void>
 
-    /** Wait only for round checkpoint work already admitted before a workspace mutation. */
-    awaitRoundCheckpointBeforeMutation?(): Promise<void>
+    /** Enter a bounded mutation ordered between the preceding and following round checkpoints. */
+    beginWorkspaceMutation?(): Promise<() => void>
 
     /** Start recursive workspace observation after the first provider request has reached the wire. */
     startWorkspaceWatcher?(): void
