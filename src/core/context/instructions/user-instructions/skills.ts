@@ -256,26 +256,19 @@ export async function discoverAvailableSkills(cwd: string, toggleState: SkillTog
     return available
 }
 
-/**
- * Get full skill content including instructions.
- * For remote skills, pass remoteSkillEntries so content can be loaded without disk I/O.
- */
-export async function getSkillContent(
-    skillName: string,
-    availableSkills: SkillMetadata[],
+/** Load one discovered skill without re-resolving name precedence. */
+export async function getSkillContentForMetadata(
+    skill: SkillMetadata,
     remoteSkillEntries?: GlobalInstructionsFile[],
 ): Promise<SkillContent | null> {
-    const skill = availableSkills.find((s) => s.name === skillName)
-    if (!skill) return null
-
     // Remote skills have no file on disk — retrieve content from the provided entries.
     // Try entry.name first (fast path when dashboard is in sync), fall back to frontmatter match.
     if (skill.path.startsWith("remote:")) {
-        let entry = (remoteSkillEntries || []).find((e) => e.name === skillName)
+        let entry = (remoteSkillEntries || []).find((candidate) => candidate.name === skill.name)
         if (!entry) {
-            entry = (remoteSkillEntries || []).find((e) => {
-                const { data } = parseYamlFrontmatter(e.contents)
-                return typeof data.name === "string" && data.name === skillName
+            entry = (remoteSkillEntries || []).find((candidate) => {
+                const { data } = parseYamlFrontmatter(candidate.contents)
+                return typeof data.name === "string" && data.name === skill.name
             })
         }
         if (!entry) return null
@@ -289,7 +282,6 @@ export async function getSkillContent(
     try {
         const fileContent = await fs.readFile(skill.path, "utf-8")
         const { content: body } = parseFrontmatter(fileContent)
-
         return {
             ...skill,
             instructions: body.trim(),
@@ -297,4 +289,17 @@ export async function getSkillContent(
     } catch {
         return null
     }
+}
+
+/**
+ * Get full skill content including instructions.
+ * For remote skills, pass remoteSkillEntries so content can be loaded without disk I/O.
+ */
+export async function getSkillContent(
+    skillName: string,
+    availableSkills: SkillMetadata[],
+    remoteSkillEntries?: GlobalInstructionsFile[],
+): Promise<SkillContent | null> {
+    const skill = availableSkills.find((candidate) => candidate.name === skillName)
+    return skill ? getSkillContentForMetadata(skill, remoteSkillEntries) : null
 }

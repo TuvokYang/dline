@@ -8,9 +8,10 @@ import {
     getLocalWindsurfRules,
 } from "@core/context/instructions/user-instructions/external-rules"
 import { RuleContextBuilder } from "@core/context/instructions/user-instructions/RuleContextBuilder"
-import { discoverAvailableSkills } from "@core/context/instructions/user-instructions/skills"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { resolveAvailableImageModelId } from "@core/image-generation/runtime"
+import { projectTaskCapabilityView } from "@core/prompts/capabilities/TaskCapabilityView"
+import { getWorkspaceCapabilityCatalogRegistry } from "@core/prompts/capabilities/WorkspaceCapabilityCatalog"
 import { formatResponse } from "@core/prompts/responses"
 import type { SystemPromptContext } from "@core/prompts/system-prompt"
 import { ensureRulesDirectoryExists } from "@core/storage/disk"
@@ -20,12 +21,7 @@ import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import { DEFAULT_LANGUAGE_SETTINGS, getLanguageKey, type LanguageDisplay } from "@shared/Languages"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import type { Mode } from "@shared/storage/types"
-import {
-    createTaskCapabilityToggles,
-    reconcileTaskCapabilityToggles,
-    serializeTaskCapabilityToggles,
-    type TaskCapabilityToggles,
-} from "@shared/TaskCapabilityToggles"
+import { serializeTaskCapabilityToggles, type TaskCapabilityToggles } from "@shared/TaskCapabilityToggles"
 import { DEFAULT_TERMINAL_COMMAND_TIMEOUT_SECONDS } from "@shared/terminal-settings"
 import { DlineDefaultTool } from "@shared/tools"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
@@ -103,63 +99,35 @@ export class TaskPromptContextOwner {
             this.options.identity.cwd,
         )
         const externalRulesDiscoveryMs = Math.round(performance.now() - stageStartedAt)
-        stageStartedAt = performance.now()
-        const { globalWorkflowToggles, localWorkflowToggles } = await this.options.host.refreshWorkflows(
-            this.options.identity.cwd,
-        )
-        const workflowsDiscoveryMs = Math.round(performance.now() - stageStartedAt)
-        stageStartedAt = performance.now()
-        const refreshedSkills = await this.options.host.refreshSkills()
-        const skillsRefreshMs = Math.round(performance.now() - stageStartedAt)
-        stageStartedAt = performance.now()
-        const refreshedSubagents = await this.options.host.refreshSubagents()
-        const subagentsRefreshMs = Math.round(performance.now() - stageStartedAt)
         const remoteConfigSettings = this.options.stateManager.getRemoteConfigSettings()
-        const remoteRulesToggles = this.options.stateManager.getGlobalStateKey("remoteRulesToggles") ?? {}
-        const remoteWorkflowToggles = this.options.stateManager.getGlobalStateKey("remoteWorkflowToggles") ?? {}
-        const currentTaskToggles = this.options.runtime.getTaskCapabilityToggles()
-        const discoveredTaskToggles = createTaskCapabilityToggles({
-            globalClineRulesToggles: globalToggles,
-            localClineRulesToggles: localToggles,
-            localCursorRulesToggles: cursorLocalToggles,
-            localWindsurfRulesToggles: windsurfLocalToggles,
-            localAgentsRulesToggles: agentsLocalToggles,
-            globalWorkflowToggles,
-            localWorkflowToggles,
-            globalSkillsToggles: Object.fromEntries(
-                refreshedSkills.globalSkills
-                    .filter((skill) => !skill.path.startsWith("remote:"))
-                    .map((skill) => [skill.path, skill.enabled]),
-            ),
-            localSkillsToggles: Object.fromEntries(refreshedSkills.localSkills.map((skill) => [skill.path, skill.enabled])),
-            remoteSkillsToggles: Object.fromEntries(
-                refreshedSkills.globalSkills
-                    .filter((skill) => skill.path.startsWith("remote:"))
-                    .map((skill) => [skill.name, skill.enabled]),
-            ),
-            remoteRulesToggles: Object.fromEntries(
-                (remoteConfigSettings.remoteGlobalRules ?? []).map((rule) => [
-                    rule.name,
-                    rule.alwaysEnabled || remoteRulesToggles[rule.name] !== false,
-                ]),
-            ),
-            remoteWorkflowToggles: Object.fromEntries(
-                (remoteConfigSettings.remoteGlobalWorkflows ?? []).map((workflow) => [
-                    workflow.name,
-                    workflow.alwaysEnabled || remoteWorkflowToggles[workflow.name] !== false,
-                ]),
-            ),
-            globalSubagentsToggles: Object.fromEntries(
-                refreshedSubagents.globalSubagents.map((agent) => [agent.path, agent.enabled]),
-            ),
-            localSubagentsToggles: Object.fromEntries(
-                refreshedSubagents.localSubagents.map((agent) => [agent.path, agent.enabled]),
-            ),
-            mcpServers: Object.fromEntries(
-                this.options.host.getMcpServers().map((server) => [server.name, server.disabled !== true]),
-            ),
+        const remoteSkillEntries = remoteConfigSettings.remoteGlobalSkills ?? []
+        const remoteWorkflowEntries = remoteConfigSettings.remoteGlobalWorkflows ?? []
+        stageStartedAt = performance.now()
+        const capabilitySnapshot = await getWorkspaceCapabilityCatalogRegistry().getSourceSnapshot({
+            cwd: this.options.identity.cwd,
+            remoteSkillEntries,
+            remoteWorkflowEntries,
         })
-        const taskCapabilityToggles = reconcileTaskCapabilityToggles(currentTaskToggles, discoveredTaskToggles)
+        const catalogSnapshotMs = Math.round(performance.now() - stageStartedAt)
+        stageStartedAt = performance.now()
+        const capabilityView = projectTaskCapabilityView({
+            sources: capabilitySnapshot.sources,
+            stateManager: this.options.stateManager,
+            currentTaskToggles: this.options.runtime.getTaskCapabilityToggles(),
+            rules: {
+                globalClineRulesToggles: globalToggles,
+                localClineRulesToggles: localToggles,
+                localCursorRulesToggles: cursorLocalToggles,
+                localWindsurfRulesToggles: windsurfLocalToggles,
+                localAgentsRulesToggles: agentsLocalToggles,
+            },
+            remoteSkillEntries,
+            remoteRuleEntries: remoteConfigSettings.remoteGlobalRules ?? [],
+            remoteWorkflowEntries,
+            mcpServers: this.options.host.getMcpServers(),
+        })
+        const capabilityProjectionMs = Math.round(performance.now() - stageStartedAt)
+        const { taskCapabilityToggles, capabilityToggleState, availableSkills } = capabilityView
         const serializedTaskToggles = serializeTaskCapabilityToggles(taskCapabilityToggles)
         if (serializedTaskToggles !== this.options.taskStateManager.taskCapabilityToggles) {
             this.options.taskStateManager.setTaskCapabilityToggles(serializedTaskToggles)
@@ -226,39 +194,18 @@ export class TaskPromptContextOwner {
             }))
         }
 
-        const remoteSkillEntries = this.options.stateManager.getRemoteConfigSettings().remoteGlobalSkills || []
-        const capabilityToggleState = {
-            remoteSkillEntries,
-            globalSkillsToggles: taskCapabilityToggles.globalSkillsToggles,
-            localSkillsToggles: taskCapabilityToggles.localSkillsToggles,
-            remoteSkillsToggles: taskCapabilityToggles.remoteSkillsToggles,
-            workflowToggles: taskCapabilityToggles.localWorkflowToggles,
-            globalWorkflowToggles: taskCapabilityToggles.globalWorkflowToggles,
-            remoteWorkflowEntries: remoteConfigSettings.remoteGlobalWorkflows ?? [],
-            remoteWorkflowToggles: taskCapabilityToggles.remoteWorkflowToggles,
-            subagentToggles: taskCapabilityToggles.localSubagentsToggles,
-            globalSubagentToggles: taskCapabilityToggles.globalSubagentsToggles,
-        }
-        stageStartedAt = performance.now()
-        const availableSkills = await discoverAvailableSkills(this.options.identity.cwd, capabilityToggleState)
-        const duplicateSkillsDiscoveryMs = Math.round(performance.now() - stageStartedAt)
         this.recordPerformance({
             startedAt,
             hostMs,
             dlineRulesDiscoveryMs,
             externalRulesDiscoveryMs,
-            workflowsDiscoveryMs,
-            skillsRefreshMs,
-            subagentsRefreshMs,
+            catalogSnapshotMs,
+            capabilityProjectionMs,
             evaluationContextMs,
             globalRulesLoadMs,
             localRulesLoadMs,
-            duplicateSkillsDiscoveryMs,
             rules: Object.keys(globalToggles).length + Object.keys(localToggles).length,
-            workflows: Object.keys(globalWorkflowToggles).length + Object.keys(localWorkflowToggles).length,
-            skills: refreshedSkills.globalSkills.length + refreshedSkills.localSkills.length,
-            availableSkills: availableSkills.length,
-            subagents: refreshedSubagents.globalSubagents.length + refreshedSubagents.localSubagents.length,
+            ...capabilityView.counts,
         })
 
         const disableTools: DlineDefaultTool[] = []
@@ -328,13 +275,11 @@ export class TaskPromptContextOwner {
         readonly hostMs: number
         readonly dlineRulesDiscoveryMs: number
         readonly externalRulesDiscoveryMs: number
-        readonly workflowsDiscoveryMs: number
-        readonly skillsRefreshMs: number
-        readonly subagentsRefreshMs: number
+        readonly catalogSnapshotMs: number
+        readonly capabilityProjectionMs: number
         readonly evaluationContextMs: number
         readonly globalRulesLoadMs: number
         readonly localRulesLoadMs: number
-        readonly duplicateSkillsDiscoveryMs: number
         readonly rules: number
         readonly workflows: number
         readonly skills: number
@@ -345,13 +290,11 @@ export class TaskPromptContextOwner {
             hostMs: input.hostMs,
             dlineRulesDiscoveryMs: input.dlineRulesDiscoveryMs,
             externalRulesDiscoveryMs: input.externalRulesDiscoveryMs,
-            workflowsDiscoveryMs: input.workflowsDiscoveryMs,
-            skillsRefreshMs: input.skillsRefreshMs,
-            subagentsRefreshMs: input.subagentsRefreshMs,
+            catalogSnapshotMs: input.catalogSnapshotMs,
+            capabilityProjectionMs: input.capabilityProjectionMs,
             evaluationContextMs: input.evaluationContextMs,
             globalRulesLoadMs: input.globalRulesLoadMs,
             localRulesLoadMs: input.localRulesLoadMs,
-            duplicateSkillsDiscoveryMs: input.duplicateSkillsDiscoveryMs,
             rules: input.rules,
             workflows: input.workflows,
             skills: input.skills,
@@ -363,7 +306,7 @@ export class TaskPromptContextOwner {
         })
         if (Logger.isDebugEnabled()) {
             Logger.debug(
-                `[PromptBuildPerf] phase=capability_context taskId=${this.options.identity.taskId} hostMs=${input.hostMs} dlineRulesDiscoveryMs=${input.dlineRulesDiscoveryMs} externalRulesDiscoveryMs=${input.externalRulesDiscoveryMs} workflowsDiscoveryMs=${input.workflowsDiscoveryMs} skillsRefreshMs=${input.skillsRefreshMs} subagentsRefreshMs=${input.subagentsRefreshMs} evaluationContextMs=${input.evaluationContextMs} globalRulesLoadMs=${input.globalRulesLoadMs} localRulesLoadMs=${input.localRulesLoadMs} duplicateSkillsDiscoveryMs=${input.duplicateSkillsDiscoveryMs} totalMs=${Math.round(performance.now() - input.startedAt)} rules=${input.rules} workflows=${input.workflows} skills=${input.skills} availableSkills=${input.availableSkills} subagents=${input.subagents}`,
+                `[PromptBuildPerf] phase=capability_context taskId=${this.options.identity.taskId} hostMs=${input.hostMs} dlineRulesDiscoveryMs=${input.dlineRulesDiscoveryMs} externalRulesDiscoveryMs=${input.externalRulesDiscoveryMs} catalogSnapshotMs=${input.catalogSnapshotMs} capabilityProjectionMs=${input.capabilityProjectionMs} evaluationContextMs=${input.evaluationContextMs} globalRulesLoadMs=${input.globalRulesLoadMs} localRulesLoadMs=${input.localRulesLoadMs} totalMs=${Math.round(performance.now() - input.startedAt)} rules=${input.rules} workflows=${input.workflows} skills=${input.skills} availableSkills=${input.availableSkills} subagents=${input.subagents}`,
             )
         }
     }

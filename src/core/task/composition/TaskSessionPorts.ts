@@ -19,25 +19,6 @@ export interface TaskPromptContextHost {
         readonly cursorLocalToggles: ClineRulesToggles
         readonly agentsLocalToggles: ClineRulesToggles
     }>
-    refreshWorkflows(cwd: string): Promise<{
-        readonly globalWorkflowToggles: ClineRulesToggles
-        readonly localWorkflowToggles: ClineRulesToggles
-    }>
-    refreshSkills(): Promise<{
-        readonly globalSkills: readonly {
-            readonly name: string
-            readonly path: string
-            readonly enabled: boolean
-        }[]
-        readonly localSkills: readonly {
-            readonly path: string
-            readonly enabled: boolean
-        }[]
-    }>
-    refreshSubagents(): Promise<{
-        readonly globalSubagents: readonly { readonly path: string; readonly enabled: boolean }[]
-        readonly localSubagents: readonly { readonly path: string; readonly enabled: boolean }[]
-    }>
     /** Servers as the workspace on/off overlay shows them; seeds a task's default MCP toggles. */
     getMcpServers: NonNullable<SystemPromptContext["mcpHub"]>["getServers"]
     /**

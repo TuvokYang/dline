@@ -135,6 +135,7 @@ describe("WorkspacePromptInputWatcherRegistry", () => {
 
         expect(firstInvalidate).toHaveBeenCalledTimes(1)
         expect(secondInvalidate).toHaveBeenCalledTimes(1)
+        expect(firstInvalidate.mock.calls[0]?.[0]).toBe(secondInvalidate.mock.calls[0]?.[0])
     })
 
     it("stops notifying a released subscriber while the remaining one keeps receiving events", async () => {
@@ -272,64 +273,42 @@ describe("WorkspacePromptInputWatcherRegistry", () => {
         expect(healthy).toHaveBeenCalledTimes(1)
     })
 
-    it("traverses a directory whenever any live subscriber declines to ignore it", async () => {
-        const contested = path.join(workspaceA, "packages")
+    it("uses the workspace root only as a pruned bootstrap for capability directories", async () => {
+        const unrelated = path.join(workspaceA, "packages")
         await registry.subscribe({
             taskId: "task-1",
-            cwd: workspaceA,
-            ...createRoots(workspaceA),
-            invalidate: vi.fn(),
-            shouldIgnoreDirectory: () => true,
-        })
-        await registry.subscribe({
-            taskId: "task-2",
             cwd: workspaceA,
             ...createRoots(workspaceA),
             invalidate: vi.fn(),
             shouldIgnoreDirectory: () => false,
         })
 
-        // The shared watch must stay a superset of what each task would watch alone.
-        expect(invokeIgnored(contested)).toBe(false)
+        expect(watch.mock.calls[0]?.[0]).toContain(workspaceA)
+        expect(invokeIgnored(unrelated)).toBe(true)
+        expect(invokeIgnored(path.join(workspaceA, ".agents"))).toBe(false)
     })
 
-    it("stops applying a released subscriber's ignore rules", async () => {
+    it("keeps an exact scoped input's ancestors traversable only while it is tracked", async () => {
         const contested = path.join(workspaceA, "packages")
-        const permissive = await registry.subscribe({
+        const childAgents = path.join(contested, "app", "AGENTS.md")
+        const subscription = await registry.subscribe({
             taskId: "task-1",
             cwd: workspaceA,
             ...createRoots(workspaceA),
             invalidate: vi.fn(),
-            shouldIgnoreDirectory: () => false,
-        })
-        await registry.subscribe({
-            taskId: "task-2",
-            cwd: workspaceA,
-            ...createRoots(workspaceA),
-            invalidate: vi.fn(),
-            shouldIgnoreDirectory: (candidate) => candidate === contested,
         })
 
+        await subscription.trackExact([childAgents])
         expect(invokeIgnored(contested)).toBe(false)
 
-        // Releasing the first task must hand traversal policy to the survivor
-        // instead of freezing on the dead task's IgnoreController snapshot.
-        await permissive.dispose()
-
+        await subscription.untrackExact([childAgents])
         expect(invokeIgnored(contested)).toBe(true)
     })
 
-    it("never ignores a directory while a subscriber without ignore rules is attached", async () => {
+    it("prunes unrelated workspace directories even without subscriber ignore rules", async () => {
         const contested = path.join(workspaceA, "packages")
-        await registry.subscribe({
-            taskId: "task-1",
-            cwd: workspaceA,
-            ...createRoots(workspaceA),
-            invalidate: vi.fn(),
-            shouldIgnoreDirectory: () => true,
-        })
-        await registry.subscribe({ taskId: "task-2", cwd: workspaceA, ...createRoots(workspaceA), invalidate: vi.fn() })
+        await registry.subscribe({ taskId: "task-1", cwd: workspaceA, ...createRoots(workspaceA), invalidate: vi.fn() })
 
-        expect(invokeIgnored(contested)).toBe(false)
+        expect(invokeIgnored(contested)).toBe(true)
     })
 })

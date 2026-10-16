@@ -11,7 +11,17 @@ import { collectCapabilities } from "../CapabilitiesAggregator"
 
 vi.mock("@core/context/instructions/user-instructions/skills", () => ({
     discoverAvailableSkills: vi.fn(async () => [{ name: "writer", description: "Write text", path: "skill", source: "project" }]),
+    discoverSkills: vi.fn(async () => [{ name: "writer", description: "Write text", path: "skill", source: "project" }]),
+    getAvailableSkills: vi.fn((skills) => skills),
+    filterEnabledSkills: vi.fn((skills) => skills),
     getSkillContent: vi.fn(async () => ({
+        name: "writer",
+        description: "Write text",
+        path: "skill",
+        source: "project",
+        instructions: "PRIVATE_SKILL_INSTRUCTIONS",
+    })),
+    getSkillContentForMetadata: vi.fn(async () => ({
         name: "writer",
         description: "Write text",
         path: "skill",

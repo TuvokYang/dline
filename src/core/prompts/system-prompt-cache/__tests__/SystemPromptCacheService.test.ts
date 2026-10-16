@@ -217,8 +217,9 @@ describe("SystemPromptCacheService", () => {
         expect(service.getLastTools()).not.toEqual(openAiTools)
     })
 
-    it("restores exact persisted native tools when reusing a frozen prompt", async () => {
+    it("restores exact persisted native tools without rescanning capabilities on later rounds", async () => {
         const tools: readonly ClineTool[] = [buildTool("read_file")]
+        const collectCapabilities = vi.fn(async () => EMPTY_CAPABILITIES)
         const cached = {
             ...emptyContext("task-1"),
             systemPrompt: {
@@ -241,19 +242,21 @@ describe("SystemPromptCacheService", () => {
             deps: {
                 getContext: async () => cached,
                 saveContext: async () => undefined,
-                collectCapabilities: async () => EMPTY_CAPABILITIES,
+                collectCapabilities,
                 buildSystemPrompt: async () => {
                     throw new Error("frozen tools must not be rebuilt")
                 },
             },
         })
 
-        const result = await service.getOrCreate({
-            promptContext: { ...promptContext, enableNativeToolCalls: true },
-        })
+        const input = { promptContext: { ...promptContext, enableNativeToolCalls: true } }
+        const result = await service.getOrCreate(input)
+        await service.getOrCreate(input)
+        await service.getOrCreate(input)
 
         expect(result.text).toBe("old prompt # Capabilities old")
         expect(service.getLastTools()).toEqual(tools)
+        expect(collectCapabilities).toHaveBeenCalledTimes(1)
     })
 
     it("rebuilds a frozen prompt written before prompt contract versioning", async () => {

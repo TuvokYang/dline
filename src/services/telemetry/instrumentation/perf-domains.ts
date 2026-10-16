@@ -94,6 +94,7 @@ export const PERF_PHASES = {
         "rules_refresh_rpc_error",
         "rule_toggle_scan",
         "external_rules_refresh",
+        "catalog_refresh",
     ],
     [PerfDomain.PromptInputWatcher]: ["start", "ready", "dispose", "event_batch"],
     [PerfDomain.PromptFreshness]: ["drain_complete", "reevaluate"],

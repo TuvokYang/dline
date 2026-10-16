@@ -16,10 +16,14 @@ import { expect, type Frame, type Page } from "@playwright/test"
  * - R1: repeated `@` mention typing across panels must stay served by the
  *   cached workspace enumeration.
  * - R3: the webview provider must keep every panel interactive throughout.
+ * - R4: Task creation and frozen-prompt feedback share one workspace capability
+ *   source snapshot instead of repeating filesystem discovery per admission.
  */
 
 /** Each `PromptInputFileWatcher.start()` logs exactly one of these. */
 const WATCHER_START_LOG = "[PromptInputWatcherPerf] phase=start"
+/** Each real workspace capability source collection logs exactly one of these. */
+const CATALOG_REFRESH_LOG = "[CapabilityCatalogPerf] phase=refresh"
 
 async function selectProfile(frame: Frame, profileName: string): Promise<void> {
     const modelSwitcher = frame.getByRole("button", { name: "Select model" })
@@ -96,12 +100,14 @@ e2e(
 
         const firstMarker = "E2E_CPU_PANEL_ONE_DONE"
         const secondMarker = "E2E_CPU_PANEL_TWO_DONE"
+        const feedbackMarker = "E2E_CPU_PANEL_ONE_FEEDBACK_DONE"
 
         server.resetOpenAiMock()
         server.enqueueResponses(
             "openai-compatible-responses",
             { type: "tool", id: "call_cpu_panel_one", name: "attempt_completion", arguments: { result: firstMarker } },
             { type: "tool", id: "call_cpu_panel_two", name: "attempt_completion", arguments: { result: secondMarker } },
+            { type: "tool", id: "call_cpu_panel_feedback", name: "attempt_completion", arguments: { result: feedbackMarker } },
         )
 
         // Two editor-panel tasks stay alive at the same time, which is the shape
@@ -113,6 +119,7 @@ e2e(
         const secondPanel = await createTaskPanel(page)
         await typeMentionQuery(secondPanel)
         await runTaskInPanel(secondPanel, "Second panel task for BUGFIX-038.", secondMarker)
+        await runTaskInPanel(firstPanel, "First panel frozen-prompt feedback for BUGFIX-210.", feedbackMarker)
 
         // R2 oracle: one shared watch for the workspace scope. Reverting the
         // registry restores per-task watchers and pushes this count to >= 2.
@@ -123,10 +130,20 @@ e2e(
             `Expected a single shared prompt-input watch, saw ${watcherStarts} "${WATCHER_START_LOG}" entries`,
         ).toBe(1)
 
+        // R4 oracle: the first Task creates the canonical source snapshot. The
+        // second Task and the first Task's feedback round project from it in
+        // memory. Reintroducing Task-local scans pushes this count to >= 3.
+        const catalogRefreshes = countOccurrences(output, CATALOG_REFRESH_LOG)
+        expect(
+            catalogRefreshes,
+            `Expected one shared capability catalog refresh, saw ${catalogRefreshes} "${CATALOG_REFRESH_LOG}" entries`,
+        ).toBe(1)
+
         // R1/R3 oracle: both panels completed and both stay interactive, so the
         // cached enumeration served every mention query and the memoized provider
         // never starved a panel of updates.
         await expect(firstPanel.getByText(firstMarker, { exact: false }).last()).toBeVisible()
+        await expect(firstPanel.getByText(feedbackMarker, { exact: false }).last()).toBeVisible()
         await expect(secondPanel.getByText(secondMarker, { exact: false }).last()).toBeVisible()
         for (const panel of [firstPanel, secondPanel]) {
             const input = panel.getByTestId("chat-input")
@@ -136,7 +153,7 @@ e2e(
         }
 
         const consumptions = server.getMockConsumptions("openai-compatible-responses")
-        expect(consumptions.length).toBeGreaterThanOrEqual(2)
+        expect(consumptions.length).toBeGreaterThanOrEqual(3)
         expect(consumptions.every((consumption) => consumption.contractError === undefined)).toBe(true)
 
         const screenshotPath = testInfo.outputPath("multi-task-cpu-amplification.png")

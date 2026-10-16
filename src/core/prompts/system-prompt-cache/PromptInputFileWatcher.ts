@@ -101,6 +101,7 @@ export class PromptInputFileWatcher {
             ...this.subagentDirectories,
         ])
         this.watchRoots = resolveUnique([
+            this.cwd,
             ...this.rootRuleFiles,
             localRulesDirectory,
             cursorRulesDirectory,
@@ -276,6 +277,10 @@ export class PromptInputFileWatcher {
             return false
         }
         if ([...this.exactInputs].some((input) => isWithin(resolved, input))) return false
+        // The workspace root is a shallow bootstrap for capability directories
+        // that do not exist yet. Prune every unrelated subtree so this never
+        // regresses into a recursive workspace watch.
+        if (isWithin(this.cwd, resolved)) return resolved !== this.cwd
         return this.isIgnoredDirectory(resolved)
     }
 

@@ -1,9 +1,6 @@
 import { refreshClineRulesToggles } from "@core/context/instructions/user-instructions/agent-rules"
 import { refreshExternalRulesToggles } from "@core/context/instructions/user-instructions/external-rules"
-import { refreshWorkflowToggles } from "@core/context/instructions/user-instructions/workflows"
 import type { Controller } from "@core/controller"
-import { refreshSkills } from "@core/controller/file/refreshSkills"
-import { refreshSubagents } from "@core/controller/file/refreshSubagents"
 import { inputSemanticCatalogService } from "@core/controller/slash/input-semantic-catalog"
 import { OrchestratorController } from "@core/orchestrator/OrchestratorController"
 import { buildActiveTasksSection } from "@core/task/active-tasks/ActiveTaskContextProvider"
@@ -38,9 +35,6 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
             getHostVersion: () => HostProvider.env.getHostVersion({}),
             refreshClineRules: (cwd) => refreshClineRulesToggles(controller, cwd),
             refreshExternalRules: (cwd) => refreshExternalRulesToggles(controller, cwd),
-            refreshWorkflows: (cwd) => refreshWorkflowToggles(controller, cwd),
-            refreshSkills: () => refreshSkills(controller),
-            refreshSubagents: () => refreshSubagents(controller),
             getMcpServers: () => controller.getMcpServersForOwner(),
             getTaskMcpServers: () => controller.mcpHub.getServersForOwner(controller.mcpOwnerId),
         }

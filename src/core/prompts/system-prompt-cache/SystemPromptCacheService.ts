@@ -1,6 +1,7 @@
 import type { CollectCapabilitiesInput } from "@core/prompts/capabilities/CapabilitiesAggregator"
 import { collectCapabilities } from "@core/prompts/capabilities/CapabilitiesAggregator"
 import { renderCapabilitiesForContext } from "@core/prompts/capabilities/CapabilitiesSection"
+import { getWorkspaceCapabilityCatalogRegistry } from "@core/prompts/capabilities/WorkspaceCapabilityCatalog"
 import type { SystemPromptComposition } from "@core/prompts/generators/system-prompt-composition"
 import { PromptProfile } from "@core/prompts/profiles/types"
 import type { SystemPromptContext } from "@core/prompts/system-prompt"
@@ -72,6 +73,7 @@ export class SystemPromptCacheService {
     private lastTools?: readonly ClineTool[]
     private latestPromptFreshness: PromptFreshnessSnapshot = { status: "unknown", changes: [], checkedAt: 0 }
     private pendingGetOrCreate?: Promise<FrozenSystemPromptCache>
+    private cachedFreshnessInitialized = false
 
     /**
      * Create a system prompt cache service for one task.
@@ -82,7 +84,8 @@ export class SystemPromptCacheService {
         this.taskId = params.taskId
         this.getContext = params.deps?.getContext ?? getTaskContext
         this.saveContext = params.deps?.saveContext ?? saveTaskContext
-        this.collectCapabilitiesFn = params.deps?.collectCapabilities ?? collectCapabilities
+        this.collectCapabilitiesFn =
+            params.deps?.collectCapabilities ?? ((input) => getWorkspaceCapabilityCatalogRegistry().getCapabilities(input))
         this.buildSystemPrompt = params.deps?.buildSystemPrompt ?? this.defaultBuildSystemPrompt
         this.getPromptBuilderInfo = params.deps?.getPromptBuilderInfo ?? this.buildPromptInfo
         this.now = params.deps?.now ?? Date.now
@@ -215,6 +218,7 @@ export class SystemPromptCacheService {
             checkedAt: now,
             frozenAt: frozen.refreshedAt,
         })
+        this.cachedFreshnessInitialized = true
         return frozen
     }
 
@@ -238,7 +242,9 @@ export class SystemPromptCacheService {
             if (providerProjectionChanged) {
                 return this.refreshLocked({ promptContext: input.promptContext, reason: "capability_change" })
             }
-            await this.updateFreshnessSnapshot(cached, input.promptContext)
+            // A restored task checks its persisted baseline once. Later rounds are
+            // O(1): workspace catalog revisions drive explicit freshness events.
+            if (!this.cachedFreshnessInitialized) await this.updateFreshnessSnapshot(cached, input.promptContext)
             this.lastTools = cached.tools ?? undefined
             return cached
         }
@@ -281,6 +287,7 @@ export class SystemPromptCacheService {
             checkedAt: this.now(),
             frozenAt: cached.refreshedAt,
         })
+        this.cachedFreshnessInitialized = true
     }
 
     /**

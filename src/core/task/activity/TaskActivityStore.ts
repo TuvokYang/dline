@@ -328,17 +328,21 @@ export class TaskActivityStore {
                 visited.add(activityId)
             })
             const move = this.backgroundMovers.get(requestedId)
-            const isEligibleGroup = () =>
-                Boolean(move) &&
-                groupIds.every((activityId) => {
-                    const activity = this.activities.get(activityId)
-                    return (
-                        activity?.status === "running" &&
-                        activity.executionMode === "foreground" &&
-                        this.backgroundMovers.get(activityId) === move
-                    )
+            const resolveLiveGroupIds = (): string[] | undefined => {
+                const members = groupIds.map((activityId) => this.activities.get(activityId))
+                if (members.some((activity) => activity === undefined)) return undefined
+                const liveIds = members
+                    .filter((activity): activity is TaskActivityRecord => activity?.status === "running")
+                    .map((activity) => activity.activityId)
+                if (!move || liveIds.length === 0) return undefined
+                const allLiveMembersAreMovable = liveIds.every((activityId) => {
+                    const activity = this.activities.get(activityId) as TaskActivityRecord
+                    return activity.executionMode === "foreground" && this.backgroundMovers.get(activityId) === move
                 })
-            if (!move || !isEligibleGroup()) continue
+                return allLiveMembersAreMovable ? liveIds : undefined
+            }
+            const initialLiveIds = resolveLiveGroupIds()
+            if (!move || !initialLiveIds) continue
             let result: BackgroundHandoffResult | undefined
             let ownershipSnapshots: Array<{
                 activityId: string
@@ -350,11 +354,15 @@ export class TaskActivityStore {
                 result = await move()
                 const accepted = typeof result === "boolean" ? result : result.accepted
                 if (!accepted) continue
-                if (!isEligibleGroup()) {
+                const liveIds = resolveLiveGroupIds()
+                const liveGroupUnchanged =
+                    liveIds?.length === initialLiveIds.length &&
+                    initialLiveIds.every((activityId, index) => liveIds[index] === activityId)
+                if (!liveIds || !liveGroupUnchanged) {
                     if (typeof result !== "boolean") await result.rollback?.()
                     continue
                 }
-                ownershipSnapshots = groupIds.map((activityId) => {
+                ownershipSnapshots = liveIds.map((activityId) => {
                     const activity = this.activities.get(activityId) as TaskActivityRecord
                     return {
                         activityId,
@@ -363,7 +371,7 @@ export class TaskActivityStore {
                         latestEvent: activity.latestEvent,
                     }
                 })
-                for (const activityId of groupIds) {
+                for (const activityId of liveIds) {
                     this.update(activityId, {
                         executionMode: "background",
                         cancellationOwner: "explicit",
@@ -375,7 +383,7 @@ export class TaskActivityStore {
                     this.backgroundGroups.delete(activityId)
                 }
                 if (typeof result !== "boolean") await result.commit?.()
-                moved.push(...groupIds)
+                moved.push(...liveIds)
             } catch (error) {
                 for (const snapshot of ownershipSnapshots) {
                     const activity = this.activities.get(snapshot.activityId)

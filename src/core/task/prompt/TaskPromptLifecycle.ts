@@ -1,4 +1,8 @@
 import type { IgnoreController } from "@core/ignore/IgnoreController"
+import {
+    getWorkspaceCapabilityCatalogRegistry,
+    type WorkspaceCapabilityCatalogSubscription,
+} from "@core/prompts/capabilities/WorkspaceCapabilityCatalog"
 import type { SystemPromptContext } from "@core/prompts/system-prompt"
 import {
     PromptFreshnessInvalidationCoordinator,
@@ -34,6 +38,7 @@ export interface TaskPromptLifecycleOptions {
 export class TaskPromptLifecycle {
     private readonly cache: SystemPromptCacheService
     private readonly invalidations: PromptFreshnessInvalidationCoordinator
+    private readonly capabilitySubscription: WorkspaceCapabilityCatalogSubscription
     private watcher?: PromptInputWatcherSubscription
     private watcherInitialization?: Promise<void>
     private disposed = false
@@ -46,6 +51,9 @@ export class TaskPromptLifecycle {
             reevaluate: () => this.reevaluate(),
             publishState: options.publishState,
         })
+        this.capabilitySubscription = getWorkspaceCapabilityCatalogRegistry().subscribe(options.cwd, () =>
+            this.invalidate("prompt_input_file"),
+        )
     }
 
     start(): void {
@@ -55,6 +63,7 @@ export class TaskPromptLifecycle {
     beginDispose(): void {
         this.disposed = true
         this.invalidations.dispose()
+        this.capabilitySubscription.dispose()
     }
 
     async dispose(): Promise<void> {
@@ -140,7 +149,13 @@ export class TaskPromptLifecycle {
                 workflowDirectories: getWorkflowsScanDirectories(this.options.cwd).map((directory) => directory.path),
                 skillDirectories: getSkillsDirectoriesForScan(this.options.cwd).map((directory) => directory.path),
                 subagentDirectories: getSubagentsScanDirectories(this.options.cwd).map((directory) => directory.path),
-                invalidate: () => this.invalidate("prompt_input_file"),
+                invalidate: (change) => {
+                    if (change.kind === "rule" || change.kind === "scoped_agents") {
+                        this.invalidate("prompt_input_file")
+                        return
+                    }
+                    getWorkspaceCapabilityCatalogRegistry().invalidateWorkspace(this.options.cwd, change)
+                },
                 shouldIgnoreDirectory: (absolutePath) => this.options.ignoreController.shouldIgnoreDirectory(absolutePath),
             })
             this.watcher = watcher

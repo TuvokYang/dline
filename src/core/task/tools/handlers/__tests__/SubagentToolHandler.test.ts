@@ -1309,6 +1309,71 @@ describe("SubagentToolHandler", () => {
         assert.equal(config.subagentFanoutBudget?.state().running, 0)
     })
 
+    it("returns a settled failure while handing the running batch sibling to the background", async () => {
+        const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true, maxParallelSubagents: 2 })
+        const activityStore = new TaskActivityStore(config.taskId)
+        config.activityStore = activityStore
+        const publish = vi.mocked(config.backgroundResults!.publish)
+        const runControls: Array<{
+            onProgress: Parameters<SubagentRunner["run"]>[1]
+            resolve: (result: SubagentRunResult) => void
+        }> = []
+        vi.spyOn(SubagentRunner.prototype, "run").mockImplementation(
+            (_prompt, onProgress) =>
+                new Promise<SubagentRunResult>((resolve) => {
+                    runControls.push({ onProgress, resolve })
+                }),
+        )
+        const execution = new UseSubagentsToolHandler().execute(config, {
+            type: "tool_use",
+            name: DlineDefaultTool.USE_SUBAGENTS,
+            params: {
+                subagents: JSON.stringify([
+                    { task: "fails first", context: "ctx-1" },
+                    { task: "keeps running", context: "ctx-2" },
+                ]),
+            },
+            partial: false,
+            ts: Date.now(),
+        })
+        for (let attempt = 0; attempt < 20 && runControls.length < 2; attempt += 1) await delay(0)
+        assert.equal(runControls.length, 2)
+
+        const failedResult: SubagentRunResult = {
+            status: "failed",
+            error: "FIRST_SUBAGENT_FAILED",
+            stats: emptyTestStats(),
+        }
+        runControls[0].onProgress({ status: "failed", error: failedResult.error, stats: failedResult.stats })
+        runControls[0].resolve(failedResult)
+        const failedActivity = activityStore.list().find((activity) => activity.detail?.includes("fails first"))
+        const runningActivity = activityStore.list().find((activity) => activity.detail?.includes("keeps running"))
+        assert.ok(failedActivity)
+        assert.ok(runningActivity)
+        await vi.waitFor(() => assert.equal(activityStore.get(failedActivity.activityId)?.status, "failed"))
+
+        assert.deepEqual(await activityStore.moveToBackground([runningActivity.activityId]), [runningActivity.activityId])
+        const result = String(await execution)
+        assert.match(result, /\[1\] FAILED - fails first/)
+        assert.match(result, /FIRST_SUBAGENT_FAILED/)
+        assert.match(result, /Continued background subagent batch job: subagent_batch_/)
+        assert.match(result, /final result will be available only in a later model request/i)
+        assert.equal(activityStore.get(failedActivity.activityId)?.executionMode, "foreground")
+        assert.equal(activityStore.get(runningActivity.activityId)?.executionMode, "background")
+
+        const completedResult: SubagentRunResult = {
+            status: "completed",
+            result: "RUNNING_SIBLING_COMPLETED",
+            stats: emptyTestStats(),
+        }
+        runControls[1].onProgress({ status: "completed", result: completedResult.result, stats: completedResult.stats })
+        runControls[1].resolve(completedResult)
+        await vi.waitFor(() => vitestExpect(publish).toHaveBeenCalledOnce())
+        const delivery = publish.mock.calls[0][0]
+        assert.match(delivery.text, /RUNNING_SIBLING_COMPLETED/)
+        assert.doesNotMatch(delivery.text, /FIRST_SUBAGENT_FAILED/)
+    })
+
     it("registers soft Finish and exposes Retry only after a retryable background failure", async () => {
         const { config } = createConfig({ autoApproveSafe: true, autoApproveAll: true })
         let activityInput: { finish?: () => Promise<boolean> } | undefined

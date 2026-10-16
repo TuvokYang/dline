@@ -114,10 +114,11 @@ async function publishHandedOffBatchResults(
     batchId: string,
     entries: readonly SubagentStatusItem[],
     results: readonly SubagentExecResult[],
+    deliveredResultIndexes: ReadonlySet<number> = new Set(),
 ): Promise<void> {
     const delivery = config.backgroundResults
     if (!delivery) return
-    const completed = entries.filter((_entry, index) => !results[index]?.retryable)
+    const completed = entries.filter((_entry, index) => !deliveredResultIndexes.has(index) && !results[index]?.retryable)
     if (completed.length === 0) return
     const text = [
         "# Background Results",
@@ -1445,19 +1446,24 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
             resolveHandoff = resolve
         })
         const continueBatchInBackground = async (): Promise<BackgroundHandoffResult> => {
-            if (isContinuedInBackground || !entries.some((entry) => entry.status === "pending" || entry.status === "running")) {
-                return false
-            }
+            const activeEntries = entries.filter((entry) => entry.status === "pending" || entry.status === "running")
+            if (isContinuedInBackground || activeEntries.length === 0) return false
+            const activeEntrySet = new Set(activeEntries)
+            const entrySnapshots = entries.map((entry) => ({
+                entry,
+                background: entry.background,
+                backgroundHandoffAvailable: entry.backgroundHandoffAvailable,
+            }))
             const rollback = async () => {
                 isContinuedInBackground = false
-                for (const entry of entries) {
-                    entry.background = false
-                    entry.backgroundHandoffAvailable = true
+                for (const snapshot of entrySnapshots) {
+                    snapshot.entry.background = snapshot.background
+                    snapshot.entry.backgroundHandoffAvailable = snapshot.backgroundHandoffAvailable
                 }
             }
             isContinuedInBackground = true
             for (const entry of entries) {
-                entry.background = true
+                if (activeEntrySet.has(entry)) entry.background = true
                 entry.backgroundHandoffAvailable = false
             }
             try {
@@ -1510,6 +1516,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
             false,
             block.ts,
         )
+        const settledResultsByJobId = new Map<string, SubagentExecResult>()
         const runResultsPromise = budget.awaitChildren(() =>
             Promise.all(
                 planned.map((item) => {
@@ -1526,9 +1533,15 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
                             updateActivityFromEntry(config, entry)
                         },
                     }).then((result) => {
-                        // Each child settles on its own; stamping it here keeps a fast child
-                        // from inheriting the finish time of the slowest one in the batch.
+                        // Each child settles on its own. Persist the result immediately
+                        // so a mixed batch can return it while live siblings move to the background.
+                        settledResultsByJobId.set(item.jobId, result)
+                        entry.status = result.status
+                        entry.result = result.result
+                        entry.error = result.error
+                        entry.backgroundHandoffAvailable = false
                         entry.finishedAt = Date.now()
+                        applyStats(entry, result.stats)
                         updateActivityFromEntry(config, entry)
                         return result
                     })
@@ -1537,6 +1550,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
         )
         let results: SubagentExecResult[] = []
         let handedOff = false
+        const deliveredResultIndexes = new Set<number>()
         try {
             const outcome = await Promise.race([
                 runResultsPromise.then((completedResults) => ({ kind: "completed" as const, results: completedResults })),
@@ -1547,7 +1561,11 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
         } finally {
             config.taskState.isExecutingSubagent = false
         }
-        const finalizeBatchResults = async (completedResults: SubagentExecResult[], background: boolean): Promise<void> => {
+        const finalizeBatchResults = async (
+            completedResults: SubagentExecResult[],
+            background: boolean,
+            alreadyDeliveredIndexes: ReadonlySet<number> = new Set(),
+        ): Promise<void> => {
             completedResults.forEach((result: SubagentExecResult, position) => {
                 const item = planned[position]
                 const entry = entriesByJobId.get(item.jobId) as SubagentStatusItem
@@ -1555,7 +1573,7 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
                 entry.status = result.status
                 entry.result = result.result
                 entry.error = result.error
-                entry.background = background
+                entry.background = background && !alreadyDeliveredIndexes.has(position)
                 entry.backgroundHandoffAvailable = false
                 entry.finishedAt ??= Date.now()
                 applyStats(entry, result.stats)
@@ -1648,16 +1666,46 @@ export class UseSubagentsToolHandler implements IFullyManagedTool, IPreparableTo
                 block.ts,
             )
             await emitUsage(config, entries)
-            if (background) await publishHandedOffBatchResults(config, batchId, entries, completedResults)
+            if (background) {
+                await publishHandedOffBatchResults(config, batchId, entries, completedResults, alreadyDeliveredIndexes)
+            }
         }
         if (handedOff) {
+            const settledEntries: SubagentStatusItem[] = []
+            const settledResults: SubagentExecResult[] = []
+            planned.forEach((item, index) => {
+                const result = settledResultsByJobId.get(item.jobId)
+                if (!result) return
+                deliveredResultIndexes.add(index)
+                settledEntries.push(entriesByJobId.get(item.jobId) as SubagentStatusItem)
+                settledResults.push(result)
+            })
             void runResultsPromise
-                .then((completedResults) => finalizeBatchResults(completedResults, true))
+                .then((completedResults) => finalizeBatchResults(completedResults, true, deliveredResultIndexes))
                 .catch((error) => Logger.error("[SubagentToolHandler] background batch finalization failed", error))
-            const continuedNotice = backgroundSubagentResult("continued", "batch job", batchId)
-            return formatResponse.toolResult(
-                rejected.length === 0 ? continuedNotice : `${continuedNotice}\n\n${formatRejectedItems(rejected, false)}`,
-            )
+            const sections: string[] = []
+            if (settledEntries.length > 0) {
+                const modelSummaryEntries = settledEntries.map((entry, index) => {
+                    const result = settledResults[index]
+                    if (!result?.retryable) return entry
+                    return {
+                        ...entry,
+                        error: `${describePausedReason(result)}. The activity is preserved; the user can restart it with the Retry control. Do not treat this failure as a completed result.`,
+                    }
+                })
+                sections.push(formatSummary(modelSummaryEntries))
+                const retryableCount = settledResults.filter((result) => result.retryable).length
+                if (retryableCount > 0) {
+                    sections.push(
+                        getPrompt("toolHandlers", "subagentBatchRetryablePaused")
+                            .replace("@COUNT@", String(retryableCount))
+                            .replace("@TOTAL@", String(settledEntries.length)),
+                    )
+                }
+            }
+            sections.push(backgroundSubagentResult("continued", "batch job", batchId))
+            if (rejected.length > 0) sections.push(formatRejectedItems(rejected, false))
+            return formatResponse.toolResult(sections.join("\n\n"))
         }
         await finalizeBatchResults(results, false)
         const modelSummaryEntries = entries.map((entry, index) => {

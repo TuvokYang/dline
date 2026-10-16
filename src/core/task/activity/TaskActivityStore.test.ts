@@ -939,6 +939,35 @@ describe("TaskActivityStore", () => {
         expect(await store.moveToBackground(["subagent-foreground"])).toEqual([])
     })
 
+    it("moves only the live members of a grouped handoff when a sibling already failed", async () => {
+        const move = vi.fn(async () => true)
+        const store = new TaskActivityStore("task-1")
+        for (const activityId of ["batch-failed", "batch-running"]) {
+            store.create({
+                activityId,
+                kind: "subagent",
+                executionMode: "foreground",
+                title: activityId,
+                continueInBackground: move,
+                backgroundGroupIds: ["batch-failed", "batch-running"],
+            })
+        }
+        store.update("batch-failed", { status: "failed", error: "provider failed" })
+
+        expect(await store.moveToBackground(["batch-running"])).toEqual(["batch-running"])
+        expect(move).toHaveBeenCalledOnce()
+        expect(store.get("batch-failed")).toMatchObject({
+            status: "failed",
+            executionMode: "foreground",
+            error: "provider failed",
+        })
+        expect(store.get("batch-running")).toMatchObject({
+            status: "running",
+            executionMode: "background",
+            cancellationOwner: "explicit",
+        })
+    })
+
     it("does not start a grouped handoff when any activity is missing", async () => {
         const move = vi.fn(async () => true)
         const store = new TaskActivityStore("task-1")
