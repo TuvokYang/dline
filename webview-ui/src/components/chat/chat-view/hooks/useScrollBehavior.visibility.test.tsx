@@ -177,6 +177,30 @@ describe("useScrollBehavior bottom restoration across visibility changes", () =>
         expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ align: "end" }))
     })
 
+    it("restores the hidden bottom even when Virtuoso resets its position while hidden", () => {
+        const { result } = renderScrollBehavior()
+        const scrollToIndex = attachVirtuoso(result)
+
+        act(() => {
+            result.current.isAtBottomRef.current = true
+            result.current.absoluteBottomLoadedRef.current = true
+        })
+        act(() => {
+            setVisibility("hidden")
+            document.dispatchEvent(new Event("visibilitychange"))
+        })
+
+        // Hidden layout teardown can report false before the panel is visible again.
+        act(() => {
+            result.current.isAtBottomRef.current = false
+            setVisibility("visible")
+            document.dispatchEvent(new Event("visibilitychange"))
+            runPendingFrames()
+        })
+
+        expect(scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ align: "end" }))
+    })
+
     it("hands auto-follow back once the bottom has been restored", () => {
         const { result } = renderScrollBehavior()
         attachVirtuoso(result)

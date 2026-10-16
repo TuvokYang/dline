@@ -55,6 +55,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed the follow-up question card (ask_followup_question) and its options appearing in the middle of the reply: when the model keeps writing after it starts the question, the card now follows the whole reply
 - Fixed earlier Thinking rows appearing twice after an API request failed or a stream dropped in the task
 - Fixed a task reopened after an abnormal exit not staying at the bottom of the conversation: a command row left "running" by the previous session no longer turns off auto-scroll when it expands itself, while expanding a row by hand still keeps your reading position
+- Fixed a task or panel that was at the bottom before being hidden returning to an older position when shown again: Virtuoso can reset its current bottom state during hidden layout, so the pre-hide snapshot now authorizes the first restore scroll while later retries still stop when the reader takes control
 - Fixed the first message sent in a task opened from History (including one reopened after an interruption) clearing and reloading the chat, and a rejected send losing the typed input: the task keeps the same opening identity when the history view turns into the running task, so the conversation stays in place
 - Fixed a strip of the auto-approve bar still showing under the open input queue: the queue list now opens flush against the Queue bar, with no gap or arrow
 - Input queue entries are now separated from each other; queued entries show a list icon and steering entries a paper-plane icon

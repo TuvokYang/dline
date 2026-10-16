@@ -230,15 +230,22 @@ export function useScrollBehavior(
      */
     const restoreBottomAfterVisibility = useCallback(() => {
         disableAutoScrollRef.current = false
+        let restoreAttempted = false
         requestProgrammaticScroll({
-            run: () => performScrollToBottom("auto"),
+            run: () => {
+                performScrollToBottom("auto")
+                restoreAttempted = true
+            },
             priority: "layout",
             retryDelaysMs: LAYOUT_SETTLE_RETRY_MS,
             isStillWanted: () =>
                 !disableAutoScrollRef.current &&
                 document.visibilityState !== "hidden" &&
-                isAtBottomRef.current &&
-                absoluteBottomLoadedRef.current,
+                absoluteBottomLoadedRef.current &&
+                // The hidden snapshot owns the first attempt. Virtuoso can report
+                // `false` while its invisible layout is torn down, which must not
+                // erase the fact that the reader left this task at the bottom.
+                (!restoreAttempted || isAtBottomRef.current),
         })
     }, [absoluteBottomLoadedRef, disableAutoScrollRef, isAtBottomRef, performScrollToBottom, requestProgrammaticScroll])
 
