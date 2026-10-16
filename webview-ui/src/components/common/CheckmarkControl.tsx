@@ -1,7 +1,6 @@
 import { flip, offset, shift, useFloating } from "@floating-ui/react"
 import type { CheckpointSource } from "@shared/ExtensionMessage"
 import { CheckpointRestoreRequest } from "@shared/proto/dline/checkpoints"
-import { Int64Request } from "@shared/proto/dline/common"
 import { ClineCheckpointRestore } from "@shared/WebviewMessage"
 import { BookmarkIcon } from "lucide-react"
 import { useEffect, useState } from "react"
@@ -33,7 +32,7 @@ export const CheckmarkControl = ({
     messageTs,
     isCheckpointCheckedOut,
     compactionRestore,
-    hasWorkspaceCheckpoint = true,
+    hasWorkspaceCheckpoint = false,
     workspaceCheckpointCoverage,
     source,
 }: CheckmarkControlProps) => {
@@ -43,20 +42,26 @@ export const CheckmarkControl = ({
     const [restoreBothDisabled, setRestoreBothDisabled] = useState(false)
     const [showRestoreConfirm, setShowRestoreConfirm] = useState(false)
     const [showMoreOptions, setShowMoreOptions] = useState(false)
-    const { onRelinquishControl } = useExtensionState()
-    const workspaceCheckpointAvailable = !compactionRestore && hasWorkspaceCheckpoint
+    const { checkpointManagerErrorMessage, onRelinquishControl, taskViewState } = useExtensionState()
+    const opening = taskViewState?.taskId && taskViewState.taskInstanceId ? taskViewState : undefined
+    const workspaceCheckpointAvailable =
+        !compactionRestore &&
+        hasWorkspaceCheckpoint &&
+        !isCheckpointCheckedOut &&
+        !checkpointManagerErrorMessage &&
+        opening !== undefined
+    const canCompare = workspaceCheckpointAvailable
+    const checkpointIdentity = {
+        number: messageTs,
+        checkpointRowTs: messageTs,
+        taskId: opening?.taskId ?? "",
+        taskInstanceId: opening?.taskInstanceId ?? "",
+    }
     const partialCoverage =
         workspaceCheckpointCoverage !== undefined &&
         workspaceCheckpointCoverage.total > 1 &&
         workspaceCheckpointCoverage.available < workspaceCheckpointCoverage.total
-    const sourceLabel =
-        source?.kind === "pre_edit"
-            ? `Before ${source.toolName}`
-            : source?.kind === "round_start"
-              ? "Round checkpoint"
-              : source?.kind === "pre_compaction"
-                ? "Pre-compaction checkpoint"
-                : undefined
+    const sourceLabel = source?.kind === "pre_edit" ? `Before ${source.toolName}` : undefined
     const checkpointLabel = compactionRestore
         ? "Compaction checkpoint"
         : partialCoverage
@@ -145,7 +150,7 @@ export const CheckmarkControl = ({
             const restoreType: ClineCheckpointRestore = "task"
             await CheckpointsServiceClient.checkpointRestore(
                 CheckpointRestoreRequest.create({
-                    number: messageTs,
+                    ...checkpointIdentity,
                     restoreType,
                     ...(compactionRestore
                         ? {
@@ -172,7 +177,7 @@ export const CheckmarkControl = ({
             const restoreType: ClineCheckpointRestore = "workspace"
             await CheckpointsServiceClient.checkpointRestore(
                 CheckpointRestoreRequest.create({
-                    number: messageTs,
+                    ...checkpointIdentity,
                     restoreType,
                 }),
             )
@@ -191,7 +196,7 @@ export const CheckmarkControl = ({
             const restoreType: ClineCheckpointRestore = "taskAndWorkspace"
             await CheckpointsServiceClient.checkpointRestore(
                 CheckpointRestoreRequest.create({
-                    number: messageTs,
+                    ...checkpointIdentity,
                     restoreType,
                 }),
             )
@@ -221,7 +226,7 @@ export const CheckmarkControl = ({
             <div className="hover-content">
                 <DottedLine $isCheckedOut={isCheckpointCheckedOut} />
                 <ButtonGroup>
-                    {workspaceCheckpointAvailable && (
+                    {canCompare && (
                         <>
                             <CustomButton
                                 $isCheckedOut={isCheckpointCheckedOut}
@@ -230,9 +235,7 @@ export const CheckmarkControl = ({
                                     setCompareDisabled(true)
                                     try {
                                         await CheckpointsServiceClient.checkpointDiff(
-                                            Int64Request.create({
-                                                value: messageTs,
-                                            }),
+                                            CheckpointRestoreRequest.create(checkpointIdentity),
                                         )
                                     } catch (err) {
                                         console.error("CheckpointDiff error:", err)

@@ -20,7 +20,7 @@ import {
     TaskStartData,
     UserPromptSubmitData,
 } from "../../shared/proto/dline/hooks"
-import { getAllHooksDirs } from "../storage/disk"
+import { getAllHooksDirs, getHookDirectoryCandidates } from "../storage/disk"
 import { StateManager } from "../storage/StateManager"
 import { HookExecutionError } from "./HookError"
 import { HookProcess } from "./HookProcess"
@@ -735,13 +735,23 @@ export class HookFactory {
         return { scriptPaths: scripts }
     }
 
+    /** A bounded view of cold discovery; the underlying scan continues on timeout. */
+    async getHookInfoWithin<Name extends HookName>(
+        hookName: Name,
+        timeoutMs: number,
+    ): Promise<{ scriptPaths: string[] } | undefined> {
+        const { HookDiscoveryCache } = await import("./HookDiscoveryCache")
+        const scripts = await HookDiscoveryCache.getInstance().getWithin(hookName, timeoutMs)
+        return scripts === undefined ? undefined : { scriptPaths: scripts }
+    }
+
     /**
      * Check if any hook scripts exist for the given hook name
      * @returns true if at least one hook script exists, false otherwise
      */
     async hasHook<Name extends HookName>(hookName: Name): Promise<boolean> {
-        const scripts = await HookFactory.findHookScripts(hookName)
-        return scripts.length > 0
+        const { HookDiscoveryCache } = await import("./HookDiscoveryCache")
+        return (await HookDiscoveryCache.getInstance().get(hookName)).length > 0
     }
 
     /**
@@ -782,8 +792,9 @@ export class HookFactory {
         const { HookDiscoveryCache } = await import("./HookDiscoveryCache")
         const scripts = await HookDiscoveryCache.getInstance().get(hookName)
 
-        // Fetch hooks dirs once for source determination and telemetry
-        const hooksDirs = await getAllHooksDirs()
+        // Candidate paths are configuration-derived and require no filesystem IO;
+        // the cache already proved which exact scripts exist.
+        const hooksDirs = await getHookDirectoryCandidates()
 
         // Capture hook discovery telemetry
         // Categorize scripts by location (global vs workspace)

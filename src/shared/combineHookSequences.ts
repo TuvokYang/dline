@@ -1,17 +1,5 @@
 import { UiMessage } from "./ExtensionMessage"
 
-/**
- * Hook metadata extracted from hook message text.
- * Mirrors the UiSayHook interface but represents parsed data.
- */
-interface HookMetadata {
-    hookName: string
-    toolName?: string
-    status: string
-    exitCode?: number
-    hasJsonResponse?: boolean
-}
-
 type HookStatusSay = "hook" | "hook_status"
 type HookOutputStreamSay = "hook_output" | "hook_output_stream"
 
@@ -37,25 +25,6 @@ function isHookOutputStreamSay(say: string | undefined): say is HookOutputStream
  */
 function isToolOrCommandMessage(msg: UiMessage): boolean {
     return msg.ask === "tool" || msg.say === "tool" || msg.ask === "command" || msg.say === "command"
-}
-
-/**
- * Safely parses hook metadata from a hook message.
- * Returns null if parsing fails or message is not a hook.
- */
-function parseHookMetadata(hookMessage: UiMessage): HookMetadata | null {
-    if (!isHookStatusSay(getSay(hookMessage)) || !hookMessage.text) {
-        return null
-    }
-
-    try {
-        const outputIndex = hookMessage.text.indexOf(HOOK_OUTPUT_STRING)
-        const metadataStr = outputIndex !== -1 ? hookMessage.text.slice(0, outputIndex).trim() : hookMessage.text.trim()
-
-        return JSON.parse(metadataStr) as HookMetadata
-    } catch {
-        return null
-    }
 }
 
 // ============================================================================
@@ -166,194 +135,16 @@ function combineAllHooks(messages: UiMessage[]): UiMessage[] {
 }
 
 // ============================================================================
-// PART 3: PRETOOLUSE REORDERING
-// ============================================================================
-
-/**
- * Finds the timestamp of the immediate next tool/command after a given hook.
- *
- * This function ensures stable hook-to-tool associations by only matching a hook
- * with the IMMEDIATE next tool (no other hooks or tools in between). This prevents
- * hooks from being remapped to different tools when new tools are added later.
- *
- * @param hookIndex The starting index to search from
- * @param messages The original messages array (may include partial tools)
- * @returns The timestamp of the immediate next tool, or null if none found
- */
-function findImmediateNextToolTimestamp(hookIndex: number, messages: UiMessage[]): number | null {
-    for (let i = hookIndex + 1; i < messages.length; i++) {
-        const msg = messages[i]
-
-        // If we hit a tool, this is the immediate next tool
-        if (isToolOrCommandMessage(msg)) {
-            return msg.ts
-        }
-
-        // If we hit another PreToolUse hook before finding a tool, stop searching
-        // This prevents matching a hook to a tool that has its own PreToolUse hook
-        if (isHookStatusSay(getSay(msg))) {
-            const metadata = parseHookMetadata(msg)
-            if (metadata?.hookName === "PreToolUse") {
-                return null
-            }
-        }
-    }
-    return null
-}
-
-/**
- * Builds a map of tool timestamps to their PreToolUse hooks.
- *
- * This map indicates which hooks should be moved to appear before which tools.
- * Only PreToolUse hooks are included; PostToolUse hooks stay in their original position.
- *
- * A PreToolUse hook should only be mapped to a tool if the hook was created AFTER the
- * tool already exists in the message stream. This can happen when hooks arrive late
- * or out of order. If the hook timestamp < tool timestamp, it means the hook
- * naturally appears before the tool chronologically and should NOT be moved.
- *
- * @param processedMessages Messages after filtering and combining
- * @param originalMessages Original messages array (used to find tools)
- * @returns Map of tool timestamp -> array of PreToolUse hooks for that tool
- */
-function buildPreToolUseMap(processedMessages: UiMessage[], originalMessages: UiMessage[]): Map<number, UiMessage[]> {
-    const map = new Map<number, UiMessage[]>()
-
-    // Build timestamp-to-index map once to avoid O(n) findIndex calls
-    const timestampToIndex = new Map<number, number>()
-    for (let i = 0; i < originalMessages.length; i++) {
-        timestampToIndex.set(originalMessages[i].ts, i)
-    }
-
-    for (const msg of processedMessages) {
-        // Only process PreToolUse hooks
-        const metadata = parseHookMetadata(msg)
-        if (metadata?.hookName !== "PreToolUse") {
-            continue
-        }
-
-        // Find this hook's position in the original array using the index map
-        const hookIndexInOriginal = timestampToIndex.get(msg.ts)
-        if (hookIndexInOriginal === undefined) {
-            continue // Shouldn't happen, but be safe
-        }
-
-        // Find the immediate next tool after this hook in the original array
-        const toolTimestamp = findImmediateNextToolTimestamp(hookIndexInOriginal, originalMessages)
-        if (toolTimestamp === null) {
-            // No tool found - hook will stay in original position
-            continue
-        }
-
-        // CRITICAL FIX: Only map this hook to the tool if it needs to be moved.
-        // A hook only needs moving if its timestamp > tool timestamp (arrived after tool).
-        // If hook timestamp < tool timestamp, the hook naturally appears before the tool
-        // chronologically and should NOT be moved.
-        if (msg.ts > toolTimestamp) {
-            // Hook arrived after tool - needs to be moved before the tool
-            if (!map.has(toolTimestamp)) {
-                map.set(toolTimestamp, [])
-            }
-            map.get(toolTimestamp)?.push(msg)
-        }
-        // Otherwise, hook is already in correct chronological position - don't move it
-    }
-
-    return map
-}
-
-/**
- * Reorders messages so PreToolUse hooks appear before their associated tools.
- *
- * Algorithm:
- * 1. When we encounter a tool, check if it has PreToolUse hooks mapped to it
- * 2. If yes, insert those hooks BEFORE the tool
- * 3. Track which hooks and tools we've already added to avoid duplicates
- * 4. For PreToolUse hooks encountered in their original position:
- *    - If their tool is available and we'll process them before it, skip them
- *    - Otherwise, add them in their current position (tool not available yet)
- *
- * @param messages Messages after filtering and combining
- * @param preToolUseMap Map of tool timestamp -> PreToolUse hooks
- * @returns Reordered messages array
- */
-function reorderWithPreToolUseHooks(messages: UiMessage[], preToolUseMap: Map<number, UiMessage[]>): UiMessage[] {
-    const result: UiMessage[] = []
-    const addedHooks = new Set<number>()
-    const addedTools = new Set<number>()
-
-    // Build set of available tool timestamps for quick lookup
-    const availableTools = new Set<number>()
-    for (const msg of messages) {
-        if (isToolOrCommandMessage(msg)) {
-            availableTools.add(msg.ts)
-        }
-    }
-
-    for (const msg of messages) {
-        // Case 1: This is a tool with PreToolUse hooks
-        if (isToolOrCommandMessage(msg) && preToolUseMap.has(msg.ts)) {
-            const hooksForTool = preToolUseMap.get(msg.ts)!
-
-            // Insert hooks that haven't been added yet
-            const newHooks = hooksForTool.filter((h) => !addedHooks.has(h.ts))
-            result.push(...newHooks)
-            newHooks.forEach((h) => addedHooks.add(h.ts))
-
-            // Add the tool
-            result.push(msg)
-            addedTools.add(msg.ts)
-            continue
-        }
-
-        // Case 2: This tool was already added with its hooks
-        if (addedTools.has(msg.ts)) {
-            continue
-        }
-
-        // Case 3: This is a PreToolUse hook in its original position
-        const metadata = parseHookMetadata(msg)
-        if (metadata?.hookName === "PreToolUse") {
-            // Find which tool (if any) this hook is mapped to
-            let mappedToolTs: number | undefined
-            for (const [toolTs, hooks] of preToolUseMap) {
-                if (hooks.some((h) => h.ts === msg.ts)) {
-                    mappedToolTs = toolTs
-                    break
-                }
-            }
-
-            // If this hook's tool is available and we'll insert it before that tool, skip it here
-            if (mappedToolTs !== undefined && availableTools.has(mappedToolTs)) {
-                continue
-            }
-
-            // Otherwise, keep hook in original position (tool not available yet)
-        }
-
-        // Case 4: All other messages (text, PostToolUse hooks, reasoning, etc.)
-        result.push(msg)
-    }
-
-    return result
-}
-
-// ============================================================================
 // MAIN FUNCTION
 // ============================================================================
 
 /**
- * Combines sequences of hook and hook_output messages, and reorders
- * PreToolUse hooks to appear before their associated tool messages.
- *
- * Process:
- * 1. Deduplicate tool/command messages by timestamp (preserve newest variant)
- * 2. Combine hooks with their hook_output messages
- * 3. Build mapping of tools to their PreToolUse hooks
- * 4. Reorder so PreToolUse hooks appear before their tools
+ * Combines hooks and their output without changing chronological message order.
+ * Tool/command duplicates keep their newest variant, and hook output stays with
+ * its hook. Hook placement must never create a second presentation-order authority.
  *
  * @param messages Array of UiMessage objects to process
- * @returns New array with hooks combined and PreToolUse hooks reordered
+ * @returns New array with hook output combined and chronological placement preserved
  */
 export function combineHookSequences(messages: UiMessage[]): UiMessage[] {
     // Phase 1: Deduplicate tool/command messages while preserving streaming partials
@@ -362,13 +153,7 @@ export function combineHookSequences(messages: UiMessage[]): UiMessage[] {
     // Phase 2: Combine hooks with their outputs
     const combined = combineAllHooks(filtered)
 
-    // Phase 3: Build PreToolUse hook mapping
-    const preToolUseMap = buildPreToolUseMap(combined, messages)
-
-    // Phase 4: Reorder to place PreToolUse hooks before tools
-    const reordered = reorderWithPreToolUseHooks(combined, preToolUseMap)
-
-    return reordered
+    return combined
 }
 
 export const HOOK_OUTPUT_STRING = "__HOOK_OUTPUT__"

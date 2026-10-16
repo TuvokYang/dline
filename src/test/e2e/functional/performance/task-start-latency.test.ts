@@ -28,21 +28,8 @@ const REVISIONS_PER_TASK = 12
  */
 const WORKSPACE_FILE_COUNT = 4_000
 const WORKSPACE_FILE_BYTES = 2_048
-/**
- * Budget for the startup work that precedes checkpoint initialization.
- *
- * Checkpoint initialization is deliberately blocking: the baseline must capture
- * the workspace before the model can edit a file, otherwise the first restore
- * point already contains model edits. Its duration scales with workspace size,
- * so it is measured and reported separately instead of being budgeted here.
- *
- * What this budget protects is everything else between pressing send and the
- * checkpoint starting - store clearing, state posting and task persistence -
- * which is where the reported 13-15s stall lived. Building the checkpoint
- * manager also scans the seeded workspace, which measures around 4s here, so
- * the budget sits above that while staying far below the reported regression.
- */
-const PRE_CHECKPOINT_BUDGET_MS = 8_000
+/** Full action-to-wire budget for the large-history/large-workspace fixture. */
+const PROVIDER_WIRE_BUDGET_MS = 5_000
 
 const LOG_TIMESTAMP = String.raw`(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})`
 const CHECKPOINT_PATTERN = new RegExp(`^${LOG_TIMESTAMP} \\[info\\] Creating new CheckpointTracker for task (\\d+)$`)
@@ -239,7 +226,7 @@ e2e(
                         {
                             seededTasks: SEEDED_TASK_COUNT,
                             revisionsPerTask: REVISIONS_PER_TASK,
-                            preCheckpointBudgetMs: PRE_CHECKPOINT_BUDGET_MS,
+                            providerWireBudgetMs: PROVIDER_WIRE_BUDGET_MS,
                             ...measurement,
                         },
                         null,
@@ -250,15 +237,12 @@ e2e(
                 contentType: "application/json",
             })
 
-            if (typeof measurement.sendToCheckpointMs !== "number") {
-                throw new Error("The checkpoint start marker was never observed, so the budget would be vacuous")
-            }
             expect(
-                measurement.sendToCheckpointMs,
-                `send to checkpoint start must stay under ${PRE_CHECKPOINT_BUDGET_MS}ms ` +
-                    `with ${SEEDED_TASK_COUNT} historical tasks ` +
-                    `(measured ${measurement.sendToCheckpointMs}ms, full send-to-request ${measurement.sendToRequestMs}ms)`,
-            ).toBeLessThan(PRE_CHECKPOINT_BUDGET_MS)
+                measurement.sendToRequestMs,
+                `send to provider wire must stay under ${PROVIDER_WIRE_BUDGET_MS}ms ` +
+                    `with ${SEEDED_TASK_COUNT} historical tasks and ${WORKSPACE_FILE_COUNT} workspace files ` +
+                    `(measured ${measurement.sendToRequestMs}ms)`,
+            ).toBeLessThan(PROVIDER_WIRE_BUDGET_MS)
 
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [
                 /e2e_mock_queue_exhausted/i,

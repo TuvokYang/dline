@@ -222,9 +222,37 @@ describe("TelemetryService decomposition", () => {
         service.addProvider(provider)
         expect(service.getProviders()).toHaveLength(1)
 
-        await service.removeProvider(provider.name)
+        expect(service.removeProvider(provider.name)).toBeUndefined()
         expect(service.getProviders()).toHaveLength(0)
+        await vi.waitFor(() => expect(provider.disposed).toBe(true))
         await service.dispose()
+    })
+
+    it("detaches a provider without waiting for a hanging exporter flush", async () => {
+        const provider = new RecordingProvider()
+        const service = createService([provider])
+        const eventCountBeforeRemoval = provider.events.length
+        vi.spyOn(provider, "forceFlush").mockReturnValue(new Promise<void>(() => {}))
+
+        expect(service.removeProvider(provider.name)).toBeUndefined()
+        service.captureTaskCreated("task-after-removal", "anthropic")
+
+        expect(service.getProviders()).toHaveLength(0)
+        expect(provider.events).toHaveLength(eventCountBeforeRemoval)
+        expect(provider.disposed).toBe(false)
+        await expect(service.dispose()).resolves.toBeUndefined()
+    })
+
+    it("detaches a provider without waiting for a hanging exporter dispose", async () => {
+        const provider = new RecordingProvider()
+        const service = createService([provider])
+        const dispose = vi.spyOn(provider, "dispose").mockReturnValue(new Promise<void>(() => {}))
+
+        expect(service.removeProvider(provider.name)).toBeUndefined()
+        await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
+
+        expect(service.getProviders()).toHaveLength(0)
+        await expect(service.dispose()).resolves.toBeUndefined()
     })
 
     it("reports settings from providers, defaulting to off when none exist", () => {

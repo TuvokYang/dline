@@ -69,3 +69,11 @@ export function dispatchableDialog(state: TaskState, actionId?: string): DialogI
             (actionId === undefined || interaction.actionRules.some((rule) => rule.actionId === actionId)),
     )
 }
+
+/** Map a lightweight History continue intent onto the canonical dialog that promotion restored. */
+export function resolveCompatibleHistoryAction(interaction: DialogInteraction, requestedActionId: string): string | undefined {
+    if (interaction.actionRules.some((rule) => rule.actionId === requestedActionId)) return requestedActionId
+    if (requestedActionId !== "resume" && requestedActionId !== "reply") return undefined
+    const compatibleActionId = requestedActionId === "resume" ? "reply" : "resume"
+    return interaction.actionRules.some((rule) => rule.actionId === compatibleActionId) ? compatibleActionId : undefined
+}

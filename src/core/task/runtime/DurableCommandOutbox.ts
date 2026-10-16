@@ -1,3 +1,4 @@
+import { Logger } from "@shared/services/Logger"
 import type { Command } from "../kernel"
 import type { CommandPublicationStore } from "../stores/contracts"
 import { type CommandRouter, domainFor } from "./CommandRouter"
@@ -193,7 +194,14 @@ export class DurableCommandOutbox {
                 continue
             }
             try {
+                const durabilityStartedAt = performance.now()
                 await entry.receipt.durable
+                const durabilityMs = Math.round(performance.now() - durabilityStartedAt)
+                if (durabilityMs >= 100 && Logger.isDebugEnabled()) {
+                    Logger.debug(
+                        `[RuntimePerf] phase=command_durable commandType=${entry.command.type} commandId=${entry.command.commandId} durationMs=${durabilityMs}`,
+                    )
+                }
                 if (entry.fenced) {
                     queue.shift()
                     continue

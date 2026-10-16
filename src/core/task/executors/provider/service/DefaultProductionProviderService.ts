@@ -15,7 +15,7 @@ import { projectInternalMessagesForProvider } from "@shared/messages/content"
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
 import { Logger } from "@shared/services/Logger"
 import { ClineError } from "@/services/error"
-import { isTurnEndingToolName } from "../../../assistant-message-order"
+import { isTurnEndingToolName, orderTurnEndingContentBlocks } from "../../../assistant-message-order"
 import { isRetryableProviderError, type ProviderIdentity, waitRetryDelayUnlessAborted } from "../../../auto-retry"
 import { getRetryDelay, MAX_AUTO_RETRY_ATTEMPTS } from "../../../auto-retry-schedule"
 import { ContextWindowReceivingTracker } from "../../../ContextWindowReceivingTracker"
@@ -338,7 +338,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         let usage = new ProviderUsageIncrements()
         let receivingTokens = 0
         let authoritativeContextTokens = 0
-        let replyRows: Extract<ProductionProviderChunk, { kind: "partial" }>["replyRows"]
+        const replyRows = { reasoning: this.nextPresentationId(), text: this.nextPresentationId() }
 
         try {
             serverTools = this.options.serverTools?.begin(turn.request.serverToolContext)
@@ -365,9 +365,15 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 const frame = xmlPreview.read(text)
                                 prose = frame.prose
                                 // The prose first, so its row is opened above the cards of the calls it introduces.
-                                yield { kind: "partial", transientId, text: prose }
+                                yield { kind: "partial", transientId, text: prose, replyRows }
                                 for (const card of frame.cards()) {
-                                    yield { kind: "partial", transientId, text: prose, projection: xmlCardProjection(card) }
+                                    yield {
+                                        kind: "partial",
+                                        transientId,
+                                        text: prose,
+                                        replyRows,
+                                        projection: xmlCardProjection(card),
+                                    }
                                 }
                                 break
                             }
@@ -393,24 +399,19 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                                 })
                                 if (chunk.reasoning) reasoningText += chunk.reasoning
                                 if (action === "open_placeholder") {
-                                    yield { kind: "partial", transientId, text: prose, reasoning: "" }
+                                    yield { kind: "partial", transientId, text: prose, reasoning: "", replyRows }
                                 } else if (action === "publish_text") {
                                     yield {
                                         kind: "partial",
                                         transientId,
                                         text: prose,
                                         reasoning: reasoningText,
+                                        replyRows,
                                     }
                                 }
                                 break
                             case "tool_calls":
-                                // Reserve the canonical reply order before the call takes its row id.
-                                // Providers may emit reasoning after tool deltas even though the final
-                                // turn still orders reasoning and prose before its calls.
-                                replyRows ??= {
-                                    reasoning: this.nextPresentationId(),
-                                    text: this.nextPresentationId(),
-                                }
+                                // Reply rows were reserved before any native or XML call could claim a row.
                                 this.consumeNativeTool(nativeTools, chunk)
                                 const partialBlock = this.previewNativeTool(nativeTools.get(chunk.dline_tid))
                                 // The completed chunk may omit the name, so it is read from the call
@@ -547,8 +548,12 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         if (historyText.trim().length > 0) content.push({ type: "text", text: historyText })
         const recorded = (tool: ToolUse) => !request.nativeTools || tool.isNativeToolCall === true
         content.push(...materialized.tools.filter(recorded).map((tool) => this.toAssistantToolUse(tool)))
+        // The execution pool then admits only the first ending and skips any later ending.
+        const orderedTools = orderTurnEndingContentBlocks(materialized.tools)
+        const firstEnding = orderedTools.find((tool) => isTurnEndingToolName(tool.name))
+        const presentedTools = orderedTools.filter((tool) => !isTurnEndingToolName(tool.name) || tool === firstEnding)
         const blocks = await Promise.all(
-            materialized.tools.map((tool, index) => this.createBlock(request, tool, index, recorded(tool))),
+            orderedTools.map((tool, index) => this.createBlock(request, tool, index, recorded(tool))),
         )
         const ending = usage.ending()
         yield {
@@ -562,7 +567,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             ...(ending === undefined ? {} : { ending }),
             mode: blocks.length > 1 ? request.mode : "serial",
             blocks,
-            ...(materialized.tools.length > 0 ? { toolRows: materialized.tools.map((tool) => tool.ts) } : {}),
+            ...(presentedTools.length > 0 ? { toolRows: presentedTools.map((tool) => tool.ts) } : {}),
         }
     }
 

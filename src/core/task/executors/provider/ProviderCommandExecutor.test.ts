@@ -458,11 +458,18 @@ describe("ProviderCommandExecutor round checkpoint", () => {
         turnPlan: { mode: "serial", blocks: [] },
     }
 
-    it("writes the round's restore point before the request opens its own row", async () => {
+    it("starts the provider request without waiting for the round restore point", async () => {
         const order: string[] = []
+        let releaseCheckpoint!: () => void
+        const checkpoint = new Promise<void>((resolve) => {
+            releaseCheckpoint = resolve
+        })
         const beforeRequest = vi.fn(async (_turnId: string) => {
             order.push("checkpoint")
+            await checkpoint
+            order.push("checkpoint_done")
         })
+        const afterProviderStarted = vi.fn(() => order.push("watcher"))
         const executor = new ProviderCommandExecutor(
             "task-1",
             {
@@ -482,12 +489,19 @@ describe("ProviderCommandExecutor round checkpoint", () => {
                 }),
             },
             { beforeRequest },
+            { afterProviderStarted },
         )
 
-        await executor.execute(command)
+        const execution = executor.execute(command)
+        await vi.waitFor(() => expect(order).toContain("request"))
 
-        expect(order).toEqual(["checkpoint", "request_row", "request"])
+        expect(order.slice(0, 3)).toEqual(["checkpoint", "request_row", "request"])
         expect(beforeRequest).toHaveBeenCalledWith("turn-request", expect.any(AbortSignal))
+        releaseCheckpoint()
+        await execution
+        expect(afterProviderStarted).toHaveBeenCalledOnce()
+        expect(order.indexOf("watcher")).toBeGreaterThan(order.indexOf("request"))
+        await vi.waitFor(() => expect(order).toContain("checkpoint_done"))
     })
 
     it("still sends the request when the restore point cannot be written", async () => {

@@ -12,6 +12,7 @@ function messageState() {
         get clineMessages() {
             return rows
         },
+        conversationSize: () => 0,
         addToClineMessages: async (message: Partial<UiMessage>) => {
             rows.push(message as UiMessage)
         },

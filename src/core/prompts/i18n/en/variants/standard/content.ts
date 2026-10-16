@@ -1,4 +1,4 @@
-import { EXPLICIT_INSTRUCTIONS_SECTION } from "../../system/toolUseGuidelines"
+import { EXPLICIT_INSTRUCTIONS_SECTION, TURN_END_TOOL_RULES } from "../../system/toolUseGuidelines"
 
 export const STANDARD_TOOL_USE_PREFIX = `TOOL USE
 
@@ -30,7 +30,7 @@ Include at least one tool call in each response except when an \`<explicit_instr
 Treat tool results as evidence. If a result differs from your expectation, adjust the approach rather than continuing from the assumption.
 
 ## TURN-END Tools
-Tools marked [TURN-END] hand control back to the user. Use a TURN-END tool when the user needs to provide information or a decision, explicitly requested a plan or report for review, or the entire current task is complete. Calling one terminates the current execution turn: the runtime stops the automatic API/tool loop and opens the tool's user interaction. Do not emit additional tool calls after a TURN-END call in the same response. Execution resumes from the user's submitted feedback or selected action.
+${TURN_END_TOOL_RULES}
 
 ${EXPLICIT_INSTRUCTIONS_SECTION}`
 

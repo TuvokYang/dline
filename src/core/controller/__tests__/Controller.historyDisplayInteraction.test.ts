@@ -59,7 +59,7 @@ function createPromotingController(continuation: Promise<void>): Controller {
             taskInstanceId: "opening-display",
             historyItem: { id: "task-history" },
             accepts: () => true,
-            dispose: async () => undefined,
+            disposeForPromotion: async () => undefined,
         },
         historyDisplayProfileBindings: new WeakMap(),
         openingHandoff: new OpeningHandoff(),

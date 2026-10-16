@@ -762,6 +762,23 @@ export function setRuntimeHooksDir(dir: string | undefined): void {
     runtimeHooksDir = dir
 }
 
+/**
+ * Hook directories implied by configuration, without touching the filesystem.
+ *
+ * Discovery probes the exact hook candidates in these directories concurrently.
+ * It must not serialize mkdir/stat calls on the first Task submission.
+ */
+export async function getHookDirectoryCandidates(): Promise<string[]> {
+    const dirs = new Set<string>()
+    if (runtimeHooksDir) dirs.add(runtimeHooksDir)
+    dirs.add(path.join(getDlineDocumentsPathSync(), "hooks"))
+    const { StateManager } = await import("./StateManager")
+    for (const root of StateManager.get().getGlobalStateKey("workspaceRoots") ?? []) {
+        dirs.add(path.join(root.path, GlobalFileNames.hooksDir))
+    }
+    return [...dirs]
+}
+
 export async function getAllHooksDirs(): Promise<string[]> {
     const startedAt = performance.now()
     const dirs: string[] = []

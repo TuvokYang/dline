@@ -22,6 +22,8 @@ export interface HookExecutionOptions<Name extends keyof Hooks = any> {
     messageStateHandler: MessageStateHandler
     taskId: string
     hooksEnabled: boolean
+    /** Bound only cold discovery; an already discovered hook still runs to completion. */
+    hookDiscoveryTimeoutMs?: number
     model?: HookModelInputContext
     toolName?: string // Optional tool name for PreToolUse/PostToolUse hooks
     pendingToolInfo?: any // Optional metadata about pending tool execution for PreToolUse
@@ -75,25 +77,24 @@ export async function executeHook<Name extends keyof Hooks>(options: HookExecuti
         }
     }
 
-    // Check if the hook exists
     const hookFactory = new HookFactory()
-    const hasHook = await hookFactory.hasHook(hookName)
-
-    if (!hasHook) {
+    const discovered =
+        options.hookDiscoveryTimeoutMs === undefined
+            ? await hookFactory.getHookInfo(hookName)
+            : await hookFactory.getHookInfoWithin(hookName, options.hookDiscoveryTimeoutMs)
+    if (!discovered) {
+        Logger.warn(
+            `[${String(hookName)} Hook] Cold discovery exceeded ${options.hookDiscoveryTimeoutMs}ms; continuing while the cache warms`,
+        )
         return { wasCancelled: false }
     }
+    if (discovered.scriptPaths.length === 0) return { wasCancelled: false }
 
     let hookMessageTs: number | undefined
     const abortController = new AbortController()
-
-    // Declare hookInfo with empty default - populated inside try block.
-    // If getHookInfo throws, error handlers will use the empty default.
-    let hookInfo: { scriptPaths: string[] } = { scriptPaths: [] }
+    const hookInfo = discovered
 
     try {
-        // Get hook info including script paths
-        hookInfo = await hookFactory.getHookInfo(hookName)
-
         // Show hook execution indicator and capture timestamp
         const hookMetadata = {
             hookName,

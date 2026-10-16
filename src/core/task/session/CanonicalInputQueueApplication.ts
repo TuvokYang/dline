@@ -1,4 +1,5 @@
 import { Logger } from "@shared/services/Logger"
+import { hasTransitionDraftContent } from "@shared/TransitionDraft"
 import { renderRetainedInputs } from "../continuation/RetainedInputContent"
 import { retainedInputPartsOf } from "../continuation/RetainedInputParts"
 import { retainedQueueDeliveryEntries } from "../kernel/machines/intake"
@@ -51,6 +52,7 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
 
         switch (mutation.kind) {
             case "enqueue": {
+                if (!hasTransitionDraftContent(mutation.draft)) return { accepted: false, result: "empty_input" }
                 const mode = mutation.mode ?? "queued"
                 const input = await this.inputs.materialize(mutation.draft, mode)
                 event = {
@@ -86,6 +88,7 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
                 }
                 break
             case "commit_edit": {
+                if (!hasTransitionDraftContent(mutation.draft)) return { accepted: false, result: "empty_input" }
                 const payloadRef = await this.inputs.materializePayload(mutation.draft)
                 event = {
                     type: "input_queue.edit_committed" as const,

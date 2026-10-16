@@ -183,6 +183,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
             uiMessage: {
                 close: vi.fn(async () => undefined),
                 getAll: () => rows,
+                findIndexByTs: (ts: number) => rows.findIndex((row) => row.ts === ts),
                 updateMessage: vi.fn(async (index: number, updates: Record<string, unknown>) => {
                     rows[index] = { ...rows[index], ...updates }
                 }),
@@ -222,7 +223,6 @@ describe("TaskSessionCompositionService orphaned activities", () => {
 
         await expect(new TaskSessionCompositionService().open(options)).rejects.toBe(failure)
 
-        expect(rows[0].commandStatus).toBe(expected)
         const written = upsert.mock.calls.flatMap(([activities]) => activities)
         if (deferRestoredCommands) {
             expect(written).toEqual([])
@@ -230,6 +230,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
         } else {
             expect(written).toEqual([expect.objectContaining({ activityId: "orphan", status: "interrupted" })])
         }
+        expect(rows[0].commandStatus).toBe(expected)
     })
 
     // The next opening recovers only activities persisted as in flight. An activity
@@ -243,6 +244,7 @@ describe("TaskSessionCompositionService orphaned activities", () => {
             uiMessage: {
                 close: vi.fn(async () => undefined),
                 getAll: () => rows,
+                findIndexByTs: (ts: number) => rows.findIndex((row) => row.ts === ts),
                 updateMessage: vi.fn(async (index: number, updates: Record<string, unknown>) => {
                     rows[index] = { ...rows[index], ...updates }
                 }),

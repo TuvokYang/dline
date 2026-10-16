@@ -317,20 +317,35 @@ async function ensureUserInOrgWithRemoteConfig(controller: Controller): Promise<
     return remoteConfig
 }
 
+const inFlightRemoteConfigFetches = new WeakMap<Controller, Promise<void>>()
+
 /**
  * Main entry point for fetching remote configuration.
  * Called periodically to ensure users stay in organizations with remote
  * configuration enabled.
  *
- * Catches all exceptions and logs them without clearing existing config,
- * so transient failures do not drop remote-config-enforced settings.
+ * Controller construction, Task initialization, and the hourly timer can all
+ * request the same refresh. They share one in-flight operation so a Task does
+ * not amplify network work or start overlapping OTEL reconciliation cycles.
+ * Catches all exceptions and logs them without clearing existing config, so
+ * transient failures do not drop remote-config-enforced settings.
  *
  * @param controller The controller instance
  */
-export async function fetchRemoteConfig(controller: Controller) {
-    try {
-        await ensureUserInOrgWithRemoteConfig(controller)
-    } catch (error) {
-        Logger.error("Failed to fetch remote config", error)
-    }
+export function fetchRemoteConfig(controller: Controller): Promise<void> {
+    const existing = inFlightRemoteConfigFetches.get(controller)
+    if (existing) return existing
+
+    const refresh = ensureUserInOrgWithRemoteConfig(controller)
+        .then(() => undefined)
+        .catch((error: unknown) => {
+            Logger.error("Failed to fetch remote config", error)
+        })
+        .finally(() => {
+            if (inFlightRemoteConfigFetches.get(controller) === refresh) {
+                inFlightRemoteConfigFetches.delete(controller)
+            }
+        })
+    inFlightRemoteConfigFetches.set(controller, refresh)
+    return refresh
 }

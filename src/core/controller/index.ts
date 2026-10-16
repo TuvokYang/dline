@@ -137,7 +137,7 @@ import type { ProfileSwitchOperation, ResolvedProfileTarget } from "./profile-sw
 import { projectFocusChainHistory } from "./state/focusChainHistoryProjection"
 import { cleanupStateSubscriptions, sendAccountUsageUpdate, sendStatePatch, sendStateUpdate } from "./state/subscribeToState"
 import { projectTaskHistory } from "./state/taskHistoryProjection"
-import { awaitDispatchableDialog, dispatchableDialog } from "./task/awaitDispatchableDialog"
+import { awaitDispatchableDialog, resolveCompatibleHistoryAction } from "./task/awaitDispatchableDialog"
 import { composeBackgroundHandoffAvailability } from "./task/BackgroundHandoffAvailability"
 import { describeDialogState, describeDispatch } from "./task/describeInteractionDispatch"
 import { dispatchInteraction } from "./task/dispatchInteraction"
@@ -154,7 +154,7 @@ import { readOnlyTaskView } from "./task/readOnlyTaskView"
 import { controllerTransitionDraftCarrier, projectTransitionDraft } from "./task/replyWithTransitionDraft"
 import { selectTaskRateMetricsQuery, type TaskRateMetricsQueryFn } from "./task/TaskRateMetricsSource"
 import { adaptCanonicalTaskView } from "./task/TaskViewMessageAdapter"
-import { startTaskLifecycle } from "./task/task-start-lifecycle"
+import { startTaskAfterSurface } from "./task/task-start-lifecycle"
 import { sendChatButtonClickedEvent } from "./ui/subscribeToChatButtonClicked"
 import { sendPartialMessageEvent } from "./ui/subscribeToPartialMessage"
 
@@ -242,6 +242,11 @@ type TaskClearOptions = TaskClearWithinLifecycleOptions & {
 export type TaskLifecycleScope = {
     /** Clear the active task while already holding the controller lifecycle lock. */
     clearTask(options?: TaskClearWithinLifecycleOptions): Promise<void>
+}
+
+type TaskLifecycleOperationOptions = {
+    /** False only for a visible close that must detach before older durable cleanup settles. */
+    waitForPendingTeardown?: boolean
 }
 
 /*
@@ -1164,13 +1169,10 @@ export class Controller {
             await this.postStateToWebview()
         }
 
-        if (autoApprovalSettings && !historyItem) {
-            const updatedAutoApprovalSettings = {
-                ...autoApprovalSettings,
-                version: (autoApprovalSettings.version ?? 1) + 1,
-            }
-            this.stateManager.setGlobalState("autoApprovalSettings", updatedAutoApprovalSettings)
-        }
+        // Reading the live Auto-Approve permission is sufficient. Creating a Task
+        // must not rewrite the global settings document merely to bump a version;
+        // that cross-process transaction can outlive provider admission by seconds.
+        void autoApprovalSettings
 
         // Initialize and persist the workspace manager (multi-root or single-root) with telemetry + fallback.
         // Detection spawns `git` per workspace folder and its result never changes for
@@ -1361,12 +1363,31 @@ export class Controller {
                 logInitStage("history_prepare", initializedTaskId, `current=${this.task === taskInstance}`)
                 if (this.task !== taskInstance) return initializedTaskId
             } else if (task || images || files) {
-                await startTaskLifecycle({
+                const outcome = await startTaskAfterSurface({
                     taskId: initializedTaskId,
                     startInBackground: options?.startInBackground === true,
                     beforeStart: options?.beforeStart,
+                    publishSurface: async () => {
+                        // Queue the canonical surface before admission, but do not
+                        // let a slow Webview consumer or a large History projection
+                        // own provider latency. Delivery remains observed.
+                        void this.postStateToWebview({ immediate: true }).catch((error: unknown) =>
+                            Logger.warn(`[Task ${initializedTaskId}] Initial surface delivery failed:`, error),
+                        )
+                        logInitStage("initial_surface_publish", initializedTaskId)
+                    },
+                    isCurrent: () => this.task === taskInstance,
                     start: async () => {
+                        const admissionStartedAt = performance.now()
+                        const logAdmissionStage = (stage: string) => {
+                            if (Logger.isDebugEnabled()) {
+                                Logger.debug(
+                                    `[TaskStartPerf] phase=${stage} taskId=${initializedTaskId} elapsedMs=${Math.round(performance.now() - admissionStartedAt)}`,
+                                )
+                            }
+                        }
                         const hookContext = await this.collectTaskStartHookContext(taskInstance, task ?? "")
+                        logAdmissionStage("hook_context")
                         // The composer staged into its draft before the task existed;
                         // admission only trusts the task's own resources.
                         const opening = options?.semanticInput
@@ -1381,7 +1402,9 @@ export class Controller {
                                 [...(options?.context ?? []), ...(hookContext ? [hookContext] : [])].join("\n\n") || undefined,
                             opensTask: true,
                         })
+                        logAdmissionStage("input_materialized")
                         const started = await taskInstance.task.start(input)
+                        logAdmissionStage("runtime_submitted")
                         if (opening) await releaseOpeningOnceDurable(opening, started, taskInstance.assembly.runtime)
                     },
                     onBackgroundError: async (error) => {
@@ -1401,6 +1424,7 @@ export class Controller {
                         await options?.onBackgroundError?.(error, initializedTaskId)
                     },
                 })
+                if (outcome === "stale") return initializedTaskId
             }
         } finally {
             // Polling is started once in the constructor and is a controller-
@@ -1408,10 +1432,6 @@ export class Controller {
             // creating duplicate, un-clearable intervals.
         }
 
-        // Brief yield to let the UI frame render before pushing state.
-        // Previously was 1000ms; reduced to a single microtask tick since
-        // history resumes can push immediate state before navigating.
-        await new Promise((r) => setTimeout(r, 0))
         if (this.task !== taskInstance) {
             return initializedTaskId
         }
@@ -1591,9 +1611,8 @@ export class Controller {
     /**
      * Promote the exact lightweight history interaction into the canonical Task runtime.
      *
-     * The historical projection carries display identity only, so the promoted
-     * runtime re-derives the authoritative interaction and the request is
-     * rebased onto it before the canonical dispatch path validates it.
+     * The lifecycle lock only swaps surface ownership. Canonical readiness and
+     * dispatch wait outside it so Close can invalidate this opening immediately.
      */
     async dispatchHistoryDisplayInteraction(
         request: DispatchInteractionRequest,
@@ -1605,66 +1624,66 @@ export class Controller {
             return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
         }
 
-        // The lifecycle lock covers the promotion only. Dispatch returns once the
-        // kernel accepted the reply; the resumed turn runs through its executors
-        // afterwards, so Close and later lifecycle operations are never held behind it.
-        return this.runTaskLifecycleOperation(async () => {
+        const promoted = await this.runTaskLifecycleOperation(async () => {
             if (this.historyDisplaySession !== display || !display.accepts(request)) {
                 Logger.warn(
                     `[HistoryDisplay] Interaction became stale while promoting task ${display.taskId}: ${describeDispatch(request)}`,
                 )
-                return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
+                return { response: DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" }) }
             }
             try {
                 await this.promoteHistoryDisplay(display)
                 const session = this.task
                 if (!session) {
                     Logger.error(`[HistoryDisplay] Promotion produced no task session for ${display.taskId}`)
-                    return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
+                    return { response: DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" }) }
                 }
-                // The recovery dialog is still planned when promotion returns; its
-                // prepare and reveal run through the outbox afterwards.
-                const interaction = await awaitDispatchableDialog(session, {
-                    actionId: request.actionId,
-                    isCurrent: () => this.task === session,
-                })
-                const state = session.state()
-                if (!interaction && dispatchableDialog(state)) {
-                    // The history surface offered an action the restored task no longer
-                    // does, e.g. Resume over a dialog whose torn row hydrate revealed
-                    // again. That dialog is now shown, and the user's draft is kept.
-                    Logger.warn(
-                        `[HistoryDisplay] Promoted task ${session.taskId} offers no ${request.actionId}: ${describeDialogState(state)}`,
-                    )
-                    return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
-                }
-                if (!interaction) {
-                    // Without this the promoted task simply stopped: no command ran,
-                    // no error surfaced, and the only visible effect was an input
-                    // that never accepted the user's message.
-                    Logger.error(
-                        `[HistoryDisplay] Promoted task ${session.taskId} has no dispatchable dialog: ${describeDialogState(state)}`,
-                    )
-                    return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
-                }
-                return await dispatchInteraction(
-                    this,
-                    DispatchInteractionRequest.create({
-                        ...request,
-                        taskId: session.taskId,
-                        // The runtime adopted the display's opening, so this is the identity
-                        // the reply was rendered under; it is read from the session to stay exact.
-                        taskInstanceId: session.taskInstanceId,
-                        turnId: interaction.turnId,
-                        interactionId: interaction.interactionId,
-                        stateRevision: state.revision,
-                    }),
-                )
+                return { session }
             } catch (error) {
                 Logger.error(`[HistoryDisplay] Failed to promote task ${display.taskId}:`, error)
-                return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
+                return { response: DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" }) }
             }
         })
+        if ("response" in promoted) return promoted.response
+
+        const { session } = promoted
+        try {
+            const interaction = await awaitDispatchableDialog(session, {
+                isCurrent: () => this.task === session,
+            })
+            if (this.task !== session) {
+                return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
+            }
+            const state = session.state()
+            if (!interaction) {
+                Logger.error(
+                    `[HistoryDisplay] Promoted task ${session.taskId} has no dispatchable dialog: ${describeDialogState(state)}`,
+                )
+                return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
+            }
+            const actionId = resolveCompatibleHistoryAction(interaction, request.actionId)
+            if (!actionId) {
+                Logger.warn(
+                    `[HistoryDisplay] Promoted task ${session.taskId} offers no compatible ${request.actionId}: ${describeDialogState(state)}`,
+                )
+                return DispatchInteractionResponse.create({ accepted: false, result: "stale_interaction" })
+            }
+            return await dispatchInteraction(
+                this,
+                DispatchInteractionRequest.create({
+                    ...request,
+                    actionId,
+                    taskId: session.taskId,
+                    taskInstanceId: session.taskInstanceId,
+                    turnId: interaction.turnId,
+                    interactionId: interaction.interactionId,
+                    stateRevision: state.revision,
+                }),
+            )
+        } catch (error) {
+            Logger.error(`[HistoryDisplay] Failed to dispatch promoted interaction for task ${session.taskId}:`, error)
+            return DispatchInteractionResponse.create({ accepted: false, result: "invalid_runtime_event" })
+        }
     }
 
     /**
@@ -1682,7 +1701,10 @@ export class Controller {
                 // itself, so leaving that round armed would let it take the same lock
                 // concurrently and then activate a surface this promotion replaced.
                 this.stopLockPoll()
-                await Promise.all([display.dispose(), this.historyDisplayProfileBindings.get(display)])
+                // Wait only for a history-maintenance writer that already started.
+                // Read-only hydration and Profile identity refresh continue outside
+                // provider admission; both target the same task-local stores/cache.
+                await display.disposeForPromotion()
                 await this.initTask(undefined, undefined, undefined, display.historyItem, undefined, {
                     skipInitialClear: true,
                     activateHistory: true,
@@ -3639,12 +3661,14 @@ export class Controller {
     }
 
     /** Serialize operations that may resume or remove the active Task instance. */
-    async runTaskLifecycleOperation<T>(operation: (scope: TaskLifecycleScope) => Promise<T>): Promise<T> {
+    async runTaskLifecycleOperation<T>(
+        operation: (scope: TaskLifecycleScope) => Promise<T>,
+        options: TaskLifecycleOperationOptions = {},
+    ): Promise<T> {
         return this.taskLifecycleMutex.withLock(async () => {
-            // A deferred teardown still owns the previous task's locks, settings and
-            // stores. Draining it here keeps every lifecycle operation ordered behind
-            // the task it replaces, while the surface itself was already released.
-            await this.pendingTaskTeardown
+            // Writers still drain the previous task before taking ownership. A user
+            // close may skip only this admission wait so its visible surface can detach.
+            if (options.waitForPendingTeardown !== false) await this.pendingTaskTeardown
             return operation({
                 clearTask: (options) => this.clearTaskWithinLifecycle(options),
             })
@@ -3676,10 +3700,13 @@ export class Controller {
     }
 
     async clearTask(options?: TaskClearOptions) {
-        return this.runTaskLifecycleOperation((scope) => {
-            if (options?.expectedOpening && !this.isCurrentOpening(options.expectedOpening)) return Promise.resolve()
-            return scope.clearTask(options)
-        })
+        return this.runTaskLifecycleOperation(
+            (scope) => {
+                if (options?.expectedOpening && !this.isCurrentOpening(options.expectedOpening)) return Promise.resolve()
+                return scope.clearTask(options)
+            },
+            { waitForPendingTeardown: options?.closeReason !== "user_clear" },
+        )
     }
 
     private isCurrentOpening(opening: TaskOpening): boolean {
@@ -3750,18 +3777,31 @@ export class Controller {
             logCloseStage("detached_state_publish")
         }
 
-        const teardown = Promise.all([
-            historyDisplay?.dispose(),
-            task || holdsLock
-                ? this.teardownDetachedTask(
-                      task,
-                      taskId,
-                      options?.preserveCompletedState === true,
-                      logCloseStage,
-                      options?.checkpointRestoreFence,
-                  )
-                : undefined,
-        ]).then(() => undefined)
+        const previousTeardown = this.pendingTaskTeardown
+        const releaseDetached = async () => {
+            await Promise.all([
+                historyDisplay?.dispose(),
+                task || holdsLock
+                    ? this.teardownDetachedTask(
+                          task,
+                          taskId,
+                          options?.preserveCompletedState === true,
+                          logCloseStage,
+                          options?.checkpointRestoreFence,
+                      )
+                    : undefined,
+            ])
+        }
+        const teardown = previousTeardown
+            ? previousTeardown.then(releaseDetached, async (previousError) => {
+                  try {
+                      await releaseDetached()
+                  } catch (currentError) {
+                      throw new AggregateError([previousError, currentError], "Multiple task teardowns failed")
+                  }
+                  throw previousError
+              })
+            : releaseDetached()
         const pending = teardown.then(() => {
             if (this.pendingTaskTeardown === pending) this.pendingTaskTeardown = undefined
         })

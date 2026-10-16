@@ -18,6 +18,15 @@ describe("rowIdentity", () => {
     it("does not confuse a single message with a group that starts and ends on it", () => {
         expect(rowIdentity(message(7))).not.toBe(rowIdentity([message(7), message(7)]))
     })
+
+    it("keeps a logical tool-group identity while later members arrive", () => {
+        const before = [message(1), message(2)] as UiMessage[] & { _toolGroupId: string }
+        const after = [message(1), message(2), message(3)] as UiMessage[] & { _toolGroupId: string }
+        before._toolGroupId = "tool:2"
+        after._toolGroupId = "tool:2"
+
+        expect(rowIdentity(after)).toBe(rowIdentity(before))
+    })
 })
 
 describe("leadingRowShift", () => {

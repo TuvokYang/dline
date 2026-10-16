@@ -32,7 +32,6 @@ import {
     type InteractionDraft,
     isActiveInteractionSynchronized,
 } from "@/task-interaction/types"
-import { HistoryTaskOpeningView } from "../history/HistoryTaskOpeningView"
 import { Navbar } from "../menu/Navbar"
 import { TaskActivityNavigationProvider } from "./activity/TaskActivityNavigationContext"
 import { DEFAULT_TASK_ACTIVITY_FILTERS, type TaskActivityFilters, TaskActivityPanel } from "./activity/TaskActivityPanel"
@@ -95,7 +94,6 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         taskViewState,
         currentTaskItem,
         taskTitleMessage,
-        historyTaskOpening,
         dismissHistoryTaskOpening,
         transitionDraft,
         modeSwitch,
@@ -711,14 +709,6 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         const text = visibleTask ? "Type a message..." : "Type your task here..."
         return text
     }, [visibleTask])
-
-    if (historyTaskOpening) {
-        return (
-            <ChatLayout isHidden={isHidden}>
-                <HistoryTaskOpeningView opening={historyTaskOpening} />
-            </ChatLayout>
-        )
-    }
 
     return (
         <ChatLayout isHidden={isHidden}>

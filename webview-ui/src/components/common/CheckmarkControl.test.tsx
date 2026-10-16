@@ -9,6 +9,7 @@ let checkpointManagerErrorMessage: string | undefined
 vi.mock("@/context/ExtensionStateContext", () => ({
     useExtensionState: () => ({
         checkpointManagerErrorMessage,
+        taskViewState: { taskId: "task-1", taskInstanceId: "open-1" },
         onRelinquishControl: (listener: () => void) => {
             relinquishListeners.add(listener)
             return () => relinquishListeners.delete(listener)
@@ -32,14 +33,16 @@ describe("CheckmarkControl", () => {
     })
 
     it("shows partial multi-root coverage without disabling available file restore", () => {
-        render(<CheckmarkControl messageTs={42} workspaceCheckpointCoverage={{ available: 1, total: 2 }} />)
+        render(
+            <CheckmarkControl hasWorkspaceCheckpoint messageTs={42} workspaceCheckpointCoverage={{ available: 1, total: 2 }} />,
+        )
 
         expect(screen.getByText("Checkpoint (1/2 workspaces)", { exact: true })).toBeInTheDocument()
         expect(screen.getByRole("button", { name: "Compare", exact: true, hidden: true })).toBeInTheDocument()
     })
 
     it("opens the restore confirmation and restores files and task", async () => {
-        render(<CheckmarkControl messageTs={42} />)
+        render(<CheckmarkControl hasWorkspaceCheckpoint messageTs={42} />)
 
         fireEvent.click(screen.getByRole("button", { name: "Restore", exact: true, hidden: true }))
         const restoreAll = screen.getByRole("button", { name: "Restore Files & Task", exact: true })
@@ -49,15 +52,37 @@ describe("CheckmarkControl", () => {
             fireEvent.click(restoreAll)
         })
         expect(CheckpointsServiceClient.checkpointRestore).toHaveBeenCalledWith(
+            expect.objectContaining({
+                checkpointRowTs: 42,
+                number: 42,
+                restoreType: "taskAndWorkspace",
+                taskId: "task-1",
+                taskInstanceId: "open-1",
+            }),
+        )
+    })
+
+    it("uses the same effective file operation set for Compare and round restore", async () => {
+        render(<CheckmarkControl hasWorkspaceCheckpoint messageTs={42} source={{ kind: "round_start", turnId: "turn-1" }} />)
+
+        expect(screen.getByRole("button", { name: "Compare", exact: true, hidden: true })).toBeInTheDocument()
+        fireEvent.click(screen.getByRole("button", { name: "Restore", exact: true, hidden: true }))
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Restore Files & Task", exact: true }))
+        })
+        expect(CheckpointsServiceClient.checkpointRestore).toHaveBeenCalledWith(
             expect.objectContaining({ number: 42, restoreType: "taskAndWorkspace" }),
         )
     })
 
-    it("keeps historical file checkpoint controls available when current backend health reports an error", () => {
+    it("hides file operations when the current checkpoint backend is unhealthy", () => {
         checkpointManagerErrorMessage = "One workspace checkpoint backend is unhealthy."
         render(<CheckmarkControl hasWorkspaceCheckpoint messageTs={42} />)
 
-        expect(screen.getByRole("button", { name: "Compare", exact: true, hidden: true })).toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Compare", exact: true, hidden: true })).not.toBeInTheDocument()
+        fireEvent.click(screen.getByRole("button", { name: "Restore", exact: true, hidden: true }))
+        expect(screen.queryByRole("button", { name: "Restore Files & Task", exact: true })).not.toBeInTheDocument()
+        expect(screen.getByRole("button", { name: "Restore Task Only", exact: true })).toBeInTheDocument()
     })
 
     it("keeps chat restore available when the Git checkpoint backend is unavailable", async () => {
@@ -110,7 +135,7 @@ describe("CheckmarkControl", () => {
     })
 
     it("can reopen Restore after Compare relinquishes control", async () => {
-        render(<CheckmarkControl messageTs={42} />)
+        render(<CheckmarkControl hasWorkspaceCheckpoint messageTs={42} />)
 
         await act(async () => {
             fireEvent.click(screen.getByRole("button", { name: "Compare", exact: true, hidden: true }))
@@ -126,7 +151,7 @@ describe("CheckmarkControl", () => {
     it("keeps the restore confirmation open when the pointer leaves the checkpoint control", () => {
         vi.useFakeTimers()
         try {
-            render(<CheckmarkControl messageTs={42} />)
+            render(<CheckmarkControl hasWorkspaceCheckpoint messageTs={42} />)
             fireEvent.click(screen.getByRole("button", { name: "Restore", exact: true, hidden: true }))
 
             const checkpointLabel = screen.getByText("Checkpoint", { exact: true })
@@ -145,7 +170,7 @@ describe("CheckmarkControl", () => {
         render(
             <div>
                 <button type="button">Outside</button>
-                <CheckmarkControl messageTs={42} />
+                <CheckmarkControl hasWorkspaceCheckpoint messageTs={42} />
             </div>,
         )
         fireEvent.click(screen.getByRole("button", { name: "Restore", exact: true, hidden: true }))
@@ -156,7 +181,7 @@ describe("CheckmarkControl", () => {
     })
 
     it("closes the restore confirmation on Escape", () => {
-        render(<CheckmarkControl messageTs={42} />)
+        render(<CheckmarkControl hasWorkspaceCheckpoint messageTs={42} />)
         fireEvent.click(screen.getByRole("button", { name: "Restore", exact: true, hidden: true }))
 
         fireEvent.keyDown(document, { key: "Escape" })

@@ -69,11 +69,13 @@ export function findGroupedMessageByTs(
     return undefined
 }
 
-/**
- * Check if a message group is a tool group (array with _isToolGroup marker)
- */
-export function isToolGroup(item: UiMessage | UiMessage[]): item is UiMessage[] & { _isToolGroup: true } {
-    return Array.isArray(item) && (item as any)._isToolGroup === true
+export type ToolMessageGroup = UiMessage[] & { _isToolGroup: true; _toolGroupId: string }
+
+/** Check if a message group is a logical low-stakes tool round. */
+export function isToolGroup(item: UiMessage | UiMessage[]): item is ToolMessageGroup {
+    if (!Array.isArray(item)) return false
+    const group = item as UiMessage[] & { _isToolGroup?: boolean; _toolGroupId?: string }
+    return group._isToolGroup === true && typeof group._toolGroupId === "string"
 }
 
 /**
@@ -313,11 +315,9 @@ export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
                 return false
             }
             case "text":
-                // Sometimes cline returns an empty text message, we don't want to render these. (We also use a say text for user messages, so in case they just sent images we still render that)
-                if (hasNoVisibleContent) {
-                    return false
-                }
-                break
+                // Assistant prose stays in the conversation, not in the tool-owned chat surface.
+                // Apply the same rule to partial and final frames so a Respond row never flashes then disappears.
+                return Boolean(message.images?.length || message.files?.length)
             case "mcp_server_request_started":
                 return false
             case "mcp_server_response":
@@ -872,7 +872,7 @@ export function indexRequestRounds(messages: readonly UiMessage[]): RequestRound
     const rounds = new Map<number, number>()
     let round = 0
     for (const message of messages) {
-        if (message.say === "api_req_started") {
+        if (message.say === "api_req_started" || message.say === "user_feedback" || message.say === "task") {
             round += 1
         }
         rounds.set(message.ts, round)
@@ -913,8 +913,10 @@ export function groupLowStakesTools(
 
     const commitToolGroup = () => {
         if (toolGroup.length > 0 && hasTools) {
-            const group = toolGroup as UiMessage[] & { _isToolGroup: boolean }
+            const firstTool = toolGroup.find(isLowStakesTool)
+            const group = toolGroup as UiMessage[] & { _isToolGroup: true; _toolGroupId: string }
             group._isToolGroup = true
+            group._toolGroupId = `tool:${firstTool?.ts ?? toolGroup[0].ts}`
             result.push(group)
             pendingReasoning = []
             pendingApiReq = []
@@ -1042,7 +1044,37 @@ export function groupChatRows(
     messages: UiMessage[],
     visibleMessages: UiMessage[] = filterVisibleMessages(messages),
 ): (UiMessage | UiMessage[])[] {
-    return groupLowStakesTools(groupMessages(visibleMessages), indexRequestRounds(messages))
+    const rounds = indexRequestRounds(messages)
+    return groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds)), rounds)
+}
+
+/** A turn-ending interaction owns the tail of its request round, never a row in its middle. */
+function placeTurnEndLast(messages: UiMessage[], rounds: RequestRounds): UiMessage[] {
+    const result: UiMessage[] = []
+    let round: number | undefined
+    let ending: UiMessage | undefined
+    for (const message of messages) {
+        const nextRound = rounds.get(message.ts)
+        if (round !== nextRound) {
+            if (ending) result.push(ending)
+            ending = undefined
+            round = nextRound
+        }
+        const kind = message.type === "ask" ? message.ask : message.say
+        if (
+            kind === "completion_result" ||
+            kind === "followup" ||
+            kind === "make_plan" ||
+            kind === "qna_respond" ||
+            kind === "generate_report" ||
+            kind === "new_task"
+        ) {
+            // Execution admits only the first ending; a second preview is not another interaction.
+            ending ??= message
+        } else result.push(message)
+    }
+    if (ending) result.push(ending)
+    return result
 }
 
 export function getIconByToolName(toolName: string) {

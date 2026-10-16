@@ -243,6 +243,9 @@ export class TaskCheckpointManager implements ICheckpointManager {
     private readonly gate: CheckpointGate<CheckpointReferenceSet>
     /** Workspace changes since the last checkpoint commit; absent when checkpoints are off. */
     private readonly changes: WorkspaceChangeFeed | undefined
+    /** Recursive observation is requested after provider wire and starts once the baseline tracker is ready. */
+    private workspaceWatcherRequested = false
+    private workspaceWatcherStarted = false
     /**
      * Set when the task incarnation releases its resources.
      *
@@ -266,7 +269,6 @@ export class TaskCheckpointManager implements ICheckpointManager {
         this.state = { ...initialState }
         this.changes =
             config.enableCheckpoints && services.taskFileTracker ? new WorkspaceChangeFeed(services.taskFileTracker) : undefined
-        if (this.changes) void this.watchWorkspace(this.changes)
         this.gate = new CheckpointGate<CheckpointReferenceSet>({
             taskId: this.task.taskId,
             workspace: {
@@ -278,7 +280,10 @@ export class TaskCheckpointManager implements ICheckpointManager {
                 advancedSince: (position) =>
                     this.services.canonicalCheckpoint?.advancedSince?.(position) ?? Promise.resolve(true),
             },
-            rows: { write: (input) => this.writeCheckpointRow(input) },
+            rows: {
+                write: (input) => this.writeCheckpointRow(input),
+                attach: (row, baseline, current) => this.attachWorkspaceBaseline(row, baseline, current),
+            },
             bundles: { capture: (input) => this.captureCheckpointBundle(input) },
             initialState: () => this.latestCheckpointState(),
             observe: (observation) => this.reportGateObservation(observation),
@@ -306,15 +311,10 @@ export class TaskCheckpointManager implements ICheckpointManager {
         }
     }
 
-    /** Before a named file edit: add a file restore point when the files changed since the latest checkpoint. */
-    async ensurePreEditCheckpoint(
-        sourceOrSignal?: Extract<CheckpointSource, { kind: "pre_edit" }> | AbortSignal,
-        signal?: AbortSignal,
-    ): Promise<void> {
+    /** Keep a workspace mutation behind the round baseline already started for this turn. */
+    async awaitRoundCheckpointBeforeMutation(): Promise<void> {
         if (!this.config.enableCheckpoints || this.disposed) return
-        const source = sourceOrSignal instanceof AbortSignal ? undefined : sourceOrSignal
-        const operationSignal = sourceOrSignal instanceof AbortSignal ? sourceOrSignal : signal
-        await this.gate.ensurePreEdit(source ?? operationSignal, source ? operationSignal : undefined)
+        await this.gate.waitForPendingWork()
     }
 
     /**
@@ -329,6 +329,32 @@ export class TaskCheckpointManager implements ICheckpointManager {
         this.disposed = true
     }
 
+    /**
+     * Start recursive observation once request-critical filesystem work is complete.
+     *
+     * The feed already requires a full first checkpoint scan, so deferring chokidar's
+     * own recursive baseline cannot lose startup changes. It only prevents that
+     * baseline from occupying the filesystem pool before the first provider request.
+     */
+    startWorkspaceWatcher(): void {
+        this.workspaceWatcherRequested = true
+        this.startWorkspaceWatcherIfReady()
+    }
+
+    private startWorkspaceWatcherIfReady(): void {
+        if (
+            !this.workspaceWatcherRequested ||
+            this.workspaceWatcherStarted ||
+            !this.changes ||
+            !this.state.checkpointTracker ||
+            this.disposed
+        ) {
+            return
+        }
+        this.workspaceWatcherStarted = true
+        void this.watchWorkspace(this.changes)
+    }
+
     /** Watch every workspace root; a root that cannot be watched is scanned instead. */
     private async watchWorkspace(changes: WorkspaceChangeFeed): Promise<void> {
         try {
@@ -341,43 +367,57 @@ export class TaskCheckpointManager implements ICheckpointManager {
         }
     }
 
-    /**
-     * Register one checkpoint row and wait until it is durable.
-     *
-     * A pre-edit row restores the conversation of the round row it follows, so
-     * it carries that row's position instead of the current one.
-     */
-    private async writeCheckpointRow(input: {
-        readonly refs?: CheckpointReferenceSet
-        readonly anchor?: CheckpointRow
-        readonly source?: CheckpointSource
-    }): Promise<CheckpointRow> {
+    /** Register one chat-only checkpoint row and wait until it is durable. */
+    private async writeCheckpointRow(input: { readonly source?: CheckpointSource }): Promise<CheckpointRow> {
         if (this.disposed) throw new Error("The task is closing")
         const messages = this.services.messageStateHandler.clineMessages
         // A new restore point supersedes the one the workspace was checked out to.
         for (const message of messages) {
             if (message.say === "checkpoint_created") message.isCheckpointCheckedOut = false
         }
-        const anchor = input.anchor
-        const anchorRow = anchor && messages.find((message) => message.ts === anchor.ts)
-        const begun = this.callbacks.beginRow({
-            ...(input.source ? { checkpointSource: input.source } : {}),
-            ...(input.refs ? { lastCheckpointHash: input.refs.hashes, checkpointWorkspaceRoots: input.refs.workspaceRoots } : {}),
-            ...(anchor
-                ? {
-                      checkpointAnchorTs: anchor.ts,
-                      ...(anchor.position === undefined ? {} : { conversationJournalSeq: anchor.position }),
-                      ...(anchorRow?.conversationHistoryIndex === undefined
-                          ? {}
-                          : { conversationHistoryIndex: anchorRow.conversationHistoryIndex }),
-                      ...(anchorRow?.conversationHistoryDeletedRange === undefined
-                          ? {}
-                          : { conversationHistoryDeletedRange: anchorRow.conversationHistoryDeletedRange }),
-                  }
-                : {}),
-        })
+        const begun = this.callbacks.beginRow(input.source ? { checkpointSource: input.source } : {})
         const row = await begun.persistence
         return { ts: row.ts, position: row.conversationJournalSeq }
+    }
+
+    private async attachWorkspaceBaseline(
+        row: CheckpointRow,
+        baseline: CheckpointReferenceSet,
+        current: CheckpointReferenceSet,
+    ): Promise<void> {
+        if (this.disposed || !(await this.hasEffectiveWorkspaceDelta(baseline, current))) return
+        const index = this.services.messageStateHandler.clineMessages.findIndex((message) => message.ts === row.ts)
+        if (index >= 0) await this.persistCheckpointHash(index, baseline)
+    }
+
+    private async currentWorkspaceDelta(references: CheckpointReferenceSet): Promise<CheckpointChangedFile[]> {
+        const coordinator = this.state.checkpointUnitCoordinator
+        if (coordinator) {
+            const outcome = await coordinator.getDiffSet(references)
+            this.showPartialCheckpointWarning("Checkpoint diff is partial", outcome.failures)
+            return outcome.changedFiles
+        }
+        const tracker = this.state.checkpointTracker
+        if (!tracker) return []
+        const hash = await this.getCurrentWorkspaceHash(references)
+        return hash ? await tracker.getDiffSet(hash) : []
+    }
+
+    private async hasEffectiveWorkspaceDelta(
+        baseline: CheckpointReferenceSet,
+        current: CheckpointReferenceSet,
+    ): Promise<boolean> {
+        const coordinator = this.state.checkpointUnitCoordinator
+        if (coordinator) {
+            const outcome = await coordinator.getDiffSet(current, baseline)
+            return outcome.changedFiles.length > 0
+        }
+        const tracker = this.state.checkpointTracker
+        if (!tracker) return false
+        const baselineHash = await this.getCurrentWorkspaceHash(baseline)
+        const currentHash = await this.getCurrentWorkspaceHash(current)
+        if (!baselineHash || !currentHash) return false
+        return (await tracker.getDiffSet(baselineHash, currentHash)).length > 0
     }
 
     private async captureCheckpointBundle(input: {
@@ -624,6 +664,10 @@ export class TaskCheckpointManager implements ICheckpointManager {
             // A chat restore the task cannot complete is refused before the workspace
             // is touched; otherwise the files would rewind while the chat stays put.
             if (chatRestoreBoundary) this.assertChatRestoreAdmissible(chat.message, chatRestoreBoundary, editedText)
+            // A multi-diff can retain editor models for files the restore will delete.
+            // Close only Dline-owned compare tabs before mutating the workspace so VS Code
+            // cannot persist a stale model back over the restored filesystem state.
+            if (restoreType !== "task") await HostProvider.diff.closeAllDiffs({})
             if (chatRestoreBoundary && this.services.canonicalCheckpoint) {
                 // Awaited here so a refused or failed restore lands in the catch below
                 // instead of escaping to the caller with nothing restored.
@@ -838,18 +882,14 @@ export class TaskCheckpointManager implements ICheckpointManager {
             const previousHash =
                 coordinator || !previousReferences ? undefined : await this.getCurrentWorkspaceHash(previousReferences)
             let changedFiles: CheckpointChangedFile[]
-            if (coordinator) {
-                const outcome = await coordinator.getDiffSet(
-                    checkpointReferences,
-                    previousReferences,
-                    seeNewChangesSinceLastTaskCompletion,
-                )
+            if (!seeNewChangesSinceLastTaskCompletion) {
+                changedFiles = await this.currentWorkspaceDelta(checkpointReferences)
+            } else if (coordinator) {
+                const outcome = await coordinator.getDiffSet(checkpointReferences, previousReferences, true)
                 changedFiles = outcome.changedFiles
                 this.showPartialCheckpointWarning("Checkpoint diff is partial", outcome.failures)
             } else {
-                changedFiles = seeNewChangesSinceLastTaskCompletion
-                    ? await this.state.checkpointTracker.getTaskDiffSet(previousHash!, targetHash!)
-                    : await this.state.checkpointTracker.getDiffSet(targetHash!)
+                changedFiles = await this.state.checkpointTracker.getTaskDiffSet(previousHash!, targetHash!)
             }
             if (!changedFiles.length) {
                 HostProvider.window.showMessage({ type: ShowMessageType.INFORMATION, message: "No changes found" })
@@ -1089,6 +1129,12 @@ export class TaskCheckpointManager implements ICheckpointManager {
 
         try {
             const taskFiles = this.services.taskFileTracker?.getAllModifiedFiles() ?? []
+            const changedFiles = await this.currentWorkspaceDelta(checkpointReferences)
+            const effectiveFiles =
+                taskFiles.length === 0 ? changedFiles : changedFiles.filter((file) => taskFiles.includes(file.absolutePath))
+            if (effectiveFiles.length === 0) {
+                return { status: "failed", error: "No workspace changes to restore" }
+            }
             const coordinator = this.state.checkpointUnitCoordinator
             if (coordinator) {
                 const outcome = await coordinator.restore(checkpointReferences, taskFiles)
@@ -1456,6 +1502,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
                 const tracker = coordinator.primaryTracker
                 this.state.checkpointTracker = tracker
                 this.services.messageStateHandler.setCheckpointTracker(tracker)
+                this.startWorkspaceWatcherIfReady()
                 await this.setcheckpointManagerErrorMessage(undefined)
                 return tracker
             }
@@ -1514,6 +1561,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
             // Update the state with the created tracker
             this.state.checkpointTracker = tracker
             this.services.messageStateHandler.setCheckpointTracker(tracker)
+            this.startWorkspaceWatcherIfReady()
             await this.setcheckpointManagerErrorMessage(undefined)
             return tracker
         } catch (error) {

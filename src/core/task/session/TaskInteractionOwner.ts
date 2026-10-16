@@ -240,43 +240,6 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
     }
 
     /**
-     * The row a turn-ending dialog is anchored at.
-     *
-     * A turn-ending tool previews its card while the reply still streams, so the
-     * previewed ask row can precede prose or reasoning the same turn committed
-     * afterwards; reusing it put the question and its options in the middle of
-     * the reply. The preview is reused only while it is still the last row.
-     * Otherwise the dialog is anchored after everything already written and the
-     * preview is named as `stalePreviewTs`, for the caller to drop once the new
-     * anchor is durable. A completion row (a `say`) keeps its in-place replacement.
-     */
-    private anchorAfterTurn(existingTs: number | undefined): { ts: number; stalePreviewTs?: number } {
-        if (existingTs === undefined) return { ts: this.nextRowTs() }
-        const messages = this.messages.clineMessages
-        if (messages.at(-1)?.ts === existingTs) return { ts: existingTs }
-        const preview = messages.find((message) => message.ts === existingTs)
-        if (preview?.type !== "ask") return { ts: existingTs }
-        return { ts: this.nextRowTs(), stalePreviewTs: existingTs }
-    }
-
-    /**
-     * Drop a preview row its dialog no longer uses.
-     *
-     * Runs after the dialog's own anchor is committed, so a failure leaves a
-     * duplicate card rather than a dialog without any row; it is logged instead
-     * of failing a dialog that is already on screen.
-     */
-    private async dropStalePreview(previewTs: number): Promise<void> {
-        try {
-            await this.messages.removeMessagesByTs([previewTs])
-        } catch (error) {
-            Logger.warn(
-                `[TaskInteractionOwner] Failed to drop stale preview ${previewTs}: ${error instanceof Error ? error.message : error}`,
-            )
-        }
-    }
-
-    /**
      * Write the row a dialog is answered from, commit it, and push it to the chat.
      *
      * A completion becomes its dialog's anchor by replacing its own row in
@@ -685,21 +648,19 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
         // admitting this caller would block the very stop it is waiting behind.
         if (this.suspendedReason) throw new InteractionCancellationError(this.suspendedReason)
         if (this.pending.has(request.interactionId)) throw new Error(`Interaction ${request.interactionId} is already pending`)
-        const anchor = this.anchorAfterTurn(request.existingTs)
+        // Turn-end placement is a presentation rule, never a reason to replace the streamed row's identity.
+        const anchorTs = request.existingTs ?? this.nextRowTs()
         const presentationRef = await this.payloads.put(
             encodeTaskPayload<DialogPresentationEnvelope>({
                 kind: "dialog_presentation",
                 presentationKind: request.kind,
                 body: request.presentation,
-                existingTs: anchor.ts,
+                existingTs: anchorTs,
                 completionId: request.completionId,
             }),
         )
         const definition = getInteraction(request.kind)
-        await this.presentAnchor(
-            createCanonicalAskRow(definition.taskAsk, request.presentation, anchor.ts, request.interactionId),
-        )
-        if (anchor.stalePreviewTs !== undefined) await this.dropStalePreview(anchor.stalePreviewTs)
+        await this.presentAnchor(createCanonicalAskRow(definition.taskAsk, request.presentation, anchorTs, request.interactionId))
         const session = this.requireSession()
         const state = session.state()
         const event: TaskEvent = {

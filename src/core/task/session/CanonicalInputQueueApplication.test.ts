@@ -120,6 +120,16 @@ function harness(
 }
 
 describe("CanonicalInputQueueApplication", () => {
+    it("refuses empty input without creating a payload or queue entry", async () => {
+        const h = harness()
+        expect(await h.application.mutate({ kind: "enqueue", draft: { text: "  ", images: [], files: [] } })).toEqual({
+            accepted: false,
+            result: "empty_input",
+        })
+        expect(h.runtime.getState().intake.queued).toEqual([])
+        expect(h.payloads.put).not.toHaveBeenCalled()
+    })
+
     it("accepts and durably projects input while compaction is running", async () => {
         const h = harness()
         h.setState((current) => ({

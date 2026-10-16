@@ -107,7 +107,7 @@ vi.mock("@/hosts/host-provider", () => {
         window: mockWindow,
         env: mockEnv,
         workspace: mockWorkspace,
-        diff: { openMultiFileDiff: vi.fn() },
+        diff: { openMultiFileDiff: vi.fn(), closeAllDiffs: vi.fn().mockResolvedValue({}) },
         extensionFsPath: process.cwd(),
         globalStorageFsPath: process.cwd(),
         getBinaryLocation: async (name: string) => `/mock/path/to/binary/${name}`,

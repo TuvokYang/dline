@@ -10,7 +10,7 @@ option java_multiple_files = true;
 option java_package = "bot.dline.proto";
 
 service CheckpointsService {
-  rpc checkpointDiff(Int64Request) returns (Empty);
+  rpc checkpointDiff(CheckpointRestoreRequest) returns (Empty);
   rpc checkpointRestore(CheckpointRestoreRequest) returns (Empty);
   rpc retryCheckpointInitialization(EmptyRequest) returns (Boolean);
   rpc subscribeToCheckpoints(CheckpointSubscriptionRequest) returns (stream CheckpointEvent);
@@ -27,6 +27,9 @@ message CheckpointRestoreRequest {
   optional string compaction_checkpoint_id = 7;
   optional string compaction_expected_head_checkpoint_id = 8;
   optional int32 compaction_expected_chain_revision = 9;
+  string task_id = 10;
+  string task_instance_id = 11;
+  int64 checkpoint_row_ts = 12;
 }
 
 message CheckpointSubscriptionRequest {

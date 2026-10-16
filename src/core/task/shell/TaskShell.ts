@@ -1,3 +1,4 @@
+import { Logger } from "@shared/services/Logger"
 import { planRecoveryDialog } from "../kernel/recovery"
 import type { EventSubmissionResult, RuntimeFacade } from "../runtime"
 import type { TaskUiAction } from "./TaskUiAction"
@@ -83,15 +84,21 @@ export class TaskShell {
     ) {}
 
     async start(input: TaskInput): Promise<EventSubmissionResult> {
+        const startedAt = performance.now()
         const opened = await this.open()
+        this.logStartPhase("open", startedAt)
         if (opened.kind === "rejected") return opened
-        return this.submitInput(input)
+        const submitted = await this.submitInput(input)
+        this.logStartPhase("submit_input", startedAt)
+        return submitted
     }
 
     async submitInput(input: TaskInput): Promise<EventSubmissionResult> {
         // Prepared before submission so the row precedes the work it causes, and
         // committed only after acceptance so a refused entry leaves no message.
+        const startedAt = performance.now()
         const presentation = await this.presentation?.prepare(input)
+        this.logStartPhase("presentation_prepared", startedAt)
         const submitted = await this.runtime.submit({
             type: "user.submit",
             generation: this.runtime.getState().generation,
@@ -100,7 +107,16 @@ export class TaskShell {
             mode: input.mode,
             sequence: input.sequence,
         })
-        if (submitted.kind !== "rejected") await presentation?.commit()
+        this.logStartPhase("runtime_submit", startedAt)
+        if (submitted.kind !== "rejected" && presentation) {
+            void presentation
+                .commit()
+                .then(() => this.logStartPhase("presentation_committed", startedAt))
+                .catch((error) =>
+                    Logger.error(`[Task ${this.runtime.getState().taskId}] Input presentation commit failed:`, error),
+                )
+        }
+        this.logStartPhase("presentation_queued", startedAt)
         return submitted
     }
 
@@ -151,10 +167,21 @@ export class TaskShell {
      * work still runs.
      */
     async open(): Promise<EventSubmissionResult> {
+        const startedAt = performance.now()
         this.runtime.grantWriteOwnership()
         await this.retainedQueueSettlement?.settle()
+        this.logStartPhase("retained_queue_settled", startedAt)
         this.runtime.releaseRestoredCommands()
-        return this.runtime.submit({ type: "lifecycle.open", generation: this.runtime.getState().generation })
+        const opened = await this.runtime.submit({ type: "lifecycle.open", generation: this.runtime.getState().generation })
+        this.logStartPhase("lifecycle_open_submitted", startedAt)
+        return opened
+    }
+
+    private logStartPhase(phase: string, startedAt: number): void {
+        if (!Logger.isDebugEnabled()) return
+        Logger.debug(
+            `[TaskShellPerf] phase=${phase} taskId=${this.runtime.getState().taskId} elapsedMs=${Math.round(performance.now() - startedAt)}`,
+        )
     }
 
     private async haltTask(type: "user.cancel" | "user.terminate", haltId: string): Promise<EventSubmissionResult> {

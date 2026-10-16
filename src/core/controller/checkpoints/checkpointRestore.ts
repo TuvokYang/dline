@@ -6,9 +6,14 @@ import { ShowMessageType } from "@/shared/proto/dline/host"
 import { Logger } from "@/shared/services/Logger"
 import { ClineCheckpointRestore } from "../../../shared/WebviewMessage"
 import { Controller } from ".."
+import { currentOpening } from "../task/opened-task"
 
 export async function checkpointRestore(controller: Controller, request: CheckpointRestoreRequest): Promise<Empty> {
     if (request.number) {
+        if (request.checkpointRowTs !== request.number || !currentOpening(controller, request)) {
+            Logger.warn("Ignored checkpoint restore from a stale task opening")
+            return Empty.create({})
+        }
         // wait for messages to be loaded
         await pWaitFor(() => controller.task !== undefined, {
             timeout: 3_000,

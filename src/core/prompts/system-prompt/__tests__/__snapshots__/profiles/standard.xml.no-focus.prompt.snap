@@ -822,7 +822,7 @@ return (
 
 ## TURN-END Tools
 
-Tools marked [TURN-END] hand control back to the user. Use a TURN-END tool when the user needs to provide information or a decision, explicitly requested a plan or report for review, or the entire current task is complete. Calling one terminates the current execution turn: the runtime stops the automatic API/tool loop and opens the tool's user interaction. Do not emit additional tool calls after a TURN-END call in the same response. Execution resumes from the user's submitted feedback or selected action.
+Tools marked [TURN-END] hand control back to the user. Use one when you need a user decision or information, the user requested a plan or report for review, or the entire task is complete. Use at most one TURN-END tool per assistant response, as the final tool call. Finish all reasoning, prose and other tool calls before it. Never place it in a parallel group or emit another tool call after it. The runtime ends the automatic tool loop at that boundary and resumes only from the user's feedback or selected action.
 
 ## Explicit Instructions
 

@@ -3561,6 +3561,119 @@ describe("SubagentRunner", () => {
         assert.equal(createMessage.mock.calls.length, 1)
     })
 
+    it("keeps provider context append-only across rounds and preserves thinking", async () => {
+        const requests: TestConversationMessage[][] = []
+        const createMessage = vi.fn()
+        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, messages: TestConversationMessage[]) {
+            requests.push(structuredClone(messages))
+            yield { type: "usage", inputTokens: 100, outputTokens: 10, cacheReadTokens: 0 }
+            yield { type: "reasoning", reasoning: "Inspecting the first round" }
+            yield { type: "reasoning", reasoning: "", signature: "thinking-signature" }
+            yield {
+                type: "tool_calls",
+                function_id: "append-only-read-1",
+                tool_call: {
+                    function: { name: DlineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: ".", recursive: false }) },
+                },
+            }
+        })
+        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, messages: TestConversationMessage[]) {
+            requests.push(structuredClone(messages))
+            expect(requests[1][0]).toEqual(requests[0][0])
+            expect(JSON.stringify(requests[1][1])).toContain("Inspecting the first round")
+            expect(JSON.stringify(requests[1][2])).toContain("# Context Window Usage")
+            yield { type: "usage", inputTokens: 200, outputTokens: 20, cacheReadTokens: 0 }
+            yield {
+                type: "reasoning",
+                reasoning: "[Redacted thinking block]",
+                redacted_data: "opaque-round-two-thinking",
+                redacted_phase: "final",
+            }
+            yield {
+                type: "tool_calls",
+                function_id: "append-only-read-2",
+                tool_call: {
+                    function: { name: DlineDefaultTool.LIST_FILES, arguments: JSON.stringify({ path: ".", recursive: false }) },
+                },
+            }
+        })
+        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, messages: TestConversationMessage[]) {
+            requests.push(structuredClone(messages))
+            expect(requests[2].slice(0, requests[1].length)).toEqual(requests[1])
+            expect(JSON.stringify(requests[2][1])).toContain("thinking-signature")
+            expect(JSON.stringify(requests[2][3])).toContain("opaque-round-two-thinking")
+            yield {
+                type: "tool_calls",
+                function_id: "append-only-complete",
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+            }
+        })
+        stubSystemPrompt(true)
+        vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+        vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+        stubApiHandler(createMessage)
+        initializeHostProvider()
+
+        const result = await new SubagentRunner(createTaskConfig(true)).run("Inspect append-only context", () => {})
+
+        assert.equal(result.status, "completed", result.error)
+        assert.equal(result.result, "done")
+        assert.equal(requests.length, 3)
+    })
+
+    it("freezes one provider-visible context across transport retries", async () => {
+        let shareTokens = 8_000
+        let budget: NonNullable<TaskConfig["contextBudget"]>
+        budget = {
+            snapshot: () => ({
+                contextWindowTokens: 200_000,
+                occupiedTokens: 10_000,
+                stagedTokens: 0,
+                remainingTokens: 190_000,
+                roundBudgetTokens: shareTokens,
+                roundStagedTokens: 0,
+                activeConsumers: 1,
+                shareTokens,
+                mustYield: false,
+            }),
+            shareBytes: (capBytes) => Math.min(capBytes, shareTokens * 4),
+            child: () => budget,
+            end: vi.fn(),
+        }
+        let frozenRequest: TestConversationMessage[] | undefined
+        const createMessage = vi.fn()
+        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, messages: TestConversationMessage[]) {
+            frozenRequest = structuredClone(messages)
+            shareTokens = 1_000
+            yield* []
+            throw Object.assign(new Error("temporary failure"), { status: 408 })
+        })
+        createMessage.mockImplementationOnce(async function* (_systemPrompt: string, messages: TestConversationMessage[]) {
+            expect(messages).toEqual(frozenRequest)
+            yield {
+                type: "tool_calls",
+                function_id: "frozen-context-complete",
+                tool_call: { function: { name: DlineDefaultTool.ATTEMPT, arguments: JSON.stringify({ result: "done" }) } },
+            }
+        })
+        vi.spyOn(global, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void) => {
+            queueMicrotask(callback)
+            return {} as NodeJS.Timeout
+        }) as typeof setTimeout)
+        stubSystemPrompt(true)
+        vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+        vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+        stubApiHandler(createMessage)
+        initializeHostProvider()
+        const config = createTaskConfig(true)
+        config.contextBudget = budget
+
+        const result = await new SubagentRunner(config).run("Retry one frozen context", () => {})
+
+        assert.equal(result.status, "completed", result.error)
+        assert.equal(createMessage.mock.calls.length, 2)
+    })
+
     it("injects and enforces the configured final output token budget", async () => {
         const longResult = "abcdefghij".repeat(100)
         const createMessage = vi.fn().mockImplementation(async function* (_systemPrompt: string, messages: unknown[]) {

@@ -42,13 +42,15 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs> } = {
         },
         rows: {
             write: async (input) => {
-                // A row records where the conversation stood when it was registered.
-                const position = input.anchor ? input.anchor.position : journal.length
                 await hooks.onRowWrite?.()
                 if (failures.row) throw failures.row
-                const row: CheckpointRow = { ts: nextTs++, position }
+                const row: CheckpointRow = { ts: nextTs++, position: journal.length }
                 rows.push({ row, ...input })
                 return row
+            },
+            attach: async (row, refs) => {
+                const entry = rows.find((candidate) => candidate.row.ts === row.ts)
+                if (entry) entry.refs = refs
             },
         },
         bundles: {
@@ -92,37 +94,40 @@ describe("CheckpointGate", () => {
             expect(first.outcome).toBe("created")
             expect(second.outcome).toBe("covered")
             expect(subject.rows).toHaveLength(1)
-            expect(subject.rows[0]).toMatchObject({ refs: "refs-0", row: { position: 1 }, source })
+            expect(subject.rows[0]).toMatchObject({ row: { position: 1 }, source })
+            expect(subject.rows[0].refs).toBeUndefined()
             expect(subject.bundles).toEqual([{ row: subject.rows[0].row, refs: "refs-0" }])
         })
 
-        it("keeps distinct round and pre-compaction boundaries even when nothing changed between them", async () => {
+        it("covers a pre-compaction check when the existing checkpoint restores the same state", async () => {
             const subject = harness()
             subject.say()
             await subject.gate.ensureRound("round_start", { kind: "round_start", turnId: "turn-1" })
 
             const result = await subject.gate.ensureRound("pre_compaction", { kind: "pre_compaction" })
 
-            expect(result.outcome).toBe("created")
+            expect(result.outcome).toBe("covered")
             expect(subject.workspace.commits).toBe(1)
-            expect(subject.rows.map((entry) => entry.source)).toEqual([
-                { kind: "round_start", turnId: "turn-1" },
-                { kind: "pre_compaction" },
-            ])
+            expect(subject.rows.map((entry) => entry.source)).toEqual([{ kind: "round_start", turnId: "turn-1" }])
         })
 
-        it("keeps different provider turn identities even when the conversation boundary did not advance", async () => {
+        it("does not create an adjacent duplicate merely because the provider turn id changed", async () => {
             const subject = harness()
             subject.say()
             await subject.gate.ensureRound("round_start", { kind: "round_start", turnId: "turn-1" })
 
             const result = await subject.gate.ensureRound("round_start", { kind: "round_start", turnId: "turn-2" })
 
-            expect(result.outcome).toBe("created")
+            expect(result.outcome).toBe("covered")
+            expect(subject.rows).toHaveLength(1)
+            subject.say()
+            expect((await subject.gate.ensureRound("round_start", { kind: "round_start", turnId: "turn-2" })).outcome).toBe(
+                "created",
+            )
             expect(subject.rows.at(-1)?.source).toEqual({ kind: "round_start", turnId: "turn-2" })
         })
 
-        it("adds a row for a round that only talked, reusing the files without committing", async () => {
+        it("keeps chat-only rows without a file restore baseline when no files changed", async () => {
             const subject = harness()
             subject.say()
             await subject.gate.ensureRound("round_start")
@@ -132,10 +137,10 @@ describe("CheckpointGate", () => {
 
             expect(result.outcome).toBe("created")
             expect(subject.workspace.commits).toBe(1)
-            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-0"])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual([undefined, undefined])
         })
 
-        it("commits only when the files changed", async () => {
+        it("attaches the old baseline only after the next commit proves files changed", async () => {
             const subject = harness()
             subject.say()
             await subject.gate.ensureRound("round_start")
@@ -145,7 +150,8 @@ describe("CheckpointGate", () => {
             await subject.gate.ensureRound("round_start")
 
             expect(subject.workspace.commits).toBe(2)
-            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", undefined])
+            expect(subject.bundles.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
         })
 
         it("adds a row before compaction when only the files changed", async () => {
@@ -157,7 +163,7 @@ describe("CheckpointGate", () => {
             const result = await subject.gate.ensureRound("pre_compaction")
 
             expect(result.outcome).toBe("created")
-            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", undefined])
         })
 
         it("covers a reported change whose commit restores the same files", async () => {
@@ -210,7 +216,8 @@ describe("CheckpointGate", () => {
 
             await subject.gate.ensureRound("round_start")
 
-            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", undefined, "refs-1"])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual([undefined, undefined, undefined])
+            expect(subject.workspace.commits).toBe(3)
         })
 
         it("adds nothing when the commit fails and the conversation did not move", async () => {
@@ -270,73 +277,6 @@ describe("CheckpointGate", () => {
         })
     })
 
-    describe("pre-edit checks", () => {
-        it("adds nothing before the first edit of a round", async () => {
-            const subject = harness()
-            subject.say()
-            await subject.gate.ensureRound("round_start")
-
-            const result = await subject.gate.ensurePreEdit()
-
-            expect(result.outcome).toBe("covered")
-            expect(subject.rows).toHaveLength(1)
-        })
-
-        it("adds a file restore point anchored to the round when an earlier write changed the files", async () => {
-            const subject = harness()
-            subject.say()
-            const round = await subject.gate.ensureRound("round_start")
-            subject.say()
-            subject.write()
-
-            const source = {
-                kind: "pre_edit" as const,
-                toolTs: 260,
-                toolName: "replace_in_file",
-                dlineTid: "tool-260",
-            }
-            const result = await subject.gate.ensurePreEdit(source)
-
-            expect(result.outcome).toBe("created")
-            expect(subject.rows[1]).toMatchObject({
-                refs: "refs-1",
-                anchor: round.row,
-                row: { position: round.row?.position },
-                source,
-            })
-            expect(subject.bundles[1]).toEqual({ row: subject.rows[1].row, refs: "refs-1", anchor: round.row })
-        })
-
-        it("leaves the next round to add its own chat checkpoint", async () => {
-            const subject = harness()
-            subject.say()
-            await subject.gate.ensureRound("round_start")
-            subject.say()
-            subject.write()
-            await subject.gate.ensurePreEdit()
-
-            const next = await subject.gate.ensureRound("round_start")
-
-            expect(next.outcome).toBe("created")
-            expect(subject.rows[2]).toMatchObject({ refs: "refs-1" })
-            expect(subject.rows[2].anchor).toBeUndefined()
-        })
-
-        it("adds no row when the commit before an edit fails", async () => {
-            const subject = harness()
-            subject.say()
-            await subject.gate.ensureRound("round_start")
-            subject.write()
-            subject.workspace.commitError = new Error("index.lock exists")
-
-            const result = await subject.gate.ensurePreEdit()
-
-            expect(result.outcome).toBe("failed")
-            expect(subject.rows).toHaveLength(1)
-            expect(subject.observations.at(-1)).toMatchObject({ reason: "pre_edit", part: "file" })
-        })
-    })
-
     describe("completion", () => {
         it("commits the post-state without a row and lets later rounds reuse it", async () => {
             const subject = harness()
@@ -349,7 +289,7 @@ describe("CheckpointGate", () => {
             await subject.gate.ensureRound("round_start")
 
             expect(refs).toBe("refs-1")
-            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", undefined])
             expect(subject.workspace.commits).toBe(2)
         })
     })
@@ -371,7 +311,7 @@ describe("CheckpointGate", () => {
             let nested: Promise<unknown> | undefined
             subject.hooks.onRowWrite = async () => {
                 subject.hooks.onRowWrite = undefined
-                nested = subject.gate.ensurePreEdit()
+                nested = subject.gate.ensureRound("pre_compaction")
                 await nested
             }
 
@@ -379,6 +319,37 @@ describe("CheckpointGate", () => {
 
             expect(result.outcome).toBe("created")
             await expect(nested).resolves.toEqual({ outcome: "skipped" })
+        })
+
+        it("holds a workspace mutation behind work already admitted without adding another checkpoint", async () => {
+            const subject = harness()
+            subject.say()
+            let release!: () => void
+            subject.hooks.onRowWrite = () => new Promise<void>((resolve) => (release = resolve))
+            const running = subject.gate.ensureRound("round_start")
+            await vi.waitFor(() => expect(release).toBeDefined())
+
+            let barrierSettled = false
+            const barrier = subject.gate.waitForPendingWork().then(() => {
+                barrierSettled = true
+            })
+            await Promise.resolve()
+
+            expect(barrierSettled).toBe(false)
+            expect(subject.rows).toHaveLength(0)
+            release()
+            await Promise.all([running, barrier])
+            expect(subject.rows).toHaveLength(1)
+        })
+
+        it("releases the mutation barrier when admitted checkpoint work degrades", async () => {
+            const subject = harness()
+            subject.say()
+            subject.workspace.commitError = new Error("shadow repository unavailable")
+            const running = subject.gate.ensureRound("round_start")
+
+            await expect(subject.gate.waitForPendingWork()).resolves.toBeUndefined()
+            await expect(running).resolves.toMatchObject({ outcome: "created" })
         })
 
         it("lets a cancelled caller leave the queue without letting two holders run", async () => {
@@ -406,7 +377,7 @@ describe("CheckpointGate", () => {
             await Promise.all([first, third])
 
             expect(maxActive).toBe(1)
-            expect(subject.rows).toHaveLength(2)
+            expect(subject.rows).toHaveLength(1)
         })
 
         it("waits for admitted work on close and refuses work after it", async () => {
@@ -433,7 +404,7 @@ describe("CheckpointGate", () => {
     })
 
     describe("reopened task", () => {
-        it("restores source identity so a different boundary is not merged after reopen", async () => {
+        it("reuses the restored checkpoint when only the producer kind changed", async () => {
             const subject = harness({
                 initialState: () => ({
                     latestChat: { ts: 1, position: 1 },
@@ -446,8 +417,8 @@ describe("CheckpointGate", () => {
 
             const result = await subject.gate.ensureRound("pre_compaction", { kind: "pre_compaction" })
 
-            expect(result.outcome).toBe("created")
-            expect(subject.rows.at(-1)?.source).toEqual({ kind: "pre_compaction" })
+            expect(result.outcome).toBe("covered")
+            expect(subject.rows).toHaveLength(0)
         })
 
         it("continues from the latest checkpoint instead of adding a duplicate", async () => {

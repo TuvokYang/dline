@@ -56,7 +56,7 @@ const UserMessage: React.FC<UserMessageProps> = ({
     const [isEditing, setIsEditing] = useState(false)
     const [editedText, setEditedText] = useState(text || "")
     const textAreaRef = useRef<HTMLTextAreaElement>(null)
-    const { checkpointManagerErrorMessage } = useExtensionState()
+    const { checkpointManagerErrorMessage, taskViewState } = useExtensionState()
 
     const queued = inputKind === "queued"
     // History never lexes the text again: without valid facts the row is plain Markdown.
@@ -101,6 +101,9 @@ const UserMessage: React.FC<UserMessageProps> = ({
                     restoreType: type,
                     offset: 1,
                     editedText: type === "task" ? editedText : undefined,
+                    checkpointRowTs: messageTs,
+                    taskId: taskViewState?.taskId ?? "",
+                    taskInstanceId: taskViewState?.taskInstanceId ?? "",
                 }),
             )
         } catch (err) {

@@ -10,6 +10,7 @@ import {
     ChevronsUpDownIcon,
     DownloadIcon,
     ExternalLinkIcon,
+    LoaderCircle,
     StarIcon,
     TrashIcon,
 } from "lucide-react"
@@ -40,8 +41,9 @@ const HistoryViewItem = ({
     handleHistorySelect,
     selectedItems,
 }: HistoryViewItemProps) => {
-    const { openHistoryTask } = useExtensionState()
+    const { historyTaskOpening, openHistoryTask } = useExtensionState()
     const [expanded, setExpanded] = useState(false)
+    const isOpening = historyTaskOpening?.target.id === item.id
     const totalInputTokens = (item.tokensIn || 0) + (item.cacheWrites || 0) + (item.cacheReads || 0)
     // Cost and completion follow the same rules as the Recent list so the two
     // panels cannot disagree about the same task.
@@ -53,7 +55,9 @@ const HistoryViewItem = ({
         [item.id, item.isFavorited, pendingFavoriteToggles],
     )
 
-    const handleShowTask = useCallback(() => openHistoryTask(item), [item, openHistoryTask])
+    const handleShowTask = useCallback(() => {
+        if (!isOpening) openHistoryTask(item)
+    }, [isOpening, item, openHistoryTask])
 
     const _handleOpenInNewWindow = useCallback((id: string, e: React.MouseEvent) => {
         e.stopPropagation()
@@ -111,6 +115,8 @@ const HistoryViewItem = ({
             />
 
             <div
+                aria-busy={isOpening}
+                aria-disabled={isOpening}
                 aria-label="Open Task"
                 className="flex flex-col gap-2 py-2 pl-2 pr-3 relative flex-grow min-w-0"
                 onClick={(e) => {
@@ -130,6 +136,7 @@ const HistoryViewItem = ({
                         <span className="ph-no-capture">{item.task}</span>
                     </div>
                     <div className="flex gap-2 flex-shrink-0">
+                        {isOpening && <LoaderCircle aria-label="Opening task" className="animate-spin" size={16} />}
                         <Button
                             aria-label="Open in New Window"
                             className="p-0 opacity-0 group-hover:opacity-100 transition-opacity"

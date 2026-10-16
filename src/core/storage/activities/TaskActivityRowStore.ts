@@ -2,7 +2,7 @@ import { readFile, rename } from "node:fs/promises"
 import path from "node:path"
 import type { TaskActivityRecord } from "@shared/task-activity"
 import type { UnifyStore } from "../backend/api/UnifyStore"
-import { asc, desc } from "../backend/api/UnifyStoreQuery"
+import { asc, desc, lt } from "../backend/api/UnifyStoreQuery"
 import { ensureInstanceLayout, InstanceDatabase, openInstanceStorage } from "../instance"
 import { TaskActivityRow } from "./TaskActivityRow"
 
@@ -22,6 +22,7 @@ export interface LegacyActivityFile {
 
 const CREATED_AT = TaskActivityRow.storage.fields.createdAt
 const ACTIVITY_ID = TaskActivityRow.storage.fields.activityId
+const INCREMENTAL_READ_BATCH_SIZE = 8
 
 function isMissingFile(error: unknown): boolean {
     return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT"
@@ -57,6 +58,32 @@ export class TaskActivityRowStore {
     async read(): Promise<TaskActivityRecord[]> {
         const { records } = await this.rows.query({ orderBy: [desc(CREATED_AT), asc(ACTIVITY_ID)] })
         return records.map((row) => row.record)
+    }
+
+    /**
+     * Read in bounded batches, yielding between them so lifecycle RPCs can preempt
+     * a large history hydrate on the extension host.
+     *
+     * The primary-key cursor is independent of presentation order; callers sort
+     * the hydrated records from their canonical `createdAt` fields.
+     */
+    async readIncrementally(shouldContinue: () => boolean): Promise<TaskActivityRecord[]> {
+        const activities: TaskActivityRecord[] = []
+        let beforeActivityId: string | undefined
+        while (shouldContinue()) {
+            const { records } = await this.rows.query({
+                ...(beforeActivityId ? { where: lt(ACTIVITY_ID, beforeActivityId) } : {}),
+                orderBy: [desc(ACTIVITY_ID)],
+                limit: INCREMENTAL_READ_BATCH_SIZE,
+            })
+            if (!shouldContinue()) return []
+            activities.push(...records.map((row) => row.record))
+            if (records.length < INCREMENTAL_READ_BATCH_SIZE) break
+            beforeActivityId = records.at(-1)?.activityId
+            if (!beforeActivityId) break
+            await new Promise<void>((resolve) => setImmediate(resolve))
+        }
+        return shouldContinue() ? activities : []
     }
 
     /** Inserts `activities` or overwrites the stored ones with the same id; others are left alone. */

@@ -9,21 +9,16 @@ export type HistoryTaskOpening = {
     status: "loading"
     previousKey?: string
     requestId: number
-    rpcCompleted?: boolean
 }
 
 /** Local navigation feedback only; canonical Task identity and admission stay backend-owned. */
 export function useHistoryTaskOpening({
     taskViewState,
-    hasMessageSurface,
     requestOpen,
-    navigateToChat,
     onOpenFailed,
 }: {
     taskViewState?: TaskViewState
-    hasMessageSurface: boolean
     requestOpen: (id: string) => Promise<unknown>
-    navigateToChat: () => void
     onOpenFailed: (target: HistoryTaskTarget, error: unknown) => void
 }) {
     const [historyTaskOpening, setHistoryTaskOpening] = useState<HistoryTaskOpening>()
@@ -36,24 +31,15 @@ export function useHistoryTaskOpening({
         (target: HistoryTaskTarget) => {
             const requestId = ++generation.current
             setHistoryTaskOpening({ target, status: "loading", previousKey: currentKey.current, requestId })
-            navigateToChat()
             void Promise.resolve()
                 .then(() => requestOpen(target.id))
-                .then(
-                    () => {
-                        if (generation.current !== requestId) return
-                        setHistoryTaskOpening((opening) =>
-                            opening?.requestId === requestId ? { ...opening, rpcCompleted: true } : opening,
-                        )
-                    },
-                    (error) => {
-                        if (generation.current !== requestId) return
-                        setHistoryTaskOpening(undefined)
-                        onOpenFailed(target, error)
-                    },
-                )
+                .catch((error) => {
+                    if (generation.current !== requestId) return
+                    setHistoryTaskOpening(undefined)
+                    onOpenFailed(target, error)
+                })
         },
-        [navigateToChat, onOpenFailed, requestOpen],
+        [onOpenFailed, requestOpen],
     )
 
     const dismissHistoryTaskOpening = useCallback(() => {
@@ -64,8 +50,8 @@ export function useHistoryTaskOpening({
     useEffect(() => {
         if (historyTaskOpening?.status !== "loading" || !key || key === historyTaskOpening.previousKey) return
         if (taskViewState?.taskId !== historyTaskOpening.target.id) return
-        if (hasMessageSurface || historyTaskOpening.rpcCompleted) setHistoryTaskOpening(undefined)
-    }, [hasMessageSurface, historyTaskOpening, key, taskViewState?.taskId])
+        setHistoryTaskOpening(undefined)
+    }, [historyTaskOpening, key, taskViewState?.taskId])
 
     useEffect(
         () => () => {

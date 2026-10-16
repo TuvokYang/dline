@@ -124,8 +124,8 @@ export class ControllerTaskCallbacksOwner {
             ask: (...args) => this.ask(...args),
             focusChainForceUpdate: (plan) => this.focusChain.forceReplaceFocusChain(plan),
             saveCheckpoint: (completion, ts) => this.checkpointManager?.saveCheckpoint(completion, ts) ?? Promise.resolve(),
-            ensurePreEditCheckpoint: (source, signal) =>
-                this.checkpointManager?.ensurePreEditCheckpoint?.(source, signal) ?? Promise.resolve(),
+            awaitRoundCheckpointBeforeMutation: () =>
+                this.checkpointManager?.awaitRoundCheckpointBeforeMutation?.() ?? Promise.resolve(),
             sayAndCreateMissingParamError: (tool, param, relPath, ts) => this.missingParameter(tool, param, relPath, ts),
             executeCommandTool: (command, timeout, executionOptions) =>
                 this.requireCommandExecutor().execute(command, timeout, executionOptions),

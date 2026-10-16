@@ -24,11 +24,11 @@ import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-r
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
 import { PostHogClientProvider } from "./services/telemetry/providers/posthog/PostHogClientProvider"
 import {
-    activateRuntimeTelemetry,
     completeRuntimeSessionLedger,
     deactivateRuntimeTelemetry,
     markRuntimeSessionStage,
 } from "./services/telemetry/runtime/activation"
+import { startRuntimeTelemetryInBackground } from "./services/telemetry/runtime/background-activation"
 import { getRuntimeTelemetryLifecycle } from "./services/telemetry/runtime/host"
 import { forwardRuntimeEvent } from "./services/telemetry/runtime/provider-event-bridge"
 import { cleanupTestMode } from "./services/test/TestMode"
@@ -105,6 +105,12 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
             }
         }
         await StateManager.initialize(storageContext)
+        // TaskStart contributes to the first provider request, so warm its watched
+        // discovery cache as soon as workspace roots are available. This runs beside
+        // the remaining activation work and never delays extension readiness.
+        void HookDiscoveryCache.getInstance()
+            .get("TaskStart")
+            .catch((error) => Logger.warn("[Hooks] Failed to prewarm TaskStart discovery", error))
         {
             const elapsedMs = recordInitStage("afterStateManager")
             if (Logger.isDebugEnabled()) {
@@ -164,10 +170,11 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
 
     const stateManager = StateManager.get()
 
-    // Start runtime diagnostics once consent is readable. Failure is contained:
-    // diagnostics assist troubleshooting, so they must never block activation.
-    try {
-        await activateRuntimeTelemetry({
+    // Runtime diagnostics are an observability side path. Journal recovery,
+    // exporter construction, and a missing collector must never delay extension
+    // readiness or any Task that arrives while telemetry is starting.
+    startRuntimeTelemetryInBackground(
+        {
             dataDir: storageContext.dataDir,
             // Runtime diagnostics support error investigation, so they follow the
             // error-reporting consent rather than product analytics consent.
@@ -180,10 +187,13 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
                         const task = controller.task
                         return task && !INACTIVE_TASK_PHASES.has(task.state().flow.phase) ? [task.taskId] : []
                     }),
-        })
-    } catch (error) {
-        Logger.error("[Dline] Failed to start runtime telemetry:", error)
-    }
+        },
+        {
+            onStarted: (lifecycle) =>
+                lifecycle.diagnostics.phase("activation.common_ready", "completed", performance.now() - initStart),
+            onError: (error) => Logger.error("[Dline] Failed to start runtime telemetry:", error),
+        },
+    )
 
     // Non-blocking announcement check and display
     showVersionUpdateAnnouncement(stateManager)
@@ -200,7 +210,6 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
     FileContextTracker.cleanupOrphanedWarnings(stateManager)
 
     telemetryService.captureExtensionActivated()
-    getRuntimeTelemetryLifecycle()?.diagnostics.phase("activation.common_ready", "completed", performance.now() - initStart)
 
     {
         const elapsedMs = performance.now() - initStart

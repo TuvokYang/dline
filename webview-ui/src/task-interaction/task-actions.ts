@@ -51,6 +51,9 @@ export function composerCarriesAction(view: TaskViewState, action: TaskViewActio
         case "reply":
             return view.input.enterAction === "reply"
         case "resume":
+            // The composer owns Resume even while the backend still has it disabled.
+            // In that preparation window it renders the same action as unavailable,
+            // rather than duplicating Resume in the approval-style footer.
             return true
         case "cancel":
             return action.dispatchTarget === "task"

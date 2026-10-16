@@ -128,11 +128,18 @@ export class TelemetryProviderRegistry {
 
         const replaced = this.takeByName(registration.base.name)
         this.registrations.push(registration)
-        void this.closeRegistrations(replaced)
+        this.retire(replaced)
     }
 
-    async remove(name: string): Promise<void> {
-        await this.closeRegistrations(this.takeByName(name))
+    /**
+     * Stop routing to a provider immediately and retire it off the caller's path.
+     *
+     * Exporter flush and shutdown may wait for an unavailable collector. Provider
+     * configuration is observability state, so those waits must never become a
+     * dependency of remote config, Task admission, or a provider request.
+     */
+    remove(name: string): void {
+        this.retire(this.takeByName(name))
     }
 
     /**
@@ -483,6 +490,14 @@ export class TelemetryProviderRegistry {
         const removed = this.registrations.filter((registration) => registration.base.name === name)
         this.registrations = this.registrations.filter((registration) => registration.base.name !== name)
         return removed
+    }
+
+    private retire(registrations: readonly TelemetryProviderRegistration[]): void {
+        if (registrations.length === 0) return
+        // closeRegistrations uses allSettled, so the detached retirement cannot
+        // reject or surface as an unhandled promise. The provider is already out
+        // of the routing set before any exporter work begins.
+        void this.closeRegistrations(registrations)
     }
 
     private async closeRegistrations(registrations: readonly TelemetryProviderRegistration[]): Promise<void> {

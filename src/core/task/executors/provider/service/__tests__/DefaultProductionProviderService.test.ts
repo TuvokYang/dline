@@ -185,6 +185,59 @@ describe("DefaultProductionProviderService", () => {
         expect(final.toolRows).toEqual([row])
     })
 
+    it.each([
+        false,
+        true,
+    ])("reserves stable reply rows before a call even when reasoning arrives later (native=%s)", async (native) => {
+        const call: ApiStreamChunk = native
+            ? {
+                  type: "tool_calls",
+                  function_id: "call_read",
+                  dline_tid: "tid_read",
+                  argumentsMode: "snapshot",
+                  tool_call: { function: { name: "read_file", arguments: '{"path":"a.ts"}' } },
+              }
+            : text("<read_file><path>a.ts</path></read_file>")
+        const chunks = await run([call, { type: "reasoning", reasoning: "Late thought" } as ApiStreamChunk], native)
+        const partials = chunks.filter((chunk) => chunk.kind === "partial")
+        const replyRows = partials[0]?.replyRows
+        const card = partials.find((chunk) => chunk.projection?.block)?.projection?.block as { ts: number } | undefined
+
+        expect(replyRows).toBeDefined()
+        expect(card).toBeDefined()
+        expect(replyRows!.reasoning).toBeLessThan(replyRows!.text)
+        expect(replyRows!.text).toBeLessThan(card!.ts)
+        expect(partials.every((chunk) => chunk.replyRows?.reasoning === replyRows!.reasoning)).toBe(true)
+        expect(chunks.find((chunk) => chunk.kind === "final")).toMatchObject({ reasoning: "Late thought" })
+    })
+
+    it("orders ordinary calls before a single presented turn-end without dropping recorded provider calls", async () => {
+        const chunks = await run(
+            [
+                text("<qna_respond><response>Answer</response></qna_respond>"),
+                text(
+                    "<execute_command><command>npm test</command><requires_approval>false</requires_approval></execute_command>",
+                ),
+                text("<attempt_completion><result>Duplicate ending</result></attempt_completion>"),
+            ],
+            false,
+        )
+        const final = chunks.find((chunk) => chunk.kind === "final")
+        if (final?.kind !== "final" || !final.content) throw new Error("missing final assistant content")
+
+        expect(final.blocks.map((block) => block.invocation.toolName)).toEqual([
+            "execute_command",
+            "qna_respond",
+            "attempt_completion",
+        ])
+        expect(final.toolRows).toEqual(final.blocks.slice(0, 2).map((block) => block.invocation.presentationId))
+        expect(final.content.filter((entry) => entry.type === "tool_use").map((entry) => entry.name)).toEqual([
+            "qna_respond",
+            "execute_command",
+            "attempt_completion",
+        ])
+    })
+
     it("streams the prose before the card of the call it introduces", async () => {
         const chunks = await run([text("Reading it. <read_file><path>a.ts</path></read_file>")], false)
 

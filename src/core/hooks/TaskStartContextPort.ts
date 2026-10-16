@@ -1,6 +1,7 @@
 import type { StateManager } from "@core/storage/StateManager"
 import type { MessageStateHandler } from "@core/task/message-state"
 import { Logger } from "@/shared/services/Logger"
+import { HookDiscoveryCache } from "./HookDiscoveryCache"
 import { executeHook } from "./hook-executor"
 import type { HookModelInputContext } from "./hook-factory"
 import { getHooksEnabledSafe } from "./hooks-utils"
@@ -29,6 +30,8 @@ export interface HookTaskStartContextOptions {
     readonly messages: MessageStateHandler
     readonly say: (type: string, text?: string) => Promise<number | undefined>
     readonly model?: () => HookModelInputContext | undefined
+    /** Test/host seam for the already-warmed discovery snapshot. */
+    readonly discoveredHooks?: () => readonly string[] | undefined
 }
 
 /**
@@ -41,6 +44,15 @@ export class HookTaskStartContext implements TaskStartContextPort {
     constructor(private readonly options: HookTaskStartContextOptions) {}
 
     async collect(identity: TaskStartHookIdentity): Promise<string | undefined> {
+        const discovered = this.options.discoveredHooks?.() ?? HookDiscoveryCache.getInstance().peek("TaskStart")
+        if (discovered === undefined) {
+            // Activation keeps warming the watched cache. Joining a cold filesystem
+            // probe here can block the first provider request for tens of seconds.
+            Logger.warn(`[TaskStart Hook] Discovery is still warming for task ${identity.taskId}; continuing without a hook`)
+            return undefined
+        }
+        if (discovered.length === 0) return undefined
+
         const result = await executeHook({
             hookName: "TaskStart",
             hookInput: {

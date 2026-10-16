@@ -181,6 +181,30 @@ describe("telemetry module boundaries", () => {
         expect(compositionRoot).toContain("onEvent: (event) => forwardRuntimeEvent(event, telemetryService)")
     })
 
+    it("keeps Task-critical paths independent of telemetry lifecycle promises", async () => {
+        const common = await fs.readFile(path.join(process.cwd(), "src", "common.ts"), "utf8")
+        const remoteConfig = await fs.readFile(
+            path.join(process.cwd(), "src", "core", "storage", "remote-config", "utils.ts"),
+            "utf8",
+        )
+        expect(common).not.toMatch(/\bawait\s+activateRuntimeTelemetry\s*\(/)
+        expect(remoteConfig).not.toMatch(/\bawait\s+telemetryService\.(?:removeProvider|forceFlush|applyConsent)\s*\(/)
+
+        const roots = [
+            path.join(process.cwd(), "src", "core", "task"),
+            path.join(process.cwd(), "src", "core", "api"),
+            path.join(process.cwd(), "src", "core", "controller", "task"),
+        ]
+        for (const root of roots) {
+            for (const file of await productionFilesUnder(root)) {
+                const source = await fs.readFile(file, "utf8")
+                expect(source, `${path.relative(process.cwd(), file)} must not wait for telemetry`).not.toMatch(
+                    /\bawait\s+(?:getTelemetryService\s*\(|telemetryService\.)/,
+                )
+            }
+        }
+    })
+
     it("keeps normal OpenTelemetry diagnostics at debug level", async () => {
         const files = await productionFilesUnder(path.join(TELEMETRY_ROOT, "providers", "opentelemetry"))
         expect(files.length).toBeGreaterThan(0)

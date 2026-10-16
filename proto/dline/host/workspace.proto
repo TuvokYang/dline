@@ -22,6 +22,7 @@ service WorkspaceService {
   // The expected content protects unsaved user edits from being overwritten.
   rpc applyTextDocumentEdit(ApplyTextDocumentEditRequest) returns (ApplyTextDocumentEditResponse);
 
+
   // Get diagnostics from the workspace.
   rpc getDiagnostics(GetDiagnosticsRequest) returns (GetDiagnosticsResponse);
 
@@ -81,6 +82,7 @@ message ApplyTextDocumentEditResponse {
   bool conflict = 2;
   string content = 3;
 }
+
 
 message GetDiagnosticsRequest {
   optional dline.Metadata metadata = 1;

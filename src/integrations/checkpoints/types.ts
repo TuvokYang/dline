@@ -100,14 +100,11 @@ export interface ICheckpointManager {
         signal?: AbortSignal,
     ): Promise<void>
 
-    /**
-     * Before a named file edit: add a file restore point when the files changed
-     * since the latest checkpoint. Never rejects.
-     */
-    ensurePreEditCheckpoint?(
-        sourceOrSignal?: Extract<CheckpointSource, { kind: "pre_edit" }> | AbortSignal,
-        signal?: AbortSignal,
-    ): Promise<void>
+    /** Wait only for round checkpoint work already admitted before a workspace mutation. */
+    awaitRoundCheckpointBeforeMutation?(): Promise<void>
+
+    /** Start recursive workspace observation after the first provider request has reached the wire. */
+    startWorkspaceWatcher?(): void
 
     /** Stop creating checkpoints and wait for the one in progress; called before the task's stores close. */
     dispose?(): Promise<void>

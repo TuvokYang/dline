@@ -4,7 +4,7 @@ import { Logger } from "@shared/services/Logger"
 
 export type CheckpointRoundReason = "round_start" | "pre_compaction"
 export type CheckpointRoundSource = Extract<CheckpointSource, { kind: CheckpointRoundReason }>
-export type CheckpointGateReason = CheckpointRoundReason | "pre_edit" | "post_completion"
+export type CheckpointGateReason = CheckpointRoundReason | "post_completion"
 export type CheckpointGateOutcome = "created" | "covered" | "skipped" | "failed"
 export type CheckpointGatePart = "file" | "row" | "bundle"
 
@@ -36,15 +36,10 @@ export interface CheckpointRow {
 
 /** The visible side of a checkpoint. */
 export interface CheckpointRowPort<Refs> {
-    /**
-     * Register one row in presentation order and resolve once it is durable.
-     * A row with an `anchor` restores the conversation to the anchor's position.
-     */
-    write(input: {
-        readonly refs?: Refs
-        readonly anchor?: CheckpointRow
-        readonly source?: CheckpointSource
-    }): Promise<CheckpointRow>
+    /** Register one chat row in presentation order and resolve once it is durable. */
+    write(input: { readonly source?: CheckpointSource }): Promise<CheckpointRow>
+    /** Publish a baseline only after a later commit proves that restoring it changes files. */
+    attach(row: CheckpointRow, baseline: Refs, current: Refs): Promise<void>
 }
 
 /** The chat side of a checkpoint, stored beside the journal. */
@@ -56,7 +51,7 @@ export interface CheckpointBundlePort<Refs> {
 export interface CheckpointGateState<Refs> {
     /** The latest row a round created; later rounds and edits are measured against it. */
     readonly latestChat?: CheckpointRow
-    /** Producer identity of latestChat, used so distinct semantic boundaries are never merged. */
+    /** Producer metadata of latestChat; coverage depends on restore state, not producer identity. */
     readonly latestSource?: CheckpointRoundSource
     /** References that match the workspace as long as nothing changed since they were committed. */
     readonly latestRefs?: Refs
@@ -107,9 +102,8 @@ type CommitAttempt<Refs> = { readonly ok: true; readonly refs: Refs | undefined 
 /**
  * The single owner of checkpoint creation for one task.
  *
- * Callers await it before the conversation moves on: before a provider request,
- * before compaction and before a named file edit. A checkpoint is a side feature
- * of the task, so no failure here reaches the caller; a part that could not be
+ * Callers use it at round and completion boundaries. A checkpoint is a side
+ * feature of the task, so no failure here reaches the caller; a part that could not be
  * written is logged, reported to telemetry and left out.
  *
  * Work is serialized by a private lock held only across checkpoint I/O (shadow
@@ -124,7 +118,6 @@ export class CheckpointGate<Refs> {
     private closed = false
     private seeded = false
     private latestChat: CheckpointRow | undefined
-    private latestSource: CheckpointRoundSource | undefined
     private latestRefs: Refs | undefined
 
     constructor(private readonly options: CheckpointGateOptions<Refs>) {}
@@ -143,9 +136,10 @@ export class CheckpointGate<Refs> {
         return this.exclusive(reason, operationSignal, async (run) => {
             const advanced = await this.conversationAdvanced()
             const changed = this.options.workspace.hasChanges()
-            if (!advanced && !changed && this.sameRoundSource(source)) return COVERED
+            if (!advanced && !changed) return COVERED
 
             const previousRefs = this.latestRefs
+            const previousRow = this.latestChat
             let refs = previousRefs
             if (changed) {
                 const committed = await this.commit(run)
@@ -157,51 +151,20 @@ export class CheckpointGate<Refs> {
                 refs = committed.ok ? committed.refs : undefined
                 if (
                     committed.ok &&
-                    !advanced &&
-                    this.options.workspace.sameRefs(refs, previousRefs) &&
-                    this.sameRoundSource(source)
-                )
-                    return COVERED
+                    refs !== undefined &&
+                    previousRow &&
+                    previousRefs !== undefined &&
+                    !this.options.workspace.sameRefs(refs, previousRefs)
+                ) {
+                    await this.attachRefs(run, previousRow, previousRefs, refs)
+                }
+                if (committed.ok && !advanced && this.options.workspace.sameRefs(refs, previousRefs)) return COVERED
             }
 
-            const row = await this.writeRow(run, {
-                ...(refs === undefined ? {} : { refs }),
-                ...(source ? { source } : {}),
-            })
+            const row = await this.writeRow(run, source ? { source } : {})
             if (!row) return FAILED
             await this.captureBundle(run, { row, ...(refs === undefined ? {} : { refs }) })
             this.latestChat = row
-            this.latestSource = source
-            return { outcome: "created", row }
-        })
-    }
-
-    /**
-     * Before a named file edit: add a file restore point when the files changed
-     * since the latest checkpoint. Its chat side is the round row it follows.
-     */
-    ensurePreEdit(
-        sourceOrSignal?: Extract<CheckpointSource, { kind: "pre_edit" }> | AbortSignal,
-        signal?: AbortSignal,
-    ): Promise<CheckpointGateResult> {
-        const source = sourceOrSignal instanceof AbortSignal ? undefined : sourceOrSignal
-        const operationSignal = sourceOrSignal instanceof AbortSignal ? sourceOrSignal : signal
-        return this.exclusive("pre_edit", operationSignal, async (run) => {
-            if (!this.options.workspace.hasChanges()) return COVERED
-            const previousRefs = this.latestRefs
-            const committed = await this.commit(run)
-            if (!committed.ok) return FAILED
-            if (committed.refs === undefined) return SKIPPED
-            if (this.options.workspace.sameRefs(committed.refs, previousRefs)) return COVERED
-
-            const anchor = this.latestChat
-            const row = await this.writeRow(run, {
-                refs: committed.refs,
-                ...(anchor ? { anchor } : {}),
-                ...(source ? { source } : {}),
-            })
-            if (!row) return FAILED
-            await this.captureBundle(run, { row, refs: committed.refs, ...(anchor ? { anchor } : {}) })
             return { outcome: "created", row }
         })
     }
@@ -217,12 +180,35 @@ export class CheckpointGate<Refs> {
                 refs = this.latestRefs
                 return COVERED
             }
+            const previousRefs = this.latestRefs
+            const previousRow = this.latestChat
             const committed = await this.commit(run)
             if (!committed.ok) return FAILED
             refs = committed.refs
+            if (
+                refs !== undefined &&
+                previousRow &&
+                previousRefs !== undefined &&
+                !this.options.workspace.sameRefs(refs, previousRefs)
+            ) {
+                await this.attachRefs(run, previousRow, previousRefs, refs)
+            }
             return committed.refs === undefined ? SKIPPED : { outcome: "created" }
         })
         return refs
+    }
+
+    /**
+     * Wait for work admitted before this call without admitting another checkpoint.
+     *
+     * File tools use this as a mutation barrier: the provider may reach the wire
+     * while its round baseline is still being built, but no workspace mutation may
+     * overtake that already-started baseline. Work admitted later is deliberately
+     * excluded, so this is not a general checkpoint drain.
+     */
+    async waitForPendingWork(): Promise<void> {
+        const pending = this.tail
+        await pending
     }
 
     /** Refuse new work and wait for the work already admitted, so no row is left without its bundle. */
@@ -244,14 +230,6 @@ export class CheckpointGate<Refs> {
         }
     }
 
-    /** Whether the latest row already represents the same semantic round boundary. */
-    private sameRoundSource(source: CheckpointRoundSource | undefined): boolean {
-        if (!source) return true
-        if (!this.latestSource || source.kind !== this.latestSource.kind) return false
-        if (source.kind === "pre_compaction") return true
-        return this.latestSource.kind === "round_start" && source.turnId === this.latestSource.turnId
-    }
-
     /** A successful commit always becomes the latest references: the workspace now matches them. */
     private async commit(run: GateRun): Promise<CommitAttempt<Refs>> {
         const now = this.options.now ?? Date.now
@@ -261,6 +239,10 @@ export class CheckpointGate<Refs> {
             this.latestRefs = refs
             return { ok: true, refs }
         } catch (error) {
+            // The workspace moved but no trustworthy reference describes it.
+            // Clearing this prevents a later successful commit from attaching a stale
+            // baseline to a row created after this failure.
+            this.latestRefs = undefined
             run.fail("file", error)
             return { ok: false }
         } finally {
@@ -268,15 +250,20 @@ export class CheckpointGate<Refs> {
         }
     }
 
-    private async writeRow(
-        run: GateRun,
-        input: { readonly refs?: Refs; readonly anchor?: CheckpointRow; readonly source?: CheckpointSource },
-    ): Promise<CheckpointRow | undefined> {
+    private async writeRow(run: GateRun, input: { readonly source?: CheckpointSource }): Promise<CheckpointRow | undefined> {
         try {
             return await this.options.rows.write(input)
         } catch (error) {
             run.fail("row", error)
             return undefined
+        }
+    }
+
+    private async attachRefs(run: GateRun, row: CheckpointRow, baseline: Refs, current: Refs): Promise<void> {
+        try {
+            await this.options.rows.attach(row, baseline, current)
+        } catch (error) {
+            run.fail("row", error)
         }
     }
 
@@ -298,7 +285,6 @@ export class CheckpointGate<Refs> {
         try {
             const state = this.options.initialState?.()
             this.latestChat = state?.latestChat
-            this.latestSource = state?.latestSource
             this.latestRefs = state?.latestRefs
         } catch (error) {
             Logger.warn(`[CheckpointGate] Could not read the latest checkpoint of task ${this.options.taskId}:`, error)

@@ -17,16 +17,11 @@ export interface RowCoordinate {
     identities: string[]
 }
 
-/**
- * Identify a row by the messages it is built from.
- *
- * Grouping can merge several messages into one row and regroup them when
- * neighbouring history arrives, so the full membership is what distinguishes
- * "the same row again" from "a row that now covers different messages". Using
- * only the first and last message would report a regrouped row as unchanged.
- */
+/** Identify a virtual row by its stable logical owner, falling back to membership for ordinary groups. */
 export function rowIdentity(row: UiMessage | UiMessage[]): string {
-    return Array.isArray(row) ? row.map((message) => message.ts).join(",") : String(row.ts)
+    if (!Array.isArray(row)) return String(row.ts)
+    const group = row as UiMessage[] & { _toolGroupId?: string }
+    return group._toolGroupId ?? row.map((message) => message.ts).join(",")
 }
 
 /**

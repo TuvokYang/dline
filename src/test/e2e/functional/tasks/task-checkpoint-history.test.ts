@@ -285,7 +285,9 @@ e2e(
         await sendTask(sidebar, "Create a file so checkpoint Compare and Restore can be exercised.")
         await sidebar.getByText("Approve", { exact: true }).click()
         const filePath = path.join(workspaceDir, "checkpoint-e2e.txt")
-        await expect.poll(() => pathExists(filePath)).toBe(true)
+        // Provider wire is intentionally independent, but the first workspace mutation
+        // waits for the already-started round baseline so that a new file cannot enter it.
+        await expect.poll(() => pathExists(filePath), { timeout: 30_000 }).toBe(true)
         await expect(sidebar.getByText("E2E_CHECKPOINT_WRITE_COMPLETE", { exact: false }).last()).toBeVisible({
             timeout: 60_000,
         })

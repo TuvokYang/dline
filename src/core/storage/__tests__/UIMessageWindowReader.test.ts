@@ -156,6 +156,34 @@ describe("UIMessage history windows", () => {
         expect((await fs.readdir(taskDirectory)).filter((name) => name.startsWith("messages.db"))).toEqual([])
     })
 
+    it("opens a large legacy JSONL history from a bounded title and tail window", async () => {
+        const taskId = "large-legacy-window"
+        const taskDirectory = await ensureTaskDirectoryExists(taskId)
+        const legacyFile = path.join(taskDirectory, GlobalFileNames.uiMessages)
+        await writeJsonl(
+            legacyFile,
+            Array.from({ length: 1_000 }, (_, index) => ({
+                ts: index + 1,
+                type: "say",
+                say: index === 0 ? "task" : "text",
+                text: `message-${index + 1}`,
+            })),
+        )
+        const fullRead = vi.spyOn(fs, "readFile")
+
+        const reader = await UIMessage.openWindow(taskId)
+        try {
+            expect(reader.count).toBe(401)
+            await expect(reader.getPage(0, 1)).resolves.toMatchObject({ messages: [{ ts: 1, say: "task" }] })
+            expect((await reader.getLatest(200)).map((message) => message.ts)).toEqual(
+                Array.from({ length: 200 }, (_, index) => 801 + index),
+            )
+            expect(fullRead).not.toHaveBeenCalledWith(legacyFile, "utf8")
+        } finally {
+            await reader.close()
+        }
+    })
+
     it("uses a bounded reader for new tasks and rejects reads after close", async () => {
         const reader = await UIMessage.openWindow("window-close")
         expect(reader.count).toBe(0)

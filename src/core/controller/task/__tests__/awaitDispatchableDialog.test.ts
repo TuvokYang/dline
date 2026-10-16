@@ -1,6 +1,6 @@
 import { createInitialTaskState, type TaskState } from "@core/task/kernel"
 import { describe, expect, it } from "vitest"
-import { awaitDispatchableDialog } from "../awaitDispatchableDialog"
+import { awaitDispatchableDialog, resolveCompatibleHistoryAction } from "../awaitDispatchableDialog"
 
 function planned(halt: TaskState["halt"] = { status: "idle", generation: 0 }): TaskState {
     return {
@@ -136,5 +136,26 @@ describe("awaitDispatchableDialog", () => {
 
         expect(dialog).toBeUndefined()
         expect(Date.now() - started).toBeLessThan(1_000)
+    })
+})
+
+describe("resolveCompatibleHistoryAction", () => {
+    it("keeps an exact canonical action", () => {
+        expect(resolveCompatibleHistoryAction(answerable().dialog.interrupted!, "resume")).toBe("resume")
+    })
+
+    it("maps Resume onto a canonical reply continuation", () => {
+        const interaction = {
+            ...answerable().dialog.interrupted!,
+            actionRules: [{ actionId: "reply", payloadPolicy: "draft" as const }],
+        }
+
+        expect(resolveCompatibleHistoryAction(interaction, "resume")).toBe("reply")
+    })
+
+    it("does not map Resume onto an unrelated approval", () => {
+        const interaction = withPendingApproval(answerable()).dialog.approvalsByBlock["block-1"]!
+
+        expect(resolveCompatibleHistoryAction(interaction, "resume")).toBeUndefined()
     })
 })

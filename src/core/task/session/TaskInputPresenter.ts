@@ -49,6 +49,10 @@ export class TaskInputPresenter implements TaskInputPresentationPort {
                 ? ("user_feedback" as const)
                 : ("task" as const),
             ...submittedRowFields(shown),
+            // Prepared before runtime submission, so the synchronous journal view
+            // is the exact conversation position this user row precedes. Supplying
+            // it avoids a database count on the provider-critical path.
+            conversationHistoryIndex: this.messages.conversationSize() - 1,
             interactionId: input.entryId,
         }
         return { commit: () => this.messages.addToClineMessages(row) }

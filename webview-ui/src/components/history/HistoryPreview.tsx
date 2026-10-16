@@ -1,7 +1,7 @@
 import type { HistoryItem } from "@shared/HistoryItem"
 import { StringRequest } from "@shared/proto/dline/common"
 import { GetTaskHistoryRequest } from "@shared/proto/dline/task"
-import { ExternalLinkIcon } from "lucide-react"
+import { ExternalLinkIcon, LoaderCircle } from "lucide-react"
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { TaskServiceClient } from "@/services/grpc-client"
@@ -72,12 +72,25 @@ export function filterHistoryPreview(
 }
 
 /** One Recent-list row: task text, timestamp, usage badge and completion state. */
-function HistoryPreviewRow({ item, onSelect }: { item: PreviewTask; onSelect: (item: PreviewTask) => void }) {
+function HistoryPreviewRow({
+    item,
+    isOpening,
+    onSelect,
+}: {
+    item: PreviewTask
+    isOpening: boolean
+    onSelect: (item: PreviewTask) => void
+}) {
     const usage = getTaskUsageLabel(item)
     const timestamp = formatHistoryTimestamp(item.ts)
 
     return (
-        <div className="history-preview-item" onClick={() => onSelect(item)} onContextMenu={(event) => event.preventDefault()}>
+        <div
+            aria-busy={isOpening}
+            aria-disabled={isOpening}
+            className="history-preview-item"
+            onClick={isOpening ? undefined : () => onSelect(item)}
+            onContextMenu={(event) => event.preventDefault()}>
             <div className="history-task-content">
                 {item.isFavorited && (
                     <span
@@ -89,26 +102,30 @@ function HistoryPreviewRow({ item, onSelect }: { item: PreviewTask; onSelect: (i
                 <div className="history-task-description ph-no-capture">{item.task}</div>
             </div>
             <div className="history-preview-btns">
-                <button
-                    onClick={(event) => {
-                        event.stopPropagation()
-                        TaskServiceClient.openTaskInNewWindow(StringRequest.create({ value: item.id })).catch((error) =>
-                            console.error("Failed to open task in new window:", error),
-                        )
-                    }}
-                    style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: "2px",
-                        color: "var(--vscode-descriptionForeground)",
-                        display: "flex",
-                        alignItems: "center",
-                    }}
-                    title="Open in New Window"
-                    type="button">
-                    <ExternalLinkIcon size={14} />
-                </button>
+                {isOpening ? (
+                    <LoaderCircle aria-label="Opening task" className="animate-spin" size={14} />
+                ) : (
+                    <button
+                        onClick={(event) => {
+                            event.stopPropagation()
+                            TaskServiceClient.openTaskInNewWindow(StringRequest.create({ value: item.id })).catch((error) =>
+                                console.error("Failed to open task in new window:", error),
+                            )
+                        }}
+                        style={{
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            padding: "2px",
+                            color: "var(--vscode-descriptionForeground)",
+                            display: "flex",
+                            alignItems: "center",
+                        }}
+                        title="Open in New Window"
+                        type="button">
+                        <ExternalLinkIcon size={14} />
+                    </button>
+                )}
             </div>
             <div className="history-meta-stack">
                 <span className="history-date" title={`Last edited ${timestamp}`}>
@@ -130,7 +147,7 @@ function HistoryPreviewRow({ item, onSelect }: { item: PreviewTask; onSelect: (i
 }
 
 const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {
-    const { taskHistory, workspaceRoots, openHistoryTask } = useExtensionState()
+    const { taskHistory, workspaceRoots, historyTaskOpening, openHistoryTask } = useExtensionState()
     const [filter, setFilter] = useState<HistoryPreviewFilter>("workspace")
     const workspacePaths = useMemo(() => workspaceRoots.map((root) => root.path), [workspaceRoots])
     const fallbackTasks = useMemo(
@@ -385,7 +402,14 @@ const HistoryPreview = ({ showHistoryView }: HistoryPreviewProps) => {
 
             <div className="px-4 history-preview-list" ref={listRef}>
                 {tasks.length > 0 ? (
-                    visibleTasks.map((item) => <HistoryPreviewRow item={item} key={item.id} onSelect={handleHistorySelect} />)
+                    visibleTasks.map((item) => (
+                        <HistoryPreviewRow
+                            isOpening={historyTaskOpening?.target.id === item.id}
+                            item={item}
+                            key={item.id}
+                            onSelect={handleHistorySelect}
+                        />
+                    ))
                 ) : (
                     <div
                         style={{

@@ -1,6 +1,6 @@
 import { Logger } from "@/shared/services/Logger"
 import { telemetryService } from "../../services/telemetry"
-import { getAllHooksDirs } from "../storage/disk"
+import { getHookDirectoryCandidates } from "../storage/disk"
 import { HookFactory, Hooks } from "./hook-factory"
 
 type HookName = keyof Hooks
@@ -89,6 +89,13 @@ export class HookDiscoveryCache {
         this.context = context
         this.createFileWatcher = createFileWatcher || null
 
+        // A prewarm may have discovered directories before the host supplied its
+        // watcher factory. Re-admit those paths now so later hook creation or
+        // deletion invalidates the warmed result.
+        const discoveredBeforeInitialization = [...this.watchedDirs]
+        this.watchedDirs.clear()
+        for (const dir of discoveredBeforeInitialization) this.ensureWatcher(dir)
+
         // Watch for workspace changes to invalidate cache (if callback provided)
         if (onWorkspaceFoldersChanged) {
             context.subscriptions.push(
@@ -144,6 +151,29 @@ export class HookDiscoveryCache {
         return scripts
     }
 
+    /** Return the current snapshot without starting or joining filesystem discovery. */
+    peek(hookName: HookName): string[] | undefined {
+        return this.cache.get(hookName)?.scriptPaths
+    }
+
+    /**
+     * Return a warmed result, or stop waiting while the same background scan continues.
+     * Used only where cold discovery must not own an interactive admission path.
+     */
+    async getWithin(hookName: HookName, timeoutMs: number): Promise<string[] | undefined> {
+        const cached = this.cache.get(hookName)
+        if (cached) return cached.scriptPaths
+
+        const scan = this.get(hookName)
+        return await new Promise<string[] | undefined>((resolve) => {
+            const timeout = setTimeout(() => resolve(undefined), Math.max(0, timeoutMs))
+            void scan.then((scripts) => {
+                clearTimeout(timeout)
+                resolve(scripts)
+            })
+        })
+    }
+
     /**
      * Scan for hook scripts and cache the result
      */
@@ -158,9 +188,11 @@ export class HookDiscoveryCache {
         // Create a new scan promise
         const scanPromise = (async () => {
             try {
-                // Get all current hooks directories
-                const hooksDirs = await getAllHooksDirs()
-                this.log(`Scanning ${hooksDirs.length} directories for ${hookName}`)
+                // Probe exact candidates in one concurrent round. Directory existence
+                // is implicit in the file result, so cold discovery never serializes
+                // mkdir + directory stat + script stat on Task admission.
+                const hooksDirs = await getHookDirectoryCandidates()
+                this.log(`Scanning ${hooksDirs.length} candidate directories for ${hookName}`)
 
                 // Ensure watchers are set up for each directory (lazy initialization)
                 for (const dir of hooksDirs) {
@@ -256,16 +288,12 @@ export class HookDiscoveryCache {
      * Invalidate all cached hooks that have scripts in this directory
      */
     private invalidateDirectory(dir: string): void {
-        let invalidated = 0
-
-        for (const [hookName, entry] of this.cache) {
-            if (entry.scriptPaths.some((scriptPath) => scriptPath.startsWith(dir))) {
-                this.cache.delete(hookName)
-                invalidated++
-            }
-        }
-
-        this.log(`Invalidated ${invalidated} hooks for directory ${dir}`)
+        // Empty discoveries have no script path to match, but a create event in
+        // this directory is exactly what makes them stale. Clear every hook-name
+        // result; the next lookup re-probes all configured candidate directories.
+        const invalidated = this.cache.size
+        this.cache.clear()
+        this.log(`Invalidated ${invalidated} hooks after a change in ${dir}`)
     }
 
     /**

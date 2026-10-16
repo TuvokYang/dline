@@ -224,8 +224,8 @@ export class TelemetryService {
         this.registry.add(provider)
     }
 
-    public removeProvider(name: string): Promise<void> {
-        return this.registry.remove(name)
+    public removeProvider(name: string): void {
+        this.registry.remove(name)
     }
 
     public startSpan(options: TelemetrySpanStartOptions, channel: TelemetryChannel = "runtime"): TelemetrySpanHandle {

@@ -97,6 +97,24 @@ export class TaskActivityPersistence {
         }
     }
 
+    /**
+     * History-display read that lets a lifecycle promotion interrupt large payload hydration.
+     * A cancelled read returns no partial snapshot; the active Task will hydrate the same
+     * durable rows after its provider request reaches the wire.
+     */
+    async loadIncrementally(shouldContinue: () => boolean): Promise<TaskActivityRecord[]> {
+        try {
+            const store = await this.store()
+            const stored = await store.readIncrementally(shouldContinue)
+            if (!shouldContinue()) return []
+            if (stored.length > 0) return sanitizeActivities(stored, this.taskId)
+            return await this.importLegacy(store)
+        } catch (error) {
+            Logger.warn("[TaskActivityPersistence] Failed to load activity history incrementally", error)
+            return []
+        }
+    }
+
     /** Writes the activities that changed; activities not passed keep their stored rows. */
     async upsert(activities: readonly TaskActivityRecord[]): Promise<void> {
         await (await this.store()).upsert(activities)

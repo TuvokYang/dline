@@ -1,6 +1,7 @@
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
 import { CLINE_MCP_TOOL_IDENTIFIER } from "@/shared/mcp"
+import { Logger } from "@/shared/services/Logger"
 import { DlineDefaultTool } from "@/shared/tools"
 import { prepareRegisteredToolAdmission, type ToolAdmissionSnapshot } from "../executors/tool/ToolAdmissionRegistry"
 import type { ToolApprovalPresentation, ToolPreflightResult, ToolSideEffect } from "../executors/tool/ToolPreflight"
@@ -43,12 +44,11 @@ import { WebFetchToolHandler } from "./handlers/WebFetchToolHandler"
 import { WebSearchToolHandler } from "./handlers/WebSearchToolHandler"
 import { WorkingRespondHandler } from "./handlers/WorkingRespondHandler"
 import { WriteToFileToolHandler } from "./handlers/WriteToFileToolHandler"
-import { applyToolCallSideEffects, ensureToolCallCheckpoint, resolveToolCallSideEffects } from "./ToolCallSideEffects"
+import { applyToolCallSideEffects, resolveToolCallSideEffects } from "./ToolCallSideEffects"
 import type { ToolHandlerResult } from "./ToolExecutionResult"
 import { ToolValidator } from "./ToolValidator"
 import type { TaskConfig } from "./types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "./types/UIHelpers"
-import { NO_TOOL_RESULT } from "./utils/ToolResultUtils"
 
 export interface IToolHandler {
     readonly name: DlineDefaultTool
@@ -101,6 +101,23 @@ export interface IPreparableToolHandler extends IToolHandler {
 
 export interface IFullyManagedTool extends IToolHandler, IPartialBlockHandler {
     // Legacy marker name retained for compatibility; partial methods are presentation-only.
+}
+
+const WORKSPACE_MUTATION_TOOLS = new Set<DlineDefaultTool>([
+    DlineDefaultTool.FILE_NEW,
+    DlineDefaultTool.FILE_EDIT,
+    DlineDefaultTool.NEW_RULE,
+    DlineDefaultTool.APPLY_PATCH,
+    DlineDefaultTool.REPLACE_TEXT,
+    DlineDefaultTool.RENAME,
+])
+
+/** Whether this invocation may mutate workspace files rather than only previewing an edit. */
+function mayMutateWorkspace(block: ToolUse): boolean {
+    const tool = block.name as DlineDefaultTool
+    if (!WORKSPACE_MUTATION_TOOLS.has(tool)) return false
+    if (tool !== DlineDefaultTool.REPLACE_TEXT && tool !== DlineDefaultTool.RENAME) return true
+    return block.params.dry_run !== "true"
 }
 
 /**
@@ -366,13 +383,25 @@ export class ToolExecutorCoordinator {
             // from a spent one instead of retrying a call that can never run.
             return formatResponse.toolError(explicitToolRefusalMessage(block.name, authorized.code))
         }
+        // The request is already on the provider wire. Only file mutation waits for
+        // the baseline that request started; waiting here cannot delay provider
+        // admission and does not create a tool-local checkpoint.
+        if (mayMutateWorkspace(block)) {
+            try {
+                await authorized.config.callbacks.awaitRoundCheckpointBeforeMutation?.()
+            } catch (error) {
+                // Checkpoints are a side feature. A failed baseline loses restore
+                // coverage, but must not turn an admitted file tool into a deadlock.
+                Logger.warn(
+                    "[ToolExecutorCoordinator] Round checkpoint mutation barrier failed; continuing tool execution",
+                    error,
+                )
+            }
+        }
         // Effects that ride on a call without belonging to any tool. The surface
         // decides which of them it has, so a task with no checklist and no
         // workspace history runs the same tools without supplying either.
         const effects = resolveToolCallSideEffects(config)
-        // A stop that lands while the edit waits for its restore point ends the call
-        // there: the edit must not start after the task that owned it was halted.
-        if (!(await ensureToolCallCheckpoint(effects, block, config.taskState?.operationSignal))) return NO_TOOL_RESULT
         const result = await handler.execute(authorized.config, block)
         await applyToolCallSideEffects(effects, block)
         return result

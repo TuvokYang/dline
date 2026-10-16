@@ -267,7 +267,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
      * the previous behaviour; only a caller that knows the task is finished
      * turns it off.
      */
-    const queueCanDeliver = canQueueInput !== false
+    const queueCanDeliver = canQueueInput !== false && submitKind !== "resume"
 
     // Editing happens in the composer because attaching images or file
     // references is only possible there. The entry keeps its queue position and

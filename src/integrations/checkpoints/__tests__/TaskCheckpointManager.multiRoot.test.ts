@@ -99,14 +99,26 @@ function createHarness(
 
 function tracker(hash: string): CheckpointTracker {
     return {
-        commitForFiles: vi.fn().mockResolvedValue(hash),
+        commitForFiles: vi.fn().mockResolvedValueOnce(hash).mockResolvedValue(`${hash}-next`),
         restoreFiles: vi.fn().mockResolvedValue(undefined),
         resetHead: vi.fn().mockResolvedValue(undefined),
-        getDiffSet: vi.fn().mockResolvedValue([]),
+        getDiffSet: vi
+            .fn()
+            .mockResolvedValue([
+                { relativePath: "changed.ts", absolutePath: path.resolve("C:/changed.ts"), before: "before", after: "after" },
+            ]),
         getTaskDiffSet: vi.fn().mockResolvedValue([]),
         getTaskDiffCount: vi.fn().mockResolvedValue(0),
         getConsecutiveStagingFailures: vi.fn().mockReturnValue(0),
     } as unknown as CheckpointTracker
+}
+
+async function sealLatestTurn(harness: ReturnType<typeof createHarness>): Promise<void> {
+    await harness.manager.saveCheckpoint()
+    const completion: UiMessage = { ts: 900, type: "say", say: "completion_result" }
+    harness.messages.push(completion)
+    await harness.manager.saveCheckpoint(true, completion.ts)
+    harness.messages.pop()
 }
 
 describe("TaskCheckpointManager multi-root", () => {
@@ -129,7 +141,7 @@ describe("TaskCheckpointManager multi-root", () => {
             workspacePath === path.resolve("C:/workspace-a") ? tracker("hash-a") : tracker("hash-b"),
         )
 
-        await harness.manager.saveCheckpoint()
+        await sealLatestTurn(harness)
 
         expect(harness.messages[0]).toEqual(
             expect.objectContaining({
@@ -137,8 +149,10 @@ describe("TaskCheckpointManager multi-root", () => {
                 checkpointWorkspaceRoots: [harness.rootA, harness.rootB],
             }),
         )
-        // The row is written after the commit, so it is born with every root's revision.
-        expect(harness.updateClineMessage).not.toHaveBeenCalled()
+        expect(harness.updateClineMessage).toHaveBeenCalledWith(0, {
+            lastCheckpointHash: ["hash-a", "hash-b"],
+            checkpointWorkspaceRoots: [harness.rootA, harness.rootB],
+        })
     })
 
     it("returns Task-owned changes across every referenced workspace root", async () => {
@@ -153,7 +167,7 @@ describe("TaskCheckpointManager multi-root", () => {
         const harness = createHarness(async (_taskId, _enabled, workspacePath) =>
             workspacePath === path.resolve("C:/workspace-a") ? trackerA : trackerB,
         )
-        await harness.manager.saveCheckpoint()
+        await sealLatestTurn(harness)
         harness.messages.push({
             ts: 43,
             type: "say",
@@ -177,7 +191,7 @@ describe("TaskCheckpointManager multi-root", () => {
         const harness = createHarness(async (_taskId, _enabled, workspacePath) =>
             workspacePath === path.resolve("C:/workspace-a") ? trackerA : trackerB,
         )
-        await harness.manager.saveCheckpoint()
+        await sealLatestTurn(harness)
         harness.messages.push({
             ts: 43,
             type: "say",
@@ -195,7 +209,7 @@ describe("TaskCheckpointManager multi-root", () => {
         const harness = createHarness(async (_taskId, _enabled, workspacePath) =>
             workspacePath === path.resolve("C:/workspace-a") ? trackerA : trackerB,
         )
-        await harness.manager.saveCheckpoint()
+        await sealLatestTurn(harness)
 
         await harness.manager.restoreCheckpoint(42, "workspace")
 
@@ -209,7 +223,7 @@ describe("TaskCheckpointManager multi-root", () => {
         const harness = createHarness(async (_taskId, _enabled, workspacePath) =>
             workspacePath === path.resolve("C:/workspace-a") ? trackerA : trackerB,
         )
-        await harness.manager.saveCheckpoint()
+        await sealLatestTurn(harness)
         vi.mocked(trackerB.resetHead).mockRejectedValueOnce(new Error("secondary restore failed"))
 
         await harness.manager.restoreCheckpoint(42, "taskAndWorkspace")

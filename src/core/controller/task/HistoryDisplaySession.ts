@@ -43,6 +43,8 @@ import { adaptCanonicalTaskView, anchoredInteractionId } from "./TaskViewMessage
  */
 const HISTORY_MESSAGE_WINDOW_SIZE = 200
 const HISTORY_INPUT_QUEUE_READER = "history-input-queue-reader"
+/** Give an immediately resumed task priority over low-priority orphan recovery. */
+const HISTORY_MAINTENANCE_PROMOTION_GRACE_MS = 1_000
 
 export interface HistoryDisplayLoadOptions {
     /**
@@ -97,6 +99,9 @@ export class HistoryDisplaySession {
     private disposed = false
     /** Activity hydration and orphan recovery, which run after the first message window is out. */
     private maintenance: Promise<void> = Promise.resolve()
+    /** The maintenance phase that may write activities.db or messages.db. */
+    private maintenanceWriter: Promise<void> = Promise.resolve()
+    private disposal?: Promise<void>
 
     constructor(readonly historyItem: HistoryItem) {
         this.activityPersistence = new TaskActivityPersistence(historyItem.id)
@@ -281,22 +286,52 @@ export class HistoryDisplaySession {
     }
 
     async dispose(): Promise<void> {
+        this.beginDispose()
+        await this.finishDisposal()
+    }
+
+    /**
+     * Hand the display to an active Task without waiting for read-only history IO.
+     *
+     * Promotion waits only for maintenance that already crossed into a database
+     * writer. A hydration still in flight observes `disposed` before orphan
+     * recovery and can finish in the background without competing with the Task.
+     */
+    async disposeForPromotion(): Promise<void> {
+        this.beginDispose()
+        await this.maintenanceWriter
+        this.detachViewState()
+        void this.finishDisposal().catch((error) =>
+            Logger.warn(`[HistoryDisplay] Background promotion cleanup failed for task ${this.taskId}:`, error),
+        )
+    }
+
+    private beginDispose(): void {
+        if (this.disposed) return
         this.disposed = true
         // A gated read resolves empty once disposed, so nothing waits on a
         // window that will never be served.
         this.activityGate.open()
-        // activities.db admits one writer; recovery hands it back before the
-        // store is torn down and the promoted Task opens it.
-        await this.maintenance
         this.activityStore.dispose()
-        const reader = this.messageReader
-        this.messageReader = undefined
+    }
+
+    private finishDisposal(): Promise<void> {
+        this.disposal ??= (async () => {
+            await this.maintenance
+            this.detachViewState()
+            const reader = this.messageReader
+            this.messageReader = undefined
+            await Promise.all([reader?.close(), this.releaseActivities(), this.releaseMetrics()])
+        })()
+        return this.disposal
+    }
+
+    private detachViewState(): void {
         this.messages = []
         this.syntheticMessage = undefined
         this.taskTitleMessage = undefined
         this.inputQueue = []
         this.durableMessageCount = 0
-        await Promise.all([reader?.close(), this.releaseActivities(), this.releaseMetrics()])
     }
 
     /**
@@ -309,42 +344,63 @@ export class HistoryDisplaySession {
      */
     private async maintain(options?: HistoryDisplayLoadOptions): Promise<void> {
         try {
-            const interrupted = await this.hydrateActivities(options?.ownerless)
-            if (this.disposed || interrupted.size === 0) return
-            await this.settleInterruptedCommandCards(interrupted)
+            // Give an immediate Resume priority before any large activity query can
+            // occupy the extension host. The active Task hydrates the same durable
+            // history after its provider request reaches the wire.
+            await new Promise((resolve) => setTimeout(resolve, HISTORY_MAINTENANCE_PROMOTION_GRACE_MS))
             if (this.disposed) return
-            const settled: UiMessage[] = []
-            this.messages = this.messages.map((message) => {
-                if (!isInterruptedCommandRow(message, interrupted)) return message
-                const row: UiMessage = { ...message, commandStatus: "interrupted" }
-                settled.push(row)
-                return row
-            })
-            if (settled.length > 0) await options?.onMaintained?.(settled)
+
+            // Hydration is read-only. Keep it outside the promotion writer fence so
+            // a slow history read cannot delay the active Task taking over.
+            await this.hydrateActivities()
+            if (this.disposed) return
+
+            // Assign before the first await inside recovery. Promotion either marks
+            // the display disposed before this point, or observes and drains the
+            // exact writer phase; there is no gap in which a second writer can start.
+            const writer = this.recoverAndSettle(options)
+            this.maintenanceWriter = writer
+            await writer
         } catch (error) {
             Logger.warn(`[HistoryDisplay] Background maintenance failed for task ${this.taskId}:`, error)
         }
     }
 
-    /**
-     * Read the persisted activities, then give `activities.db` back to its writer.
-     *
-     * Recovery runs inside the same writer window, so an ownerless task's
-     * orphaned work is recorded as interrupted before the database is released.
-     */
-    private async hydrateActivities(ownerless: Promise<boolean> | undefined): Promise<ReadonlySet<string>> {
+    /** Read persisted activities without claiming a durable writer. */
+    private async hydrateActivities(): Promise<void> {
         try {
             await this.activityStore.hydrate()
-            return await this.recoverOrphanedActivities(ownerless)
         } finally {
             await this.releaseActivities()
         }
     }
 
+    /** The only history-maintenance phase allowed to mutate task databases. */
+    private async recoverAndSettle(options?: HistoryDisplayLoadOptions): Promise<void> {
+        let interrupted: ReadonlySet<string>
+        try {
+            interrupted = await this.recoverOrphanedActivities(options?.ownerless)
+        } finally {
+            // Recovery persistence has settled before its writer is released.
+            await this.releaseActivities()
+        }
+        if (this.disposed || interrupted.size === 0) return
+        await this.settleInterruptedCommandCards(interrupted)
+        if (this.disposed) return
+        const settled: UiMessage[] = []
+        this.messages = this.messages.map((message) => {
+            if (!isInterruptedCommandRow(message, interrupted)) return message
+            const row: UiMessage = { ...message, commandStatus: "interrupted" }
+            settled.push(row)
+            return row
+        })
+        if (settled.length > 0) await options?.onMaintained?.(settled)
+    }
+
     /** Read activities.db once the first message window is out, and never after dispose. */
     private async loadActivitiesOnceServed(): Promise<TaskActivityRecord[]> {
         await this.activityGate.whenOpen()
-        return this.disposed ? [] : await this.activityPersistence.load()
+        return this.disposed ? [] : await this.activityPersistence.loadIncrementally(() => !this.disposed)
     }
 
     private async recoverOrphanedActivities(ownerless: Promise<boolean> | undefined): Promise<ReadonlySet<string>> {

@@ -36,6 +36,30 @@ describe("LegacyInputAdapter", () => {
         expect(node.commandId).toBe("command.compact")
     })
 
+    it("admits plain text from the current snapshot without starting capability discovery", async () => {
+        let discoveryRequested = false
+        const pendingDiscovery = new Promise<InputSemanticCatalog>(() => undefined)
+        const legacy = new LegacyInputAdapter(
+            () => {
+                discoveryRequested = true
+                return pendingDiscovery
+            },
+            () => "legacy-plain",
+            () => catalog,
+        )
+
+        const { document, catalog: used } = await legacy.adapt({ text: "ordinary text without semantic candidates" })
+
+        expect(discoveryRequested).toBe(false)
+        expect(used).toBe(catalog)
+        expect(document).toMatchObject({
+            documentId: "legacy-plain",
+            catalogRevision: "9",
+            rawText: "ordinary text without semantic candidates",
+            nodes: [{ kind: "text", text: "ordinary text without semantic candidates" }],
+        })
+    })
+
     it("waits for capability discovery, so a workspace command is not demoted to plain text", async () => {
         const discovered: InputSemanticCatalog = {
             revision: 1,

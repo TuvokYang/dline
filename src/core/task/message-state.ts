@@ -6,6 +6,7 @@ import type { ContextWindowIndicatorSnapshot } from "@/shared/context-window-ind
 import { UiMessage } from "@/shared/ExtensionMessage"
 import type { ApiMetrics } from "@/shared/getApiMetrics"
 import { HistoryItem, summarizeHistoryTaskText } from "@/shared/HistoryItem"
+import { orderMessagesByTs } from "@/shared/message-order"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import { getCwd, getDesktopDir } from "@/utils/path"
@@ -154,7 +155,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
     /** ClineMessages as a property getter — merges durable rows with transient presentation overlays by timestamp. */
     get clineMessages(): UiMessage[] {
         const durable = this.uiMessage ? (this.uiMessage.getAll() as unknown as UiMessage[]) : []
-        if (this.transientClineMessages.size === 0) return durable
+        if (this.transientClineMessages.size === 0) return orderMessagesByTs(durable)
         const merged = new Map(durable.map((message) => [message.ts, message]))
         for (const [ts, message] of this.transientClineMessages) merged.set(ts, message)
         return [...merged.values()].sort((left, right) => left.ts - right.ts)
@@ -166,7 +167,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
      */
     latestMessageTs(): number | undefined {
         const store = this.uiMessage
-        let latest = store && store.count > 0 ? store.getAt(store.count - 1)?.ts : undefined
+        let latest: number | undefined
+        for (const message of store?.getAll() ?? []) latest = Math.max(latest ?? message.ts, message.ts)
         for (const ts of this.transientClineMessages.keys()) latest = latest === undefined ? ts : Math.max(latest, ts)
         return latest
     }
@@ -496,9 +498,11 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
             return
         }
 
-        // Set cross-store context before persisting. Callers may provide an
-        // explicit index when replaying or responding to historical asks.
-        this.placeRow(msg, await this.currentConversationSize())
+        // Set cross-store context before persisting. A caller that prepared the
+        // row before starting its causal work may provide the exact conversation
+        // index; do not issue a redundant database count on that hot path.
+        if (msg.conversationHistoryIndex === undefined) this.placeRow(msg, await this.currentConversationSize())
+        else this.placeRow(msg, 0)
 
         // Persist via UIMessage store (cache + disk, Mutex-protected)
         await this.uiMessage?.addMessage(msg)
@@ -774,7 +778,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
      * Flush a single message to disk.
      */
     async flushMessageUpdate(index: number): Promise<void> {
-        await this.uiMessage?.flushMessage(index)
+        const message = this.clineMessages[index]
+        const storedIndex = message ? (this.uiMessage?.findIndexByTs(message.ts) ?? -1) : -1
+        if (storedIndex >= 0) await this.uiMessage?.flushMessage(storedIndex)
         await this.updateTaskHistoryOnly()
     }
 
@@ -782,7 +788,11 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
      * Flush multiple messages to disk.
      */
     async flushMessageUpdates(indices: number[]): Promise<void> {
-        await this.uiMessage?.flushMessages(indices)
+        const messages = this.clineMessages
+        const storedIndices = indices
+            .map((index) => (messages[index] ? (this.uiMessage?.findIndexByTs(messages[index].ts) ?? -1) : -1))
+            .filter((index) => index >= 0)
+        await this.uiMessage?.flushMessages(storedIndices)
         await this.updateTaskHistoryOnly()
     }
 
@@ -795,7 +805,12 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
             throw new Error(`Invalid message index: ${index}`)
         }
         const previousMessage = { ...all[index] }
-        await this.uiMessage?.updateMessage(index, updates)
+        if (this.transientClineMessages.has(previousMessage.ts)) {
+            this.upsertTransientClineMessage({ ...previousMessage, ...updates })
+            return
+        }
+        const storedIndex = this.uiMessage?.findIndexByTs(previousMessage.ts) ?? -1
+        if (storedIndex >= 0) await this.uiMessage?.updateMessage(storedIndex, updates)
 
         const freshAll = this.clineMessages
         this.emitClineMessagesChanged({
@@ -816,7 +831,9 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
             throw new Error(`Invalid message index: ${index}`)
         }
         const previousMessage = all[index]
-        await this.uiMessage?.deleteMessage(index)
+        const storedIndex = this.uiMessage?.findIndexByTs(previousMessage.ts) ?? -1
+        if (storedIndex >= 0) await this.uiMessage?.deleteMessage(storedIndex)
+        this.transientClineMessages.delete(previousMessage.ts)
 
         const freshAll = this.clineMessages
         this.emitClineMessagesChanged({

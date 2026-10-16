@@ -34,7 +34,11 @@ import {
     type ProductionApprovalPolicyAdapterOptions,
 } from "../executors/policy/ProductionApprovalPolicyAdapter"
 import { ProductionProviderAdapter, type ProductionProviderService } from "../executors/provider/ProductionProviderAdapter"
-import type { ProviderRoundCheckpointPort, ProviderTextPresentationPort } from "../executors/provider/ProviderCommandExecutor"
+import type {
+    ProviderRequestLifecyclePort,
+    ProviderRoundCheckpointPort,
+    ProviderTextPresentationPort,
+} from "../executors/provider/ProviderCommandExecutor"
 import { JournalConversationView } from "../executors/provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../executors/provider/service/ProviderJournalMessageMaterializer"
 import type { ProviderRequestReportPort } from "../executors/provider/service/ProviderRequestReport"
@@ -103,6 +107,8 @@ export interface TaskCompositionOptions {
     readonly providerRequestReport?: ProviderRequestReportPort
     /** Writes the round's restore point before each request; see ProviderRoundCheckpointPort. */
     readonly providerCheckpoint?: ProviderRoundCheckpointPort
+    /** Starts non-request-critical work after provider transport begins. */
+    readonly providerLifecycle?: ProviderRequestLifecyclePort
     /** Writes the round's restore point before a compaction rewrites history; see CompactionCheckpointPort. */
     readonly compactionCheckpoint?: CompactionCheckpointPort
     /** Reads the task's model-mistake counter and live user-configured ceiling. */
@@ -195,6 +201,7 @@ export async function composeTask(options: TaskCompositionOptions): Promise<Task
                     presentation: options.providerPresentation,
                     report: options.providerRequestReport,
                     checkpoint: options.providerCheckpoint,
+                    lifecycle: options.providerLifecycle,
                 },
                 compose: bindToolSequence(
                     new ProductionComposeAdapter({

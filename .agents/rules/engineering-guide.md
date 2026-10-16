@@ -9,6 +9,12 @@ This file records high-signal project conventions that are easy to miss and expe
 - Combine independent search/replace blocks for one file when that keeps the change atomic and reviewable.
 - Preserve unrelated and unknown workspace changes. Do not use formatting or bulk replacement to absorb another task's work.
 
+## Source file size
+
+- A hand-written source file must not exceed 2,000 physical lines.
+- Do not split a file merely because it is large while its responsibilities, change reasons, and dependency direction remain coherent. When a file approaches the limit, extract stable responsibilities or dependency boundaries rather than creating arbitrary forwarding fragments.
+- Generated code, machine-managed lockfiles and snapshots, and fixture data are not hand-written source files and must not be split solely to satisfy this limit.
+
 ## Searching ignored directories
 
 `search_files` runs through ripgrep, which honours `.gitignore` plus the scan

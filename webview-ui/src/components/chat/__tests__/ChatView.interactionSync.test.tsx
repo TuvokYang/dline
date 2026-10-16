@@ -327,7 +327,7 @@ describe("ChatView interaction anchor synchronization", () => {
         expect(mocks.useChatState).toHaveBeenLastCalledWith([ASK], '["task-1","task-instance-1"]')
     })
 
-    it("hides the previous Task input and actions during local history opening and restores them after canonical readiness", () => {
+    it("does not replace a canonical Task surface with local history loading feedback", () => {
         const rendered = renderChat([ASK])
         expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
         mocks.extensionState = {
@@ -335,13 +335,9 @@ describe("ChatView interaction anchor synchronization", () => {
             historyTaskOpening: { target: { id: "next", task: "Next saved task" }, status: "loading", requestId: 1 },
         }
         rendered.rerender(chatView())
-        expect(screen.getByRole("status")).toHaveTextContent("Opening task")
-        expect(screen.queryByText("Next saved task")).not.toBeInTheDocument()
-        expect(screen.queryByRole("textbox", { name: "Task input" })).not.toBeInTheDocument()
-        expect(screen.queryByRole("button", { name: "Compact task" })).not.toBeInTheDocument()
-        mocks.extensionState = { ...mocks.extensionState, historyTaskOpening: undefined }
-        rendered.rerender(chatView())
+        expect(screen.queryByText("Opening task")).not.toBeInTheDocument()
         expect(screen.getByRole("textbox", { name: "Task input" })).toBeEnabled()
+        expect(screen.getByRole("button", { name: "Compact task" })).toBeInTheDocument()
         expect(mocks.askResponse).not.toHaveBeenCalled()
         expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
     })

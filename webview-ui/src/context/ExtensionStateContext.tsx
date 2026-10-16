@@ -30,6 +30,7 @@ import {
 } from "../../../src/shared/api"
 import { Environment } from "../../../src/shared/config-types"
 import type { McpMarketplaceCatalog, McpServer, McpViewTab } from "../../../src/shared/mcp"
+import { orderMessagesByTs } from "../../../src/shared/message-order"
 import type { TaskCapabilityToggles } from "../../../src/shared/TaskCapabilityToggles"
 import { type HistoryTaskOpening, type HistoryTaskTarget, useHistoryTaskOpening } from "../hooks/useHistoryTaskOpening"
 import {
@@ -445,21 +446,18 @@ export const ExtensionStateContextProvider: React.FC<{
     }, [])
 
     // Atomic sliding window state via React 18 auto-batching
-    const [clineMessages, setClineMessages] = useState<UiMessage[]>([])
+    const [clineMessages, setMessageWindow] = useState<UiMessage[]>([])
+    // Fetches, history jumps and realtime frames share the same presentation order.
+    const setClineMessages = useCallback<React.Dispatch<React.SetStateAction<UiMessage[]>>>((update) => {
+        setMessageWindow((current) => orderMessagesByTs(typeof update === "function" ? update(current) : update))
+    }, [])
     const [firstItemIndex, setFirstItemIndex] = useState(0)
-    const handleHistoryTaskOpenFailure = useCallback(
-        (target: HistoryTaskTarget) => {
-            navigateToHistory()
-            window.alert(`Could not open task '${target.task || target.id}'.`)
-        },
-        [navigateToHistory],
-    )
+    const handleHistoryTaskOpenFailure = useCallback((target: HistoryTaskTarget) => {
+        window.alert(`Could not open task '${target.task || target.id}'.`)
+    }, [])
     const { historyTaskOpening, openHistoryTask, dismissHistoryTaskOpening } = useHistoryTaskOpening({
         taskViewState: state.taskViewState,
-        // Hand off once the backend window is ready, not after the next paging RPC.
-        hasMessageSurface: !!state.taskTitleMessage && (state.totalMessageCount ?? 0) > 0,
         requestOpen: requestHistoryTaskOpen,
-        navigateToChat,
         onOpenFailed: handleHistoryTaskOpenFailure,
     })
     const clineMessagesRef = useRef<UiMessage[]>([])
@@ -481,15 +479,19 @@ export const ExtensionStateContextProvider: React.FC<{
     // frames queued since then are missing from its result. Rebasing inside the
     // state update applies the reconciliation on top of those frames instead of
     // overwriting them, a settled row among them.
-    const commitMessageWindow = useCallback((messages: UiMessage[], startIndex: number, base?: readonly UiMessage[]) => {
-        const rebase = (current: UiMessage[]) => (base ? rebaseMessageWindow(current, base, messages) : messages)
-        const committed = rebase(clineMessagesRef.current)
-        clineMessagesRef.current = committed
-        firstItemIndexRef.current = startIndex
-        windowWasAtTailRef.current = canAppendRealtimeMessage(committed.length, startIndex, totalMessageCountRef.current)
-        setClineMessages(base ? rebase : messages)
-        setFirstItemIndex(startIndex)
-    }, [])
+    const commitMessageWindow = useCallback(
+        (messages: UiMessage[], startIndex: number, base?: readonly UiMessage[]) => {
+            const rebase = (current: UiMessage[]) =>
+                orderMessagesByTs(base ? rebaseMessageWindow(current, base, messages) : messages)
+            const committed = rebase(clineMessagesRef.current)
+            clineMessagesRef.current = committed
+            firstItemIndexRef.current = startIndex
+            windowWasAtTailRef.current = canAppendRealtimeMessage(committed.length, startIndex, totalMessageCountRef.current)
+            setClineMessages(base ? rebase : messages)
+            setFirstItemIndex(startIndex)
+        },
+        [setClineMessages],
+    )
 
     const prevTotalRef = useRef(0)
     const prevMessageWindowRevisionRef = useRef(0)

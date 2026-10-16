@@ -40,6 +40,83 @@ const createRequestMessage = (ts: number, info: Record<string, unknown>): UiMess
     ts,
 })
 
+describe("turn-ending row order", () => {
+    it("keeps one ending after every other row of its round without moving it into the next round", () => {
+        const messages: UiMessage[] = [
+            createRequestMessage(1, {}),
+            createReasoningMessage(2, "first thought"),
+            { ts: 3, type: "ask", ask: "completion_result", text: "done", partial: false },
+            { ts: 4, type: "say", say: "command", text: "npm test", partial: true },
+            createReasoningMessage(5, "late thought"),
+            { ts: 6, type: "ask", ask: "qna_respond", text: "duplicate ending", partial: true },
+            createRequestMessage(7, {}),
+            createReasoningMessage(8, "next thought"),
+            { ts: 9, type: "ask", ask: "followup", text: "next question" },
+        ]
+        const identities = () =>
+            groupChatRows(messages)
+                .flatMap((row) => (Array.isArray(row) ? row : [row]))
+                .map((row) => row.ts)
+        expect(identities()).toEqual([2, 4, 5, 3, 8, 9])
+        messages[3] = { ...messages[3], partial: false }
+        messages[4] = { ...messages[4], text: "late thought finalized", partial: false }
+        expect(identities()).toEqual([2, 4, 5, 3, 8, 9])
+    })
+})
+
+describe("response visibility across streaming frames", () => {
+    it.each([
+        "completion_result",
+        "qna_respond",
+        "followup",
+        "generate_report",
+        "make_plan",
+    ] as const)("preserves the %s response identity at the round tail through finalization", (ask) => {
+        const partial: UiMessage = { ts: 2, type: "ask", ask, partial: true, text: "Answer" }
+        const final: UiMessage = { ...partial, partial: false, interactionId: "interaction-1" }
+        const thought = createReasoningMessage(3, "Late thought")
+        const rows = (messages: UiMessage[]) => groupChatRows(messages).flatMap((row) => (Array.isArray(row) ? row : [row]))
+
+        expect(rows([createRequestMessage(1, {}), partial, thought])).toEqual([thought, partial])
+        expect(rows([createRequestMessage(1, { cost: 0.01 }), final, thought])).toEqual([thought, final])
+    })
+
+    it("never renders assistant prose before, during, or after tool execution", () => {
+        const prose = { ...createTextMessage(2, "I will inspect the files"), partial: true }
+        const tool = createToolMessage(3, "readFile")
+        const visibleIdentities = (messages: UiMessage[]) =>
+            groupChatRows(messages)
+                .flatMap((row) => (Array.isArray(row) ? row : [row]))
+                .map((row) => row.ts)
+
+        expect(visibleIdentities([createRequestMessage(1, {}), prose])).toEqual([])
+        expect(visibleIdentities([createRequestMessage(1, {}), prose, tool])).toEqual([3])
+        expect(visibleIdentities([createRequestMessage(1, { cost: 0.01 }), { ...prose, partial: false }, tool])).toEqual([3])
+    })
+
+    it.each([
+        "actModeRespond",
+        "statusUpdate",
+    ])("keeps the %s tool-owned response at the same row through finalization", (tool) => {
+        const partial: UiMessage = {
+            ts: 2,
+            type: "say",
+            say: "tool",
+            partial: true,
+            text: JSON.stringify({ tool, content: "Inspecting" }),
+        }
+        const final: UiMessage = { ...partial, partial: false, text: JSON.stringify({ tool, content: "Inspecting the files" }) }
+        const request = createRequestMessage(1, {})
+        const nextTool = createToolMessage(3, "readFile")
+        const rows = (messages: UiMessage[]) => groupChatRows(messages).flatMap((row) => (Array.isArray(row) ? row : [row]))
+
+        expect(rows([request, partial])).toEqual([partial])
+        expect(rows([request, partial, nextTool])).toEqual([partial, nextTool])
+        expect(rows([request, partial, final, nextTool])).toEqual([final, nextTool])
+        expect(rows([request, final, nextTool])).toEqual([final, nextTool])
+    })
+})
+
 describe("filterVisibleMessages request rows", () => {
     it("hides legacy empty resume continuations without hiding attachment-only feedback", () => {
         const emptyContinuation: UiMessage = { ts: 1, type: "say", say: "user_feedback", text: "" }
@@ -370,6 +447,18 @@ describe("groupLowStakesTools round boundaries", () => {
         expect(afterNextRead[0]).toEqual([1, 2])
     })
 
+    it("keeps the logical group id stable while tools append to one round", () => {
+        const before = groupLowStakesTools([request(1), createToolMessage(2, "readFile")]).find(isToolGroup)
+        const after = groupLowStakesTools([
+            request(1),
+            createToolMessage(2, "readFile"),
+            createToolMessage(3, "searchFiles"),
+        ]).find(isToolGroup)
+
+        expect(before?._toolGroupId).toBe("tool:2")
+        expect(after?._toolGroupId).toBe(before?._toolGroupId)
+    })
+
     it("shows the text of a later round instead of folding it into an earlier group", () => {
         const grouped = groupLowStakesTools([
             request(1),
@@ -412,15 +501,13 @@ describe("groupChatRows request rounds", () => {
         expect(whileStreaming).toEqual([[2, 3], [5]])
     })
 
-    it("shows a later round's text after an earlier round's group", () => {
-        const transcript = [
-            completedRequest(1),
-            createToolMessage(2, "readFile"),
-            completedRequest(3),
-            createTextMessage(4, "Second round answer"),
-        ]
+    it("keeps a later round's tool-owned response separate from an earlier read group", () => {
+        const response = createToolMessage(4, "actModeRespond")
+        const transcript = [completedRequest(1), createToolMessage(2, "readFile"), completedRequest(3), response]
+        const grouped = groupChatRows(transcript)
 
-        expect(groupChatRows(transcript).some((item) => !Array.isArray(item) && item.ts === 4)).toBe(true)
+        expect(groupMembers(grouped)).toEqual([[2]])
+        expect(grouped[1]).toEqual(response)
     })
 
     it("keeps a failed request of an earlier round out of the next round's group", () => {
@@ -510,13 +597,13 @@ describe("pre-edit checkpoint card association", () => {
     })
 
     it("hides only the checkpoint row when another message shares the checkpoint timestamp", () => {
-        const sameTimestamp: UiMessage = { ts: 51, type: "say", say: "text", text: "keep this row" }
+        const sameTimestamp = createReasoningMessage(51, "keep this row")
 
         expect(filterVisibleMessages([tool, sameTimestamp, checkpoint])).toEqual([tool, sameTimestamp])
     })
 
     it("does not attach to an unrelated or backend-only row that merely shares the timestamp", () => {
-        const unrelated: UiMessage = { ts: 50, type: "say", say: "text", text: "not a tool" }
+        const unrelated = createReasoningMessage(50, "not a tool")
         const backendOnly: UiMessage = { ts: 50, type: "say", say: "state_snapshot" }
 
         expect(filterVisibleMessages([unrelated, checkpoint])).toEqual([unrelated, checkpoint])

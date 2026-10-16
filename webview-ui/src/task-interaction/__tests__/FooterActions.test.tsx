@@ -402,6 +402,15 @@ describe("FooterActions", () => {
         expect(container).toBeEmptyDOMElement()
     })
 
+    it("leaves disabled Resume exclusively in the composer's action button", () => {
+        const view = resumeView()
+        view.input.enabled = false
+
+        const { container } = render(<FooterActions dispatch={vi.fn()} draft={{ text: "", images: [], files: [] }} view={view} />)
+
+        expect(container).toBeEmptyDOMElement()
+    })
+
     it("renders Continue in Background without the composer's Cancel and dispatches it", async () => {
         const view = approvalView()
         delete view.activeInteraction

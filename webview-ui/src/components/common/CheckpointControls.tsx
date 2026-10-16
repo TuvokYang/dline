@@ -1,5 +1,4 @@
 import { CheckpointRestoreRequest } from "@shared/proto/dline/checkpoints"
-import { Int64Request } from "@shared/proto/dline/common"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { useEffect, useRef, useState } from "react"
 import { useClickAway } from "react-use"
@@ -21,7 +20,13 @@ export const CheckpointOverlay = ({ messageTs }: CheckpointOverlayProps) => {
     const [hasMouseEntered, setHasMouseEntered] = useState(false)
     const containerRef = useRef<HTMLDivElement>(null)
     const tooltipRef = useRef<HTMLDivElement>(null)
-    const { onRelinquishControl } = useExtensionState()
+    const { onRelinquishControl, taskViewState } = useExtensionState()
+    const checkpointIdentity = {
+        number: messageTs,
+        checkpointRowTs: messageTs,
+        taskId: taskViewState?.taskId ?? "",
+        taskInstanceId: taskViewState?.taskInstanceId ?? "",
+    }
 
     useClickAway(containerRef, () => {
         if (showRestoreConfirm) {
@@ -46,7 +51,7 @@ export const CheckpointOverlay = ({ messageTs }: CheckpointOverlayProps) => {
         try {
             await CheckpointsServiceClient.checkpointRestore(
                 CheckpointRestoreRequest.create({
-                    number: messageTs,
+                    ...checkpointIdentity,
                     restoreType: "task",
                 }),
             )
@@ -61,7 +66,7 @@ export const CheckpointOverlay = ({ messageTs }: CheckpointOverlayProps) => {
         try {
             await CheckpointsServiceClient.checkpointRestore(
                 CheckpointRestoreRequest.create({
-                    number: messageTs,
+                    ...checkpointIdentity,
                     restoreType: "workspace",
                 }),
             )
@@ -76,7 +81,7 @@ export const CheckpointOverlay = ({ messageTs }: CheckpointOverlayProps) => {
         try {
             await CheckpointsServiceClient.checkpointRestore(
                 CheckpointRestoreRequest.create({
-                    number: messageTs,
+                    ...checkpointIdentity,
                     restoreType: "taskAndWorkspace",
                 }),
             )
@@ -126,11 +131,7 @@ export const CheckpointOverlay = ({ messageTs }: CheckpointOverlayProps) => {
                 onClick={async () => {
                     setCompareDisabled(true)
                     try {
-                        await CheckpointsServiceClient.checkpointDiff(
-                            Int64Request.create({
-                                value: messageTs,
-                            }),
-                        )
+                        await CheckpointsServiceClient.checkpointDiff(CheckpointRestoreRequest.create(checkpointIdentity))
                     } catch (err) {
                         console.error("CheckpointDiff error:", err)
                     } finally {

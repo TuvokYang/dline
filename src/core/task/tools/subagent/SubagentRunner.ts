@@ -62,7 +62,6 @@ import { canonicalizeAttemptCompletionParams } from "../attempt-completion-param
 import { partitionDeferredHostedCalls } from "../deferred-hosted-rows"
 import { type DeferredServerToolCall, ServerToolLifecycle } from "../ServerToolLifecycle"
 import { DefaultToolHandlerState, type ToolHandlerState } from "../state/ToolHandlerState"
-import { ensureToolCallCheckpoint, resolveToolCallSideEffects } from "../ToolCallSideEffects"
 import { ToolExecutorCoordinator } from "../ToolExecutorCoordinator"
 import { ToolValidator } from "../ToolValidator"
 import type { TaskConfig } from "../types/TaskConfig"
@@ -78,6 +77,7 @@ import {
     truncateTextToSubagentOutputBudget,
 } from "./SubagentOutputBudget"
 import { SubagentProseStream } from "./SubagentProseStream"
+import { type FrozenSubagentRoundContext, SubagentRoundContextProjection } from "./SubagentRoundContextProjection"
 
 /**
  * Failed responses in a row after which a run stops with an error.
@@ -255,29 +255,6 @@ export function appendHostedServerToolFailureNotice(
     return true
 }
 
-/**
- * Attach the current context usage to the request without altering the stored turn.
- *
- * The figures change every turn, so they cannot live in the persisted
- * conversation: appending them as their own message would also break the
- * user/assistant alternation the providers require. Folding the section into the
- * trailing user message keeps the transcript shape intact.
- */
-function withCurrentContextUsage(messages: ClineStorageMessage[], usageSection: string | undefined): ClineStorageMessage[] {
-    if (!usageSection || messages.length === 0) return messages
-
-    const lastIndex = messages.length - 1
-    const lastMessage = messages[lastIndex]
-    if (!lastMessage || lastMessage.role !== "user" || !Array.isArray(lastMessage.content)) return messages
-
-    const usageBlock = { type: "text", text: usageSection } as ClineTextContentBlock
-    const withUsage: ClineStorageMessage = {
-        ...lastMessage,
-        content: [...lastMessage.content, usageBlock],
-    }
-    return [...messages.slice(0, lastIndex), withUsage]
-}
-
 export type SubagentRunStatus = "completed" | "failed" | "cancelled"
 
 export interface SubagentRunResult {
@@ -314,6 +291,7 @@ interface SubagentToolCall {
 
 interface SubagentContextState {
     conversationHistoryDeletedRange?: [number, number]
+    roundContexts: SubagentRoundContextProjection
 }
 
 function createEmptyRequestUsageState(): SubagentRequestUsageState {
@@ -842,7 +820,9 @@ export class SubagentRunner {
         // Latest narrative text produced by the run, used to salvage findings if
         // the model never converts them into an attempt_completion result.
         let latestAssistantNarrative = ""
-        const contextState: SubagentContextState = {}
+        const contextState: SubagentContextState = {
+            roundContexts: new SubagentRoundContextProjection(),
+        }
         const contextManager = new ContextManager()
         const usageState: SubagentUsageState = {
             currentRequest: createEmptyRequestUsageState(),
@@ -1199,6 +1179,18 @@ export class SubagentRunner {
                 let roundStopReason: ApiStopReason | undefined
                 // This request carries every tool result produced so far.
                 toolBudget.clearStaged()
+                const roundContext = contextState.roundContexts.freeze(
+                    conversation,
+                    [
+                        buildContextUsageSection({
+                            contextTokens: stats.contextTokens,
+                            contextWindow: stats.contextWindow,
+                        }),
+                        buildContextBudgetSection(this.activeBudget, outputBudget.outputTokens),
+                    ]
+                        .filter((section): section is string => Boolean(section))
+                        .join("\n\n") || undefined,
+                )
                 const providerStream = this.createMessageWithInitialChunkRetry(
                     api,
                     systemPrompt,
@@ -1208,6 +1200,7 @@ export class SubagentRunner {
                     providerInfo.model.id,
                     contextManager,
                     contextState,
+                    roundContext,
                     requestWebSearchRoutingPlan,
                     providerRequestRound,
                     () => {
@@ -1219,16 +1212,6 @@ export class SubagentRunner {
                         hostedToolBlocks.length = 0
                     },
                     onProgress,
-                    () =>
-                        [
-                            buildContextUsageSection({
-                                contextTokens: stats.contextTokens,
-                                contextWindow: stats.contextWindow,
-                            }),
-                            buildContextBudgetSection(this.activeBudget, outputBudget.outputTokens),
-                        ]
-                            .filter((section): section is string => Boolean(section))
-                            .join("\n\n") || undefined,
                 )
                 const stream = normalizeApiStream(
                     providerStream,
@@ -1399,6 +1382,7 @@ export class SubagentRunner {
                         })
                     }
                 }
+                contextState.roundContexts.commit(roundContext)
                 // Settle before looping so the recovered turn is billed and sampled
                 // exactly like a turn that drained normally.
                 if (recoveredFromHostedServerToolFailure) {
@@ -1693,21 +1677,7 @@ export class SubagentRunner {
                                 )
                             }
                             const run = admission.run
-                            // A subagent's file edit is the parent task's change, so it gets
-                            // the same file restore point an edit in the parent's own turn does.
-                            toolResult = await this.executeToolWithInterruption(async () => {
-                                const proceed = await ensureToolCallCheckpoint(
-                                    resolveToolCallSideEffects(subagentConfig),
-                                    toolCallBlock,
-                                    this.interruptionController?.signal,
-                                    "standalone",
-                                )
-                                // The run was interrupted while the edit waited for its restore
-                                // point and has already reported itself cancelled; this closure
-                                // is abandoned, and the edit must not start behind that report.
-                                if (!proceed) throw new SubagentToolInterruptedError()
-                                return run()
-                            })
+                            toolResult = await this.executeToolWithInterruption(run)
                         } catch (error) {
                             // An interrupted wait is not a tool failure: fall through to the
                             // abort check below so the run reports `cancelled`.
@@ -1989,21 +1959,22 @@ export class SubagentRunner {
         modelId: string,
         contextManager: ContextManager,
         contextState: SubagentContextState,
+        roundContext: FrozenSubagentRoundContext | undefined,
         webSearchRoutingPlan: WebSearchRoutingPlan,
         providerRequestRound: ProviderRequestRoundAdmission | undefined,
         onReplayableAttemptDiscarded: () => void,
         onProgress: (update: SubagentProgressUpdate) => void,
-        contextUsage: () => string | undefined = () => undefined,
     ) {
         let cumulativeRetryDelayMs = 0
         for (let attempt = 1; attempt <= MAX_INITIAL_STREAM_ATTEMPTS; attempt += 1) {
-            const truncatedConversation = withCurrentContextUsage(
+            const truncatedConversation = contextState.roundContexts.project(
                 contextManager
                     .getTruncatedMessages(fullConversation, contextState.conversationHistoryDeletedRange)
                     .map((message) => message as ClineStorageMessage),
-                contextUsage(),
+                contextState.conversationHistoryDeletedRange,
+                roundContext,
             )
-            const roundContext = {
+            const adapterRoundContext = {
                 taskId: this.baseConfig.taskId,
                 requestIndex: ++this.apiLogRequestIndex,
                 provider: providerId,
@@ -2016,13 +1987,13 @@ export class SubagentRunner {
                 hostedToolReplayProtocol: api.getHostedToolReplayProtocol?.(),
                 documentInput: api.getDocumentInputLimits?.(),
             })
-            await recordProviderAdapterInput(roundContext, {
+            await recordProviderAdapterInput(adapterRoundContext, {
                 systemPrompt,
                 messages: providerConversation,
                 tools: nativeTools,
             })
             const providerStream = recordProviderAdapterOutput(
-                roundContext,
+                adapterRoundContext,
                 api.createMessage(systemPrompt, providerConversation, nativeTools, {
                     serverTools: webSearchRoutingPlan.serverTools,
                     retryOwner: "subagent",

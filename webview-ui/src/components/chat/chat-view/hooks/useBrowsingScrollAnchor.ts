@@ -55,6 +55,8 @@ export function useBrowsingScrollAnchor(
                 const anchor = anchorRef.current
                 const element = anchor ? scroller.querySelector<HTMLElement>(`[data-message-ts="${anchor.ts}"]`) : null
                 pendingRef.current = false
+                contentChangeRef.current = false
+                anchorRef.current = null
                 if (!anchor || !element) return
                 const delta = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.top
                 if (Math.abs(delta) > 0.5) virtuosoRef.current?.scrollBy({ top: delta, behavior: "auto" })

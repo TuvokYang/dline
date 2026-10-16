@@ -17,6 +17,8 @@ const MESSAGE_SURFACE_BUDGET_MS = 500
 const RESUME_SURFACE_BUDGET_MS = 1_500
 /** Click-to-visible bounds, including Webview transport and rendering. */
 const BROWSER_SURFACE_BUDGET_MS = 1_500
+/** Resume action to provider wire for the large interrupted-activity fixture. */
+const RESUME_PROVIDER_WIRE_BUDGET_MS = 5_000
 
 async function sendTask(sidebar: Frame, text: string): Promise<void> {
     const input = sidebar.getByTestId("chat-input")
@@ -148,7 +150,23 @@ e2e(
         const footer = sidebar.getByRole("contentinfo")
         const resumeButton = footer.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 5_000 })
+        await expect(sidebar.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0)
         const browserSurfaceMs = Math.round(performance.now() - historyClickedAt)
+
+        // Resume immediately, while the intentionally large activity maintenance
+        // is still the most likely background owner. Surface readiness alone is
+        // not the contract: the continuation must reach the provider wire too.
+        const input = sidebar.getByTestId("chat-input")
+        await input.fill("E2E_HISTORY_LIVENESS_DRAFT")
+        const resumeClickedAtMs = Date.now()
+        await resumeButton.click()
+        await expectComposerText(input, "")
+        await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(3)
+        const continuation = server.getMockConsumptions("openai-compatible-chat")[2]
+        if (!continuation) throw new Error("The resumed Task never reached the mock provider")
+        expect(continuation.contractError).toBeUndefined()
+        const resumeToProviderMs = continuation.receivedAtMs - resumeClickedAtMs
+
         // The extension's share is measured by its own stage timings: a browser
         // clock also counts Webview transport, rendering, and the poll interval.
         const extensionStages = await E2ETestHelper.waitForValue(
@@ -165,7 +183,14 @@ e2e(
                 ),
             5_000,
         )
-        const timing = { browserMessageSurfaceMs, browserSurfaceMs, messageSurfaceMs, extensionSurfaceMs, extensionStages }
+        const timing = {
+            browserMessageSurfaceMs,
+            browserSurfaceMs,
+            messageSurfaceMs,
+            extensionSurfaceMs,
+            extensionStages,
+            resumeToProviderMs,
+        }
         console.log(`[history-resume-liveness] ${JSON.stringify(timing)}`)
         await e2e.info().attach("history-resume-liveness.json", {
             body: Buffer.from(`${JSON.stringify(timing, null, 2)}\n`, "utf8"),
@@ -183,19 +208,13 @@ e2e(
         expect(browserSurfaceMs, "Click-to-Resume visibility must not wait for activity maintenance").toBeLessThan(
             BROWSER_SURFACE_BUDGET_MS,
         )
+        expect(
+            resumeToProviderMs,
+            `Resume to provider wire must stay under ${RESUME_PROVIDER_WIRE_BUDGET_MS}ms with large interrupted activity history`,
+        ).toBeLessThan(RESUME_PROVIDER_WIRE_BUDGET_MS)
         await expect(sidebar.getByTestId("history-task-opening")).toHaveCount(0)
-        await expect.poll(() => server.openAiRequestCount).toBe(2)
         await expect(sidebar.getByText("E2E_HISTORY_LIVENESS_INTERRUPTED_MUST_NOT_RENDER", { exact: false })).toHaveCount(0)
-        await expect(resumeButton).toHaveAttribute("aria-disabled", "false", { timeout: 5_000 })
-
-        const input = sidebar.getByTestId("chat-input")
-        await input.fill("E2E_HISTORY_LIVENESS_DRAFT")
-        await resumeButton.click()
-        await expectComposerText(input, "")
         await expect(sidebar.getByText("E2E_HISTORY_LIVENESS_RESUMED", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-        await expect.poll(() => server.openAiRequestCount).toBe(3)
-        const continuation = server.getMockConsumptions("openai-compatible-chat")[2]
-        expect(continuation.contractError).toBeUndefined()
         await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
     },
 )

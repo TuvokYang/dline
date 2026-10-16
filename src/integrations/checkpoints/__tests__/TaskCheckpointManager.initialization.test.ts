@@ -206,7 +206,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42 })
     })
 
-    it("writes the round row after the shadow commit, so the row is born with its files", async () => {
+    it("writes a chat-only round row while retaining its baseline in the canonical bundle", async () => {
         const messages: UiMessage[] = []
         const baselineHash = "shadow-baseline-hash"
         const tracker = {
@@ -224,14 +224,8 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         await harness.manager.saveCheckpoint()
 
         expect(tracker.commit).toHaveBeenCalledOnce()
-        expect(messages).toEqual([
-            expect.objectContaining({
-                say: "checkpoint_created",
-                lastCheckpointHash: [baselineHash],
-                checkpointWorkspaceRoots: ["C:/workspace"],
-            }),
-        ])
-        // Nothing is patched afterwards: the view never shows the row without its files.
+        expect(messages).toEqual([expect.objectContaining({ say: "checkpoint_created" })])
+        expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
         expect(harness.updateClineMessage).not.toHaveBeenCalled()
         expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42, workspaceRef: singleRootWorkspaceRef(baselineHash) })
     })
@@ -292,6 +286,7 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         try {
             const taskId = "task-durable-checkpoint-message"
             const checkpointHash = "durable-checkpoint-hash"
+            const nextCheckpointHash = "next-checkpoint-hash"
             const uiMessage = await UIMessage.open(taskId)
             const messageStateHandler = new MessageStateHandler({
                 taskId,
@@ -301,7 +296,12 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
             })
             const tracker = {
                 setTaskFileTracker: vi.fn(),
-                commit: vi.fn().mockResolvedValue(checkpointHash),
+                commit: vi.fn().mockResolvedValueOnce(checkpointHash).mockResolvedValueOnce(nextCheckpointHash),
+                getDiffSet: vi
+                    .fn()
+                    .mockResolvedValue([
+                        { relativePath: "changed.ts", absolutePath: "C:/workspace/changed.ts", before: "before", after: "after" },
+                    ]),
             } as unknown as CheckpointTracker
             let nextMessageTs = 100
             const hashesObservedByPost: Array<string[] | undefined> = []
@@ -347,10 +347,13 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
             )
 
             await manager.saveCheckpoint()
+            await manager.saveCheckpoint()
 
             const reopened = await UIMessage.open(taskId)
-            expect(reopened.getAll().at(-1)?.lastCheckpointHash).toEqual([checkpointHash])
-            expect(hashesObservedByPost.at(-1)).toEqual([checkpointHash])
+            expect(tracker.getDiffSet).toHaveBeenCalled()
+            expect(reopened.getAll()[0]?.lastCheckpointHash).toEqual([checkpointHash])
+            expect(reopened.getAll().at(-1)?.lastCheckpointHash).toBeUndefined()
+            expect(hashesObservedByPost).toContainEqual([checkpointHash])
         } finally {
             if (previousDocsDir === undefined) delete process.env.DLINE_DOCS_DIR
             else process.env.DLINE_DOCS_DIR = previousDocsDir
@@ -381,7 +384,8 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 
         releaseCommit("baseline-hash")
         await round
-        expect(messages).toEqual([expect.objectContaining({ lastCheckpointHash: ["baseline-hash"], checkpointSource: source })])
+        expect(messages).toEqual([expect.objectContaining({ checkpointSource: source })])
+        expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
     })
 
     it("still writes the chat row and never rejects when the commit fails", async () => {
@@ -426,8 +430,10 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         releaseCommit("late-baseline-hash")
         await round
         await disposal
-        // The admitted checkpoint is complete, so no row is left without its bundle.
-        expect(messages).toEqual([expect.objectContaining({ lastCheckpointHash: ["late-baseline-hash"] })])
+        // The admitted checkpoint is complete and durable, but remains chat-only
+        // until a later commit proves that restoring its baseline changes files.
+        expect(messages).toEqual([expect.objectContaining({ say: "checkpoint_created" })])
+        expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
         expect(capture).toHaveBeenCalledOnce()
 
         await harness.manager.ensureRoundCheckpoint("round_start")
@@ -448,7 +454,6 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         )
 
         await disabled.ensureRoundCheckpoint("round_start")
-        await disabled.ensurePreEditCheckpoint()
 
         expect(beginRow).not.toHaveBeenCalled()
         expect(messages).toEqual([])

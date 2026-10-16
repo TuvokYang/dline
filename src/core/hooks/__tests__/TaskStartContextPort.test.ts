@@ -18,6 +18,7 @@ function port(hooksEnabled = true): HookTaskStartContext {
         stateManager: { getGlobalSettingsKey: () => hooksEnabled } as unknown as StateManager,
         messages: {} as MessageStateHandler,
         say: async () => undefined,
+        discoveredHooks: () => ["TaskStart.test"],
     })
 }
 

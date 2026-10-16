@@ -19,6 +19,7 @@ const display = vi.hoisted(() => {
         readonly surfacePublished = vi.fn()
         readonly markLocked = vi.fn()
         readonly dispose = vi.fn(async () => undefined)
+        readonly disposeForPromotion = vi.fn(async () => undefined)
         constructor(readonly historyItem: { id: string }) {
             this.taskId = historyItem.id
             display.instances.push(this)
@@ -166,21 +167,23 @@ describe("opening a task from History", () => {
         expect(events).toEqual(["post:immediate", "flush"])
     })
 
-    it("promotes only after the binding was written, since the runtime reloads task settings", async () => {
+    it("promotes without waiting for the background Profile binding", async () => {
         const resolution = deferred<void>()
         profile.gate = resolution.promise
         const { controller, events } = subject()
         await controllerPrototype.initHistoryDisplaySession.call(controller, historyItem)
         const [session] = display.instances
 
-        const promoted = controllerPrototype.promoteHistoryDisplay.call(controller, session)
-        await new Promise((resolve) => setTimeout(resolve, 0))
-        expect(controller.initTask).not.toHaveBeenCalled()
+        await controllerPrototype.promoteHistoryDisplay.call(controller, session)
+
+        expect(controller.initTask).toHaveBeenCalledTimes(1)
+        expect(events).toContain("initTask")
+        expect(events).not.toContain("flush")
+        expect(session?.disposeForPromotion).toHaveBeenCalledTimes(1)
+        expect(session?.dispose).not.toHaveBeenCalled()
 
         resolution.resolve()
-        await promoted
-        expect(events.indexOf("flush")).toBeLessThan(events.indexOf("initTask"))
-        expect(session?.dispose).toHaveBeenCalledTimes(1)
+        await vi.waitFor(() => expect(events).toContain("flush"))
     })
 
     // The switcher is usable before the task's own binding lands; writing the

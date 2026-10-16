@@ -8,6 +8,12 @@ export interface TaskStartLifecycleOptions {
     onBackgroundError: (error: unknown) => Promise<void> | void
 }
 
+export interface TaskStartAfterSurfaceOptions extends TaskStartLifecycleOptions {
+    publishSurface: () => Promise<void>
+    isCurrent: () => boolean
+    yieldToSurface?: () => Promise<void>
+}
+
 /**
  * Admits a task start after its identity-dependent setup has completed.
  * Foreground starts preserve the existing await semantics. Background starts
@@ -16,6 +22,18 @@ export interface TaskStartLifecycleOptions {
 async function reportBackgroundError(options: TaskStartLifecycleOptions, error: unknown): Promise<void> {
     if (isInteractionCancellationError(error)) return
     await options.onBackgroundError(error)
+}
+
+/** Publish the real Task surface before any background admission can reach API preflight. */
+export async function startTaskAfterSurface(options: TaskStartAfterSurfaceOptions): Promise<"started" | "stale"> {
+    await options.publishSurface()
+    if (!options.isCurrent()) return "stale"
+
+    await (options.yieldToSurface?.() ?? new Promise<void>((resolve) => setTimeout(resolve, 0)))
+    if (!options.isCurrent()) return "stale"
+
+    await startTaskLifecycle(options)
+    return "started"
 }
 
 export async function startTaskLifecycle(options: TaskStartLifecycleOptions): Promise<void> {

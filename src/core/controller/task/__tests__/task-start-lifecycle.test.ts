@@ -1,8 +1,53 @@
 import { InteractionCancellationError } from "@core/task/interaction/InteractionCancellationError"
 import { describe, expect, it, vi } from "vitest"
-import { startTaskLifecycle } from "../task-start-lifecycle"
+import { startTaskAfterSurface, startTaskLifecycle } from "../task-start-lifecycle"
 
 describe("startTaskLifecycle", () => {
+    it("publishes and yields the real surface before starting background admission", async () => {
+        const events: string[] = []
+
+        await expect(
+            startTaskAfterSurface({
+                taskId: "task-1",
+                startInBackground: true,
+                publishSurface: async () => {
+                    events.push("surface")
+                },
+                yieldToSurface: async () => {
+                    events.push("yield")
+                },
+                isCurrent: () => true,
+                beforeStart: async () => {
+                    events.push("before-start")
+                },
+                start: async () => {
+                    events.push("start")
+                },
+                onBackgroundError: async () => undefined,
+            }),
+        ).resolves.toBe("started")
+
+        expect(events).toEqual(["surface", "yield", "before-start", "start"])
+    })
+
+    it("does not start admission when the published surface was replaced", async () => {
+        const start = vi.fn(async () => undefined)
+
+        await expect(
+            startTaskAfterSurface({
+                taskId: "task-1",
+                startInBackground: true,
+                publishSurface: async () => undefined,
+                yieldToSurface: async () => undefined,
+                isCurrent: () => false,
+                start,
+                onBackgroundError: async () => undefined,
+            }),
+        ).resolves.toBe("stale")
+
+        expect(start).not.toHaveBeenCalled()
+    })
+
     it("returns after background admission without waiting for task completion", async () => {
         const events: string[] = []
         let finishStart: (() => void) | undefined

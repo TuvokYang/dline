@@ -238,23 +238,53 @@ export class TaskSessionCompositionService {
         // Only the window holding the task lock may write. A deferred opening may
         // be showing work another window still runs, so it settles nothing.
         const ownsTask = !options.deferRestoredCommands
-        resources.add({
-            release: async () => {
-                try {
-                    // Released after the command and subagent owners, so nothing is
-                    // left that could still finish an activity in flight. The chat
-                    // store closes after this resource, so its rows can still be settled.
-                    if (ownsTask) await settleClosedActivities(activities, messages)
-                    await activities.waitForPersistence()
-                } finally {
-                    activities.dispose()
-                }
+        let activityMaintenanceStarted = false
+        let activityMaintenance: Promise<void> = Promise.resolve()
+        const runActivityMaintenance = async () => {
+            await activities.hydrate()
+            // Commands and subagents are owned by the session that started them
+            // and end with it, so persisted in-flight work is now ownerless.
+            if (ownsTask) await settleOrphanedActivities(activities, messages)
+        }
+        const startActivityMaintenance = (defer = true) => {
+            if (activityMaintenanceStarted) return
+            activityMaintenanceStarted = true
+            // Large activity histories contain bounded command/subagent payloads that
+            // are irrelevant to request admission. Yield once after the provider wire
+            // starts, then hydrate and recover them under the normal single-writer store.
+            activityMaintenance = (
+                defer
+                    ? new Promise<void>((resolve) => setImmediate(resolve)).then(runActivityMaintenance)
+                    : runActivityMaintenance()
+            ).catch((error: unknown) =>
+                Logger.warn(
+                    `[TaskSessionComposition] ${options.taskId}: deferred activity maintenance failed: ${error instanceof Error ? error.message : String(error)}`,
+                ),
+            )
+        }
+        let activityRelease: Promise<void> | undefined
+        const activityResource = {
+            release: () => {
+                activityRelease ??= (async () => {
+                    // A task that closes before its first provider request still drains
+                    // the same durable recovery before relinquishing activities.db.
+                    startActivityMaintenance(false)
+                    await activityMaintenance
+                    try {
+                        // Released after the command and subagent owners, so nothing is
+                        // left that could still finish an activity in flight. The chat
+                        // store closes after this resource, so its rows can still be settled.
+                        if (ownsTask) await settleClosedActivities(activities, messages)
+                        await activities.waitForPersistence()
+                    } finally {
+                        activities.dispose()
+                    }
+                })()
+                return activityRelease
             },
-        })
-        await activities.hydrate()
-        // Commands and subagents are owned by the session that started them and end
-        // with it, so a persisted in-flight activity has no owner in this one.
-        if (ownsTask) await settleOrphanedActivities(activities, messages)
+        }
+        // Early fallback for failures before host resources have been acquired.
+        resources.add(activityResource)
         let session: ActiveTaskSession | undefined
         let collaboration: TaskCollaborationSessionOwner | undefined
         // The whole auto-condense setting group defines the trigger and the window a
@@ -437,6 +467,9 @@ export class TaskSessionCompositionService {
         prompt.start()
         // One sequence orders every chat row of the session, the host's included.
         const nextPresentationId = createPresentationIdSequence(Date.now, () => messages.latestMessageTs())
+        // If host creation fails, activity recovery must run before the already
+        // acquired presentation owners release the message surface it patches.
+        resources.add(activityResource)
         const tool = await options.hostFactory.create({
             taskId: options.taskId,
             taskIncarnationId,
@@ -531,6 +564,9 @@ export class TaskSessionCompositionService {
             },
         })
         for (const release of tool.releases ?? []) resources.add(release)
+        // Re-register the same idempotent fence after host owners so reverse-order
+        // teardown settles command rows before those owners release their surfaces.
+        resources.add(activityResource)
         tool.commands.bindBackgroundCommandSettlement({
             settled: (command) =>
                 backgroundIngress.publish({
@@ -845,6 +881,12 @@ export class TaskSessionCompositionService {
                     tool.checkpoints?.ensureRoundCheckpoint?.("round_start", { kind: "round_start", turnId }, signal) ??
                     Promise.resolve(),
             },
+            providerLifecycle: {
+                afterProviderStarted: () => {
+                    tool.checkpoints?.startWorkspaceWatcher?.()
+                    startActivityMaintenance()
+                },
+            },
             compactionCheckpoint: tool.checkpoints && {
                 beforeCompaction: (signal) =>
                     tool.checkpoints?.ensureRoundCheckpoint?.("pre_compaction", { kind: "pre_compaction" }, signal) ??
@@ -1074,6 +1116,7 @@ export class TaskSessionCompositionService {
             new LegacyInputAdapter(
                 () => service().discovered(),
                 () => `${options.taskId}:doc:${randomUUID()}`,
+                () => service().current(),
             ),
             admission,
         )

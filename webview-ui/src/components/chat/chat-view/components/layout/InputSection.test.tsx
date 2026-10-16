@@ -111,6 +111,26 @@ function props(currentDraft: InteractionDraft): ComponentProps<typeof InputSecti
 }
 
 describe("InputSection deferred task submission", () => {
+    it("keeps a blocked Resume draft in the composer rather than enqueueing it", () => {
+        const current = props(draft("resume with this note"))
+        const onEnqueue = vi.fn(async () => true)
+        const onSubmit = vi.fn(async () => undefined)
+        render(
+            <InputSection
+                {...current}
+                canQueueInput={true}
+                enabled={false}
+                onEnqueueInput={onEnqueue}
+                onSubmit={onSubmit}
+                submitKind="resume"
+            />,
+        )
+        fireEvent.click(screen.getByRole("button", { name: "Submit" }))
+        expect(onEnqueue).not.toHaveBeenCalled()
+        expect(onSubmit).not.toHaveBeenCalled()
+        expect(current.chatState.composer.retire).not.toHaveBeenCalled()
+    })
+
     it("waits for Task settings before submitting the next request", async () => {
         let releaseSettings!: () => void
         mocks.flushPendingTaskSettingsRequests.mockImplementationOnce(

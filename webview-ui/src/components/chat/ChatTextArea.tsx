@@ -296,7 +296,7 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
         const trySend = useCallback(() => {
             // Nothing can take a send while sending is disabled and no queue is
             // attached; the draft stays, and the user is told why.
-            if (sendingDisabled && !onSendBlocked) {
+            if (sendingDisabled && (!onSendBlocked || !queueAvailable || submitKind === "resume")) {
                 if (contentLength(engine.getState().segments) > 0) reportSendRefusal("input_not_ready")
                 return
             }
@@ -305,13 +305,24 @@ const ChatTextArea = forwardRef<SemanticComposerEditorHandle, ChatTextAreaProps>
                 reportSendRefusal(capture.block)
                 return
             }
+            if (contentLength(engine.getState().segments) === 0 && submitKind !== "resume") return
             if (sendingDisabled) {
                 onSendBlocked?.(capture.draft, "queued")
                 return
             }
             setIsFocused(false)
             onSend(capture.draft)
-        }, [documentId, engine, onSend, onSendBlocked, reportSendRefusal, semanticCatalog, sendingDisabled])
+        }, [
+            documentId,
+            engine,
+            onSend,
+            onSendBlocked,
+            queueAvailable,
+            reportSendRefusal,
+            semanticCatalog,
+            sendingDisabled,
+            submitKind,
+        ])
 
         /**
          * Hand the draft to the queue as steering input, as the steer shortcut

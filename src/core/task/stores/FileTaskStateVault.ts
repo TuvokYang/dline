@@ -1,4 +1,4 @@
-import { readJsonWithBackup, writeJsonAtomic } from "@shared/storage/atomic-file"
+import { readJsonWithBackupSync, writeJsonAtomicSync } from "@shared/storage/atomic-file"
 import type { DurableTaskSnapshot, StateVault } from "./contracts"
 
 interface PersistedTaskStateV1 {
@@ -31,7 +31,7 @@ export class FileTaskStateVault implements StateVault {
     /** Returns the newest decodable snapshot, falling back to `state.json.bak` when the primary is unusable. */
     async load(taskId: string): Promise<DurableTaskSnapshot | undefined> {
         await this.writeTail
-        const result = await readJsonWithBackup(this.filePath, decodeFor(taskId))
+        const result = readJsonWithBackupSync(this.filePath, decodeFor(taskId))
         switch (result.status) {
             case "primary":
             case "backup":
@@ -45,7 +45,11 @@ export class FileTaskStateVault implements StateVault {
 
     save(snapshot: DurableTaskSnapshot): Promise<void> {
         const document: PersistedTaskStateV1 = { version: 1, snapshot }
-        const write = this.writeTail.then(() => writeJsonAtomic(this.filePath, document, { backup: true }))
+        // Runtime snapshots are small and provider commands cannot dispatch until
+        // this write is durable. The async fs pool may be saturated by workspace
+        // discovery, so use the same atomic-file contract synchronously rather
+        // than letting unrelated scans convoy the task's causal commit.
+        const write = this.writeTail.then(() => writeJsonAtomicSync(this.filePath, document, { backup: true }))
         this.writeTail = write.catch(() => undefined)
         return write
     }

@@ -14,7 +14,7 @@ import type { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import type { McpHub } from "@services/mcp/McpHub"
 import type { AutoApprovalSettings } from "@shared/AutoApprovalSettings"
 import type { BrowserSettings } from "@shared/BrowserSettings"
-import type { CheckpointSource, CommandStatus, UiAsk, UiSay } from "@shared/ExtensionMessage"
+import type { CommandStatus, UiAsk, UiSay } from "@shared/ExtensionMessage"
 import type { FocusChainSettings } from "@shared/FocusChainSettings"
 import type { SubmittedInputRow } from "@shared/input-semantics/submitted-input"
 import type { ClineContent, ClineToolResponseContent } from "@shared/messages/content"
@@ -228,14 +228,8 @@ export interface TaskCallbacks {
      */
     saveCheckpoint?: (isAttemptCompletionMessage?: boolean, completionMessageTs?: number) => Promise<void>
 
-    /**
-     * Before a named file edit runs: add a file restore point when the files
-     * changed since the latest checkpoint. Never rejects; a checkpoint that
-     * cannot be made is left out and the edit runs.
-     *
-     * Optional like `saveCheckpoint`: only a surface with workspace history has one.
-     */
-    ensurePreEditCheckpoint?: (source?: Extract<CheckpointSource, { kind: "pre_edit" }>, signal?: AbortSignal) => Promise<void>
+    /** Wait for the already-started round baseline before a tool mutates workspace files. */
+    awaitRoundCheckpointBeforeMutation?: () => Promise<void>
 
     sayAndCreateMissingParamError: (
         toolName: DlineDefaultTool,

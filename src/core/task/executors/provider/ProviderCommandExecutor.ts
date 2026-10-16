@@ -119,6 +119,11 @@ export interface ProviderRoundCheckpointPort {
     beforeRequest(turnId: string, signal: AbortSignal): Promise<void>
 }
 
+/** Work that may begin only after the request has reached the provider transport. */
+export interface ProviderRequestLifecyclePort {
+    afterProviderStarted?(): void
+}
+
 export interface ProviderExecutionInput {
     readonly draftRef: string
     readonly turnId?: string
@@ -178,6 +183,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
         private readonly presentation?: ProviderTextPresentationPort,
         private readonly report?: ProviderRequestReportPort,
         private readonly checkpoint?: ProviderRoundCheckpointPort,
+        private readonly lifecycle?: ProviderRequestLifecyclePort,
     ) {}
 
     execute(command: Command): Promise<void> {
@@ -265,7 +271,11 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
     }
 
     private async consume(command: ProviderStartCommand, signal: AbortSignal): Promise<ProviderTurnOutcome | undefined> {
-        await this.settleRoundCheckpoint(command.turnId ?? command.commandId, signal)
+        // Checkpoint persistence is a side feature of the turn. Shadow Git can take
+        // tens of seconds on a cold workspace, so it must not gate provider admission.
+        // The gate still serializes and observes its own work, and task teardown
+        // drains it through CheckpointGate.close().
+        void this.settleRoundCheckpoint(command.turnId ?? command.commandId, signal)
         const record = await this.openRequestRecord(command)
         const usage: UsageAccumulator = {}
         // A stream that neither yields a turn nor throws was abandoned, which only
@@ -285,7 +295,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
         }
     }
 
-    /** A restore point that cannot be written only costs that restore point, never the turn. */
+    /** A restore point runs independently and cannot delay or fail the provider turn. */
     private async settleRoundCheckpoint(turnId: string, signal: AbortSignal): Promise<void> {
         if (!this.checkpoint) return
         try {
@@ -363,8 +373,13 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
         let transientId: string | undefined
         let retrying = false
         let durableTerminal = false
+        let providerStartedObserved = false
         try {
             for await (const chunk of this.port.start({ draftRef: command.draftRef, turnId: command.turnId, signal })) {
+                if (!providerStartedObserved) {
+                    providerStartedObserved = true
+                    this.lifecycle?.afterProviderStarted?.()
+                }
                 if (chunk.kind === "interrupted") {
                     interrupted = chunk
                     continue

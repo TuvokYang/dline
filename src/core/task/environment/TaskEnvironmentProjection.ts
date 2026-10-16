@@ -10,7 +10,6 @@ import {
     type BackgroundSubagentProvider,
     buildTaskBackgroundEnvironmentSection,
 } from "@core/task/background/BackgroundContextInjector"
-import { detectAvailableCliTools } from "@core/task/cli-tool-detector"
 import { showContextUsage } from "@core/task/environment-context"
 import type { FocusChainInstructionPort } from "@core/task/focus-chain"
 import { formatFocusChainTaskProgressSection } from "@core/task/focus-chain/file-utils"
@@ -20,11 +19,12 @@ import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { ITerminalManager } from "@integrations/terminal/types"
-import { listFiles } from "@services/glob/list-files"
+import { listTopLevelFilesSync } from "@services/glob/list-files"
 import { findLast } from "@shared/array"
 import { combineApiRequests } from "@shared/combineApiRequests"
 import { combineCommandSequences } from "@shared/combineCommandSequences"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
+import { Logger } from "@shared/services/Logger"
 import type { Mode } from "@shared/storage/types"
 import { arePathsEqual, getDesktopDir } from "@utils/path"
 import { filterExistingFiles } from "@utils/tabFiltering"
@@ -215,21 +215,26 @@ export class TaskEnvironmentProjection {
         if (arePathsEqual(this.options.identity.cwd, getDesktopDir())) {
             details += "(Desktop files not shown automatically. Use list_files to explore if needed.)"
         } else {
-            const [fileInfos, didHitLimit] = await listFiles(this.options.identity.cwd, true, 200, {
-                ignoreController: this.options.workspace.ignoreController,
-            })
+            const startedAt = performance.now()
+            if (Logger.isDebugEnabled()) {
+                Logger.debug(`[EnvironmentPerf] phase=file_list_start taskId=${this.options.identity.taskId}`)
+            }
+            // The request-critical environment needs a bounded workspace overview,
+            // not a deep traversal. Recursive discovery can monopolize filesystem
+            // work long after a timeout; the model can request it explicitly with
+            // list_files when the task actually needs that detail.
+            const [fileInfos, didHitLimit] = listTopLevelFilesSync(this.options.identity.cwd, 200)
+            if (Logger.isDebugEnabled()) {
+                Logger.debug(
+                    `[EnvironmentPerf] phase=file_list_complete taskId=${this.options.identity.taskId} durationMs=${Math.round(performance.now() - startedAt)} files=${fileInfos.length} hitLimit=${didHitLimit}`,
+                )
+            }
             details += formatResponse.formatFilesList(
                 this.options.identity.cwd,
                 fileInfos,
                 didHitLimit,
                 this.options.workspace.ignoreController,
             )
-        }
-        const workspacesJson = await this.options.workspace.manager?.buildWorkspacesJson()
-        if (workspacesJson) details += `\n\n# Workspace Configuration\n${workspacesJson}`
-        const cliTools = await detectAvailableCliTools()
-        if (cliTools.length > 0) {
-            details += `\n\n# Detected CLI Tools\nThese are some of the tools on the user's machine, and may be useful if needed to accomplish the task: ${cliTools.join(", ")}. This list is not exhaustive, and other tools may be available.`
         }
         return details
     }

@@ -1,9 +1,10 @@
+import { statSync } from "node:fs"
 import { builtinIgnoreGlobPatterns, type IgnoreController, readDirectoryGlobPatterns } from "@core/ignore/IgnoreController"
 import { workspaceResolver } from "@core/workspace"
 import { isDirectory } from "@utils/fs"
 import { arePathsEqual } from "@utils/path"
 import * as fs from "fs/promises"
-import { globby, Options } from "globby"
+import { globby, globbyStream, globbySync, Options } from "globby"
 import * as os from "os"
 import * as path from "path"
 import { Logger } from "@/shared/services/Logger"
@@ -30,6 +31,8 @@ const MAX_LINE_COUNT_FILE_SIZE = 1_000_000
 /** Optional workspace rules; when absent only the built-in floor applies. */
 export interface ListFilesOptions {
     readonly ignoreController?: IgnoreController
+    /** Maximum recursive traversal time. The active filesystem walk is cancelled when this expires. */
+    readonly timeoutMs?: number
 }
 
 // Helper functions
@@ -193,7 +196,7 @@ export async function listFiles(
     }
 
     const filePaths = recursive
-        ? await globbyLevelByLevel(limit, globbyOptions)
+        ? await globbyLevelByLevel(limit, globbyOptions, options.timeoutMs)
         : (await globby("*", globbyOptions)).slice(0, limit)
 
     // Enrich all file paths with stat metadata
@@ -205,6 +208,40 @@ export async function listFiles(
     }
 
     return [fileInfos, filePaths.length >= limit]
+}
+
+/**
+ * Synchronous, shallow workspace snapshot for provider-critical prompt assembly.
+ * It intentionally avoids line counts and the async filesystem pool.
+ */
+export function listTopLevelFilesSync(dirPath: string, limit: number): [FileInfo[], boolean] {
+    const resolved = workspaceResolver.resolveWorkspacePath(dirPath, "", "Services.glob.listTopLevelFilesSync")
+    const absolutePath = typeof resolved === "string" ? resolved : resolved.absolutePath
+    if (isRestrictedPath(absolutePath)) return [[], false]
+    try {
+        if (!statSync(absolutePath).isDirectory()) return [[], false]
+    } catch {
+        return [[], false]
+    }
+    const paths = globbySync("*", {
+        cwd: absolutePath,
+        dot: true,
+        absolute: true,
+        markDirectories: true,
+        gitignore: false,
+        onlyFiles: false,
+        suppressErrors: true,
+    }).slice(0, limit)
+    const infos = paths.map((filePath): FileInfo => {
+        const isDirectory = filePath.endsWith("/")
+        try {
+            const stats = statSync(filePath)
+            return { path: filePath, size: stats.size, mtime: stats.mtime, isDirectory: isDirectory || stats.isDirectory() }
+        } catch {
+            return { path: filePath, size: 0, mtime: new Date(0), isDirectory }
+        }
+    })
+    return [infos, paths.length >= limit]
 }
 
 /*
@@ -222,56 +259,92 @@ Breadth-first traversal of directory structure level by level up to a limit:
    - Potential for loops if symbolic links reference back to parent (we could use followSymlinks: false but that may not be ideal for some projects and it's pointless if they're not using symlinks wrong)
    - Timeout mechanism prevents infinite loops
 */
-async function globbyLevelByLevel(limit: number, options?: Options) {
+async function globbyLevelByLevel(limit: number, options?: Options, timeoutMs = 10_000) {
     const results: Set<string> = new Set()
     const queue: string[] = ["*"]
+    const deadline = Date.now() + timeoutMs
     // Rules accumulated so far: the caller's workspace rules, plus the nested
     // `.gitignore` of every directory we actually enter.
     const currentIgnore: string[] = [...((options?.ignore as string[]) ?? [])]
 
-    const globbingProcess = async () => {
-        while (results.size < limit) {
-            const pattern = queue.shift()
-            if (pattern === undefined) break
-            const filesAtLevel = await globby(pattern, { ...options, ignore: currentIgnore })
+    while (results.size < limit) {
+        const pattern = queue.shift()
+        if (pattern === undefined) break
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) {
+            Logger.warn("Globbing timed out, returning partial results")
+            break
+        }
+        const { files: filesAtLevel, timedOut } = await collectGlobWithin(
+            pattern,
+            {
+                ...options,
+                ignore: currentIgnore,
+            },
+            limit - results.size,
+            remaining,
+        )
 
-            for (const file of filesAtLevel) {
-                if (results.size >= limit) {
-                    break
-                }
-                results.add(file)
-                if (file.endsWith("/")) {
-                    // This directory survived the current rules, so its own `.gitignore`
-                    // is safe to read and must apply to everything below it.
-                    currentIgnore.push(...(await readDirectoryGlobPatterns(file)))
+        for (const file of filesAtLevel) {
+            if (results.size >= limit) break
+            results.add(file)
+            if (file.endsWith("/")) {
+                // This directory survived the current rules, so its own `.gitignore`
+                // is safe to read and must apply to everything below it.
+                currentIgnore.push(...(await readDirectoryGlobPatterns(file)))
 
-                    // Queue as a RELATIVE path to cwd so that ignore patterns (like **/tmp/**)
-                    // are checked against relative entry paths, not absolute ones. Using absolute
-                    // patterns causes false matches when the project sits under a directory whose
-                    // name collides with an ignored name (e.g., /tmp on Linux).
-                    const cwd = options?.cwd?.toString() ?? ""
-                    // Globs are always POSIX-separated. On Windows `path.relative` returns
-                    // backslashes, which glob reads as escapes, so a nested directory could
-                    // never be re-queried and the traversal silently stopped below depth 1.
-                    const relativeDir = path.relative(cwd, file).split(path.sep).join("/")
-                    // Parentheses must still be escaped: NextJS route groups such as
-                    // `(auth)` would otherwise be parsed as glob grouping syntax.
-                    const escapedDir = relativeDir.replace(/[()]/g, "\\$&")
-                    queue.push(`${escapedDir}/*`)
-                }
+                // Queue as a RELATIVE path to cwd so that ignore patterns (like **/tmp/**)
+                // are checked against relative entry paths, not absolute ones. Using absolute
+                // patterns causes false matches when the project sits under a directory whose
+                // name collides with an ignored name (e.g., /tmp on Linux).
+                const cwd = options?.cwd?.toString() ?? ""
+                // Globs are always POSIX-separated. On Windows `path.relative` returns
+                // backslashes, which glob reads as escapes, so a nested directory could
+                // never be re-queried and the traversal silently stopped below depth 1.
+                const relativeDir = path.relative(cwd, file).split(path.sep).join("/")
+                // Parentheses must still be escaped: NextJS route groups such as
+                // `(auth)` would otherwise be parsed as glob grouping syntax.
+                const escapedDir = relativeDir.replace(/[()]/g, "\\$&")
+                queue.push(`${escapedDir}/*`)
             }
         }
-        return Array.from(results).slice(0, limit)
+        if (timedOut) {
+            Logger.warn("Globbing timed out, returning partial results")
+            break
+        }
     }
+    return Array.from(results).slice(0, limit)
+}
 
-    // Timeout after 10 seconds and return partial results
-    const timeoutPromise = new Promise<string[]>((_, reject) => {
-        setTimeout(() => reject(new Error("Globbing timeout")), 10_000)
-    })
-    try {
-        return await Promise.race([globbingProcess(), timeoutPromise])
-    } catch (_error) {
-        Logger.warn("Globbing timed out, returning partial results")
-        return Array.from(results)
+/** Collect one breadth-first level and destroy its active walk when the budget expires. */
+async function collectGlobWithin(
+    pattern: string,
+    options: Options,
+    limit: number,
+    timeoutMs: number,
+): Promise<{ readonly files: string[]; readonly timedOut: boolean }> {
+    const stream = globbyStream(pattern, options) as NodeJS.ReadableStream & {
+        destroy(error?: Error): void
+        [Symbol.asyncIterator](): AsyncIterator<string>
     }
+    const files: string[] = []
+    let timedOut = false
+    const timer = setTimeout(() => {
+        timedOut = true
+        stream.destroy(new Error("Globbing timeout"))
+    }, timeoutMs)
+    try {
+        for await (const file of stream) {
+            files.push(String(file))
+            if (files.length >= limit) {
+                stream.destroy()
+                break
+            }
+        }
+    } catch (error) {
+        if (!timedOut) throw error
+    } finally {
+        clearTimeout(timer)
+    }
+    return { files, timedOut }
 }

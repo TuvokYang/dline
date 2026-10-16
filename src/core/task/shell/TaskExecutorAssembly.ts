@@ -15,6 +15,7 @@ import { type ApprovalPolicyPort, PolicyCommandExecutor } from "../executors/pol
 import {
     ProviderCommandExecutor,
     type ProviderExecutionPort,
+    type ProviderRequestLifecyclePort,
     type ProviderRoundCheckpointPort,
     type ProviderTextPresentationPort,
 } from "../executors/provider/ProviderCommandExecutor"
@@ -33,6 +34,8 @@ export interface ProviderPorts {
     readonly report?: ProviderRequestReportPort
     /** Writes the round's restore point before each request; absent without workspace history. */
     readonly checkpoint?: ProviderRoundCheckpointPort
+    /** Starts request-adjacent maintenance only after provider transport has begun. */
+    readonly lifecycle?: ProviderRequestLifecyclePort
 }
 
 /** Everything the dialog domain needs: how a question is asked, and who awaits it. */
@@ -113,6 +116,7 @@ export function createTaskExecutorAssembly(options: TaskExecutorAssemblyOptions)
         options.execution.provider.presentation,
         options.execution.provider.report,
         options.execution.provider.checkpoint,
+        options.execution.provider.lifecycle,
     )
     const tool = new ToolCommandExecutor(options.execution.tool, events)
     const dialog = new DialogCommandExecutor(

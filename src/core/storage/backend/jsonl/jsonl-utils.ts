@@ -75,6 +75,55 @@ export async function readJsonl<T>(filePath: string): Promise<T[]> {
     return parseJsonlContent<T>(content)
 }
 
+/** Read a bounded prefix from a JSONL file; undefined identifies a legacy JSON array. */
+export async function readJsonlHeadValues<T>(filePath: string, lineCount: number): Promise<T[] | undefined> {
+    if (!(await fileExistsAtPath(filePath))) return []
+    const handle = await fs.open(filePath, "r")
+    try {
+        const { size } = await handle.stat()
+        if (size === 0 || lineCount <= 0) return []
+        const prefixLength = Math.min(size, LEGACY_ARRAY_PROBE_BYTES)
+        const prefix = Buffer.alloc(prefixLength)
+        await handle.read(prefix, 0, prefixLength, 0)
+        if (isJsonArray(stripByteOrderMark(prefix.toString("utf8")))) return undefined
+
+        const chunks: Buffer[] = []
+        let position = 0
+        let newlines = 0
+        while (position < size && newlines < lineCount) {
+            const length = Math.min(TAIL_CHUNK_BYTES, size - position)
+            const chunk = Buffer.allocUnsafe(length)
+            const { bytesRead } = await handle.read(chunk, 0, length, position)
+            if (bytesRead === 0) break
+            const read = chunk.subarray(0, bytesRead)
+            chunks.push(read)
+            for (const byte of read) if (byte === NEWLINE) newlines += 1
+            position += bytesRead
+        }
+        return parseJsonlContent<T>(Buffer.concat(chunks).toString("utf8")).slice(0, lineCount)
+    } finally {
+        await handle.close()
+    }
+}
+
+/** Read a bounded suffix from a JSONL file; undefined identifies a legacy JSON array. */
+export async function readJsonlTailValues<T>(filePath: string, lineCount: number): Promise<T[] | undefined> {
+    if (!(await fileExistsAtPath(filePath))) return []
+    const handle = await fs.open(filePath, "r")
+    try {
+        const { size } = await handle.stat()
+        if (size === 0 || lineCount <= 0) return []
+        const prefixLength = Math.min(size, LEGACY_ARRAY_PROBE_BYTES)
+        const prefix = Buffer.alloc(prefixLength)
+        await handle.read(prefix, 0, prefixLength, 0)
+        if (isJsonArray(stripByteOrderMark(prefix.toString("utf8")))) return undefined
+        const tail = await readJsonlTail(handle, lineCount)
+        return parseJsonlContent<T>(tail.lines.map((line) => line.text).join("\n"))
+    } finally {
+        await handle.close()
+    }
+}
+
 /**
  * Append one or more entries as JSONL lines to a file.
  * Creates the file if it does not exist.

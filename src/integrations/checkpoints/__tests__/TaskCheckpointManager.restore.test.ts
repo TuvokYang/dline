@@ -1,5 +1,6 @@
 import * as path from "path"
 import { describe, expect, it, vi } from "vitest"
+import { HostProvider } from "@/hosts/host-provider"
 import type { UiMessage } from "@/shared/ExtensionMessage"
 
 vi.unmock("@integrations/checkpoints")
@@ -13,6 +14,8 @@ interface RestoreHarness {
     taskState: DefaultToolHandlerState
     resetHead: ReturnType<typeof vi.fn>
     restoreFiles: ReturnType<typeof vi.fn>
+    closeAllDiffs: ReturnType<typeof vi.fn>
+    getDiffSet: ReturnType<typeof vi.fn>
     restoreChatRuntime: ReturnType<typeof vi.fn>
     resumeTask: ReturnType<typeof vi.fn>
     persistTaskHistory: ReturnType<typeof vi.fn>
@@ -43,6 +46,15 @@ function createHarness(
     })
     const resetHead = vi.fn().mockResolvedValue(undefined)
     const restoreFiles = vi.fn().mockResolvedValue(undefined)
+    const closeAllDiffs = vi.mocked(HostProvider.diff.closeAllDiffs)
+    closeAllDiffs.mockClear()
+    closeAllDiffs.mockResolvedValue({})
+    const changedPath = trackedFiles?.[0] ?? path.resolve("C:/workspace/changed.ts")
+    const getDiffSet = vi
+        .fn()
+        .mockResolvedValue([
+            { relativePath: path.basename(changedPath), absolutePath: changedPath, before: "before", after: "after" },
+        ])
     const restoreChatRuntime = vi.fn().mockResolvedValue(undefined)
     const resumeTask = vi.fn().mockResolvedValue(undefined)
     const truncateApiHistory = vi.fn().mockResolvedValue(undefined)
@@ -114,7 +126,7 @@ function createHarness(
             publishMessage: vi.fn().mockResolvedValue(undefined),
         } as never,
         {
-            checkpointTracker: { resetHead, restoreFiles } as never,
+            checkpointTracker: { getDiffSet, resetHead, restoreFiles } as never,
         },
     )
     return {
@@ -122,6 +134,8 @@ function createHarness(
         taskState,
         resetHead,
         restoreFiles,
+        closeAllDiffs,
+        getDiffSet,
         restoreChatRuntime,
         resumeTask,
         persistTaskHistory,
@@ -139,7 +153,9 @@ describe("TaskCheckpointManager restore isolation", () => {
 
         await harness.manager.restoreCheckpoint(42, "workspace")
 
+        expect(harness.closeAllDiffs).toHaveBeenCalledOnce()
         expect(harness.resetHead).toHaveBeenCalledWith("hash-1")
+        expect(harness.closeAllDiffs.mock.invocationCallOrder[0]).toBeLessThan(harness.resetHead.mock.invocationCallOrder[0])
         expect(harness.taskState).toMatchObject({
             userMessageContent: [{ type: "text", text: "active user content" }],
             assistantMessageContent: [{ type: "text", text: "active assistant content" }],
@@ -154,6 +170,17 @@ describe("TaskCheckpointManager restore isolation", () => {
         expect(harness.resumeTask).not.toHaveBeenCalled()
         // A file-only restore must not touch conversation presentation state.
         expect(harness.clearTransientClineMessages).not.toHaveBeenCalled()
+    })
+
+    it("rejects a workspace restore whose effective delta is empty", async () => {
+        const harness = createHarness([{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: ["hash-1"] }])
+        harness.getDiffSet.mockResolvedValue([])
+
+        const result = await harness.manager.restoreCheckpoint(42, "workspace")
+
+        expect(harness.resetHead).not.toHaveBeenCalled()
+        expect(harness.restoreFiles).not.toHaveBeenCalled()
+        expect(result.checkpointManagerErrorMessage).toBe("No workspace changes to restore")
     })
 
     it("resolves a current single root by persisted identity instead of the first hash", async () => {

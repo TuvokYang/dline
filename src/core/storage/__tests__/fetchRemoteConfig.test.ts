@@ -3,10 +3,18 @@ import * as remoteConfigFetch from "@core/storage/remote-config/fetch"
 import * as remoteConfigUtils from "@core/storage/remote-config/utils"
 import { createSessionFixture } from "@core/task/session/__fixtures__/active-task-session"
 import * as assert from "assert"
-import { afterEach, beforeEach, describe, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 // sinon import removed: using vitest globals
 import { ClineAccountService } from "@/services/account/ClineAccountService"
 import { AuthService } from "@/services/auth/AuthService"
+
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((settle) => {
+        resolve = settle
+    })
+    return { promise, resolve }
+}
 
 describe("fetchRemoteConfig", () => {
     let sandbox: any /* sinon.SinonSandbox → vitest */
@@ -398,5 +406,26 @@ describe("fetchRemoteConfig", () => {
         // switchAccount failure should NOT clear existing remote config
         assert.strictEqual((remoteConfigUtils.clearRemoteConfig as any) /* sinon.SinonStub → vitest */.mock.calls.length, 0)
         assert.strictEqual((remoteConfigUtils.applyRemoteConfig as any) /* sinon.SinonStub → vitest */.mock.calls.length, 0)
+    })
+
+    it("coalesces concurrent refresh requests for the same controller", async () => {
+        const discovery = deferred<undefined>()
+        fetchUserRemoteConfigStub.mockReturnValue(discovery.promise)
+        const controller = {
+            accountService: { switchAccount: vi.fn() },
+            stateManager: { setSecret: vi.fn() },
+            mcpHub: {},
+            postStateToWebview: vi.fn(),
+        }
+
+        const first = remoteConfigFetch.fetchRemoteConfig(controller as any)
+        const second = remoteConfigFetch.fetchRemoteConfig(controller as any)
+
+        expect(second).toBe(first)
+        expect(fetchUserRemoteConfigStub).toHaveBeenCalledOnce()
+
+        discovery.resolve(undefined)
+        await Promise.all([first, second])
+        expect(remoteConfigUtils.clearRemoteConfig).toHaveBeenCalledOnce()
     })
 })

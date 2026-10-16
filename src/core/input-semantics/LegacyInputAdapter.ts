@@ -1,6 +1,6 @@
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
-import { lexSemanticInput } from "@shared/input-semantics/lexer"
+import { lexSemanticInput, semanticCandidateSpans } from "@shared/input-semantics/lexer"
 
 /** A submission from a client that has no semantic composer. */
 export interface LegacyInput {
@@ -38,13 +38,15 @@ export class LegacyInputAdapter {
     constructor(
         private readonly catalog: () => Promise<InputSemanticCatalog>,
         private readonly nextDocumentId: () => string,
+        private readonly currentCatalog?: () => InputSemanticCatalog,
     ) {}
 
     async adapt(input: LegacyInput): Promise<LegacyAdaptation> {
-        const catalog = await this.catalog()
+        const text = input.text ?? ""
+        const catalog = await this.catalogFor(text)
         return {
             catalog,
-            document: lexSemanticInput(input.text ?? "", {
+            document: lexSemanticInput(text, {
                 catalog,
                 documentId: this.nextDocumentId(),
                 // A legacy client has no way to confirm a candidate, so its text keeps
@@ -52,5 +54,17 @@ export class LegacyInputAdapter {
                 activation: "auto",
             }),
         }
+    }
+
+    /**
+     * Plain text cannot resolve differently after capability discovery because
+     * candidate boundaries are catalog-independent. Admit it against the current
+     * snapshot without starting a redundant filesystem scan on the provider hot
+     * path. Inputs that do contain a command or mention still wait for the complete
+     * catalog so dynamic capabilities are never silently demoted to prose.
+     */
+    private catalogFor(text: string): Promise<InputSemanticCatalog> | InputSemanticCatalog {
+        if (!this.currentCatalog || semanticCandidateSpans(text).length > 0) return this.catalog()
+        return this.currentCatalog()
     }
 }
