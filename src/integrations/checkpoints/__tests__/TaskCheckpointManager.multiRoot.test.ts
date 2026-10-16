@@ -149,8 +149,8 @@ describe("TaskCheckpointManager multi-root", () => {
                 checkpointWorkspaceRoots: [harness.rootA, harness.rootB],
             }),
         )
-        expect(harness.updateClineMessage).toHaveBeenCalledWith(0, {
-            lastCheckpointHash: ["hash-a", "hash-b"],
+        expect(harness.updateClineMessage).toHaveBeenCalledWith(1, {
+            lastCheckpointHash: ["hash-a-next", "hash-b-next"],
             checkpointWorkspaceRoots: [harness.rootA, harness.rootB],
         })
     })

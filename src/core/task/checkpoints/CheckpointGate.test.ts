@@ -48,10 +48,6 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs> } = {
                 rows.push({ row, ...input })
                 return row
             },
-            attach: async (row, refs) => {
-                const entry = rows.find((candidate) => candidate.row.ts === row.ts)
-                if (entry) entry.refs = refs
-            },
         },
         bundles: {
             capture: async (input) => {
@@ -94,8 +90,7 @@ describe("CheckpointGate", () => {
             expect(first.outcome).toBe("created")
             expect(second.outcome).toBe("covered")
             expect(subject.rows).toHaveLength(1)
-            expect(subject.rows[0]).toMatchObject({ row: { position: 1 }, source })
-            expect(subject.rows[0].refs).toBeUndefined()
+            expect(subject.rows[0]).toMatchObject({ row: { position: 1 }, refs: "refs-0", source })
             expect(subject.bundles).toEqual([{ row: subject.rows[0].row, refs: "refs-0" }])
         })
 
@@ -127,7 +122,7 @@ describe("CheckpointGate", () => {
             expect(subject.rows.at(-1)?.source).toEqual({ kind: "round_start", turnId: "turn-2" })
         })
 
-        it("keeps chat-only rows without a file restore baseline when no files changed", async () => {
+        it("reuses the current file baseline when only the conversation advanced", async () => {
             const subject = harness()
             subject.say()
             await subject.gate.ensureRound("round_start")
@@ -137,10 +132,10 @@ describe("CheckpointGate", () => {
 
             expect(result.outcome).toBe("created")
             expect(subject.workspace.commits).toBe(1)
-            expect(subject.rows.map((entry) => entry.refs)).toEqual([undefined, undefined])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-0"])
         })
 
-        it("attaches the old baseline only after the next commit proves files changed", async () => {
+        it("binds every row to the workspace baseline at that conversation boundary", async () => {
             const subject = harness()
             subject.say()
             await subject.gate.ensureRound("round_start")
@@ -150,7 +145,7 @@ describe("CheckpointGate", () => {
             await subject.gate.ensureRound("round_start")
 
             expect(subject.workspace.commits).toBe(2)
-            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", undefined])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
             expect(subject.bundles.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
         })
 
@@ -163,7 +158,7 @@ describe("CheckpointGate", () => {
             const result = await subject.gate.ensureRound("pre_compaction")
 
             expect(result.outcome).toBe("created")
-            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", undefined])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
         })
 
         it("covers a reported change whose commit restores the same files", async () => {
@@ -216,7 +211,7 @@ describe("CheckpointGate", () => {
 
             await subject.gate.ensureRound("round_start")
 
-            expect(subject.rows.map((entry) => entry.refs)).toEqual([undefined, undefined, undefined])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", undefined, "refs-1"])
             expect(subject.workspace.commits).toBe(3)
         })
 
@@ -289,7 +284,7 @@ describe("CheckpointGate", () => {
             await subject.gate.ensureRound("round_start")
 
             expect(refs).toBe("refs-1")
-            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", undefined])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
             expect(subject.workspace.commits).toBe(2)
         })
     })
@@ -352,7 +347,7 @@ describe("CheckpointGate", () => {
             await expect(running).resolves.toMatchObject({ outcome: "created" })
         })
 
-        it("holds the next round behind a started mutation so its file delta attaches to the preceding row", async () => {
+        it("holds the next round behind a started mutation and binds its committed baseline", async () => {
             const subject = harness()
             subject.say()
             await subject.gate.ensureRound("round_start")
@@ -372,7 +367,7 @@ describe("CheckpointGate", () => {
             settleMutation()
             await expect(nextRound).resolves.toMatchObject({ outcome: "created" })
 
-            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", undefined])
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
             expect(subject.bundles.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
         })
 
@@ -428,6 +423,17 @@ describe("CheckpointGate", () => {
     })
 
     describe("reopened task", () => {
+        it("creates a file-backed row when the reopened checkpoint has no reusable refs", async () => {
+            const subject = harness({ initialState: () => ({ latestChat: { ts: 1, position: 0 } }) })
+            subject.workspace.dirty = false
+
+            const result = await subject.gate.ensureRound("round_start")
+
+            expect(result.outcome).toBe("created")
+            expect(subject.workspace.commits).toBe(1)
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0"])
+        })
+
         it("reuses the restored checkpoint when only the producer kind changed", async () => {
             const subject = harness({
                 initialState: () => ({

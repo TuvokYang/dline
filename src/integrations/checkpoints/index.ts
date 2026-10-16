@@ -282,7 +282,6 @@ export class TaskCheckpointManager implements ICheckpointManager {
             },
             rows: {
                 write: (input) => this.writeCheckpointRow(input),
-                attach: (row, baseline, current) => this.attachWorkspaceBaseline(row, baseline, current),
             },
             bundles: { capture: (input) => this.captureCheckpointBundle(input) },
             initialState: () => this.latestCheckpointState(),
@@ -367,27 +366,29 @@ export class TaskCheckpointManager implements ICheckpointManager {
         }
     }
 
-    /** Register one chat-only checkpoint row and wait until it is durable. */
-    private async writeCheckpointRow(input: { readonly source?: CheckpointSource }): Promise<CheckpointRow> {
+    /** Register one complete checkpoint row and wait until it is durable. */
+    private async writeCheckpointRow(input: {
+        readonly source?: CheckpointSource
+        readonly refs?: CheckpointReferenceSet
+    }): Promise<CheckpointRow> {
         if (this.disposed) throw new Error("The task is closing")
         const messages = this.services.messageStateHandler.clineMessages
         // A new restore point supersedes the one the workspace was checked out to.
         for (const message of messages) {
             if (message.say === "checkpoint_created") message.isCheckpointCheckedOut = false
         }
-        const begun = this.callbacks.beginRow(input.source ? { checkpointSource: input.source } : {})
+        const fileCheckpoint = input.refs && hasFileCheckpoint(input.refs) ? input.refs : undefined
+        const begun = this.callbacks.beginRow({
+            ...(input.source ? { checkpointSource: input.source } : {}),
+            ...(fileCheckpoint
+                ? {
+                      lastCheckpointHash: fileCheckpoint.hashes,
+                      checkpointWorkspaceRoots: fileCheckpoint.workspaceRoots,
+                  }
+                : {}),
+        })
         const row = await begun.persistence
         return { ts: row.ts, position: row.conversationJournalSeq }
-    }
-
-    private async attachWorkspaceBaseline(
-        row: CheckpointRow,
-        baseline: CheckpointReferenceSet,
-        current: CheckpointReferenceSet,
-    ): Promise<void> {
-        if (this.disposed || !(await this.hasEffectiveWorkspaceDelta(baseline, current))) return
-        const index = this.services.messageStateHandler.clineMessages.findIndex((message) => message.ts === row.ts)
-        if (index >= 0) await this.persistCheckpointHash(index, baseline)
     }
 
     private async currentWorkspaceDelta(references: CheckpointReferenceSet): Promise<CheckpointChangedFile[]> {
@@ -401,23 +402,6 @@ export class TaskCheckpointManager implements ICheckpointManager {
         if (!tracker) return []
         const hash = await this.getCurrentWorkspaceHash(references)
         return hash ? await tracker.getDiffSet(hash) : []
-    }
-
-    private async hasEffectiveWorkspaceDelta(
-        baseline: CheckpointReferenceSet,
-        current: CheckpointReferenceSet,
-    ): Promise<boolean> {
-        const coordinator = this.state.checkpointUnitCoordinator
-        if (coordinator) {
-            const outcome = await coordinator.getDiffSet(current, baseline)
-            return outcome.changedFiles.length > 0
-        }
-        const tracker = this.state.checkpointTracker
-        if (!tracker) return false
-        const baselineHash = await this.getCurrentWorkspaceHash(baseline)
-        const currentHash = await this.getCurrentWorkspaceHash(current)
-        if (!baselineHash || !currentHash) return false
-        return (await tracker.getDiffSet(baselineHash, currentHash)).length > 0
     }
 
     private async captureCheckpointBundle(input: {
@@ -435,15 +419,21 @@ export class TaskCheckpointManager implements ICheckpointManager {
         })
     }
 
-    /** Where a reopened task continues from: its latest round row and latest file references. */
+    /** Where a reopened task continues from: its latest round row and non-stale file references. */
     private latestCheckpointState(): CheckpointGateState<CheckpointReferenceSet> {
         const messages = this.services.messageStateHandler.clineMessages
-        const latestRound = findLast(
+        const latestRoundIndex = findLastIndex(
             messages,
             (message) => message.say === "checkpoint_created" && message.checkpointAnchorTs === undefined,
         )
-        const latestFiles = findLast(messages, (message) => hasFileCheckpoint(readCheckpointReferenceSet(message)))
-        const latestRefs = latestFiles ? readCheckpointReferenceSet(latestFiles) : undefined
+        const latestFileIndex = findLastIndex(messages, (message) => hasFileCheckpoint(readCheckpointReferenceSet(message)))
+        const latestRound = latestRoundIndex >= 0 ? messages[latestRoundIndex] : undefined
+        // A task-only row created after a failed file commit invalidates older refs.
+        // Completion refs written after the latest round remain reusable.
+        const latestRefs =
+            latestFileIndex >= 0 && latestFileIndex >= latestRoundIndex
+                ? readCheckpointReferenceSet(messages[latestFileIndex])
+                : undefined
         const latestSource = latestRound?.checkpointSource
         const latestRoundSource: CheckpointRoundSource | undefined =
             latestSource?.kind === "round_start" || latestSource?.kind === "pre_compaction" ? latestSource : undefined

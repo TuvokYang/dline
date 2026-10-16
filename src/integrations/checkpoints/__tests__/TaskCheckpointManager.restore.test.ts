@@ -172,6 +172,26 @@ describe("TaskCheckpointManager restore isolation", () => {
         expect(harness.clearTransientClineMessages).not.toHaveBeenCalled()
     })
 
+    it("keeps file restore available after restoring only the task conversation", async () => {
+        const checkpoint: UiMessage = {
+            ts: 42,
+            type: "say",
+            say: "checkpoint_created",
+            conversationHistoryIndex: 0,
+            lastCheckpointHash: ["hash-1"],
+        }
+        const harness = createHarness([checkpoint, { ts: 43, type: "say", say: "text", text: "later" }])
+
+        await harness.manager.restoreCheckpoint(42, "task")
+
+        expect(checkpoint.lastCheckpointHash).toEqual(["hash-1"])
+        expect(harness.resetHead).not.toHaveBeenCalled()
+
+        await harness.manager.restoreCheckpoint(42, "workspace")
+
+        expect(harness.resetHead).toHaveBeenCalledWith("hash-1")
+    })
+
     it("rejects a workspace restore whose effective delta is empty", async () => {
         const harness = createHarness([{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: ["hash-1"] }])
         harness.getDiffSet.mockResolvedValue([])

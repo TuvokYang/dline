@@ -36,10 +36,8 @@ export interface CheckpointRow {
 
 /** The visible side of a checkpoint. */
 export interface CheckpointRowPort<Refs> {
-    /** Register one chat row in presentation order and resolve once it is durable. */
-    write(input: { readonly source?: CheckpointSource }): Promise<CheckpointRow>
-    /** Publish a baseline only after a later commit proves that restoring it changes files. */
-    attach(row: CheckpointRow, baseline: Refs, current: Refs): Promise<void>
+    /** Register one complete restore point in presentation order and resolve once it is durable. */
+    write(input: { readonly source?: CheckpointSource; readonly refs?: Refs }): Promise<CheckpointRow>
 }
 
 /** The chat side of a checkpoint, stored beside the journal. */
@@ -136,12 +134,14 @@ export class CheckpointGate<Refs> {
         return this.exclusive(reason, operationSignal, async (run) => {
             const advanced = await this.conversationAdvanced()
             const changed = this.options.workspace.hasChanges()
-            if (!advanced && !changed) return COVERED
+            if (!advanced && !changed && this.latestRefs !== undefined) return COVERED
 
             const previousRefs = this.latestRefs
-            const previousRow = this.latestChat
             let refs = previousRefs
-            if (changed) {
+            // A row always carries the workspace state at its own conversation boundary.
+            // Commit when files may have changed or no reusable baseline exists; otherwise
+            // reuse the latest references instead of manufacturing a chat-only checkpoint.
+            if (changed || refs === undefined) {
                 const committed = await this.commit(run)
                 // Without a new restore point for the files there is nothing to add
                 // when the conversation also stands where the latest row left it.
@@ -149,19 +149,13 @@ export class CheckpointGate<Refs> {
                 // A failed commit must not reuse the previous references: the files
                 // moved on, so they would restore an older state than this row shows.
                 refs = committed.ok ? committed.refs : undefined
-                if (
-                    committed.ok &&
-                    refs !== undefined &&
-                    previousRow &&
-                    previousRefs !== undefined &&
-                    !this.options.workspace.sameRefs(refs, previousRefs)
-                ) {
-                    await this.attachRefs(run, previousRow, previousRefs, refs)
-                }
                 if (committed.ok && !advanced && this.options.workspace.sameRefs(refs, previousRefs)) return COVERED
             }
 
-            const row = await this.writeRow(run, source ? { source } : {})
+            const row = await this.writeRow(run, {
+                ...(source ? { source } : {}),
+                ...(refs === undefined ? {} : { refs }),
+            })
             if (!row) return FAILED
             await this.captureBundle(run, { row, ...(refs === undefined ? {} : { refs }) })
             this.latestChat = row
@@ -180,19 +174,9 @@ export class CheckpointGate<Refs> {
                 refs = this.latestRefs
                 return COVERED
             }
-            const previousRefs = this.latestRefs
-            const previousRow = this.latestChat
             const committed = await this.commit(run)
             if (!committed.ok) return FAILED
             refs = committed.refs
-            if (
-                refs !== undefined &&
-                previousRow &&
-                previousRefs !== undefined &&
-                !this.options.workspace.sameRefs(refs, previousRefs)
-            ) {
-                await this.attachRefs(run, previousRow, previousRefs, refs)
-            }
             return committed.refs === undefined ? SKIPPED : { outcome: "created" }
         })
         return refs
@@ -215,8 +199,8 @@ export class CheckpointGate<Refs> {
      * Enter one bounded workspace mutation in the same ordering sequence as checkpoints.
      *
      * A mutation admitted after a round waits for that baseline. A later round waits
-     * for the returned settlement callback, so it observes and attaches the file
-     * delta to the row that preceded the mutation rather than creating a chat-only row.
+     * for the returned settlement callback, then commits the changed files and binds
+     * that resulting baseline to its own row.
      */
     async beginMutation(): Promise<() => void> {
         if (this.holding.getStore()) return () => undefined
@@ -268,8 +252,8 @@ export class CheckpointGate<Refs> {
             return { ok: true, refs }
         } catch (error) {
             // The workspace moved but no trustworthy reference describes it.
-            // Clearing this prevents a later successful commit from attaching a stale
-            // baseline to a row created after this failure.
+            // Clearing this prevents a later row from binding a stale baseline after
+            // this failure.
             this.latestRefs = undefined
             run.fail("file", error)
             return { ok: false }
@@ -278,20 +262,15 @@ export class CheckpointGate<Refs> {
         }
     }
 
-    private async writeRow(run: GateRun, input: { readonly source?: CheckpointSource }): Promise<CheckpointRow | undefined> {
+    private async writeRow(
+        run: GateRun,
+        input: { readonly source?: CheckpointSource; readonly refs?: Refs },
+    ): Promise<CheckpointRow | undefined> {
         try {
             return await this.options.rows.write(input)
         } catch (error) {
             run.fail("row", error)
             return undefined
-        }
-    }
-
-    private async attachRefs(run: GateRun, row: CheckpointRow, baseline: Refs, current: Refs): Promise<void> {
-        try {
-            await this.options.rows.attach(row, baseline, current)
-        } catch (error) {
-            run.fail("row", error)
         }
     }
 
