@@ -424,10 +424,16 @@ export class DeepSeekHandler implements ApiHandler {
                     // Find today's data and match current model
                     const today = usageData?.data?.biz_data?.days?.find((d) => d.date === todayStr)
                     if (today?.data) {
+                        // The usage endpoint reports the provider's own model names,
+                        // which need not equal the id Dline displays. Matching the exact
+                        // id plus one hardcoded family left any renamed model reporting a
+                        // silent zero, so a day with no exact match now falls back to
+                        // every model of that day instead of reporting nothing.
                         const model = this.getModel()
-                        const modelData = today.data.find((d) => d.model === model.id || d.model.includes("deepseek-v4")) // match current model or v4 family
-                        if (modelData?.usage) {
-                            for (const u of modelData.usage) {
+                        const modelData = today.data.find((d) => d.model === model.id)
+                        const rows = modelData ? [modelData] : today.data
+                        for (const row of rows) {
+                            for (const u of row.usage ?? []) {
                                 const amt = Number.parseInt(u.amount, 10) || 0
                                 switch (u.type) {
                                     case "PROMPT_CACHE_HIT_TOKEN":
@@ -441,8 +447,8 @@ export class DeepSeekHandler implements ApiHandler {
                                         break
                                 }
                             }
-                            dailyInputTokens = dailyCacheHitTokens + dailyCacheMissTokens
                         }
+                        dailyInputTokens = dailyCacheHitTokens + dailyCacheMissTokens
                     }
                 } else {
                     Logger.warn(`[DeepSeek] Usage API failed: ${usageResp.status}`)

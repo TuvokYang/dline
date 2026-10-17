@@ -81,7 +81,13 @@ export function isSubscriptionUsage(usage: AccountUsage): boolean {
  */
 export function applyLocalDailyTokens(usage: AccountUsage, localDailyTokens: TokenIncrement | undefined): AccountUsage {
     if (!localDailyTokens || !isSubscriptionUsage(usage)) return usage
-    if (usage.dailyInputTokens !== undefined || usage.dailyOutputTokens !== undefined) return usage
+    // Zero is not a report, it is the absence of one. A provider whose model
+    // matching fails returns a defined zero for the day, and treating that as
+    // authoritative hid the ledger's real totals behind "Today In: 0". A day
+    // that reported any non-zero count is left exactly as the provider said.
+    const reportedInput = usage.dailyInputTokens ?? 0
+    const reportedOutput = usage.dailyOutputTokens ?? 0
+    if (reportedInput > 0 || reportedOutput > 0) return usage
     return {
         ...usage,
         dailyInputTokens: localDailyTokens.inputTokens,
