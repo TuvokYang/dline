@@ -2,6 +2,7 @@ import { deepSeekModels } from "@core/api/providers/models/deepseek"
 import { ModelRegistry } from "@core/model-registry/ModelRegistry"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { BaseProviderConfig } from "@shared/proto/dline/provider/common"
+import { resolveInputMediaTypes } from "@shared/providers/input-media"
 import { expect } from "chai"
 import { afterEach, describe, it, vi } from "vitest"
 import { getProfileModelInfo } from "../model-info"
@@ -31,5 +32,27 @@ describe("getProfileModelInfo", () => {
 
         expect(result.id).to.equal("deepseek-v4-pro")
         expect(result.capabilities?.contextWindow).to.equal(1_000_000)
+    })
+
+    // deepseek-flash reads images while deepseek-v4-pro does not, so the declared
+    // capability must reach the media resolver for one model and not the other.
+    it("declares image input for deepseek-flash only", () => {
+        vi.spyOn(ModelRegistry, "getInstance").mockReturnValue({
+            getProviderModels: () => ({
+                provider: "deepseek",
+                providerName: "DeepSeek",
+                billingMode: "token",
+                models: deepSeekModels,
+                defaultModelId: "deepseek-flash",
+            }),
+        } as unknown as ModelRegistry)
+
+        const resolve = (modelId: string) =>
+            resolveInputMediaTypes(
+                getProfileModelInfo(ApiProfile.create({ provider: "deepseek", modelId, deepseek: BaseProviderConfig.create() })),
+            )
+
+        expect(resolve("deepseek-flash").has("image/png")).to.equal(true)
+        expect(resolve("deepseek-v4-pro").has("image/png")).to.equal(false)
     })
 })

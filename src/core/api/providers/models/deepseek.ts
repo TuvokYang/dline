@@ -49,7 +49,7 @@ export const deepSeekModels: Record<string, ModelInfo> = {
             supportsTools: true,
             maxTokens: 384_000,
             contextWindow: 1_000_000,
-            supportsImages: false,
+            supportsImages: true,
             supportsPromptCache: true,
             supportsReasoning: true,
             thinking: thinkingCapabilities(),
