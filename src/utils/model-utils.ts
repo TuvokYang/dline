@@ -157,8 +157,14 @@ function isDeepSeek32ModelFamily(id: string): boolean {
 
 export function isDeepSeekNativeModelFamily(id: string): boolean {
     const modelId = normalize(id)
-    // deepseek-chat and deepseek-reasoner deprecated as of 2026-07-24, mapped to deepseek-v4-flash
-    return modelId.includes("deepseek-v4") || modelId.includes("deepseek-chat") || modelId.includes("deepseek-reasoner")
+    // deepseek-chat and deepseek-reasoner were retired on 2026-07-24 and deepseek-v4-flash was
+    // renamed to deepseek-flash; all three still name the same native-tool model family.
+    return (
+        modelId.includes("deepseek-v4") ||
+        modelId.includes("deepseek-flash") ||
+        modelId.includes("deepseek-chat") ||
+        modelId.includes("deepseek-reasoner")
+    )
 }
 
 export function isNextGenModelFamily(id: string): boolean {

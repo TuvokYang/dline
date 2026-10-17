@@ -854,7 +854,7 @@ e2e(
         // This provider has no Model Configuration disclosure, so expanding the card is enough.
         const deepSeekCard = await openProfileEditor(sidebar, E2E_PROFILE_NAMES.mockDeepSeek)
         await openModelPicker(deepSeekCard)
-        await expect(sidebar.getByRole("option", { name: modelOptionName("deepseek-v4-flash") })).toBeVisible()
+        await expect(sidebar.getByRole("option", { name: modelOptionName("deepseek-flash") })).toBeVisible()
         await expect(sidebar.getByRole("option", { name: modelOptionName("dline-e2e-discovered-model") })).toBeVisible()
         await expect
             .poll(() => server.getModelListRequests().filter((request) => request.target === "deepseek-chat").length)

@@ -7,6 +7,7 @@ import { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 
 export const DEEPSEEK_REASONING_EFFORT_OPTIONS = ["low", "high", "max"] as const
 
+/** Declared thinking capability for the seeded DeepSeek models. */
 function thinkingCapabilities() {
     return {
         supported: true,
@@ -41,9 +42,9 @@ export const deepSeekModels: Record<string, ModelInfo> = {
             currency: "CNY",
         },
     },
-    "deepseek-v4-flash": {
-        id: "deepseek-v4-flash",
-        name: "deepseek-v4-flash",
+    "deepseek-flash": {
+        id: "deepseek-flash",
+        name: "deepseek-flash",
         capabilities: {
             supportsTools: true,
             maxTokens: 384_000,
@@ -66,4 +67,4 @@ export const deepSeekModels: Record<string, ModelInfo> = {
 }
 
 /** Default model ID for DeepSeek provider */
-export const deepSeekDefaultModelId = "deepseek-v4-flash"
+export const deepSeekDefaultModelId = "deepseek-flash"

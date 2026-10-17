@@ -63,13 +63,51 @@ describe("DeepSeekModelSource", () => {
         const source = new DeepSeekModelSource()
 
         const models = await mockFetchForTesting(
-            async () => jsonResponse(listing("deepseek-v4-flash", "deepseek-v4-pro")),
+            async () => jsonResponse(listing("deepseek-flash", "deepseek-v4-pro")),
             async () => source.fetchModels({ apiKey: "secret-key" }),
         )
 
-        expect(Object.keys(models).sort()).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"])
-        expect(models["deepseek-v4-flash"].id).toBe("deepseek-v4-flash")
-        expect(models["deepseek-v4-flash"].name).toBe("deepseek-v4-flash")
+        expect(Object.keys(models).sort()).toEqual(["deepseek-flash", "deepseek-v4-pro"])
+        expect(models["deepseek-flash"].id).toBe("deepseek-flash")
+        expect(models["deepseek-flash"].name).toBe("deepseek-flash")
+    })
+
+    it("enables native tool calling and effort-mode thinking for a model the listing does not describe", async () => {
+        const source = new DeepSeekModelSource()
+
+        const models = await mockFetchForTesting(
+            async () => jsonResponse(listing("deepseek-flash")),
+            async () => source.fetchModels({ apiKey: "secret-key" }),
+        )
+
+        const capabilities = models["deepseek-flash"].capabilities
+        expect(capabilities?.supportsTools).toBe(true)
+        expect(capabilities?.supportsReasoning).toBe(true)
+        expect(capabilities?.thinking).toMatchObject({ supported: true, mode: "effort", defaultEnabled: true })
+    })
+
+    it("keeps a capability the listing states explicitly instead of the default", async () => {
+        const source = new DeepSeekModelSource()
+        const declared = {
+            object: "list",
+            data: [
+                {
+                    id: "deepseek-text-only",
+                    object: "model",
+                    owned_by: "deepseek",
+                    supported_features: ["reasoning"],
+                },
+            ],
+        }
+
+        const models = await mockFetchForTesting(
+            async () => jsonResponse(declared),
+            async () => source.fetchModels({ apiKey: "secret-key" }),
+        )
+
+        const capabilities = models["deepseek-text-only"].capabilities
+        expect(capabilities?.supportsTools).toBe(false)
+        expect(capabilities?.supportsReasoning).toBe(true)
     })
 
     it("falls back to the documented platform limits the listing omits", async () => {

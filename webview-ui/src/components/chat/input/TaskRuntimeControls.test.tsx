@@ -70,8 +70,8 @@ vi.mock("@components/settings/providers/useProviderModels", () => ({
             ? {}
             : providerId === "deepseek"
               ? {
-                    "deepseek-v4-flash": {
-                        id: "deepseek-v4-flash",
+                    "deepseek-flash": {
+                        id: "deepseek-flash",
                         capabilities: { supportsReasoning: true },
                     },
                 }
@@ -86,7 +86,7 @@ vi.mock("@components/settings/providers/useProviderModels", () => ({
         defaultModelId: !mocks.providerCatalogAvailable
             ? ""
             : providerId === "deepseek"
-              ? "deepseek-v4-flash"
+              ? "deepseek-flash"
               : providerId === "anthropic"
                 ? "claude-sonnet-4-6"
                 : "",
@@ -340,7 +340,7 @@ describe("chat input TaskRuntimeControls", () => {
                 id: "openai-id",
                 name: "deepseek-thinking",
                 provider: "deepseek",
-                modelId: "deepseek-v4-flash",
+                modelId: "deepseek-flash",
                 usedFor: [],
                 enabled: true,
                 deepseek: {
@@ -429,7 +429,7 @@ describe("chat input TaskRuntimeControls", () => {
                 id: "openai-id",
                 name: "deepseek-disabled",
                 provider: "deepseek",
-                modelId: "deepseek-v4-flash",
+                modelId: "deepseek-flash",
                 usedFor: [],
                 enabled: true,
                 deepseek: {

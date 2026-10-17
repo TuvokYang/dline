@@ -308,7 +308,7 @@ describe("DeepSeekHandler", () => {
             const profile = ApiProfile.create({
                 provider: "deepseek",
                 apiKey: "test-api-key",
-                modelId: "deepseek-v4-flash",
+                modelId: "deepseek-flash",
                 deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_RESPONSES }),
             })
             const handler = new DeepSeekHandler({ profile, mode: "act" })
@@ -324,7 +324,7 @@ describe("DeepSeekHandler", () => {
             expect(responsesCreate.mock.calls).to.have.length(1)
             expect(chatCreate.mock.calls).to.have.length(0)
             const request = responsesCreate.mock.calls[0]?.[0]
-            expect(request).to.deep.include({ model: "deepseek-v4-flash", stream: true, instructions: "system" })
+            expect(request).to.deep.include({ model: "deepseek-flash", stream: true, instructions: "system" })
             expect(request).not.to.have.property("previous_response_id")
             expect(request).not.to.have.property("store")
         })
@@ -334,7 +334,7 @@ describe("DeepSeekHandler", () => {
                 profile: ApiProfile.create({
                     provider: "deepseek",
                     apiKey: "test-api-key",
-                    modelId: "deepseek-v4-flash",
+                    modelId: "deepseek-flash",
                     deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_RESPONSES }),
                 }),
                 mode: "act",
@@ -375,7 +375,7 @@ describe("DeepSeekHandler", () => {
             const profile = ApiProfile.create({
                 provider: "deepseek",
                 apiKey: "test-api-key",
-                modelId: "deepseek-v4-flash",
+                modelId: "deepseek-flash",
                 deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_RESPONSES }),
             })
             const handler = new DeepSeekHandler({ profile, mode: "act" })
@@ -394,7 +394,7 @@ describe("DeepSeekHandler", () => {
                 profile: ApiProfile.create({
                     provider: "deepseek",
                     apiKey: "test-api-key",
-                    modelId: "deepseek-v4-flash",
+                    modelId: "deepseek-flash",
                     deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_RESPONSES }),
                 }),
                 mode: "act",
@@ -416,7 +416,7 @@ describe("DeepSeekHandler", () => {
                 profile: ApiProfile.create({
                     provider: "deepseek",
                     apiKey: "test-api-key",
-                    modelId: "deepseek-v4-flash",
+                    modelId: "deepseek-flash",
                     deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_CHAT }),
                 }),
                 mode: "act",
@@ -436,7 +436,7 @@ describe("DeepSeekHandler", () => {
                 profile: ApiProfile.create({
                     provider: "deepseek",
                     apiKey: "test-api-key",
-                    modelId: "deepseek-v4-flash",
+                    modelId: "deepseek-flash",
                     deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_CHAT }),
                 }),
                 mode: "act",
@@ -458,7 +458,7 @@ describe("DeepSeekHandler", () => {
                 profile: ApiProfile.create({
                     provider: "deepseek",
                     apiKey: "test-api-key",
-                    modelId: "deepseek-v4-flash",
+                    modelId: "deepseek-flash",
                     deepseek: BaseProviderConfig.create({
                         apiFormat: ApiFormat.OPENAI_CHAT,
                         reasoning: { effort: "high" },
@@ -508,7 +508,7 @@ describe("DeepSeekHandler", () => {
                 profile: ApiProfile.create({
                     provider: "deepseek",
                     apiKey: "test-api-key",
-                    modelId: "deepseek-v4-flash",
+                    modelId: "deepseek-flash",
                     deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_CHAT }),
                 }),
                 mode: "act",
@@ -533,7 +533,7 @@ describe("DeepSeekHandler", () => {
             const profile = ApiProfile.create({
                 provider: "deepseek",
                 apiKey: "test-api-key",
-                modelId: "deepseek-v4-flash",
+                modelId: "deepseek-flash",
                 deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_RESPONSES }),
             })
             const handler = new DeepSeekHandler({ profile, mode: "act" })
@@ -814,7 +814,7 @@ describe("DeepSeekHandler", () => {
                 providerName: "DeepSeek",
                 billingMode: "token",
                 models: deepSeekModels,
-                defaultModelId: "deepseek-v4-flash",
+                defaultModelId: "deepseek-flash",
             }),
         } as unknown as ModelRegistry)
         const profile = ApiProfile.create({
@@ -866,7 +866,7 @@ describe("DeepSeekHandler", () => {
             profile: ApiProfile.create({
                 provider: "deepseek",
                 apiKey: "test-api-key",
-                modelId: "deepseek-v4-flash",
+                modelId: "deepseek-flash",
             }),
             mode: "act",
         })

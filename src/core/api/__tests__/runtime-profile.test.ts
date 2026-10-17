@@ -57,10 +57,10 @@ describe("Task runtime Profile overrides", () => {
             id: "profile-deepseek",
             name: "DeepSeek profile",
             provider: "deepseek",
-            modelId: "deepseek-v4-flash",
+            modelId: "deepseek-flash",
             enabled: true,
             modelInfo: {
-                id: "deepseek-v4-flash",
+                id: "deepseek-flash",
                 capabilities: {
                     supportsReasoning: true,
                     thinking: { supported: true, mode: "effort", effortLevels: ["high", "max"] },

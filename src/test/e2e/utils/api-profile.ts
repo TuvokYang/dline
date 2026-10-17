@@ -366,7 +366,7 @@ function deepSeekProfile(id: string, name: string, baseUrl: string): StoredApiPr
         name,
         provider: "deepseek",
         baseUrl,
-        modelId: "deepseek-v4-flash",
+        modelId: "deepseek-flash",
         usedFor: ["act", "plan", "subagents"],
         enabled: true,
         deepseek: {

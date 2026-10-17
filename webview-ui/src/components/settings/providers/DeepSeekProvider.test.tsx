@@ -35,8 +35,8 @@ const models = {
             currency: "CNY",
         },
     } as ModelInfo,
-    "deepseek-v4-flash": {
-        id: "deepseek-v4-flash",
+    "deepseek-flash": {
+        id: "deepseek-flash",
         apiFormats: [ApiFormat.OPENAI_CHAT, ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT],
         capabilities: {
             contextWindow: 1_000_000,
@@ -68,8 +68,8 @@ const remoteModels = {
 vi.mock("./useProviderModelOptions", () => ({
     useProviderModelOptions: () => ({
         models,
-        defaultModelId: "deepseek-v4-flash",
-        modelInfoSaneDefaults: models["deepseek-v4-flash"],
+        defaultModelId: "deepseek-flash",
+        modelInfoSaneDefaults: models["deepseek-flash"],
         imageModels: {},
         defaultImageModelId: "",
         loading: false,
@@ -284,7 +284,7 @@ describe("DeepSeekProvider", () => {
         render(<DeepSeekProvider onUpdate={onUpdate} profile={profile} showModelOptions={true} />)
 
         // The picker lists remote discoveries alongside the local catalog.
-        expect(screen.getByTestId("deepseek-models")).toHaveTextContent("deepseek-v4-preview,deepseek-v4-pro,deepseek-v4-flash")
+        expect(screen.getByTestId("deepseek-models")).toHaveTextContent("deepseek-v4-preview,deepseek-v4-pro,deepseek-flash")
         const format = screen.getByRole("combobox", { name: "API Format" })
         expect(format).toHaveValue(String(ApiFormat.OPENAI_CHAT))
         expect(screen.getByRole("option", { name: "OpenAI Chat" })).toBeInTheDocument()
