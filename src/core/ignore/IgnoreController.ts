@@ -112,6 +112,43 @@ export async function readDirectoryGlobPatterns(directoryPath: string): Promise<
     }
 }
 
+/**
+ * Read one directory's agent rule file, if it has one.
+ *
+ * A nested `.agentignore` restricts what the agent may touch below that
+ * directory, and the same precedence the workspace root uses applies: only the
+ * first accepted filename contributes, so a migrated file is not re-applied.
+ * Returns undefined when the directory states no agent rules.
+ */
+async function readDirectoryAgentRules(directoryPath: string): Promise<string | undefined> {
+    for (const fileName of AGENT_IGNORE_FILENAMES) {
+        try {
+            const content = await fs.readFile(path.join(directoryPath, fileName), "utf8")
+            // A rule file always protects itself, matching the root loader.
+            return `${content}\n${fileName}`
+        } catch {}
+    }
+    return undefined
+}
+
+/**
+ * Read one directory's agent rules as glob patterns, for a directory walk.
+ *
+ * The `scan` group is the right one here: a plain rule belongs to every
+ * permission, while an attributed rule such as `vendor/ -w` removes only
+ * write. Reading the `read` group instead would drop that rule entirely and
+ * let the walk descend into a subtree the workspace excluded.
+ *
+ * A glob list cannot express re-inclusion, so negations are dropped by
+ * {@link gitignoreToGlobPatterns}; a survivor is re-checked against
+ * {@link IgnoreController.validateAccess} where exact fidelity matters.
+ */
+export async function readDirectoryAgentGlobPatterns(directoryPath: string): Promise<string[]> {
+    const content = await readDirectoryAgentRules(directoryPath)
+    if (!content) return []
+    return gitignoreToGlobPatterns(parsePermissionRules(content).scan)
+}
+
 interface ScopeState {
     instance: Ignore
     /** Raw rules text, or undefined when no rule file contributed content. */

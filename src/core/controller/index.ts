@@ -134,6 +134,7 @@ import { getClineOnboardingModels } from "./models/getClineOnboardingModels"
 import { appendClineStealthModels } from "./models/refreshOpenRouterModels"
 import { ProfileSwitchCoordinator } from "./profile-switch/ProfileSwitchCoordinator"
 import type { ProfileSwitchOperation, ResolvedProfileTarget } from "./profile-switch/types"
+import { planExternalStateChange } from "./state/externalStateChangePlan"
 import { projectFocusChainHistory } from "./state/focusChainHistoryProjection"
 import { cleanupStateSubscriptions, sendAccountUsageUpdate, sendStatePatch, sendStateUpdate } from "./state/subscribeToState"
 import { projectTaskHistory } from "./state/taskHistoryProjection"
@@ -711,7 +712,14 @@ export class Controller {
             onSyncExternalChange: async (event) => {
                 const startedAt = performance.now()
                 const changedKeys = event.source === "settings" ? event.commit.changedKeys : []
-                await this.configureGlobalComponents()
+                // An idle window sees a steady stream of these events from its own
+                // bookkeeping, so what each source actually requires is decided
+                // once, in one place, instead of being re-derived inline.
+                const plan = planExternalStateChange(event.source, changedKeys)
+                if (!plan.reconfigureComponents && !plan.publishState) return
+                if (plan.reconfigureComponents) {
+                    await this.configureGlobalComponents()
+                }
                 if (changedKeys.some((key) => ACCOUNT_USAGE_BINDING_SETTINGS.has(key))) {
                     this.restartAccountUsagePolling()
                 }

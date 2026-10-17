@@ -1,5 +1,10 @@
 import { statSync } from "node:fs"
-import { builtinIgnoreGlobPatterns, type IgnoreController, readDirectoryGlobPatterns } from "@core/ignore/IgnoreController"
+import {
+    builtinIgnoreGlobPatterns,
+    type IgnoreController,
+    readDirectoryAgentGlobPatterns,
+    readDirectoryGlobPatterns,
+} from "@core/ignore/IgnoreController"
 import { workspaceResolver } from "@core/workspace"
 import { isDirectory } from "@utils/fs"
 import { arePathsEqual } from "@utils/path"
@@ -289,9 +294,13 @@ async function globbyLevelByLevel(limit: number, options?: Options, timeoutMs = 
             if (results.size >= limit) break
             results.add(file)
             if (file.endsWith("/")) {
-                // This directory survived the current rules, so its own `.gitignore`
-                // is safe to read and must apply to everything below it.
+                // This directory survived the current rules, so its own ignore files
+                // are safe to read and must apply to everything below it. Agent rules
+                // are read here too: a nested `.agentignore` is the only place a
+                // subtree can state what the agent must not traverse, and the root
+                // loader never sees it.
                 currentIgnore.push(...(await readDirectoryGlobPatterns(file)))
+                currentIgnore.push(...(await readDirectoryAgentGlobPatterns(file)))
 
                 // Queue as a RELATIVE path to cwd so that ignore patterns (like **/tmp/**)
                 // are checked against relative entry paths, not absolute ones. Using absolute

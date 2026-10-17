@@ -359,10 +359,15 @@ export class TaskHistory {
             // Committed data reaches the WAL before the main file, so both are
             // watched: waiting only on the database file would delay every
             // cross-window refresh until a checkpoint happened to run.
+            // `pollInterval` is how often chokidar re-stats a file whose write is
+            // still settling, so it sets a floor on idle wake-ups per window:
+            // two files at 100 ms meant twenty stats a second with nothing to
+            // report. The 300 ms stability window is what actually decides when
+            // a commit is complete, so polling faster than it bought nothing.
             this._watcher = chokidar.watch([filePath, `${filePath}-wal`], {
                 persistent: true,
                 ignoreInitial: true,
-                awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+                awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 250 },
             })
 
             this._watcher

@@ -48,6 +48,19 @@ function tick(store: BufferedUnifyStore<Row>): Promise<void> {
     return (store as unknown as PeriodicFlushProbe).runPeriodicFlush()
 }
 
+/**
+ * Leave the store with staged work.
+ *
+ * The periodic tick deliberately does nothing for a store with nothing staged,
+ * so a test about flush policy has to create something to flush first;
+ * `append` only stages the row and marks the store dirty.
+ */
+async function stageWrites(store: BufferedUnifyStore<Row>, count = 1): Promise<void> {
+    for (let index = 0; index < count; index++) {
+        await store.append({ ts: Date.now() + index, value: `staged-${index}` })
+    }
+}
+
 afterEach(() => {
     vi.restoreAllMocks()
     vi.useRealTimers()
@@ -65,6 +78,7 @@ describe("BufferedUnifyStore periodic flush", () => {
         const warn = vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
         const info = vi.spyOn(Logger, "info").mockImplementation(() => undefined)
         const store = await openStore()
+        await stageWrites(store)
         const flush = vi.spyOn(store, "flush").mockRejectedValue(errnoError("EPERM"))
 
         try {
@@ -116,6 +130,7 @@ describe("BufferedUnifyStore periodic flush", () => {
         vi.spyOn(Date, "now").mockImplementation(() => now)
         vi.spyOn(Logger, "warn").mockImplementation(() => undefined)
         const store = await openStore()
+        await stageWrites(store)
         const flush = vi.spyOn(store, "flush").mockRejectedValue(errnoError("EPERM"))
 
         try {
@@ -138,9 +153,53 @@ describe("BufferedUnifyStore periodic flush", () => {
         }
     })
 
+    it("does no work on a tick that finds nothing staged", async () => {
+        vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+        const store = await openStore()
+        const flush = vi.spyOn(store, "flush")
+
+        try {
+            // An idle task keeps four of these stores open, and the timer ticks
+            // for each of them. A tick that reaches flush() costs a lock and an
+            // async hop for no reason, so the only correct count here is zero.
+            for (let beat = 0; beat < 10; beat++) {
+                await tick(store)
+            }
+
+            expect(flush).not.toHaveBeenCalled()
+        } finally {
+            flush.mockRestore()
+            await store.close()
+        }
+    })
+
+    it("flushes again once a write is staged", async () => {
+        vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
+        const store = await openStore()
+        const flush = vi.spyOn(store, "flush")
+
+        try {
+            await tick(store)
+            expect(flush).not.toHaveBeenCalled()
+
+            await stageWrites(store)
+            await tick(store)
+            expect(flush).toHaveBeenCalledTimes(1)
+
+            // The commit cleared the staged state, so the next idle beat is
+            // skipped again instead of repeating an empty commit.
+            await tick(store)
+            expect(flush).toHaveBeenCalledTimes(1)
+        } finally {
+            flush.mockRestore()
+            await store.close()
+        }
+    })
+
     it("does not start a second periodic flush while one is still running", async () => {
         vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] })
         const store = await openStore()
+        await stageWrites(store)
         let release!: () => void
         const pending = new Promise<void>((resolve) => {
             release = resolve

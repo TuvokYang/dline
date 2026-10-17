@@ -51,6 +51,8 @@ interface PeriodicFlushState {
     failures: number
     retryAt: number
     lastErrorCode?: string
+    /** Idle ticks observed since the last report; see `reportSkippedTicks`. */
+    skipped: number
 }
 
 /** What a commit wrote and how, for the state update and its telemetry. */
@@ -141,7 +143,7 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
     /** The logical read view omitted compatibility rows still present in the physical JSONL file. */
     private projectedPersistedRows = false
     private flushTimer: ReturnType<typeof setInterval> | undefined
-    private periodicFlush: PeriodicFlushState = { inFlight: false, failures: 0, retryAt: 0 }
+    private periodicFlush: PeriodicFlushState = { inFlight: false, failures: 0, retryAt: 0, skipped: 0 }
     private closing = false
     private closed = false
     private closePromise: Promise<void> | undefined
@@ -496,6 +498,16 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
     }
 
     async flush(): Promise<void> {
+        // An idle store must not pay for a lock acquisition and an async hop on
+        // every timer tick: the periodic timer runs for every open store, and a
+        // task keeps four of them open, so an unconditional lock turned "nothing
+        // was written" into a steady stream of scheduler wake-ups.
+        //
+        // Reading `dirty` outside the lock is safe: it only ever means "a write
+        // has been staged". A write that lands between this check and the lock
+        // is picked up by the next tick, exactly as it was when the check lived
+        // inside `flushLocked`. The in-lock guard stays as the authoritative one.
+        if (!this.dirty) return
         await this.mutex.withLock(() => this.flushLocked())
     }
 
@@ -562,13 +574,23 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
     private async runPeriodicFlush(): Promise<void> {
         const state = this.periodicFlush
         if (state.inFlight || Date.now() < state.retryAt) return
+        // Count the ticks that found nothing instead of reporting them one by
+        // one: this timer runs once per second for every open store and a task
+        // opens four, so a per-tick event would cost more than the work it
+        // describes. The aggregate is what shows whether this timer is pure
+        // overhead.
+        if (!this.dirty) {
+            state.skipped++
+            return
+        }
         state.inFlight = true
         try {
             await this.flush()
+            this.reportSkippedTicks()
             if (state.failures > 0) {
                 Logger.info(`[BufferedUnifyStore] periodic flush recovered: store=${this.storeKind}, failures=${state.failures}`)
             }
-            this.periodicFlush = { inFlight: false, failures: 0, retryAt: 0 }
+            this.periodicFlush = { inFlight: false, failures: 0, retryAt: 0, skipped: 0 }
         } catch (error) {
             const code = (error as NodeJS.ErrnoException | undefined)?.code ?? "UNKNOWN"
             state.failures++
@@ -582,6 +604,21 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
         } finally {
             state.inFlight = false
         }
+    }
+
+    /**
+     * Report the idle ticks accumulated since the last commit.
+     *
+     * Emitted only when a commit happens, so a store that never writes reports
+     * nothing: the point of the number is to show how much of the periodic
+     * timer's work was discarded because nothing was staged. Reporting it from
+     * the timer would recreate the per-tick cost it is meant to expose.
+     */
+    private reportSkippedTicks(): void {
+        const skipped = this.periodicFlush.skipped
+        if (skipped === 0) return
+        this.periodicFlush.skipped = 0
+        recordPerfPhase(PerfDomain.BufferedStore, "flush_skipped", 0, { store: this.storeKind, skipped })
     }
 
     private async flushLocked(): Promise<void> {

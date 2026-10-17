@@ -104,7 +104,13 @@ export const PERF_PHASES = {
     // the whole collection. Reporting both under one phase with a `commit`
     // dimension is what makes an unnoticed fallback to rewriting visible: the
     // cost of that fallback grows with the history and is otherwise silent.
-    [PerfDomain.BufferedStore]: ["flush_commit"],
+    //
+    // `flush_skipped` is the periodic tick that found nothing staged. Without it
+    // an idle store was invisible: the timer runs for every open store, a task
+    // keeps four open, and only the ticks that actually committed produced a
+    // span, so cost that scaled with "how many tasks are open" could not be
+    // attributed to anything.
+    [PerfDomain.BufferedStore]: ["flush_commit", "flush_skipped"],
     // Tool duration is reported as the work the tool itself performed. Approval
     // and command waits are governed by the user and the workspace, so counting
     // them would make the measurement describe how fast a reviewer clicks rather
