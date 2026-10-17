@@ -78,6 +78,20 @@ function emptyDraft(): DecodedDraft {
  * display into the writable runtime first, as the compaction and activity
  * controls do; otherwise every change would be refused as a missing task.
  */
+/**
+ * Operations that arrive once per user action, so the row they changed must be
+ * published at once. A reorder is excluded: dragging emits a burst of them and
+ * each immediate publication costs a full state build.
+ */
+const IMMEDIATE_OPERATIONS = new Set<CanonicalInputQueueMutation["kind"]>([
+    "enqueue",
+    "remove",
+    "toggle_mode",
+    "begin_edit",
+    "commit_edit",
+    "cancel_edit",
+])
+
 export async function mutateInputQueue(
     controller: Controller,
     request: MutateInputQueueRequest,
@@ -98,5 +112,13 @@ export async function mutateInputQueue(
     }
     if (!mutation) return MutateInputQueueResponse.create({ accepted: false, result: "missing_operation" })
     const outcome = await task.inputQueue.mutate(mutation)
+    if (!outcome.accepted) {
+        // A refused change left the queue untouched, so there is nothing to show.
+        return MutateInputQueueResponse.create(outcome)
+    }
+    // The Webview keeps no local queue copy, so an accepted mutation that is not
+    // published stays invisible until some unrelated state change happens to
+    // publish next. An idle task has no such change.
+    await controller.postStateToWebview(IMMEDIATE_OPERATIONS.has(mutation.kind) ? { immediate: true } : undefined)
     return MutateInputQueueResponse.create(outcome)
 }
