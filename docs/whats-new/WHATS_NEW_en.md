@@ -17,11 +17,12 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
 
 ## 0.11.0
 
-- **Reliable long-task recovery**: compaction uses provider counts or real-usage calibration, persists accepted passes, and resumes from a safe checkpoint.
-- **Safe request retries**: ordinary tasks and subagents retry upstream HTTP/2 stream failures within a bound, while a manual Retry can take over a pending automatic retry.
-- **Clear tool output**: long `qna_respond`, `generate_report`, and `attempt_completion` replies stream continuously, and multiple MCP responses share one card.
-- **Concise Thinking and checkpoints**: encrypted reasoning shows one transient Thinking row without exposing ciphertext, and each user turn shows one restore baseline.
-- **Stable editing, history, and cost display**: Background Edit keeps editor focus intact, restored tasks avoid blank or stale state, and subagents use the effective model currency.
+- **Unified task runtime and recovery**: task state is driven by runtime events and a reducer, so interruption, resume and handoff follow an explicit state machine instead of being inferred when a history task reopens.
+- **Semantic composer**: a structured composer replaces the plain text area, splitting the prompt by source (mentions, commands, pastes, drops) and passing unreadable content through to the model byte for byte.
+- **Input resource store**: a task-level resource store and typed RPCs keep images and files as managed resources with the task instead of scattering them through message text.
+- **Task performance**: chat history is now validated and replaced at the tail instead of being read and rewritten whole on every update, so the cost no longer grows with task length.
+- **MCP tools on demand**: a new "Load MCP Tools on Demand" setting (on by default) stops sending every MCP tool definition with each request; the model picks a tool from a prompt catalog and calls `load_mcp` for its parameter schema.
+- **Composer button interaction**: send, restore, queue, and cancel are merged into a single button that queues the draft while a task runs and turns into cancel after a three-second hover on the queue state.
 
 ## 0.10.0
 
