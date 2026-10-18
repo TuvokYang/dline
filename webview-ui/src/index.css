@@ -95,12 +95,31 @@
 }
 
 /*
- * Thin theme-colored scrollbar for bounded scroll areas inside chat rows, the same
- * treatment as the chat input and agent update rows. The standard properties take
- * precedence over webkit pseudo-elements in Chromium and do not depend on the scrollbar
- * width the VS Code webview injects, so the thumb follows the active theme in Storybook
- * too. This lives here rather than in main.css because Storybook loads only index.css.
+ * Thin theme-colored scrollbar, the treatment the MCP call row, the chat input and the
+ * agent update rows introduced. The standard properties take precedence over webkit
+ * pseudo-elements in Chromium and do not depend on the scrollbar width the VS Code
+ * webview injects, so the thumb follows the active theme in Storybook too. This lives
+ * here rather than in main.css because Storybook loads only index.css.
+ *
+ * It is the default for every element rather than an opt-in class: each new bounded
+ * area that forgot the class drew the untinted system scrollbar, a white bar in dark
+ * themes. It sits in the base layer, so a component that hides or restyles its own
+ * scrollbar with a utility or an inline style still wins. Areas that draw their
+ * scrollbar through ::-webkit-scrollbar rules opt out, because the standard properties
+ * would switch those rules off.
  */
+@layer base {
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4)) transparent;
+    }
+    .scrollable,
+    .code-block-scrollable {
+        scrollbar-width: auto;
+        scrollbar-color: auto;
+    }
+}
+
 .themed-scrollbar {
     scrollbar-width: thin;
     scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4)) transparent;
