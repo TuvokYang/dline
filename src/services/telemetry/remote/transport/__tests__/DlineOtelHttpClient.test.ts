@@ -1,5 +1,6 @@
 import { mockFetchForTesting } from "@shared/net"
 import { describe, expect, it } from "vitest"
+import { ExtensionRegistryInfo } from "@/registry"
 import { classifyUsageResponse } from "../../contracts/classification"
 import { DlineOtelHttpClient, DlineOtelTransportError, loopbackEndpointOverride } from "../DlineOtelHttpClient"
 
@@ -55,6 +56,7 @@ describe("DlineOtelHttpClient", () => {
         expect(captured[0].url).toBe("https://otel.example.test/v1/usage")
         expect(captured[0].init).toMatchObject({ method: "POST", redirect: "error", body })
         expect(captured[0].init.headers).toEqual({
+            "User-Agent": `Dline/${ExtensionRegistryInfo.version}`,
             authorization: `Bearer ${TOKEN}`,
             "content-type": "application/json",
             "x-dline-request-id": REQUEST_ID,
@@ -78,6 +80,7 @@ describe("DlineOtelHttpClient", () => {
         )
 
         expect(captured[0].url).toBe("http://127.0.0.1:8787/v1/auth/device/exchange")
+        expect(new Headers(captured[0].init.headers).get("user-agent")).toBe(`Dline/${ExtensionRegistryInfo.version}`)
         expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
     })
 

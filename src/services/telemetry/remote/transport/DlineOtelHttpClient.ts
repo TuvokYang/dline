@@ -1,4 +1,5 @@
 import { fetch } from "@shared/net"
+import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import type { DeviceExchangeTransport } from "../auth/DeviceTokenBroker"
 import type { WireResponse } from "../contracts/classification"
 import type { DeviceExchangeRequest } from "../contracts/wire"
@@ -92,7 +93,8 @@ export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransp
             if (signal?.aborted) throw new DlineOtelTransportError("aborted")
             const response = await fetch(new URL(pathname, this.endpoint), {
                 method: "POST",
-                headers,
+                // Every Dline client announces itself with the same agent; the runtime default would only say "node".
+                headers: { ...buildExternalBasicHeaders(), ...headers },
                 // fetch accepts only ArrayBuffer-backed views; the copy is at most one 64 KiB body.
                 body: typeof body === "string" ? body : Uint8Array.from(body),
                 redirect: "error",

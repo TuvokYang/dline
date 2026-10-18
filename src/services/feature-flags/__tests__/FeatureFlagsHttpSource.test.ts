@@ -1,5 +1,6 @@
 import { mockFetchForTesting } from "@shared/net"
 import { describe, expect, it } from "vitest"
+import { ExtensionRegistryInfo } from "@/registry"
 import {
     FeatureFlagsFetchError,
     FeatureFlagsHttpSource,
@@ -41,6 +42,7 @@ describe("FeatureFlagsHttpSource", () => {
         expect(captured[0].url).toBe("https://dev.dline.cc/v1/features")
         expect(captured[0].init).toMatchObject({ method: "POST", redirect: "error" })
         expect(new Headers(captured[0].init?.headers).has("authorization")).toBe(false)
+        expect(new Headers(captured[0].init?.headers).get("user-agent")).toBe(`Dline/${ExtensionRegistryInfo.version}`)
         expect(JSON.parse(String(captured[0].init?.body))).toEqual({
             schema_version: 1,
             device_id: "dev_device-1",

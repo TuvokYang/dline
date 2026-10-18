@@ -1,4 +1,5 @@
 import { fetch } from "@shared/net"
+import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { FEATURE_FLAGS_SCHEMA_VERSION, type FeatureFlagsDocument, parseFeatureFlagsDocument } from "./flagsDocument"
 
 export const DLINE_FEATURES_ENDPOINT = "https://dev.dline.cc"
@@ -88,7 +89,8 @@ export class FeatureFlagsHttpSource implements FeatureFlagsSource {
             if (signal?.aborted) throw new FeatureFlagsFetchError("aborted")
             const response = await fetch(this.url, {
                 method: "POST",
-                headers: { accept: "application/json", "content-type": "application/json" },
+                // Every Dline client announces itself with the same agent; the runtime default would only say "node".
+                headers: { ...buildExternalBasicHeaders(), accept: "application/json", "content-type": "application/json" },
                 body: JSON.stringify({
                     schema_version: FEATURE_FLAGS_SCHEMA_VERSION,
                     device_id: deviceId,
