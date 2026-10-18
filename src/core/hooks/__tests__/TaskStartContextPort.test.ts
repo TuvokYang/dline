@@ -13,12 +13,15 @@ vi.mock("../hook-executor", () => ({ executeHook }))
 
 const IDENTITY = { taskId: "task-1", ulid: "ulid-1", initialTask: "do the thing" }
 
-function port(hooksEnabled = true): HookTaskStartContext {
+function port(
+    hooksEnabled = true,
+    discoverHooks: (waitMs: number) => Promise<readonly string[] | undefined> = async () => ["TaskStart.test"],
+): HookTaskStartContext {
     return new HookTaskStartContext({
         stateManager: { getGlobalSettingsKey: () => hooksEnabled } as unknown as StateManager,
         messages: {} as MessageStateHandler,
         say: async () => undefined,
-        discoveredHooks: () => ["TaskStart.test"],
+        discoverHooks,
     })
 }
 
@@ -59,5 +62,30 @@ describe("HookTaskStartContext", () => {
         await port(false).collect(IDENTITY)
 
         expect(executeHook).toHaveBeenCalledWith(expect.objectContaining({ hooksEnabled: false }))
+    })
+
+    it("joins in-flight discovery with a finite wait instead of skipping the hook", async () => {
+        executeHook.mockResolvedValue({ wasCancelled: false, contextModification: "REWARMED_POLICY" })
+        const waits: number[] = []
+
+        const context = await port(true, async (waitMs) => {
+            waits.push(waitMs)
+            return ["TaskStart.rewarmed"]
+        }).collect(IDENTITY)
+
+        expect(context).toBe("REWARMED_POLICY")
+        expect(waits).toHaveLength(1)
+        expect(waits[0]).toBeGreaterThan(0)
+        expect(Number.isFinite(waits[0])).toBe(true)
+    })
+
+    it("starts without a hook when discovery does not settle within the wait", async () => {
+        await expect(port(true, async () => undefined).collect(IDENTITY)).resolves.toBeUndefined()
+        expect(executeHook).not.toHaveBeenCalled()
+    })
+
+    it("does not run the executor when discovery found no TaskStart hook", async () => {
+        await expect(port(true, async () => []).collect(IDENTITY)).resolves.toBeUndefined()
+        expect(executeHook).not.toHaveBeenCalled()
     })
 })

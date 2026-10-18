@@ -64,6 +64,10 @@ export function hookPath(hooksDir: string, hookName: string, platform: NodeJS.Pl
 export function stubHookDirs(sandbox: sinon.SinonSandbox, dirs: string[]): sinon.SinonStub | ReturnType<typeof vi.fn> {
     // Use vi.spyOn for vitest compatibility — sinon sandbox.stub may not intercept modules
     // that vitest processes through its own mock system. Create a spy that vitest can restore.
+    // Discovery probes the configured candidates and execution classifies scripts
+    // against the same list, so both must name only the test's directories; the
+    // real candidates include the user's global hooks directory.
+    vi.spyOn(diskModule, "getHookDirectoryCandidates").mockResolvedValue(dirs)
     const stub = vi.spyOn(diskModule, "getAllHooksDirs").mockResolvedValue(dirs)
     return stub as any
 }

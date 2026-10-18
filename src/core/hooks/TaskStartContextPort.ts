@@ -30,9 +30,22 @@ export interface HookTaskStartContextOptions {
     readonly messages: MessageStateHandler
     readonly say: (type: string, text?: string) => Promise<number | undefined>
     readonly model?: () => HookModelInputContext | undefined
-    /** Test/host seam for the already-warmed discovery snapshot. */
-    readonly discoveredHooks?: () => readonly string[] | undefined
+    /**
+     * Test/host seam for TaskStart discovery. Resolves `undefined` when discovery
+     * did not settle within `waitMs`; the scan itself keeps running.
+     */
+    readonly discoverHooks?: (waitMs: number) => Promise<readonly string[] | undefined>
 }
+
+/**
+ * How long a task start may join a discovery scan that is already in flight.
+ *
+ * The cache re-warms TaskStart after every hook change, so an empty snapshot
+ * means a scan is running. Joining it briefly keeps a hook edited just before a
+ * task from being skipped, while a cold filesystem probe still cannot hold the
+ * first provider request for longer than this bound.
+ */
+const TASK_START_DISCOVERY_WAIT_MS = 1_500
 
 /**
  * Run the configured TaskStart hook and return its context modification.
@@ -44,11 +57,13 @@ export class HookTaskStartContext implements TaskStartContextPort {
     constructor(private readonly options: HookTaskStartContextOptions) {}
 
     async collect(identity: TaskStartHookIdentity): Promise<string | undefined> {
-        const discovered = this.options.discoveredHooks?.() ?? HookDiscoveryCache.getInstance().peek("TaskStart")
+        const discover =
+            this.options.discoverHooks ?? ((waitMs: number) => HookDiscoveryCache.getInstance().getWithin("TaskStart", waitMs))
+        const discovered = await discover(TASK_START_DISCOVERY_WAIT_MS)
         if (discovered === undefined) {
-            // Activation keeps warming the watched cache. Joining a cold filesystem
-            // probe here can block the first provider request for tens of seconds.
-            Logger.warn(`[TaskStart Hook] Discovery is still warming for task ${identity.taskId}; continuing without a hook`)
+            Logger.warn(
+                `[TaskStart Hook] Discovery did not settle within ${TASK_START_DISCOVERY_WAIT_MS}ms for task ${identity.taskId}; continuing without a hook`,
+            )
             return undefined
         }
         if (discovered.length === 0) return undefined

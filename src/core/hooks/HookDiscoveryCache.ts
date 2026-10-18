@@ -61,6 +61,14 @@ export class HookDiscoveryCache {
     // Currently scanning promises (to prevent concurrent scans)
     private scanningPromises = new Map<HookName, Promise<string[]>>()
 
+    // Hooks whose snapshot must stay warm because a latency-sensitive path only
+    // peeks or briefly joins discovery instead of owning a cold scan.
+    private residentHooks = new Set<HookName>()
+
+    // Bumped on every invalidation so a scan that started against an older
+    // filesystem state cannot publish its result after the invalidation.
+    private generation = 0
+
     // For disposal
     private context: ExtensionContext | null = null
     private createFileWatcher: ((dir: string) => FileWatcher | null) | null = null
@@ -151,6 +159,18 @@ export class HookDiscoveryCache {
         return scripts
     }
 
+    /**
+     * Keep a hook's discovery snapshot warm for its whole lifetime.
+     *
+     * The returned promise resolves with the first scan. Every later invalidation
+     * starts a fresh background scan, so readers that never own a cold scan
+     * (see `peek` and `getWithin`) are not left with an empty cache until reload.
+     */
+    keepWarm(hookName: HookName): Promise<string[]> {
+        this.residentHooks.add(hookName)
+        return this.get(hookName)
+    }
+
     /** Return the current snapshot without starting or joining filesystem discovery. */
     peek(hookName: HookName): string[] | undefined {
         return this.cache.get(hookName)?.scriptPaths
@@ -185,8 +205,9 @@ export class HookDiscoveryCache {
             return existingPromise
         }
 
+        const generation = this.generation
         // Create a new scan promise
-        const scanPromise = (async () => {
+        const scanPromise: Promise<string[]> = (async () => {
             try {
                 // Probe exact candidates in one concurrent round. Directory existence
                 // is implicit in the file result, so cold discovery never serializes
@@ -207,11 +228,13 @@ export class HookDiscoveryCache {
 
                 this.log(`Found ${scripts.length} scripts for ${hookName}`)
 
-                // Cache the result
-                this.cache.set(hookName, {
-                    scriptPaths: scripts,
-                    timestamp: Date.now(),
-                })
+                // A newer invalidation owns the cache now; its own scan publishes.
+                if (generation === this.generation) {
+                    this.cache.set(hookName, {
+                        scriptPaths: scripts,
+                        timestamp: Date.now(),
+                    })
+                }
 
                 return scripts
             } catch (error) {
@@ -219,8 +242,10 @@ export class HookDiscoveryCache {
                 // Return empty array on error - don't break the whole system
                 return []
             } finally {
-                // Remove from scanning promises map
-                this.scanningPromises.delete(hookName)
+                // After an invalidation the in-flight entry belongs to a newer scan.
+                if (generation === this.generation) {
+                    this.scanningPromises.delete(hookName)
+                }
             }
         })()
 
@@ -291,8 +316,7 @@ export class HookDiscoveryCache {
         // Empty discoveries have no script path to match, but a create event in
         // this directory is exactly what makes them stale. Clear every hook-name
         // result; the next lookup re-probes all configured candidate directories.
-        const invalidated = this.cache.size
-        this.cache.clear()
+        const invalidated = this.invalidate()
         this.log(`Invalidated ${invalidated} hooks after a change in ${dir}`)
     }
 
@@ -300,9 +324,24 @@ export class HookDiscoveryCache {
      * Invalidate entire cache
      */
     invalidateAll(): void {
-        const size = this.cache.size
-        this.cache.clear()
+        const size = this.invalidate()
         this.log(`Invalidated entire cache (${size} entries)`)
+    }
+
+    /** Drop every snapshot and in-flight scan, then re-warm resident hooks. */
+    private invalidate(): number {
+        const size = this.cache.size
+        this.generation++
+        this.cache.clear()
+        // Callers already awaiting an older scan keep their result, but new
+        // lookups must start from the filesystem state after this invalidation.
+        this.scanningPromises.clear()
+        if (!this.disposed) {
+            for (const hookName of this.residentHooks) {
+                void this.scan(hookName)
+            }
+        }
+        return size
     }
 
     /**
@@ -342,6 +381,7 @@ export class HookDiscoveryCache {
         this.watchers.clear()
         this.watchedDirs.clear()
         this.cache.clear()
+        this.residentHooks.clear()
         this.disposed = true
     }
 

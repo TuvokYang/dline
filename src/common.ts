@@ -106,11 +106,12 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
             }
         }
         await StateManager.initialize(storageContext)
-        // TaskStart contributes to the first provider request, so warm its watched
-        // discovery cache as soon as workspace roots are available. This runs beside
-        // the remaining activation work and never delays extension readiness.
+        // TaskStart contributes to the first provider request, so keep its watched
+        // discovery cache warm from the moment workspace roots are available and
+        // again after every hook invalidation. This runs beside the remaining
+        // activation work and never delays extension readiness.
         void HookDiscoveryCache.getInstance()
-            .get("TaskStart")
+            .keepWarm("TaskStart")
             .catch((error) => Logger.warn("[Hooks] Failed to prewarm TaskStart discovery", error))
         {
             const elapsedMs = recordInitStage("afterStateManager")
