@@ -164,7 +164,11 @@ e2e(
         await expect(sidebar.getByText("README.md", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
         await sidebar.getByTestId("chat-input").fill(READ_NOTE)
         await approve.click()
-        await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 60_000 })
+        // A lone read renders as a tool group titled "Dline read 1 file:". When its round restore point lands
+        // before it, the two fold into an exploration run titled "Dline read 1 file". Checkpoint timing decides
+        // which one appears, and both are correct, so the locator accepts either title.
+        const readSummary = sidebar.getByText(/^Dline read 1 file:?$/)
+        await expect(readSummary).toBeVisible({ timeout: 60_000 })
         await expect(sidebar.getByText("WORK_DAILY_READ_COMPLETE", { exact: true })).toBeVisible({
             timeout: 60_000,
         })
@@ -201,7 +205,7 @@ e2e(
         await expect(exitApprove).toBeVisible({ timeout: 60_000 })
         await exitApprove.click()
         await expect.poll(() => server.getRequestCount(TARGET), { timeout: 60_000 }).toBe(9)
-        await expect(sidebar.getByText("Dline read 1 file:", { exact: true }).last()).toBeVisible({ timeout: 60_000 })
+        await expect(readSummary.last()).toBeVisible({ timeout: 60_000 })
         await sidebar.getByRole("button", { name: "Close Task", exact: true }).click()
         await E2ETestHelper.dismissWhatsNewModal(sidebar)
         await page.getByRole("button", { name: "History", exact: true }).click()
