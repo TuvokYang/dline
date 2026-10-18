@@ -477,15 +477,19 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
     /**
      * Clear the provider-failure dialog made obsolete by a successful Profile rebuild.
      *
-     * Only a failure that reported the Profile itself as invalid is resolved by
-     * switching Profiles. Any other failure, such as a rate limit, keeps its
-     * dialog so the user can still retry it through the newly bound Profile.
+     * Only a failure the Profile caused is resolved by switching or editing it:
+     * rejected credentials (`profile_failure`) or a Profile reported invalid.
+     * Any other failure, such as a rate limit, keeps its dialog so the user can
+     * still retry it through the newly bound Profile.
      */
     async dismissProviderFailure(): Promise<void> {
         const session = this.session
         const interaction = session?.state().dialog.primary
-        if (!session || interaction?.kind !== "error_retry") return
-        if (!this.reportsInvalidProfile(interaction)) return
+        if (!session || !interaction) return
+        const profileCaused =
+            interaction.kind === "profile_failure" ||
+            (interaction.kind === "error_retry" && this.reportsInvalidProfile(interaction))
+        if (!profileCaused) return
         try {
             const result = await session.assembly.runtime.submit({
                 type: "dialog.dismissed",

@@ -96,6 +96,38 @@ function nestedStatusOf(error: unknown, parsed: ClineError): number {
     return typeof status === "number" ? status : Number(status)
 }
 
+/** Provider error codes that name the request's credentials as the reason it was refused. */
+const REJECTED_CREDENTIAL_CODES: ReadonlySet<string> = new Set([
+    "invalid_api_key",
+    "authentication_error",
+    "invalid_token",
+    "unauthorized",
+])
+
+/** The error codes and types a provider error carries, wherever the provider nested them. */
+function nestedCodesOf(error: unknown): string[] {
+    const raw = asRecord(error)
+    const rawError = asRecord(raw?.error)
+    const messageError = asRecord(parseMessageRecord(error)?.error)
+    return [raw?.code, rawError?.code, rawError?.type, asRecord(rawError?.error)?.type, messageError?.code, messageError?.type]
+        .filter((code): code is string => typeof code === "string")
+        .map((code) => code.toLowerCase())
+}
+
+/**
+ * Whether the provider refused the request's credentials.
+ *
+ * Sending the same request again cannot succeed until the Profile's credentials
+ * change, so such a failure is neither retried automatically nor offered as a
+ * Retry. This is deliberately narrower than the `Auth` error type, which also
+ * covers 404 and 422 responses that say nothing about the key.
+ */
+export function isRejectedCredentialError(error: unknown): boolean {
+    if (error instanceof Error && error.name === "AbortError") return false
+    const status = nestedStatusOf(error, ClineError.transform(error))
+    return status === 401 || nestedCodesOf(error).some((code) => REJECTED_CREDENTIAL_CODES.has(code))
+}
+
 /**
  * Decide whether sending the same request again can succeed.
  *

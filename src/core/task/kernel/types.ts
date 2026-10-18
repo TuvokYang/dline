@@ -407,7 +407,15 @@ export type ProviderEvent =
           readonly message: string
           /** The failure as the chat's error box renders it: the provider's own description, else the failure itself. */
           readonly presentation?: string
+          /**
+           * How the user recovers. `profile_change` means sending the same request
+           * again cannot succeed until the Profile changes (its credentials were
+           * rejected), so the failure offers no Retry. Absent means Retry may help.
+           */
+          readonly recovery?: ProviderFailureRecovery
       })
+/** See `provider.failed`'s `recovery`. */
+export type ProviderFailureRecovery = "profile_change"
 export type ToolEvent =
     | (EventBase & {
           readonly type: "tool.started" | "tool.completed" | "tool.failed" | "tool.cancelled"

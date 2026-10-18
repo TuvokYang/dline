@@ -192,7 +192,15 @@ interface CheckpointManagerInternalState {
     conversationHistoryDeletedRange?: [number, number]
     checkpointTracker?: CheckpointTracker
     checkpointUnitCoordinator?: CheckpointUnitCoordinator
+    /** What the task shows about checkpoints; a warning or a failure an earlier session persisted. */
     checkpointManagerErrorMessage?: string
+    /**
+     * Why this manager's own initialization failed. Only this stops further
+     * attempts: the displayed message may be a slow-start warning or a failure
+     * restored from an earlier session, and neither proves the tracker cannot
+     * start now. Gating on it left a reopened task without file checkpoints for good.
+     */
+    initializationFailure?: string
     checkpointTrackerInitPromise?: Promise<CheckpointTracker | undefined>
 }
 
@@ -967,7 +975,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
      */
     private async commitWorkspace(): Promise<CheckpointReferenceSet | undefined> {
         if (!this.config.enableCheckpoints) return undefined
-        if (!this.state.checkpointTracker && !this.state.checkpointManagerErrorMessage) {
+        if (!this.state.checkpointTracker && !this.state.initializationFailure) {
             await this.checkpointTrackerCheckAndInit()
         }
 
@@ -1438,12 +1446,15 @@ export class TaskCheckpointManager implements ICheckpointManager {
             return this.state.checkpointTracker
         }
         if (forceRetry) {
+            this.state.initializationFailure = undefined
             await this.setcheckpointManagerErrorMessage(undefined)
-        } else if (this.state.checkpointManagerErrorMessage) {
+        } else if (this.state.initializationFailure) {
             return undefined
         }
 
-        // If initialization is already in progress, wait for it to complete
+        // If initialization is already in progress, wait for it to complete.
+        // A slow-start warning is only a message, so callers keep waiting here
+        // instead of committing a row without file references.
         if (this.state.checkpointTrackerInitPromise) {
             return await this.state.checkpointTrackerInitPromise
         }
@@ -1558,7 +1569,9 @@ export class TaskCheckpointManager implements ICheckpointManager {
             const errorMessage = error instanceof Error ? error.message : "Unknown error"
             Logger.error("Failed to initialize checkpoint tracker:", errorMessage)
 
-            // If the error was a timeout, we disable all checkpoint operations for the rest of the task
+            // A failed attempt disables file checkpoints for the rest of this session
+            // only; a reopened task tries again.
+            this.state.initializationFailure = errorMessage
             if (errorMessage.includes("Checkpoints taking too long to initialize")) {
                 await this.setcheckpointManagerErrorMessage(
                     "Checkpoints initialization timed out. Consider re-opening Dline in a project that uses git, or disabling checkpoints.",

@@ -20,6 +20,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 
 ### Fixes
+- A rejected API key (such as a 401 `invalid_api_key`) no longer offers Retry: the error card stays visible, an empty Enter does not resend the request, switching or editing the current Profile clears the failure without sending anything, and the task continues only once you type a message; previously an empty Enter and a send after switching retried with the same key again and again, each adding a checkpoint
+- Fixed file checkpoints staying disabled for good after a task was reopened: a message an earlier session saved, such as "Checkpoints initialization timed out", no longer stops the new session from initializing, so checkpoint rows carry a restorable file hash again; rounds that arrive while initialization is still slow now wait for it instead of writing rows without a file snapshot
 - Fixed messages sent after a task completed but before the reply box was ready being refused with "Dline cannot take input yet"; input in that window is now queued and delivered as the reply
 - Fixed a phase report and the tool rows of the same turn swapping order when the report completes
 - Fixed the input queue (Queue) failing to open in the sidebar and showing only a thin scrollbar

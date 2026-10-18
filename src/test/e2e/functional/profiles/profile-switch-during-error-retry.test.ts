@@ -174,3 +174,93 @@ e2e(
         ])
     },
 )
+
+/** How long a switch is watched for a request nobody asked for. */
+const UNREQUESTED_SEND_WINDOW_MS = 5_000
+
+/**
+ * A rejected API key is a Profile problem: resending the request with the same
+ * key only repeats the rejection. The failure therefore stays on screen without
+ * a Retry, an empty Enter sends nothing, a Profile switch clears the failure
+ * without sending, and only a message the user writes continues the task.
+ */
+e2e(
+    "Profile switch - a rejected API key offers no Retry and sends nothing until the user replies",
+    async ({ dlineDir, dlineDocsDir, helper, server, sidebar, userDataDir }) => {
+        e2e.setTimeout(240_000)
+        const { targetProfile } = await configureUnifiedSourceProfile(dlineDir)
+        const taskText = "E2E_PROFILE_SWITCH_AUTH_FAILURE_TASK"
+        const failureMarker = "E2E_PROFILE_SWITCH_AUTH_FAILURE"
+        const replyText = "E2E_PROFILE_SWITCH_AUTH_FAILURE_REPLY"
+        const completion = "E2E_PROFILE_SWITCH_AUTH_FAILURE_COMPLETED"
+
+        await helper.signin(sidebar)
+        server.resetOpenAiMock()
+        server.enqueueResponses(
+            "openai-compatible-chat",
+            ...Array.from({ length: 8 }, () => ({
+                type: "error" as const,
+                status: 401,
+                code: "invalid_api_key",
+                message: `Incorrect API key provided: ${failureMarker}`,
+            })),
+        )
+
+        const input = sidebar.getByTestId("chat-input")
+        await expect(input).toBeEnabled()
+        await input.fill(taskText)
+        await sidebar.getByTestId("send-button").click()
+
+        const taskId = await onlyTaskId(dlineDocsDir)
+        await E2ETestHelper.waitForValue(async () => {
+            // The failure arrives before the first state snapshot is necessarily on disk.
+            const state = await readTaskState(dlineDocsDir, taskId).catch(() => undefined)
+            const primary = state?.snapshot?.state?.dialog?.primary
+            return primary?.kind === "profile_failure" && primary.status === "awaiting" ? primary : undefined
+        }, 60_000)
+        const failureText = sidebar.getByText(new RegExp(failureMarker)).last()
+        await expect(failureText).toBeVisible()
+        const retryButton = sidebar.locator('vscode-button[aria-label="Retry"]')
+        await expect(retryButton).toHaveCount(0)
+        // A rejected key is never retried automatically either.
+        expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
+
+        // An empty Enter used to resend the failed request; now it has nothing to send.
+        await input.focus()
+        await input.press("Enter")
+        await sidebar.page().waitForTimeout(UNREQUESTED_SEND_WINDOW_MS)
+        expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
+
+        await selectProfile(sidebar, targetProfile.name)
+        await expect
+            .poll(async () => readTaskSettings(dlineDocsDir, taskId), { timeout: 30_000 })
+            .toMatchObject({ planModeProfileId: targetProfile.id, actModeProfileId: targetProfile.id })
+        await sidebar.page().waitForTimeout(UNREQUESTED_SEND_WINDOW_MS)
+        expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
+        expect(server.getRequestCount("openai-compatible-responses")).toBe(0)
+        // The switch resolved the failure: no dialog holds the task any more. The failed
+        // request itself stays in history, so its text may still be shown there.
+        await expect
+            .poll(
+                async () =>
+                    (await readTaskState(dlineDocsDir, taskId).catch(() => undefined))?.snapshot?.state?.dialog?.primary?.kind ??
+                    "none",
+                { timeout: 30_000 },
+            )
+            .toBe("none")
+
+        server.enqueueResponses("openai-compatible-responses", {
+            type: "tool",
+            name: "attempt_completion",
+            arguments: { result: completion },
+            expectedRequestIncludes: [replyText],
+        })
+        await expect(input).toBeEnabled()
+        await input.fill(replyText)
+        await sidebar.getByTestId("send-button").click()
+        await expect(sidebar.getByText(completion, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+        expect(server.getRequestCount("openai-compatible-responses")).toBe(1)
+        expect(server.getRequestCount("openai-compatible-chat")).toBe(1)
+        await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [new RegExp(failureMarker), /invalid_api_key/])
+    },
+)

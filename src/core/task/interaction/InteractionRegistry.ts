@@ -26,6 +26,7 @@ export const INTERACTION_KINDS = [
     "generate_report",
     "status_acknowledgment",
     "error_retry",
+    "profile_failure",
     "mistake_limit",
     "completion",
     "resume",
@@ -113,6 +114,20 @@ const DEFINITIONS: Readonly<Record<InteractionKind, InteractionDefinition>> = {
         "api_req_failed",
         [action("retry", "Retry", "draft"), action("start_new_task", "Start New Task", "draft")],
         RETRY_INPUT,
+    ),
+    /**
+     * A provider failure that sending the same request again cannot fix, such as
+     * a rejected API key. It reads exactly like `error_retry` but offers no
+     * Retry: Enter carries a typed reply instead, so nothing is resent unless the
+     * user writes something, and a Profile switch or edit clears it.
+     */
+    profile_failure: define(
+        "profile_failure",
+        "api_req_failed",
+        [action("start_new_task", "Start New Task", "draft")],
+        REPLY_INPUT,
+        "none",
+        "error_retry",
     ),
     mistake_limit: define("mistake_limit", "mistake_limit_reached", [
         action("process_anyway", "Process Anyway", "draft"),

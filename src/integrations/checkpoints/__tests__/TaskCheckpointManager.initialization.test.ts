@@ -206,6 +206,39 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         expect(capture).toHaveBeenCalledExactlyOnceWith({ messageTs: 42 })
     })
 
+    it("starts file checkpoints on reopen despite a failure an earlier session persisted", async () => {
+        // Task 1792149608241 kept this message after one slow start, and every later
+        // round of every reopened session was written without file references.
+        const persisted =
+            "Checkpoints initialization timed out. Consider re-opening Dline in a project that uses git, or disabling checkpoints."
+        const messages: UiMessage[] = []
+        const tracker = {
+            setTaskFileTracker: vi.fn(),
+            commit: vi.fn().mockResolvedValue("reopened-hash"),
+        } as unknown as CheckpointTracker
+        const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
+        const harness = createManager(create, persisted, { messages })
+
+        await harness.manager.saveCheckpoint()
+
+        expect(create).toHaveBeenCalledOnce()
+        expect(messages).toEqual([expect.objectContaining({ say: "checkpoint_created", lastCheckpointHash: ["reopened-hash"] })])
+        expect(harness.taskState.checkpointManagerErrorMessage).toBeUndefined()
+    })
+
+    it("stops retrying within one session once its own initialization failed", async () => {
+        const messages: UiMessage[] = []
+        const create = vi.fn<CreateCheckpointTracker>().mockRejectedValue(new Error("Git must be installed to use checkpoints."))
+        const harness = createManager(create, undefined, { messages })
+
+        await harness.manager.saveCheckpoint()
+        await harness.manager.saveCheckpoint()
+
+        expect(create).toHaveBeenCalledOnce()
+        expect(messages.length).toBeGreaterThan(0)
+        for (const message of messages) expect(message).not.toHaveProperty("lastCheckpointHash")
+    })
+
     it("writes the workspace baseline into both the round row and canonical bundle", async () => {
         const messages: UiMessage[] = []
         const baselineHash = "shadow-baseline-hash"

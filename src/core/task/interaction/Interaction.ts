@@ -19,6 +19,7 @@ export type InteractionKind =
     | "generate_report"
     | "status_acknowledgment"
     | "error_retry"
+    | "profile_failure"
     | "mistake_limit"
     | "completion"
     | "resume"

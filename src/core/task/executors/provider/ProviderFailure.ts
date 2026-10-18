@@ -1,3 +1,6 @@
+import { isRejectedCredentialError } from "../../auto-retry"
+import type { ProviderFailureRecovery } from "../../kernel"
+
 /**
  * A provider request failure together with the error the chat shows for it.
  *
@@ -23,4 +26,10 @@ export class ProviderFailure extends Error {
 /** The chat presentation a failure carries, if the provider described it. */
 export function presentationOf(error: unknown): string | undefined {
     return error instanceof ProviderFailure ? error.presentation : undefined
+}
+
+/** How the user recovers from a failure, judged on the provider's own error rather than its presentation. */
+export function recoveryOf(error: unknown): ProviderFailureRecovery | undefined {
+    const cause = error instanceof ProviderFailure ? error.cause : error
+    return isRejectedCredentialError(cause) ? "profile_change" : undefined
 }

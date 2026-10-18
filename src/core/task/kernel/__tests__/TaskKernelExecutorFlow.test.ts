@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest"
 import { toolTerminalManifestPayload } from "../machines/turn"
 import { transition } from "../transition"
-import type { ComposeRoundCommand, KernelBlock, ProviderStartCommand, TaskState, TransitionResult } from "../types"
+import type {
+    ComposeRoundCommand,
+    KernelBlock,
+    ProviderFailureRecovery,
+    ProviderStartCommand,
+    TaskState,
+    TransitionResult,
+} from "../types"
 import { createInitialTaskState } from "../types"
 
 function accepted(result: TransitionResult): Extract<TransitionResult, { kind: "accepted" }> {
@@ -179,7 +186,7 @@ describe("task kernel executor flow", () => {
     // own description (a 403 naming the invalid Profile) must reach it, not an
     // interaction id that names no cause.
     it("presents a provider failure in the provider's own words", () => {
-        const provider = (presentation?: string) => {
+        const provider = (presentation?: string, recovery?: ProviderFailureRecovery) => {
             const compose = activeCompose()
             const composed = accepted(
                 transition(compose.state, {
@@ -204,6 +211,7 @@ describe("task kernel executor flow", () => {
                     turnId: "turn-1",
                     message: "provider execution failed (Error)",
                     ...(presentation === undefined ? {} : { presentation }),
+                    ...(recovery === undefined ? {} : { recovery }),
                 }),
             )
         }
@@ -223,6 +231,16 @@ describe("task kernel executor flow", () => {
         // kind; an internal interaction id is never shown as the cause.
         const undescribed = provider()
         expect(undescribed.state.dialog.primary?.presentationRef).toBe("provider execution failed (Error)")
+
+        // Rejected credentials keep the same presentation but answer a typed reply,
+        // never a Retry that would resend the request with the same key.
+        const rejected = provider('{"message":"401 Incorrect API key provided","status":401}', "profile_change")
+        expect(rejected.state.dialog.primary).toMatchObject({
+            kind: "profile_failure",
+            presentationRef: '{"message":"401 Incorrect API key provided","status":401}',
+        })
+        expect(rejected.state.dialog.primary?.actionRules.map((rule) => rule.actionId)).toEqual(["reply", "start_new_task"])
+        expect(described.state.dialog.primary?.actionRules.map((rule) => rule.actionId)).toEqual(["retry", "start_new_task"])
     })
 
     it("rejects stale, duplicate, and post-halt compose/provider feedback", () => {

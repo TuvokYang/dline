@@ -158,18 +158,21 @@ export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision:
         // shown in its own words. Without one the sanitized failure kind is still
         // a cause; the interaction id would name none.
         const presentation = event.presentation ?? event.message
+        // Resending a request whose credentials were rejected only repeats the
+        // rejection, so that failure answers a typed reply instead of a Retry.
+        const profileChange = event.type === "provider.failed" && event.recovery === "profile_change"
         return {
             state: {
                 ...state,
                 primary: {
                     interactionId,
                     turnId: event.turnId ?? `error:${nextRevision}`,
-                    kind: "error_retry",
+                    kind: profileChange ? "profile_failure" : "error_retry",
                     status: "planned",
                     createdRevision: nextRevision,
                     presentationRef: presentation,
                     actionRules: [
-                        { actionId: "retry", payloadPolicy: "draft" },
+                        { actionId: profileChange ? "reply" : "retry", payloadPolicy: "draft" },
                         { actionId: "start_new_task", payloadPolicy: "draft" },
                     ],
                 },

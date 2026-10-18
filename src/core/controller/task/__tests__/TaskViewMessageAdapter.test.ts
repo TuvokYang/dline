@@ -74,6 +74,43 @@ describe("adaptCanonicalTaskView", () => {
         expect(view.footer.actions.map((action) => action.type)).toEqual(["start_new_task"])
     })
 
+    it("offers no Retry for rejected credentials and lets Enter carry a typed reply", () => {
+        const failure = '{"message":"401 Incorrect API key provided","status":401,"code":"invalid_api_key"}'
+        const projection = projectCanonicalTaskView({
+            ...createInitialTaskState("task-1"),
+            flow: { phase: "error", error: failure },
+            dialog: {
+                approvalsByBlock: {},
+                primary: {
+                    interactionId: "error:provider.failed:7",
+                    turnId: "turn-1",
+                    kind: "profile_failure",
+                    status: "awaiting",
+                    createdRevision: 7,
+                    presentationRef: failure,
+                    receiverGeneration: 0,
+                    actionRules: [
+                        { actionId: "reply", payloadPolicy: "draft" },
+                        { actionId: "start_new_task", payloadPolicy: "draft" },
+                    ],
+                },
+            },
+        })
+
+        const view = adaptCanonicalTaskView(projection, [
+            { type: "ask", ask: "api_req_failed", ts: 120, text: failure, interactionId: "error:provider.failed:7" },
+        ])
+
+        // The failure keeps the error presentation and its text, so the card stays visible.
+        expect(view.activeInteraction).toMatchObject({
+            taskAsk: "api_req_failed",
+            presentationKind: "error_retry",
+            presentationText: failure,
+        })
+        expect(view.footer.actions.map((action) => action.type)).toEqual(["start_new_task"])
+        expect(view.input).toMatchObject({ enabled: true, enterAction: "reply" })
+    })
+
     it("opens the composer for one reply after a dismissed provider failure, as dev's profile recovery", () => {
         const initial = createInitialTaskState("task-1")
         const failed = {

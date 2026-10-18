@@ -39,6 +39,7 @@ function createController(planProfile: string, actProfile: string, profileId?: s
                     }),
                 },
                 api: { rebuild: vi.fn() },
+                interactions: { dismissProviderFailure: vi.fn(async () => undefined) },
                 prompt: { flush: vi.fn(async () => postStateToWebview()) },
             },
         },
@@ -66,6 +67,11 @@ function createController(planProfile: string, actProfile: string, profileId?: s
 /** Read the api-handler rebuild calls recorded by one controller fixture. */
 function rebuildCalls(controller: Controller): unknown[][] {
     return (controller.task?.owners.api.rebuild as ReturnType<typeof vi.fn>).mock.calls
+}
+
+/** Read the Profile-caused failure dismissals recorded by one controller fixture. */
+function dismissCalls(controller: Controller): unknown[][] {
+    return (controller.task?.owners.interactions.dismissProviderFailure as ReturnType<typeof vi.fn>).mock.calls
 }
 
 /** Read the prompt freshness flush calls recorded by one controller fixture. */
@@ -159,6 +165,29 @@ describe("ProfileChangeCoordinator", () => {
         )
 
         expect(flushCalls(controller)).to.deep.equal([["profile_catalog"]])
+        // The failed rebuild still runs the old handler, so its failure still describes it.
+        expect(dismissCalls(controller)).to.have.length(0)
+    })
+
+    it("clears a failure the edited Profile caused only once its handler is rebuilt", async () => {
+        const edited = createController("shared-profile", "shared-profile", "shared-id")
+        const order: string[] = []
+        ;(edited.task!.owners.api.rebuild as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+            order.push("rebuild")
+        })
+        ;(edited.task!.owners.interactions.dismissProviderFailure as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+            order.push("dismiss")
+        })
+        const untouched = createController("other-profile", "other-profile", "other-id")
+        const coordinator = new ProfileChangeCoordinator(() => [edited, untouched])
+
+        await coordinator.publish(
+            [{ id: "shared-id", name: "shared-profile", modelId: "old" }] as ApiProfile[],
+            [{ id: "shared-id", name: "shared-profile", modelId: "new" }] as ApiProfile[],
+        )
+
+        expect(order).to.deep.equal(["rebuild", "dismiss"])
+        expect(dismissCalls(untouched)).to.have.length(0)
     })
 
     it("broadcasts a pure reorder even when no profile fields change", async () => {

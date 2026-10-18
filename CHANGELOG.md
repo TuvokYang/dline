@@ -20,6 +20,8 @@
 
 
 ### Fixes
+- API key 被拒绝（如 401 `invalid_api_key`）时不再提供 Retry：错误卡片保持显示，空回车不会重发请求，切换或编辑当前 Profile 后该失败被清除且不会自动发送，输入消息后才继续任务；此前空回车和切换后的发送都会用同一个 key 反复重试，每次都多出一个 checkpoint
+- 修复任务重新打开后文件 checkpoint 永久失效的问题：上一会话保存的"Checkpoints initialization timed out"等提示不再阻止新会话初始化，checkpoint 行重新带上可恢复文件的 hash；初始化较慢时并发的轮次也会等待而不是写入无文件快照的行
 - 修复任务完成后、回复框就绪前发送的消息被拒绝（Dline cannot take input yet）的问题：这段时间内的输入现在会先进入队列，并作为回复送达
 - 修复阶段汇报（Phase report）与同轮工具行的先后顺序在完成时跳动的问题
 - 修复输入队列（Queue）在侧栏中无法展开、只显示一条细滚动条的问题

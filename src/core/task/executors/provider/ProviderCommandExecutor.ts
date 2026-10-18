@@ -9,7 +9,7 @@ import {
     isExecutionAbort,
     type TaskEventSink,
 } from "../contracts"
-import { presentationOf } from "./ProviderFailure"
+import { presentationOf, recoveryOf } from "./ProviderFailure"
 import type {
     ProviderReceivingEstimate,
     ProviderRequestOutcome,
@@ -230,6 +230,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
             finalResult = (await this.recoverFinal(command)) ?? (await this.consume(command, controller.signal))
         } catch (error) {
             if (isExecutionAbort(error, controller.signal)) return
+            const recovery = recoveryOf(error)
             await this.events.submit({
                 type: "provider.failed",
                 generation: command.generation,
@@ -239,6 +240,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                 message: executorFailure("provider", error),
                 // The provider's own explanation when it gave one, else the failure itself.
                 presentation: presentationOf(error) ?? describeExecutorFailure("provider", error),
+                ...(recovery ? { recovery } : {}),
             })
             return
         }

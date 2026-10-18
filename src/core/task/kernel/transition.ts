@@ -372,7 +372,8 @@ function validateEvent(state: TaskState, event: TaskEvent): ValidationFailure | 
             return { reason: "phase_invalid", message: "Only a resolving interaction can be reopened" }
         if (
             event.type === "dialog.dismissed" &&
-            (state.dialog.primary?.interactionId !== event.interactionId || interaction.kind !== "error_retry")
+            (state.dialog.primary?.interactionId !== event.interactionId ||
+                (interaction.kind !== "error_retry" && interaction.kind !== "profile_failure"))
         )
             return { reason: "phase_invalid", message: "Only the active provider failure dialog can be dismissed" }
         if (

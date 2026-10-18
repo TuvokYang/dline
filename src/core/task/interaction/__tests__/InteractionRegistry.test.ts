@@ -36,6 +36,7 @@ const CASES: InteractionCase[] = [
         continuation: "resume",
     },
     { kind: "error_retry", taskAsk: "api_req_failed", actions: ["retry", "start_new_task"], enterAction: "retry" },
+    { kind: "profile_failure", taskAsk: "api_req_failed", actions: ["start_new_task"], enterAction: "reply" },
     {
         kind: "condense",
         taskAsk: "condense",

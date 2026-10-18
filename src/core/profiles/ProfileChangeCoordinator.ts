@@ -125,13 +125,21 @@ export class ProfileChangeCoordinator {
             : this.findBindingChange(settings.actModeProfileId, settings.actModeProfile, changes)
     }
 
-    /** A failed rebuild keeps the previous handler; the Catalog commit itself already succeeded. */
+    /**
+     * A failed rebuild keeps the previous handler; the Catalog commit itself already succeeded.
+     *
+     * A failure the edited Profile caused, such as a rejected API key, no longer
+     * describes the handler the next request uses, so it is cleared the same way
+     * a Profile switch clears it. Nothing is resent: the user continues by replying.
+     */
     private async rebuildActiveHandler(task: NonNullable<Controller["task"]>): Promise<void> {
         try {
             await task.owners.api.rebuild()
         } catch (error) {
             Logger.warn(`[ProfileChangeCoordinator] Active handler rebuild failed for task ${task.taskId}`, error)
+            return
         }
+        await task.owners.interactions.dismissProviderFailure()
     }
 
     private adoptTaskBinding(

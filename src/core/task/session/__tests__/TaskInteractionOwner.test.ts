@@ -308,6 +308,23 @@ describe("TaskInteractionOwner", () => {
         expect(messages.clineMessages).toEqual([])
     })
 
+    it("dismisses a rejected-credential failure whatever its provider wording", async () => {
+        const failure = '{"message":"401 Incorrect API key provided: sk-***","status":401,"code":"invalid_api_key"}'
+        const messages = createMessages([
+            { ts: 1, type: "say", say: "text", text: "earlier reply" },
+            { ts: 2, type: "ask", ask: "api_req_failed", text: failure, interactionId: "i-error" },
+        ])
+        const restored = restoredPrimary("i-error", "profile_failure")
+        const state = () => ({ ...restored, flow: { phase: "error" as const, error: failure } })
+        const { owner, submitted } = createOwner({ messages, state })
+
+        await owner.dismissProviderFailure()
+
+        expect(submitted).toEqual(["dialog.dismissed"])
+        expect(messages.removeMessagesByTs).toHaveBeenCalledWith([2])
+        expect(messages.clineMessages).toEqual([{ ts: 1, type: "say", say: "text", text: "earlier reply" }])
+    })
+
     it("keeps a rate-limit failure retryable across a Profile switch", async () => {
         const failure = "429 E2E_PROFILE_SWITCH_429_RATE_LIMIT"
         const rows = [
