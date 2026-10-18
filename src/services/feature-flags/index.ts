@@ -10,10 +10,11 @@ export { LocalFeatureFlagsProvider } from "./providers/LocalFeatureFlagsProvider
 export { RemoteFeatureFlagsProvider } from "./providers/RemoteFeatureFlagsProvider"
 
 import { REMOTE_ROLLOUT_FEATURE_FLAGS } from "@/shared/services/feature-flags/feature-flags"
+import { isDevelopmentBuild } from "@/shared/services/feature-flags/resolve-experimental-flags"
 import { FeatureFlagsProviderFactory } from "./FeatureFlagsProviderFactory"
 import { FeatureFlagsService } from "./FeatureFlagsService"
 import { LayeredFeatureFlagsProvider } from "./providers/LayeredFeatureFlagsProvider"
-import { RemoteFeatureFlagsProvider } from "./providers/RemoteFeatureFlagsProvider"
+import { RemoteFeatureFlagsProvider, rolloutPollIntervalMs } from "./providers/RemoteFeatureFlagsProvider"
 import { type RemoteFeatureFlagsRuntimeOptions, startRemoteFeatureFlags } from "./remote/remoteFeatureFlagsRuntime"
 
 let _featureFlagsServiceInstance: FeatureFlagsService | null = null
@@ -41,9 +42,16 @@ export function getFeatureFlagsService(): FeatureFlagsService {
  * the cached answers are applied; later answers arrive through
  * {@link FeatureFlagsService.onDidChange}.
  */
-export function startFeatureFlagRollout(options: Omit<RemoteFeatureFlagsRuntimeOptions, "provider" | "flags">): Promise<void> {
+export function startFeatureFlagRollout(
+    options: Omit<RemoteFeatureFlagsRuntimeOptions, "provider" | "flags" | "pollIntervalMs">,
+): Promise<void> {
     getFeatureFlagsService()
-    return startRemoteFeatureFlags({ ...options, provider: getRolloutProvider(), flags: REMOTE_ROLLOUT_FEATURE_FLAGS })
+    return startRemoteFeatureFlags({
+        ...options,
+        provider: getRolloutProvider(),
+        flags: REMOTE_ROLLOUT_FEATURE_FLAGS,
+        pollIntervalMs: rolloutPollIntervalMs(isDevelopmentBuild()),
+    })
 }
 
 /** Re-check rollout participation now, after usage reporting was turned on or off. */

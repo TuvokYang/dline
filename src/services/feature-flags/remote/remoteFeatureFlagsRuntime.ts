@@ -1,5 +1,5 @@
 import path from "node:path"
-import type { RemoteFeatureFlagsProvider } from "../providers/RemoteFeatureFlagsProvider"
+import type { FeatureFlagsLogLevel, RemoteFeatureFlagsProvider } from "../providers/RemoteFeatureFlagsProvider"
 import { FeatureFlagsCacheFile } from "./FeatureFlagsCacheFile"
 import { FeatureFlagsHttpSource } from "./FeatureFlagsHttpSource"
 
@@ -26,8 +26,10 @@ export interface RemoteFeatureFlagsRuntimeOptions {
     readonly version: string
     readonly platform: string
     readonly flags: readonly string[]
+    /** Pace of the rollout requests; `rolloutPollIntervalMs` chooses it per build. */
+    readonly pollIntervalMs: number
     readonly endpoint?: string
-    readonly log?: (level: "debug" | "warn", message: string) => void
+    readonly log?: (level: FeatureFlagsLogLevel, message: string) => void
 }
 
 /** Point the rollout provider at the Dline feature service and its shared cache. */
@@ -46,6 +48,7 @@ export function startRemoteFeatureFlags(options: RemoteFeatureFlagsRuntimeOption
         source,
         cache: new FeatureFlagsCacheFile(path.join(options.cacheDir, FEATURE_FLAGS_CACHE_FILE_NAME)),
         participates: options.identity.participates,
+        pollIntervalMs: options.pollIntervalMs,
         log: options.log,
     })
 }

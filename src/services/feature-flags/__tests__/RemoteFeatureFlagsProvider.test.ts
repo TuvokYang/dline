@@ -1,15 +1,17 @@
 import { describe, expect, it, vi } from "vitest"
 import {
-    FEATURE_FLAGS_RETRY_DELAY_MS,
     type FeatureFlagsScheduler,
     RemoteFeatureFlagsProvider,
     type RemoteFeatureFlagsStartOptions,
+    rolloutPollIntervalMs,
 } from "../providers/RemoteFeatureFlagsProvider"
 import type { CachedFeatureFlags, FeatureFlagsCache } from "../remote/FeatureFlagsCacheFile"
 import type { FeatureFlagsSource } from "../remote/FeatureFlagsHttpSource"
 import type { FeatureFlagsDocument } from "../remote/flagsDocument"
 
 const NOW = 1_000_000_000_000
+/** The cadence these tests run at; production and development cadences are checked separately. */
+const INTERVAL = 30 * 60_000
 
 class ManualScheduler implements FeatureFlagsScheduler {
     readonly pending = new Map<number, { callback: () => void; delayMs: number }>()
@@ -57,12 +59,13 @@ class MemoryCache implements FeatureFlagsCache {
     }
 }
 
-/** Start a session of a device that reports usage unless the test says otherwise. */
+/** Start a session of a device that reports usage, at {@link INTERVAL}, unless the test says otherwise. */
 function start(
     provider: RemoteFeatureFlagsProvider,
-    options: Omit<RemoteFeatureFlagsStartOptions, "participates"> & Partial<Pick<RemoteFeatureFlagsStartOptions, "participates">>,
+    options: Omit<RemoteFeatureFlagsStartOptions, "participates" | "pollIntervalMs"> &
+        Partial<Pick<RemoteFeatureFlagsStartOptions, "participates" | "pollIntervalMs">>,
 ): Promise<void> {
-    return provider.start({ participates: () => true, ...options })
+    return provider.start({ participates: () => true, pollIntervalMs: INTERVAL, ...options })
 }
 
 function document(flags: Record<string, boolean>, ttlSeconds = 3_600): FeatureFlagsDocument {
@@ -93,7 +96,12 @@ describe("RemoteFeatureFlagsProvider", () => {
         expect(provider.resolveFlags(["account"])).toEqual({})
     })
 
-    it("applies the cached answers on start and fetches when they are due", async () => {
+    it("polls every 30 minutes, and every minute in a development build", () => {
+        expect(rolloutPollIntervalMs(false)).toBe(1_800_000)
+        expect(rolloutPollIntervalMs(true)).toBe(60_000)
+    })
+
+    it("applies the cached answers on start and asks again one interval after they were fetched", async () => {
         const scheduler = new ManualScheduler()
         const cache = new MemoryCache({ document: document({ account: true }, 600), fetchedAt: NOW - 100_000 })
         const provider = new RemoteFeatureFlagsProvider(["account"])
@@ -101,8 +109,8 @@ describe("RemoteFeatureFlagsProvider", () => {
         await start(provider, { source: sourceAnswering(document({})), cache, scheduler, now: () => NOW })
 
         expect(provider.resolveFlags(["account"])).toEqual({ account: true })
-        // 600 s of validity, 100 s already spent.
-        expect(scheduler.delays()).toEqual([500_000])
+        // The service's 600 s ttl does not set the pace; 100 s of the interval are already spent.
+        expect(scheduler.delays()).toEqual([INTERVAL - 100_000])
     })
 
     it("answers only the eligible switches, whatever the service sends", async () => {
@@ -120,7 +128,7 @@ describe("RemoteFeatureFlagsProvider", () => {
         expect(provider.resolveFlags(["account", "webtools"])).toEqual({ account: true })
     })
 
-    it("caches a successful answer, notifies once, and polls again after its ttl", async () => {
+    it("caches a successful answer, notifies once, and polls again one interval later whatever ttl the service sends", async () => {
         const scheduler = new ManualScheduler()
         const cache = new MemoryCache()
         const provider = new RemoteFeatureFlagsProvider(["account"])
@@ -132,7 +140,7 @@ describe("RemoteFeatureFlagsProvider", () => {
 
         expect(onChange).toHaveBeenCalledTimes(1)
         expect(cache.writes).toEqual([{ document: document({ account: true }, 900), fetchedAt: NOW }])
-        expect(scheduler.delays()).toEqual([900_000])
+        expect(scheduler.delays()).toEqual([INTERVAL])
     })
 
     it("does not notify when a refresh brings the same answers", async () => {
@@ -169,12 +177,73 @@ describe("RemoteFeatureFlagsProvider", () => {
 
         expect(source.calls).toBe(1)
         expect(provider.resolveFlags(["account"])).toEqual({ account: true })
-        expect(scheduler.delays()).toEqual([FEATURE_FLAGS_RETRY_DELAY_MS])
+        expect(scheduler.delays()).toEqual([INTERVAL])
+    })
+
+    it("asks at most once per interval, however often participation is re-checked", async () => {
+        let now = NOW
+        let reporting = true
+        const scheduler = new ManualScheduler()
+        const source = sourceAnswering(new Error("network"), document({ account: true }))
+        const provider = new RemoteFeatureFlagsProvider(["account"])
+
+        await start(provider, { source, cache: new MemoryCache(), scheduler, now: () => now, participates: () => reporting })
+        await scheduler.fireAll()
+        expect(source.calls).toBe(1)
+
+        // Usage reporting re-announced itself a minute after a failure: the service keeps its interval.
+        now += 60_000
+        await provider.revalidate()
+        expect(source.calls).toBe(1)
+        expect(scheduler.delays()).toEqual([INTERVAL - 60_000])
+
+        now += INTERVAL
+        await provider.revalidate()
+        expect(source.calls).toBe(2)
+        expect(provider.resolveFlags(["account"])).toEqual({ account: true })
+
+        // Leaving and rejoining within the interval of the last answer asks nothing either.
+        reporting = false
+        await provider.revalidate()
+        reporting = true
+        now += 60_000
+        await provider.revalidate()
+        expect(source.calls).toBe(2)
+        expect(scheduler.delays()).toEqual([INTERVAL - 60_000])
+    })
+
+    it("logs each change of rollout outcome at info and a repeated outcome at debug", async () => {
+        let now = NOW
+        let reporting = true
+        const levels: string[] = []
+        const scheduler = new ManualScheduler()
+        const source = sourceAnswering(new Error("status (404)"), new Error("status (404)"), document({ account: true }))
+        const provider = new RemoteFeatureFlagsProvider(["account"])
+
+        await start(provider, {
+            source,
+            cache: new MemoryCache(),
+            scheduler,
+            now: () => now,
+            participates: () => reporting,
+            log: (level) => levels.push(level),
+        })
+        for (let attempt = 0; attempt < 3; attempt++) {
+            await scheduler.fireAll()
+            now += INTERVAL
+        }
+        reporting = false
+        await provider.revalidate()
+        await provider.revalidate()
+
+        expect(source.calls).toBe(3)
+        // Failure, the same failure again, answers, leaving the rollout, still out of it.
+        expect(levels).toEqual(["info", "debug", "info", "info", "debug"])
     })
 
     it("uses answers another window cached instead of asking again", async () => {
         const scheduler = new ManualScheduler()
-        const cache = new MemoryCache({ document: document({ account: false }, 600), fetchedAt: NOW - 600_000 })
+        const cache = new MemoryCache({ document: document({ account: false }, 600), fetchedAt: NOW - INTERVAL })
         const source = sourceAnswering(document({ account: false }))
         const provider = new RemoteFeatureFlagsProvider(["account"])
 
@@ -185,7 +254,7 @@ describe("RemoteFeatureFlagsProvider", () => {
 
         expect(source.calls).toBe(0)
         expect(provider.resolveFlags(["account"])).toEqual({ account: true })
-        expect(scheduler.delays()).toEqual([600_000])
+        expect(scheduler.delays()).toEqual([INTERVAL])
     })
 
     it("drops the answers and the shared cache of a device that does not report usage, asking nothing", async () => {
@@ -200,7 +269,7 @@ describe("RemoteFeatureFlagsProvider", () => {
         expect(provider.resolveFlags(["account"])).toEqual({})
         expect(cache.entry).toBeUndefined()
         expect(source.calls).toBe(0)
-        expect(scheduler.delays()).toEqual([FEATURE_FLAGS_RETRY_DELAY_MS])
+        expect(scheduler.delays()).toEqual([INTERVAL])
     })
 
     it("leaves the rollout at once when usage reporting is turned off", async () => {

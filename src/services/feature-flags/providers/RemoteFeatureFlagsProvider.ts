@@ -2,8 +2,21 @@ import type { FeatureFlagsCache } from "../remote/FeatureFlagsCacheFile"
 import type { FeatureFlagsSource } from "../remote/FeatureFlagsHttpSource"
 import type { FeatureFlagPayload, FeatureFlagsSettings, IFeatureFlagsProvider } from "./IFeatureFlagsProvider"
 
-/** Wait before asking again after a failed fetch; the service being down must not turn into a request loop. */
-export const FEATURE_FLAGS_RETRY_DELAY_MS = 15 * 60_000
+/**
+ * How often a device asks the service, whatever the outcome and whoever asks:
+ * the next refresh after an answer, the retry after a failure, and the next
+ * look while the device takes no part. The service's `ttl_seconds` does not
+ * set the pace, so a service that is down cannot turn into a request loop.
+ */
+export const FEATURE_FLAGS_POLL_INTERVAL_MS = 30 * 60_000
+/** A development build polls every minute, so a rollout change shows up while it is being tried. */
+export const FEATURE_FLAGS_DEV_POLL_INTERVAL_MS = 60_000
+
+export function rolloutPollIntervalMs(developmentBuild: boolean): number {
+    return developmentBuild ? FEATURE_FLAGS_DEV_POLL_INTERVAL_MS : FEATURE_FLAGS_POLL_INTERVAL_MS
+}
+
+export type FeatureFlagsLogLevel = "debug" | "info" | "warn"
 
 export interface FeatureFlagsScheduler {
     setTimeout(callback: () => void, delayMs: number): unknown
@@ -19,9 +32,11 @@ export interface RemoteFeatureFlagsStartOptions {
      * is false the answers and the shared cache are dropped and nothing is asked.
      */
     readonly participates: () => boolean
+    /** Minimum time between two requests and between a request and the next look; see {@link rolloutPollIntervalMs}. */
+    readonly pollIntervalMs: number
     readonly now?: () => number
     readonly scheduler?: FeatureFlagsScheduler
-    readonly log?: (level: "debug" | "warn", message: string) => void
+    readonly log?: (level: FeatureFlagsLogLevel, message: string) => void
 }
 
 const defaultScheduler: FeatureFlagsScheduler = {
@@ -124,6 +139,10 @@ class RefreshSession {
     private readonly abort = new AbortController()
     private timer: unknown
     private inFlight: Promise<void> | undefined
+    /** No request before this time, so re-checking participation cannot hurry the next request. */
+    private nextRequestAt = 0
+    /** Last outcome logged at info, so a state that holds for hours is announced once. */
+    private announcedOutcome: string | undefined
 
     constructor(
         private readonly options: RemoteFeatureFlagsStartOptions,
@@ -183,38 +202,53 @@ class RefreshSession {
         }
         const cached = await this.readCache()
         if (this.abort.signal.aborted) return undefined
-        if (!cached) return 0
-        this.apply(cached.document.flags)
-        return cached.fetchedAt + cached.document.ttlSeconds * 1000 - this.now()
+        if (cached) this.apply(cached.document.flags)
+        const now = this.now()
+        // Answers any window fetched are fresh for one interval; this window also waits out its own last request.
+        const freshForMs = cached ? cached.fetchedAt + this.options.pollIntervalMs - now : 0
+        return Math.max(0, freshForMs, this.nextRequestAt - now)
     }
 
     /** Drop the answers here and for every window, then look again later; checking is local and asks nothing. */
     private async withdraw(): Promise<void> {
+        this.announce("withdrawn", "[FeatureFlags] Not taking part in rollouts while usage reporting is off")
         this.apply({})
         await this.options.cache.clear().catch((error: unknown) => {
             this.options.log?.("warn", `[FeatureFlags] Failed to clear cached feature flags: ${describe(error)}`)
         })
-        this.schedule(FEATURE_FLAGS_RETRY_DELAY_MS)
+        this.schedule(this.options.pollIntervalMs)
     }
 
     private async fetchAndApply(): Promise<void> {
-        let ttlMs = FEATURE_FLAGS_RETRY_DELAY_MS
+        this.nextRequestAt = this.now() + this.options.pollIntervalMs
+        const nextIn = `${this.options.pollIntervalMs / 1000} s`
         try {
             const document = await this.options.source.fetchFlags(this.abort.signal)
             if (this.abort.signal.aborted) return
             // Participation may have ended while the request was out; its answer must not outlive it.
             if (!this.options.participates()) return await this.withdraw()
+            this.announce("answered", `[FeatureFlags] Rollout answers received; next refresh in ${nextIn}`)
             this.apply(document.flags)
-            ttlMs = document.ttlSeconds * 1000
             await this.options.cache.write({ document, fetchedAt: this.now() }).catch((error: unknown) => {
                 this.options.log?.("warn", `[FeatureFlags] Failed to cache feature flags: ${describe(error)}`)
             })
         } catch (error) {
             if (this.abort.signal.aborted) return
-            // The service is not reachable until it is deployed; keep the last answers quietly.
-            this.options.log?.("debug", `[FeatureFlags] Keeping previous feature flags: ${describe(error)}`)
+            // Printed when the failure changes, so a service that stays unreachable costs one line.
+            const failure = describe(error)
+            this.announce(
+                `failed:${failure}`,
+                `[FeatureFlags] Keeping previous feature flags: ${failure}; next attempt in ${nextIn}`,
+            )
         }
-        this.schedule(ttlMs)
+        this.schedule(this.options.pollIntervalMs)
+    }
+
+    /** Log an outcome at info when it differs from the last one announced, at debug while it holds. */
+    private announce(outcome: string, message: string): void {
+        const level = outcome === this.announcedOutcome ? "debug" : "info"
+        this.announcedOutcome = outcome
+        this.options.log?.(level, message)
     }
 
     private async readCache() {
