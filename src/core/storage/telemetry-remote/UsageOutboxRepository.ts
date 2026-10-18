@@ -16,6 +16,8 @@ import { quarantineDocument } from "./quarantine"
 export const USAGE_OUTBOX_SCHEMA_VERSION = 1
 /** How long a sender owns delivery without renewing; longer than one HTTP attempt, short enough to take over a dead window. */
 export const USAGE_SENDER_LEASE_MS = 90_000
+/** Renew once less than this share of the lease is left; a cycle then always starts with over half a lease. */
+const LEASE_RENEW_FRACTION = 2 / 3
 const LOCK_ACQUIRE_ATTEMPTS = 50
 const BODY_SUFFIX = ".bin"
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f-]{27,55}$/i
@@ -81,6 +83,10 @@ export class UsageOutboxRepository {
             const lease = document.lease
             if (lease && lease.expiresAt > now && lease.ownerId !== ownerId) return { result: undefined }
             const renewing = lease !== undefined && lease.ownerId === ownerId && lease.expiresAt > now
+            // A lease with most of its time left is kept as it is, so a quiet machine does not rewrite the outbox every cycle.
+            if (renewing && lease.expiresAt - now > this.leaseMs * LEASE_RENEW_FRACTION) {
+                return { result: { ownerId, generation: lease.generation } }
+            }
             const generation = renewing ? lease.generation : document.generation + 1
             const next: SenderLease = { ownerId, generation, expiresAt: now + this.leaseMs }
             return { document: { ...document, generation, lease: next }, result: { ownerId, generation } }
@@ -186,7 +192,11 @@ export class UsageOutboxRepository {
             if (latest.status === "unsupported") return undefined
             const previous = latest.status === "valid" ? latest.document : { generation: 0, state: emptyUsageOutbox(0) }
             const changed = await change(previous, this.clock())
-            if (changed.document) await writeJsonAtomic(this.layout.usageOutboxPath, serialize(changed.document), { fsync: true })
+            if (changed.document) {
+                const next = serialize(changed.document)
+                const unchanged = latest.status === "valid" && JSON.stringify(serialize(previous)) === JSON.stringify(next)
+                if (!unchanged) await writeJsonAtomic(this.layout.usageOutboxPath, next, { fsync: true })
+            }
             return changed.result
         })
     }
