@@ -5,6 +5,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 ## [Unreleased]
 
 ### Changed
+- The Account rollout reaches only devices that report Dline usage statistics, grouped by the device id the usage service issued; turning usage reporting off leaves the rollout at once and clears the cached rollout answers
 - Account is now a gradually rolled out feature and hidden by default: the account sign-in choice in onboarding, the sidebar Account button,
 - The composer's send, resume, queue, and cancel actions are merged into one action button:
 - Images in a message are referenced in place with `<image_ref>`, and their pixels are sent to the model after the message

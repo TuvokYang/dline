@@ -1,4 +1,5 @@
-import { readJsonWithBackup, writeJsonAtomic } from "@shared/storage/atomic-file"
+import { rm } from "node:fs/promises"
+import { backupPathOf, readJsonWithBackup, writeJsonAtomic } from "@shared/storage/atomic-file"
 import { FEATURE_FLAGS_SCHEMA_VERSION, type FeatureFlagsDocument, parseFeatureFlagsDocument } from "./flagsDocument"
 
 /** The last answers of the feature service and when they were fetched. */
@@ -12,6 +13,8 @@ export interface CachedFeatureFlags {
 export interface FeatureFlagsCache {
     read(): Promise<CachedFeatureFlags | undefined>
     write(entry: CachedFeatureFlags): Promise<void>
+    /** Forget the answers, so no window applies them again. */
+    clear(): Promise<void>
 }
 
 /**
@@ -35,6 +38,11 @@ export class FeatureFlagsCacheFile implements FeatureFlagsCache {
             ttl_seconds: entry.document.ttlSeconds,
             fetched_at: entry.fetchedAt,
         })
+    }
+
+    async clear(): Promise<void> {
+        // The backup goes too: a read falls back to it when the primary is missing.
+        await Promise.all([rm(this.filePath, { force: true }), rm(backupPathOf(this.filePath), { force: true })])
     }
 }
 

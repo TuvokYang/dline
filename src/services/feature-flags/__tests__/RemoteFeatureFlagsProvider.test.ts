@@ -3,6 +3,7 @@ import {
     FEATURE_FLAGS_RETRY_DELAY_MS,
     type FeatureFlagsScheduler,
     RemoteFeatureFlagsProvider,
+    type RemoteFeatureFlagsStartOptions,
 } from "../providers/RemoteFeatureFlagsProvider"
 import type { CachedFeatureFlags, FeatureFlagsCache } from "../remote/FeatureFlagsCacheFile"
 import type { FeatureFlagsSource } from "../remote/FeatureFlagsHttpSource"
@@ -50,6 +51,18 @@ class MemoryCache implements FeatureFlagsCache {
         this.writes.push(entry)
         this.entry = entry
     }
+
+    async clear(): Promise<void> {
+        this.entry = undefined
+    }
+}
+
+/** Start a session of a device that reports usage unless the test says otherwise. */
+function start(
+    provider: RemoteFeatureFlagsProvider,
+    options: Omit<RemoteFeatureFlagsStartOptions, "participates"> & Partial<Pick<RemoteFeatureFlagsStartOptions, "participates">>,
+): Promise<void> {
+    return provider.start({ participates: () => true, ...options })
 }
 
 function document(flags: Record<string, boolean>, ttlSeconds = 3_600): FeatureFlagsDocument {
@@ -85,7 +98,7 @@ describe("RemoteFeatureFlagsProvider", () => {
         const cache = new MemoryCache({ document: document({ account: true }, 600), fetchedAt: NOW - 100_000 })
         const provider = new RemoteFeatureFlagsProvider(["account"])
 
-        await provider.start({ source: sourceAnswering(document({})), cache, scheduler, now: () => NOW })
+        await start(provider, { source: sourceAnswering(document({})), cache, scheduler, now: () => NOW })
 
         expect(provider.resolveFlags(["account"])).toEqual({ account: true })
         // 600 s of validity, 100 s already spent.
@@ -96,7 +109,7 @@ describe("RemoteFeatureFlagsProvider", () => {
         const scheduler = new ManualScheduler()
         const provider = new RemoteFeatureFlagsProvider(["account"])
 
-        await provider.start({
+        await start(provider, {
             source: sourceAnswering(document({ account: true, webtools: true })),
             cache: new MemoryCache(),
             scheduler,
@@ -114,7 +127,7 @@ describe("RemoteFeatureFlagsProvider", () => {
         const onChange = vi.fn()
         provider.onDidChange(onChange)
 
-        await provider.start({ source: sourceAnswering(document({ account: true }, 900)), cache, scheduler, now: () => NOW })
+        await start(provider, { source: sourceAnswering(document({ account: true }, 900)), cache, scheduler, now: () => NOW })
         await scheduler.fireAll()
 
         expect(onChange).toHaveBeenCalledTimes(1)
@@ -128,7 +141,7 @@ describe("RemoteFeatureFlagsProvider", () => {
         const onChange = vi.fn()
         provider.onDidChange(onChange)
 
-        await provider.start({
+        await start(provider, {
             source: sourceAnswering(document({ account: true })),
             cache: new MemoryCache({ document: document({ account: true }), fetchedAt: NOW - 10_000_000 }),
             scheduler,
@@ -146,7 +159,7 @@ describe("RemoteFeatureFlagsProvider", () => {
         const source = sourceAnswering(new Error("network"))
         const provider = new RemoteFeatureFlagsProvider(["account"])
 
-        await provider.start({
+        await start(provider, {
             source,
             cache: new MemoryCache({ document: document({ account: true }), fetchedAt: NOW - 10_000_000 }),
             scheduler,
@@ -165,7 +178,7 @@ describe("RemoteFeatureFlagsProvider", () => {
         const source = sourceAnswering(document({ account: false }))
         const provider = new RemoteFeatureFlagsProvider(["account"])
 
-        await provider.start({ source, cache, scheduler, now: () => NOW })
+        await start(provider, { source, cache, scheduler, now: () => NOW })
         // Another window refreshed the shared cache before this one's timer fired.
         cache.entry = { document: document({ account: true }, 600), fetchedAt: NOW }
         await scheduler.fireAll()
@@ -175,11 +188,86 @@ describe("RemoteFeatureFlagsProvider", () => {
         expect(scheduler.delays()).toEqual([600_000])
     })
 
+    it("drops the answers and the shared cache of a device that does not report usage, asking nothing", async () => {
+        const scheduler = new ManualScheduler()
+        const cache = new MemoryCache({ document: document({ account: true }, 600), fetchedAt: NOW })
+        const source = sourceAnswering(document({ account: true }))
+        const provider = new RemoteFeatureFlagsProvider(["account"])
+
+        await start(provider, { source, cache, scheduler, now: () => NOW, participates: () => false })
+        await scheduler.fireAll()
+
+        expect(provider.resolveFlags(["account"])).toEqual({})
+        expect(cache.entry).toBeUndefined()
+        expect(source.calls).toBe(0)
+        expect(scheduler.delays()).toEqual([FEATURE_FLAGS_RETRY_DELAY_MS])
+    })
+
+    it("leaves the rollout at once when usage reporting is turned off", async () => {
+        const scheduler = new ManualScheduler()
+        const cache = new MemoryCache({ document: document({ account: true }, 600), fetchedAt: NOW })
+        const provider = new RemoteFeatureFlagsProvider(["account"])
+        const onChange = vi.fn()
+        provider.onDidChange(onChange)
+        let reporting = true
+
+        await start(provider, {
+            source: sourceAnswering(document({})),
+            cache,
+            scheduler,
+            now: () => NOW,
+            participates: () => reporting,
+        })
+        expect(provider.resolveFlags(["account"])).toEqual({ account: true })
+
+        reporting = false
+        await provider.revalidate()
+
+        expect(provider.resolveFlags(["account"])).toEqual({})
+        expect(onChange).toHaveBeenCalledTimes(2)
+        expect(cache.entry).toBeUndefined()
+    })
+
+    it("joins at once when usage reporting is turned on", async () => {
+        const scheduler = new ManualScheduler()
+        const source = sourceAnswering(document({ account: true }))
+        const provider = new RemoteFeatureFlagsProvider(["account"])
+        let reporting = false
+
+        await start(provider, { source, cache: new MemoryCache(), scheduler, now: () => NOW, participates: () => reporting })
+        expect(source.calls).toBe(0)
+
+        reporting = true
+        await provider.revalidate()
+
+        expect(source.calls).toBe(1)
+        expect(provider.resolveFlags(["account"])).toEqual({ account: true })
+    })
+
+    it("discards an answer that arrives after usage reporting was turned off", async () => {
+        const scheduler = new ManualScheduler()
+        const cache = new MemoryCache()
+        const provider = new RemoteFeatureFlagsProvider(["account"])
+        let reporting = true
+        const source: FeatureFlagsSource = {
+            async fetchFlags() {
+                reporting = false
+                return document({ account: true })
+            },
+        }
+
+        await start(provider, { source, cache, scheduler, now: () => NOW, participates: () => reporting })
+        await scheduler.fireAll()
+
+        expect(provider.resolveFlags(["account"])).toEqual({})
+        expect(cache.writes).toEqual([])
+    })
+
     it("stops polling once disposed", async () => {
         const scheduler = new ManualScheduler()
         const provider = new RemoteFeatureFlagsProvider(["account"])
 
-        await provider.start({ source: sourceAnswering(document({})), cache: new MemoryCache(), scheduler, now: () => NOW })
+        await start(provider, { source: sourceAnswering(document({})), cache: new MemoryCache(), scheduler, now: () => NOW })
         await provider.dispose()
 
         expect(scheduler.delays()).toEqual([])

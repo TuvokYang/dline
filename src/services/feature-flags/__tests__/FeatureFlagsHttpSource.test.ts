@@ -3,12 +3,16 @@ import { describe, expect, it } from "vitest"
 import {
     FeatureFlagsFetchError,
     FeatureFlagsHttpSource,
+    type FeatureFlagsHttpSourceOptions,
     loopbackFeaturesEndpointOverride,
 } from "../remote/FeatureFlagsHttpSource"
 import { MAX_FEATURE_FLAGS_TTL_SECONDS, MIN_FEATURE_FLAGS_TTL_SECONDS, parseFeatureFlagsDocument } from "../remote/flagsDocument"
-import { featureFlagsBucket } from "../remote/remoteFeatureFlagsRuntime"
 
-const QUERY = { bucket: "b".repeat(64), version: "0.11.0", platform: "win32", flags: ["account"] }
+const QUERY = { version: "0.11.0", platform: "win32", flags: ["account"] }
+
+function createSource(options: Partial<FeatureFlagsHttpSourceOptions> = {}): FeatureFlagsHttpSource {
+    return new FeatureFlagsHttpSource({ query: QUERY, deviceId: async () => "dev_device-1", ...options })
+}
 
 interface CapturedRequest {
     readonly url: string
@@ -23,9 +27,9 @@ function respondWith(status: number, body: unknown, captured: CapturedRequest[] 
 }
 
 describe("FeatureFlagsHttpSource", () => {
-    it("posts the query in the body so the bucket never appears in a URL", async () => {
+    it("names the device by its issued id in the body and sends no credential", async () => {
         const captured: CapturedRequest[] = []
-        const source = new FeatureFlagsHttpSource({ query: QUERY })
+        const source = createSource()
 
         const document = await mockFetchForTesting(
             respondWith(200, { schema_version: 1, flags: { account: true }, ttl_seconds: 600 }, captured),
@@ -36,17 +40,48 @@ describe("FeatureFlagsHttpSource", () => {
         expect(captured).toHaveLength(1)
         expect(captured[0].url).toBe("https://dev.dline.cc/v1/features")
         expect(captured[0].init).toMatchObject({ method: "POST", redirect: "error" })
+        expect(new Headers(captured[0].init?.headers).has("authorization")).toBe(false)
         expect(JSON.parse(String(captured[0].init?.body))).toEqual({
             schema_version: 1,
-            bucket: QUERY.bucket,
+            device_id: "dev_device-1",
             version: "0.11.0",
             platform: "win32",
             flags: ["account"],
         })
     })
 
+    it("sends nothing while the device has no issued id", async () => {
+        const captured: CapturedRequest[] = []
+        const source = createSource({ deviceId: async () => undefined })
+
+        const failure = await mockFetchForTesting(respondWith(200, { schema_version: 1, flags: {} }, captured), () =>
+            source.fetchFlags().catch((error: unknown) => error),
+        )
+
+        expect(failure).toMatchObject({ failure: "no_device" })
+        expect(captured).toHaveLength(0)
+    })
+
+    it("turns a failed id acquisition into no_device without passing its message on", async () => {
+        const captured: CapturedRequest[] = []
+        const source = createSource({
+            deviceId: async () => {
+                throw new Error("exchange failed for secret-material")
+            },
+        })
+
+        const failure = await mockFetchForTesting(respondWith(200, { schema_version: 1, flags: {} }, captured), () =>
+            source.fetchFlags().catch((error: unknown) => error),
+        )
+
+        expect(failure).toBeInstanceOf(FeatureFlagsFetchError)
+        expect(failure).toMatchObject({ failure: "no_device" })
+        expect((failure as Error).message.includes("secret-material")).toBe(false)
+        expect(captured).toHaveLength(0)
+    })
+
     it("reports a non-2xx answer by status without parsing it", async () => {
-        const source = new FeatureFlagsHttpSource({ query: QUERY })
+        const source = createSource()
 
         const failure = await mockFetchForTesting(respondWith(503, { schema_version: 1, flags: { account: true } }), () =>
             source.fetchFlags().catch((error: unknown) => error),
@@ -57,7 +92,7 @@ describe("FeatureFlagsHttpSource", () => {
     })
 
     it("rejects a body that is not a flags document", async () => {
-        const source = new FeatureFlagsHttpSource({ query: QUERY })
+        const source = createSource()
 
         const failure = await mockFetchForTesting(respondWith(200, "<html>captive portal</html>"), () =>
             source.fetchFlags().catch((error: unknown) => error),
@@ -67,9 +102,9 @@ describe("FeatureFlagsHttpSource", () => {
     })
 
     it("refuses an endpoint that is neither HTTPS nor loopback", () => {
-        expect(() => new FeatureFlagsHttpSource({ query: QUERY, endpoint: "http://dev.dline.cc" })).toThrow()
-        expect(() => new FeatureFlagsHttpSource({ query: QUERY, endpoint: "https://dev.dline.cc/path" })).toThrow()
-        expect(() => new FeatureFlagsHttpSource({ query: QUERY, endpoint: "http://127.0.0.1:8788" })).not.toThrow()
+        expect(() => createSource({ endpoint: "http://dev.dline.cc" })).toThrow()
+        expect(() => createSource({ endpoint: "https://dev.dline.cc/path" })).toThrow()
+        expect(() => createSource({ endpoint: "http://127.0.0.1:8788" })).not.toThrow()
     })
 })
 
@@ -99,16 +134,5 @@ describe("parseFeatureFlagsDocument", () => {
         expect(parseFeatureFlagsDocument({ schema_version: 1, flags: {}, ttl_seconds: 10_000_000 })?.ttlSeconds).toBe(
             MAX_FEATURE_FLAGS_TTL_SECONDS,
         )
-    })
-})
-
-describe("featureFlagsBucket", () => {
-    it("is stable for one installation and does not reveal the identity", () => {
-        const bucket = featureFlagsBucket("machine-1")
-
-        expect(featureFlagsBucket("machine-1")).toBe(bucket)
-        expect(featureFlagsBucket("machine-2")).not.toBe(bucket)
-        expect(bucket).toMatch(/^[0-9a-f]{64}$/)
-        expect(bucket.includes("machine-1")).toBe(false)
     })
 })

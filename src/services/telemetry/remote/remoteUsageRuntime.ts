@@ -32,6 +32,8 @@ export interface RemoteUsageRuntimeOptions {
 }
 
 let coordinator: RemoteUsageCoordinator | undefined
+let tokenBroker: DeviceTokenBroker | undefined
+const reportingListeners = new Set<() => void>()
 
 /**
  * Settlement port handed to every Task. It forwards to the coordinator of this
@@ -85,19 +87,56 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
         log: options.log,
     })
     coordinator = started
+    tokenBroker = tokens
     options.log?.("debug", `[RemoteUsage] starting in ${ownerId}, reporting to ${transport.origin}`)
     await started.start()
 }
 
+/**
+ * Whether this extension host may report usage now. Services that ride on the
+ * usage consent, such as the feature rollout, take part only while it holds.
+ * It is `false` until startup has resolved the policy.
+ */
+export function usageReportingAllowed(): boolean {
+    return coordinator?.reportingAllowed === true
+}
+
+/**
+ * The device id the usage service issued, for services that ride on the usage
+ * consent, or `undefined` while this device may not report usage or has not
+ * been enrolled yet. It names the same device as the usage it reports, so such
+ * a service can be related to that usage. Only the id leaves: the bearer token
+ * is a usage write credential and is sent to the usage service alone.
+ */
+export async function acquireUsageDeviceId(signal?: AbortSignal): Promise<string | undefined> {
+    const running = coordinator
+    const tokens = tokenBroker
+    if (!running?.reportingAllowed || !tokens) return undefined
+    const acquisition = await tokens.acquire("usage", { signal })
+    return acquisition.status === "ready" ? acquisition.token.deviceId : undefined
+}
+
+/** Called after a policy refresh changes {@link usageReportingAllowed}; returns the unsubscribe function. */
+export function onUsageReportingChanged(listener: () => void): () => void {
+    reportingListeners.add(listener)
+    return () => reportingListeners.delete(listener)
+}
+
 /** Re-resolve the policy after a consent, organization or host telemetry change. */
-export function refreshRemoteUsagePolicy(): Promise<void> {
-    return coordinator?.refresh() ?? Promise.resolve()
+export async function refreshRemoteUsagePolicy(): Promise<void> {
+    const running = coordinator
+    if (!running) return
+    const wasAllowed = running.reportingAllowed
+    await running.refresh()
+    if (running.reportingAllowed === wasAllowed) return
+    for (const listener of reportingListeners) listener()
 }
 
 /** Stop intake and delivery and hand the sender lease back; bounded, safe to call twice. */
 export async function stopRemoteUsage(): Promise<void> {
     const running = coordinator
     coordinator = undefined
+    tokenBroker = undefined
     await running?.dispose()
 }
 

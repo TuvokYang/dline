@@ -17,7 +17,7 @@ import type { FlowPhase } from "./core/task/kernel"
 import { AgentConfigLoader } from "./core/task/tools/subagent/AgentConfigLoader"
 import { ExtensionRegistryInfo } from "./registry"
 import { ErrorService } from "./services/error"
-import { featureFlagsService, startFeatureFlagRollout } from "./services/feature-flags"
+import { featureFlagsService, revalidateFeatureFlagRollout, startFeatureFlagRollout } from "./services/feature-flags"
 import { loopbackFeaturesEndpointOverride } from "./services/feature-flags/remote/FeatureFlagsHttpSource"
 import { getDistinctId } from "./services/logging/distinctId"
 import { DlineRuntimeFileManager } from "./services/runtime-files"
@@ -27,7 +27,13 @@ import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-r
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
 import { PostHogClientProvider } from "./services/telemetry/providers/posthog/PostHogClientProvider"
 import { readHostUsagePolicyInputs } from "./services/telemetry/remote/policy/hostUsagePolicyInputs"
-import { startRemoteUsage, stopRemoteUsage } from "./services/telemetry/remote/remoteUsageRuntime"
+import {
+    acquireUsageDeviceId,
+    onUsageReportingChanged,
+    startRemoteUsage,
+    stopRemoteUsage,
+    usageReportingAllowed,
+} from "./services/telemetry/remote/remoteUsageRuntime"
 import { loopbackEndpointOverride } from "./services/telemetry/remote/transport/DlineOtelHttpClient"
 import {
     completeRuntimeSessionLedger,
@@ -203,7 +209,7 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
         },
     )
     // Remote usage reporting is a machine-wide side path; it stays off until its policy allows it.
-    void startRemoteUsageReporting(storageContext.dataDir).catch((error) =>
+    const remoteUsageStarted = startRemoteUsageReporting(storageContext.dataDir).catch((error) =>
         Logger.warn("[Dline] Failed to start remote usage reporting:", error),
     )
     // Rollout answers only re-project state; a missing service leaves every switch at its default.
@@ -212,9 +218,11 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
             void controller.postStateToWebview()
         }
     })
-    void startFeatureFlagRolloutInBackground().catch((error) =>
-        Logger.warn("[Dline] Failed to start feature flag rollout:", error),
-    )
+    // The rollout rides on usage reporting, so it starts once the usage policy is known;
+    // starting earlier would read "not reporting" and drop the cached answers of every window.
+    void remoteUsageStarted
+        .then(() => startFeatureFlagRolloutInBackground())
+        .catch((error) => Logger.warn("[Dline] Failed to start feature flag rollout:", error))
 
     // Non-blocking announcement check and display
     showVersionUpdateAnnouncement(stateManager)
@@ -385,9 +393,15 @@ async function startFeatureFlagRolloutInBackground(): Promise<void> {
     const isTestRun = envFlagEnabled(process.env.E2E_TEST) || envFlagEnabled(process.env.IS_TEST)
     if (isTestRun && !endpoint) return
     const { getDlineCacheDir } = await import("./core/storage/disk")
+    // Turning usage reporting on or off joins or leaves the rollout at once, not at the next refresh.
+    onUsageReportingChanged(() => {
+        void revalidateFeatureFlagRollout().catch((error) =>
+            Logger.warn("[Dline] Failed to re-check feature flag rollout participation:", error),
+        )
+    })
     await startFeatureFlagRollout({
         cacheDir: getDlineCacheDir(),
-        distinctId: getDistinctId(),
+        identity: { participates: usageReportingAllowed, deviceId: acquireUsageDeviceId },
         version: ExtensionRegistryInfo.version,
         platform: process.platform,
         endpoint,

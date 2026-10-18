@@ -8,17 +8,15 @@ export const FEATURES_REQUEST_TIMEOUT_MS = 10_000
 const MAX_RESPONSE_BYTES = 64 * 1024
 const FEATURES_PATH = "/v1/features"
 
-/** What the service may target a rollout by. None of it identifies the user or the machine. */
+/** What the service may target a rollout by, besides the device. None of it identifies the user. */
 export interface FeatureFlagsQuery {
-    /** Stable per installation, derived one-way so it cannot be joined with telemetry identities. */
-    readonly bucket: string
     readonly version: string
     readonly platform: string
     /** The flags this client asks about; the service answers only these. */
     readonly flags: readonly string[]
 }
 
-export type FeatureFlagsFetchFailure = "timeout" | "aborted" | "network" | "status" | "invalid_document"
+export type FeatureFlagsFetchFailure = "no_device" | "timeout" | "aborted" | "network" | "status" | "invalid_document"
 
 /** A failed fetch. It carries no URL or body, so it can be logged as it is. */
 export class FeatureFlagsFetchError extends Error {
@@ -38,6 +36,12 @@ export interface FeatureFlagsSource {
 
 export interface FeatureFlagsHttpSourceOptions {
     readonly query: FeatureFlagsQuery
+    /**
+     * The device id the usage service issued, or `undefined` when there is none
+     * right now. The service buckets by it, so every answer can be related to
+     * the usage of the device it was given to.
+     */
+    readonly deviceId: (signal?: AbortSignal) => Promise<string | undefined>
     /** Origin of the service; tests use a loopback origin. */
     readonly endpoint?: string
     readonly timeoutMs?: number
@@ -46,27 +50,25 @@ export interface FeatureFlagsHttpSourceOptions {
 /**
  * HTTP client of the Dline feature service.
  *
- * The query travels in a POST body rather than the URL: proxies, CDNs and
- * access logs record URLs, and an answer computed for one installation must
- * not be cached for another. Goes through the shared proxy-aware fetch,
- * refuses redirects, bounds each request in time and each response in size,
- * and does not retry: the provider owns the schedule and keeps its last
- * answers when a fetch fails.
+ * The device id and the query travel in a POST body rather than the URL:
+ * proxies, CDNs and access logs record URLs, and an answer computed for one
+ * device must not be cached for another. Without a device id nothing is sent.
+ * No credential is sent either: the service only buckets a public id, and the
+ * usage token is a write credential that stays with the usage service. Goes
+ * through the shared proxy-aware fetch, refuses redirects, bounds each request
+ * in time and each response in size, and does not retry: the provider owns the
+ * schedule and keeps its last answers when a fetch fails.
  */
 export class FeatureFlagsHttpSource implements FeatureFlagsSource {
     private readonly url: URL
-    private readonly body: string
+    private readonly query: FeatureFlagsQuery
     private readonly timeoutMs: number
+    private readonly deviceId: FeatureFlagsHttpSourceOptions["deviceId"]
 
     constructor(options: FeatureFlagsHttpSourceOptions) {
         this.url = new URL(FEATURES_PATH, parseFeaturesEndpoint(options.endpoint ?? DLINE_FEATURES_ENDPOINT))
-        this.body = JSON.stringify({
-            schema_version: FEATURE_FLAGS_SCHEMA_VERSION,
-            bucket: options.query.bucket,
-            version: options.query.version,
-            platform: options.query.platform,
-            flags: options.query.flags,
-        })
+        this.query = options.query
+        this.deviceId = options.deviceId
         this.timeoutMs = options.timeoutMs ?? FEATURES_REQUEST_TIMEOUT_MS
     }
 
@@ -76,6 +78,8 @@ export class FeatureFlagsHttpSource implements FeatureFlagsSource {
     }
 
     async fetchFlags(signal?: AbortSignal): Promise<FeatureFlagsDocument> {
+        // Acquired before the request deadline starts: an enrollment has its own bound.
+        const deviceId = await this.acquireDeviceId(signal)
         const deadline = new AbortController()
         const timer = setTimeout(() => deadline.abort(), this.timeoutMs)
         const forwardAbort = () => deadline.abort()
@@ -85,7 +89,13 @@ export class FeatureFlagsHttpSource implements FeatureFlagsSource {
             const response = await fetch(this.url, {
                 method: "POST",
                 headers: { accept: "application/json", "content-type": "application/json" },
-                body: this.body,
+                body: JSON.stringify({
+                    schema_version: FEATURE_FLAGS_SCHEMA_VERSION,
+                    device_id: deviceId,
+                    version: this.query.version,
+                    platform: this.query.platform,
+                    flags: this.query.flags,
+                }),
                 redirect: "error",
                 signal: deadline.signal,
             })
@@ -105,6 +115,20 @@ export class FeatureFlagsHttpSource implements FeatureFlagsSource {
             clearTimeout(timer)
             signal?.removeEventListener("abort", forwardAbort)
         }
+    }
+
+    private async acquireDeviceId(signal: AbortSignal | undefined): Promise<string> {
+        if (signal?.aborted) throw new FeatureFlagsFetchError("aborted")
+        let deviceId: string | undefined
+        try {
+            deviceId = await this.deviceId(signal)
+        } catch {
+            // The error may describe the enrollment exchange; only the outcome leaves here.
+            deviceId = undefined
+        }
+        if (signal?.aborted) throw new FeatureFlagsFetchError("aborted")
+        if (!deviceId) throw new FeatureFlagsFetchError("no_device")
+        return deviceId
     }
 }
 

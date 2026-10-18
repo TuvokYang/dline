@@ -63,6 +63,11 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
         this.cycleIntervalMs = options.cycleIntervalMs ?? USAGE_CYCLE_INTERVAL_MS
     }
 
+    /** Whether the current policy lets this device report usage; services that ride on that consent follow it. */
+    get reportingAllowed(): boolean {
+        return !this.disposed && this.current?.decision.allowed === true
+    }
+
     /** Resolve the policy, open intake, and schedule the first cycle. */
     async start(): Promise<void> {
         await this.refresh()

@@ -13,6 +13,12 @@ export interface FeatureFlagsScheduler {
 export interface RemoteFeatureFlagsStartOptions {
     readonly source: FeatureFlagsSource
     readonly cache: FeatureFlagsCache
+    /**
+     * Whether this device takes part in rollouts now. A rollout must be
+     * measurable, so only a device that reports usage takes part; while this
+     * is false the answers and the shared cache are dropped and nothing is asked.
+     */
+    readonly participates: () => boolean
     readonly now?: () => number
     readonly scheduler?: FeatureFlagsScheduler
     readonly log?: (level: "debug" | "warn", message: string) => void
@@ -35,7 +41,8 @@ const defaultScheduler: FeatureFlagsScheduler = {
  * sit on paths that cannot await a request. Until {@link start} loads the cache
  * or a fetch succeeds it has no opinion, so the switches stay at their
  * defaults. A failed fetch keeps the last answers; nothing here turns a
- * network problem into a switch change.
+ * network problem into a switch change. A device that stops taking part loses
+ * its answers at once, so its switches return to their defaults.
  *
  * Only the eligible switches are ever answered, whatever the service sends.
  */
@@ -77,9 +84,12 @@ export class RemoteFeatureFlagsProvider implements IFeatureFlagsProvider {
         await session.begin()
     }
 
-    /** Fetch now instead of waiting for the next scheduled refresh. */
-    refreshNow(): Promise<void> {
-        return this.session?.refresh() ?? Promise.resolve()
+    /**
+     * Check participation and the shared cache now, fetching when the answers
+     * are due; call it when participation may have changed.
+     */
+    revalidate(): Promise<void> {
+        return this.session?.revalidate() ?? Promise.resolve()
     }
 
     isEnabled(): boolean {
@@ -124,10 +134,16 @@ class RefreshSession {
     }
 
     async begin(): Promise<void> {
-        const cached = await this.readCache()
-        if (this.abort.signal.aborted) return
-        if (cached) this.apply(cached.document.flags)
-        this.schedule(cached ? cached.fetchedAt + cached.document.ttlSeconds * 1000 - this.now() : 0)
+        const remainingMs = await this.settleFromCache()
+        if (remainingMs !== undefined) this.schedule(remainingMs)
+    }
+
+    /** Another window may have refreshed the shared cache meanwhile; use it rather than asking again. */
+    async revalidate(): Promise<void> {
+        const remainingMs = await this.settleFromCache()
+        if (remainingMs === undefined) return
+        if (remainingMs > 0) this.schedule(remainingMs)
+        else await this.refresh()
     }
 
     refresh(): Promise<void> {
@@ -149,23 +165,36 @@ class RefreshSession {
         this.timer = this.scheduler.setTimeout(
             () => {
                 this.timer = undefined
-                void this.onDue()
+                void this.revalidate()
             },
             Math.max(0, delayMs),
         )
     }
 
-    /** Another window may have refreshed the shared cache meanwhile; use it rather than asking again. */
-    private async onDue(): Promise<void> {
-        const cached = await this.readCache()
-        if (this.abort.signal.aborted) return
-        const remainingMs = cached ? cached.fetchedAt + cached.document.ttlSeconds * 1000 - this.now() : 0
-        if (cached && remainingMs > 0) {
-            this.apply(cached.document.flags)
-            this.schedule(remainingMs)
-            return
+    /**
+     * Apply the shared cache and return how long until it is due; `undefined`
+     * when this session stopped or the device takes no part.
+     */
+    private async settleFromCache(): Promise<number | undefined> {
+        if (this.abort.signal.aborted) return undefined
+        if (!this.options.participates()) {
+            await this.withdraw()
+            return undefined
         }
-        await this.refresh()
+        const cached = await this.readCache()
+        if (this.abort.signal.aborted) return undefined
+        if (!cached) return 0
+        this.apply(cached.document.flags)
+        return cached.fetchedAt + cached.document.ttlSeconds * 1000 - this.now()
+    }
+
+    /** Drop the answers here and for every window, then look again later; checking is local and asks nothing. */
+    private async withdraw(): Promise<void> {
+        this.apply({})
+        await this.options.cache.clear().catch((error: unknown) => {
+            this.options.log?.("warn", `[FeatureFlags] Failed to clear cached feature flags: ${describe(error)}`)
+        })
+        this.schedule(FEATURE_FLAGS_RETRY_DELAY_MS)
     }
 
     private async fetchAndApply(): Promise<void> {
@@ -173,6 +202,8 @@ class RefreshSession {
         try {
             const document = await this.options.source.fetchFlags(this.abort.signal)
             if (this.abort.signal.aborted) return
+            // Participation may have ended while the request was out; its answer must not outlive it.
+            if (!this.options.participates()) return await this.withdraw()
             this.apply(document.flags)
             ttlMs = document.ttlSeconds * 1000
             await this.options.cache.write({ document, fetchedAt: this.now() }).catch((error: unknown) => {

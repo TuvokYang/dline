@@ -46,6 +46,11 @@ export function startFeatureFlagRollout(options: Omit<RemoteFeatureFlagsRuntimeO
     return startRemoteFeatureFlags({ ...options, provider: getRolloutProvider(), flags: REMOTE_ROLLOUT_FEATURE_FLAGS })
 }
 
+/** Re-check rollout participation now, after usage reporting was turned on or off. */
+export function revalidateFeatureFlagRollout(): Promise<void> {
+    return _rolloutProvider?.revalidate() ?? Promise.resolve()
+}
+
 function getRolloutProvider(): RemoteFeatureFlagsProvider {
     _rolloutProvider ??= new RemoteFeatureFlagsProvider(REMOTE_ROLLOUT_FEATURE_FLAGS)
     return _rolloutProvider

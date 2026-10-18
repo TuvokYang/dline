@@ -171,6 +171,25 @@ describe("RemoteUsageCoordinator", () => {
         ])
     })
 
+    it("reports whether usage may be reported, which services riding on the consent follow", async () => {
+        const usage = coordinator()
+        expect(usage.reportingAllowed).toBe(false)
+
+        await usage.start()
+        expect(usage.reportingAllowed).toBe(true)
+
+        inputs = { ...ALLOWED, usageConsent: "disabled" }
+        await usage.refresh()
+        expect(usage.reportingAllowed).toBe(false)
+
+        inputs = ALLOWED
+        await usage.refresh()
+        expect(usage.reportingAllowed).toBe(true)
+
+        await usage.dispose()
+        expect(usage.reportingAllowed).toBe(false)
+    })
+
     it("purges unsent usage but keeps the device tokens when the host or organization turns reporting off", async () => {
         const usage = coordinator()
         await usage.start()
