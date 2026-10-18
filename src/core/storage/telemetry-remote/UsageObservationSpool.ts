@@ -1,16 +1,9 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { renameWithRetry } from "@shared/storage/atomic-file"
+import { parseUsageObservation } from "@/services/telemetry/remote/usage/usageCatalog"
+import type { PendingUsageObservation, SettledUsageShard } from "@/services/telemetry/remote/usage/usageOutbox"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
-
-/** One settled request as it waits in a process shard, already projected onto the remote catalog. */
-export interface SpooledObservation {
-    readonly id: string
-    /** Local receipt time, epoch milliseconds; the sender assigns the UTC minute. */
-    readonly receivedAt: number
-    readonly counters: Readonly<Record<string, number>>
-    readonly measurements: Readonly<Record<string, { count: number; sum: number; min: number; max: number }>>
-}
 
 /**
  * A sealed shard must sit this long after both its seal and its last write
@@ -42,11 +35,11 @@ export class UsageObservationSpool {
         private readonly shardId: string,
     ) {
         if (!SHARD_NAME_PATTERN.test(shardId)) throw new Error("Usage shard id must be a short file-safe token")
-        this.directory = path.join(layout.usageDir, "observations")
+        this.directory = layout.usageObservationsDir
     }
 
     /** Append one observation; an ID this process already appended is ignored. */
-    async append(observation: SpooledObservation): Promise<void> {
+    async append(observation: PendingUsageObservation): Promise<void> {
         if (this.appended.has(observation.id)) return
         this.remember(observation.id)
         await fs.mkdir(this.directory, { recursive: true })
@@ -70,14 +63,12 @@ export class UsageObservationSpool {
     }
 
     /**
-     * Read sealed shards that have settled. Malformed lines are skipped and counted
-     * rather than failing the batch, so one torn write cannot block every later minute.
+     * Read every sealed shard that has settled. Malformed lines are skipped and
+     * counted rather than failing the shard, so one torn write cannot block every
+     * later minute. An ID seen in an earlier shard of the same read is dropped.
      */
-    async readSettled(
-        now: number,
-    ): Promise<{ readonly files: string[]; readonly observations: SpooledObservation[]; readonly skipped: number }> {
-        const files: string[] = []
-        const observations: SpooledObservation[] = []
+    async readSettled(now: number): Promise<{ readonly shards: SettledUsageShard[]; readonly skipped: number }> {
+        const shards: SettledUsageShard[] = []
         const seen = new Set<string>()
         let skipped = 0
         for (const name of await this.list()) {
@@ -88,7 +79,7 @@ export class UsageObservationSpool {
             if (!stat || now - Math.max(Number(sealedAt), stat.mtimeMs) < SEALED_SHARD_SETTLE_MS) continue
             const content = await readIfPresent(filePath)
             if (content === undefined) continue
-            files.push(filePath)
+            const observations: PendingUsageObservation[] = []
             for (const line of content.split("\n")) {
                 if (!line.trim()) continue
                 const observation = parseObservation(line)
@@ -98,13 +89,17 @@ export class UsageObservationSpool {
                     observations.push(observation)
                 }
             }
+            shards.push({ name, observations })
         }
-        return { files, observations, skipped }
+        return { shards, skipped }
     }
 
-    /** Remove sealed shards once their contents are safely inside a published inflight batch. */
-    async discard(files: readonly string[]): Promise<void> {
-        for (const file of files) await fs.rm(file, { force: true })
+    /** Remove sealed shards once the outbox durably holds what they contained. */
+    async discard(names: readonly string[]): Promise<void> {
+        for (const name of names) {
+            if (!SEALED_NAME_PATTERN.test(name)) continue
+            await fs.rm(path.join(this.directory, name), { force: true })
+        }
     }
 
     /** Delete every unsent observation, for example when the user turns usage reporting off. */
@@ -141,22 +136,17 @@ async function readIfPresent(filePath: string): Promise<string | undefined> {
     }
 }
 
-function parseObservation(line: string): SpooledObservation | undefined {
+function parseObservation(line: string): PendingUsageObservation | undefined {
+    let value: Record<string, unknown>
     try {
-        const value = JSON.parse(line) as Partial<SpooledObservation>
-        if (typeof value.id !== "string" || !Number.isSafeInteger(value.receivedAt)) return undefined
-        if (!isNumberRecord(value.counters) || typeof value.measurements !== "object" || value.measurements === null)
-            return undefined
-        return value as SpooledObservation
+        value = JSON.parse(line) as Record<string, unknown>
     } catch {
         return undefined
     }
-}
-
-function isNumberRecord(value: unknown): value is Record<string, number> {
-    return (
-        typeof value === "object" &&
-        value !== null &&
-        Object.values(value).every((entry) => typeof entry === "number" && Number.isSafeInteger(entry) && entry >= 0)
-    )
+    if (typeof value !== "object" || value === null) return undefined
+    const { id, receivedAt, policyEpoch } = value
+    if (typeof id !== "string" || id.length === 0) return undefined
+    if (!Number.isSafeInteger(receivedAt) || !Number.isSafeInteger(policyEpoch)) return undefined
+    const observation = parseUsageObservation(value)
+    return observation && { id, receivedAt: receivedAt as number, policyEpoch: policyEpoch as number, ...observation }
 }

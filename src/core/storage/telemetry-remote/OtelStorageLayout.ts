@@ -17,12 +17,19 @@ export interface OtelStorageLayout {
     readonly policyPath: string
     readonly remoteQuarantineDir: string
     readonly usageDir: string
+    /** Process-sharded observation segments; each extension host appends only to its own. */
+    readonly usageObservationsDir: string
+    /** Sender lease, delivery gate, pending minutes and the inflight manifest, changed under one lock. */
+    readonly usageOutboxPath: string
+    /** Exact request bodies, named by request ID, so an unknown outcome replays the same bytes. */
+    readonly usageInflightDir: string
 }
 
 export function resolveOtelStorageLayout(dataDir: string): OtelStorageLayout {
     const root = path.resolve(dataDir)
     const secretsDir = path.join(root, "secrets", "otel")
     const remoteDir = path.join(root, "telemetry", "remote")
+    const usageDir = path.join(remoteDir, "usage")
     return {
         secretsDir,
         deviceCredentialPath: path.join(secretsDir, "device.json"),
@@ -30,6 +37,9 @@ export function resolveOtelStorageLayout(dataDir: string): OtelStorageLayout {
         remoteDir,
         policyPath: path.join(remoteDir, "policy.json"),
         remoteQuarantineDir: path.join(remoteDir, "quarantine"),
-        usageDir: path.join(remoteDir, "usage"),
+        usageDir,
+        usageObservationsDir: path.join(usageDir, "observations"),
+        usageOutboxPath: path.join(usageDir, "outbox.json"),
+        usageInflightDir: path.join(usageDir, "inflight"),
     }
 }

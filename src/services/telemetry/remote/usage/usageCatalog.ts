@@ -50,3 +50,27 @@ function addCount(counters: Record<string, number>, name: string, value: number)
     const count = Math.round(value)
     if (Number.isSafeInteger(count) && count > 0) counters[name] = count
 }
+
+/**
+ * Read the counters and summaries of a persisted observation or window. Any
+ * value the server would refuse makes the whole record unreadable, so a
+ * damaged record is skipped instead of poisoning the batch it would join.
+ */
+export function parseUsageObservation(value: unknown): UsageObservation | undefined {
+    if (!isRecord(value) || !isRecord(value.counters) || !isRecord(value.measurements)) return undefined
+    const counters = value.counters
+    if (!Object.values(counters).every((entry) => Number.isSafeInteger(entry) && (entry as number) >= 0)) return undefined
+    const measurements: Record<string, UsageMeasurementWire> = {}
+    for (const [name, entry] of Object.entries(value.measurements)) {
+        if (!isRecord(entry)) return undefined
+        const { count, sum, min, max } = entry
+        if (!Number.isSafeInteger(count) || (count as number) < 1) return undefined
+        if (![sum, min, max].every((part) => typeof part === "number" && Number.isFinite(part) && part >= 0)) return undefined
+        measurements[name] = { count: count as number, sum: sum as number, min: min as number, max: max as number }
+    }
+    return { counters: counters as Record<string, number>, measurements }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+}
