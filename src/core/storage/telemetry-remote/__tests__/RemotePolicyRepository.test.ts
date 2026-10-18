@@ -75,7 +75,7 @@ describe("RemotePolicyRepository", () => {
         const before = await policy.resolveUsage(ALLOWED)
         await fs.writeFile(
             layout.policyPath,
-            JSON.stringify({ schema_version: 1, usage: { epoch: 3, decision: { allowed: true } } }),
+            JSON.stringify({ schema_version: 2, usage: { epoch: 3, decision: { allowed: true } } }),
         )
 
         expect(await policy.read()).toBeUndefined()
@@ -86,12 +86,9 @@ describe("RemotePolicyRepository", () => {
         expect(await fs.readdir(layout.remoteQuarantineDir)).toHaveLength(1)
     })
 
-    it("reports a policy it moves aside, such as one an older build wrote with a reason this build dropped", async () => {
+    it("reports a policy it moves aside because it cannot be read at all", async () => {
         await fs.mkdir(layout.remoteDir, { recursive: true })
-        await fs.writeFile(
-            layout.policyPath,
-            JSON.stringify({ schema_version: 1, usage: { epoch: 7, decision: { allowed: false, reason: "retired_reason" } } }),
-        )
+        await fs.writeFile(layout.policyPath, "{ torn")
         const quarantined: string[] = []
         const policy = new RemotePolicyRepository(layout, { clock: () => now, onQuarantine: (name) => quarantined.push(name) })
 
@@ -103,9 +100,45 @@ describe("RemotePolicyRepository", () => {
         expect(await fs.readdir(layout.remoteQuarantineDir)).toHaveLength(1)
     })
 
+    it("continues the epoch of a legacy decision it cannot read and hands older builds a newer owner", async () => {
+        await fs.mkdir(layout.remoteDir, { recursive: true })
+        const legacy = { schema_version: 1, usage: { epoch: 7, decision: { allowed: false, reason: "development_unenrolled" } } }
+        await fs.writeFile(layout.policyPath, JSON.stringify(legacy))
+        const quarantined: string[] = []
+        const policy = new RemotePolicyRepository(layout, { clock: () => now, onQuarantine: (name) => quarantined.push(name) })
+
+        expect(await policy.read()).toEqual({})
+        const resolved = await policy.resolveUsage(ALLOWED)
+        // An older build that rewrites its legacy decision is read the same way again, not quarantined.
+        await fs.writeFile(layout.policyPath, JSON.stringify({ ...legacy, usage: { ...legacy.usage, epoch: 9 } }))
+        const again = await policy.resolveUsage(ALLOWED)
+        const stored = JSON.parse(await fs.readFile(layout.policyPath, "utf8")) as { schema_version: number }
+
+        expect(resolved).toEqual({ epoch: 8, decision: { allowed: true, profile: "usage" } })
+        expect(again).toEqual({ epoch: 10, decision: { allowed: true, profile: "usage" } })
+        expect(quarantined).toEqual([])
+        await expect(fs.access(layout.remoteQuarantineDir)).rejects.toThrow()
+        // Version 1 readers treat any higher version as a newer owner and stop writing.
+        expect(stored.schema_version).toBeGreaterThan(1)
+    })
+
+    it("upgrades a legacy document whose decision still holds without moving its epoch", async () => {
+        await fs.mkdir(layout.remoteDir, { recursive: true })
+        await fs.writeFile(
+            layout.policyPath,
+            JSON.stringify({ schema_version: 1, usage: { epoch: 4, decision: { allowed: true, profile: "usage" } } }),
+        )
+
+        const resolved = await repository().resolveUsage(ALLOWED)
+        const stored = JSON.parse(await fs.readFile(layout.policyPath, "utf8")) as { schema_version: number }
+
+        expect(resolved).toEqual({ epoch: 4, decision: { allowed: true, profile: "usage" } })
+        expect(stored.schema_version).toBeGreaterThan(1)
+    })
+
     it("treats a policy written by a newer Dline as off and leaves it untouched", async () => {
         await fs.mkdir(layout.remoteDir, { recursive: true })
-        const future = JSON.stringify({ schema_version: 2, usage: { epoch: 9, decision: { allowed: true, profile: "usage" } } })
+        const future = JSON.stringify({ schema_version: 3, usage: { epoch: 9, decision: { allowed: true, profile: "usage" } } })
         await fs.writeFile(layout.policyPath, future)
         const policy = repository()
 

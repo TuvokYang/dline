@@ -16,7 +16,16 @@ import { FileLock } from "../backend/jsonl/FileLock"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
 import { type QuarantineObserver, quarantineDocument } from "./quarantine"
 
-export const REMOTE_POLICY_SCHEMA_VERSION = 1
+export const REMOTE_POLICY_SCHEMA_VERSION = 2
+/**
+ * Builds before the single usage profile wrote version 1, and their decisions may
+ * name a profile or reason this build no longer has. Such a document is read as a
+ * predecessor: its epoch keeps rising and the decision is resolved again. Writing
+ * version 2 makes those builds read the document as owned by a newer Dline and
+ * stand aside, instead of re-deciding, and purging the shared usage spool, on
+ * every cycle while both run on one machine.
+ */
+const LEGACY_POLICY_SCHEMA_VERSION = 1
 const LOCK_ACQUIRE_ATTEMPTS = 50
 const KNOWN_DOCUMENT_KEYS = new Set(["schema_version", "usage", "server_stop"])
 
@@ -37,9 +46,19 @@ export interface RemotePolicyRepositoryOptions {
 }
 
 type LatestPolicy =
-    | { readonly status: "valid"; readonly state: RemotePolicyState; readonly raw: Record<string, unknown> }
+    | {
+          readonly status: "valid"
+          readonly state: RemotePolicyState
+          readonly raw: Record<string, unknown>
+          readonly schemaVersion: number
+          /** Epoch of a legacy decision this build cannot read; the next decision continues above it. */
+          readonly supersededEpoch?: number
+      }
     | { readonly status: "missing" }
     | { readonly status: "unsupported" }
+
+/** Lowest epoch the next decision may take when no readable predecessor exists. */
+type EpochFloor = number | undefined
 
 /**
  * Owner of `telemetry/remote/policy.json`.
@@ -76,19 +95,19 @@ export class RemotePolicyRepository {
      * Returns `undefined` when a newer Dline owns the document; delivery stays off.
      */
     async resolveUsage(inputs: LocalUsagePolicyInputs): Promise<UsagePolicyRecord | undefined> {
-        return this.mutate((state) => {
+        return this.mutate((state, floor) => {
             const decision = resolveUsagePolicy({ ...inputs, serverStop: state.serverStop })
-            return { ...state, usage: this.nextRecord(state.usage, decision) }
+            return { ...state, usage: this.nextRecord(state.usage, decision, floor) }
         })
     }
 
     /** Persist a refusal from the service and turn usage delivery off in the same write. */
     async recordServerStop(stop: ServerStop): Promise<UsagePolicyRecord | undefined> {
-        return this.mutate((state) => ({
+        return this.mutate((state, floor) => ({
             serverStop: stop,
             usage: state.usage
                 ? stopUsagePolicy(state.usage)
-                : this.nextRecord(undefined, { allowed: false, reason: "server_stopped" }),
+                : this.nextRecord(undefined, { allowed: false, reason: "server_stopped" }, floor),
         }))
     }
 
@@ -101,21 +120,31 @@ export class RemotePolicyRepository {
         await this.mutate((state) => (state.usage ? { usage: state.usage } : {}))
     }
 
-    private nextRecord(previous: UsagePolicyRecord | undefined, decision: UsagePolicyDecision): UsagePolicyRecord {
+    private nextRecord(
+        previous: UsagePolicyRecord | undefined,
+        decision: UsagePolicyDecision,
+        floor: EpochFloor,
+    ): UsagePolicyRecord {
         if (previous) return advanceUsagePolicy(previous, decision)
-        // No readable predecessor (first run, quarantine or deletion): seed from the clock so the
+        // A legacy decision this build cannot read still names the epoch batches may carry.
+        if (floor !== undefined) return { epoch: floor + 1, decision }
+        // No predecessor at all (first run, quarantine or deletion): seed from the clock so the
         // epoch never repeats one that an in-flight batch from before may still carry.
         return { epoch: Math.max(1, this.clock()), decision }
     }
 
-    private async mutate(change: (state: RemotePolicyState) => RemotePolicyState): Promise<UsagePolicyRecord | undefined> {
+    private async mutate(
+        change: (state: RemotePolicyState, floor: EpochFloor) => RemotePolicyState,
+    ): Promise<UsagePolicyRecord | undefined> {
         await fs.mkdir(this.layout.remoteDir, { recursive: true })
         return this.lock.withLock(this.layout.policyPath, async () => {
             const latest = await this.readLatestForWrite()
             if (latest.status === "unsupported") return undefined
             const previous = latest.status === "valid" ? latest.state : {}
-            const next = change(previous)
-            if (!sameState(previous, next)) {
+            const next = change(previous, latest.status === "valid" ? latest.supersededEpoch : undefined)
+            // A legacy document is rewritten even when nothing changed, so older builds see a newer owner.
+            const upgrade = latest.status === "valid" && latest.schemaVersion < REMOTE_POLICY_SCHEMA_VERSION
+            if (upgrade || !sameState(previous, next)) {
                 const raw = latest.status === "valid" ? latest.raw : {}
                 await writeJsonAtomic(
                     this.layout.policyPath,
@@ -155,27 +184,41 @@ export class RemotePolicyRepository {
 function parsePolicyDocument(value: unknown): LatestPolicy | { readonly status: "malformed" } {
     if (!isRecord(value)) return { status: "malformed" }
     const schemaVersion = value.schema_version
-    if (!Number.isSafeInteger(schemaVersion) || (schemaVersion as number) < 1) return { status: "malformed" }
+    if (!Number.isSafeInteger(schemaVersion) || (schemaVersion as number) < LEGACY_POLICY_SCHEMA_VERSION) {
+        return { status: "malformed" }
+    }
     if ((schemaVersion as number) > REMOTE_POLICY_SCHEMA_VERSION) return { status: "unsupported" }
+    const legacy = schemaVersion === LEGACY_POLICY_SCHEMA_VERSION
     // A record or stop that cannot be read is a whole-document fault: guessing either half
     // could re-enable delivery, so the document is rejected and quarantined on the next write.
+    // The one exception is a legacy decision: it is read as off and only its epoch is carried on.
     let usage: UsagePolicyRecord | undefined
+    let supersededEpoch: number | undefined
     if (value.usage !== undefined) {
-        usage = parseRecord(value.usage)
-        if (!usage) return { status: "malformed" }
+        const epoch = parseEpoch(value.usage)
+        if (epoch === undefined) return { status: "malformed" }
+        const decision = parseUsagePolicyDecision((value.usage as Record<string, unknown>).decision)
+        if (decision) usage = { epoch, decision }
+        else if (legacy) supersededEpoch = epoch
+        else return { status: "malformed" }
     }
     let serverStop: ServerStop | undefined
     if (value.server_stop !== undefined) {
         serverStop = parseServerStop(value.server_stop)
         if (!serverStop) return { status: "malformed" }
     }
-    return { status: "valid", raw: value, state: { ...(usage ? { usage } : {}), ...(serverStop ? { serverStop } : {}) } }
+    return {
+        status: "valid",
+        raw: value,
+        schemaVersion: schemaVersion as number,
+        ...(supersededEpoch === undefined ? {} : { supersededEpoch }),
+        state: { ...(usage ? { usage } : {}), ...(serverStop ? { serverStop } : {}) },
+    }
 }
 
-function parseRecord(value: unknown): UsagePolicyRecord | undefined {
+function parseEpoch(value: unknown): number | undefined {
     if (!isRecord(value) || !Number.isSafeInteger(value.epoch) || (value.epoch as number) < 1) return undefined
-    const decision = parseUsagePolicyDecision(value.decision)
-    return decision ? { epoch: value.epoch as number, decision } : undefined
+    return value.epoch as number
 }
 
 function serialize(state: RemotePolicyState): Record<string, unknown> {
