@@ -74,9 +74,12 @@ describe("MessageStateHandler Mutex Protection", () => {
     /**
      * Helper to create a test UiMessage
      */
+    // Rows are identified by timestamp, so messages made in the same millisecond
+    // must still get distinct ones.
+    let nextTestTs = Date.now()
     function createTestMessage(text: string): UiMessage {
         return {
-            ts: Date.now(),
+            ts: nextTestTs++,
             type: "say",
             say: "text",
             text,

@@ -81,11 +81,18 @@ describe("SemanticComposerEditor", () => {
     it("hides the placeholder hint while the empty box has focus", () => {
         const { root } = setup()
         const hint = placeholderHostSelector()
+        // jsdom 30's selector engine caches `:not(:focus)` per element, so a blur
+        // never flips `matches(hint)`. Check the focus gate and the empty-box host
+        // separately against the real focus state instead.
+        const focusGate = ":not(:focus)"
+        expect(hint.endsWith(focusGate)).toBe(true)
+        const host = hint.slice(0, -focusGate.length)
 
+        expect(root.matches(host)).toBe(true)
         expect(document.activeElement).toBe(root)
-        expect(root.matches(hint)).toBe(false)
         act(() => root.blur())
-        expect(root.matches(hint)).toBe(true)
+        expect(document.activeElement).not.toBe(root)
+        expect(root.matches(host)).toBe(true)
     })
 
     it("turns typed input into engine edits at the DOM caret", () => {

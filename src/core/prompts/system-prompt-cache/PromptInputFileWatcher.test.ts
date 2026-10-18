@@ -125,7 +125,8 @@ describe("PromptInputFileWatcher", () => {
                 ...fixture.roots.subagentDirectories,
             ]),
         )
-        expect(fixture.watch.mock.calls[0]?.[0]).not.toContain(fixture.cwd)
+        // The workspace root itself is watched so new top-level inputs are seen.
+        expect(fixture.watch.mock.calls[0]?.[0]).toContain(fixture.cwd)
     })
 
     it("rejects files that canonical capability discovery cannot expose", async () => {
@@ -148,7 +149,7 @@ describe("PromptInputFileWatcher", () => {
         expect(fixture.invalidate).not.toHaveBeenCalled()
     })
 
-    it("prunes directories through the injected workspace rules without hiding capability roots", async () => {
+    it("prunes unrelated workspace directories without hiding capability roots", async () => {
         const excluded = new Set<string>()
         const fixture = createFixture({
             shouldIgnoreDirectory: (candidate) => {
@@ -162,10 +163,10 @@ describe("PromptInputFileWatcher", () => {
         expect(typeof options?.ignored).toBe("function")
         const ignored = options?.ignored as (candidate: string, stats?: { isDirectory(): boolean }) => boolean
 
-        // The workspace rules decide which directories are pruned.
+        // Unrelated workspace subtrees are pruned regardless of workspace rules.
         expect(ignored(path.join(fixture.cwd, "node_modules"), { isDirectory: () => true })).toBe(true)
         expect(ignored(path.join(fixture.cwd, "dist"), { isDirectory: () => true })).toBe(true)
-        expect(ignored(path.join(fixture.cwd, "src"), { isDirectory: () => true })).toBe(false)
+        expect(ignored(path.join(fixture.cwd, "src"), { isDirectory: () => true })).toBe(true)
 
         // Capability roots stay watched and never reach the workspace rules.
         excluded.clear()
@@ -176,14 +177,14 @@ describe("PromptInputFileWatcher", () => {
         expect(ignored(path.join(fixture.cwd, "node_modules", "AGENTS.md"), { isDirectory: () => false })).toBe(false)
     })
 
-    it("watches every directory when no workspace rules are supplied", async () => {
+    it("prunes unrelated directories when no workspace rules are supplied", async () => {
         const fixture = createFixture()
         await fixture.inputWatcher.start()
 
         const options = fixture.watch.mock.calls[0]?.[1]
         const ignored = options?.ignored as (candidate: string, stats?: { isDirectory(): boolean }) => boolean
 
-        expect(ignored(path.join(fixture.cwd, "node_modules"), { isDirectory: () => true })).toBe(false)
+        expect(ignored(path.join(fixture.cwd, "node_modules"), { isDirectory: () => true })).toBe(true)
     })
 
     it("continues forwarding prompt input changes after a watcher error", async () => {

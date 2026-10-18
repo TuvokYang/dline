@@ -115,11 +115,14 @@ describe("handler interaction matrix", () => {
     ])("presents $label as say only, never as an interaction", async ({ params }) => {
         const taskConfig = config()
         await new PhaseReportHandler().execute(taskConfig, block(DlineDefaultTool.PHASE_REPORT, params))
-        expect(taskConfig.interactions.say).toHaveBeenCalledWith(
-            expect.objectContaining({
-                taskSay: "tool",
-                presentation: JSON.stringify({ tool: "statusUpdate", content: "Working" }),
-            }),
+        // The report finalizes the row it streamed (same timestamp) instead of appending another.
+        expect(taskConfig.callbacks.say).toHaveBeenCalledWith(
+            "tool",
+            JSON.stringify({ tool: "statusUpdate", content: "Working" }),
+            undefined,
+            undefined,
+            false,
+            100,
         )
         expect(taskConfig.interactions.open).not.toHaveBeenCalled()
     })

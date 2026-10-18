@@ -14,8 +14,6 @@ const CONVERSATIONAL_TOOLS = [
     DlineDefaultTool.GENERATE_REPORT,
     DlineDefaultTool.PHASE_REPORT,
     DlineDefaultTool.LEGACY_STATUS_UPDATE,
-    // Handing the conversation to a successor is always the user's choice.
-    DlineDefaultTool.NEW_TASK,
 ] as const
 
 describe("canonical conversational approval", () => {
@@ -29,6 +27,8 @@ describe("canonical conversational approval", () => {
         }
     })
 
+    // Handing the conversation to a successor is always the user's choice, and the
+    // handler no longer asks, so the outer approval slot is its only gate.
     it("keeps new_task out of automatic approval even with every read toggle on", () => {
         const settings = {
             ...DEFAULT_AUTO_APPROVAL_SETTINGS,
@@ -36,8 +36,8 @@ describe("canonical conversational approval", () => {
         }
 
         expect(resolveApprovalKind({ toolName: DlineDefaultTool.NEW_TASK, settings })).toMatchObject({
-            kind: "none",
-            scope: "conversational",
+            kind: "manual",
+            scope: "subagent",
         })
     })
 })
