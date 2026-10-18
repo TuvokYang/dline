@@ -72,6 +72,26 @@ function LayoutExamples({ active = false }: { active?: boolean }) {
     )
 }
 
+/**
+ * The same calls as one group, the way a round of read-only calls lands in the chat.
+ * The layout cases above stay one call per group so each row is measured on its own.
+ */
+function AggregatedExample() {
+    const messages = cases.map(
+        ({ id: _id, ...payload }, index): UiMessage => ({
+            ts: index + 1,
+            type: "say",
+            say: "tool",
+            text: JSON.stringify(payload),
+        }),
+    )
+    return (
+        <div data-testid="tool-group-aggregated" style={{ width: "100%", paddingTop: 24 }}>
+            <ToolGroupRenderer allMessages={messages} isLastGroup={false} messages={messages} />
+        </div>
+    )
+}
+
 const meta = {
     title: "Chat/Tool Group Layout",
     component: LayoutExamples,
@@ -82,3 +102,4 @@ export default meta
 type Story = StoryObj<typeof meta>
 export const Completed: Story = {}
 export const Active: Story = { args: { active: true } }
+export const Aggregated: Story = { render: () => <AggregatedExample /> }
