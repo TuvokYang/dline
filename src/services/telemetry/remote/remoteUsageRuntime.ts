@@ -11,6 +11,7 @@ import { isAllowedUsageAttribute, type UsageAttributeKey } from "./contracts/wir
 import { DlineOtelHttpClient } from "./transport/DlineOtelHttpClient"
 import { RemoteUsageCoordinator, USAGE_CYCLE_INTERVAL_MS } from "./usage/RemoteUsageCoordinator"
 import { type UsageAttributes, UsageDeliveryWorker } from "./usage/UsageDeliveryWorker"
+import type { RemoteUsageLog } from "./usage/usageCycleLog"
 
 /**
  * How long after a minute ends its observations may still arrive: an append is
@@ -27,7 +28,7 @@ export interface RemoteUsageRuntimeOptions {
     readonly attributes: Readonly<Partial<Record<UsageAttributeKey, string | boolean | undefined>>>
     /** Service origin; defaults to `https://otel.dline.cc`. Loopback HTTP is allowed for the contract smoke. */
     readonly endpoint?: string
-    readonly log?: (message: string) => void
+    readonly log?: RemoteUsageLog
 }
 
 let coordinator: RemoteUsageCoordinator | undefined
@@ -47,9 +48,16 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
     const layout = resolveOtelStorageLayout(options.dataDir)
     // One identity per extension host: it names the observation shard and the sender lease owner.
     const ownerId = `${process.pid}-${randomUUID().slice(0, 8)}`
+    // A quarantine resets that document's state; the usual cause is another Dline build writing a
+    // version this one cannot read, and without this line the reset would look like nothing happened.
+    const onQuarantine = (documentName: string) =>
+        options.log?.(
+            "warn",
+            `[RemoteUsage] ${documentName} could not be read (damaged, or written by an incompatible Dline build) and was moved to quarantine; its state starts over`,
+        )
     const transport = new DlineOtelHttpClient({ endpoint: options.endpoint })
-    const credentials = new DeviceCredentialRepository(layout)
-    const outbox = new UsageOutboxRepository(layout)
+    const credentials = new DeviceCredentialRepository(layout, { onQuarantine })
+    const outbox = new UsageOutboxRepository(layout, { onQuarantine })
     const spool = new UsageObservationSpool(layout, ownerId)
     const tokens = new DeviceTokenBroker({
         repository: credentials,
@@ -68,7 +76,7 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
         batchSettleMs: USAGE_BATCH_SETTLE_MS,
     })
     const started = new RemoteUsageCoordinator({
-        policy: new RemotePolicyRepository(layout),
+        policy: new RemotePolicyRepository(layout, { onQuarantine }),
         credentials,
         outbox,
         spool,
@@ -77,6 +85,7 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
         log: options.log,
     })
     coordinator = started
+    options.log?.("debug", `[RemoteUsage] starting in ${ownerId}, reporting to ${transport.origin}`)
     await started.start()
 }
 

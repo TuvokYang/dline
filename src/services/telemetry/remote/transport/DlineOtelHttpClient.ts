@@ -60,6 +60,11 @@ export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransp
         this.timeoutMs = options.timeoutMs ?? DLINE_OTEL_REQUEST_TIMEOUT_MS
     }
 
+    /** The service origin every request goes to; safe to log, it never carries a path or credentials. */
+    get origin(): string {
+        return this.endpoint.origin
+    }
+
     exchange(request: DeviceExchangeRequest, signal?: AbortSignal): Promise<WireResponse> {
         return this.post(DEVICE_EXCHANGE_PATH, { "content-type": "application/json" }, JSON.stringify(request), signal)
     }

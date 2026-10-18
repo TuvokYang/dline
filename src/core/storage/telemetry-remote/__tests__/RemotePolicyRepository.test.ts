@@ -86,6 +86,23 @@ describe("RemotePolicyRepository", () => {
         expect(await fs.readdir(layout.remoteQuarantineDir)).toHaveLength(1)
     })
 
+    it("reports a policy it moves aside, such as one an older build wrote with a reason this build dropped", async () => {
+        await fs.mkdir(layout.remoteDir, { recursive: true })
+        await fs.writeFile(
+            layout.policyPath,
+            JSON.stringify({ schema_version: 1, usage: { epoch: 7, decision: { allowed: false, reason: "retired_reason" } } }),
+        )
+        const quarantined: string[] = []
+        const policy = new RemotePolicyRepository(layout, { clock: () => now, onQuarantine: (name) => quarantined.push(name) })
+
+        const resolved = await policy.resolveUsage(ALLOWED)
+        await policy.resolveUsage(ALLOWED)
+
+        expect(resolved?.decision).toEqual({ allowed: true, profile: "usage" })
+        expect(quarantined).toEqual([path.basename(layout.policyPath)])
+        expect(await fs.readdir(layout.remoteQuarantineDir)).toHaveLength(1)
+    })
+
     it("treats a policy written by a newer Dline as off and leaves it untouched", async () => {
         await fs.mkdir(layout.remoteDir, { recursive: true })
         const future = JSON.stringify({ schema_version: 2, usage: { epoch: 9, decision: { allowed: true, profile: "usage" } } })

@@ -388,6 +388,6 @@ async function startRemoteUsageReporting(dataDir: string): Promise<void> {
             is_dev: isTelemetryDevelopmentMode(),
         },
         endpoint,
-        log: (message) => Logger.info(message),
+        log: (level, message) => Logger[level](message),
     })
 }

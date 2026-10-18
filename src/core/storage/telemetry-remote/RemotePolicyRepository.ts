@@ -1,4 +1,5 @@
 import fs from "node:fs/promises"
+import path from "node:path"
 import { writeJsonAtomic } from "@shared/storage/atomic-file"
 import {
     advanceUsagePolicy,
@@ -13,7 +14,7 @@ import {
 } from "@/services/telemetry/remote/policy/usagePolicy"
 import { FileLock } from "../backend/jsonl/FileLock"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
-import { quarantineDocument } from "./quarantine"
+import { type QuarantineObserver, quarantineDocument } from "./quarantine"
 
 export const REMOTE_POLICY_SCHEMA_VERSION = 1
 const LOCK_ACQUIRE_ATTEMPTS = 50
@@ -31,6 +32,8 @@ export type LocalUsagePolicyInputs = Omit<UsagePolicyInputs, "serverStop">
 
 export interface RemotePolicyRepositoryOptions {
     readonly clock?: () => number
+    /** Told when an unreadable policy, for example one another Dline build wrote, was moved aside. */
+    readonly onQuarantine?: QuarantineObserver
 }
 
 type LatestPolicy =
@@ -49,12 +52,14 @@ type LatestPolicy =
 export class RemotePolicyRepository {
     private readonly lock = new FileLock({ maxAcquireAttempts: LOCK_ACQUIRE_ATTEMPTS })
     private readonly clock: () => number
+    private readonly onQuarantine: QuarantineObserver | undefined
 
     constructor(
         private readonly layout: OtelStorageLayout,
         options: RemotePolicyRepositoryOptions = {},
     ) {
         this.clock = options.clock ?? Date.now
+        this.onQuarantine = options.onQuarantine
     }
 
     /** Lock-free read; `undefined` means no usable policy, which callers must treat as remote off. */
@@ -125,7 +130,9 @@ export class RemotePolicyRepository {
     private async readLatestForWrite(): Promise<LatestPolicy> {
         const parsed = await this.readParsed()
         if (parsed.status !== "malformed") return parsed
-        await quarantineDocument(this.layout.policyPath, this.layout.remoteQuarantineDir, this.clock())
+        if (await quarantineDocument(this.layout.policyPath, this.layout.remoteQuarantineDir, this.clock())) {
+            this.onQuarantine?.(path.basename(this.layout.policyPath))
+        }
         return { status: "missing" }
     }
 

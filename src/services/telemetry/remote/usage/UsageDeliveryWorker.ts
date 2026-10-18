@@ -25,7 +25,11 @@ export type UsageCycleResult =
     | { readonly kind: "idle" }
     | { readonly kind: "aborted" }
     /** No usable token yet; the inflight waits unchanged. */
-    | { readonly kind: "waiting"; readonly reason: "token_deferred" | "token_unavailable"; readonly retryAt?: number }
+    | {
+          readonly kind: "waiting"
+          readonly reason: "enrollment_backoff" | "refresh_in_progress" | "token_unavailable"
+          readonly retryAt?: number
+      }
     | { readonly kind: "delivered"; readonly requestId: string; readonly duplicate: boolean }
     | { readonly kind: "retrying"; readonly requestId: string }
     | { readonly kind: "deferred"; readonly requestId: string; readonly code: string }
@@ -169,7 +173,7 @@ export class UsageDeliveryWorker {
                 return { kind: "result", result: { kind: "stopped", scope: acquired.scope, code: acquired.code } }
             }
             if (acquired.status === "deferred") {
-                return { kind: "result", result: { kind: "waiting", reason: "token_deferred", retryAt: acquired.retryAt } }
+                return { kind: "result", result: { kind: "waiting", reason: acquired.reason, retryAt: acquired.retryAt } }
             }
             if (acquired.status === "unavailable")
                 return { kind: "result", result: { kind: "waiting", reason: "token_unavailable" } }

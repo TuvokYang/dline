@@ -6,6 +6,7 @@ import type { UsageSettlement, UsageSettlementPort } from "@/core/task/telemetry
 import { describeUsagePolicyDecision, type UsagePolicyRecord } from "../policy/usagePolicy"
 import type { UsageCycleResult, UsageDeliveryWorker } from "./UsageDeliveryWorker"
 import { projectUsageSettlement } from "./usageCatalog"
+import { describeUsageCycle, type RemoteUsageLog, type RemoteUsageLogLevel } from "./usageCycleLog"
 
 /** How often the lease holder seals shards and checks whether a batch or replay is due. */
 export const USAGE_CYCLE_INTERVAL_MS = 30_000
@@ -28,8 +29,7 @@ export interface RemoteUsageCoordinatorOptions {
     readonly clock?: () => number
     readonly scheduler?: UsageScheduler
     readonly cycleIntervalMs?: number
-    /** Local, content-free diagnostics; never routed back through remote telemetry. */
-    readonly log?: (message: string) => void
+    readonly log?: RemoteUsageLog
 }
 
 /**
@@ -53,6 +53,9 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
     private cycleAbort: AbortController | undefined
     private refreshing: Promise<void> | undefined
     private readonly appends = new Set<Promise<void>>()
+    /** Last steady cycle state printed, so a state that holds for hours is logged once. */
+    private loggedSteadyState: string | undefined
+    private ownedByNewerBuild = false
 
     constructor(private readonly options: RemoteUsageCoordinatorOptions) {
         this.clock = options.clock ?? Date.now
@@ -82,7 +85,7 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
                 policyEpoch: current.epoch,
                 ...projectUsageSettlement(settlement),
             })
-            .catch((error: unknown) => this.log(`usage observation was not stored: ${describe(error)}`))
+            .catch((error: unknown) => this.log("warn", `usage observation was not stored: ${describe(error)}`))
             .finally(() => this.appends.delete(append))
         this.appends.add(append)
     }
@@ -122,14 +125,14 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
         } catch (error) {
             // Unknown inputs are treated as "not allowed" without persisting a decision.
             this.current = undefined
-            this.log(`usage policy inputs unavailable: ${describe(error)}`)
+            this.log("warn", `usage policy inputs unavailable: ${describe(error)}`)
             return
         }
         try {
             await this.apply(await this.options.policy.resolveUsage(inputs))
         } catch (error) {
             this.current = undefined
-            this.log(`usage policy could not be applied: ${describe(error)}`)
+            this.log("warn", `usage policy could not be applied: ${describe(error)}`)
         }
     }
 
@@ -138,7 +141,13 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
         const previous = this.current
         this.current = next
         // One line per change, so the log shows whether usage is sent and, if not, why.
-        if (next && previous?.epoch !== next.epoch) this.log(`usage reporting ${describeUsagePolicyDecision(next.decision)}`)
+        if (next && previous?.epoch !== next.epoch) {
+            this.log("info", `usage reporting ${describeUsagePolicyDecision(next.decision)}`)
+        }
+        if (!next !== this.ownedByNewerBuild) {
+            this.ownedByNewerBuild = !next
+            if (!next) this.log("warn", "usage reporting paused: a newer Dline build owns the policy document")
+        }
         // A newer Dline owns the policy document: it also owns the data, so nothing is touched.
         if (!next || next.decision.allowed || previous?.epoch === next.epoch) return
         this.cycleAbort?.abort()
@@ -169,31 +178,30 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
             this.cycleAbort = abort
             const result = await this.options.worker.runCycle(current.epoch, abort.signal)
             if (this.cycleAbort === abort) this.cycleAbort = undefined
+            this.report(result)
             await this.handle(result)
         } catch (error) {
-            this.log(`usage delivery cycle failed: ${describe(error)}`)
+            this.log("warn", `usage delivery cycle failed: ${describe(error)}`)
         }
     }
 
     private async handle(result: UsageCycleResult): Promise<void> {
-        switch (result.kind) {
-            case "stopped":
-                this.log(`usage reporting stopped by the service (${result.scope}: ${result.code})`)
-                await this.apply(await this.options.policy.recordServerStop({ scope: result.scope, code: result.code }))
-                return
-            case "discarded":
-                this.log(`usage batch discarded (${result.code})`)
-                return
-            case "rejected":
-                this.log(`usage batch rejected locally (${result.violations.join(", ")})`)
-                return
-            default:
-                return
-        }
+        if (result.kind !== "stopped") return
+        await this.apply(await this.options.policy.recordServerStop({ scope: result.scope, code: result.code }))
     }
 
-    private log(message: string): void {
-        this.options.log?.(`[RemoteUsage] ${message}`)
+    /** Every event is printed; a steady state only when it is entered, so an idle window stays quiet. */
+    private report(result: UsageCycleResult): void {
+        const line = describeUsageCycle(result)
+        if (line.steadyState !== undefined) {
+            if (line.steadyState === this.loggedSteadyState) return
+            this.loggedSteadyState = line.steadyState
+        }
+        this.log(line.level, line.message)
+    }
+
+    private log(level: RemoteUsageLogLevel, message: string): void {
+        this.options.log?.(level, `[RemoteUsage] ${message}`)
     }
 }
 

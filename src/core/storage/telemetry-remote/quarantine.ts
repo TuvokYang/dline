@@ -8,22 +8,31 @@ export const MAX_QUARANTINED_DOCUMENTS = 3
 export const OWNER_ONLY_DIRECTORY_MODE = 0o700
 
 /**
+ * Told the file name of a document this process just moved aside. A quarantine
+ * restarts the document's state, so the owner reports it instead of letting the
+ * reset pass silently.
+ */
+export type QuarantineObserver = (documentName: string) => void
+
+/**
  * Move a document that failed validation aside instead of overwriting it.
  *
  * The caller holds the document's lock. The moved copy keeps its original bytes
  * and permissions for diagnosis, and the next write starts from a clean slate.
+ * Returns whether this call moved the document.
  */
-export async function quarantineDocument(filePath: string, quarantineDir: string, now: number): Promise<void> {
+export async function quarantineDocument(filePath: string, quarantineDir: string, now: number): Promise<boolean> {
     await fs.mkdir(quarantineDir, { recursive: true, mode: OWNER_ONLY_DIRECTORY_MODE })
     const { name, ext } = path.parse(filePath)
     try {
         await renameWithRetry(filePath, path.join(quarantineDir, `${name}.${now}.${randomUUID()}${ext}`))
     } catch (error) {
         // Another process quarantined or replaced it first.
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
         throw error
     }
     await pruneQuarantine(quarantineDir, name)
+    return true
 }
 
 /** Delete every quarantined copy, for example when they may still contain credentials the user revoked. */

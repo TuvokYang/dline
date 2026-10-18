@@ -11,7 +11,7 @@ import {
 import type { UsageWindow } from "@/services/telemetry/remote/usage/usageWindow"
 import { FileLock } from "../backend/jsonl/FileLock"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
-import { quarantineDocument } from "./quarantine"
+import { type QuarantineObserver, quarantineDocument } from "./quarantine"
 
 export const USAGE_OUTBOX_SCHEMA_VERSION = 1
 /** How long a sender owns delivery without renewing; longer than one HTTP attempt, short enough to take over a dead window. */
@@ -49,6 +49,8 @@ export type UsageOutboxCommit<T> = { readonly status: "committed"; readonly resu
 export interface UsageOutboxRepositoryOptions {
     readonly clock?: () => number
     readonly leaseMs?: number
+    /** Told when an unreadable outbox was moved aside; its queue and lease start over. */
+    readonly onQuarantine?: QuarantineObserver
 }
 
 /**
@@ -65,6 +67,7 @@ export class UsageOutboxRepository {
     private readonly lock = new FileLock({ maxAcquireAttempts: LOCK_ACQUIRE_ATTEMPTS })
     private readonly clock: () => number
     private readonly leaseMs: number
+    private readonly onQuarantine: QuarantineObserver | undefined
 
     constructor(
         private readonly layout: OtelStorageLayout,
@@ -72,6 +75,7 @@ export class UsageOutboxRepository {
     ) {
         this.clock = options.clock ?? Date.now
         this.leaseMs = options.leaseMs ?? USAGE_SENDER_LEASE_MS
+        this.onQuarantine = options.onQuarantine
     }
 
     /**
@@ -204,7 +208,9 @@ export class UsageOutboxRepository {
     private async readLatestForWrite(): Promise<LatestOutbox> {
         const parsed = await this.readParsed()
         if (parsed.status !== "malformed") return parsed
-        await quarantineDocument(this.layout.usageOutboxPath, this.layout.remoteQuarantineDir, this.clock())
+        if (await quarantineDocument(this.layout.usageOutboxPath, this.layout.remoteQuarantineDir, this.clock())) {
+            this.onQuarantine?.(path.basename(this.layout.usageOutboxPath))
+        }
         return { status: "missing" }
     }
 

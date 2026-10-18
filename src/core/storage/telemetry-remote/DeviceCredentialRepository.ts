@@ -1,10 +1,11 @@
 import { randomBytes } from "node:crypto"
 import fs from "node:fs/promises"
+import path from "node:path"
 import { removeStaleAtomicTempFiles, writeJsonAtomic } from "@shared/storage/atomic-file"
 import type { RemoteProfile } from "@/services/telemetry/remote/contracts/wire"
 import { FileLock } from "../backend/jsonl/FileLock"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
-import { OWNER_ONLY_DIRECTORY_MODE, purgeQuarantine, quarantineDocument } from "./quarantine"
+import { OWNER_ONLY_DIRECTORY_MODE, purgeQuarantine, type QuarantineObserver, quarantineDocument } from "./quarantine"
 
 export const DEVICE_CREDENTIAL_SCHEMA_VERSION = 1
 const CREDENTIAL_FILE_MODE = 0o600
@@ -87,6 +88,8 @@ export interface DeviceCredentialDecision<T> {
 
 export interface DeviceCredentialRepositoryOptions {
     readonly clock?: () => number
+    /** Told when an unreadable credential document was moved aside; the device enrolls again. */
+    readonly onQuarantine?: QuarantineObserver
 }
 
 type ValidParsedDocument = {
@@ -111,12 +114,14 @@ type LatestDocument = ValidParsedDocument | { readonly status: "missing" } | { r
 export class DeviceCredentialRepository {
     private readonly lock = new FileLock({ maxAcquireAttempts: LOCK_ACQUIRE_ATTEMPTS })
     private readonly clock: () => number
+    private readonly onQuarantine: QuarantineObserver | undefined
 
     constructor(
         private readonly layout: OtelStorageLayout,
         options: DeviceCredentialRepositoryOptions = {},
     ) {
         this.clock = options.clock ?? Date.now
+        this.onQuarantine = options.onQuarantine
     }
 
     /** Read without locking; atomic replacement guarantees a complete document. */
@@ -213,7 +218,9 @@ export class DeviceCredentialRepository {
     private async readLatestForWrite(): Promise<LatestDocument> {
         const parsed = await this.readParsed()
         if (parsed.status !== "malformed") return parsed
-        await quarantineDocument(this.layout.deviceCredentialPath, this.layout.secretsQuarantineDir, this.clock())
+        if (await quarantineDocument(this.layout.deviceCredentialPath, this.layout.secretsQuarantineDir, this.clock())) {
+            this.onQuarantine?.(path.basename(this.layout.deviceCredentialPath))
+        }
         return { status: "missing" }
     }
 

@@ -9,6 +9,7 @@ import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutb
 import type { UsageSettlement } from "@/core/task/telemetry/UsageSettlement"
 import { RemoteUsageCoordinator, type UsageScheduler } from "../RemoteUsageCoordinator"
 import type { UsageCycleResult } from "../UsageDeliveryWorker"
+import type { RemoteUsageLogLevel } from "../usageCycleLog"
 
 const ALLOWED: LocalUsagePolicyInputs = {
     usageConsent: "enabled",
@@ -92,7 +93,7 @@ describe("RemoteUsageCoordinator", () => {
         await fs.rm(root, { recursive: true, force: true })
     })
 
-    function coordinator(): RemoteUsageCoordinator {
+    function coordinator(log?: (level: RemoteUsageLogLevel, message: string) => void): RemoteUsageCoordinator {
         return new RemoteUsageCoordinator({
             policy,
             credentials: {
@@ -109,6 +110,7 @@ describe("RemoteUsageCoordinator", () => {
             },
             clock: () => now,
             scheduler,
+            log,
         })
     }
 
@@ -202,6 +204,31 @@ describe("RemoteUsageCoordinator", () => {
         expect(await spooled()).toEqual([])
         expect(scheduler.pending).toHaveLength(1)
         await usage.dispose()
+    })
+
+    it("logs every delivery event but a steady state only when it is entered", async () => {
+        const levels: RemoteUsageLogLevel[] = []
+        const usage = coordinator((level) => levels.push(level))
+        await usage.start()
+        const cycles: UsageCycleResult[] = [
+            { kind: "idle" },
+            { kind: "idle" },
+            { kind: "delivered", requestId: "11111111-aaaa", duplicate: false },
+            { kind: "idle" },
+            { kind: "waiting", reason: "enrollment_backoff", retryAt: now + 1_000 },
+            { kind: "waiting", reason: "enrollment_backoff", retryAt: now + 2_000 },
+            { kind: "discarded", requestId: "22222222-bbbb", code: "payload_too_large" },
+        ]
+
+        for (const cycle of cycles) {
+            worker.next = cycle
+            scheduler.fire()
+            await waitFor(() => scheduler.pending.length === 1)
+        }
+        await usage.dispose()
+
+        // Policy line, first idle, delivery, first wait, discard: repeats of a held state stay silent.
+        expect(levels).toEqual(["info", "debug", "debug", "debug", "warn"])
     })
 
     it("closes intake without deleting anything when the policy inputs cannot be read", async () => {
