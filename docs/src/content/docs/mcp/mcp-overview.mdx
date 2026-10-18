@@ -83,7 +83,19 @@ On the **Configure** tab, select **Configure MCP Servers**. Dline opens `<docume
 
 ## Workspace servers
 
-A project can place `.yaml`, `.yml`, or `.json` descriptor files under `<workspace>/.agents/mcp/`. Each file describes one server that applies only to that workspace:
+A project can place `.yaml`, `.yml`, or `.json` descriptor files under `<workspace>/.agents/mcp/`. Each file describes one server that applies only to that workspace. Subfolders are scanned as well. The file name is not used: a server is identified by its `name`.
+
+```text
+<workspace>/
+└── .agents/
+    └── mcp/
+        ├── project-db.yml
+        └── remote-docs.json
+```
+
+### Local server (STDIO)
+
+`.agents/mcp/project-db.yml`:
 
 ```yaml
 name: project-db
@@ -93,12 +105,33 @@ command: node
 args: ["${workspaceFolder}/tools/db-mcp.js"]
 env:
   DB_URL: "${env:PROJECT_DB_URL}"
+timeout: 120
 ```
 
-- `name` is required and `description` is optional. Other fields are the same as in the global configuration, without the outer `mcpServers` object.
+### Remote server
+
+`.agents/mcp/remote-docs.json`:
+
+```json
+{
+  "name": "remote-docs",
+  "description": "Search the team documentation service",
+  "type": "streamableHttp",
+  "url": "https://docs.example.com/mcp",
+  "headers": {
+    "Authorization": "Bearer ${env:DOCS_MCP_TOKEN}"
+  }
+}
+```
+
+### Descriptor rules
+
+- `name` is required and must be unique within the workspace. When two files use the same `name`, the file that sorts first by path is loaded and the other is ignored with a warning. `description` is optional. Other fields are the same as in the global configuration, without the outer `mcpServers` object.
 - `${workspaceFolder}` is replaced with the workspace root. A `stdio` server without `cwd` uses the workspace root as its working directory.
-- Sensitive fields must reference environment variables (`${env:VAR}`); plain-text credentials are rejected.
+- `${env:VAR}` is resolved from the environment of the VS Code process when the server connects, so set the variable before starting VS Code. An unset variable is left as-is and a warning is logged.
+- Credentials must come from `${env:VAR}`. A descriptor is rejected when plain text appears in a field whose name has `token`, `secret`, `password`, `credential`, `cookie`, `authorization`, or `api_key` as a whole segment (for example `API_TOKEN`, `db-password`, or `Authorization`), in a URL query parameter with such a name, or in an argument written as `--token=<value>`. Pass credentials through `env` or `headers` rather than `args`.
 - `autoApprove` in a workspace descriptor is ignored, so a descriptor cannot auto-approve tools.
+- Dline watches `.agents/mcp/`. Adding, editing, or deleting a descriptor takes effect without reloading the window. A descriptor that fails validation is skipped and the error is logged.
 
 ## Managing servers
 
@@ -134,3 +167,4 @@ For when MCP tools are available in a task, see the [Tools reference](/tools-ref
 | Tools are missing | Make sure the server is enabled and connected |
 | Authentication errors | Check `headers` or environment variables; for OAuth servers, select **Authenticate** |
 | Requests time out | Increase **Request Timeout** or `timeout` |
+| A workspace server does not appear | Check that the file is under `.agents/mcp/` with a `.yaml`, `.yml`, or `.json` extension, that its `name` is unique, and that the Dline output shows no descriptor validation error |
