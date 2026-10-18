@@ -1,11 +1,11 @@
 ---
 title: Telemetry System and Unification Plan
-description: Dline's canonical telemetry pipeline, device and account identity boundary, compatibility paths, and planned remote and Issue diagnostics integration.
+description: Dline's canonical telemetry pipeline, device and account identity boundary, compatibility paths, current remote usage delivery, and planned remote diagnostics and Issue diagnostics integration.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Dline's target is one canonical telemetry mechanism. Loopback OTLP, local journals, account identity logs, planned `otel.dline.cc`, diagnostic bundles, and Issue diagnostics are sinks, views, or profile overlays of the same admission and privacy system.
+Dline's target is one canonical telemetry mechanism. Loopback OTLP, local journals, account identity logs, `otel.dline.cc`, diagnostic bundles, and Issue diagnostics are sinks, views, or profile overlays of the same admission and privacy system. Today `otel.dline.cc` receives only usage counts, through the dedicated path described in [Current remote usage delivery](#current-remote-usage-delivery).
 
 See [Telemetry, Privacy, and Issue Diagnostics](/troubleshooting/telemetry/) for the public contract.
 
@@ -57,11 +57,31 @@ The existing cleanup scans all `.jsonl` files in the shared directory, excludes 
 
 ### Split consent propagation
 
-The canonical registry reads consent from `StateManager` for each delivery. The runtime compatibility lifecycle holds an enabled state updated at activation and through explicit error-setting changes. A live organization disable reaches the canonical registry through state replacement but does not currently call the runtime lifecycle transition. The single resolver migration must close this gap before remote rollout.
+The canonical registry reads consent from `StateManager` for each delivery. The runtime compatibility lifecycle holds an enabled state updated at activation and through explicit error-setting changes. A live organization disable reaches the canonical registry through state replacement but does not currently call the runtime lifecycle transition. The single resolver migration must close this gap before remote diagnostics rollout. Remote usage delivery does not depend on this lifecycle: it re-reads its policy inputs on every cycle and on each consent or organization change.
 
 ### Legacy pairing credential
 
 Starting error diagnostics currently ensures an owner-only legacy pairing credential. No current transport consumes it. Issue diagnostics must migrate or discard it and require a new explicit per-Issue action.
+
+## Current remote usage delivery
+
+`otel.dline.cc` currently receives only the `usage` profile. The path is owned as follows:
+
+| Layer | Owner | Responsibility |
+|---|---|---|
+| Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | One typed record per settled provider request: purpose, outcome, tokens, micro-USD cost, duration |
+| Policy | `remote/policy/usagePolicy.ts`, `RemotePolicyRepository` | Resolves consent, consent revision, organization, host level, development build, and server stop into a machine-wide policy epoch |
+| Catalog | `remote/usage/usageCatalog.ts` | Fixed metric names split only by purpose and outcome |
+| Spool and outbox | `UsageObservationSpool`, `UsageOutboxRepository` | Per-process observation shards; sender lease, delivery gate, pending minutes, and exact-bytes inflight changed under one lock |
+| Delivery | `UsageDeliveryWorker`, `RemoteUsageCoordinator` | Windowing, batching, replay, defer, and stop handling; deletes unsent data when the policy leaves the allowed state |
+| Credentials and transport | `DeviceCredentialRepository`, `DeviceTokenBroker`, `DlineOtelHttpClient` | Owner-only device secret, single-flight token exchange, fixed origin over `@shared/net` |
+| Composition | `remote/remoteUsageRuntime.ts` | Started from `initialize()` and stopped in `tearDown()` in `src/common.ts` |
+
+`remote/` paths are below `src/services/telemetry/`; the repositories live in `src/core/storage/telemetry-remote/`.
+
+This path does not yet meet the target below: settlements bypass `provider-registry.ts` and the canonical channel catalog. Privacy holds by construction instead. The settlement type has no content fields, the catalog is fixed, and batch attributes are allowlisted and validated against the wire contract before sending. Moving this path behind the canonical admission boundary remains open work.
+
+`DLINE_OTEL_ENDPOINT` can replace the origin only with a loopback origin, for local contract testing against a mock service. Any other value is ignored with a warning.
 
 ## Target single mechanism
 
@@ -77,12 +97,12 @@ account identity ingress ────┘
        -> one local journal owner
        -> loopback OTLP
        -> account-capable sink
-       -> planned otel.dline.cc
+       -> otel.dline.cc
        -> tests
   -> diagnostic bundle read view
 ```
 
-Authoritative usage settlement remains a typed durable ingress because Provider totals require an awaited handoff, but it is governed by the same consent, policy epoch, channel catalog, privacy admission, and audit rules. It is not a second telemetry system.
+In the target, authoritative usage settlement remains a typed durable ingress because Provider totals require an awaited handoff, but it is governed by the same consent, policy epoch, channel catalog, privacy admission, and audit rules. It is not a second telemetry system.
 
 The local-journal migration must first reproduce current file sizes, cleanup selection, ordering, crash evidence, cancellation, bundle export, and restart recovery. Only after parity may production stop duplicate compatibility writes. Any change to grouping, count, age, active-file protection, or byte budgets requires a separate approved storage contract.
 
@@ -90,12 +110,14 @@ The local-journal migration must first reproduce current file sizes, cleanup sel
 Do not remove the compatibility writer first. The final stop-write step depends on canonical parity and historical readers.
 </Aside>
 
-## Planned remote profiles
+## Remote profiles
 
-- `usage`: content-free Provider token/cache/cost settlements and low-cardinality aggregates.
+- `usage` (current): content-free Provider token/cache/cost settlements aggregated into the fixed catalog above.
 - `production`: content-safe `error` and `runtime` logs, metrics, and traces.
 - `issue_diagnostic`: time-bounded diagnostic density requiring error consent and an active per-Issue grant.
-- `development`: matching consent plus valid development enrollment.
+- `development` (planned): matching consent plus valid development enrollment. Until enrollment exists, development builds send nothing.
+
+`production` and `issue_diagnostic` are planned.
 
 The Dline remote provider attaches to the existing registry. It must not introduce a remote-only catalog or consent system. Remote diagnostics excludes both device `distinct_id` and account identity. A future account destination must be a separately declared account-capable sink.
 

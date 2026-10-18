@@ -27,6 +27,7 @@ import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
 import { PostHogClientProvider } from "./services/telemetry/providers/posthog/PostHogClientProvider"
 import { readHostUsagePolicyInputs } from "./services/telemetry/remote/policy/hostUsagePolicyInputs"
 import { startRemoteUsage, stopRemoteUsage } from "./services/telemetry/remote/remoteUsageRuntime"
+import { loopbackEndpointOverride } from "./services/telemetry/remote/transport/DlineOtelHttpClient"
 import {
     completeRuntimeSessionLedger,
     deactivateRuntimeTelemetry,
@@ -366,6 +367,10 @@ export async function tearDown(): Promise<void> {
 
 async function startRemoteUsageReporting(dataDir: string): Promise<void> {
     const host = await HostProvider.env.getHostVersion({}).catch(() => undefined)
+    const endpoint = loopbackEndpointOverride(process.env.DLINE_OTEL_ENDPOINT)
+    if (process.env.DLINE_OTEL_ENDPOINT && !endpoint) {
+        Logger.warn("[Dline] Ignoring DLINE_OTEL_ENDPOINT: only a loopback origin may replace the telemetry service")
+    }
     await startRemoteUsage({
         dataDir,
         readPolicyInputs: readHostUsagePolicyInputs,
@@ -378,7 +383,7 @@ async function startRemoteUsageReporting(dataDir: string): Promise<void> {
             vscode_version: host?.version,
             is_dev: isTelemetryDevelopmentMode(),
         },
-        endpoint: process.env.DLINE_OTEL_ENDPOINT || undefined,
+        endpoint,
         log: (message) => Logger.info(message),
     })
 }

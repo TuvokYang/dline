@@ -1,6 +1,6 @@
 ---
 title: Telemetry, Privacy, and Issue Diagnostics
-description: Understand Dline's reporting levels, data purposes, identity separation, local retention, and the planned otel.dline.cc and Issue authorization flow.
+description: Understand Dline's reporting levels, data purposes, identity separation, local retention, usage delivery to otel.dline.cc, and the planned Issue authorization flow.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
@@ -8,7 +8,7 @@ import { Aside } from "@astrojs/starlight/components"
 Dline asks for consent to product usage reporting and error/runtime diagnostics separately. The two checkboxes define the effective reporting level, but they remain independent permissions.
 
 <Aside>
-The unified journal migration, `otel.dline.cc` delivery, and Issue diagnostics authorization described as planned on this page are not active in the current build.
+Usage delivery to `otel.dline.cc` is active as described below. The unified journal migration, diagnostic profiles on `otel.dline.cc`, and Issue diagnostics authorization described as planned on this page are not active in the current build.
 </Aside>
 
 ## Reporting levels
@@ -40,7 +40,7 @@ The separate `account` channel emits an `account.identified` record containing t
 - The default network sink is the local OTLP/HTTP endpoint `http://127.0.0.1:4318`.
 - The default loopback sink accepts `usage`, `account`, and `runtime`; account records remain separate from ordinary records.
 - An organization-configured OTLP endpoint currently accepts consented `usage` Event and Metric signals only. It is not an account, error/runtime, or Trace sink.
-- The current build contains no `https://otel.dline.cc` delivery implementation and no hidden fallback to it.
+- With usage reporting confirmed, aggregated per-minute usage counts are sent to `https://otel.dline.cc` as described in the usage delivery section below. No other channel is sent there, and no other destination falls back to it.
 
 <Aside type="caution">
 A non-loopback endpoint sends data outside your machine. Review its retention, access-control, and legal policies before enabling reporting.
@@ -52,7 +52,7 @@ A non-loopback endpoint sends data outside your machine. Review its retention, a
 
 Ordinary OpenTelemetry events can carry this stable device `distinct_id`. Account ID is emitted separately as `account.identified` and is never used as `distinct_id`, aliased to it, or inherited by ordinary Event/Metric attributes. The current organization usage OTLP sink does not opt into the account channel.
 
-The planned `otel.dline.cc` diagnostic profiles exclude both `distinct_id` and account identity. Any future account telemetry destination requires an explicit account-capable sink and its own documented retention and access policy.
+Usage delivery to `otel.dline.cc` excludes both `distinct_id` and account identity; the service only sees a pseudonymous device principal described below. The planned diagnostic profiles exclude both as well. Any future account telemetry destination requires an explicit account-capable sink and its own documented retention and access policy.
 
 ## Current local storage and limits
 
@@ -67,7 +67,7 @@ All journal files are below the Dline data root in `telemetry/sessions/`.
 
 Current cleanup is file-based, not session-based. When the error-reporting lifecycle starts, it scans every `.jsonl` in the shared directory, protects only the active unprefixed runtime file, keeps up to eight other eligible files, and removes eligible files older than 3 days. Prefixed files are counted independently and usage-only sessions do not start this cleanup. Therefore canonical journals do not currently have a reliable global cross-session byte ceiling.
 
-Exporter queues remain bounded in memory when no Collector exists. The current build does not create a long-lived disk remote-retry spool.
+Exporter queues remain bounded in memory when no Collector exists, and the OTLP exporters do not create a disk retry spool. Only `otel.dline.cc` usage delivery keeps a bounded disk queue, described below.
 
 Enabling error reporting also creates an owner-only legacy pairing credential in local secret storage. No current transport sends or consumes it. Planned Issue diagnostics must migrate or discard it and cannot treat it as Issue authorization without a new explicit user action.
 
@@ -78,7 +78,7 @@ The target is one canonical mechanism:
 - normal signals and authoritative usage settlement enter one admission boundary through typed ingress ports;
 - one consent/profile resolver, channel/severity catalog, canonicalization boundary, and content policy govern admitted data;
 - sink-specific policy may only reduce fields or density;
-- one provider registry owns local, loopback, planned `otel.dline.cc`, account-capable, and test sinks;
+- one provider registry owns local, loopback, `otel.dline.cc`, account-capable, and test sinks;
 - one local journal owner replaces duplicate production writing only after parity is proven;
 - Issue diagnostics is a temporary profile overlay, not another recorder;
 - the process ledger remains a crash capsule outside the telemetry stream.
@@ -97,22 +97,68 @@ Development mode can retain extra local correlation fields. Development mode is 
 
 The current `/reportbug` handler requires `api_request_output` and `additional_context`. The values appear in Dline's approval preview. After approval, `api_request_output` is placed in the prefilled GitHub Issue `logs` field and passed through the browser URL. GitHub receives the Issue only after you review the browser form and press submit, so you can edit or remove the field first. This does not authorize `otel.dline.cc` or upload journals or ZIP files.
 
-## Planned `otel.dline.cc` measures
+## Usage delivery to `otel.dline.cc`
 
-The planned provider is a sink inside the same canonical mechanism, not a second telemetry system.
+Dline sends usage counts to `https://otel.dline.cc` only while every condition holds:
+
+- **Allow usage reporting** is checked and you have confirmed the current remote usage disclosure. If you opted in before remote delivery existed, **Settings → About** shows a **Confirm** notice, and your usage stays on this machine until you confirm.
+- Organization policy has not disabled telemetry.
+- VS Code's `telemetry.telemetryLevel` is `all`. `error`, `crash`, `off`, or a level that cannot be read stops delivery.
+- The service has not refused this device.
+- The build is not a development build. Development builds never send usage.
+
+### What is sent
+
+Each settled provider request is counted once, including cancelled and failed requests. Dline groups the counts into sealed 60-second windows and sends at most one batch per minute with up to ten windows. Nothing is sent for a minute without requests.
+
+| Metric | Meaning |
+|---|---|
+| `dline.usage.requests.<purpose>.<outcome>` | Number of requests |
+| `dline.usage.tokens.input.<purpose>`, `.output.<purpose>`, `.cache_read.<purpose>`, `.cache_write.<purpose>` | Token totals reported by the provider |
+| `dline.usage.cost_micro_usd.<purpose>` | Cost in millionths of a US dollar, only for models priced in US dollars |
+| `dline.usage.request_duration_ms.<purpose>` | Request duration as count, sum, minimum, and maximum |
+
+`<purpose>` is `task`, `subagent`, `compaction`, or `other`; `<outcome>` is `completed`, `cancelled`, or `failed`. Each batch carries only `client_version`, `platform`, `architecture`, `vscode_version`, and `is_dev`.
+
+Provider, model, API format, Task or workspace identity, `distinct_id`, account ID, prompts, responses, file contents, paths, commands, and error text are not sent. In the current build this delivery is a dedicated path that can carry only this fixed catalog; moving it behind the canonical admission boundary remains part of the target above.
+
+### Device identity and transport
+
+On the first send, Dline creates a random device secret in `secrets/otel/device.json` below the Dline data root, with owner-only permissions, and exchanges it for a short-lived access token. The service sees a pseudonymous device principal shared by every Dline window that uses the same data root.
+
+Requests go only to the fixed HTTPS origin through Dline's proxy-aware transport, with redirects rejected and a bounded timeout. The `DLINE_OTEL_ENDPOINT` environment variable accepts only a loopback origin for local contract testing; any other value is ignored.
+
+### Local queue
+
+The queue lives in `telemetry/remote/usage/` below the Dline data root:
+
+| Artifact | Purpose |
+|---|---|
+| `observations/` | Per-process files that record settled requests before they are grouped |
+| `outbox.json` | The sender lease, the next allowed send time, pending minutes, and the request awaiting an answer |
+| `inflight/` | The exact bytes of a request whose outcome is unknown |
+
+Only one Dline window sends at a time. At most eleven pending minutes are kept, and older minutes are dropped. A request whose outcome is unknown is replayed with the same request ID and bytes, and it is abandoned after 12 attempts or 24 hours.
+
+### Turning usage delivery off
+
+When any condition above stops delivery, Dline aborts the current send and deletes unsent observations, pending minutes, and stored request bodies. Unchecking **Allow usage reporting** also deletes the local access tokens; the device secret is kept so that opting in again does not register a new device. Error reporting is unaffected. Data already accepted by the service is not deleted.
+
+The service's retention, access, and deletion policy must be published before this delivery reaches production releases.
+
+## Planned `otel.dline.cc` diagnostics
+
+The planned diagnostic profiles are sinks inside the same canonical mechanism, not a second telemetry system.
 
 | Profile | Authorization | Data |
 |---|---|---|
-| `usage` | Usage reporting | Provider-reported per-request token/cache/cost totals without content, plus low-cardinality aggregates |
 | `production` | Error reporting | Content-safe `error`/`runtime` logs, metrics, and traces |
 | `issue_diagnostic` | Error reporting plus an active per-Issue grant | A higher-frequency view of the same diagnostic categories |
 | `development` | Matching consent plus valid development enrollment | Development-only streams unavailable to ordinary users |
 
-Before rollout, the client and service must enforce fixed HTTPS origin, rejected redirects, proxy-aware transport, finite timeout and cancellation, bounded responses and outboxes, owner-only credentials, policy epochs, privacy canaries, and server policy that can only narrow consent. Ordinary signals and authoritative usage settlements must pass the same canonical privacy admission.
+Before rollout, diagnostic delivery must enforce the same transport, credential, and policy-epoch rules as usage delivery, plus privacy canaries and server policy that can only narrow consent. Diagnostic outbox count, byte, and age limits must be fixed before release. Outboxes are sink-owned delivery state and never use forensic journals as upload queues.
 
-Usage delivery plans sealed 60-second windows, no empty heartbeat, at most ten combined windows, and oldest-window drop at the bound. Diagnostic outbox count, byte, and age limits must be fixed before release. Outboxes are sink-owned delivery state and never use forensic journals as upload queues.
-
-Disabling a channel must stop capture and sends, abort in-flight requests, delete that channel's unsent remote outbox and local remote token, and leave the other channel unchanged. It cannot delete data already accepted by the service. Server-side retention, access, and deletion policy must be published before production rollout.
+Disabling error reporting must stop capture and sends, abort in-flight requests, delete the unsent diagnostic outbox and its local token, and leave usage delivery unchanged.
 
 ## Planned Issue diagnostics flow
 

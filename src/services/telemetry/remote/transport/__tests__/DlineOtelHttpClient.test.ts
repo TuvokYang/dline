@@ -1,7 +1,7 @@
 import { mockFetchForTesting } from "@shared/net"
 import { describe, expect, it } from "vitest"
 import { classifyUsageResponse } from "../../contracts/classification"
-import { DlineOtelHttpClient, DlineOtelTransportError } from "../DlineOtelHttpClient"
+import { DlineOtelHttpClient, DlineOtelTransportError, loopbackEndpointOverride } from "../DlineOtelHttpClient"
 
 const TOKEN = "tok_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcd"
 const REQUEST_ID = "0b4f8a52-5d0e-4e55-9a0c-5a1f1e7c0a01"
@@ -144,5 +144,16 @@ describe("DlineOtelHttpClient", () => {
         expect(() => new DlineOtelHttpClient({ endpoint: "http://otel.dline.cc" })).toThrow()
         expect(() => new DlineOtelHttpClient({ endpoint: "https://user:pw@otel.dline.cc" })).toThrow()
         expect(() => new DlineOtelHttpClient({ endpoint: "http://localhost:8787" })).not.toThrow()
+    })
+
+    it("honours an environment override only when it names a loopback origin", () => {
+        expect(loopbackEndpointOverride("http://127.0.0.1:8787")).toBe("http://127.0.0.1:8787")
+        expect(loopbackEndpointOverride("https://localhost:8443")).toBe("https://localhost:8443")
+        // A remote HTTPS host is a valid client endpoint but must not replace the service from the environment.
+        expect(loopbackEndpointOverride("https://otel.example.test")).toBeUndefined()
+        expect(loopbackEndpointOverride("http://127.0.0.1:8787/?redirect=x")).toBeUndefined()
+        expect(loopbackEndpointOverride("not a url")).toBeUndefined()
+        expect(loopbackEndpointOverride("")).toBeUndefined()
+        expect(loopbackEndpointOverride(undefined)).toBeUndefined()
     })
 })

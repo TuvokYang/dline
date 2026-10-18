@@ -1,11 +1,11 @@
 ---
 title: 遥测系统与统一规划
-description: Dline 的 canonical telemetry pipeline、设备与账户身份边界、当前兼容路径，以及计划中的远端与 Issue diagnostics 接入。
+description: Dline 的 canonical telemetry pipeline、设备与账户身份边界、当前兼容路径、当前远端 usage 投递，以及计划中的远端诊断与 Issue diagnostics 接入。
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Dline 的目标是一套 canonical telemetry mechanism。loopback OTLP、本地 journal、账户身份日志、计划中的 `otel.dline.cc`、diagnostic bundle 和 Issue diagnostics 都是同一接纳与隐私系统的 sink、视图或 profile overlay。
+Dline 的目标是一套 canonical telemetry mechanism。loopback OTLP、本地 journal、账户身份日志、`otel.dline.cc`、diagnostic bundle 和 Issue diagnostics 都是同一接纳与隐私系统的 sink、视图或 profile overlay。目前 `otel.dline.cc` 只接收使用计数，经由[当前远端 usage 投递](#当前远端-usage-投递)所述的专用路径。
 
 面向用户的说明见[遥测、隐私与 Issue 诊断](/zh-cn/troubleshooting/telemetry/)。
 
@@ -57,11 +57,31 @@ PostHog account identification 不再改写或 alias 设备 ID。当前 PostHog 
 
 ### Consent 传播分裂
 
-canonical registry 每次从 `StateManager` 读取 consent。runtime 兼容 lifecycle 保存自己的 enabled 状态，只在 activation 和显式 error-setting 更新时变化。live organization disable 会通过 state replacement 影响 canonical registry，但当前不会调用 runtime lifecycle transition。统一 resolver 迁移必须在远端发布前补齐。
+canonical registry 每次从 `StateManager` 读取 consent。runtime 兼容 lifecycle 保存自己的 enabled 状态，只在 activation 和显式 error-setting 更新时变化。live organization disable 会通过 state replacement 影响 canonical registry，但当前不会调用 runtime lifecycle transition。统一 resolver 迁移必须在远端诊断发布前补齐。远端 usage 投递不依赖该 lifecycle：它在每个周期以及每次 consent 或组织设置变化时重新读取 policy 输入。
 
 ### Legacy pairing credential
 
 启动错误诊断当前会确保存在 owner-only legacy pairing credential，但没有现有 transport 消费。Issue diagnostics 必须迁移或丢弃它，并要求新的单 Issue 显式操作。
+
+## 当前远端 usage 投递
+
+`otel.dline.cc` 目前只接收 `usage` profile。该路径的所有权如下：
+
+| 层 | Owner | 职责 |
+|---|---|---|
+| Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | 每个已结算的服务商请求产生一条类型化记录：purpose、outcome、token、micro-USD 成本、时长 |
+| Policy | `remote/policy/usagePolicy.ts`、`RemotePolicyRepository` | 把 consent、consent revision、组织、宿主等级、development 构建和服务端停止解析为机器级 policy epoch |
+| Catalog | `remote/usage/usageCatalog.ts` | 只按 purpose 和 outcome 拆分的固定指标名 |
+| Spool 与 outbox | `UsageObservationSpool`、`UsageOutboxRepository` | 按进程分片的 observation；发送租约、投递闸门、待发分钟和 exact-bytes inflight 在同一把锁下修改 |
+| 投递 | `UsageDeliveryWorker`、`RemoteUsageCoordinator` | 窗口、批次、重放、延后与停止处理；policy 离开允许状态时删除未发送数据 |
+| 凭据与传输 | `DeviceCredentialRepository`、`DeviceTokenBroker`、`DlineOtelHttpClient` | owner-only 设备密钥、single-flight 令牌交换、经 `@shared/net` 的固定 origin |
+| 组合 | `remote/remoteUsageRuntime.ts` | 在 `src/common.ts` 的 `initialize()` 中启动，在 `tearDown()` 中停止 |
+
+`remote/` 路径位于 `src/services/telemetry/` 下；repository 位于 `src/core/storage/telemetry-remote/`。
+
+该路径尚未达到下文目标：settlement 绕过了 `provider-registry.ts` 和 canonical channel catalog。隐私由构造保证：settlement 类型没有正文字段，catalog 固定，批次属性经过 allowlist，并在发送前按 wire 合同校验。把该路径纳入 canonical admission boundary 仍是待完成工作。
+
+`DLINE_OTEL_ENDPOINT` 只能把 origin 替换为 loopback origin，用于针对本地 mock 服务的契约测试；其他值会被忽略并记录警告。
 
 ## 单一遥测机制目标
 
@@ -77,12 +97,12 @@ account identity ingress ────┘
        -> one local journal owner
        -> loopback OTLP
        -> account-capable sink
-       -> planned otel.dline.cc
+       -> otel.dline.cc
        -> tests
   -> diagnostic bundle read view
 ```
 
-权威 usage settlement 因为需要 awaited durable handoff，继续使用类型化 durable ingress，但它必须服从相同 consent、policy epoch、channel catalog、privacy admission 和审计规则，不构成第二套遥测系统。
+在目标形态中，权威 usage settlement 因为需要 awaited durable handoff，继续使用类型化 durable ingress，但它必须服从相同 consent、policy epoch、channel catalog、privacy admission 和审计规则，不构成第二套遥测系统。
 
 本地 journal 迁移必须先复现当前 file size、cleanup selection、顺序、崩溃证据、取消、bundle export 和 restart recovery，parity 通过后才能停止兼容写入。任何 grouping、count、age、active-file protection 或 byte budget 变化都需要独立批准的 storage 约定。
 
@@ -90,12 +110,14 @@ account identity ingress ────┘
 不能先删除兼容 writer。停止重复写入是 canonical parity 和历史 reader 完成后的最后步骤。
 </Aside>
 
-## 计划中的远端 profile
+## 远端 profile
 
-- `usage`：不含正文的 Provider token/cache/cost settlement 和低基数聚合。
+- `usage`（当前）：不含正文的 Provider token/cache/cost settlement，聚合为上文的固定 catalog。
 - `production`：经过内容过滤的 `error`/`runtime` logs、metrics、traces。
 - `issue_diagnostic`：需要 error consent 与 active per-Issue grant 的有时限诊断密度。
-- `development`：对应 consent 加有效 development enrollment。
+- `development`（计划）：对应 consent 加有效 development enrollment。enrollment 落地之前，development 构建不发送任何数据。
+
+`production` 和 `issue_diagnostic` 仍是计划。
 
 Dline remote provider 接入现有 registry，禁止新增 remote-only catalog 或 consent system。remote diagnostics 同时排除设备 `distinct_id` 和 account identity。未来 account 目的地必须是单独声明的 account-capable sink。
 

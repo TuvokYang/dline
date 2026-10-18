@@ -148,13 +148,30 @@ function parseJson(text: string | undefined): unknown {
     }
 }
 
+/**
+ * Read an endpoint override from the environment. Only a loopback origin is
+ * honoured, so an inherited variable can point the client at the local contract
+ * smoke but can never send the device secret to another remote host.
+ */
+export function loopbackEndpointOverride(value: string | undefined): string | undefined {
+    if (!value) return undefined
+    try {
+        return isLoopback(parseEndpoint(value)) ? value : undefined
+    } catch {
+        return undefined
+    }
+}
+
 /** Only HTTPS, or plain HTTP to loopback for the local contract smoke, may carry a device secret. */
 function parseEndpoint(value: string): URL {
     const url = new URL(value)
-    const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]"
-    if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url))) {
         throw new Error("Dline telemetry endpoint must use HTTPS")
     }
     if (url.username || url.password || url.search || url.hash) throw new Error("Dline telemetry endpoint must be a bare origin")
     return url
+}
+
+function isLoopback(url: URL): boolean {
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]"
 }

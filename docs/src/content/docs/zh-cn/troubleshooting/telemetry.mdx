@@ -1,6 +1,6 @@
 ---
 title: 遥测、隐私与 Issue 诊断
-description: 了解 Dline 的报告等级、数据用途、身份分离、本地保留边界，以及计划中的 otel.dline.cc 与 Issue 授权流程。
+description: 了解 Dline 的报告等级、数据用途、身份分离、本地保留边界、向 otel.dline.cc 投递使用统计，以及计划中的 Issue 授权流程。
 ---
 
 import { Aside } from "@astrojs/starlight/components"
@@ -8,7 +8,7 @@ import { Aside } from "@astrojs/starlight/components"
 Dline 分别征求产品使用统计和错误/运行时诊断的同意。两个复选框共同形成有效报告等级，但仍是独立权限。
 
 <Aside>
-本页标为“计划”的统一 journal 迁移、`otel.dline.cc` 投递和 Issue 诊断授权在当前构建中尚未启用。
+向 `otel.dline.cc` 投递使用统计已按下文所述启用。本页标为“计划”的统一 journal 迁移、`otel.dline.cc` 诊断 profile 和 Issue 诊断授权在当前构建中尚未启用。
 </Aside>
 
 ## 报告等级
@@ -40,7 +40,7 @@ Dline 分别征求产品使用统计和错误/运行时诊断的同意。两个�
 - 默认网络 sink 是本机 OTLP/HTTP 端点 `http://127.0.0.1:4318`。
 - 默认 loopback sink 接受 `usage`、`account` 和 `runtime`；account record 与普通 record 分离。
 - 组织配置的 OTLP 端点当前只接收已获准的 `usage` Event 和 Metric，不是 account、error/runtime 或 Trace sink。
-- 当前构建不包含 `https://otel.dline.cc` 投递实现，也不存在隐藏 fallback。
+- 确认使用统计后，按分钟聚合的使用计数会发送到 `https://otel.dline.cc`，详见下文使用统计投递一节。不会向该地址发送其他通道，也没有其他目的地回退到它。
 
 <Aside type="caution">
 非 loopback 端点会把数据发送到本机以外。启用前应检查其保留、访问控制和法律政策。
@@ -52,7 +52,7 @@ Dline 分别征求产品使用统计和错误/运行时诊断的同意。两个�
 
 普通 OpenTelemetry event 可以携带稳定的设备 `distinct_id`。account ID 只通过独立 `account.identified` 发出，不能作为 `distinct_id`、不能与它 alias，也不能被普通 Event/Metric 继承。当前组织 usage OTLP sink 不接收 account 通道。
 
-计划中的 `otel.dline.cc` diagnostic profile 同时排除 `distinct_id` 和 account identity。未来若新增 account telemetry 目的地，必须显式声明 account-capable sink，并单独公开保留和访问政策。
+向 `otel.dline.cc` 投递的使用统计同时排除 `distinct_id` 和 account identity；服务端只能看到下文所述的假名化设备主体。计划中的 diagnostic profile 同样排除这两者。未来若新增 account telemetry 目的地，必须显式声明 account-capable sink，并单独公开保留和访问政策。
 
 ## 当前本地存储与限制
 
@@ -67,7 +67,7 @@ Dline 分别征求产品使用统计和错误/运行时诊断的同意。两个�
 
 当前清理按文件而不是按 session 执行。error-reporting lifecycle 启动时扫描共享目录全部 `.jsonl`，只保护活动的无前缀 runtime 文件，最多保留其他 8 个符合条件文件，并删除超过 3 天的符合条件文件。带前缀文件被分别计数；只开启使用统计时不会启动这套 cleanup。因此 canonical journal 当前没有可靠的跨 session 全局字节上限。
 
-Collector 缺失时 exporter 仍只使用有界内存队列，当前构建不会创建长期磁盘远端重试 spool。
+Collector 缺失时 exporter 仍只使用有界内存队列，OTLP exporter 不会创建磁盘重试 spool。只有 `otel.dline.cc` 使用统计投递会保留下文所述的有界磁盘队列。
 
 开启错误报告还会在本地 secret storage 创建 owner-only legacy pairing credential。当前没有 transport 发送或消费它。计划中的 Issue diagnostics 必须迁移或丢弃它，不能在没有新用户显式操作时视为 Issue 授权。
 
@@ -78,7 +78,7 @@ Collector 缺失时 exporter 仍只使用有界内存队列，当前构建不会
 - 普通信号和权威 usage settlement 通过类型化 ingress port 进入同一个 admission boundary；
 - 一个 consent/profile resolver、channel/severity catalog、canonicalization boundary 和 content policy 约束获准数据；
 - sink-specific policy 只能删字段或降低密度；
-- 一个 provider registry 管理本地、loopback、计划中的 `otel.dline.cc`、account-capable 和测试 sink；
+- 一个 provider registry 管理本地、loopback、`otel.dline.cc`、account-capable 和测试 sink；
 - 一个本地 journal owner 只有在 parity 通过后才替代重复 production 写入；
 - Issue diagnostics 只是临时 profile overlay；
 - 进程 ledger 仍是 telemetry stream 之外的 crash capsule。
@@ -97,22 +97,68 @@ development 模式可以保留额外本地关联字段，但不等于远端授�
 
 当前 `/reportbug` handler 要求 `api_request_output` 和 `additional_context`。这些值会显示在 Dline 审批预览中；批准后，`api_request_output` 会进入预填 GitHub Issue 的 `logs` 字段并通过浏览器 URL 传递。只有你在浏览器再次检查并点击 submit 后，GitHub 才会收到 Issue，因此提交前可以编辑或删除该字段。该流程不会授权 `otel.dline.cc`，也不会上传 journal 或 ZIP。
 
-## 计划中的 `otel.dline.cc` 措施
+## 向 `otel.dline.cc` 投递使用统计
 
-计划 provider 是同一 canonical mechanism 内的 sink，不是第二套遥测系统。
+只有以下条件全部成立时，Dline 才会向 `https://otel.dline.cc` 发送使用计数：
+
+- 已勾选 **Allow usage reporting**，并已确认当前的远端使用统计说明。如果你在远端投递出现之前就已同意，**Settings → About** 会显示 **Confirm** 提示；确认之前，使用统计只保留在本机。
+- 组织 policy 没有禁用遥测。
+- VS Code 的 `telemetry.telemetryLevel` 为 `all`。`error`、`crash`、`off` 或无法读取的等级都会停止投递。
+- 服务端没有拒绝该设备。
+- 当前不是 development 构建。development 构建从不发送使用统计。
+
+### 发送内容
+
+每个已结算的服务商请求只计数一次，取消和失败的请求也计入。Dline 把计数归入封闭的 60 秒窗口，每分钟最多发送一批，每批最多 10 个窗口。没有请求的分钟不发送任何内容。
+
+| 指标 | 含义 |
+|---|---|
+| `dline.usage.requests.<purpose>.<outcome>` | 请求数 |
+| `dline.usage.tokens.input.<purpose>`、`.output.<purpose>`、`.cache_read.<purpose>`、`.cache_write.<purpose>` | 服务商报告的 token 总量 |
+| `dline.usage.cost_micro_usd.<purpose>` | 以百万分之一美元计的成本，仅限以美元定价的模型 |
+| `dline.usage.request_duration_ms.<purpose>` | 请求时长的次数、总和、最小值和最大值 |
+
+`<purpose>` 为 `task`、`subagent`、`compaction` 或 `other`；`<outcome>` 为 `completed`、`cancelled` 或 `failed`。每批只附带 `client_version`、`platform`、`architecture`、`vscode_version` 和 `is_dev`。
+
+不会发送服务商、模型、API 格式、Task 或 workspace 身份、`distinct_id`、account ID、提示词、响应、文件内容、路径、命令和错误文本。当前构建中该投递是只能承载这一固定目录的专用路径；把它纳入上文的 canonical admission boundary 仍属于目标的一部分。
+
+### 设备身份与传输
+
+首次发送时，Dline 在 Dline data root 下的 `secrets/otel/device.json` 创建随机设备密钥，权限为 owner-only，并用它交换短期访问令牌。服务端只能看到一个假名化设备主体，使用同一 data root 的所有 Dline 窗口共享该主体。
+
+请求只发往固定 HTTPS origin，经由 Dline 支持代理的 transport，拒绝 redirect 并使用有界 timeout。环境变量 `DLINE_OTEL_ENDPOINT` 只接受用于本地契约测试的 loopback origin，其他值会被忽略。
+
+### 本地队列
+
+队列位于 Dline data root 下的 `telemetry/remote/usage/`：
+
+| 产物 | 用途 |
+|---|---|
+| `observations/` | 按进程分开的文件，在分组前记录已结算请求 |
+| `outbox.json` | 发送租约、下次允许发送时间、待发分钟和等待应答的请求 |
+| `inflight/` | 结果未知的请求的原始字节 |
+
+同一时间只有一个 Dline 窗口发送。最多保留 11 个待发分钟，更早的分钟会被丢弃。结果未知的请求会以相同请求 ID 和字节重放，12 次尝试或 24 小时后放弃。
+
+### 关闭使用统计投递
+
+上述任一条件导致投递停止时，Dline 会中止当前发送，并删除未发送的 observation、待发分钟和已保存的请求正文。取消勾选 **Allow usage reporting** 还会删除本地访问令牌；设备密钥会保留，因此重新同意不会注册新设备。错误报告不受影响。服务端已接收的数据不会被删除。
+
+该投递进入 production 版本之前，必须公开服务端的保留、访问和删除政策。
+
+## 计划中的 `otel.dline.cc` 诊断
+
+计划中的 diagnostic profile 是同一 canonical mechanism 内的 sink，不是第二套遥测系统。
 
 | Profile | 授权 | 数据 |
 |---|---|---|
-| `usage` | 使用统计 | 服务商返回的单次请求 token/cache/cost 总量，不含正文；以及低基数聚合 |
 | `production` | 错误报告 | 经过内容过滤的 `error`/`runtime` logs、metrics 和 traces |
 | `issue_diagnostic` | 错误报告加 active per-Issue grant | 相同诊断类别的更高频视图 |
 | `development` | 对应同意加有效 development enrollment | 普通用户不可加入的开发流 |
 
-发布前，客户端和服务端必须落实固定 HTTPS origin、拒绝 redirect、支持代理的 transport、有限 timeout 与取消、有界 response/outbox、owner-only credential、policy epoch、privacy canary，以及只能收紧 consent 的服务端 policy。普通 signal 与权威 usage settlement 必须经过同一 canonical privacy admission。
+发布前，诊断投递必须落实与使用统计投递相同的 transport、credential 和 policy epoch 规则，并加上 privacy canary 和只能收紧 consent 的服务端 policy。diagnostic outbox 的 count、byte、age 上限必须在发布前固定。outbox 只是 sink 投递状态，不把 forensic journal 当作上传队列。
 
-usage 投递计划使用封闭 60 秒窗口、不发送空 heartbeat、最多合并 10 个窗口并在超限时丢弃最旧窗口。diagnostic outbox 的 count、byte、age 上限必须在发布前固定。outbox 只是 sink 投递状态，不把 forensic journal 当作上传队列。
-
-关闭通道必须停止 capture 与发送、取消 in-flight request、删除该通道未发送 outbox 和本地 remote token，并保持另一通道不变。它不能删除服务端已接收数据。production 上线前必须公开服务端保留、访问和删除政策。
+关闭错误报告必须停止 capture 与发送、取消 in-flight request、删除未发送的诊断 outbox 及其本地 token，并保持使用统计投递不变。
 
 ## 计划中的 Issue 诊断流程
 
