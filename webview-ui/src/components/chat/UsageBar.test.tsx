@@ -2,6 +2,7 @@ import type { AccountUsageData } from "@shared/ExtensionMessage"
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { hoverPastTooltipDelay } from "@/components/ui/__tests__/tooltipHover"
 
 const mockedContext = vi.hoisted(() => ({ value: {} as Record<string, unknown> }))
 const usageServiceMocks = vi.hoisted(() => ({
@@ -141,7 +142,7 @@ describe("UsageBar", () => {
         }
 
         render(<UsageBar />)
-        await user.hover(screen.getByRole("button", { name: "Provider usage" }))
+        await hoverPastTooltipDelay(user, screen.getByRole("button", { name: "Provider usage" }))
 
         const tooltip = await screen.findByRole("tooltip")
         const visibleTooltip = document.querySelector('[data-usage-surface="preview"]')
@@ -181,7 +182,7 @@ describe("UsageBar", () => {
 
         render(<UsageBar />)
         const trigger = screen.getByRole("button", { name: "Provider usage" })
-        await user.hover(trigger)
+        await hoverPastTooltipDelay(user, trigger)
         expect(document.querySelector('[data-usage-surface="preview"]')).toHaveAttribute("data-slot", "tooltip-content")
         expect(document.querySelector('[data-slot="click-menu-content"]')).not.toBeInTheDocument()
 

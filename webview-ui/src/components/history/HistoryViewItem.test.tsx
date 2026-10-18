@@ -3,6 +3,7 @@ import { StringArrayRequest } from "@shared/proto/dline/common"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { hoverPastTooltipDelay } from "@/components/ui/__tests__/tooltipHover"
 import { TaskServiceClient } from "@/services/grpc-client"
 import HistoryPreview, {
     filterHistoryPreview,
@@ -271,7 +272,7 @@ describe("HistoryPreview", () => {
         expect(getComputedStyle(metadataRow as HTMLElement).alignSelf).toBe("stretch")
         expect(getComputedStyle(metadataRow as HTMLElement).justifyContent).toBe("flex-start")
         expect(getComputedStyle(completionStatus).marginLeft).toBe("auto")
-        await user.hover(completionStatus)
+        await hoverPastTooltipDelay(user, completionStatus)
         expect(await screen.findByRole("tooltip")).toHaveTextContent("Completed")
     })
 

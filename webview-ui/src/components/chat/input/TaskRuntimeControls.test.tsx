@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { hoverPastTooltipDelay } from "@/components/ui/__tests__/tooltipHover"
 import { TaskRuntimeControls } from "./TaskRuntimeControls"
 import { TaskServiceTierControl } from "./TaskServiceTierControl"
 
@@ -164,7 +165,7 @@ describe("chat input TaskRuntimeControls", () => {
         const trigger = screen.getByRole("combobox", { name: "Task thinking override" })
         expect(trigger).toHaveTextContent("Thinking")
         expect(screen.queryByRole("spinbutton", { name: "Task thinking budget" })).not.toBeInTheDocument()
-        await user.hover(trigger)
+        await hoverPastTooltipDelay(user, trigger)
         expect(await screen.findByRole("tooltip")).toHaveTextContent("Thinking: Thinking")
         expect(mocks.updateTaskSettings).not.toHaveBeenCalled()
         expect(mocks.state.apiConfiguration).toMatchObject({ actModeReasoningOverride: override })
@@ -591,9 +592,9 @@ describe("chat input TaskRuntimeControls", () => {
         const serviceTierTooltipTrigger = serviceTierControl.closest<HTMLElement>('[data-slot="tooltip-trigger"]')
         expect(thinkingTooltipTrigger).not.toBeNull()
         expect(serviceTierTooltipTrigger).not.toBeNull()
-        await user.hover(thinkingTooltipTrigger!)
+        await hoverPastTooltipDelay(user, thinkingTooltipTrigger!)
         await waitFor(() => expect(document.querySelector('[data-slot="tooltip-content"]')).toHaveTextContent("Thinking: High"))
-        await user.hover(serviceTierTooltipTrigger!)
+        await hoverPastTooltipDelay(user, serviceTierTooltipTrigger!)
         await waitFor(() =>
             expect(document.querySelector('[data-slot="tooltip-content"]')).toHaveTextContent("Service Tier: Priority"),
         )

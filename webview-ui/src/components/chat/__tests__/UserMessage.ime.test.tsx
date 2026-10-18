@@ -8,6 +8,7 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { hoverPastTooltipDelay } from "@/components/ui/__tests__/tooltipHover"
 
 const mockedContext = vi.hoisted(() => ({ value: {} as Record<string, unknown> }))
 const usageServiceMocks = vi.hoisted(() => ({
@@ -142,7 +143,7 @@ describe("UsageBar", () => {
         render(<UsageBar />)
         const trigger = screen.getByRole("button", { name: "Provider usage" })
 
-        await user.hover(trigger)
+        await hoverPastTooltipDelay(user, trigger)
         expect((await screen.findAllByText("80% remaining")).length).toBeGreaterThan(0)
         expect(screen.getAllByText("17% remaining").length).toBeGreaterThan(0)
         expect(screen.getAllByText("Reset cards: 1").length).toBeGreaterThan(0)
