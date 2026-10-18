@@ -515,7 +515,7 @@ describe("groupChatRows request rounds", () => {
         expect(grouped[1]).toEqual(response)
     })
 
-    it("keeps a failed request of an earlier round out of the next round's group", () => {
+    it("stops drawing a failed request once the next round's request ran, without folding it into that round", () => {
         const transcript = [
             createRequestMessage(1, { streamingFailedMessage: "stream dropped" }),
             completedRequest(2),
@@ -525,7 +525,7 @@ describe("groupChatRows request rounds", () => {
         const grouped = groupChatRows(transcript)
 
         expect(groupMembers(grouped)).toEqual([[3]])
-        expect(grouped[0]).toMatchObject({ ts: 1, say: "api_req_started" })
+        expect(grouped).toHaveLength(1)
     })
 
     it("still groups the tools of one round together", () => {

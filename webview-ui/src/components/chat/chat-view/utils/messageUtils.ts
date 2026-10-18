@@ -10,6 +10,7 @@ import { FileIcon, FolderOpenDotIcon, FolderOpenIcon, SearchIcon, ShapesIcon, Wr
 import React from "react"
 import type { ToolMessageGroup } from "./chatRowKinds"
 import { groupExplorationRuns } from "./explorationRuns"
+import { supersededFailureIndexes } from "./failurePresentation"
 
 export { isToolGroup, type ToolMessageGroup } from "./chatRowKinds"
 
@@ -228,7 +229,10 @@ export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
             checkpoints.map((message) => message.ts),
         ).flat(),
     )
+    const retriedFailures = supersededFailureIndexes(messages)
     return messages.filter((message, index, arr) => {
+        // A failure a later attempt of the same work answered stays recorded but is not drawn.
+        if (retriedFailures.has(index)) return false
         const hasNoVisibleContent = !message.text?.trim() && !message.images?.length && !message.files?.length
         if (message.say === "checkpoint_created" && attachedCheckpointTimestamps.has(message.ts)) {
             // The restore point renders with its owning tool card. If that card is

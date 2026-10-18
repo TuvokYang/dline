@@ -492,6 +492,8 @@ e2e(
             })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
             await expect(retried.sidebar.getByTestId("error-retry-box")).toHaveCount(0)
+            // Like the API error above, the retry supersedes the failure card, so the chat stops drawing it.
+            await expect(retried.sidebar.getByTestId("compaction-failure")).toHaveCount(0)
             const outputAfterRetry = await E2ETestHelper.readDlineOutput(userDataDir)
             expect(outputAfterRetry).not.toContain("hydrated_interaction_mismatch")
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)

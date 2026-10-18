@@ -47,6 +47,7 @@ import { getMcpServerDisplayName } from "@/utils/mcp"
 import CodeAccordian, { cleanPathPrefix } from "../common/CodeAccordian"
 import AgentUpdateRow from "./AgentUpdateRow"
 import { ApiErrorBox } from "./ApiErrorBox"
+import { ApiFailureContent } from "./ApiFailureContent"
 import { cancelTaskActivities } from "./activity/useTaskActivities"
 import CodeExecutionRow from "./CodeExecutionRow"
 import { CommandOutputContent, CommandOutputRow } from "./CommandOutputRow"
@@ -785,9 +786,9 @@ export const ChatRowContent = memo(
                     const isSummaryRefit = tool.compactionUnitKind === "summary_refit"
                     const failureReason = describeCompactionFailure(tool.compactionFailureKind)
                     // A failed compaction produced no summary, so it carries none of the card
-                    // chrome that presents one. Rendering it as a standalone error keeps the
-                    // compaction card a summary-only surface and lets the failure be removed
-                    // on its own when a Restore rewinds past it.
+                    // chrome that presents one. It renders as an API failure like every other
+                    // failed request; the chat stops drawing it once a retry supersedes it
+                    // (see failurePresentation), and a Restore that rewinds past it removes it.
                     if (status === "failed") {
                         return (
                             <div
@@ -801,12 +802,13 @@ export const ChatRowContent = memo(
                                 data-compaction-unit-index={tool.compactionUnitIndex}
                                 data-compaction-unit-kind={tool.compactionUnitKind}
                                 data-testid="compaction-failure">
-                                <ApiErrorBox
+                                <ApiFailureContent
                                     error={
                                         failureReason
                                             ? `${failureReason}\n\n${tool.error ?? ""}`.trim()
                                             : (tool.error ?? "Conversation compaction failed before completion.")
                                     }
+                                    footerOwnsRetry
                                     testId="compaction-error-box"
                                     title="Conversation Compaction Failed"
                                 />
@@ -1328,7 +1330,7 @@ export const ChatRowContent = memo(
                             return <AutoRetryErrorBox info={JSON.parse(message.text || "{}")} startedAt={message.ts} />
                         } catch (_e) {
                             // Fallback if JSON parsing fails
-                            return <ApiErrorBox error={message.text} testId="error-retry-box" />
+                            return <ApiFailureContent error={message.text} testId="error-retry-box" />
                         }
                     case "hook_status":
                         return <HookMessage CommandOutput={CommandOutputContent} message={message} />
