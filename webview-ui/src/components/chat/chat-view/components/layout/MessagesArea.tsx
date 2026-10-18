@@ -12,7 +12,7 @@ import { isApiReqActive } from "@/utils/streaming"
 
 import { useBrowsingScrollAnchor } from "../../hooks/useBrowsingScrollAnchor"
 import type { ChatState, MessageHandlers, ScrollBehavior } from "../../types/chatTypes"
-import { isToolGroup } from "../../utils/messageUtils"
+import { isToolActivityRow } from "../../utils/chatRowKinds"
 import {
     DEFAULT_MESSAGE_WINDOW_LIMITS,
     isWholeConversationLoaded,
@@ -550,7 +550,7 @@ export const MessagesArea: React.FC<MessagesAreaProps> = ({
 
         if (visibleGroupedMessages.length === 0) return true
         if (!lastVisibleMessage) return true
-        if (lastVisibleRow && isToolGroup(lastVisibleRow)) return true
+        if (lastVisibleRow && isToolActivityRow(lastVisibleRow)) return true
         if (lastVisibleMessage.partial !== true) return true
         if (!lastMsg) return true
         if (lastMsg.say === "user_feedback" || lastMsg.say === "user_feedback_diff") return true

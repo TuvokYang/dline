@@ -4,33 +4,31 @@ import { useMemo } from "react"
 import BrowserSessionRow from "@/components/chat/BrowserSessionRow"
 import ChatRow from "@/components/chat/ChatRow"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "@/components/chat/constants"
-import { CheckmarkControl } from "@/components/common/CheckmarkControl"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
 import type { MessageHandlers, RowExpansionOrigin } from "../../types/chatTypes"
+import { isExplorationRun } from "../../utils/chatRowKinds"
 import {
     indexPreEditCheckpointAttachments,
     isTextMessagePendingToolCall,
     isToolGroup,
     resolveMessageRowExpanded,
 } from "../../utils/messageUtils"
+import { CheckpointMarker } from "./CheckpointMarker"
+import { ExplorationRunRenderer } from "./ExplorationRunRenderer"
 import { ToolGroupRenderer } from "./ToolGroupRenderer"
 
 function AttachedCheckpoint({ message }: { message: UiMessage }) {
     return (
         <div className="px-4">
-            <CheckmarkControl
-                hasWorkspaceCheckpoint={message.lastCheckpointHash?.some(Boolean) === true}
-                isCheckpointCheckedOut={message.isCheckpointCheckedOut}
-                messageTs={message.ts}
-                source={message.checkpointSource}
-                workspaceCheckpointCoverage={{
-                    available: message.lastCheckpointHash?.filter(Boolean).length ?? 0,
-                    total: message.checkpointWorkspaceRoots?.length ?? message.lastCheckpointHash?.length ?? 0,
-                }}
-            />
+            <CheckpointMarker message={message} />
         </div>
     )
+}
+
+/** Rows that draw low-stakes tool calls; only the newest one shows the calls still executing. */
+function drawsToolActivity(row: UiMessage | UiMessage[]): boolean {
+    return isToolGroup(row) || isExplorationRun(row)
 }
 
 interface MessageRendererProps {
@@ -89,26 +87,41 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         return false
     }, [messageOrGroup, modifiedMessages])
 
-    // Tool group (low-stakes tools grouped together)
-    // Determine if this is the last tool group to show active items
-    const isLastToolGroup = useMemo(() => {
-        if (!isToolGroup(messageOrGroup)) {
+    // Only the newest row drawing tool calls shows the ones still executing.
+    const isLastToolActivity = useMemo(() => {
+        if (!drawsToolActivity(messageOrGroup)) {
             return false
         }
-        // Find the last tool group in groupedMessages
         for (let i = groupedMessages.length - 1; i >= 0; i--) {
-            if (isToolGroup(groupedMessages[i])) {
+            if (drawsToolActivity(groupedMessages[i])) {
                 return i === index
             }
         }
         return false
     }, [messageOrGroup, groupedMessages, index])
 
+    if (isExplorationRun(messageOrGroup)) {
+        return (
+            <ExplorationRunRenderer
+                allMessages={modifiedMessages}
+                expandedRows={expandedRows}
+                isLastActivity={isLastToolActivity}
+                isLastRow={isLastMessage}
+                onToggleExpand={onToggleExpand}
+                run={messageOrGroup}
+            />
+        )
+    }
+
     if (isToolGroup(messageOrGroup)) {
         return (
             <div>
                 <div className={TOOL_RESPONSE_SCROLL_CLASS} data-testid="tool-group-scroll">
-                    <ToolGroupRenderer allMessages={modifiedMessages} isLastGroup={isLastToolGroup} messages={messageOrGroup} />
+                    <ToolGroupRenderer
+                        allMessages={modifiedMessages}
+                        isLastGroup={isLastToolActivity}
+                        messages={messageOrGroup}
+                    />
                 </div>
                 {attachedCheckpoints.map((checkpoint) => (
                     <AttachedCheckpoint key={checkpoint.ts} message={checkpoint} />

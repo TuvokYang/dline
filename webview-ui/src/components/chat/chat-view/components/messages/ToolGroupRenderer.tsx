@@ -12,6 +12,8 @@ interface ToolGroupRendererProps {
     messages: UiMessage[]
     allMessages: UiMessage[]
     isLastGroup: boolean
+    /** An enclosing row that already summarises these calls hides the group's own heading. */
+    showSummary?: boolean
 }
 
 interface ToolWithReasoning {
@@ -218,7 +220,7 @@ const getCurrentActivities = (allMessages: UiMessage[]): UiMessage[] => {
  * Renders a collapsible group of low-stakes tool calls.
  * Shows both completed tools AND currently active tools in a unified list (only for last group).
  */
-export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup }: ToolGroupRendererProps) => {
+export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup, showSummary = true }: ToolGroupRendererProps) => {
     const [expandedItems, setExpandedItems] = useState<Record<number, boolean>>({})
 
     // Filter out tools in the "current activities" range (being shown in loading state)
@@ -282,8 +284,7 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup }: T
 
     return (
         <div className={cn("px-4 py-2 ml-1 text-description")}>
-            {/* Header */}
-            <div className="text-[13px] text-description font-semibold mb-1">{summary}:</div>
+            {showSummary && <div className="text-[13px] text-description font-semibold mb-1">{summary}:</div>}
 
             {/* Content - unified list of completed + active tools */}
             <div className="min-w-0">

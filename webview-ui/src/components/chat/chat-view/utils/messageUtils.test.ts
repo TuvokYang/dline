@@ -1,5 +1,6 @@
 import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
+import { isExplorationRun } from "./chatRowKinds"
 import {
     filterVisibleMessages,
     findGroupedMessageByTs,
@@ -474,8 +475,12 @@ describe("groupLowStakesTools round boundaries", () => {
 describe("groupChatRows request rounds", () => {
     const completedRequest = (ts: number) => createRequestMessage(ts, { cost: 0.01 })
     const streamingRequest = (ts: number) => createRequestMessage(ts, {})
+    // Read-only rounds may fold into one exploration run; each round keeps its own group inside it.
     const groupMembers = (grouped: ReturnType<typeof groupChatRows>) =>
-        grouped.filter(isToolGroup).map((group) => group.map((message) => message.ts))
+        grouped
+            .flatMap((row) => (isExplorationRun(row) ? row._rounds.flatMap((round) => round.entries.filter(isToolGroup)) : [row]))
+            .filter(isToolGroup)
+            .map((group) => group.map((message) => message.ts))
 
     // A successful request draws no row, so it is gone from the visible list
     // before grouping. Rounds therefore come from the whole transcript: two

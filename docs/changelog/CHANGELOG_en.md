@@ -17,6 +17,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - In-work replies (Reply) and phase reports (Phase report) are now two clearly distinct minimal rows
 - The DeepSeek Flash model ID is renamed from `deepseek-v4-flash` to `deepseek-flash` (the default model follows) and accepts image input; remotely discovered DeepSeek models default to native tool calling and reasoning effort, and a capability the model listing states explicitly takes precedence
 - Idle tasks no longer pay periodic CPU: storage skips the locked flush when nothing is staged, and task history writes no longer reconfigure components
+- Consecutive read-only rounds (thinking plus reads, folder listings, searches, and definition or reference lookups, with no file change in between) fold into one row: collapsed, it shows the checkpoint taken before the exploration and a summary of reads, searches, thoughts, and rounds; expanded, it lists each round with its checkpoint, thinking you can click to read, and tool calls you can click to open the file or show search results; a file change, command, approval, error, or user input ends the row, and every checkpoint stays restorable
 
 
 ### Fixes

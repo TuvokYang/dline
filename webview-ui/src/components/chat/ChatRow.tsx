@@ -51,6 +51,7 @@ import { cancelTaskActivities } from "./activity/useTaskActivities"
 import CodeExecutionRow from "./CodeExecutionRow"
 import { CommandOutputContent, CommandOutputRow } from "./CommandOutputRow"
 import { CompletionOutputRow } from "./CompletionOutputRow"
+import { CheckpointMarker } from "./chat-view/components/messages/CheckpointMarker"
 import type { RowExpansionOrigin } from "./chat-view/types/chatTypes"
 import { collectMcpResponseTexts, parseMcpServerResponse, resolveApiErrorMessage } from "./chat-view/utils/messageUtils"
 import { describeCompactionFailure } from "./compaction-failure-label"
@@ -1204,18 +1205,7 @@ export const ChatRowContent = memo(
                     case "clineignore_error":
                         return <ErrorRow errorType="clineignore_error" message={message} />
                     case "checkpoint_created":
-                        return (
-                            <CheckmarkControl
-                                hasWorkspaceCheckpoint={message.lastCheckpointHash?.some(Boolean) === true}
-                                isCheckpointCheckedOut={message.isCheckpointCheckedOut}
-                                messageTs={message.ts}
-                                source={message.checkpointSource}
-                                workspaceCheckpointCoverage={{
-                                    available: message.lastCheckpointHash?.filter(Boolean).length ?? 0,
-                                    total: message.checkpointWorkspaceRoots?.length ?? message.lastCheckpointHash?.length ?? 0,
-                                }}
-                            />
-                        )
+                        return <CheckpointMarker message={message} />
                     case "load_mcp_documentation":
                         return (
                             <div className="text-foreground flex items-center opacity-70 text-[12px] py-1 px-0">

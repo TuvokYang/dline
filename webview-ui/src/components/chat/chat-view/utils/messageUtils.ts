@@ -8,6 +8,10 @@ import type { TaskViewState, UiMessage, UiSayBrowserAction, UiSayTool } from "@s
 import { parseImageGenerationToolText } from "@shared/image-generation"
 import { FileIcon, FolderOpenDotIcon, FolderOpenIcon, SearchIcon, ShapesIcon, WrenchIcon } from "lucide-react"
 import React from "react"
+import type { ToolMessageGroup } from "./chatRowKinds"
+import { groupExplorationRuns } from "./explorationRuns"
+
+export { isToolGroup, type ToolMessageGroup } from "./chatRowKinds"
 
 /**
  * Low-stakes tool types that should be grouped together
@@ -67,15 +71,6 @@ export function findGroupedMessageByTs(
         if (message) return { groupIndex, message }
     }
     return undefined
-}
-
-export type ToolMessageGroup = UiMessage[] & { _isToolGroup: true; _toolGroupId: string }
-
-/** Check if a message group is a logical low-stakes tool round. */
-export function isToolGroup(item: UiMessage | UiMessage[]): item is ToolMessageGroup {
-    if (!Array.isArray(item)) return false
-    const group = item as UiMessage[] & { _isToolGroup?: boolean; _toolGroupId?: string }
-    return group._isToolGroup === true && typeof group._toolGroupId === "string"
 }
 
 /**
@@ -914,7 +909,7 @@ export function groupLowStakesTools(
     const commitToolGroup = () => {
         if (toolGroup.length > 0 && hasTools) {
             const firstTool = toolGroup.find(isLowStakesTool)
-            const group = toolGroup as UiMessage[] & { _isToolGroup: true; _toolGroupId: string }
+            const group = toolGroup as ToolMessageGroup
             group._isToolGroup = true
             group._toolGroupId = `tool:${firstTool?.ts ?? toolGroup[0].ts}`
             result.push(group)
@@ -1038,14 +1033,15 @@ export function groupLowStakesTools(
  *
  * Grouping needs the request rounds of the full transcript, while only the
  * visible messages become rows; pass `visibleMessages` when the caller already
- * filtered `messages`.
+ * filtered `messages`. Read-only rounds fold into exploration runs last, so
+ * each run is built from tool groups that already hold one round each.
  */
 export function groupChatRows(
     messages: UiMessage[],
     visibleMessages: UiMessage[] = filterVisibleMessages(messages),
 ): (UiMessage | UiMessage[])[] {
     const rounds = indexRequestRounds(messages)
-    return groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds)), rounds)
+    return groupExplorationRuns(groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds)), rounds))
 }
 
 /** A turn-ending interaction owns the tail of its request round, never a row in its middle. */
