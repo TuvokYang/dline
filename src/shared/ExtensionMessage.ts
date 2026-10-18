@@ -117,6 +117,8 @@ export interface ExtensionState {
     taskHistory: HistoryItem[]
     usageReportingSetting: TelemetrySetting
     errorReportingSetting: TelemetrySetting
+    /** Usage reporting is on but the current remote usage disclosure is not confirmed yet, so usage stays local. */
+    usageReportingConfirmationPending?: boolean
     /** Complete task interaction projection derived only from runtime state. */
     taskViewState?: TaskViewState
     /** Input the user queued while the task was busy; the backend owns it. */

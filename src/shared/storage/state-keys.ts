@@ -188,6 +188,9 @@ const USER_SETTINGS_FIELDS = {
     // an answer to the combined question does not answer either of these.
     usageReportingSetting: { default: "unset" as TelemetrySetting },
     errorReportingSetting: { default: "unset" as TelemetrySetting },
+    // Disclosure revision the user saw when they last enabled usage reporting. An opt-in given
+    // before remote usage existed stays local until the user confirms the current disclosure.
+    remoteUsageConsentRevision: { default: undefined as number | undefined },
     planActSeparateModelsSetting: { default: false as boolean, isComputed: true },
     enableCheckpointsSetting: { default: true as boolean },
     shellIntegrationTimeout: { default: 4000 as number },

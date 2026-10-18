@@ -246,6 +246,7 @@ message Settings {
   optional int32 max_parallel_tool_calls = 252;
   optional int32 max_parallel_subagents = 253;
   optional bool mcp_tools_on_demand_enabled = 254;
+  optional int32 remote_usage_consent_revision = 255;
 }
 
 // Account usage quota for rate-limited providers (e.g., Codex, Copilot)

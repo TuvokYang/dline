@@ -92,6 +92,7 @@ import { getDistinctId } from "@/services/logging/distinctId"
 import { telemetryService } from "@/services/telemetry"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
+import { REMOTE_USAGE_CONSENT_REVISION } from "@/services/telemetry/remote/policy/usagePolicy"
 import { refreshRemoteUsagePolicy } from "@/services/telemetry/remote/remoteUsageRuntime"
 import { getRuntimeTelemetryLifecycle } from "@/services/telemetry/runtime/host"
 import { ClineExtensionContext } from "@/shared/cline"
@@ -1858,6 +1859,8 @@ export class Controller {
         }
 
         this.stateManager.setGlobalState("usageReportingSetting", usageReportingSetting)
+        // Enabling happens next to the current disclosure, so it also confirms that disclosure.
+        if (isOptedIn) this.stateManager.setGlobalState("remoteUsageConsentRevision", REMOTE_USAGE_CONSENT_REVISION)
         // Turning reporting off must stop remote intake and delete unsent usage now, not at the next cycle.
         void refreshRemoteUsagePolicy()
 
@@ -3015,6 +3018,9 @@ export class Controller {
         const mcpDisplayMode = this.stateManager.getGlobalStateKey("mcpDisplayMode")
         const usageReportingSetting = this.stateManager.getGlobalSettingsKey("usageReportingSetting")
         const errorReportingSetting = this.stateManager.getGlobalSettingsKey("errorReportingSetting")
+        const usageReportingConfirmationPending =
+            isReportingAllowed(usageReportingSetting) &&
+            (this.stateManager.getGlobalSettingsKey("remoteUsageConsentRevision") ?? 0) < REMOTE_USAGE_CONSENT_REVISION
         const planActSeparateModelsSetting = this.stateManager.getGlobalSettingsKey("planActSeparateModelsSetting")
         const enableCheckpointsSetting = this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
         const globalClineRulesToggles = this.stateManager.getGlobalSettingsKey("globalClineRulesToggles")
@@ -3192,6 +3198,7 @@ export class Controller {
             mcpDisplayMode,
             usageReportingSetting,
             errorReportingSetting,
+            usageReportingConfirmationPending,
             planActSeparateModelsSetting,
             enableCheckpointsSetting: enableCheckpointsSetting ?? true,
             platform,

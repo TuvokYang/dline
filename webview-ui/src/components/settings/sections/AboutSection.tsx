@@ -83,7 +83,8 @@ function ConsentCheckbox({
  * here instead of hunting for the cause elsewhere.
  */
 function ReportingConsent() {
-    const { usageReportingSetting, errorReportingSetting, remoteConfigSettings } = useExtensionState()
+    const { usageReportingSetting, errorReportingSetting, remoteConfigSettings, usageReportingConfirmationPending } =
+        useExtensionState()
 
     return (
         <div>
@@ -96,6 +97,18 @@ function ReportingConsent() {
                 settingKey="usageReportingSetting"
                 testId="usage-reporting-setting-checkbox"
             />
+            {usageReportingConfirmationPending && (
+                <div className="text-sm mt-[5px] ml-6 text-description" data-testid="usage-reporting-confirmation">
+                    Usage reporting now also sends aggregated usage counts to Dline's telemetry service. Until you confirm, they
+                    stay on this machine.{" "}
+                    <VSCodeLink
+                        className="text-inherit"
+                        onClick={() => updateSetting("usageReportingSetting", "enabled")}
+                        style={{ fontSize: "inherit", textDecoration: "underline" }}>
+                        Confirm
+                    </VSCodeLink>
+                </div>
+            )}
             <ConsentCheckbox
                 label="Allow error reporting"
                 organizationSetting={remoteConfigSettings?.errorReportingSetting}
@@ -105,9 +118,10 @@ function ReportingConsent() {
             />
 
             <p className="text-sm mt-[5px] text-description">
-                Usage reporting sends anonymous product analytics. Error reporting sends crash and exception reports and lets
-                Dline record the runtime events a diagnostic bundle is built from. No code, prompts, or personal information are
-                ever sent. See our{" "}
+                Usage reporting sends anonymous product analytics and, at most once a minute, aggregated request, token, cache and
+                cost counts per purpose (task, subagent, compaction) to Dline's telemetry service at otel.dline.cc. Error
+                reporting sends crash and exception reports and lets Dline record the runtime events a diagnostic bundle is built
+                from. No code, prompts, file contents, model names, or personal information are ever sent. See our{" "}
                 <VSCodeLink
                     className="text-inherit"
                     href="https://docs.dline.bot/more-info/telemetry"

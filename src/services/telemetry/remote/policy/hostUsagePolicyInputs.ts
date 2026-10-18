@@ -18,8 +18,7 @@ export async function readHostUsagePolicyInputs(): Promise<LocalUsagePolicyInput
     const stateManager = StateManager.get()
     return {
         usageConsent: stateManager.getGlobalSettingsKey("usageReportingSetting") ?? "unset",
-        // Recorded when the user confirms the remote usage disclosure; until then every opt-in stays local.
-        acknowledgedConsentRevision: undefined,
+        acknowledgedConsentRevision: stateManager.getGlobalSettingsKey("remoteUsageConsentRevision"),
         organizationDisabled: stateManager.getRemoteConfigSettings().usageReportingSetting === "disabled",
         hostTelemetryLevel: await readHostTelemetryLevel(),
         isDevelopmentBuild: isTelemetryDevelopmentMode(),
