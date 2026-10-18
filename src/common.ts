@@ -21,9 +21,12 @@ import { featureFlagsService } from "./services/feature-flags"
 import { getDistinctId } from "./services/logging/distinctId"
 import { DlineRuntimeFileManager } from "./services/runtime-files"
 import { disposeTelemetryService, telemetryService } from "./services/telemetry"
+import { isTelemetryDevelopmentMode } from "./services/telemetry/development-mode"
 import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
 import { PostHogClientProvider } from "./services/telemetry/providers/posthog/PostHogClientProvider"
+import { readHostUsagePolicyInputs } from "./services/telemetry/remote/policy/hostUsagePolicyInputs"
+import { startRemoteUsage, stopRemoteUsage } from "./services/telemetry/remote/remoteUsageRuntime"
 import {
     completeRuntimeSessionLedger,
     deactivateRuntimeTelemetry,
@@ -196,6 +199,10 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
             onError: (error) => Logger.error("[Dline] Failed to start runtime telemetry:", error),
         },
     )
+    // Remote usage reporting is a machine-wide side path; it stays off until its policy allows it.
+    void startRemoteUsageReporting(storageContext.dataDir).catch((error) =>
+        Logger.warn("[Dline] Failed to start remote usage reporting:", error),
+    )
 
     // Non-blocking announcement check and display
     showVersionUpdateAnnouncement(stateManager)
@@ -327,6 +334,12 @@ export async function tearDown(): Promise<void> {
         }
         diagnostics?.phase("shutdown.business_cleanup", "completed")
     } finally {
+        // Tasks are gone, so no settlement can arrive anymore; hand the sender lease back.
+        try {
+            await stopRemoteUsage()
+        } catch (error) {
+            Logger.internalError("[Dline] Remote usage shutdown failed:", error)
+        }
         // Flush even after failed cleanup, before storage removes the consent authority.
         try {
             await deactivateRuntimeTelemetry()
@@ -349,4 +362,23 @@ export async function tearDown(): Promise<void> {
             Logger.internalError("[Dline] Runtime session ledger completion failed:", error)
         })
     }
+}
+
+async function startRemoteUsageReporting(dataDir: string): Promise<void> {
+    const host = await HostProvider.env.getHostVersion({}).catch(() => undefined)
+    await startRemoteUsage({
+        dataDir,
+        readPolicyInputs: readHostUsagePolicyInputs,
+        clientVersion: ExtensionRegistryInfo.version,
+        platform: process.platform,
+        attributes: {
+            client_version: ExtensionRegistryInfo.version,
+            platform: process.platform,
+            architecture: process.arch,
+            vscode_version: host?.version,
+            is_dev: isTelemetryDevelopmentMode(),
+        },
+        endpoint: process.env.DLINE_OTEL_ENDPOINT || undefined,
+        log: (message) => Logger.info(message),
+    })
 }

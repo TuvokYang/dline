@@ -5,6 +5,7 @@ import { ConfiguredAPIKeys, GlobalStateAndSettings, RemoteConfigFields } from "@
 import { AuthService } from "@/services/auth/AuthService"
 import { getDistinctId } from "@/services/logging/distinctId"
 import { type McpHub } from "@/services/mcp/McpHub"
+import { refreshRemoteUsagePolicy } from "@/services/telemetry/remote/remoteUsageRuntime"
 import { ApiProvider } from "@/shared/api"
 import { isOpenTelemetryConfigValid, remoteConfigToOtelConfig } from "@/shared/services/config/otel-config"
 import { Logger } from "@/shared/services/Logger"
@@ -214,6 +215,7 @@ export function clearRemoteConfig() {
 
         stateManager.clearRemoteConfig()
         remoteOtelProviderReconciler.clear()
+        void refreshRemoteUsagePolicy()
         // the remote config cline rules toggle state is stored in global state
         stateManager.setGlobalState("remoteRulesToggles", {})
         stateManager.setGlobalState("remoteWorkflowToggles", {})
@@ -285,6 +287,8 @@ export async function applyRemoteConfig(
         newCache.previousRemoteMCPServers = previousRemoteMCPServers
     }
     stateManager.replaceRemoteConfig(newCache)
+    // An organization that turns telemetry off must stop remote usage at once.
+    void refreshRemoteUsagePolicy()
 
     applyRemoteSyncQueueConfig(transformed)
 

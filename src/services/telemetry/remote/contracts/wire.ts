@@ -148,13 +148,14 @@ export function validateUsageAggregate(aggregate: UsageAggregateWire, now: numbe
 
     for (const [key, value] of Object.entries(aggregate.attributes ?? {})) {
         if (!USAGE_ATTRIBUTE_KEYS.includes(key as UsageAttributeKey)) violations.add("attribute_key")
-        else if (
-            key === "is_dev" ? typeof value !== "boolean" : typeof value !== "string" || !ATTRIBUTE_VALUE_PATTERN.test(value)
-        ) {
-            violations.add("attribute_value")
-        }
+        else if (!isAllowedUsageAttribute(key as UsageAttributeKey, value)) violations.add("attribute_value")
     }
     return [...violations]
+}
+
+/** Whether the server accepts this value for an allowlisted attribute; a refused one would reject the whole batch. */
+export function isAllowedUsageAttribute(key: UsageAttributeKey, value: unknown): boolean {
+    return key === "is_dev" ? typeof value === "boolean" : typeof value === "string" && ATTRIBUTE_VALUE_PATTERN.test(value)
 }
 
 function isConsistentMeasurement({ count, sum, min, max }: UsageMeasurementWire): boolean {

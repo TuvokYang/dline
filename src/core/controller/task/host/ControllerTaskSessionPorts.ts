@@ -7,6 +7,7 @@ import { buildActiveTasksSection } from "@core/task/active-tasks/ActiveTaskConte
 import type { TaskSessionPorts } from "@core/task/composition/TaskSessionPorts"
 import { convertClineMessageToProto } from "@shared/proto-conversions/cline-message"
 import { HostProvider } from "@/hosts/host-provider"
+import { remoteUsageSettlement } from "@/services/telemetry/remote/remoteUsageRuntime"
 import { sendPartialMessageEvent } from "../../ui/subscribeToPartialMessage"
 import type { TaskOpening } from "../opened-task"
 
@@ -24,6 +25,8 @@ export class ControllerTaskSessionPorts implements TaskSessionPorts {
     readonly semanticCatalog: TaskSessionPorts["semanticCatalog"]
     readonly successor: TaskSessionPorts["successor"]
     readonly profileUsage: TaskSessionPorts["profileUsage"]
+    /** Process-wide remote usage reporting; it records nothing while reporting is not allowed. */
+    readonly usageSettlement: TaskSessionPorts["usageSettlement"] = remoteUsageSettlement
 
     constructor(
         private readonly controller: Controller,

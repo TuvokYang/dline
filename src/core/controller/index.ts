@@ -92,6 +92,7 @@ import { getDistinctId } from "@/services/logging/distinctId"
 import { telemetryService } from "@/services/telemetry"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
+import { refreshRemoteUsagePolicy } from "@/services/telemetry/remote/remoteUsageRuntime"
 import { getRuntimeTelemetryLifecycle } from "@/services/telemetry/runtime/host"
 import { ClineExtensionContext } from "@/shared/cline"
 import { getAxiosSettings } from "@/shared/net"
@@ -1857,6 +1858,8 @@ export class Controller {
         }
 
         this.stateManager.setGlobalState("usageReportingSetting", usageReportingSetting)
+        // Turning reporting off must stop remote intake and delete unsent usage now, not at the next cycle.
+        void refreshRemoteUsagePolicy()
 
         // Capture opt-in event AFTER updating (so telemetry is enabled to receive it)
         if (!wasOptedIn && isOptedIn) {
