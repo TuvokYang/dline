@@ -41,6 +41,8 @@ import type { ProviderRequestFrame, ProviderRequestFramePort } from "../executor
 import { ExplicitInstructionRegistry } from "../explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "../explicit-instructions/ExplicitInstructionRequestScope"
 import type { CompactionTrigger } from "../stores/payload/TaskPayloadEnvelopes"
+import { compactionAttemptSettlement, recordUsageSafely } from "../telemetry/NestedUsageSettlement"
+import type { UsageSettlementPort } from "../telemetry/UsageSettlement"
 import type { CompactionRequestScopeReader } from "./CompactionRequestScopes"
 import type { CompactionProgressPort } from "./MessageStateCompactionCards"
 
@@ -88,6 +90,8 @@ export interface ProviderCompactionServiceOptions {
     readonly environment?: CompactionEnvironmentPreview
     /** Shows each accepted Pass's projected next request; absent in headless assemblies. */
     readonly indicator?: CompactionIndicatorPort
+    /** Receives the usage of every Pass attempt; absent where usage is not reported. */
+    readonly usageSettlement?: UsageSettlementPort
 }
 
 interface CompactionContext {
@@ -264,6 +268,11 @@ export class ProviderCompactionService implements ProductionCompactionService {
                 this.options.triggerOptions?.(),
             )
         return {
+            // Every attempt is charged, the failed ones included, and priced by the handler that served it.
+            recordCompactionAttempt: (_sessionInput, diagnostics) =>
+                recordUsageSafely(this.options.usageSettlement, () =>
+                    compactionAttemptSettlement(diagnostics, frame.api.getModel().info),
+                ),
             getPassInputCeiling: () => policy().passInputCeilingTokens,
             getLastTurnInputCeiling: () => policy().lastTurnPassInputCeilingTokens,
             restoreAcceptedPasses: async (_sessionInput, state) => this.options.progress?.restore(state),

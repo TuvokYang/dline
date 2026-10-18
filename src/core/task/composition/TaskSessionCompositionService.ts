@@ -91,6 +91,8 @@ import { InMemoryBackgroundDeliveryLedger, type TaskViewPort } from "../stores"
 import { JournalConversationRewind } from "../stores/JournalConversationRewind"
 import { TaskStateManager } from "../TaskStateManager"
 import { withTerminateTimeout } from "../TaskTerminateTimeout"
+import { settleSubagentRoundUsage } from "../telemetry/NestedUsageSettlement"
+import { settleUsageAround } from "../telemetry/UsageSettlementRequestReporter"
 import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { ToolValidator } from "../tools/ToolValidator"
 import type { TaskSessionHostFactory } from "./TaskSessionHostFactory"
@@ -606,7 +608,10 @@ export class TaskSessionCompositionService {
             readCapabilityToggles: options.prompt.readCapabilityToggles,
             readTurnAuthority: (turnId) => turnAuthority.read(turnId),
             workspaceManager: options.prompt.workspaceManager,
-            providerRequestRounds: performance.providerRequestRounds,
+            providerRequestRounds: settleSubagentRoundUsage(
+                performance.providerRequestRounds,
+                options.prompt.ports.usageSettlement,
+            ),
             peerTaskSpawner: tool.peerTaskSpawner,
             terminalExecutionMode: options.prompt.terminalExecutionMode,
             usesNativeToolCalls: options.prompt.shouldUseNativeToolCalls,
@@ -894,42 +899,49 @@ export class TaskSessionCompositionService {
             },
             // Every request records what it consumed, which is the only fact the
             // task has about context pressure, cache health and cost.
-            providerRequestReport: new TaskPerformanceRequestReporter(
-                new TaskProviderRequestReporter({
-                    // Compaction is the only consumer that acts on context pressure, and
-                    // it can only learn it from the request that reported its usage.
-                    pressure: compaction,
-                    usage: contextUsage,
-                    messages,
-                    nextPresentationId,
-                    api: () => api.current(),
-                    promptCache,
-                    compactTriggerOptions: readCompactTriggerOptions,
-                    admittedRequest: () => contextWindowGuard.admittedRequest(),
-                    // Retries happen before the stream says anything, so each attempt's
-                    // card has to be delivered to the chat rather than left for the countdown.
-                    // The state goes out immediately: a coalesced post would let the card's
-                    // partial row reach a Webview that has not yet adopted this opening.
-                    retryView: {
-                        showRow: (row) => options.prompt.ports.presentation.publish(row),
-                        publishState: () => options.publishState({ immediate: true }),
-                    },
-                    // Subscriptions report no token counts, so today's figures on the
-                    // usage surfaces are counted here, against the Profile that served the request.
-                    profileTokens: {
-                        activeProfileId: () => activeProfile().profileId,
-                        record: (profileId, increment) => {
-                            void options.prompt.ports.profileUsage
-                                .record(profileId, increment)
-                                .catch((error) =>
-                                    Logger.debug(
-                                        `[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
-                                    ),
-                                )
+            providerRequestReport: settleUsageAround(
+                new TaskPerformanceRequestReporter(
+                    new TaskProviderRequestReporter({
+                        // Compaction is the only consumer that acts on context pressure, and
+                        // it can only learn it from the request that reported its usage.
+                        pressure: compaction,
+                        usage: contextUsage,
+                        messages,
+                        nextPresentationId,
+                        api: () => api.current(),
+                        promptCache,
+                        compactTriggerOptions: readCompactTriggerOptions,
+                        admittedRequest: () => contextWindowGuard.admittedRequest(),
+                        // Retries happen before the stream says anything, so each attempt's
+                        // card has to be delivered to the chat rather than left for the countdown.
+                        // The state goes out immediately: a coalesced post would let the card's
+                        // partial row reach a Webview that has not yet adopted this opening.
+                        retryView: {
+                            showRow: (row) => options.prompt.ports.presentation.publish(row),
+                            publishState: () => options.publishState({ immediate: true }),
                         },
-                    },
-                }),
-                performance,
+                        // Subscriptions report no token counts, so today's figures on the
+                        // usage surfaces are counted here, against the Profile that served the request.
+                        profileTokens: {
+                            activeProfileId: () => activeProfile().profileId,
+                            record: (profileId, increment) => {
+                                void options.prompt.ports.profileUsage
+                                    .record(profileId, increment)
+                                    .catch((error) =>
+                                        Logger.debug(
+                                            `[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
+                                        ),
+                                    )
+                            },
+                        },
+                    }),
+                    performance,
+                ),
+                options.prompt.ports.usageSettlement && {
+                    settlement: options.prompt.ports.usageSettlement,
+                    purpose: "task",
+                    modelInfo: () => api.current().getModel().info,
+                },
             ),
             services: {
                 // One sequence for both producers: chat rows are ordered by this id,
@@ -1009,6 +1021,7 @@ export class TaskSessionCompositionService {
                         passProjected: (compactionId, projection) =>
                             contextUsage.compactionPassProjected(compactionId, projection),
                     },
+                    usageSettlement: options.prompt.ports.usageSettlement,
                 }),
                 readApprovalPolicy: () =>
                     approvalPolicySnapshotOf(options.stateManager.getGlobalSettingsKey("autoApprovalSettings"), {

@@ -4,6 +4,13 @@ import { Logger } from "@shared/services/Logger"
 import type { UiApiReqCancelReason, UiApiReqInfo, UiMessage } from "@/shared/ExtensionMessage"
 import type { ContextWindowRequestOpening } from "../ContextWindowIndicatorProjection"
 import type * as ProviderRequestReport from "../executors/provider/service/ProviderRequestReport"
+import {
+    nonNegative,
+    optionalNonNegative,
+    readSettledUsageTokens,
+    type SettledUsageTokens,
+    usageWasReported,
+} from "../executors/provider/service/ProviderUsageTokens"
 import type { MessageStateHandler } from "../message-state"
 import { type ProviderUsageTelemetryPort, providerUsageTelemetry } from "../observability/provider-usage-telemetry"
 import type { PromptCacheHealthTracker } from "../prompt-cache/PromptCacheHealthTracker"
@@ -216,9 +223,9 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
         const api = this.options.api()
         // Cost, profile totals, and telemetry count every attempt; occupancy only
         // counts the attempt whose conversation the next request will carry.
-        const tokens = readUsageTokens(settlement.usage)
+        const tokens = readSettledUsageTokens(settlement.usage)
         const contextUsage = occupancyUsageOf(settlement)
-        const contextUsageTokens = readUsageTokens(contextUsage)
+        const contextUsageTokens = readSettledUsageTokens(contextUsage)
         const contextTokens =
             contextUsageTokens.inputTokens +
             contextUsageTokens.cacheWriteTokens +
@@ -274,7 +281,7 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
     private recordUsageTelemetry(
         api: ApiHandler,
         settlement: ProviderRequestReport.ProviderRequestSettlement,
-        tokens: UsageTokens,
+        tokens: SettledUsageTokens,
     ): void {
         const usage = settlement.usage
         if (settlement.outcome !== "completed" || !usage) return
@@ -316,7 +323,7 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
      * Tokens are consumed whatever the outcome, so a cancelled or failed request
      * counts too. Input matches the task header: fresh input plus cache reads and writes.
      */
-    private recordProfileTokens(profileId: string | undefined, tokens: UsageTokens): void {
+    private recordProfileTokens(profileId: string | undefined, tokens: SettledUsageTokens): void {
         if (!profileId) return
         const increment = {
             inputTokens: tokens.inputTokens + tokens.cacheWriteTokens + tokens.cacheReadTokens,
@@ -337,7 +344,7 @@ export class TaskProviderRequestReporter implements ProviderRequestReport.Provid
     private recordCacheSample(
         api: ApiHandler,
         settlement: ProviderRequestReport.ProviderRequestSettlement,
-        tokens: UsageTokens,
+        tokens: SettledUsageTokens,
         contextTokens: number,
         contextWindow: number,
     ): number {
@@ -460,14 +467,6 @@ export function resolveCompactTriggerTokens(contextWindow: number, settings: Com
     ).compactTriggerTokens
 }
 
-interface UsageTokens {
-    readonly inputTokens: number
-    readonly outputTokens: number
-    readonly cacheWriteTokens: number
-    readonly cacheReadTokens: number
-    readonly totalCost?: number
-}
-
 /**
  * A request the user stopped or that never produced a turn is recorded with the
  * reason it ended, which is also what stops the chat row reading as still running.
@@ -490,36 +489,8 @@ function occupancyUsageOf(
     return "contextUsage" in settlement ? settlement.contextUsage : settlement.usage
 }
 
-function readUsageTokens(usage: Readonly<Record<string, number>> | undefined): UsageTokens {
-    const costUsageReported = usageWasReported(usage, "costUsageReported", "totalCost")
-    return {
-        inputTokens: nonNegative(usage?.inputTokens),
-        outputTokens: nonNegative(usage?.outputTokens),
-        cacheWriteTokens: nonNegative(usage?.cacheWriteTokens),
-        cacheReadTokens: nonNegative(usage?.cacheReadTokens),
-        // An absent cost lets the finalizer price the request from model metadata;
-        // an explicitly reported zero suppresses that fallback for subscriptions/free tiers.
-        totalCost: costUsageReported ? optionalNonNegative(usage?.totalCost) : undefined,
-    }
-}
-
-function nonNegative(value: number | undefined): number {
-    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0
-}
-
-function optionalNonNegative(value: number | undefined): number | undefined {
-    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : undefined
-}
-
 function cacheUsageWasReported(usage: Readonly<Record<string, number>>): boolean {
     const marker = usage.cacheUsageReported
     if (typeof marker === "number" && Number.isFinite(marker)) return marker > 0
     return Object.hasOwn(usage, "cacheWriteTokens") || Object.hasOwn(usage, "cacheReadTokens")
-}
-
-function usageWasReported(usage: Readonly<Record<string, number>> | undefined, markerKey: string, valueKey: string): boolean {
-    if (!usage) return false
-    const marker = usage[markerKey]
-    if (typeof marker === "number" && Number.isFinite(marker)) return marker > 0
-    return Object.hasOwn(usage, valueKey)
 }
