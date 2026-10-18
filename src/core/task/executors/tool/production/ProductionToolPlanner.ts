@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto"
 import type { ToolUse } from "@core/assistant-message"
 import { isTurnEndingToolUse } from "../../../assistant-message-order"
-import { type ProviderTurnApproval, resolveLaneContext, resolveToolLanes } from "../../../kernel"
+import { type ProviderTurnApproval, type ProviderTurnBlockPlan, resolveLaneContext, resolveToolLanes } from "../../../kernel"
 import { approvalInteractionId } from "../../../tools/approval-interaction"
 import type { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
-import type { PlannedProviderTool } from "../../provider/service/ProviderRequest"
 import type { ToolAdmissionSnapshot } from "../ToolAdmissionRegistry"
+
+/** The block plan fields a tool decides before admission, named on the kernel contract both executors share. */
+type PlannedTool = Pick<ProviderTurnBlockPlan, "attempt" | "lanes" | "turnEnding" | "approval">
 
 function riskFacts(
     block: ToolUse,
@@ -54,7 +56,7 @@ export function planProductionTool(
     block: ToolUse,
     snapshot: ToolAdmissionSnapshot,
     options: { readonly aiApproverAvailable?: boolean } = {},
-): PlannedProviderTool {
+): PlannedTool {
     const preflight = coordinator.prepareAdmission(block, snapshot, async () => undefined)
     return {
         attempt: randomUUID(),

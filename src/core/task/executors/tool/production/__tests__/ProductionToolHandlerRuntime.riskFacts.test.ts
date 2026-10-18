@@ -2,9 +2,9 @@ import type { ToolUse } from "@core/assistant-message"
 import type { IgnoreController } from "@core/ignore/IgnoreController"
 import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it } from "vitest"
+import type { ProviderTurnApproval } from "../../../../kernel"
 import { ToolValidator } from "../../../../tools/ToolValidator"
 import { ProductionApprovalPolicyAdapter } from "../../../policy/ProductionApprovalPolicyAdapter"
-import type { PlannedProviderTool } from "../../../provider/service/ProviderRequest"
 import type { ToolAdmissionSnapshot } from "../../ToolAdmissionRegistry"
 import { ProductionToolHandlerRuntime } from "../ProductionToolHandlerRuntime"
 import { planProductionTool } from "../ProductionToolPlanner"
@@ -38,7 +38,7 @@ function runtime(): ProductionToolHandlerRuntime {
     return new ProductionToolHandlerRuntime(new ToolValidator({ validateAccess: () => true } as unknown as IgnoreController))
 }
 
-async function policyVerdict(approval: PlannedProviderTool["approval"], actions: Record<string, boolean>): Promise<boolean> {
+async function policyVerdict(approval: ProviderTurnApproval, actions: Record<string, boolean>): Promise<boolean> {
     if (approval.kind !== "automatic") throw new Error(`expected an automatic approval, received ${approval.kind}`)
     const adapter = new ProductionApprovalPolicyAdapter({
         readSnapshot: () => ({ settings: { actions } }),

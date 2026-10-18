@@ -1,4 +1,3 @@
-import { Logger } from "@shared/services/Logger"
 import type { Command } from "../kernel"
 import type { CommandPublicationStore } from "../stores/contracts"
 import { type CommandRouter, domainFor } from "./CommandRouter"
@@ -197,10 +196,17 @@ export class DurableCommandOutbox {
                 const durabilityStartedAt = performance.now()
                 await entry.receipt.durable
                 const durabilityMs = Math.round(performance.now() - durabilityStartedAt)
-                if (durabilityMs >= 100 && Logger.isDebugEnabled()) {
-                    Logger.debug(
-                        `[RuntimePerf] phase=command_durable commandType=${entry.command.type} commandId=${entry.command.commandId} durationMs=${durabilityMs}`,
-                    )
+                // A slow durability wait is an observation, not a fault; the host
+                // routes observations to its debug channel.
+                if (durabilityMs >= 100) {
+                    this.diagnostics?.record({
+                        source: "outbox",
+                        code: "command_durable_slow",
+                        severity: "observation",
+                        message: `[RuntimePerf] phase=command_durable commandType=${entry.command.type} durationMs=${durabilityMs}`,
+                        revision: entry.command.originRevision,
+                        commandId: entry.command.commandId,
+                    })
                 }
                 if (entry.fenced) {
                     queue.shift()

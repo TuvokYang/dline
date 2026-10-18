@@ -7,16 +7,12 @@ import type { ClineStorageMessage } from "@shared/messages/content"
 import type { ClineMessageModelInfo } from "@shared/messages/metrics"
 import type { Mode } from "@shared/storage/types"
 import type { ExplicitTurnAuthority } from "../../../explicit-instructions/TurnAuthority"
-import type { ProviderTurnApproval } from "../../../kernel"
+import type { ProviderTurnBlockPlan } from "../../../kernel"
 import type { ProviderDraftEnvelope } from "../../../stores/payload/TaskPayloadEnvelopes"
 import type { HostedImageGenerationContext } from "../../../tools/HostedImageGenerationLifecycle"
 
-export interface PlannedProviderTool {
-    readonly attempt: string
-    readonly lanes: readonly string[]
-    readonly turnEnding: boolean
-    readonly approval: ProviderTurnApproval
-}
+/** The kernel block plan fields a tool executor decides before the block is admitted. */
+export type PlannedProviderTool = Pick<ProviderTurnBlockPlan, "attempt" | "lanes" | "turnEnding" | "approval">
 
 /**
  * Everything a provider request carries before its conversation.
