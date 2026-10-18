@@ -1,0 +1,378 @@
+import { randomBytes } from "node:crypto"
+import fs from "node:fs/promises"
+import { removeStaleAtomicTempFiles, writeJsonAtomic } from "@shared/storage/atomic-file"
+import type { RemoteProfile } from "@/services/telemetry/remote/contracts/wire"
+import { FileLock } from "../backend/jsonl/FileLock"
+import type { OtelStorageLayout } from "./OtelStorageLayout"
+import { OWNER_ONLY_DIRECTORY_MODE, purgeQuarantine, quarantineDocument } from "./quarantine"
+
+export const DEVICE_CREDENTIAL_SCHEMA_VERSION = 1
+const CREDENTIAL_FILE_MODE = 0o600
+const DEVICE_SECRET_BYTES = 32
+const BASE64URL_43_PATTERN = /^[A-Za-z0-9_-]{43}$/
+const MAX_DEVICE_ID_LENGTH = 128
+const REMOTE_PROFILES: readonly RemoteProfile[] = ["usage", "production", "development"]
+/**
+ * Credential writes are rare but every window may start at once after an update;
+ * about five seconds of 100 ms attempts lets them queue instead of failing.
+ */
+const LOCK_ACQUIRE_ATTEMPTS = 50
+const KNOWN_DOCUMENT_KEYS = new Set([
+    "schema_version",
+    "device_secret",
+    "created_at",
+    "generation",
+    "tokens",
+    "enrollment",
+    "refresh_claim",
+])
+
+/** A bearer token the service issued for one profile of this device. */
+export interface StoredDeviceToken {
+    readonly accessToken: string
+    readonly deviceId: string
+    /** Server epoch milliseconds. */
+    readonly expiresAt: number
+    /** Local epoch milliseconds when the exchange returned. */
+    readonly obtainedAt: number
+}
+
+/** Machine-wide wait after the service refused an enrollment; the budget is per IP, so every instance honours it. */
+export interface EnrollmentBackoff {
+    readonly notBefore: number
+    readonly consecutiveFailures: number
+}
+
+/** One instance announcing it is exchanging a token, so the others wait instead of spending enrollment budget. */
+export interface RefreshClaim {
+    readonly ownerId: string
+    readonly profile: RemoteProfile
+    readonly expiresAt: number
+}
+
+export interface DeviceCredentialState {
+    readonly tokens: Readonly<Partial<Record<RemoteProfile, StoredDeviceToken>>>
+    readonly enrollment?: EnrollmentBackoff
+    readonly refreshClaim?: RefreshClaim
+}
+
+export interface DeviceCredentialDocument extends DeviceCredentialState {
+    readonly deviceSecret: string
+    readonly createdAt: number
+    /** Increases on every write, so a caller can tell whether the document changed since it read it. */
+    readonly generation: number
+}
+
+export type DeviceCredentialReadResult =
+    | { readonly status: "valid"; readonly document: DeviceCredentialDocument }
+    | { readonly status: "missing" }
+    | { readonly status: "malformed" }
+    /** Written by a newer Dline; left untouched, and remote delivery stays off rather than downgrading it. */
+    | { readonly status: "unsupported" }
+
+export type DeviceCredentialEnsureResult =
+    | { readonly status: "valid"; readonly document: DeviceCredentialDocument }
+    | { readonly status: "unsupported" }
+
+export type DeviceCredentialMutateResult<T> =
+    | { readonly status: "valid"; readonly document: DeviceCredentialDocument; readonly value: T }
+    | { readonly status: "missing" }
+    | { readonly status: "unsupported" }
+
+/** What a mutation decided after seeing the latest document; omit `next` to leave the document unchanged. */
+export interface DeviceCredentialDecision<T> {
+    readonly next?: DeviceCredentialState
+    readonly value: T
+}
+
+export interface DeviceCredentialRepositoryOptions {
+    readonly clock?: () => number
+}
+
+type ValidParsedDocument = {
+    readonly status: "valid"
+    readonly document: DeviceCredentialDocument
+    readonly raw: Record<string, unknown>
+}
+type ParsedDocument = ValidParsedDocument | { readonly status: "malformed" } | { readonly status: "unsupported" }
+/** What a locked writer sees: an unreadable document has already been quarantined and reads as missing. */
+type LatestDocument = ValidParsedDocument | { readonly status: "missing" } | { readonly status: "unsupported" }
+
+/**
+ * Owner of the machine's remote telemetry device secret and its bearer tokens.
+ *
+ * Every VS Code window on the machine shares one document: the service keeps
+ * only the newest eight tokens per device and limits enrollments per IP, so
+ * per-window credentials would revoke each other. Writes run under a short
+ * cross-process lock that never spans network I/O; callers re-read the latest
+ * document inside {@link mutate} and decide from it, which makes every write a
+ * compare-and-swap against what another window may have stored meanwhile.
+ */
+export class DeviceCredentialRepository {
+    private readonly lock = new FileLock({ maxAcquireAttempts: LOCK_ACQUIRE_ATTEMPTS })
+    private readonly clock: () => number
+
+    constructor(
+        private readonly layout: OtelStorageLayout,
+        options: DeviceCredentialRepositoryOptions = {},
+    ) {
+        this.clock = options.clock ?? Date.now
+    }
+
+    /** Read without locking; atomic replacement guarantees a complete document. */
+    async read(): Promise<DeviceCredentialReadResult> {
+        const parsed = await this.readParsed()
+        return parsed.status === "valid" ? { status: "valid", document: parsed.document } : parsed
+    }
+
+    /** Return the device document, creating a fresh secret when none exists or the stored one is unreadable. */
+    async ensure(): Promise<DeviceCredentialEnsureResult> {
+        return this.withDocumentLock(async () => {
+            await removeStaleAtomicTempFiles(this.layout.secretsDir)
+            const current = await this.readLatestForWrite()
+            if (current.status === "unsupported") return current
+            if (current.status === "valid") return { status: "valid", document: current.document }
+            const created: DeviceCredentialDocument = {
+                deviceSecret: randomBytes(DEVICE_SECRET_BYTES).toString("base64url"),
+                createdAt: this.clock(),
+                generation: 1,
+                tokens: {},
+            }
+            await this.write(created, {})
+            return { status: "valid", document: created }
+        })
+    }
+
+    /**
+     * Apply a decision to the latest stored document under the lock.
+     *
+     * The device secret and creation time are immutable here; a new identity
+     * requires {@link resetIdentity}. Returns `missing` when no device exists,
+     * so a mutation can never resurrect an identity the user reset.
+     */
+    async mutate<T>(
+        decide: (current: DeviceCredentialDocument) => DeviceCredentialDecision<T>,
+    ): Promise<DeviceCredentialMutateResult<T>> {
+        return this.withDocumentLock(async () => {
+            const current = await this.readLatestForWrite()
+            if (current.status !== "valid") return current
+            const decision = decide(current.document)
+            if (!decision.next) return { status: "valid", document: current.document, value: decision.value }
+            const next: DeviceCredentialDocument = {
+                ...normalizeState(decision.next),
+                deviceSecret: current.document.deviceSecret,
+                createdAt: current.document.createdAt,
+                generation: current.document.generation + 1,
+            }
+            await this.write(next, current.raw)
+            return { status: "valid", document: next, value: decision.value }
+        })
+    }
+
+    /**
+     * Remove every bearer token, including any inside quarantined copies, while
+     * keeping the device secret so the machine principal stays stable.
+     */
+    async clearTokens(): Promise<void> {
+        await this.withDocumentLock(async () => {
+            const current = await this.readLatestForWrite()
+            if (current.status === "valid" && hasTokenState(current.document)) {
+                await this.write(
+                    {
+                        deviceSecret: current.document.deviceSecret,
+                        createdAt: current.document.createdAt,
+                        generation: current.document.generation + 1,
+                        tokens: {},
+                        ...(current.document.enrollment ? { enrollment: current.document.enrollment } : {}),
+                    },
+                    current.raw,
+                )
+            }
+            await purgeQuarantine(this.layout.secretsQuarantineDir)
+        })
+    }
+
+    /** Forget the device: the next {@link ensure} creates a new secret, which the service sees as a new device. */
+    async resetIdentity(): Promise<void> {
+        await this.withDocumentLock(async () => {
+            const current = await this.readParsed()
+            if (current.status === "unsupported") {
+                throw new Error("Remote telemetry identity was written by a newer Dline and cannot be reset by this version")
+            }
+            await fs.rm(this.layout.deviceCredentialPath, { force: true })
+            await purgeQuarantine(this.layout.secretsQuarantineDir)
+        })
+    }
+
+    private async withDocumentLock<T>(operation: () => Promise<T>): Promise<T> {
+        await fs.mkdir(this.layout.secretsDir, { recursive: true, mode: OWNER_ONLY_DIRECTORY_MODE })
+        return this.lock.withLock(this.layout.deviceCredentialPath, operation)
+    }
+
+    /** Latest document for a locked write; an unreadable one is moved aside so it is never silently overwritten. */
+    private async readLatestForWrite(): Promise<LatestDocument> {
+        const parsed = await this.readParsed()
+        if (parsed.status !== "malformed") return parsed
+        await quarantineDocument(this.layout.deviceCredentialPath, this.layout.secretsQuarantineDir, this.clock())
+        return { status: "missing" }
+    }
+
+    private async readParsed(): Promise<ParsedDocument | { readonly status: "missing" }> {
+        let raw: string
+        try {
+            raw = await fs.readFile(this.layout.deviceCredentialPath, "utf8")
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing" }
+            throw error
+        }
+        try {
+            return parseDeviceCredentialDocument(JSON.parse(raw))
+        } catch {
+            return { status: "malformed" }
+        }
+    }
+
+    private async write(document: DeviceCredentialDocument, previousRaw: Record<string, unknown>): Promise<void> {
+        await writeJsonAtomic(
+            this.layout.deviceCredentialPath,
+            { ...preserveUnknownFields(previousRaw), ...serializeDocument(document) },
+            { mode: CREDENTIAL_FILE_MODE, fsync: true },
+        )
+    }
+}
+
+function parseDeviceCredentialDocument(value: unknown): ParsedDocument {
+    if (!isRecord(value)) return { status: "malformed" }
+    const schemaVersion = value.schema_version
+    if (!Number.isSafeInteger(schemaVersion) || (schemaVersion as number) < 1) return { status: "malformed" }
+    if ((schemaVersion as number) > DEVICE_CREDENTIAL_SCHEMA_VERSION) return { status: "unsupported" }
+    const { device_secret: deviceSecret, created_at: createdAt, generation } = value
+    if (typeof deviceSecret !== "string" || !BASE64URL_43_PATTERN.test(deviceSecret)) return { status: "malformed" }
+    if (!isTimestamp(createdAt) || !Number.isSafeInteger(generation) || (generation as number) < 1) return { status: "malformed" }
+    const enrollment = parseEnrollment(value.enrollment)
+    const refreshClaim = parseRefreshClaim(value.refresh_claim)
+    return {
+        status: "valid",
+        raw: value,
+        document: {
+            deviceSecret,
+            createdAt,
+            generation: generation as number,
+            // Tokens, backoff and claims are recoverable state: an unreadable entry is ignored rather
+            // than costing the device its identity.
+            tokens: parseTokens(value.tokens),
+            ...(enrollment ? { enrollment } : {}),
+            ...(refreshClaim ? { refreshClaim } : {}),
+        },
+    }
+}
+
+function parseTokens(value: unknown): Partial<Record<RemoteProfile, StoredDeviceToken>> {
+    if (!isRecord(value)) return {}
+    const tokens: Partial<Record<RemoteProfile, StoredDeviceToken>> = {}
+    for (const profile of REMOTE_PROFILES) {
+        const token = parseToken(value[profile])
+        if (token) tokens[profile] = token
+    }
+    return tokens
+}
+
+function parseToken(value: unknown): StoredDeviceToken | undefined {
+    if (!isRecord(value)) return undefined
+    const { access_token: accessToken, device_id: deviceId, expires_at: expiresAt, obtained_at: obtainedAt } = value
+    if (typeof accessToken !== "string" || !BASE64URL_43_PATTERN.test(accessToken)) return undefined
+    if (typeof deviceId !== "string" || deviceId.length === 0 || deviceId.length > MAX_DEVICE_ID_LENGTH) return undefined
+    if (!isTimestamp(expiresAt) || !isTimestamp(obtainedAt)) return undefined
+    return { accessToken, deviceId, expiresAt, obtainedAt }
+}
+
+function parseEnrollment(value: unknown): EnrollmentBackoff | undefined {
+    if (!isRecord(value)) return undefined
+    const { not_before: notBefore, consecutive_failures: consecutiveFailures } = value
+    if (!isTimestamp(notBefore) || !Number.isSafeInteger(consecutiveFailures) || (consecutiveFailures as number) < 0) {
+        return undefined
+    }
+    return { notBefore, consecutiveFailures: consecutiveFailures as number }
+}
+
+function parseRefreshClaim(value: unknown): RefreshClaim | undefined {
+    if (!isRecord(value)) return undefined
+    const { owner_id: ownerId, profile, expires_at: expiresAt } = value
+    if (typeof ownerId !== "string" || ownerId.length === 0) return undefined
+    if (!REMOTE_PROFILES.includes(profile as RemoteProfile) || !isTimestamp(expiresAt)) return undefined
+    return { ownerId, profile: profile as RemoteProfile, expiresAt }
+}
+
+function normalizeState(state: DeviceCredentialState): DeviceCredentialState {
+    const tokens: Partial<Record<RemoteProfile, StoredDeviceToken>> = {}
+    for (const profile of REMOTE_PROFILES) {
+        const token = state.tokens[profile]
+        if (token) {
+            if (!parseToken(serializeToken(token))) throw new Error(`Refusing to store an invalid ${profile} token`)
+            tokens[profile] = token
+        }
+    }
+    return {
+        tokens,
+        ...(state.enrollment ? { enrollment: state.enrollment } : {}),
+        ...(state.refreshClaim ? { refreshClaim: state.refreshClaim } : {}),
+    }
+}
+
+function serializeDocument(document: DeviceCredentialDocument): Record<string, unknown> {
+    const tokens: Record<string, unknown> = {}
+    for (const profile of REMOTE_PROFILES) {
+        const token = document.tokens[profile]
+        if (token) tokens[profile] = serializeToken(token)
+    }
+    return {
+        schema_version: DEVICE_CREDENTIAL_SCHEMA_VERSION,
+        device_secret: document.deviceSecret,
+        created_at: document.createdAt,
+        generation: document.generation,
+        tokens,
+        ...(document.enrollment
+            ? {
+                  enrollment: {
+                      not_before: document.enrollment.notBefore,
+                      consecutive_failures: document.enrollment.consecutiveFailures,
+                  },
+              }
+            : {}),
+        ...(document.refreshClaim
+            ? {
+                  refresh_claim: {
+                      owner_id: document.refreshClaim.ownerId,
+                      profile: document.refreshClaim.profile,
+                      expires_at: document.refreshClaim.expiresAt,
+                  },
+              }
+            : {}),
+    }
+}
+
+function serializeToken(token: StoredDeviceToken): Record<string, unknown> {
+    return {
+        access_token: token.accessToken,
+        device_id: token.deviceId,
+        expires_at: token.expiresAt,
+        obtained_at: token.obtainedAt,
+    }
+}
+
+/** Keep fields a newer Dline added, so rewriting the document here does not drop them. */
+function preserveUnknownFields(value: Record<string, unknown>): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(value).filter(([key]) => !KNOWN_DOCUMENT_KEYS.has(key)))
+}
+
+function hasTokenState(document: DeviceCredentialDocument): boolean {
+    return Object.keys(document.tokens).length > 0 || document.refreshClaim !== undefined
+}
+
+function isTimestamp(value: unknown): value is number {
+    return Number.isSafeInteger(value) && (value as number) >= 0
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+}
