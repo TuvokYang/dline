@@ -92,7 +92,6 @@ import { getDistinctId } from "@/services/logging/distinctId"
 import { telemetryService } from "@/services/telemetry"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
-import { REMOTE_USAGE_CONSENT_REVISION } from "@/services/telemetry/remote/policy/usagePolicy"
 import { refreshRemoteUsagePolicy } from "@/services/telemetry/remote/remoteUsageRuntime"
 import { getRuntimeTelemetryLifecycle } from "@/services/telemetry/runtime/host"
 import { ClineExtensionContext } from "@/shared/cline"
@@ -1859,8 +1858,6 @@ export class Controller {
         }
 
         this.stateManager.setGlobalState("usageReportingSetting", usageReportingSetting)
-        // Enabling happens next to the current disclosure, so it also confirms that disclosure.
-        if (isOptedIn) this.stateManager.setGlobalState("remoteUsageConsentRevision", REMOTE_USAGE_CONSENT_REVISION)
         // Turning reporting off must stop remote intake and delete unsent usage now, not at the next cycle.
         void refreshRemoteUsagePolicy()
 
@@ -1869,9 +1866,9 @@ export class Controller {
             telemetryService.captureUserOptIn()
         }
 
-        // The method re-reads the stored consent, so it decides for itself
-        // whether a prompt is warranted.
-        void this.warnIfHostTelemetryDisabled()
+        // Only an explicit opt-in is told that the host suppresses it; the
+        // method re-reads the stored consent, so it decides for itself.
+        if (!wasOptedIn && isOptedIn) void this.warnIfHostTelemetryDisabled()
 
         await this.postStateToWebview()
     }
@@ -1884,10 +1881,8 @@ export class Controller {
      * setting that silently does nothing. The prompt lives here rather than in
      * the telemetry service because host UI is a Controller responsibility.
      *
-     * Called both when consent changes and when a webview initializes: a user
-     * who opted in during an earlier session never passes through the setting
-     * path again, so checking only there would leave them permanently
-     * unaware that the host is suppressing what they agreed to.
+     * Called only when the user turns usage reporting on. It is on by default,
+     * and a host level the user chose is respected without a prompt at startup.
      */
     async warnIfHostTelemetryDisabled(): Promise<void> {
         try {
@@ -3018,9 +3013,6 @@ export class Controller {
         const mcpDisplayMode = this.stateManager.getGlobalStateKey("mcpDisplayMode")
         const usageReportingSetting = this.stateManager.getGlobalSettingsKey("usageReportingSetting")
         const errorReportingSetting = this.stateManager.getGlobalSettingsKey("errorReportingSetting")
-        const usageReportingConfirmationPending =
-            isReportingAllowed(usageReportingSetting) &&
-            (this.stateManager.getGlobalSettingsKey("remoteUsageConsentRevision") ?? 0) < REMOTE_USAGE_CONSENT_REVISION
         const planActSeparateModelsSetting = this.stateManager.getGlobalSettingsKey("planActSeparateModelsSetting")
         const enableCheckpointsSetting = this.stateManager.getGlobalSettingsKey("enableCheckpointsSetting")
         const globalClineRulesToggles = this.stateManager.getGlobalSettingsKey("globalClineRulesToggles")
@@ -3198,7 +3190,6 @@ export class Controller {
             mcpDisplayMode,
             usageReportingSetting,
             errorReportingSetting,
-            usageReportingConfirmationPending,
             planActSeparateModelsSetting,
             enableCheckpointsSetting: enableCheckpointsSetting ?? true,
             platform,

@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest"
-import { advanceUsagePolicy, REMOTE_USAGE_CONSENT_REVISION, resolveUsagePolicy, type UsagePolicyInputs } from "../usagePolicy"
+import {
+    advanceUsagePolicy,
+    describeUsagePolicyDecision,
+    parseUsagePolicyDecision,
+    resolveUsagePolicy,
+    type UsagePolicyInputs,
+} from "../usagePolicy"
 
 const allowedInputs: UsagePolicyInputs = {
     usageConsent: "enabled",
-    acknowledgedConsentRevision: REMOTE_USAGE_CONSENT_REVISION,
     organizationDisabled: false,
     hostTelemetryLevel: "all",
-    isDevelopmentBuild: false,
-    developmentEnrolled: false,
     serverStop: undefined,
 }
 
@@ -19,8 +22,6 @@ describe("remote usage policy", () => {
     it.each([
         ["consent_off", { usageConsent: "unset" }],
         ["consent_off", { usageConsent: "disabled" }],
-        ["consent_revision", { acknowledgedConsentRevision: undefined }],
-        ["consent_revision", { acknowledgedConsentRevision: REMOTE_USAGE_CONSENT_REVISION - 1 }],
         ["organization_disabled", { organizationDisabled: true }],
         ["host_telemetry", { hostTelemetryLevel: "error" }],
         ["host_telemetry", { hostTelemetryLevel: "off" }],
@@ -29,20 +30,18 @@ describe("remote usage policy", () => {
         expect(resolveUsagePolicy({ ...allowedInputs, ...override })).toEqual({ allowed: false, reason })
     })
 
-    it("keeps an earlier opt-in local until the remote disclosure is confirmed", () => {
-        const legacyOptIn = { ...allowedInputs, acknowledgedConsentRevision: undefined }
-
-        expect(resolveUsagePolicy(legacyOptIn)).toEqual({ allowed: false, reason: "consent_revision" })
+    it("names the decision and, when blocked, its reason for the log", () => {
+        expect(describeUsagePolicyDecision(resolveUsagePolicy(allowedInputs))).toBe("allowed (profile usage)")
+        expect(describeUsagePolicyDecision(resolveUsagePolicy({ ...allowedInputs, hostTelemetryLevel: "off" }))).toBe(
+            "blocked (host_telemetry)",
+        )
     })
 
-    it("uses the development profile only with an enrollment and never falls back to production", () => {
-        const development = { ...allowedInputs, isDevelopmentBuild: true }
-
-        expect(resolveUsagePolicy({ ...development, developmentEnrolled: true })).toEqual({
-            allowed: true,
-            profile: "development",
-        })
-        expect(resolveUsagePolicy(development)).toEqual({ allowed: false, reason: "development_unenrolled" })
+    it("rejects decisions written by the removed consent-revision and development gates, so the record is rebuilt", () => {
+        expect(parseUsagePolicyDecision({ allowed: false, reason: "development_unenrolled" })).toBeUndefined()
+        expect(parseUsagePolicyDecision({ allowed: false, reason: "consent_revision" })).toBeUndefined()
+        expect(parseUsagePolicyDecision({ allowed: true, profile: "development" })).toBeUndefined()
+        expect(parseUsagePolicyDecision({ allowed: true, profile: "usage" })).toEqual({ allowed: true, profile: "usage" })
     })
 
     it("checks consent before anything a server or organization could change", () => {

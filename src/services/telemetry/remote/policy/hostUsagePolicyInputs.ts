@@ -2,7 +2,6 @@ import { StateManager } from "@/core/storage/StateManager"
 import type { LocalUsagePolicyInputs } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
 import { HostProvider } from "@/hosts/host-provider"
 import { Setting } from "@/shared/proto/dline/host"
-import { isTelemetryDevelopmentMode } from "../../development-mode"
 import type { HostTelemetryLevel } from "./usagePolicy"
 
 const HOST_TELEMETRY_LEVELS: readonly HostTelemetryLevel[] = ["all", "error", "crash", "off"]
@@ -17,12 +16,9 @@ const HOST_TELEMETRY_LEVELS: readonly HostTelemetryLevel[] = ["all", "error", "c
 export async function readHostUsagePolicyInputs(): Promise<LocalUsagePolicyInputs> {
     const stateManager = StateManager.get()
     return {
-        usageConsent: stateManager.getGlobalSettingsKey("usageReportingSetting") ?? "unset",
-        acknowledgedConsentRevision: stateManager.getGlobalSettingsKey("remoteUsageConsentRevision"),
+        usageConsent: stateManager.getGlobalSettingsKey("usageReportingSetting") ?? "enabled",
         organizationDisabled: stateManager.getRemoteConfigSettings().usageReportingSetting === "disabled",
         hostTelemetryLevel: await readHostTelemetryLevel(),
-        isDevelopmentBuild: isTelemetryDevelopmentMode(),
-        developmentEnrolled: false,
     }
 }
 

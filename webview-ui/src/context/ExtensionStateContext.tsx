@@ -368,7 +368,7 @@ export const ExtensionStateContextProvider: React.FC<{
         mode: "act",
         platform: DEFAULT_PLATFORM,
         environment: Environment.production,
-        usageReportingSetting: "unset",
+        usageReportingSetting: "enabled",
         errorReportingSetting: "unset",
         distinctId: "",
         planActSeparateModelsSetting: true,

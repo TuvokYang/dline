@@ -40,7 +40,7 @@ Dline 分别征求产品使用统计和错误/运行时诊断的同意。两个�
 - 默认网络 sink 是本机 OTLP/HTTP 端点 `http://127.0.0.1:4318`。
 - 默认 loopback sink 接受 `usage`、`account` 和 `runtime`；account record 与普通 record 分离。
 - 组织配置的 OTLP 端点当前只接收已获准的 `usage` Event 和 Metric，不是 account、error/runtime 或 Trace sink。
-- 确认使用统计后，按分钟聚合的使用计数会发送到 `https://otel.dline.cc`，详见下文使用统计投递一节。不会向该地址发送其他通道，也没有其他目的地回退到它。
+- 使用情况报告开启期间（默认开启），按分钟聚合的使用计数会发送到 `https://otel.dline.cc`，详见下文使用统计投递一节。不会向该地址发送其他通道，也没有其他目的地回退到它。
 
 <Aside type="caution">
 非 loopback 端点会把数据发送到本机以外。启用前应检查其保留、访问控制和法律政策。
@@ -101,11 +101,11 @@ development 模式可以保留额外本地关联字段，但不等于远端授�
 
 只有以下条件全部成立时，Dline 才会向 `https://otel.dline.cc` 发送使用计数：
 
-- 已勾选 **Allow usage reporting**，并已确认当前的远端使用统计说明。如果你在远端投递出现之前就已同意，**Settings → About** 会显示 **Confirm** 提示；确认之前，使用统计只保留在本机。
+- 已勾选 **Allow usage reporting**。该项默认开启；在 **Settings → About** 中取消勾选会停止投递并删除尚未发送的计数。
 - 组织 policy 没有禁用遥测。
 - VS Code 的 `telemetry.telemetryLevel` 为 `all`。`error`、`crash`、`off` 或无法读取的等级都会停止投递。
 - 服务端没有拒绝该设备。
-- 当前不是 development 构建。development 构建从不发送使用统计。
+- 当前不是自动化测试运行。development 构建同样发送，其批次带 `is_dev=true`，便于服务端区分。
 
 ### 发送内容
 

@@ -70,7 +70,7 @@ Starting error diagnostics currently ensures an owner-only legacy pairing creden
 | Layer | Owner | Responsibility |
 |---|---|---|
 | Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | One typed record per settled provider request: purpose, outcome, tokens, micro-USD cost, duration |
-| Policy | `remote/policy/usagePolicy.ts`, `RemotePolicyRepository` | Resolves consent, consent revision, organization, host level, development build, and server stop into a machine-wide policy epoch |
+| Policy | `remote/policy/usagePolicy.ts`, `RemotePolicyRepository` | Resolves the usage setting (on by default), organization, host level, and server stop into a machine-wide policy epoch, and logs each change of decision |
 | Catalog | `remote/usage/usageCatalog.ts` | Fixed metric names split only by purpose and outcome |
 | Spool and outbox | `UsageObservationSpool`, `UsageOutboxRepository` | Per-process observation shards; sender lease, delivery gate, pending minutes, and exact-bytes inflight changed under one lock |
 | Delivery | `UsageDeliveryWorker`, `RemoteUsageCoordinator` | Windowing, batching, replay, defer, and stop handling; deletes unsent data when the policy leaves the allowed state |
@@ -115,7 +115,7 @@ Do not remove the compatibility writer first. The final stop-write step depends 
 - `usage` (current): content-free Provider token/cache/cost settlements aggregated into the fixed catalog above.
 - `production`: content-safe `error` and `runtime` logs, metrics, and traces.
 - `issue_diagnostic`: time-bounded diagnostic density requiring error consent and an active per-Issue grant.
-- `development` (planned): matching consent plus valid development enrollment. Until enrollment exists, development builds send nothing.
+- `development` (planned): a separate development stream. Today development builds send usage under the `usage` profile with `is_dev=true`, and automated test runs send nothing.
 
 `production` and `issue_diagnostic` are planned.
 

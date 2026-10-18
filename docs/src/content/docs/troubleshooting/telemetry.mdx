@@ -40,7 +40,7 @@ The separate `account` channel emits an `account.identified` record containing t
 - The default network sink is the local OTLP/HTTP endpoint `http://127.0.0.1:4318`.
 - The default loopback sink accepts `usage`, `account`, and `runtime`; account records remain separate from ordinary records.
 - An organization-configured OTLP endpoint currently accepts consented `usage` Event and Metric signals only. It is not an account, error/runtime, or Trace sink.
-- With usage reporting confirmed, aggregated per-minute usage counts are sent to `https://otel.dline.cc` as described in the usage delivery section below. No other channel is sent there, and no other destination falls back to it.
+- While usage reporting is on (the default), aggregated per-minute usage counts are sent to `https://otel.dline.cc` as described in the usage delivery section below. No other channel is sent there, and no other destination falls back to it.
 
 <Aside type="caution">
 A non-loopback endpoint sends data outside your machine. Review its retention, access-control, and legal policies before enabling reporting.
@@ -101,11 +101,11 @@ The current `/reportbug` handler requires `api_request_output` and `additional_c
 
 Dline sends usage counts to `https://otel.dline.cc` only while every condition holds:
 
-- **Allow usage reporting** is checked and you have confirmed the current remote usage disclosure. If you opted in before remote delivery existed, **Settings → About** shows a **Confirm** notice, and your usage stays on this machine until you confirm.
+- **Allow usage reporting** is checked. It is on by default; unchecking it in **Settings → About** stops delivery and deletes unsent counts.
 - Organization policy has not disabled telemetry.
 - VS Code's `telemetry.telemetryLevel` is `all`. `error`, `crash`, `off`, or a level that cannot be read stops delivery.
 - The service has not refused this device.
-- The build is not a development build. Development builds never send usage.
+- The run is not an automated test. Development builds send too, and their batches carry `is_dev=true` so the service can separate them.
 
 ### What is sent
 

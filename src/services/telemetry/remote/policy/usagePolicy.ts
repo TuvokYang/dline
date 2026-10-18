@@ -1,13 +1,6 @@
 import { isReportingAllowed, type TelemetrySetting } from "@shared/TelemetrySetting"
 import type { StopScope } from "../contracts/classification"
 
-/**
- * Revision of the remote usage disclosure. A user who opted in to usage
- * reporting before remote delivery existed agreed to local collection only,
- * so remote delivery waits until they confirm this revision.
- */
-export const REMOTE_USAGE_CONSENT_REVISION = 1
-
 /** VS Code's `telemetry.telemetryLevel`; usage data is only allowed at `all`. */
 export type HostTelemetryLevel = "all" | "error" | "crash" | "off"
 
@@ -18,50 +11,40 @@ export interface ServerStop {
 }
 
 export interface UsagePolicyInputs {
+    /** The user's usage reporting setting; it defaults to on and only the user turns it off. */
     readonly usageConsent: TelemetrySetting
-    readonly acknowledgedConsentRevision: number | undefined
     /** Organization Remote Config turned telemetry off; it can only disable, never enable. */
     readonly organizationDisabled: boolean
     readonly hostTelemetryLevel: HostTelemetryLevel
-    readonly isDevelopmentBuild: boolean
-    /** A development build sends only with a valid enrollment; it never falls back to the production profile. */
-    readonly developmentEnrolled: boolean
     readonly serverStop: ServerStop | undefined
 }
 
-export const USAGE_POLICY_BLOCKS = [
-    "consent_off",
-    "consent_revision",
-    "organization_disabled",
-    "host_telemetry",
-    "development_unenrolled",
-    "server_stopped",
-] as const
+export const USAGE_POLICY_BLOCKS = ["consent_off", "organization_disabled", "host_telemetry", "server_stopped"] as const
 export type UsagePolicyBlock = (typeof USAGE_POLICY_BLOCKS)[number]
 
+/**
+ * Development builds send under the same profile; their batches carry the
+ * `is_dev` attribute, so the service separates them without a second stream.
+ */
 export type UsagePolicyDecision =
-    | { readonly allowed: true; readonly profile: "usage" | "development" }
+    | { readonly allowed: true; readonly profile: "usage" }
     | { readonly allowed: false; readonly reason: UsagePolicyBlock }
 
 /**
  * Decide whether remote usage may be collected and sent. Every input can only
- * narrow: no server field, organization setting or build flag grants what the
- * user's consent did not.
+ * narrow: no server field or organization setting grants what the user turned off.
  */
 export function resolveUsagePolicy(inputs: UsagePolicyInputs): UsagePolicyDecision {
     if (!isReportingAllowed(inputs.usageConsent)) return { allowed: false, reason: "consent_off" }
-    if ((inputs.acknowledgedConsentRevision ?? 0) < REMOTE_USAGE_CONSENT_REVISION) {
-        return { allowed: false, reason: "consent_revision" }
-    }
     if (inputs.organizationDisabled) return { allowed: false, reason: "organization_disabled" }
     if (inputs.hostTelemetryLevel !== "all") return { allowed: false, reason: "host_telemetry" }
     if (inputs.serverStop) return { allowed: false, reason: "server_stopped" }
-    if (inputs.isDevelopmentBuild) {
-        return inputs.developmentEnrolled
-            ? { allowed: true, profile: "development" }
-            : { allowed: false, reason: "development_unenrolled" }
-    }
     return { allowed: true, profile: "usage" }
+}
+
+/** One line for the log: what the decision is and, when blocked, why. */
+export function describeUsagePolicyDecision(decision: UsagePolicyDecision): string {
+    return decision.allowed ? `allowed (profile ${decision.profile})` : `blocked (${decision.reason})`
 }
 
 /** The machine-wide policy record every instance reads before it claims, sends or acknowledges a batch. */
@@ -86,9 +69,7 @@ export function stopUsagePolicy(previous: UsagePolicyRecord): UsagePolicyRecord 
 export function parseUsagePolicyDecision(value: unknown): UsagePolicyDecision | undefined {
     if (!isRecord(value)) return undefined
     if (value.allowed === true) {
-        return value.profile === "usage" || value.profile === "development"
-            ? { allowed: true, profile: value.profile }
-            : undefined
+        return value.profile === "usage" ? { allowed: true, profile: "usage" } : undefined
     }
     if (value.allowed === false && USAGE_POLICY_BLOCKS.includes(value.reason as UsagePolicyBlock)) {
         return { allowed: false, reason: value.reason as UsagePolicyBlock }

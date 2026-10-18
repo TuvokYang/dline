@@ -3,7 +3,7 @@ import type { LocalUsagePolicyInputs, RemotePolicyRepository } from "@/core/stor
 import type { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import type { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import type { UsageSettlement, UsageSettlementPort } from "@/core/task/telemetry/UsageSettlement"
-import type { UsagePolicyRecord } from "../policy/usagePolicy"
+import { describeUsagePolicyDecision, type UsagePolicyRecord } from "../policy/usagePolicy"
 import type { UsageCycleResult, UsageDeliveryWorker } from "./UsageDeliveryWorker"
 import { projectUsageSettlement } from "./usageCatalog"
 
@@ -137,12 +137,14 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
     private async apply(next: UsagePolicyRecord | undefined): Promise<void> {
         const previous = this.current
         this.current = next
+        // One line per change, so the log shows whether usage is sent and, if not, why.
+        if (next && previous?.epoch !== next.epoch) this.log(`usage reporting ${describeUsagePolicyDecision(next.decision)}`)
         // A newer Dline owns the policy document: it also owns the data, so nothing is touched.
         if (!next || next.decision.allowed || previous?.epoch === next.epoch) return
         this.cycleAbort?.abort()
         await this.options.outbox.reset(next.epoch)
         await this.options.spool.purge()
-        if (next.decision.reason === "consent_off" || next.decision.reason === "consent_revision") {
+        if (next.decision.reason === "consent_off") {
             await this.options.credentials.clearTokens()
         }
     }

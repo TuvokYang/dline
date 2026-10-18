@@ -22,7 +22,6 @@ const mocks = vi.hoisted(() => ({
         usageReportingSetting: "unset" as string,
         errorReportingSetting: "unset" as string,
         remoteConfigSettings: undefined as unknown,
-        usageReportingConfirmationPending: false as boolean,
     },
 }))
 
@@ -46,24 +45,6 @@ describe("reporting consent placement", () => {
         mocks.state.usageReportingSetting = "unset"
         mocks.state.errorReportingSetting = "unset"
         mocks.state.remoteConfigSettings = undefined
-        mocks.state.usageReportingConfirmationPending = false
-    })
-
-    it("asks an earlier opt-in to confirm remote usage and re-enables reporting on confirmation", () => {
-        mocks.state.usageReportingSetting = "enabled"
-        mocks.state.usageReportingConfirmationPending = true
-        render(<AboutSection renderSectionHeader={renderSectionHeader} version="1.2.3" />)
-
-        fireEvent.click(screen.getByText("Confirm"))
-
-        expect(mocks.updateSetting).toHaveBeenCalledWith("usageReportingSetting", "enabled")
-    })
-
-    it("does not ask for confirmation once the current disclosure is confirmed", () => {
-        mocks.state.usageReportingSetting = "enabled"
-        render(<AboutSection renderSectionHeader={renderSectionHeader} version="1.2.3" />)
-
-        expect(screen.queryByTestId("usage-reporting-confirmation")).toBeNull()
     })
 
     it("offers both consents next to the diagnostics export once error reporting is on", () => {

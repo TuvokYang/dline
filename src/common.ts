@@ -37,6 +37,7 @@ import { startRuntimeTelemetryInBackground } from "./services/telemetry/runtime/
 import { getRuntimeTelemetryLifecycle } from "./services/telemetry/runtime/host"
 import { forwardRuntimeEvent } from "./services/telemetry/runtime/provider-event-bridge"
 import { cleanupTestMode } from "./services/test/TestMode"
+import { envFlagEnabled } from "./shared/env"
 import { ShowMessageType } from "./shared/proto/dline/host/window"
 import { syncWorker } from "./shared/services/worker/sync"
 import { getBlobStoreSettingsFromEnv } from "./shared/services/worker/worker"
@@ -371,6 +372,9 @@ async function startRemoteUsageReporting(dataDir: string): Promise<void> {
     if (process.env.DLINE_OTEL_ENDPOINT && !endpoint) {
         Logger.warn("[Dline] Ignoring DLINE_OTEL_ENDPOINT: only a loopback origin may replace the telemetry service")
     }
+    // A test run reports only to a loopback service it started; it never reaches the real one.
+    const isTestRun = envFlagEnabled(process.env.E2E_TEST) || envFlagEnabled(process.env.IS_TEST)
+    if (isTestRun && !endpoint) return
     await startRemoteUsage({
         dataDir,
         readPolicyInputs: readHostUsagePolicyInputs,

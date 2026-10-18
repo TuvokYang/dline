@@ -10,7 +10,6 @@ import type { UsageSettlement } from "@/core/task/telemetry/UsageSettlement"
 import type { AcquireOptions, TokenAcquisition } from "../auth/DeviceTokenBroker"
 import type { WireResponse } from "../contracts/classification"
 import { USAGE_WINDOW_MS, type UsageAggregateWire, validateUsageAggregate } from "../contracts/wire"
-import { REMOTE_USAGE_CONSENT_REVISION } from "../policy/usagePolicy"
 import { DlineOtelTransportError, type UsageDelivery, type UsageTransport } from "../transport/DlineOtelHttpClient"
 import { RemoteUsageCoordinator, type UsageScheduler } from "../usage/RemoteUsageCoordinator"
 import { UsageDeliveryWorker } from "../usage/UsageDeliveryWorker"
@@ -27,11 +26,8 @@ const SETTLE = 20_000
 const ATTRIBUTES = { client_version: "0.11.0", platform: "win32", architecture: "x64", is_dev: false } as const
 const ALLOWED: LocalUsagePolicyInputs = {
     usageConsent: "enabled",
-    acknowledgedConsentRevision: REMOTE_USAGE_CONSENT_REVISION,
     organizationDisabled: false,
     hostTelemetryLevel: "all",
-    isDevelopmentBuild: false,
-    developmentEnrolled: false,
 }
 const WIRE_KEYS = new Set([
     "schema_version",

@@ -84,11 +84,10 @@ export async function initializeWebview(controller: Controller, _request: EmptyR
         // Silently refresh MCP marketplace catalog
         controller.refreshMcpMarketplace(true /* sendCatalogEvent */)
 
-        // Ensure providers and host identity are attached now that the webview
-        // is live, then tell the user if the host is suppressing the reporting
-        // they already agreed to — a user who opted in during an earlier
-        // session never passes through the settings path again.
-        void getTelemetryService().then(() => controller.warnIfHostTelemetryDisabled())
+        // Ensure providers and host identity are attached now that the webview is live.
+        // Usage reporting is on by default, so a host that turned telemetry off is
+        // respected silently here; only an explicit opt-in warns about it.
+        void getTelemetryService()
 
         return Empty.create({})
     } catch (error) {

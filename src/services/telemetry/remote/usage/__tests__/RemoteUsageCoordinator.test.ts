@@ -7,17 +7,13 @@ import { type LocalUsagePolicyInputs, RemotePolicyRepository } from "@/core/stor
 import { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import type { UsageSettlement } from "@/core/task/telemetry/UsageSettlement"
-import { REMOTE_USAGE_CONSENT_REVISION } from "../../policy/usagePolicy"
 import { RemoteUsageCoordinator, type UsageScheduler } from "../RemoteUsageCoordinator"
 import type { UsageCycleResult } from "../UsageDeliveryWorker"
 
 const ALLOWED: LocalUsagePolicyInputs = {
     usageConsent: "enabled",
-    acknowledgedConsentRevision: REMOTE_USAGE_CONSENT_REVISION,
     organizationDisabled: false,
     hostTelemetryLevel: "all",
-    isDevelopmentBuild: false,
-    developmentEnrolled: false,
 }
 
 function settlement(observationId: string): UsageSettlement {

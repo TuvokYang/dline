@@ -2,17 +2,13 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { REMOTE_USAGE_CONSENT_REVISION } from "@/services/telemetry/remote/policy/usagePolicy"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
 import { type LocalUsagePolicyInputs, RemotePolicyRepository } from "../RemotePolicyRepository"
 
 const ALLOWED: LocalUsagePolicyInputs = {
     usageConsent: "enabled",
-    acknowledgedConsentRevision: REMOTE_USAGE_CONSENT_REVISION,
     organizationDisabled: false,
     hostTelemetryLevel: "all",
-    isDevelopmentBuild: false,
-    developmentEnrolled: false,
 }
 
 describe("RemotePolicyRepository", () => {

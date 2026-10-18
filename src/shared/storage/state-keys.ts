@@ -186,11 +186,9 @@ const USER_SETTINGS_FIELDS = {
     // Usage and error reporting are consented to separately. The former
     // `telemetrySetting` covered both at once and is deliberately not migrated:
     // an answer to the combined question does not answer either of these.
-    usageReportingSetting: { default: "unset" as TelemetrySetting },
+    // Usage reporting is on until the user turns it off; error reporting stays opt-in.
+    usageReportingSetting: { default: "enabled" as TelemetrySetting },
     errorReportingSetting: { default: "unset" as TelemetrySetting },
-    // Disclosure revision the user saw when they last enabled usage reporting. An opt-in given
-    // before remote usage existed stays local until the user confirms the current disclosure.
-    remoteUsageConsentRevision: { default: undefined as number | undefined },
     planActSeparateModelsSetting: { default: false as boolean, isComputed: true },
     enableCheckpointsSetting: { default: true as boolean },
     shellIntegrationTimeout: { default: 4000 as number },
