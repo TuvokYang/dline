@@ -77,6 +77,7 @@ describe("RemoteUsageCoordinator", () => {
     let tokenClears: number
     let policy: RemotePolicyRepository
     let now: number
+    let reportingChanges: boolean[]
 
     beforeEach(async () => {
         root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-otel-coordinator-"))
@@ -87,6 +88,7 @@ describe("RemoteUsageCoordinator", () => {
         tokenClears = 0
         now = 1_900_000_000_000
         policy = new RemotePolicyRepository(layout, { clock: () => now })
+        reportingChanges = []
     })
 
     afterEach(async () => {
@@ -111,6 +113,7 @@ describe("RemoteUsageCoordinator", () => {
             clock: () => now,
             scheduler,
             log,
+            onReportingChanged: (allowed) => reportingChanges.push(allowed),
         })
     }
 
@@ -188,6 +191,34 @@ describe("RemoteUsageCoordinator", () => {
 
         await usage.dispose()
         expect(usage.reportingAllowed).toBe(false)
+    })
+
+    it("announces every change of reporting permission, including one its own cycle finds", async () => {
+        const usage = coordinator()
+        await usage.start()
+        expect(reportingChanges).toEqual([true])
+
+        // Nobody calls refresh: the next cycle finds that consent was turned off.
+        inputs = { ...ALLOWED, usageConsent: "disabled" }
+        scheduler.fire()
+        await waitFor(() => scheduler.pending.length === 1)
+        expect(reportingChanges).toEqual([true, false])
+
+        // A cycle that finds the same answer announces nothing.
+        scheduler.fire()
+        await waitFor(() => scheduler.pending.length === 1)
+        expect(reportingChanges).toEqual([true, false])
+
+        inputs = ALLOWED
+        await usage.refresh()
+        inputs = new Error("state not ready")
+        await usage.refresh()
+        inputs = ALLOWED
+        await usage.refresh()
+        await usage.dispose()
+
+        // Unreadable inputs close reporting as well; shutting this host down does not change the permission.
+        expect(reportingChanges).toEqual([true, false, true, false, true])
     })
 
     it("purges unsent usage but keeps the device tokens when the host or organization turns reporting off", async () => {

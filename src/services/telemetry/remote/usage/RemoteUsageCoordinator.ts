@@ -30,6 +30,13 @@ export interface RemoteUsageCoordinatorOptions {
     readonly scheduler?: UsageScheduler
     readonly cycleIntervalMs?: number
     readonly log?: RemoteUsageLog
+    /**
+     * Called whenever {@link RemoteUsageCoordinator.reportingAllowed} changes, whoever
+     * resolved the policy: startup, an explicit refresh, or a delivery cycle.
+     * Disposal is not announced: one extension host shutting down does not
+     * change whether this device may report.
+     */
+    readonly onReportingChanged?: (allowed: boolean) => void
 }
 
 /**
@@ -129,14 +136,14 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
             inputs = await this.options.readPolicyInputs()
         } catch (error) {
             // Unknown inputs are treated as "not allowed" without persisting a decision.
-            this.current = undefined
+            this.adopt(undefined)
             this.log("warn", `usage policy inputs unavailable: ${describe(error)}`)
             return
         }
         try {
             await this.apply(await this.options.policy.resolveUsage(inputs))
         } catch (error) {
-            this.current = undefined
+            this.adopt(undefined)
             this.log("warn", `usage policy could not be applied: ${describe(error)}`)
         }
     }
@@ -144,7 +151,7 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
     /** Adopt a decision; leaving the allowed state deletes everything not yet sent. */
     private async apply(next: UsagePolicyRecord | undefined): Promise<void> {
         const previous = this.current
-        this.current = next
+        this.adopt(next)
         // One line per change, so the log shows whether usage is sent and, if not, why.
         if (next && previous?.epoch !== next.epoch) {
             this.log("info", `usage reporting ${describeUsagePolicyDecision(next.decision)}`)
@@ -160,6 +167,18 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
         await this.options.spool.purge()
         if (next.decision.reason === "consent_off") {
             await this.options.credentials.clearTokens()
+        }
+    }
+
+    /** The only writer of the current decision, so every change of permission is announced once. */
+    private adopt(next: UsagePolicyRecord | undefined): void {
+        const wasAllowed = this.reportingAllowed
+        this.current = next
+        if (this.reportingAllowed === wasAllowed) return
+        try {
+            this.options.onReportingChanged?.(this.reportingAllowed)
+        } catch (error) {
+            this.log("warn", `reporting change listener failed: ${describe(error)}`)
         }
     }
 

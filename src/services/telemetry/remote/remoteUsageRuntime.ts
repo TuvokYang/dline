@@ -85,6 +85,7 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
         worker,
         readPolicyInputs: options.readPolicyInputs,
         log: options.log,
+        onReportingChanged: notifyReportingListeners,
     })
     coordinator = started
     tokenBroker = tokens
@@ -116,7 +117,11 @@ export async function acquireUsageDeviceId(signal?: AbortSignal): Promise<string
     return acquisition.status === "ready" ? acquisition.token.deviceId : undefined
 }
 
-/** Called after a policy refresh changes {@link usageReportingAllowed}; returns the unsubscribe function. */
+/**
+ * Called whenever {@link usageReportingAllowed} changes: at startup, after a
+ * consent or organization change, or when a delivery cycle finds a different
+ * policy. Returns the unsubscribe function.
+ */
 export function onUsageReportingChanged(listener: () => void): () => void {
     reportingListeners.add(listener)
     return () => reportingListeners.delete(listener)
@@ -124,11 +129,10 @@ export function onUsageReportingChanged(listener: () => void): () => void {
 
 /** Re-resolve the policy after a consent, organization or host telemetry change. */
 export async function refreshRemoteUsagePolicy(): Promise<void> {
-    const running = coordinator
-    if (!running) return
-    const wasAllowed = running.reportingAllowed
-    await running.refresh()
-    if (running.reportingAllowed === wasAllowed) return
+    await coordinator?.refresh()
+}
+
+function notifyReportingListeners(): void {
     for (const listener of reportingListeners) listener()
 }
 
