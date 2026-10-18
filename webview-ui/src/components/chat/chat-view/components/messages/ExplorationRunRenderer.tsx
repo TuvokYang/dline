@@ -25,10 +25,11 @@ interface ExplorationRunRendererProps {
 /**
  * One row for consecutive read-only rounds.
  *
- * Collapsed, it shows the restore point taken before the run and a summary of
- * what the rounds read and thought. Expanded, it lists every round in order:
- * that round's restore point, its thinking (click to read it) and its tool calls
- * (click to open a file or show search results).
+ * Collapsed, it reads like one tool group: the restore point taken before the
+ * run, the summary, then every round's calls in order (click to open a file or
+ * show search results). Only the thinking and the later restore points stay
+ * folded. Expanded, it lists every round in order: that round's restore point,
+ * its thinking (click to read it) and its tool calls.
  */
 export const ExplorationRunRenderer = memo(
     ({ run, allMessages, isLastRow, isLastActivity, expandedRows, onToggleExpand }: ExplorationRunRendererProps) => {
@@ -38,6 +39,7 @@ export const ExplorationRunRenderer = memo(
         const isRunning = isLastRow && isApiReqActive(findLastRequest(allMessages))
         const summary = useMemo(() => summarizeRun(run), [run])
         const lastGroup = useMemo(() => findLastToolGroup(run._rounds), [run])
+        const calls = useMemo(() => collectCalls(run._rounds), [run])
         const bodyId = `${run._explorationRunId}-rounds`
 
         return (
@@ -68,6 +70,14 @@ export const ExplorationRunRenderer = memo(
                         )}
                     </button>
                 </div>
+                {!isExpanded && (
+                    <ToolGroupRenderer
+                        allMessages={allMessages}
+                        isLastGroup={isLastActivity}
+                        messages={calls}
+                        showSummary={false}
+                    />
+                )}
                 {isExpanded && (
                     <div className={TOOL_RESPONSE_SCROLL_CLASS} id={bodyId}>
                         {run._rounds.map((round, index) => (
@@ -131,6 +141,17 @@ function summarizeRun(run: ExplorationRun): string {
     if (thoughts > 0) parts.push(`${thoughts} thought${thoughts === 1 ? "" : "s"}`)
     if (rounds > 1) parts.push(`${rounds} rounds`)
     return parts.join(" · ")
+}
+
+/** Every round's tool calls in order, without the thinking between them. */
+function collectCalls(rounds: readonly ExplorationRound[]): UiMessage[] {
+    const calls: UiMessage[] = []
+    for (const round of rounds) {
+        for (const entry of round.entries) {
+            if (isToolGroup(entry)) calls.push(...entry)
+        }
+    }
+    return calls
 }
 
 function findLastToolGroup(rounds: readonly ExplorationRound[]): ToolMessageGroup | undefined {

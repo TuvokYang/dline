@@ -12,6 +12,9 @@ vi.mock("./CheckpointMarker", () => ({
     CheckpointMarker: ({ message }: { message: UiMessage }) => <div data-testid="checkpoint" data-ts={message.ts} />,
 }))
 
+const openFile = vi.hoisted(() => vi.fn(() => Promise.resolve()))
+vi.mock("@/services/grpc-client", () => ({ FileServiceClient: { openFileRelativePath: openFile } }))
+
 const request = (ts: number): UiMessage => ({ ts, type: "say", say: "api_req_started", text: JSON.stringify({ cost: 0.01 }) })
 const checkpoint = (ts: number): UiMessage => ({
     ts,
@@ -66,15 +69,35 @@ function Harness({ run }: { run: ExplorationRun }) {
 
 const checkpointTimestamps = () => screen.queryAllByTestId("checkpoint").map((element) => Number(element.dataset.ts))
 const SUMMARY = "Dline read 2 files, performed 1 search · 3 thoughts · 3 rounds"
+const CALLS = ["src/first.ts", '"needle" in src/', "src/third.ts"]
+
+/** Names of the tool-call rows, in the order they are drawn. */
+const drawnCalls = () =>
+    screen
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label") ?? button.textContent ?? "")
+        .filter((name) => CALLS.includes(name))
 
 describe("ExplorationRunRenderer", () => {
-    it("collapsed, shows the restore point taken before the run and a summary of its rounds", () => {
+    it("collapsed, keeps the first restore point and lists every round's calls in one group without thinking", () => {
         render(<Harness run={buildRun(transcript)} />)
 
         expect(screen.getByRole("button", { name: SUMMARY })).toHaveAttribute("aria-expanded", "false")
         expect(checkpointTimestamps()).toEqual([10])
         expect(screen.queryAllByRole("button", { name: "Thinking" })).toHaveLength(0)
-        expect(screen.queryByRole("button", { name: "src/first.ts" })).not.toBeInTheDocument()
+        expect(screen.queryAllByTestId("exploration-round")).toHaveLength(0)
+        for (const name of CALLS) expect(screen.getByRole("button", { name })).toBeInTheDocument()
+        expect(drawnCalls()).toEqual(CALLS)
+    })
+
+    it("collapsed, opens a file from its row without unfolding the run", () => {
+        openFile.mockClear()
+        render(<Harness run={buildRun(transcript)} />)
+
+        fireEvent.click(screen.getByRole("button", { name: "src/third.ts" }))
+
+        expect(openFile).toHaveBeenCalledWith(expect.objectContaining({ value: "src/third.ts" }))
+        expect(screen.getByRole("button", { name: SUMMARY })).toHaveAttribute("aria-expanded", "false")
     })
 
     it("expanded, lists every round with its own restore point, thinking and tool calls", () => {
@@ -90,6 +113,8 @@ describe("ExplorationRunRenderer", () => {
         expect(within(rounds[0]).getByRole("button", { name: "src/first.ts" })).toBeInTheDocument()
         expect(within(rounds[1]).getByRole("button", { name: '"needle" in src/' })).toBeInTheDocument()
         expect(within(rounds[2]).getByRole("button", { name: "src/third.ts" })).toBeInTheDocument()
+        // The merged list gives way to the rounds, so each call is drawn once.
+        expect(drawnCalls()).toEqual(CALLS)
     })
 
     it("shows the thinking of the round the user clicks, and only that one", () => {
@@ -114,5 +139,6 @@ describe("ExplorationRunRenderer", () => {
         expect(header).toHaveAttribute("aria-expanded", "false")
         expect(screen.queryAllByTestId("exploration-round")).toHaveLength(0)
         expect(checkpointTimestamps()).toEqual([10])
+        expect(drawnCalls()).toEqual(CALLS)
     })
 })
