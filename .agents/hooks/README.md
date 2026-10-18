@@ -1,8 +1,8 @@
-# Cline Hooks Documentation
+# Dline Hooks Documentation
 
 ## Overview
 
-Cline hooks allow you to execute custom scripts at specific points in the agentic workflow. Hooks can be placed in either:
+Dline hooks allow you to execute custom scripts at specific points in the agentic workflow. Hooks can be placed in either:
 - **Global hooks directory**: `~/Documents/dline/Hooks/` (applies to all workspaces)
 - **Workspace hooks directory**: `.agents/hooks/` (applies to the workspace the repo is part of)
 
@@ -10,7 +10,7 @@ Hooks run automatically when enabled.
 
 ## Enabling Hooks
 
-1. Open Cline settings in VSCode
+1. Open Dline settings in VSCode
 2. Navigate to the Feature Settings section
 3. Check the "Enable Hooks" checkbox
 4. Hooks must be executable files (on Unix/Linux/macOS use `chmod +x hookname`)
@@ -78,7 +78,7 @@ Dline uses a git-style approach for hooks that works consistently across support
 
 ### How It Works
 
-Like git hooks, Cline executes hook files through a shell that interprets the shebang line:
+Like git hooks, Dline executes hook files through a shell that interprets the shebang line:
 - On Unix/Linux/macOS: Native shell execution with shebang support
 
 This means:
@@ -297,7 +297,7 @@ echo '{"cancel": false}'
 
 ## Global vs Workspace Hooks
 
-Cline supports two levels of hooks:
+Dline supports two levels of hooks:
 
 ### Global Hooks
 - **Location**: `~/Documents/dline/Hooks/` (macOS/Linux)
@@ -336,7 +336,7 @@ When multiple hooks exist (global and/or workspace):
    chmod +x ~/Documents/dline/Hooks/PreToolUse
    ```
 
-3. Enable hooks in Cline settings
+3. Enable hooks in Dline settings
 
 ### Example: Global + Workspace Hooks
 
@@ -392,7 +392,7 @@ If you have multiple workspace roots, you can place hooks in each root's `.agent
 - Ensure the "Enable Hooks" setting is checked
 - Verify the hook file is executable (`chmod +x hookname`)
 - Check the hook file has no syntax errors
-- Look for errors in VSCode's Output panel (Cline channel)
+- Look for errors in VSCode's Output panel (Dline channel)
 
 ### Hook Timing Out
 - Reduce complexity of the hook script
