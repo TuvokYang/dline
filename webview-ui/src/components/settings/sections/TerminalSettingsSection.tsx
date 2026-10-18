@@ -193,7 +193,7 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
                             <strong>Having terminal issues?</strong> Check our{" "}
                             <a
                                 className="text-(--vscode-textLink-foreground) underline hover:no-underline"
-                                href="https://docs.dline.bot/troubleshooting/terminal-quick-fixes"
+                                href="https://docs.dline.cc/customization/terminal-environment/"
                                 rel="noopener noreferrer"
                                 target="_blank">
                                 Terminal Quick Fixes
@@ -201,7 +201,7 @@ export const TerminalSettingsSection: React.FC<TerminalSettingsSectionProps> = (
                             or the{" "}
                             <a
                                 className="text-(--vscode-textLink-foreground) underline hover:no-underline"
-                                href="https://docs.dline.bot/troubleshooting/terminal-integration-guide"
+                                href="https://docs.dline.cc/customization/terminal-environment/"
                                 rel="noopener noreferrer"
                                 target="_blank">
                                 Complete Troubleshooting Guide

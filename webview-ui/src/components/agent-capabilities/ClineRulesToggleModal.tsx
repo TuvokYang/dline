@@ -699,7 +699,7 @@ const ClineRulesToggleModal: React.FC = () => {
                                         conversation.{" "}
                                         <VSCodeLink
                                             className="text-xs"
-                                            href="https://docs.dline.bot/features/cline-rules"
+                                            href="https://docs.dline.cc/customization/rules/"
                                             style={{ display: "inline", fontSize: "inherit" }}>
                                             Docs
                                         </VSCodeLink>
@@ -711,7 +711,7 @@ const ClineRulesToggleModal: React.FC = () => {
                                         <span className="text-foreground font-bold">/workflow-name</span> in the chat.{" "}
                                         <VSCodeLink
                                             className="text-xs inline"
-                                            href="https://docs.dline.bot/features/slash-commands/workflows">
+                                            href="https://docs.dline.cc/customization/workflows/">
                                             Docs
                                         </VSCodeLink>
                                     </p>
@@ -906,7 +906,7 @@ const ClineRulesToggleModal: React.FC = () => {
                                                 : "Toggle to enable/disable (chmod +x/-x)."}{" "}
                                             <VSCodeLink
                                                 className="text-xs"
-                                                href="https://docs.dline.bot/features/hooks"
+                                                href="https://docs.dline.cc/customization/hooks/"
                                                 style={{ display: "inline", fontSize: "inherit" }}>
                                                 Docs
                                             </VSCodeLink>

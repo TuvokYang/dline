@@ -113,14 +113,14 @@ function ReportingConsent() {
                 information are ever sent. See our{" "}
                 <VSCodeLink
                     className="text-inherit"
-                    href="https://docs.dline.bot/more-info/telemetry"
+                    href="https://docs.dline.cc/troubleshooting/telemetry/"
                     style={{ fontSize: "inherit", textDecoration: "underline" }}>
                     telemetry overview
                 </VSCodeLink>{" "}
                 and{" "}
                 <VSCodeLink
                     className="text-inherit"
-                    href="https://cline.bot/privacy"
+                    href="https://docs.dline.cc/troubleshooting/telemetry/#privacy-filtering"
                     style={{ fontSize: "inherit", textDecoration: "underline" }}>
                     privacy policy
                 </VSCodeLink>{" "}
