@@ -42,6 +42,7 @@ import { ExplicitInstructionRegistry } from "../explicit-instructions/ExplicitIn
 import { ExplicitInstructionRequestScope } from "../explicit-instructions/ExplicitInstructionRequestScope"
 import type { CompactionTrigger } from "../stores/payload/TaskPayloadEnvelopes"
 import { compactionAttemptSettlement, recordUsageSafely } from "../telemetry/NestedUsageSettlement"
+import { servedModelOf } from "../telemetry/UsageServedModel"
 import type { UsageSettlementPort } from "../telemetry/UsageSettlement"
 import type { CompactionRequestScopeReader } from "./CompactionRequestScopes"
 import type { CompactionProgressPort } from "./MessageStateCompactionCards"
@@ -271,7 +272,10 @@ export class ProviderCompactionService implements ProductionCompactionService {
             // Every attempt is charged, the failed ones included, and priced by the handler that served it.
             recordCompactionAttempt: (_sessionInput, diagnostics) =>
                 recordUsageSafely(this.options.usageSettlement, () =>
-                    compactionAttemptSettlement(diagnostics, frame.api.getModel().info),
+                    compactionAttemptSettlement(diagnostics, {
+                        modelInfo: frame.api.getModel().info,
+                        servedBy: servedModelOf(frame.api),
+                    }),
                 ),
             getPassInputCeiling: () => policy().passInputCeilingTokens,
             getLastTurnInputCeiling: () => policy().lastTurnPassInputCeilingTokens,

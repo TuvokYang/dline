@@ -5,7 +5,7 @@ import { Logger } from "@shared/services/Logger"
 import { settledCostMicroUsd } from "../executors/provider/service/ProviderUsageTokens"
 import type { ApiRequestRoundUsage } from "../performance/api-request-round-types"
 import type { ProviderRequestRoundAdmission, ProviderRequestRoundPort } from "../performance/provider-request-round-port"
-import type { UsageOutcome, UsageSettlement, UsageSettlementPort } from "./UsageSettlement"
+import type { UsageOutcome, UsageServedModel, UsageSettlement, UsageSettlementPort } from "./UsageSettlement"
 
 const MICRO_UNITS_PER_DOLLAR = 1_000_000
 
@@ -18,7 +18,7 @@ const MICRO_UNITS_PER_DOLLAR = 1_000_000
  */
 export function compactionAttemptSettlement(
     diagnostics: CompactionAttemptDiagnostics,
-    modelInfo: ModelInfo,
+    served: { readonly modelInfo: ModelInfo; readonly servedBy?: UsageServedModel },
     newObservationId: () => string = randomUUID,
 ): UsageSettlement {
     const usage = diagnostics.usage
@@ -28,7 +28,7 @@ export function compactionAttemptSettlement(
         cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
         cacheReadTokens: usage?.cacheReadTokens ?? 0,
     }
-    const costMicroUsd = usage ? settledCostMicroUsd(tokens, modelInfo) : undefined
+    const costMicroUsd = usage ? settledCostMicroUsd(tokens, served.modelInfo) : undefined
     return {
         observationId: diagnostics.authorizationAttemptId || newObservationId(),
         purpose: "compaction",
@@ -36,6 +36,7 @@ export function compactionAttemptSettlement(
         ...tokens,
         ...(costMicroUsd === undefined ? {} : { costMicroUsd }),
         durationMs: Math.max(0, Math.round(diagnostics.providerTtfbMs + diagnostics.streamMs)),
+        ...(served.servedBy ? { servedBy: served.servedBy } : {}),
     }
 }
 
@@ -71,7 +72,9 @@ export function settleSubagentRoundUsage(
     if (!rounds || !port) return rounds
     return {
         admit: (input) =>
-            input.source === "subagent" ? new SubagentRoundUsage(rounds.admit(input), port, options) : rounds.admit(input),
+            input.source === "subagent"
+                ? new SubagentRoundUsage(rounds.admit(input), port, options, input.servedBy)
+                : rounds.admit(input),
     }
 }
 
@@ -85,6 +88,7 @@ class SubagentRoundUsage implements ProviderRequestRoundAdmission {
         private readonly inner: ProviderRequestRoundAdmission,
         private readonly port: UsageSettlementPort,
         options: SubagentUsageOptions,
+        private readonly servedBy: UsageServedModel | undefined,
     ) {
         this.clock = options.clock ?? Date.now
         this.newObservationId = options.newObservationId ?? randomUUID
@@ -113,6 +117,7 @@ class SubagentRoundUsage implements ProviderRequestRoundAdmission {
                 cacheWriteTokens: usage.cacheWriteTokens ?? 0,
                 ...(costMicroUsd === undefined ? {} : { costMicroUsd }),
                 durationMs: Math.max(0, this.clock() - this.attemptStartedAt),
+                ...(this.servedBy ? { servedBy: this.servedBy } : {}),
             }
         })
     }

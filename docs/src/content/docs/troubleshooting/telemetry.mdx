@@ -117,10 +117,11 @@ Each settled provider request is counted once, including cancelled and failed re
 | `dline.usage.tokens.input.<purpose>`, `.output.<purpose>`, `.cache_read.<purpose>`, `.cache_write.<purpose>` | Token totals reported by the provider |
 | `dline.usage.cost_micro_usd.<purpose>` | Cost in millionths of a US dollar, only for models priced in US dollars |
 | `dline.usage.request_duration_ms.<purpose>` | Request duration as count, sum, minimum, and maximum |
+| `dline.usage.model.<provider>.requests.<model>`, `.tokens_input.<model>`, `.tokens_output.<model>` | Requests and input/output tokens per provider and model, used for provider and model rankings |
 
-`<purpose>` is `task`, `subagent`, `compaction`, or `other`; `<outcome>` is `completed`, `cancelled`, or `failed`. Each batch carries only `client_version`, `platform`, `architecture`, `vscode_version`, and `is_dev`.
+`<purpose>` is `task`, `subagent`, `compaction`, or `other`; `<outcome>` is `completed`, `cancelled`, or `failed`. `<provider>` is the Profile's provider ID and `<model>` the model ID, lowercased with any other character than letters, digits, `_`, `.`, and `-` replaced by `_`. When one batch would exceed the service's 128 metric names, the least used models are summed under `_other`. Each batch carries only `client_version`, `platform`, `architecture`, `vscode_version`, and `is_dev`.
 
-Provider, model, API format, Task or workspace identity, `distinct_id`, account ID, prompts, responses, file contents, paths, commands, and error text are not sent. In the current build this delivery is a dedicated path that can carry only this fixed catalog; moving it behind the canonical admission boundary remains part of the target above.
+API format, Task or workspace identity, `distinct_id`, account ID, prompts, responses, file contents, paths, commands, and error text are not sent. In the current build this delivery is a dedicated path that can carry only this catalog; moving it behind the canonical admission boundary remains part of the target above.
 
 ### Device identity and transport
 

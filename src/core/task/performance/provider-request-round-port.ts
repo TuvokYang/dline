@@ -1,3 +1,4 @@
+import type { UsageServedModel } from "../telemetry/UsageSettlement"
 import type { ApiRequestRoundUsage } from "./api-request-round-types"
 import type { ApiResponseExecutionToolSummary } from "./api-response-execution-types"
 
@@ -6,6 +7,8 @@ export type ProviderRequestRoundSource = "ordinary" | "compaction" | "subagent"
 export interface ProviderRequestRoundAdmissionInput {
     readonly source: ProviderRequestRoundSource
     readonly apiIndex?: number
+    /** The provider and model serving the round, for observers that split usage by them. */
+    readonly servedBy?: UsageServedModel
 }
 
 export interface ProviderRequestRoundAdmission {

@@ -69,9 +69,9 @@ canonical registry 每次从 `StateManager` 读取 consent。runtime 兼容 life
 
 | 层 | Owner | 职责 |
 |---|---|---|
-| Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | 每个已结算的服务商请求产生一条类型化记录：purpose、outcome、token、micro-USD 成本、时长 |
+| Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | 每个已结算的服务商请求产生一条类型化记录：purpose、outcome、token、micro-USD 成本、时长，以及服务该请求的 provider 和模型 |
 | Policy | `remote/policy/usagePolicy.ts`、`RemotePolicyRepository` | 把使用情况设置（默认开启）、组织、宿主等级和服务端停止解析为机器级 policy epoch，并在决策变化时记录日志 |
-| Catalog | `remote/usage/usageCatalog.ts` | 只按 purpose 和 outcome 拆分的固定指标名 |
+| Catalog | `remote/usage/usageCatalog.ts` | 按 purpose 和 outcome 拆分的固定指标名，加上用于排名、按 provider 和模型拆分的一组指标；后者会折叠以满足服务端的指标名上限 |
 | Spool 与 outbox | `UsageObservationSpool`、`UsageOutboxRepository` | 按进程分片的 observation；发送租约、投递闸门、待发分钟和 exact-bytes inflight 在同一把锁下修改 |
 | 投递 | `UsageDeliveryWorker`、`RemoteUsageCoordinator` | 窗口、批次、重放、延后与停止处理；policy 离开允许状态时删除未发送数据 |
 | 凭据与传输 | `DeviceCredentialRepository`、`DeviceTokenBroker`、`DlineOtelHttpClient` | owner-only 设备密钥、single-flight 令牌交换、经 `@shared/net` 的固定 origin |

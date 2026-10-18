@@ -154,7 +154,9 @@ describe("remote usage pipeline", () => {
         const host = extensionHost("window-a", transport)
         await host.coordinator.start()
 
-        host.coordinator.record(settlement(canaries[0], { costMicroUsd: 450 }))
+        host.coordinator.record(
+            settlement(canaries[0], { costMicroUsd: 450, servedBy: { provider: "anthropic", model: "claude-sonnet-4.5" } }),
+        )
         host.coordinator.record(settlement(canaries[1], { purpose: "subagent", outcome: "failed" }))
         await waitFor(async () => (await spooledLines()) === 2)
         await deliverFirstMinute(host)
@@ -171,6 +173,9 @@ describe("remote usage pipeline", () => {
             "dline.usage.tokens.input.task": 120,
             "dline.usage.tokens.output.task": 30,
             "dline.usage.cost_micro_usd.task": 450,
+            "dline.usage.model.anthropic.requests.claude-sonnet-4.5": 1,
+            "dline.usage.model.anthropic.tokens_input.claude-sonnet-4.5": 120,
+            "dline.usage.model.anthropic.tokens_output.claude-sonnet-4.5": 30,
             "dline.usage.requests.subagent.failed": 1,
             "dline.usage.tokens.input.subagent": 120,
             "dline.usage.tokens.output.subagent": 30,

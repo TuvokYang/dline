@@ -92,6 +92,7 @@ import { JournalConversationRewind } from "../stores/JournalConversationRewind"
 import { TaskStateManager } from "../TaskStateManager"
 import { withTerminateTimeout } from "../TaskTerminateTimeout"
 import { settleSubagentRoundUsage } from "../telemetry/NestedUsageSettlement"
+import { servedModelOf } from "../telemetry/UsageServedModel"
 import { settleUsageAround } from "../telemetry/UsageSettlementRequestReporter"
 import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { ToolValidator } from "../tools/ToolValidator"
@@ -941,6 +942,7 @@ export class TaskSessionCompositionService {
                     settlement: options.prompt.ports.usageSettlement,
                     purpose: "task",
                     modelInfo: () => api.current().getModel().info,
+                    servedBy: () => servedModelOf(api.current()),
                 },
             ),
             services: {

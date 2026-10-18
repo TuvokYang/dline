@@ -18,7 +18,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - The DeepSeek Flash model ID is renamed from `deepseek-v4-flash` to `deepseek-flash` (the default model follows) and accepts image input; remotely discovered DeepSeek models default to native tool calling and reasoning effort, and a capability the model listing states explicitly takes precedence
 - Idle tasks no longer pay periodic CPU: storage skips the locked flush when nothing is staged, and task history writes no longer reconfigure components
 - Consecutive read-only rounds (thinking plus reads, folder listings, searches, and definition or reference lookups, with no file change in between) fold into one row: collapsed, it reads like an ordinary tool group, with the checkpoint taken before the exploration, a summary of reads, searches, thoughts, and rounds, and every round's file and operation rows (click to open the file or show search results), folding away only the thinking and the checkpoints in between; clicking the summary lists each round with its checkpoint, thinking you can click to read, and tool calls; a file change, command, approval, error, or user input ends the row, and every checkpoint stays restorable
-- Added telemetry to Dline's service at `otel.dline.cc`: usage telemetry is on by default and can be turned off in Settings → About
+- Added telemetry to Dline's service at `otel.dline.cc`: usage telemetry is on by default and can be turned off in Settings → About; it counts provider and model usage for rankings
 
 
 ### Fixes

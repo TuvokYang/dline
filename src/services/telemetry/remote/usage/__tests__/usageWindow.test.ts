@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { UsageSettlement } from "@/core/task/telemetry/UsageSettlement"
-import { validateUsageAggregate } from "../../contracts/wire"
-import { projectUsageSettlement } from "../usageCatalog"
+import { USAGE_MAX_METRIC_NAMES, validateUsageAggregate } from "../../contracts/wire"
+import { fitMetricNameLimit, projectUsageSettlement } from "../usageCatalog"
 import { buildUsageAggregate, mergeObservations, type UsageWindow } from "../usageWindow"
 
 const MINUTE = 60_000
@@ -46,6 +46,56 @@ describe("usage catalog", () => {
         const observation = projectUsageSettlement(settlement({ purpose: "planning" as UsageSettlement["purpose"] }))
 
         expect(Object.keys(observation.counters)).toContain("dline.usage.requests.other.completed")
+    })
+
+    it("also counts the request under the provider and model that served it", () => {
+        const observation = projectUsageSettlement(
+            settlement({ outcome: "failed", servedBy: { provider: "anthropic", model: "claude-sonnet-4.5" } }),
+        )
+
+        expect(observation.counters).toMatchObject({
+            "dline.usage.requests.task.failed": 1,
+            "dline.usage.model.anthropic.requests.claude-sonnet-4.5": 1,
+            "dline.usage.model.anthropic.tokens_input.claude-sonnet-4.5": 100,
+            "dline.usage.model.anthropic.tokens_output.claude-sonnet-4.5": 10,
+        })
+    })
+
+    it("turns any model ID into names the server accepts, keeping one model key across its metrics", () => {
+        const model = `Qwen/Qwen3-Coder:480B@2025 ${"x".repeat(200)}`
+        const observation = projectUsageSettlement(settlement({ servedBy: { provider: "OpenAI Compatible", model } }))
+        const modelNames = Object.keys(observation.counters).filter((name) => name.startsWith("dline.usage.model."))
+
+        expect(modelNames).toHaveLength(3)
+        const aggregate = buildUsageAggregate([window(0, observation)], {})
+        expect(validateUsageAggregate(aggregate as NonNullable<typeof aggregate>, BASE + MINUTE)).toEqual([])
+        const modelKeys = new Set(modelNames.map((name) => name.split(".").slice(5).join(".")))
+        expect(modelKeys.size).toBe(1)
+        expect([...modelKeys][0]).toMatch(/^qwen_qwen3-coder_480b_2025_x+$/)
+        expect(modelNames.every((name) => name.startsWith("dline.usage.model.openai_compatible."))).toBe(true)
+    })
+
+    it("folds the least used models into one overflow model once a batch would exceed the name limit", () => {
+        let merged = projectUsageSettlement(settlement({ servedBy: { provider: "p", model: "busy" } }))
+        merged = mergeObservations(merged, merged)
+        for (let index = 0; index < 60; index++) {
+            merged = mergeObservations(
+                merged,
+                projectUsageSettlement(settlement({ servedBy: { provider: "p", model: `m${index}` } })),
+            )
+        }
+
+        const fitted = fitMetricNameLimit(merged)
+
+        const names = [...Object.keys(fitted.counters), ...Object.keys(fitted.measurements)]
+        expect(names.length).toBeLessThanOrEqual(USAGE_MAX_METRIC_NAMES)
+        expect(fitted.counters["dline.usage.model.p.requests.busy"]).toBe(2)
+        const modelRequests = Object.entries(fitted.counters)
+            .filter(([name]) => name.startsWith("dline.usage.model.") && name.includes(".requests."))
+            .reduce((total, [, value]) => total + value, 0)
+        expect(modelRequests).toBe(62)
+        expect(fitted.counters["dline.usage.model._other.requests._other"]).toBeGreaterThan(0)
+        expect(fitted.counters["dline.usage.requests.task.completed"]).toBe(62)
     })
 })
 

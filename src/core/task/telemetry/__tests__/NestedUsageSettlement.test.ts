@@ -66,7 +66,7 @@ describe("compactionAttemptSettlement", () => {
             diagnostics({
                 usage: { inputTokens: 1_000, outputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, totalTokens: 1_100 },
             }),
-            DOLLAR_PRICED,
+            { modelInfo: DOLLAR_PRICED, servedBy: { provider: "anthropic", model: "claude-haiku-4.5" } },
         )
 
         expect(settlement).toEqual({
@@ -79,13 +79,14 @@ describe("compactionAttemptSettlement", () => {
             cacheReadTokens: 0,
             costMicroUsd: 4_500,
             durationMs: 2_000,
+            servedBy: { provider: "anthropic", model: "claude-haiku-4.5" },
         })
     })
 
     it("counts a failed attempt that reported nothing without inventing a cost", () => {
         const settlement = compactionAttemptSettlement(
             diagnostics({ outcome: "failed", authorizationAttemptId: "" }),
-            DOLLAR_PRICED,
+            { modelInfo: DOLLAR_PRICED },
             () => "fresh",
         )
 
@@ -108,7 +109,8 @@ describe("settleSubagentRoundUsage", () => {
                 newObservationId: () => `round-${++id}`,
             },
         )
-        const admission = rounds?.admit({ source: "subagent" })
+        const servedBy = { provider: "openrouter", model: "deepseek/deepseek-chat" }
+        const admission = rounds?.admit({ source: "subagent", servedBy })
         if (!admission) throw new Error("expected an admission")
 
         const completed = admission.bindAttempt(chunks(), 0)
@@ -130,6 +132,7 @@ describe("settleSubagentRoundUsage", () => {
                 cacheWriteTokens: 0,
                 costMicroUsd: 12_300,
                 durationMs: 750,
+                servedBy,
             },
             {
                 observationId: "round-2",
@@ -140,6 +143,7 @@ describe("settleSubagentRoundUsage", () => {
                 cacheReadTokens: 50,
                 cacheWriteTokens: 0,
                 durationMs: 0,
+                servedBy,
             },
         ])
         expect(attached.map(({ source }) => source)).toEqual(["subagent", "subagent"])

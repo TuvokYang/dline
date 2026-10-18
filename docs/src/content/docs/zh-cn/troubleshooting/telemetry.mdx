@@ -117,10 +117,11 @@ development 模式可以保留额外本地关联字段，但不等于远端授�
 | `dline.usage.tokens.input.<purpose>`、`.output.<purpose>`、`.cache_read.<purpose>`、`.cache_write.<purpose>` | 服务商报告的 token 总量 |
 | `dline.usage.cost_micro_usd.<purpose>` | 以百万分之一美元计的成本，仅限以美元定价的模型 |
 | `dline.usage.request_duration_ms.<purpose>` | 请求时长的次数、总和、最小值和最大值 |
+| `dline.usage.model.<provider>.requests.<model>`、`.tokens_input.<model>`、`.tokens_output.<model>` | 按 provider 和模型统计的请求数与输入/输出 token，用于 provider 和模型排名 |
 
-`<purpose>` 为 `task`、`subagent`、`compaction` 或 `other`；`<outcome>` 为 `completed`、`cancelled` 或 `failed`。每批只附带 `client_version`、`platform`、`architecture`、`vscode_version` 和 `is_dev`。
+`<purpose>` 为 `task`、`subagent`、`compaction` 或 `other`；`<outcome>` 为 `completed`、`cancelled` 或 `failed`。`<provider>` 是 Profile 的 provider ID，`<model>` 是模型 ID，均转为小写，字母、数字、`_`、`.`、`-` 以外的字符替换为 `_`。一批超过服务端 128 个指标名的上限时，使用最少的模型合并计入 `_other`。每批只附带 `client_version`、`platform`、`architecture`、`vscode_version` 和 `is_dev`。
 
-不会发送服务商、模型、API 格式、Task 或 workspace 身份、`distinct_id`、account ID、提示词、响应、文件内容、路径、命令和错误文本。当前构建中该投递是只能承载这一固定目录的专用路径；把它纳入上文的 canonical admission boundary 仍属于目标的一部分。
+不会发送 API 格式、Task 或 workspace 身份、`distinct_id`、account ID、提示词、响应、文件内容、路径、命令和错误文本。当前构建中该投递是只能承载这一目录的专用路径；把它纳入上文的 canonical admission boundary 仍属于目标的一部分。
 
 ### 设备身份与传输
 

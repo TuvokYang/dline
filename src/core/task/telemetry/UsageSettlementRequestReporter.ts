@@ -7,13 +7,15 @@ import type {
     ProviderRequestSettlement,
 } from "../executors/provider/service/ProviderRequestReport"
 import { readSettledUsageTokens, settledCostMicroUsd } from "../executors/provider/service/ProviderUsageTokens"
-import type { UsagePurpose, UsageSettlementPort } from "./UsageSettlement"
+import type { UsagePurpose, UsageServedModel, UsageSettlementPort } from "./UsageSettlement"
 
 export interface UsageSettlementRequestReporterOptions {
     readonly settlement: UsageSettlementPort
     readonly purpose: UsagePurpose
     /** Pricing of the handler about to serve the request, read when the request opens. */
     readonly modelInfo: () => ModelInfo
+    /** The provider and model of the handler about to serve the request, read when the request opens. */
+    readonly servedBy?: () => UsageServedModel | undefined
     readonly clock?: () => number
     readonly newObservationId?: () => string
 }
@@ -49,12 +51,12 @@ export class UsageSettlementRequestReporter implements ProviderRequestReportPort
     async begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord> {
         const observationId = this.newObservationId()
         const startedAt = this.clock()
-        const modelInfo = this.options.modelInfo()
+        const served = { modelInfo: this.options.modelInfo(), servedBy: this.options.servedBy?.() }
         let settled = false
         const settleUsage = (settlement: ProviderRequestSettlement): void => {
             if (settled) return
             settled = true
-            this.recordUsage(observationId, startedAt, modelInfo, settlement)
+            this.recordUsage(observationId, startedAt, served, settlement)
         }
         let record: ProviderRequestRecord
         try {
@@ -76,7 +78,7 @@ export class UsageSettlementRequestReporter implements ProviderRequestReportPort
     private recordUsage(
         observationId: string,
         startedAt: number,
-        modelInfo: ModelInfo,
+        { modelInfo, servedBy }: { readonly modelInfo: ModelInfo; readonly servedBy?: UsageServedModel },
         settlement: ProviderRequestSettlement,
     ): void {
         try {
@@ -92,6 +94,7 @@ export class UsageSettlementRequestReporter implements ProviderRequestReportPort
                 cacheWriteTokens: tokens.cacheWriteTokens,
                 ...(costMicroUsd === undefined ? {} : { costMicroUsd }),
                 durationMs: Math.max(0, this.clock() - startedAt),
+                ...(servedBy ? { servedBy } : {}),
             })
         } catch (error) {
             Logger.debug(`[usage] request usage could not be settled: ${String(error)}`)

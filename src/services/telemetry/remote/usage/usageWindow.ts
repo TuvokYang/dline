@@ -6,7 +6,7 @@ import {
     type UsageAttributeKey,
     type UsageMeasurementWire,
 } from "../contracts/wire"
-import type { UsageObservation } from "./usageCatalog"
+import { fitMetricNameLimit, type UsageObservation } from "./usageCatalog"
 
 /** One sealed UTC minute of usage, merged across every process shard. */
 export interface UsageWindow extends UsageObservation {
@@ -50,7 +50,8 @@ export function mergeObservations(left: UsageObservation, right: UsageObservatio
  *
  * At most ten distinct minutes travel together; older ones are dropped and
  * counted, and the start moves forward with them, because the server rejects a
- * span longer than the windows it claims to cover.
+ * span longer than the windows it claims to cover. The per-model names are
+ * folded to fit the server's name limit.
  */
 export function buildUsageAggregate(
     windows: readonly UsageWindow[],
@@ -69,6 +70,7 @@ export function buildUsageAggregate(
     const dropped = previouslyDropped + (minutes.length - kept.length)
     let merged: UsageObservation = { counters: {}, measurements: {} }
     for (const minute of kept) merged = mergeObservations(merged, byMinute.get(minute) as UsageObservation)
+    merged = fitMetricNameLimit(merged)
     return {
         schema_version: USAGE_SCHEMA_VERSION,
         window_started_at: kept[0],

@@ -17,6 +17,8 @@ export const USAGE_WINDOW_MS = 60_000
 export const USAGE_MAX_CLOCK_SKEW_MS = 5 * 60_000
 
 const METRIC_NAME_PATTERN = /^dline\.[a-z0-9][a-z0-9_.-]{0,126}$/
+/** The longest name `METRIC_NAME_PATTERN` admits: the `dline.` prefix plus 127 characters. */
+export const USAGE_MAX_METRIC_NAME_LENGTH = "dline.".length + 127
 const ATTRIBUTE_VALUE_PATTERN = /^[A-Za-z0-9_.+ -]{1,64}$/
 const BASE64URL_43_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const CLIENT_FIELD_MAX_LENGTH = 64

@@ -5,7 +5,7 @@ import type {
     ProviderRequestReportPort,
     ProviderRequestSettlement,
 } from "../../executors/provider/service/ProviderRequestReport"
-import type { UsageSettlement } from "../UsageSettlement"
+import type { UsageServedModel, UsageSettlement } from "../UsageSettlement"
 import { UsageSettlementRequestReporter } from "../UsageSettlementRequestReporter"
 
 const DOLLAR_PRICED = { pricing: { inputPrice: 3, outputPrice: 15 } } as unknown as ModelInfo
@@ -14,6 +14,7 @@ const YUAN_PRICED = { pricing: { inputPrice: 3, outputPrice: 15, currency: "CNY"
 function harness(options: { readonly failBegin?: boolean; readonly failRecord?: boolean } = {}) {
     let now = 1_000
     let model = DOLLAR_PRICED
+    let served: UsageServedModel | undefined
     let nextId = 0
     const recorded: UsageSettlement[] = []
     const innerSettled: ProviderRequestSettlement[] = []
@@ -32,6 +33,7 @@ function harness(options: { readonly failBegin?: boolean; readonly failRecord?: 
         },
         purpose: "task",
         modelInfo: () => model,
+        servedBy: () => served,
         clock: () => now,
         newObservationId: () => `observation-${++nextId}`,
     })
@@ -44,6 +46,9 @@ function harness(options: { readonly failBegin?: boolean; readonly failRecord?: 
         },
         switchModel: (next: ModelInfo) => {
             model = next
+        },
+        serve: (next: UsageServedModel | undefined) => {
+            served = next
         },
     }
 }
@@ -75,6 +80,17 @@ describe("UsageSettlementRequestReporter", () => {
             },
         ])
         expect(innerSettled).toEqual([settlement])
+    })
+
+    it("attributes the request to the provider and model serving it when it opened", async () => {
+        const { reporter, recorded, serve } = harness()
+        serve({ provider: "anthropic", model: "claude-sonnet-4.5" })
+        const record = await reporter.begin({ turnId: "turn-1" })
+        serve({ provider: "openai", model: "gpt-5" })
+
+        await record.settle({ outcome: "completed", usage: { inputTokens: 10, outputTokens: 1 } })
+
+        expect(recorded.map((settlement) => settlement.servedBy)).toEqual([{ provider: "anthropic", model: "claude-sonnet-4.5" }])
     })
 
     it("charges cancelled and failed requests with the usage they reported", async () => {

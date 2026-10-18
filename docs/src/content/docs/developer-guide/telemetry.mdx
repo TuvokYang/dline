@@ -69,9 +69,9 @@ Starting error diagnostics currently ensures an owner-only legacy pairing creden
 
 | Layer | Owner | Responsibility |
 |---|---|---|
-| Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | One typed record per settled provider request: purpose, outcome, tokens, micro-USD cost, duration |
+| Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | One typed record per settled provider request: purpose, outcome, tokens, micro-USD cost, duration, and the provider and model that served it |
 | Policy | `remote/policy/usagePolicy.ts`, `RemotePolicyRepository` | Resolves the usage setting (on by default), organization, host level, and server stop into a machine-wide policy epoch, and logs each change of decision |
-| Catalog | `remote/usage/usageCatalog.ts` | Fixed metric names split only by purpose and outcome |
+| Catalog | `remote/usage/usageCatalog.ts` | Fixed metric names split by purpose and outcome, plus a per-provider-and-model family for rankings that is folded to fit the service's name limit |
 | Spool and outbox | `UsageObservationSpool`, `UsageOutboxRepository` | Per-process observation shards; sender lease, delivery gate, pending minutes, and exact-bytes inflight changed under one lock |
 | Delivery | `UsageDeliveryWorker`, `RemoteUsageCoordinator` | Windowing, batching, replay, defer, and stop handling; deletes unsent data when the policy leaves the allowed state |
 | Credentials and transport | `DeviceCredentialRepository`, `DeviceTokenBroker`, `DlineOtelHttpClient` | Owner-only device secret, single-flight token exchange, fixed origin over `@shared/net` |

@@ -29,6 +29,7 @@ import { isRetryableProviderError } from "@core/task/auto-retry"
 import type { ProviderRequestRoundAdmission } from "@core/task/performance/provider-request-round-port"
 import { resolveRequestWebSearchRoutingPlan } from "@core/task/RequestApiScope"
 import { StreamResponseHandler } from "@core/task/StreamResponseHandler"
+import { servedModelOf } from "@core/task/telemetry/UsageServedModel"
 import { DEFAULT_API_PROVIDER } from "@shared/api"
 import {
     ClineAssistantContent,
@@ -1167,7 +1168,10 @@ export class SubagentRunner {
                 for (const call of deferral.carried) countedHostedServerToolIds.add(call.dlineTid)
                 const carriedTraceIds = new Map(deferral.carried.map((call) => [call.functionId, call.dlineTid]))
 
-                const providerRequestRound = this.baseConfig.providerRequestRounds?.admit({ source: "subagent" })
+                const providerRequestRound = this.baseConfig.providerRequestRounds?.admit({
+                    source: "subagent",
+                    servedBy: servedModelOf(api),
+                })
                 const providerExecution = new ProviderExecutionCompletion(providerRequestRound)
                 activeProviderExecution = providerExecution
                 const roundUsageAccumulator = new ApiUsageAccumulator()
