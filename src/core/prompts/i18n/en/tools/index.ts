@@ -134,6 +134,8 @@ export const toolPromptModules = [
         timeoutInstruction: createRuntimeContract("SUBAGENT_TIMEOUT_SECONDS"),
         description: createRuntimeContract("MAX_SUBAGENTS_PER_BATCH"),
         subagentsInstruction: createRuntimeContract("MAX_SUBAGENTS_PER_BATCH"),
+        contextBudgetFinalResult: createRuntimeContract("FINAL_RESULT_TOKENS"),
+        contextBudgetMainTaskShare: createRuntimeContract("ROUND_BUDGET_TOKENS", "ROUND_USED_TOKENS", "WORKING_CONSUMERS"),
     }),
     defineLegacyModule("toolHandlers", "tools", toolHandlers, {
         toolError: createRuntimeContract("ERROR"),

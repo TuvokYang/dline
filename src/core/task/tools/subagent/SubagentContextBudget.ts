@@ -1,4 +1,5 @@
 import type { ContextBudgetLease } from "@core/context/context-management/context-budget-ledger"
+import { renderPrompt } from "@core/prompts/i18n"
 
 /** The subagent output estimator's bytes per token, so a byte share converts the way results are measured. */
 const SUBAGENT_ESTIMATE_BYTES_PER_TOKEN = 4
@@ -21,6 +22,42 @@ export function resolveFinalResultTokens(configuredTokens: number, budget: Conte
     return Math.min(configuredTokens, shareTokens)
 }
 
+/** How the final result reaches the main task. */
+export type FinalResultDelivery = "inline" | "held_until_compaction"
+
+/** The main task's tool-result budget for its current turn, which the final result draws its share from. */
+export interface MainTaskRoundBudget {
+    readonly budgetTokens: number
+    readonly usedTokens: number
+    readonly workingConsumers: number
+}
+
+/** What a subagent is told about the room its final result may take. */
+export interface SubagentContextBudgetFacts {
+    readonly finalResultTokens: number
+    readonly delivery: FinalResultDelivery
+    /** Absent without a main-task budget, and once the result is held whole, because no share applies then. */
+    readonly mainTaskRound?: MainTaskRoundBudget
+}
+
+export function describeContextBudget(
+    budget: ContextBudgetLease | undefined,
+    configuredTokens: number,
+): SubagentContextBudgetFacts {
+    if (!budget) return { finalResultTokens: configuredTokens, delivery: "inline" }
+    const snapshot = budget.snapshot()
+    if (snapshot.mustYield) return { finalResultTokens: configuredTokens, delivery: "held_until_compaction" }
+    return {
+        finalResultTokens: resolveFinalResultTokens(configuredTokens, budget),
+        delivery: "inline",
+        mainTaskRound: {
+            budgetTokens: snapshot.roundBudgetTokens,
+            usedTokens: snapshot.roundStagedTokens,
+            workingConsumers: snapshot.activeConsumers,
+        },
+    }
+}
+
 /**
  * The section every request of a subagent carries.
  *
@@ -28,17 +65,31 @@ export function resolveFinalResultTokens(configuredTokens: number, budget: Conte
  * moves while the subagent works: other subagents finish, and their results
  * take room from the main task. It is the only place the final-result figure
  * appears, so it is rendered even without a main-task budget.
+ *
+ * The round figures belong to the main task, not to the subagent's own
+ * requests, so the text ties them to the final output only.
  */
 export function buildContextBudgetSection(budget: ContextBudgetLease | undefined, configuredTokens: number): string {
-    const finalResultLine = `Your final result may use about ${resolveFinalResultTokens(configuredTokens, budget).toLocaleString()} tokens.`
-    if (!budget) return ["# Context Budget", finalResultLine].join("\n")
-    const snapshot = budget.snapshot()
-    return [
-        "# Context Budget",
-        finalResultLine,
-        `This round's tool results may take ${snapshot.roundBudgetTokens.toLocaleString()} tokens together; ${snapshot.roundStagedTokens.toLocaleString()} are already used, and the rest is shared by ${snapshot.activeConsumers} working subagent(s) and tool call(s).`,
-        snapshot.mustYield
-            ? "The main task is out of room: your final result will be held whole and delivered after the main task compacts its context."
-            : "This budget shrinks as other subagents return; keep the final result within it.",
-    ].join("\n")
+    return renderContextBudgetSection(describeContextBudget(budget, configuredTokens))
+}
+
+export function renderContextBudgetSection(facts: SubagentContextBudgetFacts): string {
+    const lines = [
+        renderPrompt("subagent", "contextBudgetFinalResult", {
+            FINAL_RESULT_TOKENS: facts.finalResultTokens.toLocaleString(),
+        }),
+    ]
+    if (facts.mainTaskRound) {
+        lines.push(
+            renderPrompt("subagent", "contextBudgetMainTaskShare", {
+                ROUND_BUDGET_TOKENS: facts.mainTaskRound.budgetTokens.toLocaleString(),
+                ROUND_USED_TOKENS: facts.mainTaskRound.usedTokens.toLocaleString(),
+                WORKING_CONSUMERS: String(facts.mainTaskRound.workingConsumers),
+            }),
+        )
+    }
+    if (facts.delivery === "held_until_compaction") {
+        lines.push(renderPrompt("subagent", "contextBudgetHeldWhole"))
+    }
+    return lines.join("\n")
 }

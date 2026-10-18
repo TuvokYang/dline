@@ -1,6 +1,6 @@
 import { ContextBudgetLedger } from "@core/context/context-management/context-budget-ledger"
 import { describe, expect, it } from "vitest"
-import { buildContextBudgetSection, resolveFinalResultTokens } from "../SubagentContextBudget"
+import { describeContextBudget, renderContextBudgetSection, resolveFinalResultTokens } from "../SubagentContextBudget"
 
 function ledgerWith(occupied: number): ContextBudgetLedger {
     return new ContextBudgetLedger({
@@ -72,35 +72,61 @@ describe("resolveFinalResultTokens", () => {
     })
 })
 
-describe("buildContextBudgetSection", () => {
-    it("still states the configured final-result budget without a main-task budget", () => {
-        // This section is the only source of the figure, so it must not disappear.
-        expect(buildContextBudgetSection(undefined, 8_000)).toBe(
-            `# Context Budget\nYour final result may use about ${(8_000).toLocaleString()} tokens.`,
-        )
+describe("describeContextBudget", () => {
+    it("states only the configured final-result budget without a main-task budget", () => {
+        expect(describeContextBudget(undefined, 8_000)).toEqual({ finalResultTokens: 8_000, delivery: "inline" })
     })
 
-    it("reports the current share, the round's budget and the working consumers", () => {
+    it("ties the main task's round figures to the final result's share", () => {
         const parent = ledgerWith(20_000).begin()
         const child = parent.child()
         parent.child()
 
-        const section = buildContextBudgetSection(child, 50_000) ?? ""
-
-        expect(section.startsWith("# Context Budget\n")).toBe(true)
-        expect(section.includes(`about ${(32_000).toLocaleString()} tokens`)).toBe(true)
-        expect(section.includes(`may take ${(64_000).toLocaleString()} tokens together; 0 are already used`)).toBe(true)
-        expect(section.includes("shared by 2 working")).toBe(true)
-        expect(section.includes("out of room")).toBe(false)
+        expect(describeContextBudget(child, 50_000)).toEqual({
+            finalResultTokens: 32_000,
+            delivery: "inline",
+            mainTaskRound: { budgetTokens: 64_000, usedTokens: 0, workingConsumers: 2 },
+        })
     })
 
-    it("tells the subagent its result is held whole once the main task must yield", () => {
+    it("drops the share once the main task must yield, because the result is held whole", () => {
         const child = ledgerWith(98_000).begin().child()
 
-        const section = buildContextBudgetSection(child, 8_000) ?? ""
+        expect(describeContextBudget(child, 8_000)).toEqual({ finalResultTokens: 8_000, delivery: "held_until_compaction" })
+    })
+})
 
-        expect(section.includes("out of room")).toBe(true)
-        expect(section.includes(`about ${(8_000).toLocaleString()} tokens`)).toBe(true)
-        expect(section.includes("held whole and delivered after the main task compacts")).toBe(true)
+describe("renderContextBudgetSection", () => {
+    const unresolved = /@[A-Z_]+@|\[MISSING:/
+
+    it("fills every runtime figure for each delivery shape", () => {
+        const shapes = [
+            { finalResultTokens: 8_000, delivery: "inline" },
+            { finalResultTokens: 8_000, delivery: "held_until_compaction" },
+            {
+                finalResultTokens: 32_000,
+                delivery: "inline",
+                mainTaskRound: { budgetTokens: 64_000, usedTokens: 1_500, workingConsumers: 2 },
+            },
+        ] as const
+
+        for (const facts of shapes) {
+            expect(renderContextBudgetSection(facts)).not.toMatch(unresolved)
+        }
+    })
+
+    it("renders one more line for the share and one for held delivery", () => {
+        const lineCount = (text: string) => text.split("\n").length
+        const inline = renderContextBudgetSection({ finalResultTokens: 8_000, delivery: "inline" })
+        const shared = renderContextBudgetSection({
+            finalResultTokens: 8_000,
+            delivery: "inline",
+            mainTaskRound: { budgetTokens: 64_000, usedTokens: 0, workingConsumers: 2 },
+        })
+        const held = renderContextBudgetSection({ finalResultTokens: 8_000, delivery: "held_until_compaction" })
+
+        expect(lineCount(shared)).toBe(lineCount(inline) + 1)
+        expect(lineCount(held)).toBe(lineCount(inline) + 1)
+        expect(held).not.toBe(shared)
     })
 })

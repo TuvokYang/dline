@@ -25,5 +25,14 @@ const prompts: Record<string, string> = {
     backgroundInstruction: "Optional boolean. Set true to run in background. Defaults to false.",
     timeoutInstruction:
         "Optional positive integer timeout in seconds, applied to every item that does not set its own. Defaults to @SUBAGENT_TIMEOUT_SECONDS@.",
+    // Injected into every subagent request. The figure limits only the final
+    // attempt_completion result, so the wording must not read as a limit on the
+    // subagent's own tool calls, which its own context window bounds.
+    contextBudgetFinalResult:
+        "# Context Budget\nYour final output, the attempt_completion result returned to the main task, may use about @FINAL_RESULT_TOKENS@ tokens. This limit applies only to that final output; it does not limit your own tool calls or their results while you work, which only your own context window bounds.",
+    contextBudgetMainTaskShare:
+        "The limit is your share of what the main task can take in as tool results on its current turn: @ROUND_BUDGET_TOKENS@ tokens in total, @ROUND_USED_TOKENS@ already taken, and the rest split among @WORKING_CONSUMERS@ subagent(s) and tool call(s) still working. Your share shrinks as other subagents return, so read this section again right before you write the final output.",
+    contextBudgetHeldWhole:
+        "The main task is out of room: your final output will be held whole and delivered after the main task compacts its context.",
 }
 export default prompts

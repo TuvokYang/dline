@@ -47,6 +47,7 @@ import { ListFilesToolHandler } from "../../handlers/ListFilesToolHandler"
 import { ReadFileToolHandler } from "../../handlers/ReadFileToolHandler"
 import { DefaultToolHandlerState } from "../../state/ToolHandlerState"
 import { SubagentBuilder } from "../SubagentBuilder"
+import { renderContextBudgetSection } from "../SubagentContextBudget"
 import { SubagentRunner } from "../SubagentRunner"
 
 function initializeHostProvider() {
@@ -3685,7 +3686,7 @@ describe("SubagentRunner", () => {
             // Above MIN_SUBAGENT_OUTPUT_TOKENS so the configured value, not the
             // floor, is the effective budget under test. The figure appears once,
             // in the per-request Context Budget tail, never as a second static limit.
-            assert.match(initialText, /# Context Budget\nYour final result may use about 1,024 tokens\./)
+            assert.ok(initialText.includes(renderContextBudgetSection({ finalResultTokens: 1_024, delivery: "inline" })))
             assert.equal(initialText.match(/1,024 tokens/g)?.length, 1)
             yield {
                 type: "tool_calls",
