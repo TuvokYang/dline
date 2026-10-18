@@ -2,8 +2,10 @@ import { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { StringRequest } from "@shared/proto/dline/common"
 import { memo, useCallback, useMemo, useState } from "react"
 import { cleanPathPrefix } from "@/components/common/CodeAccordian"
+import { useWorkspaceDisplayPath } from "@/hooks/useWorkspaceDisplayPath"
 import { cn } from "@/lib/utils"
 import { FileServiceClient } from "@/services/grpc-client"
+import type { WorkspacePathFormatter } from "@/utils/workspaceDisplayPath"
 import { getIconByToolName, getToolsNotInCurrentActivities, isLowStakesTool } from "../../utils/messageUtils"
 import { ToolItemRow } from "./ToolItemRow"
 import type { ToolItemText, ToolRowParts } from "./tool-row-layout"
@@ -112,7 +114,8 @@ export function formatReferencesDisplay(tool: UiSayTool): ToolItemText & { row: 
  * Shares the completed-state formatters so the same operation reads the same
  * way before and after it finishes.
  */
-export function getActivityText(tool: UiSayTool): ToolItemText | null {
+export function getActivityText(reported: UiSayTool, formatPath: WorkspacePathFormatter = keepReportedPath): ToolItemText | null {
+    const tool = withDisplayPath(reported, formatPath)
     const cleanedPath = cleanPathPrefix(tool.path || "")
 
     switch (tool.tool) {
@@ -240,6 +243,8 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup, sho
     // Build completed tool items
     const completedTools = useMemo(() => buildToolsWithReasoning(filteredMessages), [filteredMessages])
 
+    const formatPath = useWorkspaceDisplayPath()
+
     // Build active tool items
     const activeTools = useMemo(() => {
         return currentActivities
@@ -250,11 +255,11 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup, sho
                     parsedTool,
                     reasoning: undefined,
                     isActive: true,
-                    activityText: getActivityText(parsedTool),
+                    activityText: getActivityText(parsedTool, formatPath),
                 }
             })
             .filter((item) => item.activityText)
-    }, [currentActivities])
+    }, [currentActivities, formatPath])
 
     // Merge: completed items first, then active items (active only added to last group).
     // An active call replaces its own completed entry. Matching is by row identity,
@@ -289,7 +294,7 @@ export const ToolGroupRenderer = memo(({ messages, allMessages, isLastGroup, sho
             {/* Content - unified list of completed + active tools */}
             <div className="min-w-0">
                 {allTools.map(({ tool, parsedTool, isActive, activityText }) => {
-                    const info = getToolDisplayInfo(parsedTool)
+                    const info = getToolDisplayInfo(parsedTool, formatPath)
                     if (!info) {
                         return null
                     }
@@ -431,6 +436,13 @@ export interface ToolDisplayInfo extends ToolItemText {
     label: string
 }
 
+const keepReportedPath: WorkspacePathFormatter = (reportedPath) => reportedPath
+
+/** The tool as it is shown: its path formatted for display, every other field as reported. */
+function withDisplayPath(tool: UiSayTool, formatPath: WorkspacePathFormatter): UiSayTool {
+    return tool.path ? { ...tool, path: formatPath(tool.path) } : tool
+}
+
 /** Keep the original path available to the width-aware row and the full tooltip. */
 function pathOnlyText(path: string): ToolItemText {
     const cleaned = cleanPathPrefix(path)
@@ -442,16 +454,23 @@ function pathOnlyText(path: string): ToolItemText {
  * Every branch produces both text forms, so the row never has to decide how to
  * fall back when a formatter yields nothing.
  */
-export function getToolDisplayInfo(tool: UiSayTool): ToolDisplayInfo | null {
+export function getToolDisplayInfo(
+    reported: UiSayTool,
+    formatPath: WorkspacePathFormatter = keepReportedPath,
+): ToolDisplayInfo | null {
+    const tool = withDisplayPath(reported, formatPath)
     const icon = getIconByToolName(tool.tool)
-    const filePath = tool.path || ""
+    // `filePath` and `folderPath` are what a click opens; the shown forms are display text only.
+    const filePath = reported.path || ""
     const folderPath = `${filePath}/`
+    const shownFilePath = tool.path || ""
+    const shownFolderPath = `${shownFilePath}/`
 
     switch (tool.tool) {
         case "readFile": {
             const lineNote =
                 tool.readLineStart != null && tool.readLineEnd != null ? ` · lines ${tool.readLineStart}-${tool.readLineEnd}` : ""
-            const cleaned = cleanPathPrefix(filePath)
+            const cleaned = cleanPathPrefix(shownFilePath)
             return {
                 icon,
                 path: filePath,
@@ -466,11 +485,11 @@ export function getToolDisplayInfo(tool: UiSayTool): ToolDisplayInfo | null {
             }
         }
         case "listFilesTopLevel":
-            return { icon, path: folderPath, label: "listed", ...pathOnlyText(folderPath) }
+            return { icon, path: folderPath, label: "listed", ...pathOnlyText(shownFolderPath) }
         case "listFilesRecursive":
-            return { icon, path: folderPath, label: "listed recursively", ...pathOnlyText(folderPath) }
+            return { icon, path: folderPath, label: "listed recursively", ...pathOnlyText(shownFolderPath) }
         case "listCodeDefinitionNames":
-            return { icon, path: folderPath, label: "definitions", ...pathOnlyText(folderPath) }
+            return { icon, path: folderPath, label: "definitions", ...pathOnlyText(shownFolderPath) }
         case "searchFiles":
             return {
                 icon,
@@ -495,7 +514,7 @@ export function getToolDisplayInfo(tool: UiSayTool): ToolDisplayInfo | null {
                 path: filePath,
                 label: "rename",
                 displayText: change,
-                tooltipText: `${cleanPathPrefix(filePath)}\n${change}`,
+                tooltipText: `${cleanPathPrefix(shownFilePath)}\n${change}`,
             }
         }
         case "replaceText": {
@@ -509,7 +528,7 @@ export function getToolDisplayInfo(tool: UiSayTool): ToolDisplayInfo | null {
                 path: filePath,
                 label: "replace",
                 displayText: change,
-                tooltipText: `${cleanPathPrefix(filePath)}\n${change}`,
+                tooltipText: `${cleanPathPrefix(shownFilePath)}\n${change}`,
             }
         }
         default:

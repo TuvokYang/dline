@@ -2,7 +2,8 @@ import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import type { Mode } from "@shared/storage/types"
 import type React from "react"
 import { useMemo } from "react"
-import { cleanPathPrefix } from "../common/CodeAccordian"
+import { useWorkspaceDisplayPath } from "@/hooks/useWorkspaceDisplayPath"
+import type { WorkspacePathFormatter } from "@/utils/workspaceDisplayPath"
 import { getIconByToolName } from "./chat-view"
 import { isApiReqAbsorbable, isLowStakesTool } from "./chat-view/utils/messageUtils"
 import ErrorRow from "./ErrorRow"
@@ -34,18 +35,17 @@ interface RequestStartRowProps {
 type ApiReqState = "pre" | "error" | "final"
 
 // Helper to format search regex for display - show all terms separated by |
-const formatSearchRegex = (regex: string, path: string, filePattern?: string): string => {
-    const cleanedPath = cleanPathPrefix(path)
+const formatSearchRegex = (regex: string, shownPath: string, filePattern?: string): string => {
     const terms = regex
         .split("|")
         .map((t) => t.trim().replace(/\\b/g, "").replace(/\\s\?/g, " "))
         .filter(Boolean)
         .join(" | ")
-    return filePattern && filePattern !== "*" ? `"${terms}" in ${cleanedPath}/ (${filePattern})` : `"${terms}" in ${cleanedPath}/`
+    return filePattern && filePattern !== "*" ? `"${terms}" in ${shownPath}/ (${filePattern})` : `"${terms}" in ${shownPath}/`
 }
 // Format activity text based on tool type
-const getActivityText = (tool: UiSayTool): string | null => {
-    const cleanedPath = cleanPathPrefix(tool.path || "")
+const getActivityText = (tool: UiSayTool, formatPath: WorkspacePathFormatter): string | null => {
+    const cleanedPath = formatPath(tool.path || "")
     switch (tool.tool) {
         case "readFile":
             return tool.path ? `Reading ${cleanedPath}...` : null
@@ -53,7 +53,7 @@ const getActivityText = (tool: UiSayTool): string | null => {
         case "listFilesRecursive":
             return tool.path ? `Exploring ${cleanedPath}/...` : null
         case "searchFiles":
-            return tool.regex && tool.path ? `Searching ${formatSearchRegex(tool.regex, tool.path, tool.filePattern)}...` : null
+            return tool.regex && tool.path ? `Searching ${formatSearchRegex(tool.regex, cleanedPath, tool.filePattern)}...` : null
         case "listCodeDefinitionNames":
             return tool.path ? `Analyzing ${cleanedPath}/...` : null
         default:
@@ -66,6 +66,7 @@ const collectToolsInRange = (
     messages: UiMessage[],
     startIdx: number,
     endIdx: number,
+    formatPath: WorkspacePathFormatter,
     stopCondition?: (msg: UiMessage) => boolean,
 ): { icon: React.ElementType; text: string }[] => {
     const activities: { icon: React.ElementType; text: string }[] = []
@@ -85,7 +86,7 @@ const collectToolsInRange = (
 
         try {
             const tool = JSON.parse(msg.text || "{}") as UiSayTool
-            const activityText = getActivityText(tool)
+            const activityText = getActivityText(tool, formatPath)
             if (activityText) {
                 const toolIcon = getIconByToolName(tool.tool)
                 activities.push({ icon: toolIcon, text: activityText })
@@ -160,6 +161,8 @@ export const RequestStartRow: React.FC<RequestStartRowProps> = ({
         return isApiReqAbsorbable(message.ts, clineMessages)
     }, [message.ts, clineMessages])
 
+    const formatPath = useWorkspaceDisplayPath()
+
     // Find all exploratory tool activities that are currently in flight.
     // Tools come AFTER the api_req_started message, so we look from currentApiReq forward.
     const currentActivities = useMemo(() => {
@@ -171,11 +174,11 @@ export const RequestStartRow: React.FC<RequestStartRowProps> = ({
         if (!currentApiReq.hasCost) {
             // CASE A: Current api_req is INCOMPLETE
             // Look for ask === "tool" messages AFTER the current api_req_started
-            return collectToolsInRange(clineMessages, currentApiReq.index + 1, clineMessages.length)
+            return collectToolsInRange(clineMessages, currentApiReq.index + 1, clineMessages.length, formatPath)
         }
         // CASE B: Current api_req is COMPLETE - no activities to show
         return []
-    }, [clineMessages])
+    }, [clineMessages, formatPath])
 
     // Check if there are any completed tools in the tool group
     const hasCompletedTools = useMemo(() => {

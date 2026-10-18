@@ -41,10 +41,11 @@ import { CheckmarkControl } from "@/components/common/CheckmarkControl"
 import { WithCopyButton } from "@/components/common/CopyButton"
 import McpResponseDisplay from "@/components/mcp/chat-display/McpResponseDisplay"
 import { useExtensionState } from "@/context/ExtensionStateContext"
+import { useWorkspaceDisplayPath } from "@/hooks/useWorkspaceDisplayPath"
 import { cn } from "@/lib/utils"
 import { FileServiceClient, UiServiceClient } from "@/services/grpc-client"
 import { getMcpServerDisplayName } from "@/utils/mcp"
-import CodeAccordian, { cleanPathPrefix } from "../common/CodeAccordian"
+import CodeAccordian from "../common/CodeAccordian"
 import AgentUpdateRow from "./AgentUpdateRow"
 import { ApiErrorBox } from "./ApiErrorBox"
 import { ApiFailureContent } from "./ApiFailureContent"
@@ -233,6 +234,7 @@ export const ChatRowContent = memo(
             showFeatureTips,
             taskViewState,
         } = useExtensionState()
+        const formatPath = useWorkspaceDisplayPath()
         const [seeNewChangesDisabled, setSeeNewChangesDisabled] = useState(false)
         const [explainChangesDisabled, setExplainChangesDisabled] = useState(false)
         const [quoteButtonState, setQuoteButtonState] = useState<QuoteButtonState>({
@@ -646,10 +648,8 @@ export const ChatRowContent = memo(
                     // variants cannot drift apart in how the path is displayed.
                     const readFilePathContent = (
                         <>
-                            {tool.path?.startsWith(".") && <span>.</span>}
-                            {tool.path && !tool.path.startsWith(".") && !tool.path.match(/^[a-zA-Z]:/) && <span>/</span>}
                             <span className="ph-no-capture whitespace-nowrap overflow-hidden text-ellipsis mr-2 text-left [direction: rtl]">
-                                {`${cleanPathPrefix(tool.path ?? "")}\u200E`}
+                                {`${formatPath(tool.path ?? "")}\u200E`}
                                 {tool.readLineStart != null && tool.readLineEnd != null ? (
                                     <span className="opacity-80">
                                         {" "}

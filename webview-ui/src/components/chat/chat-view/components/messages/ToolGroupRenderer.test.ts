@@ -1,5 +1,6 @@
 import type { UiMessage, UiSayTool } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
+import { formatWorkspaceDisplayPath } from "@/utils/workspaceDisplayPath"
 import {
     buildToolsWithReasoning,
     formatScale,
@@ -158,6 +159,37 @@ describe("formatScale", () => {
 
     it("omits the file part when the file count is unknown", () => {
         expect(formatScale(4, undefined, "ref")).toBe(" (4 refs)")
+    })
+})
+
+describe("getToolDisplayInfo workspace paths", () => {
+    const multiRoot = (path: string) =>
+        formatWorkspaceDisplayPath(path, {
+            workspaceRoots: [
+                { path: "/home/dev/frontend", name: "frontend" },
+                { path: "/home/dev/backend", name: "backend" },
+            ],
+            primaryRootIndex: 0,
+        })
+
+    it("shows the folder-relative path but still opens the reported one", () => {
+        const info = getToolDisplayInfo({ tool: "readFile", path: "/home/dev/backend/src/b.ts" } as UiSayTool, multiRoot)
+
+        expect(info?.displayText).toBe("backend/src/b.ts")
+        expect(info?.tooltipText).toBe("backend/src/b.ts")
+        expect(info?.path).toBe("/home/dev/backend/src/b.ts")
+    })
+
+    it("formats a listed folder and an in-flight search the same way", () => {
+        const listed = getToolDisplayInfo({ tool: "listFilesTopLevel", path: "src" } as UiSayTool, multiRoot)
+        const searching = getActivityText(
+            { tool: "searchFiles", path: "/home/dev/backend/src", regex: "needle" } as UiSayTool,
+            multiRoot,
+        )
+
+        expect(listed?.displayText).toBe("frontend/src/")
+        expect(listed?.path).toBe("src/")
+        expect(searching?.row?.path).toBe("backend/src/")
     })
 })
 

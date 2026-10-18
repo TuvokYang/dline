@@ -1,6 +1,7 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { memo, useEffect, useMemo, useRef } from "react"
 import CodeBlock from "@/components/common/CodeBlock"
+import { useWorkspaceDisplayPath } from "@/hooks/useWorkspaceDisplayPath"
 import { cn } from "@/lib/utils"
 import { getLanguageFromPath } from "@/utils/getLanguageFromPath"
 import { Button } from "../ui/button"
@@ -37,6 +38,7 @@ const CodeAccordian = ({
     isLoading,
 }: CodeAccordianProps) => {
     const codeContainerRef = useRef<HTMLDivElement>(null)
+    const formatPath = useWorkspaceDisplayPath()
 
     const inferredLanguage = useMemo(
         () => code && (language ?? (path ? getLanguageFromPath(path) : undefined)),
@@ -91,9 +93,7 @@ const CodeAccordian = ({
                         </div>
                     ) : (
                         <span className="whitespace-nowrap overflow-hidden text-ellipsis mr-2 [direction: rtl] text-left">
-                            {path?.startsWith(".") && <span>.</span>}
-                            {path && !path.startsWith(".") && !path.match(/^[a-zA-Z]:/) && <span>/</span>}
-                            {`${cleanPathPrefix(path ?? "")}\u200E`}
+                            {`${formatPath(path ?? "")}\u200E`}
                         </span>
                     )}
                     <div className="grow" />
