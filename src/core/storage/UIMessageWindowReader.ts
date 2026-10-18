@@ -14,6 +14,8 @@ export interface UIMessageWindowPage {
 /** Where a window reads its messages from. */
 interface WindowSource {
     readonly count: number
+    /** Whether row positions are the ones the task's `messages.db` gives them. */
+    readonly canonicalIndexes: boolean
     read(start: number, end: number): Promise<UiMessage[]>
     findByTimestamp(timestamp: number): Promise<UiMessage | undefined>
     findLastAsk(interactionId: string): Promise<UiMessage | undefined>
@@ -22,6 +24,8 @@ interface WindowSource {
 
 /** Rows of `messages.db`, read one page at a time. */
 class RowSource implements WindowSource {
+    readonly canonicalIndexes = true
+
     constructor(
         private readonly rows: UiMessageRowStore,
         readonly count: number,
@@ -46,6 +50,9 @@ class RowSource implements WindowSource {
 
 /** A legacy history that has not been imported yet because the task was not opened since the upgrade. */
 class LegacySource implements WindowSource {
+    /** The import renumbers the rows, and a first-surface window holds only the latest of them. */
+    readonly canonicalIndexes = false
+
     constructor(private readonly messages: readonly UiMessage[]) {}
 
     get count(): number {
@@ -119,6 +126,15 @@ export class UIMessageWindowReader {
 
     get count(): number {
         return this.source.count
+    }
+
+    /**
+     * Whether page positions stay valid once the task's writer opens it. A
+     * legacy history is renumbered by its import, so positions read here then
+     * address other rows.
+     */
+    get canonicalIndexes(): boolean {
+        return this.source.canonicalIndexes
     }
 
     async getLatest(limit: number): Promise<UiMessage[]> {

@@ -44,6 +44,7 @@ import { fetchTaskMessages, getTaskViewKey } from "../services/task-messages"
 import {
     canAppendRealtimeMessage,
     isMessageWindowOverfull,
+    type MessageWindowReconciliationOptions,
     realtimeFrameSupersedes,
     rebaseMessageWindow,
     reconcileMessageWindow,
@@ -110,21 +111,23 @@ const applyFetchedMessageWindow = (
     existingStartIndex: number,
     fetched: UiMessage[],
     fetchedStartIndex: number,
-    total?: number,
-    localTimestampsAtFetchStart?: ReadonlySet<number>,
-    preserveOmittedPartials?: boolean,
-    authoritativeOmissions?: boolean,
+    total: number | undefined,
+    options: MessageWindowReconciliationOptions,
 ): { messages: UiMessage[]; startIndex: number } => {
     const reconciled = reconcileMessageWindow(
         { messages: existing, startIndex: existingStartIndex },
         { messages: fetched, startIndex: fetchedStartIndex, total },
-        { localTimestampsAtFetchStart, preserveOmittedPartials, authoritativeOmissions },
+        options,
     )
     return { messages: reconciled.messages, startIndex: reconciled.startIndex }
 }
 
-/** First step of a tail sync: merge the latest page, or only page forward from the window end. */
-type TailSyncFirstStep = "latest" | "follow"
+/**
+ * First step of a tail sync: merge the latest page, only page forward from the
+ * window end, or replace the window with the latest page after the backend
+ * renumbered the conversation.
+ */
+type TailSyncFirstStep = "latest" | "follow" | "replace"
 const TAIL_PAGE_SIZE = 200
 const TAIL_SYNC_RETRY_DELAYS_MS = [100, 300, 750] as const
 
@@ -495,6 +498,7 @@ export const ExtensionStateContextProvider: React.FC<{
 
     const prevTotalRef = useRef(0)
     const prevMessageWindowRevisionRef = useRef(0)
+    const prevMessageIndexSpaceRef = useRef(0)
     // Owner token of the running window fetch. A fresh token per fetch lets a
     // newer tail sync take over, and keeps a superseded one from releasing it.
     const refetchLockRef = useRef<symbol | null>(null)
@@ -534,6 +538,7 @@ export const ExtensionStateContextProvider: React.FC<{
         const currentTaskViewKey = getTaskViewKey(state.taskViewState)
         const total = state.totalMessageCount ?? 0
         const messageWindowRevision = state.messageWindowRevision ?? 0
+        const messageIndexSpace = state.messageIndexSpace ?? 0
         const preserveOmittedPartials =
             state.taskViewState?.footer.actions.some((action) => action.type === "cancel" && action.enabled) === true
         // Pages are fenced to the task opening the view shows, so a late page of a
@@ -607,9 +612,7 @@ export const ExtensionStateContextProvider: React.FC<{
                         converted,
                         startIndex,
                         responseTotal,
-                        localTimestampsAtFetchStart,
-                        preserveOmittedPartials,
-                        authoritativeOmissions,
+                        { localTimestampsAtFetchStart, preserveOmittedPartials, authoritativeOmissions },
                     )
                     commitMessageWindow(reconciled.messages, reconciled.startIndex, base)
                     if (expectedInteraction) {
@@ -706,7 +709,7 @@ export const ExtensionStateContextProvider: React.FC<{
                 messageFetchGenerationRef.current === scheduledGeneration
             const ownsSync = () => refetchLockRef.current === owner && isCurrentView()
             const windowEnd = () => firstItemIndexRef.current + clineMessagesRef.current.length
-            let firstStepPending = firstStep === "latest"
+            let firstStepPending = firstStep !== "follow"
             let followedEnd = windowEnd()
             let readerMovedAway = false
             let retries = 0
@@ -735,9 +738,12 @@ export const ExtensionStateContextProvider: React.FC<{
                             converted,
                             Math.max(0, resp.startIndex),
                             Number(resp.totalCount ?? 0),
-                            localTimestampsAtFetchStart,
-                            preserveOmittedPartials,
-                            authoritativeOmissions,
+                            {
+                                localTimestampsAtFetchStart,
+                                preserveOmittedPartials,
+                                authoritativeOmissions,
+                                replaceWindow: firstStepPending && firstStep === "replace",
+                            },
                         )
                         commitMessageWindow(reconciled.messages, reconciled.startIndex, base)
                         progressed = firstStepPending || windowEnd() > knownEnd
@@ -783,6 +789,7 @@ export const ExtensionStateContextProvider: React.FC<{
             setFirstItemIndex(0)
             prevTotalRef.current = total
             prevMessageWindowRevisionRef.current = messageWindowRevision
+            prevMessageIndexSpaceRef.current = messageIndexSpace
             if (total > 0) {
                 fetchLatestWindow(currentTaskViewKey, projectedInteraction)
             }
@@ -794,6 +801,15 @@ export const ExtensionStateContextProvider: React.FC<{
         if (messageWindowInvalidated && clineMessages.length > 0) {
             refetchAfterUnlockRef.current = true
             runDeferredWindowReconciliation()
+        }
+        // Promoting a history display that read a legacy file renumbers the
+        // conversation: the local positions now address other rows, so the
+        // latest page replaces the window instead of merging into it. Taking the
+        // sync slot also stops a merge still running against the old numbering.
+        const indexSpaceChanged = messageIndexSpace !== prevMessageIndexSpaceRef.current
+        prevMessageIndexSpaceRef.current = messageIndexSpace
+        if (indexSpaceChanged && clineMessages.length > 0) {
+            void syncTailWindow(currentTaskViewKeyRef.current, "replace", true)
         }
 
         if (total === 0) {
@@ -885,6 +901,7 @@ export const ExtensionStateContextProvider: React.FC<{
         state.taskViewState,
         state.totalMessageCount,
         state.messageWindowRevision,
+        state.messageIndexSpace,
         state.taskViewState?.footer.actions,
         projectedInteraction,
         projectedInteractionAnchorLoaded,

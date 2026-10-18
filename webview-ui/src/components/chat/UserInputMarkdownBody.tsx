@@ -22,7 +22,10 @@ export function UserInputMarkdownBody({ markdown, variant, testId, submittedEnti
     return (
         <div
             className={cn(
-                "wrap-anywhere overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable] [&_p:last-child]:mb-0",
+                // No overscroll-contain: Chromium applies it to a body that does not
+                // overflow, which swallows wheel gestures over short messages instead of
+                // chaining them to the chat list. Wheel ownership is decided in JS.
+                "wrap-anywhere overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable] [&_p:last-child]:mb-0",
                 HEIGHT_CLASS[variant],
             )}
             data-testid={testId}>

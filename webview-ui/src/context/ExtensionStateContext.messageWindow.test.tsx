@@ -672,6 +672,99 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
         })
     })
 
+    it("keeps the latest history rows when the interaction anchor is not in any persisted page", async () => {
+        // A history opened without a runtime snapshot projects a synthetic resume
+        // interaction whose anchor row is never paged. Walking back for it must
+        // not cost the window the latest rows the history actually holds.
+        const history = [
+            convertClineMessageToProto({ ts: 1, type: "say", say: "task", text: "Task" }),
+            ...Array.from({ length: 400 }, (_, index) =>
+                convertClineMessageToProto({ ts: 1_000 + index, type: "say", say: "text", text: `History ${index + 1}` }),
+            ),
+        ]
+        vi.mocked(TaskServiceClient.fetchMessage).mockImplementation(async (request) => {
+            const count = Number(request.count ?? 0)
+            const referenceIndex = Number(request.referenceIndex ?? -1)
+            const startIndex =
+                referenceIndex === -1 ? Math.max(0, history.length - count) : Math.min(referenceIndex, history.length)
+            return {
+                taskId: "task-1",
+                taskInstanceId: "open-1",
+                messages: history.slice(startIndex, startIndex + count),
+                startIndex,
+                totalCount: history.length,
+            }
+        })
+        render(
+            <ExtensionStateContextProvider>
+                <MessageProbe />
+            </ExtensionStateContextProvider>,
+        )
+        await waitFor(() => expect(subscriptions.state).toBeDefined())
+
+        act(() => {
+            subscriptions.state?.onResponse({ stateJson: JSON.stringify(resumeInteractionState(1, history.length)) })
+        })
+
+        await waitFor(() => expect(screen.getByText("History 400")).toBeInTheDocument())
+        // Let any bounded anchor walk-back and its retries settle.
+        await new Promise((resolve) => setTimeout(resolve, 1_500))
+        expect(screen.getByText("History 400")).toBeInTheDocument()
+    })
+
+    it("replaces the window when promotion renumbers the history it was read from", async () => {
+        // A read-only display of a legacy history serves only its latest rows,
+        // numbered from zero. Promotion imports the whole history, so the same
+        // rows sit at other positions and the reply lands after all of them.
+        // Paging forward by the old positions re-reads rows already held and
+        // never reaches the reply.
+        const row = (index: number) =>
+            convertClineMessageToProto({ ts: 1_000 + index, type: "say", say: "text", text: `Row ${index}` })
+        const imported = [
+            ...Array.from({ length: 700 }, (_, index) => row(index)),
+            convertClineMessageToProto({ ts: 9_000, type: "say", say: "text", text: "Continuation" }),
+        ]
+        const legacyWindow = imported.slice(450, 700)
+        let source = legacyWindow
+        vi.mocked(TaskServiceClient.fetchMessage).mockImplementation(async (request) => {
+            const count = Number(request.count ?? 0)
+            const referenceIndex = Number(request.referenceIndex ?? -1)
+            const startIndex =
+                referenceIndex === -1 ? Math.max(0, source.length - count) : Math.min(referenceIndex, source.length)
+            return {
+                taskId: "task-1",
+                taskInstanceId: "open-1",
+                messages: source.slice(startIndex, startIndex + count),
+                startIndex,
+                totalCount: source.length,
+            }
+        })
+        render(
+            <ExtensionStateContextProvider>
+                <MessageProbe />
+            </ExtensionStateContextProvider>,
+        )
+        await waitFor(() => expect(subscriptions.state).toBeDefined())
+        act(() => {
+            subscriptions.state?.onResponse({
+                stateJson: JSON.stringify(stateSnapshot({ revision: 1, total: legacyWindow.length })),
+            })
+        })
+        await waitFor(() => expect(screen.getByText("Row 699")).toBeInTheDocument())
+
+        source = imported
+        act(() => {
+            subscriptions.state?.onResponse({
+                stateJson: JSON.stringify({ ...stateSnapshot({ revision: 2, total: imported.length }), messageIndexSpace: 1 }),
+            })
+        })
+
+        await waitFor(() => expect(screen.getByText("Continuation")).toBeInTheDocument())
+        // The window is the runtime's latest page, not old rows merged by stale positions.
+        expect(screen.getByText("Row 501")).toBeInTheDocument()
+        expect(screen.queryByText("Row 500")).toBeNull()
+    })
+
     it("does not let a stale completion say downgrade a realtime completion ask anchor", async () => {
         const staleSay = convertClineMessageToProto({
             ts: 100,

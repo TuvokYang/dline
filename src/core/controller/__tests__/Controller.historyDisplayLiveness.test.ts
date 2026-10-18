@@ -20,6 +20,11 @@ const display = vi.hoisted(() => {
         readonly markLocked = vi.fn()
         readonly dispose = vi.fn(async () => undefined)
         readonly disposeForPromotion = vi.fn(async () => undefined)
+        /** False when the display read a legacy history its runtime renumbers on import. */
+        canonicalIndexes = true
+        hasCanonicalMessageIndexes(): boolean {
+            return this.canonicalIndexes
+        }
         constructor(readonly historyItem: { id: string }) {
             this.taskId = historyItem.id
             display.instances.push(this)
@@ -91,6 +96,7 @@ function subject() {
     })
     const controller = {
         historyDisplaySession: undefined as unknown,
+        messageIndexSpace: 0,
         historyDisplayProfileBindings: new WeakMap(),
         openingHandoff: new OpeningHandoff(),
         taskLockAcquired: true,
@@ -184,6 +190,30 @@ describe("opening a task from History", () => {
 
         resolution.resolve()
         await vi.waitFor(() => expect(events).toContain("flush"))
+    })
+
+    // The display kept its opening, so only the index space tells the Webview
+    // that the window it holds is numbered differently from the runtime's rows.
+    it("renumbers the shown window when the promoted display read a legacy history", async () => {
+        const { controller } = subject()
+        await controllerPrototype.initHistoryDisplaySession.call(controller, historyItem)
+        const [session] = display.instances
+        if (!session) throw new Error("expected a history display")
+        session.canonicalIndexes = false
+
+        await controllerPrototype.promoteHistoryDisplay.call(controller, session)
+
+        expect(controller.messageIndexSpace).toBe(1)
+    })
+
+    it("keeps the window numbering when the promoted display read the task's own rows", async () => {
+        const { controller } = subject()
+        await controllerPrototype.initHistoryDisplaySession.call(controller, historyItem)
+        const [session] = display.instances
+
+        await controllerPrototype.promoteHistoryDisplay.call(controller, session)
+
+        expect(controller.messageIndexSpace).toBe(0)
     })
 
     // The switcher is usable before the task's own binding lands; writing the

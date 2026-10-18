@@ -10,7 +10,9 @@ describe("UserInputMarkdownBody", () => {
         const body = screen.getByTestId("direct-body")
         expect(screen.getByRole("heading", { name: "Heading" })).toBeInTheDocument()
         expect(screen.getByText("item")).toBeInTheDocument()
-        expect(body).toHaveClass("overflow-y-auto", "overscroll-contain", "max-h-[min(30vh,320px)]")
+        expect(body).toHaveClass("overflow-y-auto", "max-h-[min(30vh,320px)]")
+        // A short body must let the wheel chain to the chat list.
+        expect(body).not.toHaveClass("overscroll-contain")
     })
 
     it("uses the smaller pending-queue height contract", () => {

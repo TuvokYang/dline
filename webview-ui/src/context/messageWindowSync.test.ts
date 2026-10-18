@@ -210,6 +210,44 @@ describe("reconcileMessageWindow", () => {
         expect(result.removed).toBe(false)
     })
 
+    // Importing a legacy history renumbers its rows, so the positions of a window
+    // read before the import address different rows afterwards.
+    it("replaces a renumbered window with a page that does not touch it", () => {
+        const result = reconcileMessageWindow(
+            { messages: [message(1), message(2)], startIndex: 0 },
+            { messages: [message(900), message(901)], startIndex: 900, total: 1_000 },
+            { replaceWindow: true },
+        )
+
+        expect(result.messages.map((entry) => entry.ts)).toEqual([900, 901])
+        expect(result.startIndex).toBe(900)
+        expect(result.removed).toBe(true)
+    })
+
+    it("does not merge renumbered rows that only appear to touch the page", () => {
+        // A merge would keep rows 1 and 2 and move the start back to 8, claiming
+        // positions the renumbered conversation gives to other rows.
+        const result = reconcileMessageWindow(
+            { messages: [message(1), message(2), message(3), message(4), message(5)], startIndex: 0 },
+            { messages: [message(3), message(4), message(5), message(6)], startIndex: 10, total: 14 },
+            { replaceWindow: true },
+        )
+
+        expect(result.messages.map((entry) => entry.ts)).toEqual([3, 4, 5, 6])
+        expect(result.startIndex).toBe(10)
+    })
+
+    it("keeps a row that arrived while the replacing page was in flight", () => {
+        const result = reconcileMessageWindow(
+            { messages: [message(1), message(2), message(7, true)], startIndex: 0 },
+            { messages: [message(5), message(6)], startIndex: 50, total: 52 },
+            { replaceWindow: true, localTimestampsAtFetchStart: new Set([1, 2]) },
+        )
+
+        expect(result.messages.map((entry) => entry.ts)).toEqual([5, 6, 7])
+        expect(result.startIndex).toBe(50)
+    })
+
     it("moves the window start back to cover preserved leading messages", () => {
         const result = reconcileMessageWindow(
             { messages: [message(1), message(2), message(5)], startIndex: 10 },

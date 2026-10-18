@@ -207,6 +207,14 @@ export class HistoryDisplaySession {
         return this.durableMessageCount + (this.syntheticMessage ? 1 : 0)
     }
 
+    /**
+     * Whether the positions this display serves stay valid in the task's runtime.
+     * A display that has served nothing yet has no positions to invalidate.
+     */
+    hasCanonicalMessageIndexes(): boolean {
+        return this.messageReader?.canonicalIndexes ?? true
+    }
+
     getTaskTitleMessage(): UiMessage | undefined {
         return this.taskTitleMessage
     }

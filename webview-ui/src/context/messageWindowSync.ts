@@ -122,6 +122,12 @@ export interface MessageWindowReconciliationOptions {
     preserveOmittedPartials?: boolean
     /** The backend explicitly changed window membership, so omissions are deletions. */
     authoritativeOmissions?: boolean
+    /**
+     * The backend renumbered the conversation, so no local position addresses
+     * the same row any more. The fetch becomes the window instead of merging
+     * into it.
+     */
+    replaceWindow?: boolean
 }
 
 /**
@@ -147,6 +153,10 @@ export function reconcileMessageWindow(
 
     if (local.messages.length === 0) {
         return { messages: fetched.messages, startIndex: fetched.startIndex, removed: false }
+    }
+
+    if (options.replaceWindow === true) {
+        return replaceMessageWindow(local, fetched, options)
     }
 
     const coveredFrom = fetched.startIndex
@@ -201,16 +211,9 @@ export function reconcileMessageWindow(
         survivors.push(message)
     }
 
-    const resolved = fetched.messages.map((fetchedMessage) => {
-        const localMessage = localByTs.get(fetchedMessage.ts)
-        if (!localMessage) {
-            return fetchedMessage
-        }
-        // A settled fetch supersedes a local in-flight frame. Any other local copy
-        // is at least as recent as this response, which may have been in flight
-        // while a newer realtime frame arrived.
-        return localMessage.partial === true && fetchedCopySupersedes(fetchedMessage) ? fetchedMessage : localMessage
-    })
+    const resolved = fetched.messages.map((fetchedMessage) =>
+        resolveFetchedCopy(fetchedMessage, localByTs.get(fetchedMessage.ts)),
+    )
 
     const merged = [...survivors, ...resolved].sort((left, right) => left.ts - right.ts)
 
@@ -224,6 +227,49 @@ export function reconcileMessageWindow(
     void coveredTo
 
     return { messages: merged, startIndex, removed }
+}
+
+/**
+ * Replace a local window whose positions no longer address the backend's rows.
+ *
+ * Only a row that reached the window after the fetch started survives, after
+ * the page's tail: the page is an older snapshot than that row.
+ */
+function replaceMessageWindow(
+    local: LocalMessageWindow,
+    fetched: FetchedMessageWindow,
+    options: MessageWindowReconciliationOptions,
+): ReconciledMessageWindow {
+    const fetchedTs = new Set(fetched.messages.map((message) => message.ts))
+    const newestFetchedTs = fetched.messages[fetched.messages.length - 1].ts
+    const localByTs = new Map(local.messages.map((message) => [message.ts, message]))
+    const arrivedLater = local.messages.filter(
+        (message) =>
+            options.localTimestampsAtFetchStart?.has(message.ts) === false &&
+            !fetchedTs.has(message.ts) &&
+            message.ts > newestFetchedTs,
+    )
+    const resolved = fetched.messages.map((fetchedMessage) =>
+        resolveFetchedCopy(fetchedMessage, localByTs.get(fetchedMessage.ts)),
+    )
+    const keptCount = resolved.filter((message) => localByTs.has(message.ts)).length + arrivedLater.length
+    return {
+        messages: [...resolved, ...arrivedLater],
+        startIndex: fetched.startIndex,
+        removed: keptCount < local.messages.length,
+    }
+}
+
+/**
+ * Choose which copy of a row both windows hold.
+ *
+ * A settled fetch supersedes a local in-flight frame. Any other local copy is at
+ * least as recent as the response, which may have been in flight while a newer
+ * realtime frame arrived.
+ */
+function resolveFetchedCopy(fetchedMessage: UiMessage, localMessage: UiMessage | undefined): UiMessage {
+    if (!localMessage) return fetchedMessage
+    return localMessage.partial === true && fetchedCopySupersedes(fetchedMessage) ? fetchedMessage : localMessage
 }
 
 /**

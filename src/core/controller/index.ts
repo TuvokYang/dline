@@ -268,6 +268,12 @@ export class Controller {
 
     task?: ActiveTaskSession
     private historyDisplaySession?: HistoryDisplaySession
+    /**
+     * Advanced when the shown conversation is renumbered under the same
+     * opening, so the Webview replaces its window instead of merging pages by
+     * positions that now address other rows.
+     */
+    private messageIndexSpace = 0
     /** The handoff that started one opening; any other opening ignores it. */
     private handoffOpening?: { readonly taskInstanceId: string; readonly source: TaskHandoffSource }
     /** Holds state publications while an opening of the task is replaced by another. */
@@ -1714,6 +1720,8 @@ export class Controller {
                 // itself, so leaving that round armed would let it take the same lock
                 // concurrently and then activate a surface this promotion replaced.
                 this.stopLockPoll()
+                // Read before disposal closes the display's reader.
+                const renumbers = !display.hasCanonicalMessageIndexes()
                 // Wait only for a history-maintenance writer that already started.
                 // Read-only hydration and Profile identity refresh continue outside
                 // provider admission; both target the same task-local stores/cache.
@@ -1725,6 +1733,9 @@ export class Controller {
                     // the Webview's message window and the draft being sent.
                     taskInstanceId: display.taskInstanceId,
                 })
+                // The runtime imported the legacy history the display read, so the
+                // window it served is numbered differently from the runtime's rows.
+                if (renumbers) this.messageIndexSpace++
             },
             () => this.postStateToWebview({ immediate: true }),
         )
@@ -3143,6 +3154,7 @@ export class Controller {
             taskTitleMessage,
             totalMessageCount,
             messageWindowRevision: this.task?.owners.messages.messageWindowMutationRevision ?? 0,
+            messageIndexSpace: this.messageIndexSpace,
             firstItemIndex,
             apiMetrics,
             contextWindowIndicator,

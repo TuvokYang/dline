@@ -59,6 +59,7 @@ function createPromotingController(continuation: Promise<void>): Controller {
             taskInstanceId: "opening-display",
             historyItem: { id: "task-history" },
             accepts: () => true,
+            hasCanonicalMessageIndexes: () => true,
             disposeForPromotion: async () => undefined,
         },
         historyDisplayProfileBindings: new WeakMap(),

@@ -90,6 +90,12 @@ export interface ExtensionState {
     totalMessageCount?: number
     /** Destructive sequence revision used to refetch same-count message replacements. */
     messageWindowRevision?: number
+    /**
+     * Changes when the backend renumbers the shown conversation, so a window
+     * fetched before no longer addresses the same rows by position and must be
+     * replaced rather than merged.
+     */
+    messageIndexSpace?: number
     /** Index of the first item in the current window within the full message list */
     firstItemIndex?: number
     currentTaskItem?: HistoryItem
