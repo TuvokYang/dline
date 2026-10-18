@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -86,6 +87,37 @@ describe("UsageOutboxRepository", () => {
         const grants = await Promise.all([repository().claim("window-a"), repository().claim("window-b")])
 
         expect(grants.filter((grant) => grant !== undefined)).toHaveLength(1)
+    })
+
+    it("waits for the outbox lock another process holds instead of breaking it, then takes the lease", async () => {
+        await fs.mkdir(layout.usageDir, { recursive: true })
+        // The child holds the lock the way FileLock does, then checks that nobody replaced it before releasing.
+        const childScript = [
+            'const fs = require("node:fs")',
+            "const lock = process.argv[1]",
+            'const mine = JSON.stringify({ pid: process.pid, ownerId: "child-window", ts: Date.now() })',
+            'fs.writeFileSync(lock, mine, { flag: "wx" })',
+            'process.stdout.write("locked\\n")',
+            'setTimeout(() => { let intact = false; try { intact = fs.readFileSync(lock, "utf8") === mine } catch {} if (intact) fs.unlinkSync(lock); process.exit(intact ? 0 : 3) }, 1500)',
+        ].join(";")
+        const child = spawn(process.execPath, ["-e", childScript, `${layout.usageOutboxPath}.lck`], {
+            stdio: ["ignore", "pipe", "ignore"],
+        })
+        const exitCode = new Promise<number | null>((resolve, reject) => {
+            child.once("error", reject)
+            child.once("exit", (code) => resolve(code))
+        })
+        await new Promise<void>((resolve, reject) => {
+            child.once("error", reject)
+            child.stdout.on("data", (chunk: Buffer) => {
+                if (chunk.toString("utf8").includes("locked")) resolve()
+            })
+        })
+
+        const grant = await repository().claim("window-a")
+
+        expect(await exitCode).toBe(0)
+        expect(grant).toEqual({ ownerId: "window-a", generation: 1 })
     })
 
     it("persists the committed state, including the inflight manifest, for the next reader", async () => {
