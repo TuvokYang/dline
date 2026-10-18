@@ -80,6 +80,11 @@ async function approveSubagentIfRequested(sidebar: Frame, task: string): Promise
 const STICKY_USER_MESSAGE_CLEARANCE_PX = 48
 const REVEAL_MARGIN_PX = 24
 const MAX_REVEAL_WHEELS = 20
+/** Only an upward wheel hands the viewport to the reader; a programmatic or downward scroll keeps following the tail. */
+const TAKE_OVER_WHEEL_PX = -40
+const REVEAL_SETTLE_MS = 150
+const REVEAL_CLICK_TIMEOUT_MS = 3_000
+const REVEAL_AND_CLICK_TIMEOUT_MS = 45_000
 
 /**
  * Bring a control inside a chat row into the readable part of the list the way a reader does.
@@ -93,21 +98,45 @@ const MAX_REVEAL_WHEELS = 20
 async function revealInChat(sidebar: Frame, control: Locator): Promise<void> {
     const page = sidebar.page()
     const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
+    const initialList = await scroller.boundingBox()
+    if (!initialList) throw new Error("The chat list has no layout box")
+    // Take the viewport first even when the control already looks readable: while the
+    // list still follows the tail, the rows that settle after completion move it again.
+    await page.mouse.move(initialList.x + initialList.width / 2, initialList.y + initialList.height / 2)
+    await page.mouse.wheel(0, TAKE_OVER_WHEEL_PX)
+    await page.waitForTimeout(REVEAL_SETTLE_MS)
+
+    let settledTop: number | undefined
     for (let wheel = 0; wheel < MAX_REVEAL_WHEELS; wheel++) {
         const [list, target] = await Promise.all([scroller.boundingBox(), control.boundingBox()])
         if (!list || !target) throw new Error("The chat list or the control has no layout box")
         const readableTop = list.y + STICKY_USER_MESSAGE_CLEARANCE_PX
         const readableBottom = list.y + list.height
-        if (target.y >= readableTop && target.y + target.height <= readableBottom) return
+        if (target.y >= readableTop && target.y + target.height <= readableBottom) {
+            // Two equal samples prove the row stopped moving before the click.
+            if (settledTop !== undefined && Math.abs(target.y - settledTop) < 1) return
+            settledTop = target.y
+            await page.waitForTimeout(REVEAL_SETTLE_MS)
+            continue
+        }
+        settledTop = undefined
         const delta =
             target.y < readableTop
                 ? target.y - readableTop - REVEAL_MARGIN_PX
                 : target.y + target.height - readableBottom + REVEAL_MARGIN_PX
         await page.mouse.move(list.x + list.width / 2, list.y + list.height / 2)
         await page.mouse.wheel(0, delta)
-        await page.waitForTimeout(150)
+        await page.waitForTimeout(REVEAL_SETTLE_MS)
     }
     throw new Error("The chat control did not settle inside the readable part of the list")
+}
+
+/** Reveal and click as one bounded step, so a row that moves between the two is revealed again. */
+async function revealAndClickInChat(sidebar: Frame, control: Locator): Promise<void> {
+    await expect(async () => {
+        await revealInChat(sidebar, control)
+        await control.click({ timeout: REVEAL_CLICK_TIMEOUT_MS })
+    }).toPass({ timeout: REVEAL_AND_CLICK_TIMEOUT_MS })
 }
 
 async function expectCompletedSubagentCard(
@@ -126,8 +155,7 @@ async function expectCompletedSubagentCard(
     await expect(card.getByTestId("subagent-tool-step-name")).toHaveText(["read_file", "attempt_completion"])
     const showOutput = card.getByRole("button", { name: "Show subagent output", exact: true })
     if (await showOutput.isVisible()) {
-        await revealInChat(sidebar, showOutput)
-        await showOutput.click()
+        await revealAndClickInChat(sidebar, showOutput)
     }
     await expect(card.getByTestId("subagent-output")).toContainText(result)
     return card

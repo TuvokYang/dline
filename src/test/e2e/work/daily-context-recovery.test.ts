@@ -25,7 +25,9 @@ const TARGET_TARGET = "openai-official-responses" as const
 const TASK_ID = "work-daily-context-recovery"
 const TASK_TEXT = "WORK_DAILY_CONTEXT_RECOVERY_TASK"
 const HISTORY_MESSAGE_COUNT = 1_200
-const HISTORY_BROWSE_TARGET = 650
+/** A locked legacy task is shown from its latest rows only until the owning window imports it. */
+const READ_ONLY_LEGACY_WINDOW = 400
+const HISTORY_BROWSE_TARGET = HISTORY_MESSAGE_COUNT - READ_ONLY_LEGACY_WINDOW + 100
 const STREAM_CONTINUATION = "WORK_CONTEXT_STREAM_CONTINUATION"
 const STREAM_PARTIAL = "WORK_CONTEXT_STREAM_PARTIAL"
 const STREAM_READY = "WORK_CONTEXT_STREAM_READY"
@@ -100,6 +102,9 @@ e2e(
             {
                 type: "message",
                 text: `${STREAM_PARTIAL}\n${"streaming detail ".repeat(40)}`,
+                // Plain assistant prose is not a chat row, so the streamed row the
+                // reader browses away from is the visible reasoning of the same turn.
+                reasoning: `${STREAM_PARTIAL} ${"streaming detail ".repeat(40)}`,
                 beforeUsageDelayMs: 8_000,
                 usage: COLD_USAGE,
                 expectedRequestIncludes: [STREAM_CONTINUATION],
