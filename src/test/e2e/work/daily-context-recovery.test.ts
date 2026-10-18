@@ -14,6 +14,7 @@ import {
     waitForPersistedTaskMarkers,
     waitForPositivePromptCacheHealth,
     waitForPositiveTaskCacheHit,
+    wheelWorkScroller,
     workHistoryBodyMarker,
 } from "@e2e/utils/work/context-recovery"
 import { sendWorkMessage } from "@e2e/utils/work/session"
@@ -186,16 +187,14 @@ e2e(
                 attempt < 40 && (earliestVisibleWorkHistoryIndex(historyBrowse) ?? HISTORY_MESSAGE_COUNT) > HISTORY_BROWSE_TARGET;
                 attempt++
             ) {
-                await scroller.hover()
-                await page.mouse.wheel(0, -2_400)
+                await wheelWorkScroller(sidebar, -2_400)
                 await page.waitForTimeout(100)
                 historyBrowse = await captureWorkScroller(sidebar)
             }
             expect(earliestVisibleWorkHistoryIndex(historyBrowse)).toBeLessThanOrEqual(HISTORY_BROWSE_TARGET)
             expect(historyBrowse.bottomGap).toBeGreaterThan(100)
             expectUniqueOrderedWorkRows(historyBrowse)
-            await scroller.hover()
-            await page.mouse.wheel(0, 120)
+            await wheelWorkScroller(sidebar, 120)
             let scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
             await expect(scrollToBottom).toBeVisible({ timeout: 10_000 })
             await scrollToBottom.click()
@@ -212,8 +211,7 @@ e2e(
 
             let streamingBrowse = await captureWorkScroller(sidebar)
             for (let attempt = 0; attempt < 12 && streamingBrowse.bottomGap <= 500; attempt++) {
-                await scroller.hover()
-                await page.mouse.wheel(0, -1_200)
+                await wheelWorkScroller(sidebar, -1_200)
                 await page.waitForTimeout(100)
                 streamingBrowse = await captureWorkScroller(sidebar)
             }
@@ -229,8 +227,7 @@ e2e(
             const afterStreaming = await captureWorkScroller(sidebar)
             expect(afterStreaming.bottomGap).toBeGreaterThan(500)
             expectUniqueOrderedWorkRows(afterStreaming)
-            await scroller.hover()
-            await page.mouse.wheel(0, 120)
+            await wheelWorkScroller(sidebar, 120)
             scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
             await expect(scrollToBottom).toBeVisible({ timeout: 10_000 })
             await scrollToBottom.click()

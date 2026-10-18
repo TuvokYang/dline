@@ -85,6 +85,9 @@ const TAKE_OVER_WHEEL_PX = -40
 const REVEAL_SETTLE_MS = 150
 const REVEAL_CLICK_TIMEOUT_MS = 3_000
 const REVEAL_AND_CLICK_TIMEOUT_MS = 45_000
+const RETURN_TO_TAIL_WHEEL_PX = 2_400
+const RETURN_TO_TAIL_TIMEOUT_MS = 30_000
+const FLOATING_BUTTON_SETTLE_TIMEOUT_MS = 500
 
 /**
  * Bring a control inside a chat row into the readable part of the list the way a reader does.
@@ -131,6 +134,35 @@ async function revealInChat(sidebar: Frame, control: Locator): Promise<void> {
     throw new Error("The chat control did not settle inside the readable part of the list")
 }
 
+/**
+ * Hand the viewport back to the live tail after revealing an earlier row.
+ *
+ * Revealing takes the viewport from the list, which then stops following new rows,
+ * and a message sent while the reader is away from the bottom deliberately keeps the
+ * reader's position. Without this step a reply that lands below a tall card is never
+ * rendered. Like a reader, wheel down and use the floating button that the downward
+ * wheel turns into "Scroll to bottom"; reaching the end by wheel alone removes it.
+ */
+async function returnToLiveTail(sidebar: Frame): Promise<void> {
+    const page = sidebar.page()
+    const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
+    const scrollToBottom = sidebar.getByRole("button", { name: "Scroll to bottom", exact: true })
+    const floatingScrollButton = sidebar.getByRole("button", { name: /^Scroll to (bottom|top)$/ })
+    await expect(async () => {
+        const list = await scroller.boundingBox()
+        if (!list) throw new Error("The chat list has no layout box")
+        // Low in the list: the sticky user message covers its top.
+        await page.mouse.move(list.x + list.width / 2, list.y + list.height - REVEAL_MARGIN_PX)
+        await page.mouse.wheel(0, RETURN_TO_TAIL_WHEEL_PX)
+        await page.waitForTimeout(REVEAL_SETTLE_MS)
+        if (await scrollToBottom.isVisible()) {
+            await scrollToBottom.click({ timeout: REVEAL_CLICK_TIMEOUT_MS })
+            return
+        }
+        await expect(floatingScrollButton).toHaveCount(0, { timeout: FLOATING_BUTTON_SETTLE_TIMEOUT_MS })
+    }).toPass({ timeout: RETURN_TO_TAIL_TIMEOUT_MS })
+}
+
 /** Reveal and click as one bounded step, so a row that moves between the two is revealed again. */
 async function revealAndClickInChat(sidebar: Frame, control: Locator): Promise<void> {
     await expect(async () => {
@@ -154,10 +186,14 @@ async function expectCompletedSubagentCard(
     await expect(card.getByTestId("subagent-context-content")).toContainText(contextMarker)
     await expect(card.getByTestId("subagent-tool-step-name")).toHaveText(["read_file", "attempt_completion"])
     const showOutput = card.getByRole("button", { name: "Show subagent output", exact: true })
-    if (await showOutput.isVisible()) {
+    const revealed = await showOutput.isVisible()
+    if (revealed) {
         await revealAndClickInChat(sidebar, showOutput)
     }
     await expect(card.getByTestId("subagent-output")).toContainText(result)
+    if (revealed) {
+        await returnToLiveTail(sidebar)
+    }
     return card
 }
 
@@ -400,7 +436,7 @@ e2e(
 
             await sendWorkMessage(sidebar, FOREGROUND_SUBAGENT_REQUEST)
             await approveSubagentIfRequested(sidebar, FOREGROUND_CHILD_TASK)
-            await expect(sidebar.getByText("WORK_FOREGROUND_SUBAGENT_OK", { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expectWorkMessageVisible(sidebar, "WORK_FOREGROUND_SUBAGENT_OK", { timeout: 60_000 })
             await expectCompletedSubagentCard(
                 sidebar,
                 FOREGROUND_CHILD_TASK,
@@ -411,7 +447,7 @@ e2e(
 
             await sendWorkMessage(sidebar, BACKGROUND_SUBAGENT_REQUEST)
             await approveSubagentIfRequested(sidebar, BACKGROUND_CHILD_TASK)
-            await expect(sidebar.getByText("WORK_BACKGROUND_SUBAGENT_STARTED", { exact: true })).toBeVisible({ timeout: 60_000 })
+            await expectWorkMessageVisible(sidebar, "WORK_BACKGROUND_SUBAGENT_STARTED", { timeout: 60_000 })
             const backgroundTaskHeading = sidebar.getByRole("heading", { name: BACKGROUND_CHILD_TASK, exact: true }).last()
             await expect(backgroundTaskHeading).toBeVisible()
             const backgroundCard = backgroundTaskHeading.locator("xpath=ancestor::*[@data-testid='subagent-item'][1]")

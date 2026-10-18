@@ -209,11 +209,23 @@ export async function seedLockedLongHistoryTask(
     ])
 }
 
+/**
+ * Workbench size for the context recovery journey.
+ *
+ * Runner windows differ per platform (macOS opens VS Code at 1024x674). The read-only
+ * banner, the task header and the TODO row then leave the Chat list a few dozen pixels,
+ * all of it under the sticky user message, so the journey fixes the size it browses at.
+ */
+const CONTEXT_RECOVERY_WORKBENCH = { width: 1_280, height: 900 } as const
+/** Distance from the list bottom where the wheel lands, clear of the sticky user message at the top. */
+const WORK_SCROLLER_WHEEL_INSET_PX = 24
+
 export async function openContextRecoverySidebar(
     app: ElectronApplication,
     helper: E2ETestHelper,
 ): Promise<{ page: Page; sidebar: Frame }> {
     const page = await app.firstWindow()
+    await page.setViewportSize(CONTEXT_RECOVERY_WORKBENCH)
     await E2ETestHelper.openClineSidebar(page)
     const sidebar = await helper.getSidebar(page)
     await E2ETestHelper.dismissWhatsNewModal(sidebar)
@@ -253,6 +265,20 @@ export async function captureWorkScroller(sidebar: Frame): Promise<WorkScrollerS
             visibleRows,
         }
     })
+}
+
+/**
+ * Wheel the Chat list the way a reader does.
+ *
+ * The pointer lands near the bottom of the list: the sticky user message covers its
+ * top, and a wheel over that overlay never reaches the list.
+ */
+export async function wheelWorkScroller(sidebar: Frame, deltaY: number): Promise<void> {
+    const scroller = sidebar.locator('[data-virtuoso-scroller="true"]')
+    const box = await scroller.boundingBox()
+    if (!box) throw new Error("The Chat list has no layout box")
+    await scroller.hover({ position: { x: box.width / 2, y: Math.max(1, box.height - WORK_SCROLLER_WHEEL_INSET_PX) } })
+    await sidebar.page().mouse.wheel(0, deltaY)
 }
 
 export function expectUniqueOrderedWorkRows(snapshot: WorkScrollerSnapshot): void {
