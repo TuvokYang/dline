@@ -93,6 +93,13 @@ const PROFILE_IDS = {
 
 /** Far-future expiry so the seeded subscription token never triggers a refresh. */
 const CLAUDE_CODE_MOCK_TOKEN_EXPIRY_MS = 4_102_444_800_000
+/**
+ * How long the seeded profile waits for shell integration before the terminal pool
+ * gives up. The production default is 4s, which is short enough that a slow host
+ * hands the command to a terminal whose output cannot be captured; that would make
+ * command-output assertions measure host speed instead of the behavior under test.
+ */
+const E2E_SHELL_INTEGRATION_TIMEOUT_MS = 30_000
 
 const PROVIDER_CONFIG_FIELDS: Record<string, string> = {
     anthropic: "anthropic",
@@ -593,6 +600,11 @@ export async function prepareE2EState(options: PrepareE2EStateOptions): Promise<
         planModeProfile: selectedProfileName,
         imageGenerationEnabled: false,
         enableParallelToolCalling: true,
+        // A host may start its shell integration seconds after the pty does. When it
+        // does not arrive before the terminal pool stops waiting, the command runs in
+        // a terminal whose output cannot be read, so a checkpoint that inspects tool
+        // output fails on host speed instead of on the behavior it verifies.
+        shellIntegrationTimeout: E2E_SHELL_INTEGRATION_TIMEOUT_MS,
     })
     await writeJson(path.join(destinationDataDir, "globalState.json"), {
         isNewUser: false,
