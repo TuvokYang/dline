@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto"
 import * as fs from "node:fs"
 import { Logger } from "@shared/services/Logger"
-import chokidar, { type ChokidarOptions, type FSWatcher } from "chokidar"
+import type { ChokidarOptions } from "chokidar"
 import * as path from "path"
+import { type PathWatcher, watchPaths } from "@/services/file-watch/watchPaths"
 
 /** Content identity of a file, or undefined when it cannot be read or is too large to hash. */
 export type FileFingerprint = (absolutePath: string) => string | undefined
@@ -45,7 +46,7 @@ export interface WorkspaceFileSubscription {
 }
 
 export interface WorkspaceFileContextRegistryDeps {
-    readonly watch?: (paths: string, options: ChokidarOptions) => FSWatcher
+    readonly watch?: (paths: string, options: ChokidarOptions) => PathWatcher
     readonly fingerprint?: FileFingerprint
 }
 
@@ -69,7 +70,7 @@ interface FileSubscriber {
 
 interface WatchEntry {
     readonly absolutePath: string
-    readonly watcher: FSWatcher
+    readonly watcher: PathWatcher
     readonly subscribers: Set<FileSubscriber>
 }
 
@@ -96,7 +97,7 @@ const WATCH_OPTIONS: ChokidarOptions = {
  * change never hides it from another.
  */
 export class WorkspaceFileContextRegistry {
-    private readonly watch: (paths: string, options: ChokidarOptions) => FSWatcher
+    private readonly watch: (paths: string, options: ChokidarOptions) => PathWatcher
     private readonly fingerprint: FileFingerprint
     /** Keyed by {@link fileContextKey}. */
     private readonly entries = new Map<string, WatchEntry>()
@@ -110,7 +111,9 @@ export class WorkspaceFileContextRegistry {
     private revisionCounter = 0
 
     constructor(deps: WorkspaceFileContextRegistryDeps = {}) {
-        this.watch = deps.watch ?? ((paths, options) => chokidar.watch(paths, options))
+        // Inside a workspace folder the editor's own watch serves the file, so reading a file never
+        // pins its directory: on Windows a watched directory cannot be renamed or deleted.
+        this.watch = deps.watch ?? ((paths, options) => watchPaths(paths, options))
         this.fingerprint = deps.fingerprint ?? defaultFingerprint
     }
 

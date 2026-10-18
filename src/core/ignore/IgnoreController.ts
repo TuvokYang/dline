@@ -1,10 +1,10 @@
 import { normalizeWorkspaceRelativeInputPath } from "@core/workspace/utils/normalizeWorkspaceRelativeInputPath"
 import { Logger } from "@shared/services/Logger"
 import { fileExistsAtPath } from "@utils/fs"
-import chokidar, { FSWatcher } from "chokidar"
 import fs from "fs/promises"
 import ignore, { Ignore } from "ignore"
 import path from "path"
+import { type PathWatcher, watchPaths } from "@/services/file-watch/watchPaths"
 import { IGNORE_PERMISSIONS, type IgnorePermission, parsePermissionRules, withAdditionalRules } from "./permission-rules"
 
 export { IGNORE_PERMISSIONS, type IgnorePermission } from "./permission-rules"
@@ -220,7 +220,7 @@ export class IgnoreController {
         scan: createScopeState(),
     }
     private readonly changeListeners = new Set<(scope: IgnoreScope) => void>()
-    private watcher?: FSWatcher
+    private watcher?: PathWatcher
     private disposed = false
     /** Serializes reloads so a burst of watcher events cannot interleave writes. */
     private reloadQueue: Promise<void> = Promise.resolve()
@@ -455,7 +455,7 @@ export class IgnoreController {
     private setupWatcher(): void {
         const watchedFiles = [GIT_IGNORE_FILE, ...AGENT_IGNORE_FILENAMES].map((name) => path.join(this.cwd, name))
 
-        this.watcher = chokidar.watch(watchedFiles, {
+        this.watcher = watchPaths(watchedFiles, {
             persistent: true,
             ignoreInitial: true,
             atomic: true,

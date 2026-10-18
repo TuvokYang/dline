@@ -1,6 +1,7 @@
 import path from "node:path"
 import { Logger } from "@shared/services/Logger"
-import type { ChokidarOptions, FSWatcher } from "chokidar"
+import type { ChokidarOptions } from "chokidar"
+import type { PathWatcher } from "@/services/file-watch/watchPaths"
 import { type PromptInputFileChange, PromptInputFileWatcher, type PromptInputFileWatcherDeps } from "./PromptInputFileWatcher"
 
 /** One task's handle on a process-owned workspace prompt-input monitor. */
@@ -14,7 +15,7 @@ export interface PromptInputWatcherSubscription {
 export type WorkspacePromptInputWatcherSubscribeRequest = Omit<PromptInputFileWatcherDeps, "watch">
 
 export interface WorkspacePromptInputWatcherRegistryDeps {
-    readonly watch?: (paths: readonly string[], options: ChokidarOptions) => FSWatcher
+    readonly watch?: (paths: readonly string[], options: ChokidarOptions) => PathWatcher
 }
 
 interface WatcherSubscriber {
@@ -63,7 +64,7 @@ function buildEntryKey(request: WorkspacePromptInputWatcherSubscribeRequest): st
  * another cold filesystem scan.
  */
 export class WorkspacePromptInputWatcherRegistry {
-    private readonly watch?: (paths: readonly string[], options: ChokidarOptions) => FSWatcher
+    private readonly watch?: (paths: readonly string[], options: ChokidarOptions) => PathWatcher
     private readonly entries = new Map<string, WorkspaceWatcherEntry>()
 
     constructor(deps: WorkspacePromptInputWatcherRegistryDeps = {}) {

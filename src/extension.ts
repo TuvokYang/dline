@@ -54,6 +54,7 @@ import { DefaultVscodeTerminalPoolRuntime } from "./hosts/vscode/terminal/Vscode
 import { VscodeWindowsProcessTreeProvider } from "./hosts/vscode/terminal/VscodeWindowsProcessTreeProvider"
 import { VscodeDiffViewProvider } from "./hosts/vscode/VscodeDiffViewProvider"
 import { VscodeWebviewProvider } from "./hosts/vscode/VscodeWebviewProvider"
+import { VscodeWorkspaceTreeWatch } from "./hosts/vscode/VscodeWorkspaceTreeWatch"
 import { exportVSCodeStorageToSharedFiles } from "./hosts/vscode/vscode-to-file-migration"
 import { ExtensionRegistryInfo } from "./registry"
 import { AuthService } from "./services/auth/AuthService"
@@ -854,6 +855,7 @@ function setupHostProvider(context: ExtensionContext) {
         context.extensionUri.fsPath,
         context.globalStorageUri.fsPath,
         windowsProcessTreeProvider,
+        new VscodeWorkspaceTreeWatch(),
     )
 }
 

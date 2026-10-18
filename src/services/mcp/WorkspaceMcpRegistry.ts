@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
-import chokidar, { type FSWatcher } from "chokidar"
 import deepEqual from "fast-deep-equal"
 import { load as loadYaml } from "js-yaml"
 import { z } from "zod"
+import { type PathWatcher, watchPaths } from "@/services/file-watch/watchPaths"
 import { Logger } from "@/shared/services/Logger"
 import { ServerConfigSchema } from "./schemas"
 import type { McpServerConfig } from "./types"
@@ -41,7 +41,7 @@ type RegistryChangeListener = (descriptors: readonly WorkspaceMcpDescriptor[]) =
 interface RootRegistration {
     owners: Set<string>
     descriptors: WorkspaceMcpDescriptor[]
-    watcher?: FSWatcher
+    watcher?: PathWatcher
     ready: Promise<void>
     refreshQueue: Promise<void>
 }
@@ -313,9 +313,9 @@ export class WorkspaceMcpRegistry {
         return registration.descriptors.length > 0
     }
 
-    private watchRoot(workspaceRoot: string): FSWatcher {
+    private watchRoot(workspaceRoot: string): PathWatcher {
         const descriptorDirectory = path.join(workspaceRoot, MCP_DESCRIPTOR_DIRECTORY)
-        const watcher = chokidar.watch(workspaceRoot, {
+        const watcher = watchPaths(workspaceRoot, {
             persistent: true,
             ignoreInitial: true,
             ignored: (candidatePath, stats) => shouldIgnoreWorkspacePath(workspaceRoot, candidatePath, stats?.isFile() === true),

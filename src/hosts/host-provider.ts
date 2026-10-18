@@ -3,6 +3,7 @@ import { CommentReviewController } from "@/integrations/editor/CommentReviewCont
 import { DiffViewProvider } from "@/integrations/editor/DiffViewProvider"
 import type { WindowsProcessTreeProvider } from "@/integrations/terminal/process-tree"
 import { ITerminalManager } from "@/integrations/terminal/types"
+import type { WorkspaceTreeWatchHost } from "@/services/file-watch/WorkspaceTreeWatchHost"
 import { HostBridgeClientProvider } from "./host-provider-types"
 /**
  * Singleton class that manages host-specific providers for dependency injection.
@@ -25,6 +26,11 @@ export class HostProvider {
     createCommentReviewController: CommentReviewControllerCreator
     createTerminalManager: TerminalManagerCreator
     windowsProcessTreeProvider: WindowsProcessTreeProvider | undefined
+    /**
+     * The editor's recursive watch of its open folders. Absent on hosts without
+     * one; workspace watches then fall back to watching each path directly.
+     */
+    workspaceTreeWatch: WorkspaceTreeWatchHost | undefined
     hostBridge: HostBridgeClientProvider
 
     // Logs to a user-visible output channel.
@@ -62,12 +68,14 @@ export class HostProvider {
         extensionFsPath: string,
         globalStorageFsPath: string,
         windowsProcessTreeProvider?: WindowsProcessTreeProvider,
+        workspaceTreeWatch?: WorkspaceTreeWatchHost,
     ) {
         this.createWebviewProvider = createWebviewProvider
         this.createDiffViewProvider = createDiffViewProvider
         this.createCommentReviewController = createCommentReviewController
         this.createTerminalManager = createTerminalManager
         this.windowsProcessTreeProvider = windowsProcessTreeProvider
+        this.workspaceTreeWatch = workspaceTreeWatch
         this.hostBridge = hostBridge
         this.logToChannel = logToChannel
         this.getCallbackUrl = getCallbackUrl
@@ -88,6 +96,7 @@ export class HostProvider {
         extensionFsPath: string,
         globalStorageFsPath: string,
         windowsProcessTreeProvider?: WindowsProcessTreeProvider,
+        workspaceTreeWatch?: WorkspaceTreeWatchHost,
     ): HostProvider {
         if (HostProvider.instance) {
             throw new Error("Host provider has already been initialized.")
@@ -104,6 +113,7 @@ export class HostProvider {
             extensionFsPath,
             globalStorageFsPath,
             windowsProcessTreeProvider,
+            workspaceTreeWatch,
         )
         return HostProvider.instance
     }

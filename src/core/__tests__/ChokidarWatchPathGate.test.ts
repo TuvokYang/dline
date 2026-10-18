@@ -11,7 +11,8 @@ import { describe, expect, it } from "vitest"
  *
  * The compiler cannot catch this: a glob is a well-typed string. This gate
  * reads the extension sources and rejects a glob written directly into a
- * `chokidar.watch` path argument.
+ * `chokidar.watch` path argument, or into `watchPaths`, which keeps chokidar's
+ * literal-path contract when the editor serves the watch.
  *
  * Only literal text is judged. A variable, a `path.join(...)` call or any other
  * expression is accepted, because its value is not decidable here and the
@@ -38,12 +39,12 @@ interface WatchCall {
  */
 function findWatchCalls(file: string, source: string): WatchCall[] {
     const calls: WatchCall[] = []
-    const marker = /(?:chokidar\s*\.\s*watch|(?<![\w.])watch)\s*\(/g
+    const marker = /(?:chokidar\s*\.\s*watch|(?<![\w.])watchPaths|(?<![\w.])watch)\s*\(/g
 
     for (let match = marker.exec(source); match !== null; match = marker.exec(source)) {
         // `watch(` alone appears in unrelated code, so an unqualified call only
         // counts when the file imports chokidar at all.
-        if (!match[0].startsWith("chokidar") && !source.includes('from "chokidar"')) {
+        if (!/^(?:chokidar|watchPaths)/.test(match[0]) && !source.includes('from "chokidar"')) {
             continue
         }
 
@@ -121,6 +122,10 @@ function staticStringSegments(expression: string): string[] {
     return segments
 }
 
+function mayWatch(source: string): boolean {
+    return source.includes("chokidar") || source.includes("watchPaths(")
+}
+
 async function extensionSourceFiles(): Promise<string[]> {
     const { globby } = await import("globby")
     return globby(["src/**/*.ts"], {
@@ -137,7 +142,7 @@ describe("chokidar watch path gate", () => {
         const calls: WatchCall[] = []
         for (const file of files) {
             const source = await readFile(file, "utf8")
-            if (!source.includes("chokidar")) continue
+            if (!mayWatch(source)) continue
             calls.push(...findWatchCalls(path.relative(REPO_ROOT, file).replaceAll("\\", "/"), source))
         }
 
@@ -147,6 +152,14 @@ describe("chokidar watch path gate", () => {
         expect(watchedFiles).toContain("src/core/storage/TaskHistory.ts")
         expect(watchedFiles).toContain("src/test/e2e-control/task-history-control.ts")
         expect(watchedFiles).toContain("src/services/mcp/McpHub.ts")
+        expect(watchedFiles).toContain("src/services/mcp/WorkspaceMcpRegistry.ts")
+    })
+
+    it("rejects a glob passed to watchPaths", () => {
+        const calls = findWatchCalls("sample.ts", 'watchPaths(".agents/**/*.md", {})')
+
+        expect(calls).toHaveLength(1)
+        expect(staticStringSegments(calls[0].pathArgument).some((s) => GLOB_METACHARACTERS.test(s))).toBe(true)
     })
 
     it("passes a literal path with no glob metacharacter", () => {
@@ -183,7 +196,7 @@ describe("chokidar watch path gate", () => {
             if (relative === "src/core/__tests__/ChokidarWatchPathGate.test.ts") continue
 
             const source = await readFile(file, "utf8")
-            if (!source.includes("chokidar")) continue
+            if (!mayWatch(source)) continue
 
             for (const call of findWatchCalls(relative, source)) {
                 const offending = staticStringSegments(call.pathArgument).filter((segment) => GLOB_METACHARACTERS.test(segment))

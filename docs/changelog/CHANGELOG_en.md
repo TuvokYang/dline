@@ -25,6 +25,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 
 ### Fixes
+- On Windows, a directory holding a file a task read (such as a workstream folder under `.memory-bank/`) can be renamed or deleted again instead of being held in use by Dline: watches inside the workspace are now served by VS Code's own workspace watcher, which like the editor holds only the workspace folder and honors `files.watcherExclude`
 - Scroll areas such as What's New, an expanded exploration run and tool results no longer show a white scrollbar in dark themes: every scroll area in the Webview now uses the thin theme-colored scrollbar of the MCP card by default
 - A rejected API key (such as a 401 `invalid_api_key`) no longer offers Retry:
 - Fixed file checkpoints staying disabled for good after a task was reopened: a message an earlier session saved, such as "Checkpoints initialization timed out", no longer stops the new session from initializing, so checkpoint rows carry a restorable file hash again; rounds that arrive while initialization is still slow now wait for it instead of writing rows without a file snapshot

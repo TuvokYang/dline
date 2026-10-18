@@ -1,6 +1,7 @@
 import path from "node:path"
 import { Logger } from "@shared/services/Logger"
-import chokidar, { type ChokidarOptions, type FSWatcher } from "chokidar"
+import type { ChokidarOptions } from "chokidar"
+import { type PathWatcher, watchPaths } from "@/services/file-watch/watchPaths"
 import { markPerfPhase, recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 
@@ -27,7 +28,7 @@ export interface PromptInputFileWatcherDeps {
      * AGENTS paths are exact files and never require a recursive workspace walk.
      */
     readonly shouldIgnoreDirectory?: (absolutePath: string) => boolean
-    readonly watch?: (paths: readonly string[], options: ChokidarOptions) => FSWatcher
+    readonly watch?: (paths: readonly string[], options: ChokidarOptions) => PathWatcher
 }
 
 function isWithin(parent: string, candidate: string): boolean {
@@ -59,8 +60,8 @@ export class PromptInputFileWatcher {
     private readonly watchRoots: readonly string[]
     private readonly invalidate: (change: PromptInputFileChange) => void
     private readonly isIgnoredDirectory: (absolutePath: string) => boolean
-    private readonly watch: (paths: readonly string[], options: ChokidarOptions) => FSWatcher
-    private watcher?: FSWatcher
+    private readonly watch: (paths: readonly string[], options: ChokidarOptions) => PathWatcher
+    private watcher?: PathWatcher
     private readiness?: Promise<void>
     private settleReadiness?: (outcome: "success" | "degraded" | "superseded") => void
     private disposed = false
@@ -112,7 +113,7 @@ export class PromptInputFileWatcher {
         ])
         this.invalidate = deps.invalidate
         this.isIgnoredDirectory = deps.shouldIgnoreDirectory ?? (() => false)
-        this.watch = deps.watch ?? ((paths, options) => chokidar.watch([...paths], options))
+        this.watch = deps.watch ?? watchPaths
     }
 
     async trackExact(paths: readonly string[]): Promise<void> {

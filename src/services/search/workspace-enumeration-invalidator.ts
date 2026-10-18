@@ -1,5 +1,6 @@
-import chokidar, { type ChokidarOptions, type FSWatcher } from "chokidar"
+import type { ChokidarOptions } from "chokidar"
 import * as path from "path"
+import { type PathWatcher, watchPaths } from "@/services/file-watch/watchPaths"
 import { Logger } from "@/shared/services/Logger"
 
 /**
@@ -16,8 +17,8 @@ import { Logger } from "@/shared/services/Logger"
  * only observes rule/workflow/skill inputs and answers a different question.
  */
 
-/** Injected for tests; production uses chokidar. */
-export type WatchFactory = (paths: readonly string[], options: ChokidarOptions) => FSWatcher
+/** Injected for tests; production serves a workspace folder from the editor's own watch. */
+export type WatchFactory = (paths: readonly string[], options: ChokidarOptions) => PathWatcher
 
 export type WorkspaceChangeKind = "add" | "change" | "unlink" | "addDir" | "unlinkDir"
 
@@ -47,18 +48,18 @@ function hasSegmentIn(relativePath: string, directories: ReadonlySet<string>): b
 }
 
 interface RootWatch {
-    readonly watcher: FSWatcher
+    readonly watcher: PathWatcher
     readonly listeners: Set<WorkspaceChangeListener>
     /** The enumeration cache's own subscription, kept apart so eviction removes only it. */
     enumeration?: WorkspaceChangeListener
 }
 
 const watches = new Map<string, RootWatch>()
-let watchFactory: WatchFactory = (paths, options) => chokidar.watch([...paths], options)
+let watchFactory: WatchFactory = watchPaths
 
 /** Test seam: swap the watcher implementation. */
 export function setWatchFactoryForTesting(factory: WatchFactory | undefined): void {
-    watchFactory = factory ?? ((paths, options) => chokidar.watch([...paths], options))
+    watchFactory = factory ?? watchPaths
 }
 
 /** Start the root's watcher, or return the one already running. Undefined when it cannot start. */
@@ -66,7 +67,7 @@ function openRootWatch(root: string): RootWatch | undefined {
     const existing = watches.get(root)
     if (existing) return existing
 
-    let watcher: FSWatcher
+    let watcher: PathWatcher
     try {
         watcher = watchFactory([root], {
             persistent: false,

@@ -25,6 +25,7 @@
 
 
 ### Fixes
+- Windows 上任务读过文件所在的目录（如 `.memory-bank/` 下的工作流目录）不再因 Dline 占用而无法重命名或删除：工作区内的文件监听改由 VS Code 自身的工作区监听提供，与编辑器一致只占用工作区根目录，并遵守 `files.watcherExclude`
 - 暗色主题下 What's New、展开的探索段、工具结果等滚动区域的滚动条不再显示为白色：Webview 中所有滚动区域默认使用与 MCP 卡片相同的随主题细滚动条
 - API key 被拒绝（如 401 `invalid_api_key`）时不再提供 Retry：
 - 修复任务重新打开后文件 checkpoint 永久失效的问题：上一会话保存的"Checkpoints initialization timed out"等提示不再阻止新会话初始化，checkpoint 行重新带上可恢复文件的 hash；初始化较慢时并发的轮次也会等待而不是写入无文件快照的行
