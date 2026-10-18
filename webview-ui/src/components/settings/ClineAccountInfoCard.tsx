@@ -1,3 +1,4 @@
+import { isFeatureSettingActive } from "@shared/ClineFeatureSetting"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { useState } from "react"
@@ -7,8 +8,11 @@ import { AccountServiceClient } from "@/services/grpc-client"
 
 export const ClineAccountInfoCard = () => {
     const { clineUser } = useClineAuth()
-    const { navigateToAccount } = useExtensionState()
+    const { navigateToAccount, accountEnabled } = useExtensionState()
     const [isLoading, setIsLoading] = useState(false)
+
+    // Sign-up and billing belong to the account feature, which the rollout may keep off.
+    if (!isFeatureSettingActive(accountEnabled)) return null
 
     const user = clineUser || undefined
 

@@ -1,3 +1,4 @@
+import { isFeatureSettingActive } from "@shared/ClineFeatureSetting"
 import { AlertCircleIcon, CircleCheckIcon, CircleIcon, LoaderCircleIcon } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
 import DlineLogo from "@/assets/DlineLogo"
@@ -10,14 +11,15 @@ import ApiConfigurationSection from "../settings/sections/ApiConfigurationSectio
 import { NEW_USER_TYPE, STEP_CONFIG, USER_TYPE_SELECTIONS } from "./data-steps"
 
 type UserTypeSelectionProps = {
+    options: typeof USER_TYPE_SELECTIONS
     userType: NEW_USER_TYPE
     onSelectUserType: (type: NEW_USER_TYPE) => void
 }
 
-const UserTypeSelectionStep = ({ userType, onSelectUserType }: UserTypeSelectionProps) => (
+const UserTypeSelectionStep = ({ options, userType, onSelectUserType }: UserTypeSelectionProps) => (
     <div className="flex flex-col w-full items-center">
         <div className="flex w-full max-w-lg flex-col gap-3 my-2">
-            {USER_TYPE_SELECTIONS.map((option) => {
+            {options.map((option) => {
                 const isSelected = userType === option.type
 
                 return (
@@ -42,10 +44,18 @@ const UserTypeSelectionStep = ({ userType, onSelectUserType }: UserTypeSelection
 )
 
 const OnboardingView = () => {
-    const { hideSettings, hideAccount, setShowWelcome } = useExtensionState()
+    const { hideSettings, hideAccount, setShowWelcome, accountEnabled } = useExtensionState()
     const [stepNumber, setStepNumber] = useState(0)
     const [isActionLoading, setIsActionLoading] = useState(false)
-    const [userType, setUserType] = useState<NEW_USER_TYPE>(NEW_USER_TYPE.ACCOUNT)
+    const [selectedUserType, setUserType] = useState<NEW_USER_TYPE>(NEW_USER_TYPE.ACCOUNT)
+    // Without the account feature, bringing an API key is the only way in.
+    const accountActive = isFeatureSettingActive(accountEnabled)
+    const userType = accountActive ? selectedUserType : NEW_USER_TYPE.BYOK
+    const userTypeOptions = useMemo(
+        () =>
+            accountActive ? USER_TYPE_SELECTIONS : USER_TYPE_SELECTIONS.filter((option) => option.type !== NEW_USER_TYPE.ACCOUNT),
+        [accountActive],
+    )
 
     const onUserTypeClick = useCallback((selectedUserType: NEW_USER_TYPE) => {
         setUserType(selectedUserType)
@@ -122,7 +132,9 @@ const OnboardingView = () => {
                 <div
                     className={cn("flex-1 w-full flex overflow-y-auto min-h-0", stepNumber === 1 ? "max-w-4xl" : "max-w-lg")}
                     data-testid="onboarding-step-content">
-                    {stepNumber === 0 && <UserTypeSelectionStep onSelectUserType={onUserTypeClick} userType={userType} />}
+                    {stepNumber === 0 && (
+                        <UserTypeSelectionStep onSelectUserType={onUserTypeClick} options={userTypeOptions} userType={userType} />
+                    )}
                     {stepNumber === 1 && (
                         <div className="w-full">
                             <ApiConfigurationSection />

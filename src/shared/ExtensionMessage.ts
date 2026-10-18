@@ -162,6 +162,8 @@ export interface ExtensionState {
     localWebSearchEngine?: LocalSearchEngineId
     searxngSearchUrl?: string
     worktreesEnabled?: ClineFeatureSetting
+    /** Account sign-in and views; shown only while both the rollout flag and the user's opt-in are on. */
+    accountEnabled?: ClineFeatureSetting
     focusChainSettings: FocusChainSettings
     customPrompt?: string
     favoritedModelIds: string[]

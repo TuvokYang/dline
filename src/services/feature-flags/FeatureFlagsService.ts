@@ -9,14 +9,10 @@ import type { FeatureFlagPayload, IFeatureFlagsProvider } from "./providers/IFea
 /**
  * Answers which experimental capabilities are switched on.
  *
- * The switches were once fetched from a remote flag service, so reads were
- * served from a cache that a `poll()` on the sign-in path filled — a caller on
- * a hot path could not await a request. That also meant the switches only ever
- * resolved for signed-in users.
- *
- * Resolution is local now, so reads resolve on demand and fill the snapshot
- * lazily. The snapshot is kept so that repeated reads within a session agree
- * with each other even if the environment changes underneath.
+ * Reads are synchronous and resolve lazily into a snapshot, so repeated reads
+ * agree with each other even if a source changes underneath. The snapshot
+ * moves only through {@link refresh}, which the rollout source triggers when
+ * its answers change; listeners then learn of the change and re-project it.
  *
  * Deliberately independent of telemetry consent and of the account: a
  * capability must not depend on whether the user is measured or signed in.
@@ -29,15 +25,28 @@ export class FeatureFlagsService {
     public constructor(private provider: IFeatureFlagsProvider) {}
 
     private snapshot: Map<ExperimentalFeatureFlag, FeatureFlagPayload> | undefined
+    private readonly listeners = new Set<() => void>()
 
     /**
-     * Discard the snapshot so the next read re-resolves.
+     * Re-resolve the switches and tell listeners when any of them changed.
      *
-     * Reads resolve on their own, so this is only needed to pick up an
-     * environment change within a running session.
+     * Called when a source's answers change, or to pick up an environment
+     * change within a running session.
      */
     public refresh(): void {
+        const previous = this.snapshot
         this.snapshot = undefined
+        if (!previous || this.listeners.size === 0) return
+        const next = this.resolveSnapshot()
+        if (EXPERIMENTAL_FEATURE_FLAGS.some((flag) => previous.get(flag) !== next.get(flag))) {
+            for (const listener of this.listeners) listener()
+        }
+    }
+
+    /** Called after {@link refresh} changed a switch; returns the unsubscribe function. */
+    public onDidChange(listener: () => void): () => void {
+        this.listeners.add(listener)
+        return () => this.listeners.delete(listener)
     }
 
     public getBooleanFlagEnabled(flagName: ExperimentalFeatureFlag): boolean {
@@ -54,6 +63,10 @@ export class FeatureFlagsService {
 
     public getWorktreesEnabled(): boolean {
         return this.getBooleanFlagEnabled(ExperimentalFeatureFlag.WORKTREES)
+    }
+
+    public getAccountEnabled(): boolean {
+        return this.getBooleanFlagEnabled(ExperimentalFeatureFlag.ACCOUNT)
     }
 
     /**
@@ -94,6 +107,7 @@ export class FeatureFlagsService {
      */
     public async dispose(): Promise<void> {
         this.snapshot = undefined
+        this.listeners.clear()
         await this.provider.dispose()
     }
 

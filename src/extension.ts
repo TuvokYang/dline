@@ -14,6 +14,7 @@ import { sendWorktreesButtonClickedEvent } from "./core/controller/ui/subscribeT
 import { WebviewProvider } from "./core/webview"
 import { registerExtensionReloadWatcher } from "./dev/ExtensionReloadWatcher"
 import { createClineAPI } from "./exports"
+import { accountFeatureGate, isAccountFeatureActive } from "./services/account/accountFeatureGate"
 import { initializeTestMode } from "./services/test/TestMode"
 import "./utils/path" // necessary to have access to String.prototype.toPosix
 import fs from "node:fs/promises"
@@ -260,10 +261,19 @@ export async function activate(context: vscode.ExtensionContext) {
     )
     context.subscriptions.push(
         vscode.commands.registerCommand(commands.AccountButton, () => {
+            // The command palette can still reach the command while the button is hidden.
+            if (!isAccountFeatureActive()) return
             const c = sidebarController()
             if (c) sendAccountButtonClickedEvent(c)
         }),
     )
+    // The sidebar title button follows the account feature through this context key.
+    context.subscriptions.push({
+        dispose: accountFeatureGate.onDidChange((active) => {
+            void vscode.commands.executeCommand("setContext", "dline.accountEnabled", active)
+        }),
+    })
+    accountFeatureGate.reevaluate()
     context.subscriptions.push(
         vscode.commands.registerCommand(commands.WorktreesButton, () => {
             const c = sidebarController()

@@ -315,7 +315,7 @@
                 {
                     "command": "dline.accountButtonClicked",
                     "group": "navigation@5",
-                    "when": "view == dline.SidebarProvider"
+                    "when": "view == dline.SidebarProvider && dline.accountEnabled"
                 },
                 {
                     "command": "dline.settingsButtonClicked",
@@ -379,6 +379,10 @@
                 {
                     "command": "dline.reviewComment.reply",
                     "when": "false"
+                },
+                {
+                    "command": "dline.accountButtonClicked",
+                    "when": "dline.accountEnabled"
                 }
             ],
             "comments/commentThread/context": [

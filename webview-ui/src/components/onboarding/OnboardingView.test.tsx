@@ -1,3 +1,4 @@
+import type { ClineFeatureSetting } from "@shared/ClineFeatureSetting"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import OnboardingView from "./OnboardingView"
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     hideAccount: vi.fn(),
     hideSettings: vi.fn(),
     setShowWelcome: vi.fn(),
+    accountEnabled: { featureFlag: true, user: true } as ClineFeatureSetting | undefined,
 }))
 
 vi.mock("@/assets/DlineLogo", () => ({
@@ -20,6 +22,7 @@ vi.mock("@/context/ExtensionStateContext", () => ({
         hideAccount: mocks.hideAccount,
         hideSettings: mocks.hideSettings,
         setShowWelcome: mocks.setShowWelcome,
+        accountEnabled: mocks.accountEnabled,
     }),
 }))
 
@@ -42,6 +45,7 @@ describe("OnboardingView", () => {
         vi.clearAllMocks()
         mocks.accountLoginClicked.mockResolvedValue({ value: "https://example.test/login" })
         mocks.setWelcomeViewCompleted.mockResolvedValue({})
+        mocks.accountEnabled = { featureFlag: true, user: true }
     })
 
     it("offers only account login and bring-your-own-key paths", () => {
@@ -74,6 +78,24 @@ describe("OnboardingView", () => {
         expect(screen.getByTestId("api-configuration")).toBeInTheDocument()
         expect(screen.getByText("Configure your provider")).toBeInTheDocument()
         expect(screen.getByTestId("onboarding-step-content")).toHaveClass("w-full", "max-w-4xl")
+        expect(mocks.accountLoginClicked).not.toHaveBeenCalled()
+    })
+
+    it("offers only bring-your-own-key while the account feature is off", () => {
+        mocks.accountEnabled = { featureFlag: true, user: false }
+        render(<OnboardingView />)
+
+        expect(screen.queryByText("Login / Sign up account")).not.toBeInTheDocument()
+        expect(screen.getByText("Bring your own API key")).toBeInTheDocument()
+    })
+
+    it("continues to API configuration rather than account login while the feature is off", () => {
+        mocks.accountEnabled = undefined
+        render(<OnboardingView />)
+
+        fireEvent.click(screen.getByRole("button", { name: "Continue" }))
+
+        expect(screen.getByTestId("api-configuration")).toBeInTheDocument()
         expect(mocks.accountLoginClicked).not.toHaveBeenCalled()
     })
 })

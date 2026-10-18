@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import { ExperimentalFeatureFlag } from "@/shared/services/feature-flags/feature-flags"
 import { FeatureFlagsService } from "../FeatureFlagsService"
 import type { FeatureFlagPayload, IFeatureFlagsProvider } from "../providers/IFeatureFlagsProvider"
+import { LayeredFeatureFlagsProvider } from "../providers/LayeredFeatureFlagsProvider"
 import { LocalFeatureFlagsProvider } from "../providers/LocalFeatureFlagsProvider"
 
 function providerReturning(flags: Record<string, FeatureFlagPayload>): IFeatureFlagsProvider {
@@ -94,5 +95,66 @@ describe("LocalFeatureFlagsProvider", () => {
 
     it("makes no network request, so it reports no timeout", () => {
         expect(new LocalFeatureFlagsProvider({}).getSettings()).toEqual({ enabled: true })
+    })
+
+    it("leaves a switch no local source sets to the later layers", () => {
+        expect(new LocalFeatureFlagsProvider({}, false).resolveFlags([ExperimentalFeatureFlag.ACCOUNT])).toEqual({})
+        expect(new LocalFeatureFlagsProvider({}, true).resolveFlags([ExperimentalFeatureFlag.ACCOUNT])).toEqual({
+            [ExperimentalFeatureFlag.ACCOUNT]: true,
+        })
+    })
+})
+
+describe("account rollout precedence", () => {
+    function serviceWith(env: Record<string, string | undefined>, developmentBuild: boolean, remote: IFeatureFlagsProvider) {
+        return new FeatureFlagsService(
+            new LayeredFeatureFlagsProvider([new LocalFeatureFlagsProvider(env, developmentBuild), remote]),
+        )
+    }
+
+    it("follows the rollout service in a release build", () => {
+        expect(serviceWith({}, false, providerReturning({ account: true })).getAccountEnabled()).toBe(true)
+        expect(serviceWith({}, false, providerReturning({ account: false })).getAccountEnabled()).toBe(false)
+    })
+
+    it("stays off when the service has no answer", () => {
+        expect(serviceWith({}, false, providerReturning({})).getAccountEnabled()).toBe(false)
+    })
+
+    it("is on in a development build even when the service says no", () => {
+        expect(serviceWith({}, true, providerReturning({ account: false })).getAccountEnabled()).toBe(true)
+    })
+
+    it("lets an explicit variable override both", () => {
+        const env = { DLINE_EXPERIMENTAL_ACCOUNT: "false" }
+        expect(serviceWith(env, true, providerReturning({ account: true })).getAccountEnabled()).toBe(false)
+    })
+
+    it("still answers from the local layer when the rollout layer throws", () => {
+        const broken: IFeatureFlagsProvider = {
+            ...providerReturning({}),
+            resolveFlags: () => {
+                throw new Error("broken")
+            },
+        }
+        expect(serviceWith({ DLINE_EXPERIMENTAL_ACCOUNT: "true" }, false, broken).getAccountEnabled()).toBe(true)
+    })
+})
+
+describe("FeatureFlagsService.refresh", () => {
+    it("notifies only when a switch actually changed", () => {
+        let answers: Record<string, FeatureFlagPayload> = {}
+        const service = new FeatureFlagsService({ ...providerReturning({}), resolveFlags: () => answers })
+        const onChange = vi.fn()
+        service.onDidChange(onChange)
+        expect(service.getAccountEnabled()).toBe(false)
+
+        service.refresh()
+        expect(onChange).not.toHaveBeenCalled()
+
+        answers = { account: true }
+        service.refresh()
+        expect(onChange).toHaveBeenCalledTimes(1)
+        expect(service.getAccountEnabled()).toBe(true)
     })
 })

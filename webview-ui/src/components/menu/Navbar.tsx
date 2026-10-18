@@ -1,3 +1,4 @@
+import { isFeatureSettingActive } from "@shared/ClineFeatureSetting"
 import { HistoryIcon, PlusIcon, SettingsIcon, UserCircleIcon } from "lucide-react"
 import { useMemo } from "react"
 import { Button } from "@/components/ui/button"
@@ -14,7 +15,9 @@ const McpServerIcon = ({ className, size }: { className?: string; size?: number 
 )
 
 export const Navbar = () => {
-    const { navigateToHistory, navigateToSettings, navigateToAccount, navigateToMcp, navigateToChat } = useExtensionState()
+    const { navigateToHistory, navigateToSettings, navigateToAccount, navigateToMcp, navigateToChat, accountEnabled } =
+        useExtensionState()
+    const accountActive = isFeatureSettingActive(accountEnabled)
 
     const SETTINGS_TABS = useMemo(
         () => [
@@ -46,13 +49,17 @@ export const Navbar = () => {
                 icon: HistoryIcon,
                 navigate: navigateToHistory,
             },
-            {
-                id: "account",
-                name: "Account",
-                tooltip: "Account",
-                icon: UserCircleIcon,
-                navigate: navigateToAccount,
-            },
+            ...(accountActive
+                ? [
+                      {
+                          id: "account",
+                          name: "Account",
+                          tooltip: "Account",
+                          icon: UserCircleIcon,
+                          navigate: navigateToAccount,
+                      },
+                  ]
+                : []),
             {
                 id: "settings",
                 name: "Settings",
@@ -61,7 +68,7 @@ export const Navbar = () => {
                 navigate: navigateToSettings,
             },
         ],
-        [navigateToAccount, navigateToChat, navigateToHistory, navigateToMcp, navigateToSettings],
+        [accountActive, navigateToAccount, navigateToChat, navigateToHistory, navigateToMcp, navigateToSettings],
     )
 
     return (

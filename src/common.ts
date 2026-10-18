@@ -17,7 +17,8 @@ import type { FlowPhase } from "./core/task/kernel"
 import { AgentConfigLoader } from "./core/task/tools/subagent/AgentConfigLoader"
 import { ExtensionRegistryInfo } from "./registry"
 import { ErrorService } from "./services/error"
-import { featureFlagsService } from "./services/feature-flags"
+import { featureFlagsService, startFeatureFlagRollout } from "./services/feature-flags"
+import { loopbackFeaturesEndpointOverride } from "./services/feature-flags/remote/FeatureFlagsHttpSource"
 import { getDistinctId } from "./services/logging/distinctId"
 import { DlineRuntimeFileManager } from "./services/runtime-files"
 import { disposeTelemetryService, telemetryService } from "./services/telemetry"
@@ -205,6 +206,15 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
     void startRemoteUsageReporting(storageContext.dataDir).catch((error) =>
         Logger.warn("[Dline] Failed to start remote usage reporting:", error),
     )
+    // Rollout answers only re-project state; a missing service leaves every switch at its default.
+    featureFlagsService.onDidChange(() => {
+        for (const controller of OrchestratorController.getInstance().getActiveControllers()) {
+            void controller.postStateToWebview()
+        }
+    })
+    void startFeatureFlagRolloutInBackground().catch((error) =>
+        Logger.warn("[Dline] Failed to start feature flag rollout:", error),
+    )
 
     // Non-blocking announcement check and display
     showVersionUpdateAnnouncement(stateManager)
@@ -364,6 +374,25 @@ export async function tearDown(): Promise<void> {
             Logger.internalError("[Dline] Runtime session ledger completion failed:", error)
         })
     }
+}
+
+async function startFeatureFlagRolloutInBackground(): Promise<void> {
+    const endpoint = loopbackFeaturesEndpointOverride(process.env.DLINE_FEATURES_ENDPOINT)
+    if (process.env.DLINE_FEATURES_ENDPOINT && !endpoint) {
+        Logger.warn("[Dline] Ignoring DLINE_FEATURES_ENDPOINT: only a loopback origin may replace the feature service")
+    }
+    // A test run asks only a loopback service it started; it never reaches the real one.
+    const isTestRun = envFlagEnabled(process.env.E2E_TEST) || envFlagEnabled(process.env.IS_TEST)
+    if (isTestRun && !endpoint) return
+    const { getDlineCacheDir } = await import("./core/storage/disk")
+    await startFeatureFlagRollout({
+        cacheDir: getDlineCacheDir(),
+        distinctId: getDistinctId(),
+        version: ExtensionRegistryInfo.version,
+        platform: process.platform,
+        endpoint,
+        log: (level, message) => Logger[level](message),
+    })
 }
 
 async function startRemoteUsageReporting(dataDir: string): Promise<void> {

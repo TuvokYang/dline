@@ -1,15 +1,23 @@
 import { envFlagEnabled } from "@/shared/env"
-import { EXPERIMENTAL_FEATURE_FLAGS, ExperimentalFeatureFlag, ExperimentalFeatureFlagDefaultValue } from "./feature-flags"
+import {
+    EXPERIMENTAL_FEATURE_FLAGS,
+    ExperimentalFeatureFlag,
+    ExperimentalFeatureFlagDefaultValue,
+    ExperimentalFeatureFlagDevelopmentDefault,
+} from "./feature-flags"
 
 /**
  * Resolves the experimental switches from the local environment.
  *
- * The switches used to be answered by a remote flag service. They are now
- * resolved here, in order of precedence:
+ * In order of precedence:
  *
  *   1. `DLINE_EXPERIMENTAL_<FLAG>` when set to a recognised value
- *   2. `IS_DEV`, which turns every switch on
- *   3. the static default
+ *   2. `IS_DEV` in the runtime environment, which turns every switch on
+ *   3. the switch's development default, in a development build
+ *   4. the static default
+ *
+ * The Dline feature service answers between 3 and 4, so the local sources here
+ * are reported separately from the static default.
  *
  * This module is deliberately free of IO so the precedence can be tested by
  * passing an environment object rather than mutating `process.env`.
@@ -32,11 +40,27 @@ export function environmentVariableNameFor(flag: ExperimentalFeatureFlag): strin
 }
 
 /**
- * Reads one switch. An unset or unrecognised variable falls through to the next
- * source rather than being treated as `false`, so a typo cannot silently
- * disable a switch that `IS_DEV` or the default would have enabled.
+ * Whether this bundle was built for development.
+ *
+ * Must read the literal `process.env.IS_DEV`: the bundler replaces exactly that
+ * expression, so a lookup through an environment object never sees the
+ * build-time value in an installed package.
  */
-export function resolveExperimentalFlag(flag: ExperimentalFeatureFlag, env: EnvironmentSource): boolean {
+export function isDevelopmentBuild(): boolean {
+    return envFlagEnabled(process.env.IS_DEV)
+}
+
+/**
+ * Reads one switch from the local sources only, or `undefined` when none of
+ * them has an opinion. An unset or unrecognised variable falls through to the
+ * next source rather than being treated as `false`, so a typo cannot silently
+ * disable a switch that `IS_DEV` would have enabled.
+ */
+export function resolveLocalExperimentalFlag(
+    flag: ExperimentalFeatureFlag,
+    env: EnvironmentSource,
+    developmentBuild = false,
+): boolean | undefined {
     const explicit = readBooleanEnv(env[environmentVariableNameFor(flag)])
     if (explicit !== undefined) {
         return explicit
@@ -46,13 +70,25 @@ export function resolveExperimentalFlag(flag: ExperimentalFeatureFlag, env: Envi
         return true
     }
 
-    return ExperimentalFeatureFlagDefaultValue[flag] === true
+    return developmentBuild ? ExperimentalFeatureFlagDevelopmentDefault[flag] : undefined
 }
 
-export function resolveExperimentalFlags(env: EnvironmentSource): Record<ExperimentalFeatureFlag, boolean> {
+/** Reads one switch from the local sources, falling back to its static default. */
+export function resolveExperimentalFlag(
+    flag: ExperimentalFeatureFlag,
+    env: EnvironmentSource,
+    developmentBuild = false,
+): boolean {
+    return resolveLocalExperimentalFlag(flag, env, developmentBuild) ?? ExperimentalFeatureFlagDefaultValue[flag] === true
+}
+
+export function resolveExperimentalFlags(
+    env: EnvironmentSource,
+    developmentBuild = false,
+): Record<ExperimentalFeatureFlag, boolean> {
     const resolved = {} as Record<ExperimentalFeatureFlag, boolean>
     for (const flag of EXPERIMENTAL_FEATURE_FLAGS) {
-        resolved[flag] = resolveExperimentalFlag(flag, env)
+        resolved[flag] = resolveExperimentalFlag(flag, env, developmentBuild)
     }
     return resolved
 }

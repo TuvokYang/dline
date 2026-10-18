@@ -185,6 +185,13 @@ const experimentalFeatures: FeatureToggle[] = [
         stateKey: "lazyTeammateModeEnabled",
         settingKey: "lazyTeammateModeEnabled",
     },
+    {
+        id: "account",
+        label: "Account",
+        description: "Show Dline account sign-in, the account view and billing. The account service is in early rollout.",
+        stateKey: "accountEnabled",
+        settingKey: "accountEnabled",
+    },
 ]
 
 const advancedFeatures: FeatureToggle[] = [
@@ -270,6 +277,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
         localWebSearchEngine,
         searxngSearchUrl,
         worktreesEnabled,
+        accountEnabled,
         focusChainSettings,
         remoteConfigSettings,
         nativeToolCallSetting,
@@ -322,6 +330,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
         imageGenerationEnabled,
         clineWebToolsEnabled: clineWebToolsEnabled?.user,
         worktreesEnabled: worktreesEnabled?.user,
+        accountEnabled: accountEnabled?.user,
         enableParallelToolCalling,
         backgroundEditEnabled,
         doubleCheckCompletionEnabled,
@@ -332,6 +341,8 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
     // Visibility lookup for features with feature flags
     const featureVisibility: Record<string, boolean | undefined> = {
         worktreesEnabled: worktreesEnabled?.featureFlag,
+        // Offered only while the rollout or a development build turns the feature on.
+        accountEnabled: accountEnabled?.featureFlag === true,
         // How MCP tools reach the model only matters while MCP itself is on.
         mcpToolsOnDemandEnabled: mcpEnabled !== false,
     }

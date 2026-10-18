@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { ExperimentalFeatureFlag } from "../feature-flags"
-import { environmentVariableNameFor, resolveExperimentalFlag, resolveExperimentalFlags } from "../resolve-experimental-flags"
+import {
+    environmentVariableNameFor,
+    resolveExperimentalFlag,
+    resolveExperimentalFlags,
+    resolveLocalExperimentalFlag,
+} from "../resolve-experimental-flags"
 
 const WEBTOOLS_VAR = "DLINE_EXPERIMENTAL_WEBTOOLS"
 const WORKTREES_VAR = "DLINE_EXPERIMENTAL_WORKTREE_EXP"
@@ -65,6 +70,34 @@ describe("resolveExperimentalFlag", () => {
     it("does not let IS_DEV=false suppress an explicit variable", () => {
         expect(resolveExperimentalFlag(ExperimentalFeatureFlag.WEBTOOLS, { IS_DEV: "false", [WEBTOOLS_VAR]: "true" })).toBe(true)
     })
+
+    it("turns on only the switches with a development default in a development build", () => {
+        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.ACCOUNT, {}, true)).toBe(true)
+        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.ACCOUNT, {}, false)).toBe(false)
+        // Switches without one keep their static default, so development bundles
+        // and the E2E runs built from them do not change behavior.
+        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.WEBTOOLS, {}, true)).toBe(false)
+    })
+
+    it("lets the variable turn a development default off", () => {
+        expect(resolveExperimentalFlag(ExperimentalFeatureFlag.ACCOUNT, { DLINE_EXPERIMENTAL_ACCOUNT: "false" }, true)).toBe(
+            false,
+        )
+    })
+})
+
+describe("resolveLocalExperimentalFlag", () => {
+    it("has no opinion when no local source sets the switch", () => {
+        // The feature service is consulted only in this case.
+        expect(resolveLocalExperimentalFlag(ExperimentalFeatureFlag.ACCOUNT, {}, false)).toBeUndefined()
+        expect(resolveLocalExperimentalFlag(ExperimentalFeatureFlag.WEBTOOLS, {}, true)).toBeUndefined()
+    })
+
+    it("reports an explicit off as an opinion", () => {
+        expect(resolveLocalExperimentalFlag(ExperimentalFeatureFlag.ACCOUNT, { DLINE_EXPERIMENTAL_ACCOUNT: "0" }, false)).toBe(
+            false,
+        )
+    })
 })
 
 describe("resolveExperimentalFlags", () => {
@@ -73,6 +106,7 @@ describe("resolveExperimentalFlags", () => {
             [ExperimentalFeatureFlag.WEBTOOLS]: false,
             [ExperimentalFeatureFlag.WORKTREES]: false,
             [ExperimentalFeatureFlag.OPENAI_RESPONSES_WEBSOCKET_MODE]: false,
+            [ExperimentalFeatureFlag.ACCOUNT]: false,
         })
     })
 
@@ -81,6 +115,7 @@ describe("resolveExperimentalFlags", () => {
             [ExperimentalFeatureFlag.WEBTOOLS]: true,
             [ExperimentalFeatureFlag.WORKTREES]: true,
             [ExperimentalFeatureFlag.OPENAI_RESPONSES_WEBSOCKET_MODE]: true,
+            [ExperimentalFeatureFlag.ACCOUNT]: true,
         })
     })
 })

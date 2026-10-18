@@ -17,6 +17,7 @@ import { ClineEnv } from "@/config"
 import { settingsAffectPromptFreshness } from "@/core/prompts/system-prompt-cache/PromptFreshnessProjection"
 import { fetchRemoteConfig } from "@/core/storage/remote-config/fetch"
 import { clearRemoteConfig } from "@/core/storage/remote-config/utils"
+import { accountFeatureGate } from "@/services/account/accountFeatureGate"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
 import { isChatInputSendShortcut } from "@/shared/ChatInputSendShortcut"
@@ -284,6 +285,11 @@ export async function updateSettings(controller: Controller, request: UpdateSett
         // Update worktrees setting
         if (request.worktreesEnabled !== undefined) {
             controller.stateManager.setGlobalState("worktreesEnabled", request.worktreesEnabled)
+        }
+
+        if (request.accountEnabled !== undefined) {
+            controller.stateManager.setGlobalState("accountEnabled", request.accountEnabled)
+            accountFeatureGate.reevaluate()
         }
 
         // Update subagents setting

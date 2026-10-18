@@ -1,8 +1,10 @@
+import { isFeatureSettingActive } from "@shared/ClineFeatureSetting"
 import { memo, type ReactElement } from "react"
 import CreditLimitError from "@/components/chat/CreditLimitError"
 import SpendLimitError from "@/components/chat/SpendLimitError"
 import { Button } from "@/components/ui/button"
 import { useClineAuth, useClineSignIn } from "@/context/ClineAuthContext"
+import { useExtensionState } from "@/context/ExtensionStateContext"
 import { ClineError, ClineErrorType } from "../../../../src/services/error/ClineError"
 import { ApiErrorBox } from "./ApiErrorBox"
 
@@ -66,7 +68,9 @@ export const ApiFailureContent = memo(({ error, testId, title, footerOwnsRetry =
 function ClineSignInPrompt({ fallback }: { readonly fallback: ReactElement }) {
     const { clineUser } = useClineAuth()
     const { isLoginLoading, handleSignIn } = useClineSignIn()
-    if (clineUser) return fallback
+    const { accountEnabled } = useExtensionState()
+    // Without the account feature there is nothing to sign in to; show the plain failure.
+    if (clineUser || !isFeatureSettingActive(accountEnabled)) return fallback
     return (
         <div className="flex flex-col gap-3">
             <div className="flex items-center justify-center rounded border border-neutral-500/30 bg-vscode-editor-background p-6 text-center text-vscode-foreground">

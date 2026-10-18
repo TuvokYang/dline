@@ -7,6 +7,7 @@ import {
 } from "@shared/auto-condense"
 import { DEFAULT_BROWSER_SETTINGS } from "@shared/BrowserSettings"
 import { DEFAULT_CHAT_INPUT_SEND_SHORTCUT } from "@shared/ChatInputSendShortcut"
+import { isFeatureSettingActive } from "@shared/ClineFeatureSetting"
 import { DEFAULT_MAX_PARALLEL_SUBAGENTS, DEFAULT_MAX_PARALLEL_TOOL_CALLS } from "@shared/concurrency-limits"
 import { type ActiveInteractionView, DEFAULT_PLATFORM, type ExtensionState, type UiMessage } from "@shared/ExtensionMessage"
 import { DEFAULT_FOCUS_CHAIN_SETTINGS } from "@shared/FocusChainSettings"
@@ -280,6 +281,8 @@ export const ExtensionStateContextProvider: React.FC<{
     const [settingsTargetSection, setSettingsTargetSection] = useState<string | undefined>(undefined)
     const [showHistory, setShowHistory] = useState(false)
     const [showAccount, setShowAccount] = useState(false)
+    // Read by navigateToAccount, which must stay stable while the gate changes.
+    const accountActiveRef = useRef(false)
     const [showWorktrees, setShowWorktrees] = useState(false)
     const [showAnnouncement, setShowAnnouncement] = useState(false)
 
@@ -332,6 +335,8 @@ export const ExtensionStateContextProvider: React.FC<{
     }, [closeMcpView])
 
     const navigateToAccount = useCallback(() => {
+        // The extension command and stale links may still ask for the view while the feature is off.
+        if (!accountActiveRef.current) return
         setShowSettings(false)
         closeMcpView()
         setShowHistory(false)
@@ -406,6 +411,7 @@ export const ExtensionStateContextProvider: React.FC<{
         mcpToolsOnDemandEnabled: true,
         clineWebToolsEnabled: { user: true, featureFlag: false },
         worktreesEnabled: { user: true, featureFlag: false },
+        accountEnabled: { user: false, featureFlag: false },
         favoritedModelIds: [],
         optOutOfRemoteConfig: false,
         remoteConfigSettings: {},
@@ -437,6 +443,12 @@ export const ExtensionStateContextProvider: React.FC<{
         profileCatalogRevision: 0,
         taskLockStatus: undefined,
     })
+    // The account view closes as soon as the rollout or the user turns the feature off.
+    const accountActive = isFeatureSettingActive(state.accountEnabled)
+    useEffect(() => {
+        accountActiveRef.current = accountActive
+        if (!accountActive) setShowAccount(false)
+    }, [accountActive])
     const [expandTaskHeader, setExpandTaskHeader] = useState(true)
     const [hydration, setHydration] = useState<HydrationStatus>({ status: "pending" })
     const didHydrateState = hydration.status === "ready"

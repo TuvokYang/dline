@@ -84,6 +84,7 @@ import { resolveTaskPanelTitle } from "@/core/task/TaskPanelTitle"
 import { TaskStateManager } from "@/core/task/TaskStateManager"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
+import { readAccountFeatureSetting } from "@/services/account/accountFeatureGate"
 import { AuthService } from "@/services/auth/AuthService"
 import { OcaAuthService } from "@/services/auth/oca/OcaAuthService"
 import { LogoutReason } from "@/services/auth/types"
@@ -3246,6 +3247,7 @@ export class Controller {
                 user: this.stateManager.getGlobalSettingsKey("worktreesEnabled"),
                 featureFlag: featureFlagsService.getWorktreesEnabled(),
             },
+            accountEnabled: readAccountFeatureSetting(this.stateManager),
             hooksEnabled: getHooksEnabledSafe(this.stateManager.getGlobalSettingsKey("hooksEnabled")),
             remoteConfigSettings: this.stateManager.getRemoteConfigSettings(),
             nativeToolCallSetting: this.stateManager.getGlobalStateKey("nativeToolCallEnabled"),

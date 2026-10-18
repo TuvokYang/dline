@@ -228,6 +228,8 @@ const USER_SETTINGS_FIELDS = {
     localWebSearchEngine: { default: DEFAULT_LOCAL_SEARCH_ENGINE as LocalSearchEngineId },
     searxngSearchUrl: { default: undefined as string | undefined },
     worktreesEnabled: { default: false as boolean },
+    // The user's opt-in to the account feature; effective only while its rollout flag is on.
+    accountEnabled: { default: false as boolean },
     preferredLanguage: { default: "English" as string },
     chatInputSendShortcut: { default: DEFAULT_CHAT_INPUT_SEND_SHORTCUT as ChatInputSendShortcut },
     mode: { default: "act" as Mode },
