@@ -1,4 +1,4 @@
-import type { ComponentType, ReactElement } from "react"
+import type { ComponentType, ReactElement, ReactNode } from "react"
 import {
     ApprovalRenderer,
     CommandRenderer,
@@ -37,7 +37,8 @@ export const PRESENTATION_KINDS = [
 
 export type PresentationKind = (typeof PRESENTATION_KINDS)[number]
 
-const APPROVAL_PRESENTATION_KINDS = new Set<PresentationKind>([
+/** Presentations the footer draws above its actions while an approval is pending. */
+export const APPROVAL_PRESENTATION_KINDS: ReadonlySet<PresentationKind> = new Set<PresentationKind>([
     "tool_approval",
     "command_approval",
     "browser_approval",
@@ -85,12 +86,21 @@ export function isPresentationKind(value: string): value is PresentationKind {
     return PRESENTATION_KINDS.some((kind) => kind === value)
 }
 
+/** The container a presentation of this kind is drawn in, whatever draws its body. */
+export function PresentationFrame({ kind, children }: { kind: PresentationKind; children: ReactNode }) {
+    return (
+        <div className={presentationContainerClassName(kind)} data-testid={`presentation-${kind}`}>
+            {children}
+        </div>
+    )
+}
+
 /** Render one explicitly registered presentation without a generic fallback. */
 export function renderPresentation(kind: PresentationKind, props: PresentationProps): ReactElement {
     const Renderer = RENDERERS[kind]
     return (
-        <div className={presentationContainerClassName(kind)} data-testid={`presentation-${kind}`}>
+        <PresentationFrame kind={kind}>
             <Renderer {...props} />
-        </div>
+        </PresentationFrame>
     )
 }

@@ -20,9 +20,9 @@ describe("filterVisibleMessages approval history", () => {
         expect(filterVisibleMessages([rejectedTool])).toEqual([rejectedTool])
     })
 
-    // A low-stakes call that waits on, or was refused at, approval is one call:
-    // it is drawn once, as its approval card, and not also as a group entry.
-    it("draws a final low-stakes approval exactly once, as its own row", () => {
+    // The footer draws a pending low-stakes call; once answered it lands in its
+    // round's group like any call, not as a separate approval card at the end.
+    it("draws an answered final low-stakes call exactly once, inside its round's group", () => {
         const completedApiRequest: UiMessage = {
             ts: 100,
             type: "say",
@@ -35,19 +35,20 @@ describe("filterVisibleMessages approval history", () => {
             say: "tool",
             text: JSON.stringify({ tool: "readFile", path: "src/done.ts" }),
         }
-        const pendingRead: UiMessage = {
+        const answeredRead: UiMessage = {
             ts: 102,
             type: "ask",
             ask: "tool",
             text: JSON.stringify({ tool: "readFile", path: "/outside/secret.ts" }),
         }
 
-        const grouped = groupChatRows([completedApiRequest, completedRead, pendingRead])
-        const occurrences = grouped.flatMap((item) => (Array.isArray(item) ? item : [item])).filter((m) => m === pendingRead)
+        const grouped = groupChatRows([completedApiRequest, completedRead, answeredRead])
+        const occurrences = grouped.flatMap((item) => (Array.isArray(item) ? item : [item])).filter((m) => m === answeredRead)
+        const lastRow = grouped.at(-1)
 
         expect(occurrences).toHaveLength(1)
-        expect(grouped.at(-1)).toBe(pendingRead)
-        expect(grouped.filter(Array.isArray).flat()).toContain(completedRead)
+        expect(Array.isArray(lastRow)).toBe(true)
+        expect(lastRow).toEqual(expect.arrayContaining([completedRead, answeredRead]))
     })
 
     it("keeps an earlier rejected low-stakes tool in the grouped timeline after a completed API request", () => {

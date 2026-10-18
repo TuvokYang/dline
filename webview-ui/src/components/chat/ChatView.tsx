@@ -38,7 +38,6 @@ import { DEFAULT_TASK_ACTIVITY_FILTERS, type TaskActivityFilters, TaskActivityPa
 import { TaskActivityTabs, type TaskContentTab } from "./activity/TaskActivityTabs"
 import { useTaskActivities } from "./activity/useTaskActivities"
 import AutoApproveBar from "./auto-approve-menu/AutoApproveBar"
-// Import utilities and hooks from the new structure
 import {
     ChatLayout,
     convertHtmlToMarkdown,
@@ -53,9 +52,12 @@ import {
     useStoppedReasoningExpansion,
     WelcomeSection,
 } from "./chat-view"
+// Import utilities and hooks from the new structure
+import { PendingApprovalCard } from "./chat-view/components/messages/PendingApprovalCard"
 import { useComposerDraftKeepAlive } from "./chat-view/hooks/useComposerDraftKeepAlive"
 import { useSuccessorDraftTransfer } from "./chat-view/hooks/useSuccessorDraftTransfer"
 import { isTransitionRunning, useTransitionDraftRestore } from "./chat-view/hooks/useTransitionDraftRestore"
+import { withoutFooterOwnedApproval } from "./chat-view/utils/footerOwnedApproval"
 import { resolveActiveProfile, resolveTaskCurrency } from "./chat-view/utils/profileUtils"
 import { tokensPerSecondFromPerMinute } from "./input/composer-action/output-speed"
 import { appendAddToInput } from "./input/semantic-composer/add-to-input"
@@ -453,8 +455,15 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     // subscribeToShowWebview (user-triggered) and addToInput (content-driven).
 
     const visibleMessages = useMemo(() => {
-        return filterVisibleMessages(modifiedMessages)
-    }, [modifiedMessages])
+        return withoutFooterOwnedApproval(filterVisibleMessages(modifiedMessages), modifiedMessages, taskViewState)
+    }, [modifiedMessages, taskViewState])
+
+    const renderPendingApprovalCard = useCallback(
+        (message: UiMessage) => (
+            <PendingApprovalCard chatState={chatState} lastModifiedMessage={modifiedMessages.at(-1)} message={message} />
+        ),
+        [chatState, modifiedMessages],
+    )
 
     const lastProgressMessageText = useMemo(() => {
         if (!focusChainSettings.enabled) {
@@ -782,6 +791,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                         onDraftAccepted={clearOwnedDraft}
                         onDraftRejected={(settlement) => restoreRejectedDraft(settlement, sessionEpoch)}
                         onSuccessorAccepted={retainSuccessorDraft}
+                        renderApprovalCard={renderPendingApprovalCard}
                         showTimeline={false}
                         view={taskViewState}
                     />

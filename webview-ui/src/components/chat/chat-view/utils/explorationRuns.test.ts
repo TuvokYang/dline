@@ -145,10 +145,12 @@ describe("exploration runs", () => {
         expect(shape(rows)).toEqual(["run:10", "run:20,30"])
     })
 
-    it("does not fold a read the user still has to approve", () => {
-        const approval = tool(23, { tool: "readFile", path: "outside/secret.ts" }, "ask")
-        const rows = groupChatRows([...readRound(10), checkpoint(20), request(21), reasoning(22), approval])
+    // A read still waiting for approval never reaches the chat rows: the footer draws
+    // it. Once answered it is a read like any other and folds into the run.
+    it("folds an answered read into the run like any read", () => {
+        const answered = tool(23, { tool: "readFile", path: "outside/secret.ts" }, "ask")
+        const rows = groupChatRows([...readRound(10), checkpoint(20), request(21), reasoning(22), answered])
 
-        expect(shape(rows)).toEqual(["run:10", 20, 22, 23])
+        expect(shape(rows)).toEqual(["run:10,20"])
     })
 })

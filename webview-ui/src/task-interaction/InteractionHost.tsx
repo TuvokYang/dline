@@ -1,7 +1,14 @@
 import type { TaskViewAction, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
-import { useState } from "react"
+import { type ReactNode, useState } from "react"
+import { isCardHostedApproval } from "./approval-card"
 import { FooterActions } from "./FooterActions"
-import { isPresentationKind, renderPresentation } from "./renderer-registry"
+import {
+    APPROVAL_PRESENTATION_KINDS,
+    isPresentationKind,
+    PresentationFrame,
+    type PresentationKind,
+    renderPresentation,
+} from "./renderer-registry"
 import { dispatchTaskAction } from "./task-actions"
 import {
     type AcceptedInteractionSettlement,
@@ -41,19 +48,14 @@ export interface InteractionHostProps {
     onDraftAccepted?: (settlement: AcceptedInteractionSettlement) => void
     onDraftRejected?: (settlement: AcceptedInteractionSettlement) => void
     onSuccessorAccepted?: (transfer: PendingSuccessorDraftTransfer) => void
+    /**
+     * Draws the pending call of a card-hosted approval as the card the chat draws once
+     * the approval is answered. Without it the footer draws its compact summary.
+     */
+    renderApprovalCard?: (message: UiMessage) => ReactNode
 }
 
 const EMPTY_DRAFT: InteractionDraft = { text: "", images: [], files: [], activeQuote: null }
-
-const FOOTER_APPROVAL_PRESENTATIONS = new Set([
-    "tool_approval",
-    "command_approval",
-    "browser_approval",
-    "mcp_approval",
-    "subagent_approval",
-    "spawn_task_approval",
-    "focus_chain_change",
-])
 
 /** Bind one backend interaction projection to its exact ask presentation anchor. */
 export function InteractionHost({
@@ -65,13 +67,19 @@ export function InteractionHost({
     onDraftAccepted,
     onDraftRejected,
     onSuccessorAccepted,
+    renderApprovalCard,
 }: InteractionHostProps) {
     const [selection, setSelection] = useState<string[]>([])
     const interaction = view.activeInteraction
     const anchor = findActiveInteractionAnchor(messages, view)
     const presentationKind = interaction?.presentationKind
     const supported = presentationKind ? isPresentationKind(presentationKind) : false
-    const showAnchorPresentation = showTimeline || (presentationKind && FOOTER_APPROVAL_PRESENTATIONS.has(presentationKind))
+    const renderAnchorPresentation = (kind: PresentationKind, message: UiMessage) =>
+        renderApprovalCard && isCardHostedApproval(kind) ? (
+            <PresentationFrame kind={kind}>{renderApprovalCard(message)}</PresentationFrame>
+        ) : (
+            renderPresentation(kind, { message, selection, onSelectionChange: setSelection })
+        )
     const canRenderVerifiedFooter = Boolean(
         interaction && !anchor && supported && interaction.anchorVerified && interaction.kind !== "new_task",
     )
@@ -120,8 +128,8 @@ export function InteractionHost({
                 />
             ) : anchor && presentationKind && isPresentationKind(presentationKind) ? (
                 <>
-                    {showAnchorPresentation
-                        ? renderPresentation(presentationKind, { message: anchor, selection, onSelectionChange: setSelection })
+                    {showTimeline || APPROVAL_PRESENTATION_KINDS.has(presentationKind)
+                        ? renderAnchorPresentation(presentationKind, anchor)
                         : null}
                     <FooterActions
                         dispatch={dispatch}

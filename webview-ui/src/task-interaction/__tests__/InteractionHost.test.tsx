@@ -1,5 +1,5 @@
 import type { TaskViewActionType, TaskViewState, UiAsk, UiMessage } from "@shared/ExtensionMessage"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { TaskServiceClient } from "@/services/grpc-client"
 import { InteractionHost } from "../InteractionHost"
@@ -283,6 +283,54 @@ describe("InteractionHost", () => {
         expect(screen.getByText("Approve write")).toBeVisible()
         expect(screen.getByRole("button", { name: "Approve" })).toHaveAttribute("aria-disabled", "false")
         expect(screen.queryByRole("alert")).toBeNull()
+    })
+
+    it("hosts the pending call's own card above the actions when a card renderer is given", () => {
+        const renderApprovalCard = vi.fn((message: UiMessage) => <div data-testid="hosted-card">{`card ${message.ts}`}</div>)
+        render(
+            <InteractionHost
+                dispatch={vi.fn()}
+                messages={[SAY, ASK]}
+                renderApprovalCard={renderApprovalCard}
+                showTimeline={false}
+                view={taskView()}
+            />,
+        )
+
+        const frame = screen.getByTestId("presentation-tool_approval")
+        expect(within(frame).getByTestId("hosted-card")).toHaveTextContent("card 100")
+        expect(renderApprovalCard).toHaveBeenCalledWith(ASK)
+        expect(screen.queryByText("Approve write")).toBeNull()
+        const approve = screen.getByRole("button", { name: "Approve" })
+        expect(frame.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+
+    it("keeps the focus-chain renderer, which is not a hosted card, even when a card renderer is given", () => {
+        const view = taskView()
+        const change = {
+            ...configureInteraction(view, {
+                kind: "focus_chain_change",
+                taskAsk: "change_todo_list",
+                presentationKind: "focus_chain_change",
+                action: "approve",
+                label: "Approve",
+            }),
+            text: JSON.stringify({ plan: "- [ ] First step", reason: "Reorder" }),
+        }
+        const renderApprovalCard = vi.fn(() => <div data-testid="hosted-card" />)
+        render(
+            <InteractionHost
+                dispatch={vi.fn()}
+                messages={[change]}
+                renderApprovalCard={renderApprovalCard}
+                showTimeline={false}
+                view={view}
+            />,
+        )
+
+        expect(screen.getByTestId("presentation-focus_chain_change")).toBeInTheDocument()
+        expect(screen.queryByTestId("hosted-card")).toBeNull()
+        expect(renderApprovalCard).not.toHaveBeenCalled()
     })
 
     it("renders a typed file approval summary instead of raw JSON", () => {

@@ -950,7 +950,6 @@ export function groupLowStakesTools(
 
         const message = item
         const messageType = message.say
-        const isLast = i === groupedMessages.length - 1
 
         // What a later round writes never joins the group of an earlier round,
         // nor takes in a request row that an earlier round left waiting.
@@ -961,16 +960,9 @@ export function groupLowStakesTools(
             flushPending()
         }
 
-        // A settled ask at the end is the call's approval card. It is drawn on
-        // its own, so it must not also be an entry of the group before it.
-        if (isLowStakesTool(message) && message.type === "ask" && !message.partial && isLast) {
-            commitToolGroup()
-            flushPending()
-            result.push(message)
-            continue
-        }
-
-        // Low-stakes tool - absorb pending and add to group
+        // Low-stakes tool - absorb pending and add to group. A pending approval
+        // never reaches here: the footer draws its card until it is answered, and
+        // the answered call then lands in its round's group like any other.
         if (isLowStakesTool(message)) {
             // Keep reasoning visible as its own row when it happens before a tool group.
             // If we absorb it into the group, ToolGroupRenderer hides it entirely.

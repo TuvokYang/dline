@@ -158,7 +158,9 @@ describe("ChatRow image generation rendering", () => {
         expect(screen.getByText("A blue owl awaiting a decision")).toBeInTheDocument()
     })
 
-    it("delegates only the exact active approval card to the footer and restores timeline history afterward", () => {
+    // The footer hosts the pending card by drawing this same row, so the row must
+    // not hide itself while its approval is active; the chat list leaves it out instead.
+    it("draws the approval card while its own approval is active and after it is answered", () => {
         const approvalMessage = {
             ...partialMessage,
             ts: 100,
@@ -197,10 +199,8 @@ describe("ChatRow image generation rendering", () => {
             footer: { actions: [] },
         }
         const { rerender } = render(<TestableChatRowContent {...baseProps} message={approvalMessage} />)
-        expect(screen.queryByText("Dline wants to generate an image")).not.toBeInTheDocument()
-
-        rerender(<TestableChatRowContent {...baseProps} message={{ ...approvalMessage, interactionId: "older-approval" }} />)
         expect(screen.getByText("Dline wants to generate an image")).toBeInTheDocument()
+        expect(screen.getByText("A blue owl awaiting a decision")).toBeInTheDocument()
 
         activeView.current = undefined
         rerender(<TestableChatRowContent {...baseProps} message={approvalMessage} />)
