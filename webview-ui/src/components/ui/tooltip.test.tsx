@@ -20,7 +20,7 @@ describe("Tooltip", () => {
 
     // user-event schedules its own steps through `setTimeout`, so the fake clock also
     // follows real time. The margin keeps that drift from reaching the asserted boundary.
-    const DRIFT_MARGIN_MS = 500
+    const DRIFT_MARGIN_MS = 300
 
     it("opens a hovered tooltip only after the pointer rests for the open delay", async () => {
         vi.useFakeTimers({ shouldAdvanceTime: true })

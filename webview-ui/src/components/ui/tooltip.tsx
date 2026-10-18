@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
  * passing over buttons does not flash tooltips; a tooltip opened by keyboard focus is
  * not delayed.
  */
-export const TOOLTIP_OPEN_DELAY_MS = 2_000
+export const TOOLTIP_OPEN_DELAY_MS = 1_000
 
 function TooltipProvider({
     delayDuration = TOOLTIP_OPEN_DELAY_MS,
