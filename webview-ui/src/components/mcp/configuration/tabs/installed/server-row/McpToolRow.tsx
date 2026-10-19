@@ -8,10 +8,9 @@ import { McpServiceClient } from "@/services/grpc-client"
 type McpToolRowProps = {
     tool: McpTool
     serverName?: string
-    showAutoApprove?: boolean
 }
 
-const McpToolRow = ({ tool, serverName, showAutoApprove = true }: McpToolRowProps) => {
+const McpToolRow = ({ tool, serverName }: McpToolRowProps) => {
     const { setMcpServers } = useExtensionState()
     const schemaProperties =
         tool.inputSchema &&
@@ -59,7 +58,7 @@ const McpToolRow = ({ tool, serverName, showAutoApprove = true }: McpToolRowProp
                     <span className="codicon codicon-symbol-method" style={{ marginRight: "6px", flexShrink: 0 }} />
                     <span style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis" }}>{tool.name}</span>
                 </div>
-                {showAutoApprove && serverName && (
+                {serverName && (
                     <VSCodeCheckbox
                         checked={tool.autoApprove ?? true}
                         data-tool={tool.name}

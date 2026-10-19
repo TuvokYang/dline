@@ -14,7 +14,7 @@ type McpHubTestAccess = {
     notificationCallbacks: Set<(serverName: string, level: string, message: string) => void>
     fileWatchers: Map<string, unknown>
     workspaceMcpRegistry: { dispose(): Promise<void> }
-    mcpOAuthManager: { dispose(): Promise<void> }
+    authentication: { dispose(): Promise<void> }
     promptCatalogSignature: string
     notifyPromptCatalogChanged(): void
     publishPromptCatalogIfChanged(): void
@@ -118,7 +118,7 @@ describe("McpHub prompt catalog events", () => {
         access.notificationCallbacks = new Set()
         access.fileWatchers = new Map()
         access.workspaceMcpRegistry = { dispose: vi.fn().mockResolvedValue(undefined) }
-        access.mcpOAuthManager = { dispose: vi.fn().mockResolvedValue(undefined) }
+        access.authentication = { dispose: vi.fn().mockResolvedValue(undefined) }
 
         await hub.dispose()
         access.notifyPromptCatalogChanged()

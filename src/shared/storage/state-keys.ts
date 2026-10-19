@@ -154,6 +154,12 @@ const USER_SETTINGS_FIELDS = {
     workspaceWindsurfRulesToggles: { default: {} as ClineRulesToggles },
     workspaceAgentsRulesToggles: { default: {} as ClineRulesToggles },
     workspaceMcpToggles: { default: {} as Record<string, boolean> },
+    /**
+     * The user's auto-approve grants for workspace MCP server tools, keyed by internal server name.
+     * A workspace descriptor never grants approval itself; each grant is bound to the descriptor
+     * content the user approved, so an edited descriptor starts unapproved again.
+     */
+    workspaceMcpToolAutoApprove: { default: {} as Record<string, { fingerprint: string; tools: string[] }> },
     /** Task-scoped overrides. Stored in tasks/<taskId>/settings.json. */
     taskRulesToggles: { default: {} as ClineRulesToggles },
     taskWorkflowToggles: { default: {} as ClineRulesToggles },

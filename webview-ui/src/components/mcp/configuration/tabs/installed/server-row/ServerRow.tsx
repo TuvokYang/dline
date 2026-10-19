@@ -382,7 +382,8 @@ const ServerRow = ({
                             <VSCodePanelView id="tools-view">
                                 {server.tools && server.tools.length > 0 ? (
                                     <div className="flex flex-col gap-2 w-full pt-2">
-                                        {!isWorkspaceServer && server.name && (
+                                        {/* Workspace servers get the same checkboxes; their grants are the user's own and stay in this workspace's settings. */}
+                                        {server.name && (
                                             <VSCodeCheckbox
                                                 checked={server.tools.every((tool) => tool.autoApprove ?? true)}
                                                 className="mb-1 text-xs"
@@ -392,12 +393,7 @@ const ServerRow = ({
                                             </VSCodeCheckbox>
                                         )}
                                         {server.tools.map((tool) => (
-                                            <McpToolRow
-                                                key={tool.name}
-                                                serverName={server.name}
-                                                showAutoApprove={!isWorkspaceServer}
-                                                tool={tool}
-                                            />
+                                            <McpToolRow key={tool.name} serverName={server.name} tool={tool} />
                                         ))}
                                     </div>
                                 ) : (

@@ -83,7 +83,7 @@ YOLO mode does not "turn off every safety check": command permission rules and [
 
 ## How it relates to other settings
 
-- **MCP tool-level auto-approve**: in MCP server management you can turn on **Auto-approve** for a single tool, or **Auto-approve all tools** for a server (except workspace servers). These are separate from **Use MCP servers** in the chat; see [MCP overview](/mcp/mcp-overview/).
+- **MCP tool-level auto-approve**: in MCP server management you can turn on **Auto-approve** for a single tool, or **Auto-approve all tools** for a server. Workspace server tools start unapproved, and your choice for them applies only to the current workspace. These are separate from **Use MCP servers** in the chat; see [MCP overview](/mcp/mcp-overview/).
 - **.agentignore**: an action denied by `.agentignore` fails even when auto-approved, and the chat shows why.
 - **Subagents**: launching a subagent uses the **Read project files** permission, and tools inside the subagent do not ask you for approval one by one; see [Subagents](/features/subagents/#approval).
 - **Inside vs outside the workspace**: decided from the paths a tool declares or confirms. It does not mean a command or MCP tool cannot reach resources outside the workspace.

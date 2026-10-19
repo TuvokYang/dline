@@ -80,6 +80,22 @@ async function readWorkspaceMcpToggles(dlineDir: string): Promise<Record<string,
     return undefined
 }
 
+/** The user's auto-approve grants for workspace MCP tools, from Dline's local workspace settings. */
+async function readWorkspaceToolGrants(dlineDir: string): Promise<Record<string, { tools: string[] }> | undefined> {
+    const workspacesRoot = path.join(dlineDir, "data", "workspaces")
+    const entries = await readdir(workspacesRoot).catch(() => [] as string[])
+    for (const entry of entries) {
+        try {
+            const document = JSON.parse(await readFile(path.join(workspacesRoot, entry, "settings.json"), "utf8"))
+            const values = document.values ?? document
+            if (values.workspaceMcpToolAutoApprove) return values.workspaceMcpToolAutoApprove
+        } catch {
+            // A workspace directory without a settings document has no grants yet.
+        }
+    }
+    return undefined
+}
+
 async function openDline(page: Page, helper: E2ETestHelper): Promise<Frame> {
     await E2ETestHelper.openClineSidebar(page)
     const sidebar = await helper.getSidebar(page)
@@ -196,6 +212,59 @@ e2e(
             await expect(toggle).toHaveAttribute("aria-checked", "true")
             await expect.poll(async () => (await readWorkspaceMcpToggles(dlineDir))?.[connectionName]).toBe(true)
             expect(await readFile(descriptor.path, "utf8")).toBe(descriptor.text)
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await secondSession.close()
+        }
+    },
+)
+
+e2e(
+    "MCP workspace tool auto-approve - a project tool starts unapproved and the user's grant is kept across restarts",
+    async ({ dlineDir, helper, openVSCode, userDataDir, workspaceDir }) => {
+        e2e.setTimeout(300_000)
+        const descriptor = await writeWorkspaceDescriptor(workspaceDir)
+        const connectionName = `${WORKSPACE_MCP_NAME}@${createWorkspaceMcpScopeHash(workspaceDir)}`
+        const toolCheckbox = (sidebar: Frame) =>
+            serverRow(sidebar, WORKSPACE_MCP_NAME).getByRole("checkbox", { name: "Auto-approve", exact: true })
+
+        const firstSession = await openVSCode(workspaceDir)
+        try {
+            const page = await firstSession.firstWindow()
+            const sidebar = await openDline(page, helper)
+            await expect.poll(() => spawnsIn(userDataDir, connectionName), { timeout: 60_000 }).toBe(1)
+            await openMcpConfigure(sidebar)
+            await sidebar.getByText(WORKSPACE_MCP_NAME, { exact: true }).click()
+
+            // The repository's descriptor grants nothing: the tool starts unapproved.
+            await expect(toolCheckbox(sidebar)).toBeVisible({ timeout: 60_000 })
+            await expect(toolCheckbox(sidebar)).not.toBeChecked()
+
+            await toolCheckbox(sidebar).click()
+            await expect(toolCheckbox(sidebar)).toBeChecked()
+            await expect
+                .poll(async () => (await readWorkspaceToolGrants(dlineDir))?.[connectionName]?.tools)
+                .toEqual(["e2e_workspace_echo"])
+            // The grant is the user's own; the project file stays as the repository wrote it.
+            expect(await readFile(descriptor.path, "utf8")).toBe(descriptor.text)
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await firstSession.close()
+        }
+
+        const secondSession = await openVSCode(workspaceDir)
+        try {
+            const page = await secondSession.firstWindow()
+            const sidebar = await openDline(page, helper)
+            await openMcpConfigure(sidebar)
+            await sidebar.getByText(WORKSPACE_MCP_NAME, { exact: true }).click()
+
+            // The grant is read back from the workspace settings after a restart.
+            await expect(toolCheckbox(sidebar)).toBeChecked({ timeout: 60_000 })
+
+            await toolCheckbox(sidebar).click()
+            await expect(toolCheckbox(sidebar)).not.toBeChecked()
+            await expect.poll(async () => (await readWorkspaceToolGrants(dlineDir))?.[connectionName]).toBeUndefined()
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await secondSession.close()

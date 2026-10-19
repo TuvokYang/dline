@@ -130,7 +130,7 @@ timeout: 120
 - `${workspaceFolder}` is replaced with the workspace root. A `stdio` server without `cwd` uses the workspace root as its working directory.
 - `${env:VAR}` is resolved when the server connects, in the same order as for global servers. A value you enter is saved for this server in this workspace only and is not shared with global servers, other servers, or other workspaces.
 - Credentials must come from `${env:VAR}`. A descriptor is rejected when plain text appears in a field whose name has `token`, `secret`, `password`, `credential`, `cookie`, `authorization`, or `api_key` as a whole segment (for example `API_TOKEN`, `db-password`, or `Authorization`), in a URL query parameter with such a name, or in an argument written as `--token=<value>`. Pass credentials through `env` or `headers` rather than `args`.
-- `autoApprove` in a workspace descriptor is ignored, so a descriptor cannot auto-approve tools.
+- `autoApprove` in a workspace descriptor is ignored, so a descriptor cannot auto-approve tools. A workspace server's tools start unapproved; you can turn on **Auto-approve** for them in MCP server management. Your choice is stored in Dline's settings for this workspace, not in the repository, and it is cleared when the descriptor changes, so an edited server must be approved again.
 - Dline watches `.agents/mcp/`. Adding, editing, or deleting a descriptor takes effect without reloading the window. A descriptor that fails validation is skipped and the error is logged.
 
 ## Managing servers
@@ -142,7 +142,7 @@ On the **Configure** tab, each server can be:
 - enabled or disabled with its switch, including workspace servers. The switch applies to the current workspace and is kept in Dline's local workspace state; it does not change `mcp_settings.json` or a descriptor file in the repository;
 - restarted with **Restart Server**, or reconnected with **Retry Connection** after a failed connection;
 - given a timeout from 30 seconds to 1 hour in **Request Timeout** (servers from the global configuration only);
-- configured to auto-approve individual tools with **Auto-approve**, or all tools with **Auto-approve all tools** (not available for workspace servers);
+- configured to auto-approve individual tools with **Auto-approve**, or all tools with **Auto-approve all tools** (for a workspace server, the choice applies only to this workspace and starts unchecked);
 - removed with **Delete Server**.
 
 ## OAuth authentication

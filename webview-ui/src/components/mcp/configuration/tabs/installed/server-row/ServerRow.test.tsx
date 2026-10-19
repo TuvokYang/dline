@@ -85,10 +85,30 @@ describe("ServerRow workspace descriptor presentation", () => {
         fireEvent.click(screen.getByText("docs"))
 
         expect(screen.queryByText("Request Timeout")).not.toBeInTheDocument()
-        expect(screen.queryByText("Auto-approve all tools")).not.toBeInTheDocument()
-        expect(screen.queryByText("Auto-approve")).not.toBeInTheDocument()
         expect(screen.queryByRole("button", { name: "Delete Server" })).not.toBeInTheDocument()
         expect(screen.getAllByRole("button", { name: "Restart Server" })).toHaveLength(2)
+    })
+
+    it("lets the user grant auto-approve to a workspace tool, unchecked until granted", () => {
+        mocks.toggleToolAutoApprove.mockResolvedValue({ mcpServers: [] })
+        const { rerender } = render(<ServerRow server={workspaceServer} />)
+        fireEvent.click(screen.getByText("docs"))
+
+        const toolCheckbox = screen.getByRole("checkbox", { name: "Auto-approve" })
+        expect(toolCheckbox).not.toBeChecked()
+        expect(screen.getByRole("checkbox", { name: "Auto-approve all tools" })).not.toBeChecked()
+
+        fireEvent.click(toolCheckbox)
+
+        // The backend records the grant for the internal workspace name, not in the descriptor file.
+        expect(mocks.toggleToolAutoApprove).toHaveBeenCalledWith({
+            serverName: "docs@a1b2c3d4",
+            toolNames: ["search"],
+            autoApprove: true,
+        })
+
+        rerender(<ServerRow server={{ ...workspaceServer, tools: [{ name: "search", autoApprove: true }] }} />)
+        expect(screen.getByRole("checkbox", { name: "Auto-approve" })).toBeChecked()
     })
 
     it("switches a workspace server for the workspace when no task scope is given", () => {

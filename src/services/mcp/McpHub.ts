@@ -43,12 +43,10 @@ import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
 import { hashStableJson } from "@/shared/stable-json"
 import { expandEnvironmentVariables } from "@/utils/envExpansion"
-import { getServerAuthHash } from "@/utils/mcpAuth"
 import { TelemetryService } from "../telemetry/TelemetryService"
 import { DEFAULT_REQUEST_TIMEOUT_MS, MCP_CONNECT_TIMEOUT_MS } from "./constants"
-import { isOAuthFlowCancelled, McpOAuthReregistrationRequiredError } from "./McpOAuthLoopback"
-import { type McpOAuthFlow, McpOAuthManager } from "./McpOAuthManager"
-import { resolveMcpToolAutoApprove, updateMcpToolAutoApproveConfig } from "./mcp-auto-approval"
+import { McpAuthentication } from "./McpAuthentication"
+import { type McpToolApprovalConfig, resolveMcpToolAutoApprove, updateMcpToolAutoApproveConfig } from "./mcp-auto-approval"
 import { McpCallObservation } from "./mcp-call-observation"
 import { mcpTransportObserver } from "./mcp-transport-observation"
 import { StreamableHttpReconnectHandler } from "./StreamableHttpReconnectHandler"
@@ -57,7 +55,8 @@ import { McpConnection, McpServerConfig, Transport } from "./types"
 import { safeParseWithEnvReferences } from "./variables/envReferenceValidation"
 import { promptForMcpVariable } from "./variables/hostVariablePrompt"
 import { McpVariableResolver } from "./variables/McpVariableResolver"
-import { WorkspaceMcpRegistry } from "./WorkspaceMcpRegistry"
+import { type WorkspaceMcpDescriptor, WorkspaceMcpRegistry } from "./WorkspaceMcpRegistry"
+import { WorkspaceMcpToolApprovals, workspaceDescriptorFingerprint } from "./WorkspaceMcpToolApprovals"
 
 type McpConnectionMetadata = {
     displayName?: string
@@ -70,12 +69,13 @@ export class McpHub {
     private getSettingsDirectoryPath: () => Promise<string>
     private clientVersion: string
     private telemetryService: TelemetryService
-    private mcpOAuthManager: McpOAuthManager
+    private readonly authentication: McpAuthentication
 
     private settingsWatcher?: FSWatcher
     private fileWatchers: Map<string, FSWatcher> = new Map()
     private settingsServerConfigs: Record<string, McpServerConfig> = {}
     private readonly workspaceMcpRegistry: WorkspaceMcpRegistry
+    private readonly workspaceToolApprovals = new WorkspaceMcpToolApprovals()
     private workspaceConnectionRefresh: Promise<void> = Promise.resolve()
     /**
      * Serializes reconcile runs so concurrent triggers (file watcher, workspace
@@ -169,7 +169,10 @@ export class McpHub {
         this.getSettingsDirectoryPath = getSettingsDirectoryPath
         this.clientVersion = clientVersion
         this.telemetryService = telemetryService
-        this.mcpOAuthManager = new McpOAuthManager((serverHash, code) => this.finishOAuth(serverHash, code))
+        this.authentication = new McpAuthentication({
+            connections: () => this.connections,
+            restartConnection: (serverName) => this.restartConnection(serverName),
+        })
         this.workspaceMcpRegistry = new WorkspaceMcpRegistry(() => this.refreshWorkspaceConnections())
         void this.watchMcpSettingsFile().catch((error) => Logger.error("[McpHub] Failed to watch MCP settings:", error))
         void this.initializeMcpServers().catch((error) => Logger.error("[McpHub] Failed to initialize MCP servers:", error))
@@ -230,9 +233,7 @@ export class McpHub {
 
     private getConnectionMetadata(serverName: string): McpConnectionMetadata | undefined {
         if (this.settingsServerConfigs[serverName]) return { source: "settings" }
-        const descriptor = this.workspaceMcpRegistry
-            .getAllDescriptors()
-            .find((candidate) => candidate.internalName === serverName)
+        const descriptor = this.findWorkspaceDescriptor(serverName)
         return descriptor
             ? {
                   displayName: descriptor.displayName,
@@ -240,6 +241,27 @@ export class McpHub {
                   source: descriptor.source,
               }
             : undefined
+    }
+
+    /** The workspace descriptor behind a server, or undefined for a settings server. */
+    private findWorkspaceDescriptor(serverName: string): WorkspaceMcpDescriptor | undefined {
+        if (this.settingsServerConfigs[serverName]) return undefined
+        return this.workspaceMcpRegistry.getAllDescriptors().find((candidate) => candidate.internalName === serverName)
+    }
+
+    /**
+     * Resolves a server's per-tool auto-approve state from its one authority: the MCP settings entry
+     * for a settings server, the user's own grant for a workspace server. A workspace descriptor's
+     * content never grants approval.
+     */
+    private toolAutoApproval(
+        serverName: string,
+        settingsEntry: McpToolApprovalConfig | undefined,
+    ): (toolName: string) => boolean {
+        const descriptor = this.findWorkspaceDescriptor(serverName)
+        if (!descriptor) return (toolName) => resolveMcpToolAutoApprove(settingsEntry ?? {}, toolName)
+        const fingerprint = workspaceDescriptorFingerprint(descriptor.config)
+        return (toolName) => this.workspaceToolApprovals.isApproved(serverName, fingerprint, toolName)
     }
 
     private refreshWorkspaceConnections(): Promise<void> {
@@ -567,7 +589,7 @@ export class McpHub {
             // Create OAuth provider for remote transports (SSE and HTTP)
             const authProvider =
                 expandedConfig.type === "sse" || expandedConfig.type === "streamableHttp"
-                    ? await this.mcpOAuthManager.getOrCreateProvider(name, expandedConfig.url)
+                    ? await this.authentication.oauth.getOrCreateProvider(name, expandedConfig.url)
                     : undefined
 
             switch (expandedConfig.type) {
@@ -933,11 +955,11 @@ export class McpHub {
             const settingsPath = await getMcpSettingsFilePathHelper(await this.getSettingsDirectoryPath())
             const content = await fs.readFile(settingsPath, "utf-8")
             const config = JSON.parse(content)
-            const approvalConfig = config.mcpServers[serverName] || {}
+            const isAutoApproved = this.toolAutoApproval(serverName, config.mcpServers[serverName])
 
             const tools = (response?.tools || []).map((tool) => ({
                 ...tool,
-                autoApprove: resolveMcpToolAutoApprove(approvalConfig, tool.name),
+                autoApprove: isAutoApproved(tool.name),
             }))
 
             return tools
@@ -1042,7 +1064,7 @@ export class McpHub {
             try {
                 const config = JSON.parse(connection.server.config)
                 if (config.url) {
-                    await this.mcpOAuthManager.clearServerAuth(name, config.url)
+                    await this.authentication.oauth.clearServerAuth(name, config.url)
                 }
             } catch (error) {
                 Logger.error(`Failed to clear OAuth data for ${name}:`, error)
@@ -1137,9 +1159,10 @@ export class McpHub {
                     }
                 } else {
                     if (currentConnection.server.tools) {
+                        const isAutoApproved = this.toolAutoApproval(name, config)
                         currentConnection.server.tools = currentConnection.server.tools.map((tool) => ({
                             ...tool,
-                            autoApprove: resolveMcpToolAutoApprove(config, tool.name),
+                            autoApprove: isAutoApproved(tool.name),
                         }))
                     }
                     const currentConfig = JSON.parse(currentConnection.server.config)
@@ -1600,13 +1623,19 @@ export class McpHub {
     }
 
     /**
-     * RPC variant of toggleToolAutoApprove
+     * Turns auto-approve on or off for the given tools of one server.
      * @param serverName The name of the MCP server
      * @param toolNames Array of tool names to toggle auto-approve for
      * @param shouldAllow Whether to enable or disable auto-approve
      * @returns Array of updated MCP servers
      */
     async toggleToolAutoApproveRPC(serverName: string, toolNames: string[], shouldAllow: boolean): Promise<McpServer[]> {
+        const descriptor = this.findWorkspaceDescriptor(serverName)
+        if (descriptor) {
+            await this.toggleWorkspaceToolAutoApprove(descriptor, toolNames, shouldAllow)
+            return this.getSortedMcpServers(Object.keys(this.settingsServerConfigs))
+        }
+
         // Set flag to prevent file watcher from triggering during our update
         this.isUpdatingClineSettings = true
         try {
@@ -1645,42 +1674,23 @@ export class McpHub {
         }
     }
 
-    async toggleToolAutoApprove(serverName: string, toolNames: string[], shouldAllow: boolean): Promise<void> {
-        // Set flag to prevent file watcher from triggering during our update
-        this.isUpdatingClineSettings = true
-        try {
-            const settingsPath = await getMcpSettingsFilePathHelper(await this.getSettingsDirectoryPath())
-            const content = await fs.readFile(settingsPath, "utf-8")
-            const config = JSON.parse(content)
-
-            const connection = this.connections.find((conn) => conn.server.name === serverName)
-            const serverConfig = config.mcpServers[serverName]
-            const availableToolNames = connection?.server.tools?.map((tool) => tool.name) || toolNames
-            const approvalConfig = updateMcpToolAutoApproveConfig(serverConfig, toolNames, shouldAllow, availableToolNames)
-            delete serverConfig.autoApprove
-            serverConfig.disabledAutoApprove = approvalConfig.disabledAutoApprove
-
-            await fs.writeFile(settingsPath, JSON.stringify(config, null, 2))
-
-            if (connection?.server.tools) {
-                connection.server.tools = connection.server.tools.map((tool) => ({
-                    ...tool,
-                    autoApprove: resolveMcpToolAutoApprove(serverConfig, tool.name),
-                }))
-                await this.notifyWebviewOfServerChanges()
-            }
-        } catch (error) {
-            Logger.error("Failed to update autoApprove settings:", error)
-            HostProvider.window.showMessage({
-                type: ShowMessageType.ERROR,
-                message: "Failed to update autoApprove settings",
-            })
-            throw error // Re-throw to ensure the error is properly handled
-        } finally {
-            // Clear flag after a delay to ensure file watcher event has been processed
-            setTimeout(() => {
-                this.isUpdatingClineSettings = false
-            }, 300)
+    /** Records the user's own grant for a workspace server's tools; the descriptor file is never written. */
+    private async toggleWorkspaceToolAutoApprove(
+        descriptor: WorkspaceMcpDescriptor,
+        toolNames: readonly string[],
+        shouldAllow: boolean,
+    ): Promise<void> {
+        const serverName = descriptor.internalName
+        await this.workspaceToolApprovals.update(
+            serverName,
+            workspaceDescriptorFingerprint(descriptor.config),
+            toolNames,
+            shouldAllow,
+        )
+        const connection = this.connections.find((conn) => conn.server.name === serverName)
+        if (connection?.server.tools) {
+            const isAutoApproved = this.toolAutoApproval(serverName, undefined)
+            connection.server.tools = connection.server.tools.map((tool) => ({ ...tool, autoApprove: isAutoApproved(tool.name) }))
         }
     }
 
@@ -1856,133 +1866,14 @@ export class McpHub {
         //Logger.log("[MCP Debug] Notification callback removed")
     }
 
-    /**
-     * Initiates OAuth flow for a server
-     * Opens browser to authorization URL
-     */
-    async initiateOAuth(serverName: string): Promise<void> {
-        const connection = this.connections.find((conn) => conn.server.name === serverName)
-        if (!connection) {
-            throw new Error(`No connection found for server: ${serverName}`)
-        }
-
-        // Extract serverUrl from config
-        const config = JSON.parse(connection.server.config)
-        const serverUrl = config.url
-        if (!serverUrl) {
-            throw new Error(`No URL found in config for server: ${serverName}`)
-        }
-
-        // Start OAuth flow - opens the SDK-generated authorization URL in browser
-        const displayName = connection.server.displayName ?? serverName
-        let flow: McpOAuthFlow | undefined
-        try {
-            flow = await this.mcpOAuthManager.startOAuthFlow(serverName, serverUrl, displayName)
-        } catch (error) {
-            if (error instanceof McpOAuthReregistrationRequiredError) {
-                // Reconnecting registers a redirect Dline can serve and stores a new authorization URL.
-                await this.restartConnection(serverName)
-            }
-            throw error
-        }
-        if (flow) {
-            void this.settleOAuthFlow(getServerAuthHash(serverName, serverUrl), flow, displayName)
-        }
+    /** Starts the server's OAuth authorization in the browser; the outcome is reported to the user. */
+    initiateOAuth(serverName: string): Promise<void> {
+        return this.authentication.initiate(serverName)
     }
 
     /** Completes an authorization that came back through the URI handler and tells the user the outcome. */
-    async completeOAuthFromCallback(serverHash: string, code: string, state: string | null): Promise<void> {
-        const server = this.lookupOAuthConnection(serverHash)?.server
-        await this.reportOAuthOutcome(server?.displayName ?? server?.name, () => this.completeOAuth(serverHash, code, state))
-    }
-
-    /**
-     * Completes OAuth flow after a URI-handler callback
-     * Validates state, calls finishAuth, and reconnects
-     */
-    async completeOAuth(serverHash: string, code: string, state: string | null): Promise<void> {
-        this.findOAuthConnection(serverHash)
-
-        // Validate state for CSRF protection (if provided)
-        if (state && !this.mcpOAuthManager.validateAndClearState(serverHash, state)) {
-            throw new Error("Invalid OAuth state - possible CSRF attack")
-        }
-
-        await this.finishOAuth(serverHash, code)
-        await this.reconnectAuthenticated(serverHash)
-    }
-
-    /** Waits for a loopback authorization on the shared coordinator, then reconnects the server. */
-    private async settleOAuthFlow(serverHash: string, flow: McpOAuthFlow, displayName: string): Promise<void> {
-        try {
-            await flow.result
-        } catch (error) {
-            if (!isOAuthFlowCancelled(error)) {
-                this.reportOAuthFailure(displayName, error)
-            }
-            return
-        }
-        await this.reportOAuthOutcome(displayName, () => this.reconnectAuthenticated(serverHash))
-    }
-
-    private async reportOAuthOutcome(displayName: string | undefined, complete: () => Promise<void>): Promise<void> {
-        try {
-            await complete()
-            HostProvider.window.showMessage({
-                type: ShowMessageType.INFORMATION,
-                message: `Successfully authenticated ${describeMcpServer(displayName)}`,
-            })
-        } catch (error) {
-            this.reportOAuthFailure(displayName, error)
-        }
-    }
-
-    private reportOAuthFailure(displayName: string | undefined, error: unknown): void {
-        Logger.error("Failed to complete MCP OAuth:", error)
-        const reason = error instanceof Error ? error.message : String(error)
-        HostProvider.window.showMessage({
-            type: ShowMessageType.ERROR,
-            message: `Failed to authenticate ${describeMcpServer(displayName)}: ${reason}`,
-        })
-    }
-
-    private lookupOAuthConnection(serverHash: string): McpConnection | undefined {
-        return this.connections.find((conn) => {
-            const config = JSON.parse(conn.server.config)
-            return config.url ? getServerAuthHash(conn.server.name, config.url) === serverHash : false
-        })
-    }
-
-    private findOAuthConnection(serverHash: string): McpConnection {
-        const connection = this.lookupOAuthConnection(serverHash)
-        if (!connection) {
-            throw new Error(`No connection found for server hash: ${serverHash}`)
-        }
-        return connection
-    }
-
-    /** Redeems the code through the transport; the MCP SDK exchanges it and saves the tokens. */
-    private async finishOAuth(serverHash: string, code: string): Promise<void> {
-        const connection = this.findOAuthConnection(serverHash)
-        // finishAuth is only available on SSE and StreamableHTTP transports
-        if (connection.transport instanceof SSEClientTransport || connection.transport instanceof StreamableHTTPClientTransport) {
-            await connection.transport.finishAuth(code)
-        } else {
-            throw new Error("OAuth is only supported for SSE and HTTP transports")
-        }
-    }
-
-    private async reconnectAuthenticated(serverHash: string): Promise<void> {
-        const connection = this.findOAuthConnection(serverHash)
-        Logger.log(`[McpOAuth] Authentication completed for ${connection.server.name}`)
-
-        // Update server status
-        connection.server.oauthAuthStatus = "authenticated"
-        connection.server.oauthRequired = true
-        connection.server.error = ""
-
-        // Restart connection to complete setup with authenticated transport
-        await this.restartConnection(connection.server.name)
+    completeOAuthFromCallback(serverHash: string, code: string, state: string | null): Promise<void> {
+        return this.authentication.completeFromCallback(serverHash, code, state)
     }
 
     async dispose(): Promise<void> {
@@ -2007,11 +1898,6 @@ export class McpHub {
             await this.settingsWatcher.close()
         }
         await this.workspaceMcpRegistry.dispose()
-        await this.mcpOAuthManager.dispose()
+        await this.authentication.dispose()
     }
-}
-
-/** Names the server in a user-facing message, or falls back to a generic label when it is no longer known. */
-function describeMcpServer(displayName: string | undefined): string {
-    return displayName ? `MCP server "${displayName}"` : "MCP server"
 }

@@ -35,7 +35,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 
 ### Fixes
-- Fixed task history losing tasks when the Documents folder has been moved, for example to another drive: startup fixed the task history index path before resolving the system Documents location, so the index was created under `~/Documents/dline/tasks` while task folders stayed in the real Documents folder, and the history list and the Workspace Only filter were missing tasks; tasks created while affected can be added back with "Dline: Reconstruct Task History"
+- Fixed workspace MCP servers (`.agents/mcp/` descriptors) showing no Auto-approve checkboxes and still asking for approval of every call with Use MCP servers turned on: you can now turn on Auto-approve for their tools, unchecked by default; the choice is stored only in Dline's settings for the current workspace, never in the repository, and must be made again after the descriptor changes; this also fixes the same workspace tools being treated as auto-approved on first connect and as needing approval afterwards
+- Fixed task history losing tasks when the Documents folder has been moved
 - Fixed a failed API request leaving only Retry / Start New Task in the chat with no error card
 - Fixed the approval card for MCP tool calls and resource reads showing an empty server name and describing a tool call as accessing a resource; the card now shows the MCP server, the tool and its arguments
 - Fixed two Checkpoint rows appearing directly one above the other

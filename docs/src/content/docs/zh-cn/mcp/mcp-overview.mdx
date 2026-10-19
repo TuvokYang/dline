@@ -130,7 +130,7 @@ timeout: 120
 - `${workspaceFolder}` 会被替换为工作区根目录。`stdio` 类型未指定 `cwd` 时，默认以工作区根目录作为工作目录。
 - `${env:VAR}` 在服务器连接时按与全局服务器相同的顺序解析。你填写的值只为当前工作区中的该服务器保存，不会共享给全局服务器、其他服务器或其他工作区。
 - 凭据必须通过 `${env:VAR}` 提供。以下位置出现明文时，描述文件会被拒绝：字段名中以完整词段包含 `token`、`secret`、`password`、`credential`、`cookie`、`authorization` 或 `api_key` 的字段（例如 `API_TOKEN`、`db-password`、`Authorization`）；同名的 URL 查询参数；写成 `--token=<value>` 形式的参数。凭据请通过 `env` 或 `headers` 传递，不要放在 `args` 中。
-- 工作区描述文件中的 `autoApprove` 会被忽略，不能借此自动批准工具。
+- 工作区描述文件中的 `autoApprove` 会被忽略，不能借此自动批准工具。工作区服务器的工具默认不自动批准，你可以在 MCP 服务器管理界面为它们勾选 **Auto-approve**。这个选择保存在 Dline 针对当前工作区的设置中，不写入仓库；描述文件内容一旦改变就会清除，修改后的服务器需要重新批准。
 - Dline 会监听 `.agents/mcp/`。新增、修改或删除描述文件后无需重新加载窗口即可生效。校验失败的描述文件会被跳过，错误写入日志。
 
 ## 管理服务器
@@ -142,7 +142,7 @@ timeout: 120
 - 用开关启用或停用，工作区服务器同样提供开关。开关作用于当前工作区，状态保存在本机的 Dline 工作区状态中，不修改 `mcp_settings.json` 或仓库中的描述文件；
 - 点击 **Restart Server** 重启；连接失败时点击 **Retry Connection** 重试；
 - 在 **Request Timeout** 中选择 30 秒到 1 小时的超时（仅全局配置中的服务器）；
-- 为单个工具勾选 **Auto-approve**，或勾选 **Auto-approve all tools**（工作区服务器不提供）；
+- 为单个工具勾选 **Auto-approve**，或勾选 **Auto-approve all tools**（工作区服务器的选择只对当前工作区生效，默认不勾选）；
 - 点击 **Delete Server** 删除。
 
 ## OAuth 认证
