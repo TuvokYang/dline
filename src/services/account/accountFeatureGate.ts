@@ -1,6 +1,6 @@
 import { StateManager } from "@/core/storage/StateManager"
 import { featureFlagsService } from "@/services/feature-flags"
-import { type ClineFeatureSetting, isFeatureSettingActive } from "@/shared/ClineFeatureSetting"
+import { type DlineFeatureSettings, isFeatureSettingActive } from "@/shared/ClineFeatureSetting"
 
 type AccountSettingsReader = Pick<StateManager, "getGlobalSettingsKey">
 
@@ -8,7 +8,7 @@ type AccountSettingsReader = Pick<StateManager, "getGlobalSettingsKey">
  * Whether the rollout offers the account feature, and whether the user opted in.
  * A caller that owns a state manager passes it; host code reads the process one.
  */
-export function readAccountFeatureSetting(settings: AccountSettingsReader = StateManager.get()): ClineFeatureSetting {
+export function readAccountFeatureSetting(settings: AccountSettingsReader = StateManager.get()): DlineFeatureSettings {
     return {
         user: settings.getGlobalSettingsKey("accountEnabled") === true,
         featureFlag: featureFlagsService.getAccountEnabled(),

@@ -1,10 +1,10 @@
-import type { ClineFeatureSetting } from "@shared/ClineFeatureSetting"
+import type { DlineFeatureSettings } from "@shared/ClineFeatureSetting"
 import { render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Navbar } from "./Navbar"
 
 const extensionState = vi.hoisted(() => ({
-    current: {} as { accountEnabled?: ClineFeatureSetting },
+    current: {} as { accountEnabled?: DlineFeatureSettings },
 }))
 
 vi.mock("../../context/ExtensionStateContext", () => ({

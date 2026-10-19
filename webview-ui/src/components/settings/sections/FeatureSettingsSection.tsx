@@ -328,7 +328,7 @@ const FeatureSettingsSection = ({ renderSectionHeader }: FeatureSettingsSectionP
         mcpEnabled,
         mcpToolsOnDemandEnabled,
         imageGenerationEnabled,
-        clineWebToolsEnabled: clineWebToolsEnabled?.user,
+        clineWebToolsEnabled,
         worktreesEnabled: worktreesEnabled?.user,
         accountEnabled: accountEnabled?.user,
         enableParallelToolCalling,

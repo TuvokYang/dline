@@ -7,7 +7,7 @@ import FeatureSettingsSection from "./FeatureSettingsSection"
 
 const mocks = vi.hoisted(() => ({
     extensionState: {
-        clineWebToolsEnabled: { featureFlag: true, user: true },
+        clineWebToolsEnabled: true,
         focusChainSettings: { enabled: false, remindClineInterval: 6 },
         mcpDisplayMode: "plain",
         mcpEnabled: true,

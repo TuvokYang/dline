@@ -1,4 +1,4 @@
-import type { ClineFeatureSetting } from "@shared/ClineFeatureSetting"
+import type { DlineFeatureSettings } from "@shared/ClineFeatureSetting"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import OnboardingView from "./OnboardingView"
@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
     hideAccount: vi.fn(),
     hideSettings: vi.fn(),
     setShowWelcome: vi.fn(),
-    accountEnabled: { featureFlag: true, user: true } as ClineFeatureSetting | undefined,
+    accountEnabled: { featureFlag: true, user: true } as DlineFeatureSettings | undefined,
 }))
 
 vi.mock("@/assets/DlineLogo", () => ({

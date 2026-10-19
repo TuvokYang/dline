@@ -57,10 +57,6 @@ export class FeatureFlagsService {
         return this.resolveSnapshot().get(flagName)
     }
 
-    public getWebtoolsEnabled(): boolean {
-        return this.getBooleanFlagEnabled(ExperimentalFeatureFlag.WEBTOOLS)
-    }
-
     public getWorktreesEnabled(): boolean {
         return this.getBooleanFlagEnabled(ExperimentalFeatureFlag.WORKTREES)
     }

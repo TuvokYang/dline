@@ -3244,10 +3244,7 @@ export class Controller {
                 user: this.stateManager.getGlobalStateKey("multiRootEnabled"),
                 featureFlag: true, // Multi-root workspace is now always enabled
             },
-            clineWebToolsEnabled: {
-                user: this.stateManager.getGlobalSettingsKey("clineWebToolsEnabled"),
-                featureFlag: featureFlagsService.getWebtoolsEnabled(),
-            },
+            clineWebToolsEnabled: this.stateManager.getGlobalSettingsKey("clineWebToolsEnabled"),
             localWebSearchEngine: this.stateManager.getGlobalSettingsKey("localWebSearchEngine"),
             searxngSearchUrl: this.stateManager.getGlobalSettingsKey("searxngSearchUrl"),
             worktreesEnabled: {

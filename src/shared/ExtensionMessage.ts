@@ -7,7 +7,7 @@ import { AutoApprovalSettings } from "./AutoApprovalSettings"
 import { ApiConfiguration } from "./api"
 import { BrowserSettings } from "./BrowserSettings"
 import type { ChatInputSendShortcut } from "./ChatInputSendShortcut"
-import { ClineFeatureSetting } from "./ClineFeatureSetting"
+import { DlineFeatureSettings } from "./ClineFeatureSetting"
 import { ClineRulesToggles } from "./cline-rules"
 import type { CodeExecutionPresentationV1 } from "./code-execution-tools"
 import type { CompactionFailureKind } from "./context-compaction-failure"
@@ -158,12 +158,12 @@ export interface ExtensionState {
     mcpEnabled?: boolean
     mcpToolsOnDemandEnabled?: boolean
     imageGenerationEnabled?: boolean
-    clineWebToolsEnabled?: ClineFeatureSetting
+    clineWebToolsEnabled?: boolean
     localWebSearchEngine?: LocalSearchEngineId
     searxngSearchUrl?: string
-    worktreesEnabled?: ClineFeatureSetting
-    /** Account sign-in and views; shown only while both the rollout flag and the user's opt-in are on. */
-    accountEnabled?: ClineFeatureSetting
+    worktreesEnabled?: DlineFeatureSettings
+    /** Account sign-in and views: the rollout offers the setting, the user's setting turns the views on. */
+    accountEnabled?: DlineFeatureSettings
     focusChainSettings: FocusChainSettings
     customPrompt?: string
     favoritedModelIds: string[]
@@ -175,7 +175,7 @@ export interface ExtensionState {
     workspaceRoots: WorkspaceRoot[]
     primaryRootIndex: number
     isMultiRootWorkspace: boolean
-    multiRootSetting: ClineFeatureSetting
+    multiRootSetting: DlineFeatureSettings
     hooksEnabled?: boolean
     remoteConfigSettings?: Partial<RemoteConfigFields>
     globalSkillsToggles?: Record<string, boolean>

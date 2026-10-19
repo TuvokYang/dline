@@ -172,14 +172,14 @@ describe("RemoteFeatureFlagsProvider", () => {
         const provider = new RemoteFeatureFlagsProvider(["account"])
 
         await start(provider, {
-            source: sourceAnswering(document({ account: true, webtools: true })),
+            source: sourceAnswering(document({ account: true, "retired-flag": true })),
             cache: new MemoryCache(),
             scheduler,
             now: () => NOW,
         })
         await scheduler.fireAll()
 
-        expect(provider.resolveFlags(["account", "webtools"])).toEqual({ account: true })
+        expect(provider.resolveFlags(["account", "retired-flag"])).toEqual({ account: true })
     })
 
     it("caches a successful answer, notifies once, and polls again one interval later whatever ttl the service sends", async () => {

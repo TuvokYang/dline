@@ -6,6 +6,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ### Changed
 - The Account rollout reaches only devices that report Dline usage statistics, grouped by the device id the usage service issued; turning usage reporting off leaves the rollout at once and clears the cached rollout answers
+- Only two rollout switches remain, Account (`account`) and Worktrees (`worktree-exp`): Web tools follow only the Web Tools switch in Settings → Features and no longer depend on a rollout, and OpenAI Responses WebSocket is no longer a rollout
 - Usage reporting no longer stops for good after the service or its network edge refuses it: it tries again after 30 minutes and once whenever a VS Code window starts; a service that still refuses is left alone for another 30 minutes instead of being asked on every cycle
 - Opening a history task shows the full-width Resume button in the footer again, so it is easy to notice; the composer's merged action button still resumes the task, and Cancel stays only in the composer button
 - Error reporting is now on by default, and while it is on, failure events such as provider API errors and terminal hangs are sent to `otel.dline.cc` as OTLP logs: only the event name, severity, and short codes, never error messages, stack traces, paths, or Task, workspace, or account identity; error diagnostics and usage reporting each use their own token and queue, so turning one off deletes only its token and unsent data and leaves the other running; it can be turned off in Settings → About
@@ -34,6 +35,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ### Fixes
 - Fixed a failed API request leaving only Retry / Start New Task in the chat with no error card: when the round checkpoint sorts after the failed request, the error still appears on that request, and an exhausted provider balance such as DeepSeek's shows the insufficient-balance card with its top-up link again; an exhausted automatic-retry card that already explains the same failure is not duplicated
+- Fixed the approval card for MCP tool calls and resource reads showing an empty server name and describing a tool call as accessing a resource; the card now shows the MCP server, the tool and its arguments
 - Fixed two Checkpoint rows appearing directly one above the other
 - Fixed the values of `${env:VAR}` references in the MCP settings being shown expanded on the settings page and written back to `mcp_settings.json` when a setting such as the timeout changed: the configuration now keeps the original references and resolves them only when connecting
 - Documentation links for MCP, rules, workflows, hooks, terminal, auto-approve and worktrees now open the matching pages on docs.dline.cc, the About telemetry and privacy links open the telemetry and privacy documentation on docs.dline.cc, and the account page's terms of service and privacy policy now point to dline.cc; the extension homepage is now dline.cc

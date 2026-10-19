@@ -16,7 +16,7 @@ vi.mock("@/context/ExtensionStateContext", () => ({
         useAutoCondense: false,
         subagentsEnabled: false,
         imageGenerationEnabled: false,
-        clineWebToolsEnabled: { user: false, featureFlag: false },
+        clineWebToolsEnabled: false,
         localWebSearchEngine: "duckduckgo",
         searxngSearchUrl: undefined,
         worktreesEnabled: { user: true, featureFlag: true },
@@ -117,7 +117,7 @@ describe("FeatureSettingsSection", () => {
         expect(mockUpdateSetting).toHaveBeenCalledWith("imageGenerationEnabled", true)
     })
 
-    it("always renders Web Tools in the Agent section and saves changes even when its feature flag is disabled", () => {
+    it("always renders Web Tools in the Agent section and saves changes", () => {
         const { container } = render(<FeatureSettingsSection renderSectionHeader={() => null} />)
 
         expect(screen.getByText("Web Tools")).toBeTruthy()
