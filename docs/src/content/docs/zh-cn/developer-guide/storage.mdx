@@ -115,7 +115,7 @@ Dline 的持久化数据不在 VS Code `ExtensionContext` 中，而是写入三�
 
 ## 迁移边界
 
-- **从 Cline 迁移**：启动时把旧 Cline 路径下的数据复制到空的 Dline 位置，详见[从 Cline 迁移](/zh-cn/getting-started/migration-cline-to-dline/)。
+- **Cline 数据**：Dline 不读取也不导入旧 Cline 路径。用户需要手动复制配置，详见[从 Cline 迁移](/zh-cn/getting-started/migration-cline-to-dline/)。
 - **从 VS Code 存储导出**：`exportVSCodeStorageToSharedFiles()`（`src/hosts/vscode/vscode-to-file-migration.ts`）读取旧的 `ExtensionContext` 全局状态、工作区状态和密钥，写入文件存储。全局和每个工作区分别用 `__vscodeMigrationVersion` 记录版本；文件中已有的值优先。
 - **设置迁移**：`StateManager` 用 `__settingsMigrationVersion` 把受支持的旧全局状态设置迁入设置文件，确认设置文件接管后才清理旧副本。
 - **任务历史**：`taskHistory.db` 不存在时才会导入旧的 `taskHistory.jsonl`。数据库一旦创建，后续启动不会再尝试导入。

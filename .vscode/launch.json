@@ -29,8 +29,7 @@
                 "IS_DEV": "true",
                 "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
                 "DLINE_ENVIRONMENT": "production",
-                "DLINE_LOG_LEVEL": "debug",
-                "DLINE_SKIP_MIGRATION": "1"
+                "DLINE_LOG_LEVEL": "debug"
             }
         },
         {
@@ -56,8 +55,7 @@
                 "IS_DEV": "true",
                 "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
                 "DLINE_ENVIRONMENT": "staging",
-                "DLINE_LOG_LEVEL": "debug",
-                "DLINE_SKIP_MIGRATION": "1"
+                "DLINE_LOG_LEVEL": "debug"
             }
         },
         {
@@ -83,8 +81,7 @@
                 "IS_DEV": "true",
                 "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
                 "DLINE_ENVIRONMENT": "local",
-                "DLINE_LOG_LEVEL": "debug",
-                "DLINE_SKIP_MIGRATION": "1"
+                "DLINE_LOG_LEVEL": "debug"
             }
         },
         {
@@ -110,7 +107,6 @@
                 "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
                 "DLINE_ENVIRONMENT": "production",
                 "DLINE_LOG_LEVEL": "debug",
-                "DLINE_SKIP_MIGRATION": "1",
                 "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
                 "DLINE_DIR": "${workspaceFolder}/tmp/.dline",
                 "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
@@ -144,7 +140,6 @@
                 "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
                 "DLINE_ENVIRONMENT": "production",
                 "DLINE_LOG_LEVEL": "debug",
-                "DLINE_SKIP_MIGRATION": "1",
                 "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
                 "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
             }
@@ -178,7 +173,6 @@
                 "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
                 "DLINE_ENVIRONMENT": "production",
                 "DLINE_LOG_LEVEL": "debug",
-                "DLINE_SKIP_MIGRATION": "1",
                 "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
                 "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline",
                 "DLINE_DIR": "${workspaceFolder}/tmp/.dline"
@@ -281,7 +275,6 @@
                 "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
                 "DLINE_ENVIRONMENT": "production",
                 "DLINE_LOG_LEVEL": "debug",
-                "DLINE_SKIP_MIGRATION": "1",
                 "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
                 "DLINE_DIR": "${workspaceFolder}/tmp/.dline",
                 "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
@@ -315,7 +308,6 @@
                 "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
                 "DLINE_ENVIRONMENT": "production",
                 "DLINE_LOG_LEVEL": "debug",
-                "DLINE_SKIP_MIGRATION": "1",
                 "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
                 "DLINE_DIR": "${workspaceFolder}/tmp/.dline",
                 "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"
@@ -352,7 +344,6 @@
                 "DEV_WORKSPACE_FOLDER": "${workspaceFolder}",
                 "DLINE_ENVIRONMENT": "production",
                 "DLINE_LOG_LEVEL": "debug",
-                "DLINE_SKIP_MIGRATION": "1",
                 "DLINE_HOME_DIR": "${workspaceFolder}/tmp/.dline",
                 "DLINE_DIR": "${workspaceFolder}/tmp/.dline",
                 "DLINE_DOCS_DIR": "${workspaceFolder}/tmp/dline"

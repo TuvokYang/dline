@@ -22,8 +22,6 @@ export interface StructuredLogRecord {
  *   - "debug": all above + debug
  *   - "trace": all above + trace
  *
- * Migration can be skipped via DLINE_SKIP_MIGRATION=1.
- *
  * Arbitrary logged values are normalized by `safe-diagnostic-value` before they
  * reach a subscriber, so a call site cannot leak command bodies, MCP payloads,
  * task titles, or credentials into Dline Output by passing a raw object.
@@ -32,9 +30,6 @@ export interface StructuredLogRecord {
 export class Logger {
     /** Runtime log level, read once at module load. Defaults to "info". */
     private static readonly logLevel = Logger.readLogLevel()
-
-    /** Whether migration should be skipped. Read from SKIP_MIGRATION or DLINE_SKIP_MIGRATION. */
-    static readonly skipMigration = process.env.DLINE_SKIP_MIGRATION === "1"
 
     private static subscribers: Set<(msg: string) => void> = new Set()
     private static structuredSubscribers: Set<(record: StructuredLogRecord) => void> = new Set()

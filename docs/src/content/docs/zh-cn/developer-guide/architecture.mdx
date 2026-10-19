@@ -27,7 +27,7 @@ Dline 目前以一个 VS Code 扩展发布，内嵌 React Webview。本页按运
 
 1. `setupHostProvider()` 通过 `HostProvider.initialize()` 注册 VS Code 版本的 Webview、diff、review、终端和宿主桥接实现；
 2. 立即创建并注册侧边栏 Webview 提供者，它的 Controller 稍后才创建；
-3. `migrateFromClineWithProgress()` 复制旧的 Cline 数据（见[从 Cline 迁移](/zh-cn/getting-started/migration-cline-to-dline/)），然后清理旧的 VS Code 存储；
+3. 清理旧的 VS Code 存储；Dline 不会导入 Cline 数据（手动步骤见[从 Cline 迁移](/zh-cn/getting-started/migration-cline-to-dline/)）；
 4. `createStorageContext()` 解析存储根目录，`exportVSCodeStorageToSharedFiles()` 把旧的 `ExtensionContext` 状态导出到文件存储；
 5. `initialize()`（`src/common.ts`）初始化 `StateManager` 和 `ModelRegistry`，创建 Controller 并挂到 Webview 提供者上，同时注册为编排器的主 Controller；
 6. 注册编辑器面板的序列化器、测试模式和钩子，最后注册 VS Code 命令。

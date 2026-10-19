@@ -115,7 +115,7 @@ Capability toggles (rules, workflows, skills, and so on) use three sparse scopes
 
 ## Migration boundaries
 
-- **Migrating from Cline**: at startup, data from legacy Cline paths is copied into empty Dline locations. See [Migrating from Cline](/getting-started/migration-cline-to-dline/).
+- **Cline data**: Dline never reads or imports legacy Cline paths. Users copy configuration by hand; see [Migrating from Cline](/getting-started/migration-cline-to-dline/).
 - **Exporting VS Code storage**: `exportVSCodeStorageToSharedFiles()` (in `src/hosts/vscode/vscode-to-file-migration.ts`) reads legacy `ExtensionContext` global state, workspace state, and secrets and writes them to file storage. Global state and each workspace record their version separately in `__vscodeMigrationVersion`; values already in files take precedence.
 - **Settings migration**: `StateManager` uses `__settingsMigrationVersion` to move supported legacy global-state settings into the settings file, and removes the legacy copies only after the settings file owns them.
 - **Task history**: the legacy `taskHistory.jsonl` is imported only when `taskHistory.db` does not exist. Once the database has been created, later launches do not attempt the import again.

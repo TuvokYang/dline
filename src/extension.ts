@@ -22,7 +22,6 @@ import path from "node:path"
 import type { ExtensionContext } from "vscode"
 import { HostProvider } from "@/hosts/host-provider"
 import { vscodeHostBridgeClient } from "@/hosts/vscode/hostbridge/client/host-grpc-client"
-import { hasClineToDlineMigrationCandidates, migrateFromClineToDline } from "@/shared/services/migration"
 import { createStorageContext } from "@/shared/storage/storage-context"
 import { readTextFromClipboard, writeTextToClipboard } from "@/utils/env"
 import { initialize, tearDown } from "./common"
@@ -104,22 +103,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }),
     )
 
-    // 2. Migrate legacy Cline data before Dline cleanup can create target files.
-    {
-        const elapsedMs = recordActivationStage("beforeMigrate")
-        if (Logger.isDebugEnabled()) {
-            Logger.debug(`[Dline] extension activate: before migrate +${Math.round(elapsedMs)}ms`)
-        }
-    }
-    await migrateFromClineWithProgress(context)
-    {
-        const elapsedMs = recordActivationStage("afterMigrate")
-        if (Logger.isDebugEnabled()) {
-            Logger.debug(`[Dline] extension activate: after migrate +${Math.round(elapsedMs)}ms`)
-        }
-    }
-
-    // 3. Clean up legacy data patterns within VSCode's native storage.
+    // 2. Clean up legacy data patterns within VSCode's native storage.
     // Must run BEFORE the file export so we copy clean state.
     {
         const elapsedMs = recordActivationStage("beforeCleanupLegacy")
@@ -135,8 +119,8 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    // 4. One-time export of VSCode's native storage to shared file-backed stores.
-    // After this, all platforms (VSCode, CLI, JetBrains) read from ~/.cline/data/.
+    // 3. One-time export of VSCode's native storage to shared file-backed stores.
+    // After this, all platforms (VSCode, CLI, JetBrains) read from the Dline data root.
     const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
     const storageContext = createStorageContext({ workspacePath })
     {
@@ -967,56 +951,6 @@ export async function deactivate() {
 const IS_DEV = envFlagEnabled(process.env.IS_DEV)
 const IS_E2E = envFlagEnabled(process.env.E2E_TEST)
 const DEV_WORKSPACE_FOLDER = process.env.DEV_WORKSPACE_FOLDER
-
-/**
- * Migrate legacy Cline data to Dline paths with VSCode progress notification.
- * Shows a progress indicator only when there is eligible data to migrate.
- */
-async function migrateFromClineWithProgress(context: ExtensionContext): Promise<void> {
-    if (Logger.skipMigration) {
-        Logger.log("[Dline] Migration skipped via SKIP_MIGRATION env var")
-        return
-    }
-    const migrationOptions = {
-        legacyVscodeGlobalStoragePaths: getLegacyClineGlobalStoragePaths(context),
-    }
-
-    if (!(await hasClineToDlineMigrationCandidates(migrationOptions))) {
-        return
-    }
-
-    await vscode.window.withProgress(
-        {
-            location: vscode.ProgressLocation.Notification,
-            title: "Dline: Migrating legacy Cline data...",
-            cancellable: false,
-        },
-        async (progress) => {
-            progress.report({ message: "Copying data into empty Dline locations..." })
-            const result = await migrateFromClineToDline(migrationOptions)
-            if (result.migrated) {
-                const details = result.details.join(", ")
-                progress.report({ message: details })
-                vscode.window.showInformationMessage(`Dline: Data migrated - ${details}`)
-            }
-        },
-    )
-}
-
-function getLegacyClineGlobalStoragePaths(context: ExtensionContext): string[] {
-    const currentStoragePath = path.normalize(context.globalStorageUri.fsPath)
-    const currentStorageKey = process.platform === "win32" ? currentStoragePath.toLowerCase() : currentStoragePath
-    const globalStorageRoot = path.dirname(currentStoragePath)
-    const legacyExtensionIds = ["saoudrizwan.claude-dev", "cline.cline"]
-
-    return legacyExtensionIds
-        .map((extensionId) => path.join(globalStorageRoot, extensionId))
-        .filter((candidatePath) => {
-            const candidate = path.normalize(candidatePath)
-            const candidateKey = process.platform === "win32" ? candidate.toLowerCase() : candidate
-            return candidateKey !== currentStorageKey
-        })
-}
 
 // VSCode-specific storage migrations
 const LEGACY_VSCODE_STORAGE_MIGRATION_VERSION = 1

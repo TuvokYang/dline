@@ -59,7 +59,7 @@ Installing the root dependencies runs the `prepare` script, which enables Husky.
 
 The `watch:debug` task generates the Protobuf code and starts the Webview Vite dev server, TypeScript watch, and esbuild watch together. The **Run Extension (local)** configuration also:
 
-- sets `DLINE_ENVIRONMENT=local`, `IS_DEV=true`, `DLINE_LOG_LEVEL=debug`, and `DLINE_SKIP_MIGRATION=1` (skipping data migration from Cline);
+- sets `DLINE_ENVIRONMENT=local`, `IS_DEV=true`, and `DLINE_LOG_LEVEL=debug`;
 - reads `.env` from the repository root through `envFile` (the file is ignored by `.gitignore`);
 - disables installed Cline extensions in the debug window to avoid conflicts.
 

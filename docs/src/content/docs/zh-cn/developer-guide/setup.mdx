@@ -59,7 +59,7 @@ import { Aside, Steps } from "@astrojs/starlight/components"
 
 `watch:debug` 任务会生成 Protobuf 代码，并同时启动 Webview 的 Vite 开发服务器、TypeScript 监视和 esbuild 监视。**Run Extension (local)** 配置还会：
 
-- 设置 `DLINE_ENVIRONMENT=local`、`IS_DEV=true`、`DLINE_LOG_LEVEL=debug` 和 `DLINE_SKIP_MIGRATION=1`（跳过从 Cline 迁移数据）；
+- 设置 `DLINE_ENVIRONMENT=local`、`IS_DEV=true` 和 `DLINE_LOG_LEVEL=debug`；
 - 通过 `envFile` 读取仓库根目录的 `.env`（该文件已被 `.gitignore` 忽略）；
 - 在调试窗口中禁用已安装的 Cline 扩展，避免冲突。
 

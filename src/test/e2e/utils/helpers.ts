@@ -826,7 +826,6 @@ export const e2e = test
                         DLINE_DIR: dlineDir,
                         DLINE_HOME_DIR: dlineHomeDir,
                         DLINE_E2E_API_BASE_URL: server.baseUrl,
-                        DLINE_SKIP_MIGRATION: "1",
                         ...environmentOverrides,
                         DLINE_DOCS_DIR: dlineDocsDir,
                         ...(forceStaleInitialState ? { DLINE_E2E_FORCE_STALE_INITIAL_STATE: "true" } : {}),

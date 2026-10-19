@@ -142,7 +142,6 @@ export class MultiInstanceLauncher {
                 DLINE_DIR: this.options.dlineDir,
                 DLINE_HOME_DIR: this.options.dlineDir,
                 DLINE_E2E_API_BASE_URL: this.options.server.baseUrl,
-                DLINE_SKIP_MIGRATION: "1",
                 ...this.options.environment,
                 DLINE_DOCS_DIR: this.options.dlineDocsDir,
                 DLINE_E2E_TASK_HISTORY_CONTROL_DIR: controlDirectory,

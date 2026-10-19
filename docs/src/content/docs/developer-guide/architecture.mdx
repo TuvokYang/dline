@@ -27,7 +27,7 @@ The `package.json` entry point is `dist/extension.js`, built from `activate()` i
 
 1. `setupHostProvider()` registers the VS Code implementations of the Webview, diff, review, terminal, and host bridge through `HostProvider.initialize()`;
 2. the sidebar Webview provider is created and registered right away; its Controller is created later;
-3. `migrateFromClineWithProgress()` copies legacy Cline data (see [Migrating from Cline](/getting-started/migration-cline-to-dline/)), then legacy VS Code storage is cleaned up;
+3. legacy VS Code storage is cleaned up; Dline does not import Cline data (see [Migrating from Cline](/getting-started/migration-cline-to-dline/) for the manual steps);
 4. `createStorageContext()` resolves the storage roots, and `exportVSCodeStorageToSharedFiles()` exports legacy `ExtensionContext` state to file storage;
 5. `initialize()` (in `src/common.ts`) initializes `StateManager` and `ModelRegistry`, creates the Controller, attaches it to the Webview provider, and registers it as the orchestrator's main Controller;
 6. the editor panel serializer, test mode, and hooks are registered, followed by the VS Code commands.
