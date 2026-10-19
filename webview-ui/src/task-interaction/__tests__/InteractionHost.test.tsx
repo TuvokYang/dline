@@ -437,7 +437,7 @@ describe("InteractionHost", () => {
         expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull()
     })
 
-    it("leaves Resume to the composer's action button", () => {
+    it("shows the full-width Resume in the footer for a paused task, beside the composer's resume", () => {
         const view = taskView()
         const message = configureInteraction(view, {
             name: "Resume",
@@ -450,7 +450,7 @@ describe("InteractionHost", () => {
         })
         render(<InteractionHost dispatch={vi.fn()} messages={[message]} view={view} />)
 
-        expect(screen.queryByRole("button", { name: "Resume" })).toBeNull()
+        expect(screen.getByRole("button", { name: "Resume" })).toHaveAttribute("aria-disabled", "false")
     })
 
     it.each([

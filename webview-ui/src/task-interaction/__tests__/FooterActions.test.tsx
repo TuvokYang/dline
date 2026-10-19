@@ -417,8 +417,7 @@ describe("FooterActions", () => {
         await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled())
     })
 
-    // The composer's action button cancels and resumes the task, so the footer
-    // must not offer either a second time.
+    // The composer's action button cancels the task, so the footer must not offer it a second time.
     it("leaves the task's cancel to the composer's action button", () => {
         const view = approvalView()
         delete view.activeInteraction
@@ -437,21 +436,33 @@ describe("FooterActions", () => {
         expect(container).toBeEmptyDOMElement()
     })
 
-    it("leaves Resume to the composer's action button", () => {
+    // The composer also resumes, but a reopened history task needs the full-width footer Resume to be noticed.
+    it("offers Resume in the footer as well and resumes the interaction with the draft", async () => {
         const view = resumeView()
+        const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
 
-        const { container } = render(<FooterActions dispatch={vi.fn()} draft={{ text: "", images: [], files: [] }} view={view} />)
+        render(<FooterActions dispatch={dispatch} draft={{ text: "keep going", images: [], files: [] }} view={view} />)
+        fireEvent.click(screen.getByRole("button", { name: "Resume" }))
 
-        expect(container).toBeEmptyDOMElement()
+        await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+        expect(dispatch).toHaveBeenCalledWith({
+            taskId: "task-1",
+            taskInstanceId: "task-instance-1",
+            turnId: "turn-1",
+            interactionId: "interaction-1",
+            actionId: "resume",
+            stateRevision: 8,
+            draft: { text: "keep going", images: [], files: [] },
+        })
     })
 
-    it("leaves disabled Resume exclusively in the composer's action button", () => {
+    it("shows Resume disabled while the backend still prepares the history task", () => {
         const view = resumeView()
-        view.input.enabled = false
+        view.footer.actions = view.footer.actions.map((action) => ({ ...action, enabled: false }))
 
-        const { container } = render(<FooterActions dispatch={vi.fn()} draft={{ text: "", images: [], files: [] }} view={view} />)
+        render(<FooterActions dispatch={vi.fn()} draft={{ text: "", images: [], files: [] }} view={view} />)
 
-        expect(container).toBeEmptyDOMElement()
+        expect(screen.getByRole("button", { name: "Resume" })).toHaveAttribute("aria-disabled", "true")
     })
 
     it("renders Continue in Background without the composer's Cancel and dispatches it", async () => {

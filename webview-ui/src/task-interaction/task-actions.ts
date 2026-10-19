@@ -43,18 +43,15 @@ export function enabledCancelAction(view: TaskViewState | undefined): TaskViewAc
  * footer must not offer it a second time.
  *
  * - the reply the composer's Enter already sends;
- * - resume, which a send from the composer performs with the draft attached;
  * - cancelling the task, which the button offers while the task runs.
+ *
+ * Resume stays in the footer as well: a send from the composer also resumes,
+ * but a history task needs the full-width footer button to be noticed.
  */
 export function composerCarriesAction(view: TaskViewState, action: TaskViewAction): boolean {
     switch (action.type) {
         case "reply":
             return view.input.enterAction === "reply"
-        case "resume":
-            // The composer owns Resume even while the backend still has it disabled.
-            // In that preparation window it renders the same action as unavailable,
-            // rather than duplicating Resume in the approval-style footer.
-            return true
         case "cancel":
             return action.dispatchTarget === "task"
         default:
