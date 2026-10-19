@@ -1,20 +1,62 @@
 import { getDlineDocumentsPath, getSavedClineMessages, getTaskMetadata } from "@core/storage/disk"
 import { StateManager } from "@core/storage/StateManager"
+import { readTaskConversation } from "@core/task/conversation/TaskConversationReader"
+import { readWorkingDirectoryHeader } from "@core/task/environment/working-directory-header"
 import { MessageUsageProjection } from "@core/task/performance/MessageUsageProjection"
 import { HostProvider } from "@hosts/host-provider"
 import { UiMessage } from "@shared/ExtensionMessage"
 import type { ApiMetrics } from "@shared/getApiMetrics"
 import { HistoryItem } from "@shared/HistoryItem"
+import type { ClineStorageMessage } from "@shared/messages/content"
 import { ShowMessageType } from "@shared/proto/dline/host/window"
+import { Logger } from "@shared/services/Logger"
 import { fileExistsAtPath } from "@utils/fs"
 import * as path from "path"
 import { ulid } from "ulid"
 
 interface TaskReconstructionResult {
+    /** Task folders found on disk. */
     totalTasks: number
+    /** Folders the index already listed; their entries are kept as recorded. */
+    preservedTasks: number
+    /** Folders the index did not list and that were rebuilt into it. */
     reconstructedTasks: number
+    /** Index entries dropped because their folder no longer exists. */
+    removedTasks: number
     skippedTasks: number
     errors: string[]
+}
+
+/** Task folders are named by the numeric task id. */
+const TASK_FOLDER_NAME = /^\d+$/
+
+export interface TaskHistoryRebuildPlan {
+    /** Indexed tasks without a folder on disk. */
+    readonly removedTaskIds: ReadonlySet<string>
+    /** Task folders the index does not list. */
+    readonly missingTaskIds: readonly string[]
+}
+
+/**
+ * Decide what a rebuild changes, keeping every entry whose folder still exists.
+ *
+ * An existing entry is the live record of its task: the workspace it ran in,
+ * its favorite flag and its completion state are written while the task runs
+ * and cannot be recovered from the folder. Rebuilding those entries from disk
+ * would drop the workspace, which empties the current-workspace history view.
+ *
+ * @param indexedTaskIds Ids the history index currently lists.
+ * @param folderNames Names of every directory under `tasks/`.
+ */
+export function planTaskHistoryRebuild(
+    indexedTaskIds: Iterable<string>,
+    folderNames: ReadonlySet<string>,
+): TaskHistoryRebuildPlan {
+    const indexed = new Set(indexedTaskIds)
+    return {
+        removedTaskIds: new Set([...indexed].filter((taskId) => !folderNames.has(taskId))),
+        missingTaskIds: [...folderNames].filter((name) => TASK_FOLDER_NAME.test(name) && !indexed.has(name)),
+    }
 }
 
 /**
@@ -27,7 +69,7 @@ export async function reconstructTaskHistory(): Promise<TaskReconstructionResult
         const proceed = await HostProvider.window.showMessage({
             type: ShowMessageType.WARNING,
             message:
-                "This will rebuild your task history index from the task folders on disk. The current index will be replaced. Continue?",
+                "This will rebuild your task history index from the task folders on disk. Tasks missing from the index are added and entries whose folder no longer exists are removed; existing entries keep their workspace, favorite and completion state. Continue?",
             options: {
                 items: ["Yes, Reconstruct", "Cancel"],
             },
@@ -46,7 +88,7 @@ export async function reconstructTaskHistory(): Promise<TaskReconstructionResult
 
         // Show results
         if (result.errors.length > 0) {
-            const errorMessage = `Reconstruction completed with warnings:\n- Reconstructed: ${result.reconstructedTasks} tasks\n- Skipped: ${result.skippedTasks} tasks\n- Errors: ${result.errors.length}\n\nFirst few errors:\n${result.errors.slice(0, 3).join("\n")}`
+            const errorMessage = `Reconstruction completed with warnings:\n- Added: ${result.reconstructedTasks} tasks\n- Kept: ${result.preservedTasks} tasks\n- Removed: ${result.removedTasks} entries\n- Skipped: ${result.skippedTasks} tasks\n- Errors: ${result.errors.length}\n\nFirst few errors:\n${result.errors.slice(0, 3).join("\n")}`
 
             HostProvider.window.showMessage({
                 type: ShowMessageType.WARNING,
@@ -55,7 +97,7 @@ export async function reconstructTaskHistory(): Promise<TaskReconstructionResult
         } else {
             HostProvider.window.showMessage({
                 type: ShowMessageType.INFORMATION,
-                message: `Task history successfully reconstructed! Found and restored ${result.reconstructedTasks} tasks.`,
+                message: `Task history rebuilt: added ${result.reconstructedTasks} tasks, kept ${result.preservedTasks}, removed ${result.removedTasks} entries without a task folder.`,
             })
         }
 
@@ -73,7 +115,9 @@ export async function reconstructTaskHistory(): Promise<TaskReconstructionResult
 async function performTaskHistoryReconstruction(): Promise<TaskReconstructionResult> {
     const result: TaskReconstructionResult = {
         totalTasks: 0,
+        preservedTasks: 0,
         reconstructedTasks: 0,
+        removedTasks: 0,
         skippedTasks: 0,
         errors: [],
     }
@@ -86,18 +130,24 @@ async function performTaskHistoryReconstruction(): Promise<TaskReconstructionRes
         throw new Error("No tasks directory found. Nothing to reconstruct.")
     }
 
-    // Scan for task directories
-    const taskIds = await scanTaskDirectories(tasksDir)
-    result.totalTasks = taskIds.length
+    const folderNames = await scanTaskDirectories(tasksDir)
+    result.totalTasks = [...folderNames].filter((name) => TASK_FOLDER_NAME.test(name)).length
 
-    if (taskIds.length === 0) {
+    if (result.totalTasks === 0) {
         throw new Error("No task directories found. Nothing to reconstruct.")
     }
 
-    // Process each task
-    const reconstructedItems: HistoryItem[] = []
+    const stateManager = StateManager.get()
+    const indexed = await stateManager.taskHistory.getDeduplicatedWithPendingWrites()
+    const plan = planTaskHistoryRebuild(
+        indexed.map((item) => item.id),
+        folderNames,
+    )
+    result.removedTasks = plan.removedTaskIds.size
+    result.preservedTasks = indexed.length - plan.removedTaskIds.size
 
-    for (const taskId of taskIds) {
+    const reconstructedItems: HistoryItem[] = []
+    for (const taskId of plan.missingTaskIds) {
         try {
             const historyItem = await reconstructTaskHistoryItem(taskId)
             if (historyItem) {
@@ -113,27 +163,24 @@ async function performTaskHistoryReconstruction(): Promise<TaskReconstructionRes
         }
     }
 
-    // Sort by timestamp (newest first)
-    reconstructedItems.sort((a, b) => b.ts - a.ts)
-
-    // The rebuilt set is authoritative: replace the stored index, then refresh the
-    // in-memory cache so open views do not keep serving the discarded entries.
-    const stateManager = StateManager.get()
-    const persisted = await stateManager.taskHistory.replaceAllItems(reconstructedItems)
+    // Refresh the in-memory cache from the committed result so open views neither
+    // keep serving dropped entries nor miss the ones just added.
+    const persisted = await stateManager.taskHistory.reconcile({
+        removedTaskIds: plan.removedTaskIds,
+        addedItems: reconstructedItems,
+    })
     stateManager.setGlobalStateBatch({ taskHistory: persisted })
 
     return result
 }
 
-async function scanTaskDirectories(tasksDir: string): Promise<string[]> {
+/** Names of every directory under `tasks/`, so an indexed task is only dropped when its folder is really gone. */
+async function scanTaskDirectories(tasksDir: string): Promise<Set<string>> {
     const fs = await import("fs/promises")
 
     try {
         const entries = await fs.readdir(tasksDir, { withFileTypes: true })
-        return entries
-            .filter((entry) => entry.isDirectory())
-            .map((entry) => entry.name)
-            .filter((name) => /^\d+$/.test(name)) // Only numeric task IDs
+        return new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
     } catch (error) {
         throw new Error(`Failed to scan tasks directory: ${error}`)
     }
@@ -169,12 +216,36 @@ async function reconstructTaskHistoryItem(taskId: string): Promise<HistoryItem |
             size: taskInfo.size,
             isFavorited: taskInfo.isFavorited,
             conversationHistoryDeletedRange: taskInfo.conversationHistoryDeletedRange,
+            cwdOnTaskInitialization: await readTaskWorkingDirectory(taskId),
         }
 
         return historyItem
     } catch (error) {
         throw new Error(`Failed to reconstruct task ${taskId}: ${error}`)
     }
+}
+
+/**
+ * Recover the workspace a task ran in from the environment header of its first request.
+ *
+ * Besides the lost history entry, that request is the only record of the
+ * workspace, and the current-workspace history view filters on it. A task whose
+ * request cannot be read still belongs in the index; it only loses that filter.
+ */
+async function readTaskWorkingDirectory(taskId: string): Promise<string | undefined> {
+    try {
+        const firstRequest = (await readTaskConversation(taskId)).find((message) => message.role === "user")
+        const workingDirectory = firstRequest ? readWorkingDirectoryHeader(requestText(firstRequest)) : undefined
+        return workingDirectory ? path.normalize(workingDirectory) : undefined
+    } catch (error) {
+        Logger.warn(`[ReconstructTaskHistory] Could not read the workspace of task ${taskId}:`, error)
+        return undefined
+    }
+}
+
+function requestText(message: ClineStorageMessage): string {
+    if (typeof message.content === "string") return message.content
+    return message.content.map((block) => (block.type === "text" ? block.text : "")).join("\n")
 }
 
 /** Rows whose text the usage projection reads; without any, only legacy metadata knows the usage. */

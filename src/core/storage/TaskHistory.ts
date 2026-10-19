@@ -13,6 +13,14 @@ export interface TaskCompletionStateUpdate {
     revision: number
 }
 
+/** The difference a rebuild found between the index and the task folders on disk. */
+export interface TaskHistoryReconciliation {
+    /** Indexed tasks whose folder was missing when the rebuild scanned the disk. */
+    readonly removedTaskIds: ReadonlySet<string>
+    /** Entries rebuilt for task folders the index did not list. */
+    readonly addedItems: readonly HistoryItem[]
+}
+
 /**
  * Decide whether a completion update supersedes the projection already stored.
  *
@@ -214,22 +222,30 @@ export class TaskHistory {
     }
 
     /**
-     * Replace the whole index with the supplied entries.
+     * Apply a rebuild of the index over the task folders on disk.
      *
-     * The history is a derived index over `tasks/<id>/`, so rebuilding it is a
-     * wholesale replacement rather than a merge: entries missing from `items` are
-     * meant to disappear. Duplicate ids would violate the primary key, so the
-     * last occurrence wins, matching the append-order semantics of the sources
-     * this rebuild reads from.
+     * A row whose task folder still exists keeps everything it recorded: the
+     * workspace, favorite and completion projection are written while the task
+     * runs and a folder scan cannot recover them. Only rows whose folder was found
+     * missing are dropped, and an added entry never replaces a row, because
+     * another window may have written that row since the scan and it is the live
+     * record. Duplicate added ids would violate the primary key, so the last
+     * occurrence wins.
+     *
+     * @returns Every entry after the rebuild, newest first.
      */
-    async replaceAllItems(items: readonly HistoryItem[]): Promise<HistoryItem[]> {
-        const rowsById = new Map<string, TaskHistoryRow>()
-        for (const item of items) {
-            rowsById.set(item.id, TaskHistoryRow.fromHistoryItem(item))
-        }
-        const rows = [...rowsById.values()]
-        await this.store.replaceAll(rows)
-        return rows.map((row) => row.toHistoryItem())
+    async reconcile(changes: TaskHistoryReconciliation): Promise<HistoryItem[]> {
+        const addedById = new Map(changes.addedItems.map((item) => [item.id, item]))
+        return await this.store.transaction(async (transaction) => {
+            const kept = (await transaction.query()).filter((row) => !changes.removedTaskIds.has(row.id))
+            const keptIds = new Set(kept.map((row) => row.id))
+            const added = [...addedById.values()]
+                .filter((item) => !keptIds.has(item.id))
+                .map((item) => TaskHistoryRow.fromHistoryItem(item))
+            const rows = [...kept, ...added]
+            await transaction.replaceAll(rows)
+            return rows.map((row) => row.toHistoryItem()).sort((left, right) => right.ts - left.ts)
+        })
     }
 
     /** Update metadata for one task. */

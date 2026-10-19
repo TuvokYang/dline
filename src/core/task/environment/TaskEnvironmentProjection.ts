@@ -31,6 +31,7 @@ import { filterExistingFiles } from "@utils/tabFiltering"
 import type { CommandExecutor } from "@/integrations/terminal"
 import type { StateManager } from "../../storage/StateManager"
 import type { TaskEnvironmentHost } from "../composition/TaskSessionPorts"
+import { formatMultiRootWorkingDirectoryHeader, formatWorkingDirectoryHeader } from "./working-directory-header"
 
 interface EnvironmentIdentity {
     readonly taskId: string
@@ -242,10 +243,9 @@ export class TaskEnvironmentProjection {
     private formatFileDetailsHeader(): string {
         const roots = this.options.workspace.manager?.getRoots() ?? []
         if (isMultiRootEnabled(this.options.workspace.stateManager) && roots.length > 1) {
-            const primaryName = this.getPrimaryWorkspaceName()
-            return `\n\n# Current Working Directory (Primary: ${primaryName}) Files\n`
+            return formatMultiRootWorkingDirectoryHeader(this.getPrimaryWorkspaceName())
         }
-        return `\n\n# Current Working Directory (${this.options.identity.cwd.toPosix()}) Files\n`
+        return formatWorkingDirectoryHeader(this.options.identity.cwd.toPosix())
     }
 
     private contextUsageSection(api: ApiHandler): string {
