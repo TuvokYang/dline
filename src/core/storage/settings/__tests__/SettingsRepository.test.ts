@@ -94,6 +94,60 @@ describe("SettingsRepository", () => {
         expect(commits).toContainEqual({ revision: writeCommit.revision, shortcut: "ctrlEnter" })
     })
 
+    it("publishes a changed document even when its stored revision is not newer", async () => {
+        const filePath = await createSettingsFile({ chatInputSendShortcut: "enter" })
+        const writer = await openRepository(filePath, "writer")
+        await writer.mutate({ chatInputSendShortcut: "ctrlEnter" })
+        const reader = await openRepository(filePath, "reader", true)
+        const applied = reader.readSnapshot().revision
+        const commits: Array<{ revision: number; shortcut: unknown }> = []
+        reader.subscribe((commit) => {
+            commits.push({ revision: commit.revision, shortcut: commit.snapshot.values.chatInputSendShortcut })
+        })
+
+        // A hand edit keeps the stored revision.
+        const document = await readDocument(filePath)
+        await fs.writeFile(filePath, `${JSON.stringify({ ...document, chatInputSendShortcut: "shiftEnter" }, null, 2)}\n`)
+        await waitFor(() => commits.length > 0)
+
+        expect(commits).toEqual([{ revision: applied + 1, shortcut: "shiftEnter" }])
+        expect(reader.readSnapshot().values.chatInputSendShortcut).toBe("shiftEnter")
+    })
+
+    it("publishes another window's commit that an unchanged local patch adopts", async () => {
+        const filePath = await createSettingsFile({ chatInputSendShortcut: "enter", terminalOutputLineLimit: 500 })
+        const writer = await openRepository(filePath, "writer")
+        const reader = await openRepository(filePath, "reader")
+        const published: Array<{ revision: number; changedKeys: readonly string[]; shortcut: unknown }> = []
+        reader.subscribe((commit) => {
+            published.push({
+                revision: commit.revision,
+                changedKeys: commit.changedKeys,
+                shortcut: commit.snapshot.values.chatInputSendShortcut,
+            })
+        })
+
+        const external = await writer.mutate({ chatInputSendShortcut: "ctrlEnter" })
+        const adopted = await reader.mutate({ terminalOutputLineLimit: 500 })
+
+        expect(adopted.revision).toBe(external.revision)
+        expect(published).toEqual([
+            { revision: external.revision, changedKeys: ["chatInputSendShortcut"], shortcut: "ctrlEnter" },
+        ])
+    })
+
+    it("lists the keys of another window's commit in a local commit that absorbs it", async () => {
+        const filePath = await createSettingsFile({ chatInputSendShortcut: "enter", terminalOutputLineLimit: 500 })
+        const writer = await openRepository(filePath, "writer")
+        const reader = await openRepository(filePath, "reader")
+
+        await writer.mutate({ chatInputSendShortcut: "ctrlEnter" })
+        const commit = await reader.mutate({ terminalOutputLineLimit: 900 })
+
+        expect(commit.changedKeys).toEqual(["chatInputSendShortcut", "terminalOutputLineLimit"])
+        expect(commit.snapshot.values).toMatchObject({ chatInputSendShortcut: "ctrlEnter", terminalOutputLineLimit: 900 })
+    })
+
     it("does not partially commit an invalid composite patch", async () => {
         const filePath = await createSettingsFile({
             chatInputSendShortcut: "enter",

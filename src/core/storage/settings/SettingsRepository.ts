@@ -46,6 +46,15 @@ function changedKeys(previous: Settings, next: Settings): SettingsKey[] {
         .sort() as SettingsKey[]
 }
 
+/**
+ * The revision a newly adopted disk document is published under. Listeners drop a
+ * commit at or below the revision they applied, so it must exceed the previous one
+ * even when the disk carries a lower or equal revision.
+ */
+function publishedRevision(diskRevision: number, previousRevision: number): number {
+    return diskRevision > previousRevision ? diskRevision : previousRevision + 1
+}
+
 async function readDocument(filePath: string): Promise<Record<string, unknown>> {
     try {
         return JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>
@@ -116,23 +125,25 @@ export class SettingsRepository {
                 const parsed = parseSettingsDocument(await readDocument(this.filePath))
                 readMs = Math.round(performance.now() - lockAcquiredAt)
                 const nextValues = applySettingsPatch(parsed.values, resolvePatch(parsed.values))
-                const keys = changedKeys(parsed.values, nextValues)
+                // The disk may hold another window's commit that the watcher has not delivered
+                // yet. Whatever this transaction adopts is published against what listeners last
+                // saw, so that commit is never absorbed silently.
+                const previous = this.currentSnapshot
                 if (isDeepStrictEqual(parsed.values, nextValues)) {
-                    this.currentSnapshot = snapshot(parsed.values, Math.max(parsed.revision, this.currentSnapshot.revision))
-                    commit = {
-                        revision: this.currentSnapshot.revision,
-                        changedKeys: [],
-                        snapshot: this.currentSnapshot,
-                        sourceId,
-                    }
+                    commit = this.adoptDiskSnapshot(parsed, previous, sourceId)
                     return
                 }
-                const revision = Math.max(parsed.revision, this.currentSnapshot.revision) + 1
+                const revision = Math.max(parsed.revision, previous.revision) + 1
                 const writeStartedAt = performance.now()
                 await writeJsonAtomic(this.filePath, buildPersistedSettingsDocument(nextValues, revision, sourceId))
                 writeMs = Math.round(performance.now() - writeStartedAt)
                 this.currentSnapshot = snapshot(nextValues, revision)
-                commit = { revision, changedKeys: keys, snapshot: this.currentSnapshot, sourceId }
+                commit = {
+                    revision,
+                    changedKeys: changedKeys(previous.values, nextValues),
+                    snapshot: this.currentSnapshot,
+                    sourceId,
+                }
             })
             if (!commit) throw new Error("Settings transaction completed without a commit")
             const publishStartedAt = performance.now()
@@ -217,15 +228,44 @@ export class SettingsRepository {
         })
     }
 
+    /**
+     * Adopt the disk document when this window's patch changed nothing. The disk is
+     * always the latest commit: every writer replaces it under the file lock before
+     * updating its own snapshot. A difference from the previous snapshot is therefore
+     * another window's commit and is returned for publication.
+     */
+    private adoptDiskSnapshot(
+        parsed: ReturnType<typeof parseSettingsDocument>,
+        previous: SettingsSnapshot,
+        sourceId: string,
+    ): SettingsCommit {
+        const keys = changedKeys(previous.values, parsed.values)
+        if (keys.length === 0) {
+            this.currentSnapshot = snapshot(parsed.values, Math.max(parsed.revision, previous.revision))
+            return { revision: this.currentSnapshot.revision, changedKeys: [], snapshot: this.currentSnapshot, sourceId }
+        }
+        this.currentSnapshot = snapshot(parsed.values, publishedRevision(parsed.revision, previous.revision))
+        return {
+            revision: this.currentSnapshot.revision,
+            changedKeys: keys,
+            snapshot: this.currentSnapshot,
+            sourceId: parsed.sourceId,
+        }
+    }
+
+    /**
+     * Publish the disk document whenever its content differs from the current
+     * snapshot. Its revision is not a reason to skip it: a hand edit keeps the
+     * stored revision, and this window's revision may already be ahead of the
+     * disk after it adopted a document written without one.
+     */
     private async reconcileFromDisk(): Promise<void> {
         if (this.disposed) return
         const startedAt = performance.now()
         const parsed = parseSettingsDocument(await readDocument(this.filePath))
-        const diskHash = contentHash(parsed.values)
-        if (diskHash === this.currentSnapshot.contentHash) return
-        if (parsed.revision > 0 && parsed.revision <= this.currentSnapshot.revision) return
+        if (contentHash(parsed.values) === this.currentSnapshot.contentHash) return
         const previous = this.currentSnapshot
-        const revision = parsed.revision > previous.revision ? parsed.revision : previous.revision + 1
+        const revision = publishedRevision(parsed.revision, previous.revision)
         this.currentSnapshot = snapshot(parsed.values, revision)
         const keys = changedKeys(previous.values, this.currentSnapshot.values)
         if (keys.length === 0) return
