@@ -22,7 +22,7 @@ import path from "node:path"
 import type { ExtensionContext } from "vscode"
 import { HostProvider } from "@/hosts/host-provider"
 import { vscodeHostBridgeClient } from "@/hosts/vscode/hostbridge/client/host-grpc-client"
-import { createStorageContext } from "@/shared/storage/storage-context"
+import { createHostStorageContext } from "@/shared/storage/storage-context"
 import { readTextFromClipboard, writeTextToClipboard } from "@/utils/env"
 import { initialize, tearDown } from "./common"
 import { addToCline } from "./core/controller/commands/addToCline"
@@ -122,7 +122,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // 3. One-time export of VSCode's native storage to shared file-backed stores.
     // After this, all platforms (VSCode, CLI, JetBrains) read from the Dline data root.
     const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-    const storageContext = createStorageContext({ workspacePath })
+    const storageContext = await createHostStorageContext({ workspacePath })
     {
         const elapsedMs = recordActivationStage("beforeExportVSCode")
         if (Logger.isDebugEnabled()) {

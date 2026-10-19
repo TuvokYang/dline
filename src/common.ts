@@ -92,9 +92,10 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
         })
     })
 
-    // Prime cachedDocumentsPath so synchronous consumers (getDlineDocumentsPathSync)
-    // use the correct system Documents directory. Must run before StateManager.init
-    // which calls AgentConfigLoader.getInstance → getDlineDocumentsPathSync.
+    // Host entry points already resolved the Documents root before creating the
+    // StorageContext (createHostStorageContext), because the context fixes the
+    // task history paths. This cached repeat keeps synchronous consumers such as
+    // AgentConfigLoader correct for callers that inject their own context.
     const { warmupDocumentsPathCache } = await import("./core/storage/disk")
     await warmupDocumentsPathCache()
 

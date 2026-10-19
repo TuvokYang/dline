@@ -1,7 +1,7 @@
 import crypto from "node:crypto"
 import fsSync from "node:fs"
 import path from "node:path"
-import { getDlineDataDir, getDlineDocumentsPathSync } from "@core/storage/disk"
+import { getDlineDataDir, getDlineDocumentsPathSync, warmupDocumentsPathCache } from "@core/storage/disk"
 import { ClineFileStorage } from "./ClineFileStorage"
 import { ClineMemento } from "./ClineStorage"
 
@@ -116,6 +116,24 @@ export function createWorkspaceId(workspaceStoragePath: string): string {
         : path.resolve(workspaceStoragePath).replace(/\/+$/, "")
     const identifier = crypto.createHash("sha256").update(normalizedPath, "utf8").digest("hex").slice(0, 32)
     return `dline_workspace_${identifier}`
+}
+
+/**
+ * Create the StorageContext a host process starts with.
+ *
+ * The task history paths are fixed when the context is created, so the platform
+ * Documents directory must be resolved first. Creating the context before that
+ * silently resolves `~/Documents`, which differs from a relocated Documents
+ * folder and splits the history index from the task directories. Host entry
+ * points must use this factory instead of calling `createStorageContext()`
+ * directly.
+ *
+ * @param opts Configuration options for path resolution
+ * @returns A StorageContext whose paths use the resolved Documents root
+ */
+export async function createHostStorageContext(opts: StorageContextOptions = {}): Promise<StorageContext> {
+    await warmupDocumentsPathCache()
+    return createStorageContext(opts)
 }
 
 /**

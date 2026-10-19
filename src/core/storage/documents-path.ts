@@ -14,6 +14,7 @@ import { Logger } from "@/shared/services/Logger"
 
 let cachedDocumentsPath: string | undefined
 let cachedDlineDocumentsPath: string | undefined
+let reportedUnresolvedDocumentsPath = false
 
 export async function getDocumentsPath(): Promise<string> {
     if (cachedDocumentsPath) return cachedDocumentsPath
@@ -71,6 +72,15 @@ export function getDlineDataDir(): string {
 export function getDlineDocumentsPathSync(): string {
     if (process.env.DLINE_DOCS_DIR) return process.env.DLINE_DOCS_DIR
     if (cachedDocumentsPath) return path.join(cachedDocumentsPath, "dline")
+    // A relocated Documents folder makes this guess wrong, and a caller that fixes
+    // a path from it (such as the task history database) silently diverges from
+    // the task directories. Report it once so the out-of-order caller is visible.
+    if (!reportedUnresolvedDocumentsPath) {
+        reportedUnresolvedDocumentsPath = true
+        Logger.warn(
+            "[Storage] Documents path read before warmupDocumentsPathCache(); assuming ~/Documents, which may not be the system Documents folder.",
+        )
+    }
     return path.join(os.homedir(), "Documents", "dline")
 }
 
