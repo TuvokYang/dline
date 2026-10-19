@@ -1,7 +1,24 @@
 import { WebviewProvider } from "@/core/webview"
+import { WebviewProviderRegistry } from "@/core/webview/WebviewProviderRegistry"
 import { Logger } from "@/shared/services/Logger"
 
 export const TASK_URI_PATH = "/task"
+
+const MCP_OAUTH_CALLBACK_PATH = /^\/mcp-auth\/callback\/[^/]+$/
+
+/**
+ * Webview whose controller handles the callback.
+ *
+ * MCP authorization completes on the shared McpHub, so it must not be dropped because the
+ * user returned from the browser with the Dline sidebar collapsed or open in a panel.
+ */
+function callbackWebview(path: string): WebviewProvider | undefined {
+    const visible = WebviewProvider.getVisibleInstance()
+    if (visible || !MCP_OAUTH_CALLBACK_PATH.test(path)) {
+        return visible
+    }
+    return WebviewProviderRegistry.getAll()[0]
+}
 
 /**
  * Shared URI handler that processes both VSCode URI events and HTTP server callbacks
@@ -30,7 +47,7 @@ export class SharedUriHandler {
                 }),
         )
 
-        const visibleWebview = WebviewProvider.getVisibleInstance()
+        const visibleWebview = callbackWebview(path)
 
         if (!visibleWebview) {
             Logger.warn("SharedUriHandler: No visible webview found")
@@ -93,7 +110,7 @@ export class SharedUriHandler {
                     return false
                 }
                 // Match /mcp-auth/callback/{hash}
-                case path.match(/^\/mcp-auth\/callback\/[^/]+$/)?.input: {
+                case path.match(MCP_OAUTH_CALLBACK_PATH)?.input: {
                     const serverHash = path.split("/").pop()
                     const code = query.get("code")
                     const state = query.get("state")

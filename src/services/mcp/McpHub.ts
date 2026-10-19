@@ -46,7 +46,8 @@ import { expandEnvironmentVariables } from "@/utils/envExpansion"
 import { getServerAuthHash } from "@/utils/mcpAuth"
 import { TelemetryService } from "../telemetry/TelemetryService"
 import { DEFAULT_REQUEST_TIMEOUT_MS, MCP_CONNECT_TIMEOUT_MS } from "./constants"
-import { McpOAuthManager } from "./McpOAuthManager"
+import { isOAuthFlowCancelled, McpOAuthReregistrationRequiredError } from "./McpOAuthLoopback"
+import { type McpOAuthFlow, McpOAuthManager } from "./McpOAuthManager"
 import { resolveMcpToolAutoApprove, updateMcpToolAutoApproveConfig } from "./mcp-auto-approval"
 import { McpCallObservation } from "./mcp-call-observation"
 import { mcpTransportObserver } from "./mcp-transport-observation"
@@ -168,7 +169,7 @@ export class McpHub {
         this.getSettingsDirectoryPath = getSettingsDirectoryPath
         this.clientVersion = clientVersion
         this.telemetryService = telemetryService
-        this.mcpOAuthManager = new McpOAuthManager()
+        this.mcpOAuthManager = new McpOAuthManager((serverHash, code) => this.finishOAuth(serverHash, code))
         this.workspaceMcpRegistry = new WorkspaceMcpRegistry(() => this.refreshWorkspaceConnections())
         void this.watchMcpSettingsFile().catch((error) => Logger.error("[McpHub] Failed to watch MCP settings:", error))
         void this.initializeMcpServers().catch((error) => Logger.error("[McpHub] Failed to initialize MCP servers:", error))
@@ -553,7 +554,7 @@ export class McpHub {
             // Each MCP server requires its own transport connection and has unique capabilities, configurations, and error handling. Having separate clients also allows proper scoping of resources/tools and independent server management like reconnection.
             const client = new Client(
                 {
-                    name: "Cline",
+                    name: "Dline",
                     version: this.clientVersion,
                 },
                 {
@@ -1873,41 +1874,100 @@ export class McpHub {
         }
 
         // Start OAuth flow - opens the SDK-generated authorization URL in browser
-        await this.mcpOAuthManager.startOAuthFlow(serverName, serverUrl)
+        let flow: McpOAuthFlow | undefined
+        try {
+            flow = await this.mcpOAuthManager.startOAuthFlow(serverName, serverUrl)
+        } catch (error) {
+            if (error instanceof McpOAuthReregistrationRequiredError) {
+                // Reconnecting registers a redirect Dline can serve and stores a new authorization URL.
+                await this.restartConnection(serverName)
+            }
+            throw error
+        }
+        if (flow) {
+            void this.settleOAuthFlow(getServerAuthHash(serverName, serverUrl), flow)
+        }
+    }
+
+    /** Completes an authorization that came back through the URI handler and tells the user the outcome. */
+    async completeOAuthFromCallback(serverHash: string, code: string, state: string | null): Promise<void> {
+        await this.reportOAuthOutcome(() => this.completeOAuth(serverHash, code, state))
     }
 
     /**
-     * Completes OAuth flow after callback
+     * Completes OAuth flow after a URI-handler callback
      * Validates state, calls finishAuth, and reconnects
      */
     async completeOAuth(serverHash: string, code: string, state: string | null): Promise<void> {
-        // Find the connection by matching the server hash
-        const connection = this.connections.find((conn) => {
-            const config = JSON.parse(conn.server.config)
-            if (config.url) {
-                const hash = getServerAuthHash(conn.server.name, config.url)
-                return hash === serverHash
-            }
-            return false
-        })
-
-        if (!connection) {
-            throw new Error(`No connection found for server hash: ${serverHash}`)
-        }
+        this.findOAuthConnection(serverHash)
 
         // Validate state for CSRF protection (if provided)
         if (state && !this.mcpOAuthManager.validateAndClearState(serverHash, state)) {
             throw new Error("Invalid OAuth state - possible CSRF attack")
         }
 
-        // Call finishAuth on the transport - SDK handles token exchange
+        await this.finishOAuth(serverHash, code)
+        await this.reconnectAuthenticated(serverHash)
+    }
+
+    /** Waits for a loopback authorization on the shared coordinator, then reconnects the server. */
+    private async settleOAuthFlow(serverHash: string, flow: McpOAuthFlow): Promise<void> {
+        try {
+            await flow.result
+        } catch (error) {
+            if (!isOAuthFlowCancelled(error)) {
+                this.reportOAuthFailure(error)
+            }
+            return
+        }
+        await this.reportOAuthOutcome(() => this.reconnectAuthenticated(serverHash))
+    }
+
+    private async reportOAuthOutcome(complete: () => Promise<void>): Promise<void> {
+        try {
+            await complete()
+            HostProvider.window.showMessage({
+                type: ShowMessageType.INFORMATION,
+                message: "Successfully authenticated MCP server",
+            })
+        } catch (error) {
+            this.reportOAuthFailure(error)
+        }
+    }
+
+    private reportOAuthFailure(error: unknown): void {
+        Logger.error("Failed to complete MCP OAuth:", error)
+        const reason = error instanceof Error ? error.message : String(error)
+        HostProvider.window.showMessage({
+            type: ShowMessageType.ERROR,
+            message: `Failed to authenticate MCP server: ${reason}`,
+        })
+    }
+
+    private findOAuthConnection(serverHash: string): McpConnection {
+        const connection = this.connections.find((conn) => {
+            const config = JSON.parse(conn.server.config)
+            return config.url ? getServerAuthHash(conn.server.name, config.url) === serverHash : false
+        })
+        if (!connection) {
+            throw new Error(`No connection found for server hash: ${serverHash}`)
+        }
+        return connection
+    }
+
+    /** Redeems the code through the transport; the MCP SDK exchanges it and saves the tokens. */
+    private async finishOAuth(serverHash: string, code: string): Promise<void> {
+        const connection = this.findOAuthConnection(serverHash)
         // finishAuth is only available on SSE and StreamableHTTP transports
         if (connection.transport instanceof SSEClientTransport || connection.transport instanceof StreamableHTTPClientTransport) {
             await connection.transport.finishAuth(code)
         } else {
             throw new Error("OAuth is only supported for SSE and HTTP transports")
         }
+    }
 
+    private async reconnectAuthenticated(serverHash: string): Promise<void> {
+        const connection = this.findOAuthConnection(serverHash)
         Logger.log(`[McpOAuth] Authentication completed for ${connection.server.name}`)
 
         // Update server status
@@ -1941,5 +2001,6 @@ export class McpHub {
             await this.settingsWatcher.close()
         }
         await this.workspaceMcpRegistry.dispose()
+        await this.mcpOAuthManager.dispose()
     }
 }

@@ -1,12 +1,35 @@
+import path from "node:path"
 import { getAllMcpOAuthSecrets, setAllMcpOAuthSecrets } from "@core/storage/secrets"
 import { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js"
 import type { OAuthClientInformationFull, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
 import crypto from "crypto"
+import { getDlineDataDir } from "@/core/storage/disk"
 import { HostProvider } from "@/hosts/host-provider"
+import { FileOAuthFlowLease, LocalOAuthFlowCoordinator, type OAuthFlowLease } from "@/services/oauth"
 import { Logger } from "@/shared/services/Logger"
 import { openExternal } from "@/utils/env"
 import { getMcpServerCallbackPath, getServerAuthHash } from "@/utils/mcpAuth"
+import { McpOAuthFlowStrategy } from "./McpOAuthFlowStrategy"
+import { isCallbackPortInUse, McpOAuthLoopback, McpOAuthReregistrationRequiredError } from "./McpOAuthLoopback"
 import { McpOAuthRedirectResolver } from "./McpOAuthRedirectResolver"
+
+/** Redeems an authorization code through the server's MCP transport (SDK `finishAuth`). */
+export type McpOAuthCodeExchange = (serverHash: string, code: string) => Promise<void>
+
+/** An authorization running on the shared OAuth coordinator. */
+export interface McpOAuthFlow {
+    /** Settles once the browser returned and tokens were saved, or the flow failed, timed out or was cancelled. */
+    result: Promise<void>
+}
+
+export interface McpOAuthManagerOptions {
+    /** Lease that keeps one authorization per server across Dline windows. */
+    leaseFor?: (serverHash: string) => OAuthFlowLease
+    openExternal?: (url: string) => Promise<void>
+}
+
+/** An authorization may take a while when the user has to sign in or create an account first. */
+const AUTHORIZATION_TIMEOUT_MS = 10 * 60 * 1000
 
 /**
  * Structure for all OAuth data stored in the single mcpOAuthSecrets JSON
@@ -39,20 +62,22 @@ function saveMcpOAuthSecrets(secrets: McpOAuthSecrets): void {
 }
 
 /**
- * Implementation of OAuthClientProvider for Cline
+ * Implementation of OAuthClientProvider for Dline
  * Manages OAuth state and token storage for a single MCP server
  */
-class ClineOAuthClientProvider implements OAuthClientProvider {
+class DlineOAuthClientProvider implements OAuthClientProvider {
     private serverName: string
     private serverUrl: string
     private _redirectUrl: string
     private isRegistrationValid: boolean
     private serverHash: string
+    private readonly loopback: McpOAuthLoopback
 
-    constructor(serverName: string, serverUrl: string) {
+    constructor(serverName: string, serverUrl: string, loopback: McpOAuthLoopback) {
         this.serverName = serverName
         this.serverUrl = serverUrl
         this.serverHash = getServerAuthHash(serverName, serverUrl)
+        this.loopback = loopback
 
         // Redirect URL and registration validity will be set when initialize() is called
         this._redirectUrl = ""
@@ -69,7 +94,7 @@ class ClineOAuthClientProvider implements OAuthClientProvider {
         const resolution = await McpOAuthRedirectResolver.resolve(
             savedRedirectUrl,
             callbackPath,
-            HostProvider.get().getCallbackUrl,
+            this.loopback.callbackUrlSource(this.serverHash, HostProvider.get().getCallbackUrl),
         )
 
         this._redirectUrl = resolution.redirectUrl
@@ -86,9 +111,9 @@ class ClineOAuthClientProvider implements OAuthClientProvider {
             token_endpoint_auth_method: "none",
             grant_types: ["authorization_code", "refresh_token"],
             response_types: ["code"],
-            client_name: "Cline",
-            client_uri: "https://cline.bot",
-            software_id: "cline",
+            client_name: "Dline",
+            client_uri: "https://dline.cc",
+            software_id: "dline",
         }
     }
 
@@ -203,9 +228,9 @@ class ClineOAuthClientProvider implements OAuthClientProvider {
         // 7. SDK throws UnauthorizedError (caught by McpHub to show "Authenticate" button)
         //
         // Our Strategy:
-        // - Store the auth URL and state but DON'T open browser yet
+        // - Store the auth URL but DON'T open browser yet
         // - Wait for user to explicitly click "Authenticate" button
-        // - When clicked, retrieve stored URL and open browser (see startOAuthFlow())
+        // - When clicked, the flow adds a fresh PKCE challenge and state and opens the browser (see startOAuthFlow())
         //
         // This prevents automatic browser popups on every extension load!
         // ========================================================================
@@ -219,19 +244,13 @@ class ClineOAuthClientProvider implements OAuthClientProvider {
             return
         }
 
-        // Generate and add state parameter for CSRF protection
-        const state = crypto.randomBytes(32).toString("hex")
-        authorizationUrl.searchParams.set("state", state)
-
-        // Save state, timestamp, and the complete auth URL for later use
-        // These will be used when the user clicks "Authenticate" button
+        // Keep the SDK-built URL (endpoint, client_id, redirect_uri, scope, resource) for the
+        // Authenticate click; state is created per click so a retry never reuses a consumed one.
         const secrets = getMcpOAuthSecrets()
         if (!secrets[this.serverHash]) {
             secrets[this.serverHash] = {}
         }
 
-        secrets[this.serverHash].oauth_state = state
-        secrets[this.serverHash].oauth_state_timestamp = Date.now()
         secrets[this.serverHash].pending_auth_url = authorizationUrl.toString()
         saveMcpOAuthSecrets(secrets)
 
@@ -284,32 +303,45 @@ class ClineOAuthClientProvider implements OAuthClientProvider {
  */
 export class McpOAuthManager {
     private providers: Map<string, OAuthClientProvider> = new Map()
-    // OAuth state parameter timeout - prevents replay attacks
-    // The state is used for CSRF protection during the redirect back from the OAuth provider
-    // Users typically complete the OAuth flow within seconds/minutes of clicking "Authenticate"
-    // but we allow 10 minutes in case they get distracted or need to create an account
-    // After 10 minutes, the state expires and user must click "Authenticate" again for security
-    private readonly STATE_EXPIRY_MS = 10 * 60 * 1000 // 10 minutes
+    private readonly loopback = new McpOAuthLoopback()
+    private readonly activeFlows = new Map<string, { coordinator: LocalOAuthFlowCoordinator<OAuthTokens>; flowId: string }>()
+    private readonly leaseFor: (serverHash: string) => OAuthFlowLease
+    private readonly openBrowser: (url: string) => Promise<void>
+
+    /**
+     * @param exchangeCode - Redeems a code on the server's transport once the shared coordinator received it.
+     */
+    constructor(
+        private readonly exchangeCode: McpOAuthCodeExchange,
+        options: McpOAuthManagerOptions = {},
+    ) {
+        this.leaseFor =
+            options.leaseFor ??
+            ((serverHash) => new FileOAuthFlowLease(path.join(getDlineDataDir(), "oauth", "mcp", `${serverHash}.json`)))
+        this.openBrowser = options.openExternal ?? openExternal
+    }
 
     /**
      * Gets or creates an OAuthClientProvider for a server
      * Note: This is async now because we need to initialize the redirect URL
      */
     async getOrCreateProvider(serverName: string, serverUrl: string): Promise<OAuthClientProvider> {
-        const key = `${serverName}:${serverUrl}`
+        const key = providerKey(serverName, serverUrl)
         if (this.providers.has(key)) {
             return this.providers.get(key)!
         }
 
         // Create provider
-        const provider = new ClineOAuthClientProvider(serverName, serverUrl)
+        const provider = new DlineOAuthClientProvider(serverName, serverUrl, this.loopback)
         await provider.initialize() // Sets the redirect URL
         this.providers.set(key, provider)
         return provider
     }
 
     /**
-     * Validates and clears stored OAuth state using hash-based lookup
+     * Validates and clears the state of an authorization whose callback came through the URI handler.
+     *
+     * Only the host-callback path (VS Code Web) uses it; loopback flows are validated by the shared coordinator.
      */
     validateAndClearState(serverHash: string, state: string): boolean {
         const secrets = getMcpOAuthSecrets()
@@ -320,19 +352,14 @@ export class McpOAuthManager {
             return false
         }
 
-        // Check if state has expired
-        if (serverData.oauth_state_timestamp) {
-            if (Date.now() - serverData.oauth_state_timestamp > this.STATE_EXPIRY_MS) {
-                Logger.error(`OAuth state expired for server hash: ${serverHash}`)
-                // Clear expired state
-                delete serverData.oauth_state
-                delete serverData.oauth_state_timestamp
-                saveMcpOAuthSecrets(secrets)
-                return false
-            }
+        if (serverData.oauth_state_timestamp && Date.now() - serverData.oauth_state_timestamp > AUTHORIZATION_TIMEOUT_MS) {
+            Logger.error(`OAuth state expired for server hash: ${serverHash}`)
+            delete serverData.oauth_state
+            delete serverData.oauth_state_timestamp
+            saveMcpOAuthSecrets(secrets)
+            return false
         }
 
-        // Validate state matches
         const isValid = serverData.oauth_state === state
 
         // Clear state after validation
@@ -344,47 +371,146 @@ export class McpOAuthManager {
     }
 
     /**
-     * Opens the browser to the stored OAuth URL when user clicks "Authenticate"
+     * Starts the authorization the user asked for with "Authenticate".
      *
-     * This retrieves the authorization URL that was stored by redirectToAuthorization()
-     * when the SDK auto-detected that OAuth was needed during connection.
-     *
-     * Flow:
-     * 1. User sees "Authenticate" button (because UnauthorizedError was caught)
-     * 2. User clicks button → UI calls authenticateMcpServer RPC
-     * 3. Controller calls mcpHub.initiateOAuth()
-     * 4. McpHub calls THIS METHOD
-     * 5. We retrieve the stored auth URL (generated by SDK, includes state)
-     * 6. We open browser to that URL
-     * 7. User authorizes → callback with code → completeOAuth()
+     * The URL comes from redirectToAuthorization(), stored when the SDK found the server needs OAuth.
+     * A loopback redirect runs on the shared OAuth coordinator and returns its flow; a host callback
+     * (VS Code Web) opens the URL with a fresh state and completes through the URI handler.
      */
-    async startOAuthFlow(serverName: string, serverUrl: string): Promise<void> {
+    async startOAuthFlow(serverName: string, serverUrl: string): Promise<McpOAuthFlow | undefined> {
         const serverHash = getServerAuthHash(serverName, serverUrl)
-        const secrets = getMcpOAuthSecrets()
-        const storedAuthUrl = secrets[serverHash]?.pending_auth_url
-
-        if (storedAuthUrl) {
-            // Use the URL that the SDK generated (with state already added in redirectToAuthorization)
-            await openExternal(storedAuthUrl)
-        } else {
-            // Fallback: if no stored URL, the SDK hasn't been triggered yet
-            // This could happen if the server was just added but connection hasn't been attempted
+        const sdkAuthorizationUrl = getMcpOAuthSecrets()[serverHash]?.pending_auth_url
+        if (!sdkAuthorizationUrl) {
+            // The SDK has not been triggered yet, e.g. the server was just added and has not connected.
             throw new Error(`No pending authorization URL found for ${serverName}. Please try restarting the server first.`)
         }
+
+        const provider = this.providers.get(providerKey(serverName, serverUrl))
+        if (!provider?.redirectUrl || !this.loopback.owns(serverHash)) {
+            await this.openWithFreshState(serverHash, sdkAuthorizationUrl)
+            return undefined
+        }
+        return this.startLoopbackFlow({ serverName, serverUrl, serverHash, provider, sdkAuthorizationUrl })
     }
 
     /**
      * Clears all OAuth data for a server (used when server is deleted)
      */
     async clearServerAuth(serverName: string, serverUrl: string): Promise<void> {
-        const key = `${serverName}:${serverUrl}`
         const serverHash = getServerAuthHash(serverName, serverUrl)
 
-        this.providers.delete(key)
+        await this.cancelActiveFlow(serverHash)
+        this.forgetRedirect(serverName, serverUrl, serverHash)
 
         // Clear all OAuth-related data for this server
         const secrets = getMcpOAuthSecrets()
         delete secrets[serverHash]
         saveMcpOAuthSecrets(secrets)
     }
+
+    async dispose(): Promise<void> {
+        await Promise.all([...this.activeFlows.keys()].map((serverHash) => this.cancelActiveFlow(serverHash)))
+        this.loopback.clear()
+    }
+
+    private async startLoopbackFlow(target: {
+        serverName: string
+        serverUrl: string
+        serverHash: string
+        provider: OAuthClientProvider
+        sdkAuthorizationUrl: string
+    }): Promise<McpOAuthFlow> {
+        const { serverName, serverUrl, serverHash, provider, sdkAuthorizationUrl } = target
+        const strategy = new McpOAuthFlowStrategy({
+            serverHash,
+            serverName,
+            redirectUrl: String(provider.redirectUrl),
+            sdkAuthorizationUrl,
+            exchange: async (code, codeVerifier) => {
+                // The SDK's finishAuth reads the verifier back through the provider.
+                await provider.saveCodeVerifier(codeVerifier)
+                await this.exchangeCode(serverHash, code)
+                const tokens = await provider.tokens()
+                if (!tokens) {
+                    throw new Error(`The authorization server returned no tokens for MCP server "${serverName}".`)
+                }
+                return tokens
+            },
+        })
+        if (!strategy.matchesRegisteredRedirect()) {
+            this.forgetRedirect(serverName, serverUrl, serverHash)
+            throw new McpOAuthReregistrationRequiredError(
+                `The authorization request for MCP server "${serverName}" was built for an earlier callback. Dline is registering again; click Authenticate once it asks for authentication.`,
+            )
+        }
+
+        await this.cancelActiveFlow(serverHash)
+        const coordinator = new LocalOAuthFlowCoordinator(strategy, {
+            lease: this.leaseFor(serverHash),
+            openExternal: this.openBrowser,
+            timeoutMs: AUTHORIZATION_TIMEOUT_MS,
+        })
+        let started: Awaited<ReturnType<typeof coordinator.startFlow>>
+        try {
+            started = await coordinator.startFlow({ profileId: serverHash })
+        } catch (error) {
+            if (!isCallbackPortInUse(error)) {
+                throw error
+            }
+            this.forgetRedirect(serverName, serverUrl, serverHash)
+            throw new McpOAuthReregistrationRequiredError(
+                `The OAuth callback port ${strategy.callbackPort} for MCP server "${serverName}" is in use by another program. Dline is registering a new callback; click Authenticate again.`,
+            )
+        }
+
+        const active = { coordinator, flowId: started.flowId }
+        this.activeFlows.set(serverHash, active)
+        const result = started.result.then(() => undefined)
+        void result
+            .catch(() => undefined)
+            .finally(() => {
+                if (this.activeFlows.get(serverHash) === active) {
+                    this.activeFlows.delete(serverHash)
+                }
+            })
+        if (started.browserOpenStatus === "failed") {
+            await this.cancelActiveFlow(serverHash)
+            throw new Error(`Could not open the browser to authorize MCP server "${serverName}".`)
+        }
+        return { result }
+    }
+
+    /** Host-callback path: a fresh state per click, so a retry never reuses a consumed one. */
+    private async openWithFreshState(serverHash: string, sdkAuthorizationUrl: string): Promise<void> {
+        const authorizationUrl = new URL(sdkAuthorizationUrl)
+        const state = crypto.randomBytes(32).toString("hex")
+        authorizationUrl.searchParams.set("state", state)
+
+        const secrets = getMcpOAuthSecrets()
+        secrets[serverHash] ??= {}
+        secrets[serverHash].oauth_state = state
+        secrets[serverHash].oauth_state_timestamp = Date.now()
+        saveMcpOAuthSecrets(secrets)
+
+        await this.openBrowser(authorizationUrl.toString())
+    }
+
+    private async cancelActiveFlow(serverHash: string): Promise<void> {
+        const active = this.activeFlows.get(serverHash)
+        if (!active) {
+            return
+        }
+        this.activeFlows.delete(serverHash)
+        await active.coordinator.cancelFlow({ flowId: active.flowId, profileId: serverHash }).catch(() => undefined)
+    }
+
+    /** Drops the cached provider and its reserved port, so the next connection resolves and registers a redirect again. */
+    private forgetRedirect(serverName: string, serverUrl: string, serverHash: string): void {
+        this.providers.delete(providerKey(serverName, serverUrl))
+        this.loopback.release(serverHash)
+    }
+}
+
+function providerKey(serverName: string, serverUrl: string): string {
+    return `${serverName}:${serverUrl}`
 }

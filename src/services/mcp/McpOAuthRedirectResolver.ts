@@ -33,7 +33,8 @@ export type GetCallbackUrlFn = (path: string, preferredPort?: number) => Promise
  *
  * This handles all combinations:
  * - Standalone/JetBrains/CLI (http://127.0.0.1:{port}/...) — dynamic port, can become stale
- * - VSCode Desktop (vscode://extension-id/...) — stable, no port
+ * - VSCode Desktop (http://127.0.0.1:{port}/... served by McpOAuthLoopback, because MCP
+ *   authorization servers accept only localhost or HTTPS redirect URIs) — reserved port, can become stale
  * - VSCode Web (https://codespace.github.dev/...) — stable per-codespace
  * - Legacy state (no saved redirect URL) — conservative: assume stale
  * - Cross-platform migration (VSCode → JetBrains) — detect scheme change
@@ -94,7 +95,7 @@ export class McpOAuthRedirectResolver {
      * and asks the callback URL provider to try binding it first. If the same URL is
      * obtained, the existing registration remains valid.
      *
-     * For scheme URLs (VSCode desktop): no port to prefer, returns URL directly.
+     * For non-loopback URLs (VSCode Web): no port to prefer, returns URL directly.
      *
      * For legacy state (no saved URL): gets a fresh URL, marks registration as invalid
      * so the SDK will re-register with the new redirect_uri.

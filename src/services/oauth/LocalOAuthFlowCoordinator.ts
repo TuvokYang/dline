@@ -331,6 +331,7 @@ export class LocalOAuthFlowCoordinator<TCredential> {
                 return await LocalOAuthCallbackServer.listen({
                     port,
                     callbackPath: this.strategy.callbackPath,
+                    ...(this.strategy.callbackPages ? { pages: this.strategy.callbackPages } : {}),
                     ...(this.strategy.callbackRedirectHost !== undefined
                         ? { redirectHost: this.strategy.callbackRedirectHost }
                         : {}),

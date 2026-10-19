@@ -147,7 +147,7 @@ On the **Configure** tab, each server can be:
 
 ## OAuth authentication
 
-When a remote server requires OAuth, the connection reports that authentication is needed and the server row shows an **Authenticate** button. Selecting it opens the authorization page in your external browser. After you authorize, Dline reconnects automatically.
+When a remote server requires OAuth, the connection reports that authentication is needed and the server row shows an **Authenticate** button. Selecting it opens the authorization page in your external browser. After you authorize, the browser returns to a local Dline page at `http://127.0.0.1` (ports 48820–48839 are tried first) that confirms the result, and Dline reconnects the server automatically; there is no prompt to open VS Code. Dline registers itself with the server as the client "Dline". The browser is needed only for the first authorization: Dline refreshes the saved token afterwards until the server revokes it. In VS Code for the Web, the callback returns through VS Code instead.
 
 ## Security
 

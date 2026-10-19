@@ -2,6 +2,7 @@ import { expect } from "chai"
 import { afterEach, beforeEach, describe, it, vi, expect as vitestExpect } from "vitest"
 // sinon import removed
 import { WebviewProvider } from "@/core/webview"
+import { WebviewProviderRegistry } from "@/core/webview/WebviewProviderRegistry"
 import { Logger } from "@/shared/services/Logger"
 import { ErrorService } from "../error"
 import { SharedUriHandler } from "./SharedUriHandler"
@@ -48,6 +49,33 @@ describe("SharedUriHandler", () => {
     })
 
     describe("handleUri", () => {
+        describe("MCP OAuth callback handling", () => {
+            it("completes the authorization even when no Dline view is in sight", async () => {
+                const handleMcpOAuthCallback = vi.fn().mockResolvedValue(undefined)
+                vi.spyOn(WebviewProvider, "getVisibleInstance").mockReturnValue(undefined)
+                vi.spyOn(WebviewProviderRegistry, "getAll").mockReturnValue([{ controller: { handleMcpOAuthCallback } } as any])
+
+                const result = await SharedUriHandler.handleUri(
+                    "vscode://tuvokyang.dline/mcp-auth/callback/abc123?code=c1&state=s1",
+                )
+
+                expect(result).to.be.true
+                vitestExpect(handleMcpOAuthCallback).toHaveBeenCalledWith("abc123", "c1", "s1")
+            })
+
+            it("still requires a visible view for other callbacks", async () => {
+                vi.spyOn(WebviewProvider, "getVisibleInstance").mockReturnValue(undefined)
+                vi.spyOn(WebviewProviderRegistry, "getAll").mockReturnValue([
+                    { controller: { handleOpenRouterCallback: handleOpenRouterCallbackStub } } as any,
+                ])
+
+                const result = await SharedUriHandler.handleUri("vscode://tuvokyang.dline/openrouter?code=test123")
+
+                expect(result).to.be.false
+                vitestExpect(handleOpenRouterCallbackStub).not.toHaveBeenCalled()
+            })
+        })
+
         describe("OpenRouter callback handling", () => {
             it("should successfully handle OpenRouter callback with code", async () => {
                 const result = await SharedUriHandler.handleUri("vscode://cline.cline/openrouter?code=test123")

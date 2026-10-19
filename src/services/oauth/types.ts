@@ -82,11 +82,24 @@ export interface OAuthAccountPresentation {
     planName?: string
 }
 
+/** Complete HTML pages the loopback callback serves after a callback succeeds or fails. */
+export interface LocalOAuthCallbackPages {
+    success: string
+    failure: string
+}
+
 export interface OAuthAuthorizationStrategy<TCredential> {
     readonly strategyId: string
     readonly callbackPort: number
     readonly callbackPorts?: readonly number[]
     readonly callbackPath: string
+    /**
+     * Pages served by the loopback callback when completion is not a profile sign-in.
+     *
+     * Defaults to the profile sign-in pages, whose failure copy points to the
+     * "Full callback URL" field that only profile sign-in offers.
+     */
+    readonly callbackPages?: LocalOAuthCallbackPages
     /**
      * Host published in `redirect_uri` when it must differ from the loopback bind address.
      *

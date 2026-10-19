@@ -43,7 +43,8 @@
 - 修复 MCP 设置中 `${env:VAR}` 引用的值被展开后显示在设置页、并在修改超时等设置时被写回 `mcp_settings.json` 的问题：配置现在保留原始引用，只在连接时解析
 - MCP 设置的服务器行上新增「Clear Saved Variables」按钮：引用了 `${env:VAR}` 的服务器无需展开或先连接失败，即可清除为它保存的变量值并重新连接
 - 修复项目（`.agents/mcp`）中的 MCP 服务器在设置列表里没有开关的问题：开关与其他服务器一样作用于当前工作区，状态保存在本机的 Dline 工作区状态中，不修改仓库中的描述文件；单个任务仍可在任务的 MCP 开关中再关闭
-- 修复尚未打开 Dline 界面时就弹出 MCP 变量输入框的问题：缺少 `${env:VAR}` 值的服务器先等待，首次打开 Dline 侧边栏或面板后才询问，其他服务器照常连接
+- 修复需要 OAuth 的远程 MCP 服务器无法认证的问题：服务器注册客户端时拒收 `vscode://` 回调地址（`redirect_uris must only contain web uris`）；授权成功后回调到达的 VS Code 窗口找不到授权状态（`No stored state found`），并且一次失败后再点 **Authenticate** 也必然失败。现在 MCP 与 OpenAI Codex、Claude Code 登录使用同一套 OAuth 流程：每次点击都生成新的 PKCE 与 state，浏览器授权后直接回到发起授权的窗口在 `127.0.0.1` 上的本地页面，不再弹出“打开 VS Code”提示；之前已注册的客户端会自动重新注册；认证失败的提示会显示原因；Dline 在服务器上登记的客户端名称由 Cline 改为 Dline
+- 修复尚未打开 Dline 界面时就弹出 MCP 变量输入框的问题：
 - MCP、规则、工作流、hooks、终端、自动审批与 worktrees 中的文档链接改为指向 docs.dline.cc 的对应页面，About 中的遥测与隐私链接指向 docs.dline.cc 的遥测与隐私文档，账号页的服务条款与隐私政策改为 dline.cc；扩展主页改为 dline.cc
 - Windows 上任务读过文件所在的目录
 - 暗色主题下 What's New、展开的探索段、工具结果等滚动区域的滚动条不再显示为白色：Webview 中所有滚动区域默认使用与 MCP 卡片相同的随主题细滚动条

@@ -67,4 +67,26 @@ describe("LocalOAuthCallbackServer result page", () => {
         expect(html).toContain("address bar")
         expect(html).toContain("Full callback URL")
     })
+
+    it("serves the consumer's pages instead of the profile sign-in pages", async () => {
+        let rejectCallback = false
+        const server = await LocalOAuthCallbackServer.listen({
+            port: 0,
+            callbackPath: "/auth/callback",
+            pages: { success: "<p>consumer success</p>", failure: "<p>consumer failure</p>" },
+            onCallback: async () => {
+                if (rejectCallback) throw new Error("callback rejected")
+            },
+        })
+        openServers.push(server)
+
+        const success = await fetch(`${server.redirectUri}?code=abc&state=xyz`)
+        rejectCallback = true
+        const failure = await fetch(`${server.redirectUri}?code=abc&state=xyz`)
+
+        expect(success.status).toBe(200)
+        expect(await success.text()).toBe("<p>consumer success</p>")
+        expect(failure.status).toBe(400)
+        expect(await failure.text()).toBe("<p>consumer failure</p>")
+    })
 })

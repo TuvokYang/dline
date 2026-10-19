@@ -1,6 +1,6 @@
 import http from "node:http"
 import { renderAuthResultPage } from "./authResultPage"
-import { type OAuthAccountPresentation, OAuthFlowError } from "./types"
+import { type LocalOAuthCallbackPages, type OAuthAccountPresentation, OAuthFlowError } from "./types"
 
 export interface LocalOAuthCallbackServerOptions {
     /** Loopback address the server binds to. */
@@ -21,6 +21,8 @@ export interface LocalOAuthCallbackServerOptions {
      * projection still produces a complete success page.
      */
     onCallback: (callbackUri: string) => Promise<OAuthAccountPresentation | void>
+    /** Pages served after the callback; defaults to the profile sign-in pages. */
+    pages?: LocalOAuthCallbackPages
 }
 
 function renderSuccessPage(account: OAuthAccountPresentation | undefined): string {
@@ -66,11 +68,11 @@ export class LocalOAuthCallbackServer {
             try {
                 const account = await options.onCallback(callback.toString())
                 response.writeHead(200, CALLBACK_RESPONSE_HEADERS)
-                response.end(renderSuccessPage(account ?? undefined))
+                response.end(options.pages?.success ?? renderSuccessPage(account ?? undefined))
             } catch (error) {
                 const status = error instanceof OAuthFlowError && error.code === "TOKEN_EXCHANGE_FAILED" ? 500 : 400
                 response.writeHead(status, CALLBACK_RESPONSE_HEADERS)
-                response.end(FAILURE_HTML)
+                response.end(options.pages?.failure ?? FAILURE_HTML)
             }
         })
 
