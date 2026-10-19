@@ -1,42 +1,39 @@
 import { randomUUID } from "node:crypto"
+import { providerFailureClassOf } from "@core/api/observability/provider-failure"
 import type { CompactionAttemptDiagnostics } from "@core/context/context-management/compaction-attempt-diagnostics"
-import type { ModelInfo } from "@shared/api"
 import { Logger } from "@shared/services/Logger"
-import { settledCostMicroUsd } from "../executors/provider/service/ProviderUsageTokens"
 import type { ApiRequestRoundUsage } from "../performance/api-request-round-types"
 import type { ProviderRequestRoundAdmission, ProviderRequestRoundPort } from "../performance/provider-request-round-port"
 import type { UsageOutcome, UsageServedModel, UsageSettlement, UsageSettlementPort } from "./UsageSettlement"
 
-const MICRO_UNITS_PER_DOLLAR = 1_000_000
-
 /**
  * The usage one compaction Provider attempt consumed.
  *
- * Compaction reports per attempt, priced here from the handler that served the
- * Pass because its stream reports no cost. The authorization attempt identifies
- * the observation, so a diagnostic delivered twice settles once.
+ * Compaction reports per attempt, attributed to the handler that served the
+ * Pass. The authorization attempt identifies the observation, so a diagnostic
+ * delivered twice settles once.
  */
 export function compactionAttemptSettlement(
     diagnostics: CompactionAttemptDiagnostics,
-    served: { readonly modelInfo: ModelInfo; readonly servedBy?: UsageServedModel },
+    servedBy: UsageServedModel | undefined,
     newObservationId: () => string = randomUUID,
 ): UsageSettlement {
     const usage = diagnostics.usage
-    const tokens = {
+    const accepted = diagnostics.outcome === "accepted"
+    const ttftMs = Math.max(0, Math.round(diagnostics.providerTtfbMs))
+    const generationMs = Math.max(0, Math.round(diagnostics.streamMs))
+    return {
+        observationId: diagnostics.authorizationAttemptId || newObservationId(),
+        purpose: "compaction",
+        outcome: accepted ? "completed" : "failed",
         inputTokens: usage?.inputTokens ?? 0,
         outputTokens: usage?.outputTokens ?? 0,
         cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
         cacheReadTokens: usage?.cacheReadTokens ?? 0,
-    }
-    const costMicroUsd = usage ? settledCostMicroUsd(tokens, served.modelInfo) : undefined
-    return {
-        observationId: diagnostics.authorizationAttemptId || newObservationId(),
-        purpose: "compaction",
-        outcome: diagnostics.outcome === "accepted" ? "completed" : "failed",
-        ...tokens,
-        ...(costMicroUsd === undefined ? {} : { costMicroUsd }),
-        durationMs: Math.max(0, Math.round(diagnostics.providerTtfbMs + diagnostics.streamMs)),
-        ...(served.servedBy ? { servedBy: served.servedBy } : {}),
+        durationMs: ttftMs + generationMs,
+        // Only a stream that ran to its end has a generation time worth comparing.
+        ...(accepted ? { streamTiming: { ttftMs, generationMs } } : { failureClass: "other" as const }),
+        ...(servedBy ? { servedBy } : {}),
     }
 }
 
@@ -78,11 +75,24 @@ export function settleSubagentRoundUsage(
     }
 }
 
+/**
+ * One subagent round as usage sees it.
+ *
+ * The round is one request: an attempt that failed and was sent again counts as
+ * a retry of it, waiting from the failure to the resend, and its timing covers
+ * only the attempt whose usage settles it.
+ */
 class SubagentRoundUsage implements ProviderRequestRoundAdmission {
     private readonly clock: () => number
     private readonly newObservationId: () => string
     private attemptStartedAt: number
+    private firstChunkAt: number | undefined
+    private endedAt: number | undefined
     private attemptOutcome: UsageOutcome = "completed"
+    private attemptFailure: unknown
+    /** When the last attempt failed, until the next one is sent or the round settles. */
+    private failedAt: number | undefined
+    private waitsMs: number[] = []
 
     constructor(
         private readonly inner: ProviderRequestRoundAdmission,
@@ -96,30 +106,34 @@ class SubagentRoundUsage implements ProviderRequestRoundAdmission {
     }
 
     bindAttempt<T>(stream: AsyncIterable<T>, taskAttempt: number): AsyncIterable<T> {
-        this.attemptStartedAt = this.clock()
+        const now = this.clock()
+        if (this.failedAt !== undefined) this.waitsMs.push(Math.max(0, now - this.failedAt))
+        this.failedAt = undefined
+        this.attemptStartedAt = now
+        this.firstChunkAt = undefined
+        this.endedAt = undefined
         this.attemptOutcome = "completed"
-        return observeOutcome(this.inner.bindAttempt(stream, taskAttempt), (outcome) => {
-            this.attemptOutcome = outcome
+        this.attemptFailure = undefined
+        return observeAttempt(this.inner.bindAttempt(stream, taskAttempt), {
+            chunk: () => {
+                this.firstChunkAt ??= this.clock()
+            },
+            end: () => {
+                this.endedAt = this.clock()
+            },
+            fail: (outcome, error) => {
+                this.attemptOutcome = outcome
+                this.attemptFailure = error
+                this.failedAt = this.clock()
+            },
         })
     }
 
     attachExactUsage(usage: ApiRequestRoundUsage): void {
         this.inner.attachExactUsage(usage)
-        recordUsageSafely(this.port, () => {
-            const costMicroUsd = dollarCost(usage)
-            return {
-                observationId: this.newObservationId(),
-                purpose: "subagent",
-                outcome: this.attemptOutcome,
-                inputTokens: usage.inputTokens,
-                outputTokens: usage.outputTokens,
-                cacheReadTokens: usage.cacheReadTokens ?? 0,
-                cacheWriteTokens: usage.cacheWriteTokens ?? 0,
-                ...(costMicroUsd === undefined ? {} : { costMicroUsd }),
-                durationMs: Math.max(0, this.clock() - this.attemptStartedAt),
-                ...(this.servedBy ? { servedBy: this.servedBy } : {}),
-            }
-        })
+        recordUsageSafely(this.port, () => this.settlementOf(usage))
+        this.waitsMs = []
+        this.failedAt = undefined
     }
 
     completeProviderOnly(): void {
@@ -133,28 +147,63 @@ class SubagentRoundUsage implements ProviderRequestRoundAdmission {
     completeTurnEndAwaitingUser(...args: Parameters<ProviderRequestRoundAdmission["completeTurnEndAwaitingUser"]>): void {
         this.inner.completeTurnEndAwaitingUser(...args)
     }
+
+    private settlementOf(usage: ApiRequestRoundUsage): UsageSettlement {
+        const endedAt = this.endedAt ?? this.clock()
+        const firstChunkAt = this.firstChunkAt
+        const streamed = this.attemptOutcome === "completed" && firstChunkAt !== undefined && this.endedAt !== undefined
+        return {
+            observationId: this.newObservationId(),
+            purpose: "subagent",
+            outcome: this.attemptOutcome,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadTokens ?? 0,
+            cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+            ...(usage.thoughtsTokens === undefined ? {} : { reasoningTokens: usage.thoughtsTokens }),
+            durationMs: Math.max(0, endedAt - this.attemptStartedAt),
+            ...(streamed
+                ? {
+                      streamTiming: {
+                          ttftMs: Math.max(0, firstChunkAt - this.attemptStartedAt),
+                          generationMs: Math.max(0, endedAt - firstChunkAt),
+                      },
+                  }
+                : {}),
+            ...(this.waitsMs.length > 0 ? { retries: { waitsMs: [...this.waitsMs] } } : {}),
+            ...(this.attemptOutcome === "failed" ? { failureClass: providerFailureClassOf(this.attemptFailure) } : {}),
+            ...(this.servedBy ? { servedBy: this.servedBy } : {}),
+        }
+    }
 }
 
-/** A subagent round is priced before it is attached; only a dollar price can be counted. */
-function dollarCost(usage: ApiRequestRoundUsage): number | undefined {
-    if (usage.totalCost === undefined || !Number.isFinite(usage.totalCost) || usage.totalCost < 0) return undefined
-    if (usage.currency && usage.currency.toUpperCase() !== "USD") return undefined
-    return Math.round(usage.totalCost * MICRO_UNITS_PER_DOLLAR)
+interface AttemptObserver {
+    /** A chunk arrived. */
+    chunk(): void
+    /** The stream ended on its own. */
+    end(): void
+    /** The stream failed or was aborted. */
+    fail(outcome: Exclude<UsageOutcome, "completed">, error: unknown): void
 }
 
-/** Forward a stream unchanged while noting whether it ended, failed or was aborted. */
-function observeOutcome<T>(stream: AsyncIterable<T>, settle: (outcome: UsageOutcome) => void): AsyncIterable<T> {
+/** Forward a stream unchanged while noting when it first answered and how it ended. */
+function observeAttempt<T>(stream: AsyncIterable<T>, observer: AttemptObserver): AsyncIterable<T> {
     return {
         [Symbol.asyncIterator]: () => {
             const iterator = stream[Symbol.asyncIterator]()
             const fail = (error: unknown): never => {
-                settle(isAbort(error) ? "cancelled" : "failed")
+                observer.fail(isAbort(error) ? "cancelled" : "failed", error)
                 throw error
+            }
+            const seen = (result: IteratorResult<T>): IteratorResult<T> => {
+                if (result.done) observer.end()
+                else observer.chunk()
+                return result
             }
             return {
                 next: async (...args: [] | [unknown]) => {
                     try {
-                        return await iterator.next(...args)
+                        return seen(await iterator.next(...args))
                     } catch (error) {
                         return fail(error)
                     }
@@ -164,7 +213,7 @@ function observeOutcome<T>(stream: AsyncIterable<T>, settle: (outcome: UsageOutc
                 throw: async (error?: unknown) => {
                     if (!iterator.throw) return fail(error)
                     try {
-                        return await iterator.throw(error)
+                        return seen(await iterator.throw(error))
                     } catch (thrown) {
                         return fail(thrown)
                     }

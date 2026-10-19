@@ -10,7 +10,7 @@ import {
     validateUsageAggregate,
 } from "../contracts/wire"
 import type { UsageObservation } from "./usageCatalog"
-import { buildUsageAggregate, mergeObservations, type UsageWindow, windowStartOf } from "./usageWindow"
+import { buildUsageAggregate, mergeObservations, type UsageWindow, windowOf, windowStartOf } from "./usageWindow"
 
 /** Extra wait past the server gate, so a small disagreement between clocks does not cost a 429. */
 export const USAGE_GATE_MARGIN_MS = 2_000
@@ -109,7 +109,7 @@ export function foldUsageShards(state: UsageOutboxState, shards: readonly Settle
             const minute = Math.max(Math.min(windowStartOf(observation.receivedAt), currentMinute), state.sealedThrough)
             const existing = byMinute.get(minute)
             const merged = existing ? mergeObservations(existing, observation) : observation
-            byMinute.set(minute, { startedAt: minute, counters: merged.counters, measurements: merged.measurements })
+            byMinute.set(minute, windowOf(minute, merged))
         }
     }
     const capped = capPendingWindows([...byMinute.values()])
@@ -147,6 +147,12 @@ export interface UsageBatchInput {
  * The gate moves a full interval ahead as soon as the batch exists: if this
  * process dies after sending, the next sender loses a slot instead of sending
  * a second new batch inside the server's window.
+ *
+ * Online, at most one minute completes per gate interval, so a batch carries one
+ * window at its real start (`aggregation_count` 1), which the service needs for
+ * peak-minute rates. Only a backlog — offline time, a restart, or the rare minute
+ * the slightly longer gate falls behind — merges several minutes, and the
+ * service leaves such batches out of the peak.
  */
 export function takeUsageBatch(state: UsageOutboxState, input: UsageBatchInput): UsageBatchDecision {
     const { now } = input
@@ -253,11 +259,7 @@ function mergeWindowLists(left: readonly UsageWindow[], right: readonly UsageWin
     for (const window of right) {
         const existing = byMinute.get(window.startedAt)
         const merged = existing ? mergeObservations(existing, window) : window
-        byMinute.set(window.startedAt, {
-            startedAt: window.startedAt,
-            counters: merged.counters,
-            measurements: merged.measurements,
-        })
+        byMinute.set(window.startedAt, windowOf(window.startedAt, merged))
     }
     return [...byMinute.values()]
 }

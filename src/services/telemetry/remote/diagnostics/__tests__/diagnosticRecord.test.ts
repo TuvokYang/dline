@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest"
 import type { JournalTelemetrySignal } from "../../../providers/capabilities"
-import { type DiagnosticRecord, encodeDiagnosticLogs, toDiagnosticRecord } from "../diagnosticRecord"
+import {
+    type DiagnosticRecord,
+    encodeDiagnosticLogs,
+    hostEditorOf,
+    releaseChannelOf,
+    toDiagnosticRecord,
+} from "../diagnosticRecord"
 
 const NOW = 1_800_000_000_123
 
@@ -66,6 +72,7 @@ describe("toDiagnosticRecord", () => {
                 properties: {
                     provider: "anthropic",
                     model: "claude-sonnet-4.5",
+                    "model.custom": false,
                     status: 429,
                     retryable: true,
                     latencyMs: 12.5,
@@ -87,6 +94,7 @@ describe("toDiagnosticRecord", () => {
         expect(record?.attributes).toEqual({
             provider: "anthropic",
             model: "claude-sonnet-4.5",
+            "model.custom": false,
             status: 429,
             retryable: true,
             latencyMs: 12.5,
@@ -97,6 +105,84 @@ describe("toDiagnosticRecord", () => {
     it("stops at 32 attributes", () => {
         const properties = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`count${index}`, index]))
         expect(Object.keys(toDiagnosticRecord(event({ properties }), NOW)?.attributes ?? {})).toHaveLength(32)
+    })
+
+    it("keeps the contract keys when other attributes alone would fill the cap", () => {
+        const filler = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`count${index}`, index]))
+        const attributes =
+            toDiagnosticRecord(
+                event({
+                    properties: {
+                        ...filler,
+                        "error.class": "rate_limit",
+                        "error.code": "429",
+                        "http.status": 429,
+                        retryable: true,
+                        duration_ms: 812,
+                    },
+                }),
+                NOW,
+            )?.attributes ?? {}
+
+        expect(Object.keys(attributes)).toHaveLength(32)
+        expect(attributes).toMatchObject({
+            "error.class": "rate_limit",
+            "error.code": "429",
+            "http.status": 429,
+            retryable: true,
+            duration_ms: 812,
+        })
+        expect(attributes.count26).toBe(26)
+        expect(attributes.count27).toBeUndefined()
+    })
+
+    it("names a catalog model the way usage does, so a slashed ID is not dropped", () => {
+        const attributes = toDiagnosticRecord(
+            event({
+                properties: {
+                    provider: "OpenRouter",
+                    model: "anthropic/claude-sonnet-4.5",
+                    "model.custom": false,
+                    api_format: "openai_chat",
+                },
+            }),
+            NOW,
+        )?.attributes
+
+        expect(attributes).toEqual({
+            provider: "openrouter",
+            model: "anthropic_claude-sonnet-4.5",
+            "model.custom": false,
+            "api.format": "openai_chat",
+        })
+    })
+
+    it("never sends the ID of a custom model or of a model not marked as catalog", () => {
+        for (const marker of [{ "model.custom": true }, {}]) {
+            const attributes = toDiagnosticRecord(
+                event({ properties: { provider: "ollama", model: "my-private-finetune", ...marker } }),
+                NOW,
+            )?.attributes
+
+            expect(attributes).toEqual({ provider: "ollama", model: "_custom", "model.custom": true })
+        }
+    })
+})
+
+describe("client resource", () => {
+    it("reads the release channel from the extension name", () => {
+        expect(releaseChannelOf("dline")).toBe("stable")
+        expect(releaseChannelOf("dline-insiders")).toBe("insiders")
+    })
+
+    it("maps the host application name onto the service vocabulary", () => {
+        expect(hostEditorOf("Visual Studio Code")).toBe("vscode")
+        expect(hostEditorOf("Visual Studio Code - Insiders")).toBe("vscode")
+        expect(hostEditorOf("Cursor")).toBe("cursor")
+        expect(hostEditorOf("VSCodium")).toBe("vscodium")
+        expect(hostEditorOf("Windsurf")).toBe("windsurf")
+        expect(hostEditorOf("Zed")).toBe("other")
+        expect(hostEditorOf(undefined)).toBe("other")
     })
 })
 
@@ -132,5 +218,24 @@ describe("encodeDiagnosticLogs", () => {
             { key: "shell", value: { stringValue: "pwsh" } },
         ])
         expect(second.attributes.find((attribute) => attribute.key === "dline.channel")?.value.stringValue).toBe("runtime")
+    })
+
+    it("adds the release channel and host editor to the resource only when they are known", () => {
+        const { resource } = decode(
+            encodeDiagnosticLogs([], {
+                clientVersion: "0.11.0",
+                platform: "darwin",
+                releaseChannel: "insiders",
+                hostEditor: "cursor",
+            }),
+        )
+
+        expect(resource).toEqual([
+            { key: "service.name", value: { stringValue: "dline" } },
+            { key: "service.version", value: { stringValue: "0.11.0" } },
+            { key: "os.type", value: { stringValue: "darwin" } },
+            { key: "dline.release_channel", value: { stringValue: "insiders" } },
+            { key: "dline.host_editor", value: { stringValue: "cursor" } },
+        ])
     })
 })

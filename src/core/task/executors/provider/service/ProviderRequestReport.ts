@@ -34,6 +34,21 @@ export interface ProviderRetryNotice {
 }
 
 /**
+ * When the attempt that produced a reply ran, read from the provider service's clock.
+ *
+ * Earlier failed attempts and the backoff between them are excluded, so a rate
+ * limit does not make the model look slow; they are reported as retries instead.
+ */
+export interface ProviderAttemptTiming {
+    /** From sending the attempt to the end of its stream. */
+    readonly durationMs: number
+    /** From sending the attempt to its first content or reasoning; absent when none arrived. */
+    readonly ttftMs?: number
+    /** From the first content or reasoning to the end of the stream; absent when none arrived. */
+    readonly generationMs?: number
+}
+
+/**
  * What a streaming response has occupied so far, before its final usage settles it.
  *
  * `receivingTokens` is the provider's reported output once it reports one and a
@@ -80,6 +95,10 @@ export interface ProviderRequestSettlement {
      */
     readonly contextUsage?: Readonly<Record<string, number>>
     readonly outcome: ProviderRequestOutcome
+    /** Timing of the attempt that produced the reply; absent when no attempt completed its stream. */
+    readonly attemptTiming?: ProviderAttemptTiming
+    /** What ended a failed request, for classifying the failure; absent unless `outcome` is `failed`. */
+    readonly failure?: unknown
 }
 
 /**

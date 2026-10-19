@@ -269,13 +269,10 @@ export class ProviderCompactionService implements ProductionCompactionService {
                 this.options.triggerOptions?.(),
             )
         return {
-            // Every attempt is charged, the failed ones included, and priced by the handler that served it.
+            // Every attempt is charged, the failed ones included, to the handler that served it.
             recordCompactionAttempt: (_sessionInput, diagnostics) =>
                 recordUsageSafely(this.options.usageSettlement, () =>
-                    compactionAttemptSettlement(diagnostics, {
-                        modelInfo: frame.api.getModel().info,
-                        servedBy: servedModelOf(frame.api),
-                    }),
+                    compactionAttemptSettlement(diagnostics, servedModelOf(frame.api)),
                 ),
             getPassInputCeiling: () => policy().passInputCeilingTokens,
             getLastTurnInputCeiling: () => policy().lastTurnPassInputCeilingTokens,

@@ -1,4 +1,3 @@
-import type { ModelInfo } from "@shared/api"
 import { describe, expect, it } from "vitest"
 import type {
     ProviderRequestRecord,
@@ -8,12 +7,8 @@ import type {
 import type { UsageServedModel, UsageSettlement } from "../UsageSettlement"
 import { UsageSettlementRequestReporter } from "../UsageSettlementRequestReporter"
 
-const DOLLAR_PRICED = { pricing: { inputPrice: 3, outputPrice: 15 } } as unknown as ModelInfo
-const YUAN_PRICED = { pricing: { inputPrice: 3, outputPrice: 15, currency: "CNY" } } as unknown as ModelInfo
-
 function harness(options: { readonly failBegin?: boolean; readonly failRecord?: boolean } = {}) {
     let now = 1_000
-    let model = DOLLAR_PRICED
     let served: UsageServedModel | undefined
     let nextId = 0
     const recorded: UsageSettlement[] = []
@@ -32,7 +27,6 @@ function harness(options: { readonly failBegin?: boolean; readonly failRecord?: 
             },
         },
         purpose: "task",
-        modelInfo: () => model,
         servedBy: () => served,
         clock: () => now,
         newObservationId: () => `observation-${++nextId}`,
@@ -44,9 +38,6 @@ function harness(options: { readonly failBegin?: boolean; readonly failRecord?: 
         advance: (ms: number) => {
             now += ms
         },
-        switchModel: (next: ModelInfo) => {
-            model = next
-        },
         serve: (next: UsageServedModel | undefined) => {
             served = next
         },
@@ -54,7 +45,7 @@ function harness(options: { readonly failBegin?: boolean; readonly failRecord?: 
 }
 
 describe("UsageSettlementRequestReporter", () => {
-    it("settles every attempt a request consumed, priced in micro-dollars, with its duration", async () => {
+    it("settles every attempt a request consumed, with its duration", async () => {
         const { reporter, recorded, innerSettled, advance } = harness()
         const record = await reporter.begin({ turnId: "turn-1" })
         advance(2_500)
@@ -75,7 +66,6 @@ describe("UsageSettlementRequestReporter", () => {
                 outputTokens: 100,
                 cacheReadTokens: 40,
                 cacheWriteTokens: 0,
-                costMicroUsd: 4_500,
                 durationMs: 2_500,
             },
         ])
@@ -106,19 +96,6 @@ describe("UsageSettlementRequestReporter", () => {
             { observationId: "observation-1", outcome: "cancelled", inputTokens: 10 },
             { observationId: "observation-2", outcome: "failed", inputTokens: 0 },
         ])
-        expect(recorded[1].costMicroUsd).toBeUndefined()
-    })
-
-    it("prices with the handler that opened the request and prefers a reported cost", async () => {
-        const { reporter, recorded, switchModel } = harness()
-        const opened = await reporter.begin({ turnId: "turn-1" })
-        switchModel(YUAN_PRICED)
-        await opened.settle({ usage: { inputTokens: 1_000, outputTokens: 0 }, outcome: "completed" })
-        const reported = await reporter.begin({ turnId: "turn-2" })
-        await reported.settle({ usage: { inputTokens: 1_000, totalCost: 0.25, costUsageReported: 1 }, outcome: "completed" })
-
-        expect(recorded[0].costMicroUsd).toBe(3_000)
-        expect(recorded[1].costMicroUsd).toBeUndefined()
     })
 
     it("still charges a request whose visible row could not open", async () => {
@@ -140,6 +117,41 @@ describe("UsageSettlementRequestReporter", () => {
 
         expect(recorded).toHaveLength(1)
         expect(innerSettled).toHaveLength(2)
+    })
+
+    it("times only the attempt that produced the reply and counts each retry with its wait", async () => {
+        const { reporter, recorded, advance } = harness()
+        const record = await reporter.begin({ turnId: "turn-1" })
+        advance(500)
+        await record.retrying?.({ attempt: 1, maxAttempts: 5, delayMs: 2_000, errorMessage: "{}" })
+        advance(9_000)
+
+        await record.settle({
+            usage: { inputTokens: 5, outputTokens: 3, thoughtsTokenCount: 2, thoughtsUsageReported: 1 },
+            outcome: "completed",
+            attemptTiming: { durationMs: 1_200, ttftMs: 200, generationMs: 1_000 },
+        })
+
+        expect(recorded[0]).toMatchObject({
+            durationMs: 1_200,
+            streamTiming: { ttftMs: 200, generationMs: 1_000 },
+            retries: { waitsMs: [2_000] },
+            reasoningTokens: 2,
+        })
+        expect(recorded[0].failureClass).toBeUndefined()
+    })
+
+    it("without the provider's clock, times a failed request from when its last retry was due and classifies the failure", async () => {
+        const { reporter, recorded, advance } = harness({ failBegin: true })
+        const record = await reporter.begin({ turnId: "turn-1" })
+        advance(500)
+        await record.retrying?.({ attempt: 1, maxAttempts: 5, delayMs: 2_000, errorMessage: "{}" })
+        advance(3_500)
+
+        await record.settle({ outcome: "failed", failure: Object.assign(new Error("provider failed"), { status: 429 }) })
+
+        expect(recorded[0]).toMatchObject({ outcome: "failed", durationMs: 1_500, failureClass: "rate_limited" })
+        expect(recorded[0].streamTiming).toBeUndefined()
     })
 
     it("keeps the visible settlement when the usage sink fails", async () => {

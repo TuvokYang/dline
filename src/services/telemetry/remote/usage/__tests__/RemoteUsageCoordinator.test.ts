@@ -27,7 +27,6 @@ function settlement(observationId: string): UsageSettlement {
         outputTokens: 30,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
-        costMicroUsd: 450,
         durationMs: 800,
     }
 }
@@ -174,10 +173,34 @@ describe("RemoteUsageCoordinator", () => {
                 counters: expect.objectContaining({
                     "dline.usage.requests.task.completed": 1,
                     "dline.usage.tokens.input.task": 120,
-                    "dline.usage.cost_micro_usd.task": 450,
                 }),
             }),
         ])
+    })
+
+    it("counts one session start, and none while reporting is not allowed", async () => {
+        const usage = coordinator()
+        await usage.start()
+        usage.recordSessionStarted()
+        await waitFor(spooledCount(1))
+
+        expect(await spooled()).toEqual([
+            expect.objectContaining({
+                policyEpoch: now,
+                counters: { "dline.usage.session.started": 1 },
+            }),
+        ])
+
+        inputs = { ...ALLOWED, usageConsent: "disabled" }
+        await usage.refresh()
+        usage.recordSessionStarted()
+        await usage.dispose()
+        expect(await spooled()).toEqual([])
+
+        const notStarted = coordinator()
+        notStarted.recordSessionStarted()
+        await notStarted.dispose()
+        expect(await spooled()).toEqual([])
     })
 
     it("reports whether usage may be reported, which services riding on the consent follow", async () => {

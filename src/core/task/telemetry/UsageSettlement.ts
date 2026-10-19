@@ -9,12 +9,41 @@ export type UsagePurpose = (typeof USAGE_PURPOSES)[number]
 export const USAGE_OUTCOMES = ["completed", "cancelled", "failed"] as const
 export type UsageOutcome = (typeof USAGE_OUTCOMES)[number]
 
+import { PROVIDER_FAILURE_CLASSES, type ProviderFailureClass } from "@core/api/observability/provider-failure"
+
+/**
+ * Why a provider attempt failed. The service accepts exactly these values; a
+ * failure that fits none of them is `other`, never a new value. The provider
+ * domain owns the vocabulary because it classifies the errors.
+ */
+export const USAGE_ERROR_CLASSES = PROVIDER_FAILURE_CLASSES
+export type UsageErrorClass = ProviderFailureClass
+
 /** The provider and model that served a request, as its handler reported them. */
 export interface UsageServedModel {
-    /** The Profile's provider ID, such as `anthropic` or `openai-compatible`. */
+    /** The Profile's provider ID, such as `anthropic` or `lmstudio`. */
     readonly provider: string
     /** The model ID the request was sent with. */
     readonly model: string
+    /**
+     * A model outside the built-in catalog, or one reached through a custom endpoint or a
+     * user-hosted provider. Its ID never leaves the machine: it is reported as `_custom`.
+     */
+    readonly custom?: boolean
+}
+
+/** Streaming timing of the attempt that produced the result; absent for a request that never streamed. */
+export interface UsageStreamTiming {
+    /** From sending the request to the first content or reasoning chunk. */
+    readonly ttftMs: number
+    /** From the first chunk to the end of the stream. */
+    readonly generationMs: number
+}
+
+/** Attempts that failed before the request settled, all served by the same provider. */
+export interface UsageRetries {
+    /** The backoff waited before each retry, in order. */
+    readonly waitsMs: readonly number[]
 }
 
 /** What one logical provider request consumed, settled exactly once when it ends. */
@@ -28,9 +57,14 @@ export interface UsageSettlement {
     readonly outputTokens: number
     readonly cacheReadTokens: number
     readonly cacheWriteTokens: number
-    /** Millionths of a US dollar; absent when the request was not priced in dollars. */
-    readonly costMicroUsd?: number
+    /** The reasoning share of `outputTokens`; absent when the provider does not report it. */
+    readonly reasoningTokens?: number
+    /** The attempt that produced the result only: earlier failed attempts and backoff are not included. */
     readonly durationMs: number
+    readonly streamTiming?: UsageStreamTiming
+    readonly retries?: UsageRetries
+    /** Why the request failed; read only when `outcome` is `failed`. */
+    readonly failureClass?: UsageErrorClass
     /** Read when the request opens; absent when the serving handler could not say. */
     readonly servedBy?: UsageServedModel
 }

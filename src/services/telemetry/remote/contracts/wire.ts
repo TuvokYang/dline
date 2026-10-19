@@ -101,6 +101,15 @@ export interface UsageMeasurementWire {
     readonly max: number
 }
 
+/** Upper bounds, in milliseconds, of every latency histogram; the last bucket counts what exceeds them. */
+export const USAGE_HISTOGRAM_BOUNDS_MS: readonly number[] = [250, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000, 120000]
+
+/** Latency distribution of the measurement with the same name; `counts` sums to that measurement's `count`. */
+export interface UsageHistogramWire {
+    readonly bounds: readonly number[]
+    readonly counts: readonly number[]
+}
+
 export interface UsageAggregateWire {
     readonly schema_version: typeof USAGE_SCHEMA_VERSION
     readonly window_started_at: number
@@ -109,6 +118,8 @@ export interface UsageAggregateWire {
     readonly dropped_windows?: number
     readonly counters: Readonly<Record<string, number>>
     readonly measurements?: Readonly<Record<string, UsageMeasurementWire>>
+    /** Older servers ignore this field, so it is sent before they read it. */
+    readonly histograms?: Readonly<Record<string, UsageHistogramWire>>
     readonly attributes?: Readonly<Partial<Record<UsageAttributeKey, string | boolean>>>
 }
 
@@ -122,6 +133,7 @@ export type UsageAggregateViolation =
     | "metric_name"
     | "counter_value"
     | "measurement_bounds"
+    | "histogram"
     | "attribute_key"
     | "attribute_value"
 
@@ -140,13 +152,19 @@ export function validateUsageAggregate(aggregate: UsageAggregateWire, now: numbe
 
     const counters = Object.entries(aggregate.counters)
     const measurements = Object.entries(aggregate.measurements ?? {})
-    const names = [...counters, ...measurements].map(([name]) => name)
-    if (names.length === 0 || names.length > USAGE_MAX_METRIC_NAMES || new Set(names).size !== names.length) {
+    const histograms = Object.entries(aggregate.histograms ?? {})
+    const scalarNames = [...counters, ...measurements].map(([name]) => name)
+    // A histogram shares its measurement's name but still counts against the batch's name budget.
+    const nameCount = scalarNames.length + histograms.length
+    if (scalarNames.length === 0 || nameCount > USAGE_MAX_METRIC_NAMES || new Set(scalarNames).size !== scalarNames.length) {
         violations.add("metric_count")
     }
-    if (names.some((name) => !METRIC_NAME_PATTERN.test(name))) violations.add("metric_name")
+    if (scalarNames.some((name) => !METRIC_NAME_PATTERN.test(name))) violations.add("metric_name")
     if (counters.some(([, value]) => !isSafeNonNegativeInteger(value))) violations.add("counter_value")
     if (measurements.some(([, value]) => !isConsistentMeasurement(value))) violations.add("measurement_bounds")
+    if (histograms.some(([name, value]) => !isConsistentHistogram(value, aggregate.measurements?.[name]))) {
+        violations.add("histogram")
+    }
 
     for (const [key, value] of Object.entries(aggregate.attributes ?? {})) {
         if (!USAGE_ATTRIBUTE_KEYS.includes(key as UsageAttributeKey)) violations.add("attribute_key")
@@ -158,6 +176,16 @@ export function validateUsageAggregate(aggregate: UsageAggregateWire, now: numbe
 /** Whether the server accepts this value for an allowlisted attribute; a refused one would reject the whole batch. */
 export function isAllowedUsageAttribute(key: UsageAttributeKey, value: unknown): boolean {
     return key === "is_dev" ? typeof value === "boolean" : typeof value === "string" && ATTRIBUTE_VALUE_PATTERN.test(value)
+}
+
+/** A histogram the server accepts: the fixed bounds, one bucket more than bounds, summing to its measurement's count. */
+export function isConsistentHistogram(histogram: UsageHistogramWire, measurement: UsageMeasurementWire | undefined): boolean {
+    if (!measurement) return false
+    const { bounds, counts } = histogram
+    if (bounds.length !== USAGE_HISTOGRAM_BOUNDS_MS.length) return false
+    if (bounds.some((bound, index) => bound !== USAGE_HISTOGRAM_BOUNDS_MS[index])) return false
+    if (counts.length !== bounds.length + 1 || !counts.every(isSafeNonNegativeInteger)) return false
+    return counts.reduce((total, count) => total + count, 0) === measurement.count
 }
 
 function isConsistentMeasurement({ count, sum, min, max }: UsageMeasurementWire): boolean {

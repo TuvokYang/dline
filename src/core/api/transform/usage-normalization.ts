@@ -27,6 +27,21 @@ export function splitInclusiveInputUsage(usage: InclusiveInputUsage): CanonicalI
     }
 }
 
+/** Chat Completions usage as far as its reasoning share is concerned. */
+export interface ChatCompletionReasoningUsage {
+    readonly completion_tokens_details?: { readonly reasoning_tokens?: number | null } | null
+}
+
+/**
+ * The reasoning share of a Chat Completions `completion_tokens`, which already
+ * includes it; absent when the provider does not report one. Reported as the
+ * stream's `thoughtsTokenCount`, which is likewise a share of `outputTokens`.
+ */
+export function chatReasoningTokens(usage: ChatCompletionReasoningUsage | undefined): number | undefined {
+    const value = usage?.completion_tokens_details?.reasoning_tokens
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
+}
+
 function normalizeTokens(value: number | undefined): number {
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
 }

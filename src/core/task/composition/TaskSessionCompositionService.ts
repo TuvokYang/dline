@@ -941,7 +941,6 @@ export class TaskSessionCompositionService {
                 options.prompt.ports.usageSettlement && {
                     settlement: options.prompt.ports.usageSettlement,
                     purpose: "task",
-                    modelInfo: () => api.current().getModel().info,
                     servedBy: () => servedModelOf(api.current()),
                 },
             ),

@@ -11,6 +11,7 @@ import {
 } from "../contracts"
 import { presentationOf, recoveryOf } from "./ProviderFailure"
 import type {
+    ProviderAttemptTiming,
     ProviderReceivingEstimate,
     ProviderRequestOutcome,
     ProviderRequestRecord,
@@ -41,6 +42,8 @@ export type ProviderExecutionChunk =
     | ({ readonly kind: "receiving" } & ProviderReceivingEstimate)
     /** The request failed before its first chunk and will be sent again; nothing reached the journal. */
     | { readonly kind: "retry"; readonly notice: ProviderRetryNotice }
+    /** How long the attempt that produced the reply took; reported only, never journaled. */
+    | { readonly kind: "timing"; readonly timing: ProviderAttemptTiming }
     /**
      * What a reply the user stopped had already said.
      *
@@ -147,12 +150,14 @@ interface ProviderTurnOutcome {
     readonly journalWatermark: { readonly seq: number }
 }
 
-/** Carries the usage seen so far into the settlement that happens after the stream. */
+/** Carries the usage and timing seen so far into the settlement that happens after the stream. */
 interface UsageAccumulator {
     /** Usage of the attempt still streaming, or of the attempt that produced the turn. */
     value?: Readonly<Record<string, number>>
     /** Usage of attempts a retry replaced; consumed, but never part of the conversation. */
     abandoned?: Readonly<Record<string, number>>
+    /** Timing of the attempt whose stream completed. */
+    attemptTiming?: ProviderAttemptTiming
 }
 
 /** Close the current attempt so the retried one starts from an empty usage bucket. */
@@ -283,17 +288,19 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
         // A stream that neither yields a turn nor throws was abandoned, which only
         // happens when the signal fired, so an unset outcome means cancellation.
         let outcome: ProviderRequestOutcome = "cancelled"
+        let failure: unknown
         try {
             const turn = await this.streamTurn(command, signal, usage, record)
             if (turn) outcome = "completed"
             return turn
         } catch (error) {
             outcome = isExecutionAbort(error, signal) ? "cancelled" : "failed"
+            if (outcome === "failed") failure = error
             throw error
         } finally {
             // Settles on every exit, cancellation and failure included, so a request
             // never stays open as a turn the user is still waiting on.
-            await this.closeRequestRecord(record, usage, outcome)
+            await this.closeRequestRecord(record, usage, outcome, failure)
         }
     }
 
@@ -321,10 +328,17 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
         record: ProviderRequestRecord | undefined,
         usage: UsageAccumulator,
         outcome: ProviderRequestOutcome,
+        failure: unknown,
     ): Promise<void> {
         if (!record) return
         try {
-            await record.settle({ usage: consumedUsage(usage), contextUsage: usage.value, outcome })
+            await record.settle({
+                usage: consumedUsage(usage),
+                contextUsage: usage.value,
+                outcome,
+                ...(usage.attemptTiming ? { attemptTiming: usage.attemptTiming } : {}),
+                ...(outcome === "failed" ? { failure } : {}),
+            })
         } catch {
             // Reporting must not change provider execution semantics.
         }
@@ -396,6 +410,10 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
                         receivingTokens: chunk.receivingTokens,
                         authoritativeContextTokens: chunk.authoritativeContextTokens,
                     })
+                    continue
+                }
+                if (chunk.kind === "timing") {
+                    usage.attemptTiming = chunk.timing
                     continue
                 }
                 if (finalChunk) {

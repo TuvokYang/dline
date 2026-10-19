@@ -1,19 +1,18 @@
 import { randomUUID } from "node:crypto"
-import type { ModelInfo } from "@shared/api"
+import { providerFailureClassOf } from "@core/api/observability/provider-failure"
 import { Logger } from "@shared/services/Logger"
 import type {
     ProviderRequestRecord,
     ProviderRequestReportPort,
     ProviderRequestSettlement,
+    ProviderRetryNotice,
 } from "../executors/provider/service/ProviderRequestReport"
-import { readSettledUsageTokens, settledCostMicroUsd } from "../executors/provider/service/ProviderUsageTokens"
-import type { UsagePurpose, UsageServedModel, UsageSettlementPort } from "./UsageSettlement"
+import { nonNegative, readSettledUsageTokens, usageWasReported } from "../executors/provider/service/ProviderUsageTokens"
+import type { UsagePurpose, UsageServedModel, UsageSettlement, UsageSettlementPort } from "./UsageSettlement"
 
 export interface UsageSettlementRequestReporterOptions {
     readonly settlement: UsageSettlementPort
     readonly purpose: UsagePurpose
-    /** Pricing of the handler about to serve the request, read when the request opens. */
-    readonly modelInfo: () => ModelInfo
     /** The provider and model of the handler about to serve the request, read when the request opens. */
     readonly servedBy?: () => UsageServedModel | undefined
     readonly clock?: () => number
@@ -31,10 +30,11 @@ export function settleUsageAround(
 /**
  * Settles each provider request's usage into the usage port around any request report.
  *
- * The observation identity and pricing are fixed when the request opens, so a
- * profile switch during the stream cannot reprice it. Settlement covers every
- * outcome, because cancelled and failed requests are charged too, and counts
- * every attempt a retried request consumed.
+ * The observation identity and serving model are fixed when the request opens,
+ * so a profile switch during the stream cannot reattribute it. Settlement covers
+ * every outcome, because cancelled and failed requests are charged too, and
+ * counts every attempt a retried request consumed. Its timing covers only the
+ * attempt that produced the result; earlier attempts are counted as retries.
  */
 export class UsageSettlementRequestReporter implements ProviderRequestReportPort {
     private readonly clock: () => number
@@ -49,14 +49,10 @@ export class UsageSettlementRequestReporter implements ProviderRequestReportPort
     }
 
     async begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord> {
-        const observationId = this.newObservationId()
-        const startedAt = this.clock()
-        const served = { modelInfo: this.options.modelInfo(), servedBy: this.options.servedBy?.() }
-        let settled = false
+        const observed = new ObservedRequest(this.newObservationId(), this.options.purpose, this.options.servedBy?.(), this.clock)
         const settleUsage = (settlement: ProviderRequestSettlement): void => {
-            if (settled) return
-            settled = true
-            this.recordUsage(observationId, startedAt, served, settlement)
+            const usage = observed.settle(settlement)
+            if (usage) this.record(usage)
         }
         let record: ProviderRequestRecord
         try {
@@ -64,10 +60,17 @@ export class UsageSettlementRequestReporter implements ProviderRequestReportPort
         } catch (error) {
             // The visible row could not open, but the request still runs and is still charged.
             Logger.debug(`[usage] request record unavailable, settling usage only: ${String(error)}`)
-            return { settle: async (settlement) => settleUsage(settlement) }
+            return {
+                retrying: async (notice) => observed.retrying(notice),
+                settle: async (settlement) => settleUsage(settlement),
+            }
         }
         return {
             ...record,
+            retrying: async (notice) => {
+                observed.retrying(notice)
+                await record.retrying?.(notice)
+            },
             settle: async (settlement) => {
                 settleUsage(settlement)
                 await record.settle(settlement)
@@ -75,29 +78,64 @@ export class UsageSettlementRequestReporter implements ProviderRequestReportPort
         }
     }
 
-    private recordUsage(
-        observationId: string,
-        startedAt: number,
-        { modelInfo, servedBy }: { readonly modelInfo: ModelInfo; readonly servedBy?: UsageServedModel },
-        settlement: ProviderRequestSettlement,
-    ): void {
+    private record(usage: UsageSettlement): void {
         try {
-            const tokens = readSettledUsageTokens(settlement.usage)
-            const costMicroUsd = settlement.usage ? settledCostMicroUsd(tokens, modelInfo) : undefined
-            this.options.settlement.record({
-                observationId,
-                purpose: this.options.purpose,
-                outcome: settlement.outcome,
-                inputTokens: tokens.inputTokens,
-                outputTokens: tokens.outputTokens,
-                cacheReadTokens: tokens.cacheReadTokens,
-                cacheWriteTokens: tokens.cacheWriteTokens,
-                ...(costMicroUsd === undefined ? {} : { costMicroUsd }),
-                durationMs: Math.max(0, this.clock() - startedAt),
-                ...(servedBy ? { servedBy } : {}),
-            })
+            this.options.settlement.record(usage)
         } catch (error) {
             Logger.debug(`[usage] request usage could not be settled: ${String(error)}`)
+        }
+    }
+}
+
+/** One open request as usage sees it: its identity, its serving model and the retries it waited through. */
+class ObservedRequest {
+    private readonly waitsMs: number[] = []
+    /** When the attempt now running was sent, as far as the retry notices tell. */
+    private attemptStartedAt: number
+    private settled = false
+
+    constructor(
+        private readonly observationId: string,
+        private readonly purpose: UsagePurpose,
+        private readonly servedBy: UsageServedModel | undefined,
+        private readonly clock: () => number,
+    ) {
+        this.attemptStartedAt = clock()
+    }
+
+    retrying(notice: ProviderRetryNotice): void {
+        const waitMs = Math.max(0, Number.isFinite(notice.delayMs) ? notice.delayMs : 0)
+        this.waitsMs.push(waitMs)
+        this.attemptStartedAt = this.clock() + waitMs
+    }
+
+    /** The request's usage, the first time it settles; a repeated settlement is the same request. */
+    settle(settlement: ProviderRequestSettlement): UsageSettlement | undefined {
+        if (this.settled) return undefined
+        this.settled = true
+        const tokens = readSettledUsageTokens(settlement.usage)
+        const reasoningTokens = usageWasReported(settlement.usage, "thoughtsUsageReported", "thoughtsTokenCount")
+            ? nonNegative(settlement.usage?.thoughtsTokenCount)
+            : undefined
+        const timing = settlement.attemptTiming
+        // Without the provider's own clock, the attempt is timed from when its retry was due.
+        const durationMs = timing ? timing.durationMs : Math.max(0, this.clock() - this.attemptStartedAt)
+        return {
+            observationId: this.observationId,
+            purpose: this.purpose,
+            outcome: settlement.outcome,
+            inputTokens: tokens.inputTokens,
+            outputTokens: tokens.outputTokens,
+            cacheReadTokens: tokens.cacheReadTokens,
+            cacheWriteTokens: tokens.cacheWriteTokens,
+            ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+            durationMs,
+            ...(timing?.ttftMs !== undefined && timing.generationMs !== undefined
+                ? { streamTiming: { ttftMs: timing.ttftMs, generationMs: timing.generationMs } }
+                : {}),
+            ...(this.waitsMs.length > 0 ? { retries: { waitsMs: [...this.waitsMs] } } : {}),
+            ...(settlement.outcome === "failed" ? { failureClass: providerFailureClassOf(settlement.failure) } : {}),
+            ...(this.servedBy ? { servedBy: this.servedBy } : {}),
         }
     }
 }

@@ -273,7 +273,13 @@ function serialize(document: OutboxDocument): Record<string, unknown> {
 }
 
 function serializeWindow(window: UsageWindow): Record<string, unknown> {
-    return { started_at: window.startedAt, counters: window.counters, measurements: window.measurements }
+    const histograms = window.histograms ?? {}
+    return {
+        started_at: window.startedAt,
+        counters: window.counters,
+        measurements: window.measurements,
+        ...(Object.keys(histograms).length > 0 ? { histograms } : {}),
+    }
 }
 
 function parseDocument(value: unknown): LatestOutbox | { readonly status: "malformed" } {

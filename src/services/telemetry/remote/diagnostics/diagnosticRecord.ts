@@ -1,4 +1,5 @@
 import type { JournalTelemetrySignal } from "../../providers/capabilities"
+import { usageModelSegments } from "../usage/usageCatalog"
 
 export type DiagnosticChannel = "error" | "runtime"
 export type DiagnosticSeverity = "warn" | "error" | "fatal"
@@ -21,7 +22,26 @@ const EVENT_NAME = /^[A-Za-z0-9_.:/-]{1,160}$/
  * text, paths, URLs and e-mail addresses never qualify.
  */
 const TOKEN_VALUE = /^[A-Za-z0-9_.+-]{1,64}$/
+const MAX_TOKEN_LENGTH = 64
 const MAX_ATTRIBUTES = 32
+/**
+ * The keys the telemetry console reads an error by (otel contract §9). They are
+ * kept ahead of every other attribute, so the attribute cap never drops them.
+ */
+export const DIAGNOSTIC_CONTRACT_KEYS = [
+    "error.class",
+    "error.code",
+    "error.type",
+    "http.status",
+    "provider",
+    "model",
+    "model.custom",
+    "api.format",
+    "retry.attempt",
+    "retryable",
+    "phase",
+    "duration_ms",
+] as const
 /**
  * Key segments that mark free text, locations or identity. A key is split on
  * `_ . -` and camelCase boundaries; one matching segment drops the attribute.
@@ -91,7 +111,30 @@ export function toDiagnosticRecord(signal: JournalTelemetrySignal, now: number):
         name: signal.name,
         channel: signal.channel,
         severity: signal.severity,
-        attributes: remoteSafeAttributes(signal.properties),
+        attributes: remoteSafeAttributes(withNormalizedModel(signal.properties)),
+    }
+}
+
+/**
+ * Report a provider event's model the way usage does: the raw ID may hold `/` or
+ * `:`, which the value filter would drop with the whole attribute, and a custom
+ * model's ID must not leave at all. A model not marked as catalog is custom.
+ */
+function withNormalizedModel(
+    properties: Readonly<Record<string, unknown>> | undefined,
+): Readonly<Record<string, unknown>> | undefined {
+    const model = properties?.model
+    if (!properties || typeof model !== "string" || model.length === 0) return properties
+    const custom = properties["model.custom"] !== false
+    const provider = typeof properties.provider === "string" ? properties.provider : ""
+    const segments = usageModelSegments({ provider, model, custom })
+    const { api_format: apiFormat, ...rest } = properties
+    return {
+        ...rest,
+        provider: segments.provider,
+        model: segments.model.slice(0, MAX_TOKEN_LENGTH),
+        "model.custom": custom,
+        ...(typeof apiFormat === "string" && rest["api.format"] === undefined ? { "api.format": apiFormat } : {}),
     }
 }
 
@@ -102,7 +145,7 @@ export function remoteSafeAttributes(
     const safe: Record<string, DiagnosticAttributeValue> = {}
     if (!properties) return safe
     let count = 0
-    for (const [key, value] of Object.entries(properties)) {
+    for (const [key, value] of contractKeysFirst(properties)) {
         if (count >= MAX_ATTRIBUTES) break
         if (!isSafeKey(key)) continue
         if (typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) {
@@ -115,6 +158,12 @@ export function remoteSafeAttributes(
         count++
     }
     return safe
+}
+
+function contractKeysFirst(properties: Readonly<Record<string, unknown>>): [string, unknown][] {
+    const contract: ReadonlySet<string> = new Set(DIAGNOSTIC_CONTRACT_KEYS)
+    const entries = Object.entries(properties)
+    return [...entries.filter(([key]) => contract.has(key)), ...entries.filter(([key]) => !contract.has(key))]
 }
 
 function isSafeKey(key: string): boolean {
@@ -130,6 +179,25 @@ function isSafeKey(key: string): boolean {
 export interface DiagnosticResource {
     readonly clientVersion: string
     readonly platform: string
+    /** `stable` or `insiders`; never under `dline.channel`, which separates error from runtime events. */
+    readonly releaseChannel?: "stable" | "insiders"
+    /** `vscode`, `cursor`, `vscodium`, `windsurf` or `other`. */
+    readonly hostEditor?: string
+}
+
+/** The release channel of a build, read from its extension name (`dline-insiders` for Insiders). */
+export function releaseChannelOf(extensionName: string): "stable" | "insiders" {
+    return extensionName.endsWith("-insiders") ? "insiders" : "stable"
+}
+
+/** The editor hosting the extension, from its application name, in the service's fixed vocabulary. */
+export function hostEditorOf(appName: string | undefined): string {
+    const name = (appName ?? "").toLowerCase()
+    if (name.includes("cursor")) return "cursor"
+    if (name.includes("windsurf")) return "windsurf"
+    if (name.includes("vscodium")) return "vscodium"
+    if (name.includes("visual studio code") || name.includes("vscode")) return "vscode"
+    return "other"
 }
 
 const SEVERITY_NUMBER: Record<DiagnosticSeverity, number> = { warn: 13, error: 17, fatal: 21 }
@@ -144,6 +212,8 @@ export function encodeDiagnosticLogs(records: readonly DiagnosticRecord[], resou
                         stringAttribute("service.name", "dline"),
                         stringAttribute("service.version", resource.clientVersion),
                         stringAttribute("os.type", resource.platform),
+                        ...(resource.releaseChannel ? [stringAttribute("dline.release_channel", resource.releaseChannel)] : []),
+                        ...(resource.hostEditor ? [stringAttribute("dline.host_editor", resource.hostEditor)] : []),
                     ],
                 },
                 scopeLogs: [

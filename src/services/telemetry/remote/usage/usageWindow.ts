@@ -4,9 +4,10 @@ import {
     USAGE_WINDOW_MS,
     type UsageAggregateWire,
     type UsageAttributeKey,
+    type UsageHistogramWire,
     type UsageMeasurementWire,
 } from "../contracts/wire"
-import { fitMetricNameLimit, type UsageObservation } from "./usageCatalog"
+import { fitMetricNameLimit, mergeHistogram, mergeMeasurement, type UsageObservation } from "./usageCatalog"
 
 /** One sealed UTC minute of usage, merged across every process shard. */
 export interface UsageWindow extends UsageObservation {
@@ -18,12 +19,17 @@ export function windowStartOf(epochMs: number): number {
     return Math.floor(epochMs / USAGE_WINDOW_MS) * USAGE_WINDOW_MS
 }
 
+/** The window of one minute holding exactly an observation's metrics, so no family is dropped on the way. */
+export function windowOf(startedAt: number, { counters, measurements, histograms }: UsageObservation): UsageWindow {
+    return { startedAt, counters, measurements, ...(histograms ? { histograms } : {}) }
+}
+
 /**
  * Merge two observations of the same window.
  *
  * Counters add and saturate at the largest safe integer instead of losing
- * precision; summaries merge mathematically so `min*count <= sum <= max*count`
- * still holds for the server's check.
+ * precision; summaries and histograms merge so each histogram still counts
+ * exactly the samples its summary does.
  */
 export function mergeObservations(left: UsageObservation, right: UsageObservation): UsageObservation {
     const counters: Record<string, number> = { ...left.counters }
@@ -32,17 +38,13 @@ export function mergeObservations(left: UsageObservation, right: UsageObservatio
     }
     const measurements: Record<string, UsageMeasurementWire> = { ...left.measurements }
     for (const [name, value] of Object.entries(right.measurements)) {
-        const previous = measurements[name]
-        measurements[name] = previous
-            ? {
-                  count: previous.count + value.count,
-                  sum: previous.sum + value.sum,
-                  min: Math.min(previous.min, value.min),
-                  max: Math.max(previous.max, value.max),
-              }
-            : value
+        measurements[name] = mergeMeasurement(measurements[name], value)
     }
-    return { counters, measurements }
+    const histograms: Record<string, UsageHistogramWire> = { ...left.histograms }
+    for (const [name, value] of Object.entries(right.histograms ?? {})) {
+        histograms[name] = mergeHistogram(histograms[name], value)
+    }
+    return { counters, measurements, histograms }
 }
 
 /**
@@ -79,6 +81,7 @@ export function buildUsageAggregate(
         ...(dropped > 0 ? { dropped_windows: dropped } : {}),
         counters: merged.counters,
         ...(Object.keys(merged.measurements).length > 0 ? { measurements: merged.measurements } : {}),
+        ...(Object.keys(merged.histograms ?? {}).length > 0 ? { histograms: merged.histograms } : {}),
         ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
     }
 }

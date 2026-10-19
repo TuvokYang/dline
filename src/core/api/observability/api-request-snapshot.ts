@@ -15,6 +15,8 @@ export function requestMetadata(
     return {
         provider: context.profile.provider,
         model: handler.getModel().id,
+        // Diagnostics report a custom model only as `_custom`; unknown counts as custom.
+        "model.custom": handler.isCustomModel?.() ?? true,
         api_format: format === undefined ? "unknown" : apiFormatToJSON(format),
         mode: context.mode,
         api_retry_owner: options?.retryOwner ?? "provider",

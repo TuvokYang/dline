@@ -38,6 +38,7 @@ import { convertToR1Format } from "../transform/r1-format"
 import { normalizeOpenAIFinishReason } from "../transform/stop-reason"
 import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
+import { chatReasoningTokens } from "../transform/usage-normalization"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
 import { encodeOpenAIChatReasoning, encodeOpenAIResponsesReasoning, resolveOpenAIReasoning } from "./openai/reasoning"
 import { createOpenAIClientForProfile } from "./openai-client-factory"
@@ -401,6 +402,7 @@ export class OpenAiHandler implements ApiHandler {
                     cacheWriteTokens,
                     cacheReadTokens,
                 )
+                const thoughtsTokenCount = chatReasoningTokens(usage)
 
                 yield {
                     type: "usage",
@@ -408,6 +410,7 @@ export class OpenAiHandler implements ApiHandler {
                     outputTokens,
                     cacheReadTokens,
                     cacheWriteTokens,
+                    ...(thoughtsTokenCount === undefined ? {} : { thoughtsTokenCount }),
                     totalCost,
                     ...(stopReason ? { stopReason } : {}),
                 }

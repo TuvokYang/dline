@@ -118,11 +118,40 @@ describe("DefaultProductionProviderService", () => {
             draft: {} as ProviderDraftEnvelope,
             signal: controller.signal,
         })
+        const seen: string[] = []
         for await (const chunk of stream) {
+            seen.push(chunk.kind)
             if (chunk.kind === "partial") controller.abort()
         }
 
         expect(timings).toEqual([])
+        expect(seen).not.toContain("timing")
+    })
+
+    it("times the attempt that produced the reply from its send, before the final reply, excluding preparation", async () => {
+        const apiTimings: ApiRequestTiming[] = []
+        const stream = timedService(40, apiTimings).start({
+            draftRef: "draft-1",
+            draft: {} as ProviderDraftEnvelope,
+            signal: new AbortController().signal,
+        })
+        const chunks: ProductionProviderChunk[] = []
+        for await (const chunk of stream) chunks.push(chunk)
+
+        const timings = chunks.filter((chunk) => chunk.kind === "timing")
+        expect(timings).toHaveLength(1)
+        const [{ timing }] = timings as Extract<ProductionProviderChunk, { kind: "timing" }>[]
+        expect(chunks.findIndex((chunk) => chunk.kind === "timing")).toBeLessThan(
+            chunks.findIndex((chunk) => chunk.kind === "final"),
+        )
+        // The first text arrives one phase after the send, the second one phase later.
+        expect(timing.ttftMs).toBeGreaterThanOrEqual(30)
+        expect(timing.generationMs).toBeGreaterThanOrEqual(30)
+        // Preparation took a phase too; it belongs to Dline, so the attempt is the request minus it.
+        const [api] = apiTimings
+        expect(Math.abs(timing.durationMs - (api.upstreamTtfbMs + api.streamMs))).toBeLessThanOrEqual(1)
+        expect(api.totalMs - timing.durationMs).toBeGreaterThanOrEqual(api.localPrepareMs - 1)
+        expect(api.localPrepareMs).toBeGreaterThanOrEqual(30)
     })
 
     // WS-013: a call the model writes as markup, even when offered native tools,

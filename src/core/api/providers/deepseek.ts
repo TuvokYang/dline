@@ -24,6 +24,7 @@ import {
 } from "../transform/deepseek-format"
 import { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
+import { chatReasoningTokens } from "../transform/usage-normalization"
 import { convertOpenAIToolsToAnthropicTools, handleAnthropicMessagesApiStreamResponse } from "../utils/messages_api_support"
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
 import { resolveDeepSeekReasoning } from "./deepseek/reasoning"
@@ -130,12 +131,14 @@ export class DeepSeekHandler implements ApiHandler {
         const cacheWriteTokens = deepUsage?.prompt_cache_miss_tokens || 0
         const inputTokens = Math.max(0, rawInputTokens - cacheReadTokens - cacheWriteTokens)
         const totalCost = calculateApiCostOpenAI(info, rawInputTokens, outputTokens, cacheWriteTokens, cacheReadTokens)
+        const thoughtsTokenCount = chatReasoningTokens(deepUsage)
         yield {
             type: "usage",
             inputTokens: inputTokens,
             outputTokens: outputTokens,
             cacheWriteTokens: cacheWriteTokens,
             cacheReadTokens: cacheReadTokens,
+            ...(thoughtsTokenCount === undefined ? {} : { thoughtsTokenCount }),
             totalCost: totalCost,
         }
     }

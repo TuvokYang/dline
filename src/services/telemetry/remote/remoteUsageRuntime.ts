@@ -91,6 +91,7 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
     tokenBroker = tokens
     options.log?.("debug", `[RemoteUsage] starting in ${ownerId}, reporting to ${transport.origin}`)
     await started.start()
+    started.recordSessionStarted()
 }
 
 /**

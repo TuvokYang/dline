@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import type { DeviceCredentialRepository } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
 import type { LocalUsagePolicyInputs, RemotePolicyRepository } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
 import type { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
@@ -5,7 +6,7 @@ import type { UsageOutboxRepository } from "@/core/storage/telemetry-remote/Usag
 import type { UsageSettlement, UsageSettlementPort } from "@/core/task/telemetry/UsageSettlement"
 import { describeUsagePolicyDecision, type UsagePolicyRecord } from "../policy/usagePolicy"
 import type { UsageCycleResult, UsageDeliveryWorker } from "./UsageDeliveryWorker"
-import { projectUsageSettlement } from "./usageCatalog"
+import { projectUsageSettlement, sessionStartedObservation, type UsageObservation } from "./usageCatalog"
 import { describeUsageCycle, type RemoteUsageLog, type RemoteUsageLogLevel } from "./usageCycleLog"
 
 /** How often the lease holder seals shards and checks whether a batch or replay is due. */
@@ -90,14 +91,26 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
      * the append runs in the background and a lost append is only logged.
      */
     record(settlement: UsageSettlement): void {
+        this.admit(settlement.observationId, () => projectUsageSettlement(settlement))
+    }
+
+    /**
+     * Count this extension activation once (otel contract §7). Call after
+     * {@link start}; like a settlement, it is kept only while reporting is allowed.
+     */
+    recordSessionStarted(): void {
+        this.admit(`session-${randomUUID()}`, sessionStartedObservation)
+    }
+
+    private admit(id: string, observe: () => UsageObservation): void {
         const current = this.current
         if (!this.accepting || !current?.decision.allowed) return
         const append = this.options.spool
             .append({
-                id: settlement.observationId,
+                id,
                 receivedAt: this.clock(),
                 policyEpoch: current.epoch,
-                ...projectUsageSettlement(settlement),
+                ...observe(),
             })
             .catch((error: unknown) => this.log("warn", `usage observation was not stored: ${describe(error)}`))
             .finally(() => this.appends.delete(append))

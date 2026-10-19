@@ -109,17 +109,20 @@ Dline sends usage counts to `https://otel.dline.cc` only while every condition h
 
 ### What is sent
 
-Each settled provider request is counted once, including cancelled and failed requests. Dline groups the counts into sealed 60-second windows and sends at most one batch per minute with up to ten windows. Nothing is sent for a minute without requests.
+Each settled provider request is counted once, including cancelled and failed requests, and each start of the extension is counted once. Dline groups the counts into sealed 60-second windows and sends at most one batch per minute; a batch normally holds one window and holds up to ten only after time offline or a restart. Nothing is sent for a minute without requests or extension starts.
 
 | Metric | Meaning |
 |---|---|
+| `dline.usage.session.started` | Number of extension starts |
 | `dline.usage.requests.<purpose>.<outcome>` | Number of requests |
 | `dline.usage.tokens.input.<purpose>`, `.output.<purpose>`, `.cache_read.<purpose>`, `.cache_write.<purpose>` | Token totals reported by the provider |
-| `dline.usage.cost_micro_usd.<purpose>` | Cost in millionths of a US dollar, only for models priced in US dollars |
 | `dline.usage.request_duration_ms.<purpose>` | Request duration as count, sum, minimum, and maximum |
-| `dline.usage.model.<provider>.requests.<model>`, `.tokens_input.<model>`, `.tokens_output.<model>` | Requests and input/output tokens per provider and model, used for provider and model rankings |
+| `dline.usage.model.<provider>.<counter>.<model>` | Per provider and model: `requests`, `requests_failed`, `requests_cancelled`, and the token totals `tokens_input`, `tokens_output`, `tokens_cache_read`, `tokens_cache_write`, and `tokens_reasoning` |
+| `dline.usage.model.<provider>.<timing>.<model>` | Per provider and model: `request_duration_ms`, time to first output `ttft_ms`, and output time `generation_ms`, each as count, sum, minimum, and maximum plus a histogram with bounds of 250 ms to 120 s |
+| `dline.usage.errors.<provider>.<class>` | Failed requests by class: `rate_limited`, `overloaded`, `timeout`, `auth`, `network`, `invalid_request`, or `other` |
+| `dline.usage.retries.<provider>`, `dline.usage.retry_wait_ms.<provider>` | Automatic retries and the time waited before them |
 
-`<purpose>` is `task`, `subagent`, `compaction`, or `other`; `<outcome>` is `completed`, `cancelled`, or `failed`. `<provider>` is the Profile's provider ID and `<model>` the model ID, lowercased with any other character than letters, digits, `_`, `.`, and `-` replaced by `_`. When one batch would exceed the service's 128 metric names, the least used models are summed under `_other`. Each batch carries only `client_version`, `platform`, `architecture`, `vscode_version`, and `is_dev`.
+`<purpose>` is `task`, `subagent`, `compaction`, or `other`; `<outcome>` is `completed`, `cancelled`, or `failed`. `<provider>` is the Profile's provider ID and `<model>` the model ID, lowercased with any other character than letters, digits, `_`, `.`, and `-` replaced by `_`. A custom model is reported as `_custom` and its ID is never sent: a model is custom when the provider runs on your own machine or network (Ollama, LM Studio, LiteLLM), when the Profile uses an endpoint other than the provider's default, or when the model is not in Dline's built-in model catalog (a model you added yourself counts as not listed). Timings describe the last attempt of a request, after any retries. When one batch would exceed the service's 128 metric names, the least used models are summed under `_other`. Each batch carries only `client_version`, `platform`, `architecture`, `vscode_version`, and `is_dev`.
 
 API format, Task or workspace identity, `distinct_id`, account ID, prompts, responses, file contents, paths, commands, and error text are not sent. In the current build this delivery is a dedicated path that can carry only this catalog; moving it behind the canonical admission boundary remains part of the target above.
 
@@ -166,7 +169,7 @@ Only log records are sent, no metrics or traces. A record is created for one of 
 | `task.provider_api_error`, `task.browser_error`, `user.extension_storage_error`, `workspace.init_error` | error |
 | `user.auth_failed`, `task.diff_edit_failed`, `task.terminal_output_failure`, `task.terminal_hang`, `task.mention_failed` | warning |
 
-Each record carries the event name, its channel (`error` or `runtime`), its severity, a timestamp, and at most 32 attributes. An attribute is kept only when its value is a number, a boolean, or a short token of letters, digits, `_`, `.`, `+`, and `-` (at most 64 characters), and its name does not refer to free text, a location, or an identity, such as a message, stack, path, URL, command, Task, workspace, session, device, account, or credential. The request resource names only the client version and the operating-system type.
+Each record carries the event name, its channel (`error` or `runtime`), its severity, a timestamp, and at most 32 attributes. An attribute is kept only when its value is a number, a boolean, or a short token of letters, digits, `_`, `.`, `+`, and `-` (at most 64 characters), and its name does not refer to free text, a location, or an identity, such as a message, stack, path, URL, command, Task, workspace, session, device, account, or credential. The attributes the service reads an error by (`error.class`, `error.code`, `error.type`, `http.status`, `provider`, `model`, `model.custom`, `api.format`, `retry.attempt`, `retryable`, `phase`, and `duration_ms`) are kept ahead of the others. A provider error names its model the same way as usage delivery, so a custom model appears only as `_custom`. The request resource names only the client version, the operating-system type, the release channel (`stable` or `insiders`), and the editor family (`vscode`, `cursor`, `vscodium`, `windsurf`, or `other`).
 
 Error messages, stack traces, prompts, responses, file contents, paths, URLs, commands, Task or workspace identity, `distinct_id`, and account ID are not sent.
 

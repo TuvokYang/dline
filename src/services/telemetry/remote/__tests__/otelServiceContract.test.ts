@@ -93,7 +93,6 @@ async function runContractScenario(endpoint: string): Promise<UsageAggregateWire
             outputTokens: 300,
             cacheReadTokens: 800,
             cacheWriteTokens: 0,
-            costMicroUsd: 4_500,
             durationMs: 2_500,
         }),
     })

@@ -776,6 +776,48 @@ describe("OpenAiHandler", () => {
             })
         })
 
+        it("reports an OpenAI-compatible prompt's cached share as cache reads, not input, and its reasoning share", async () => {
+            const handler = new OpenAiHandler({
+                profile: ApiProfile.create({
+                    provider: "openai",
+                    apiKey: "test-api-key",
+                    modelId: "compatible-model",
+                    baseUrl: "https://llm.example.test/v1",
+                    openai: OpenAiProviderConfig.create({ apiFormat: ApiFormat.OPENAI_CHAT }),
+                }),
+                mode: "act",
+            })
+            const create = vi.fn().mockResolvedValue(
+                createAsyncIterable([
+                    {
+                        choices: [],
+                        usage: {
+                            prompt_tokens: 1_000,
+                            completion_tokens: 120,
+                            prompt_tokens_details: { cached_tokens: 800 },
+                            completion_tokens_details: { reasoning_tokens: 90 },
+                        },
+                    },
+                ]),
+            )
+            vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+                chat: { completions: { create } },
+            })
+
+            const chunks = []
+            for await (const chunk of handler.createMessage("system prompt", [{ role: "user", content: "Hello" }])) {
+                chunks.push(chunk)
+            }
+
+            const usage = chunks.find((chunk) => chunk.type === "usage")
+            expect(usage).to.include({
+                inputTokens: 200,
+                cacheReadTokens: 800,
+                outputTokens: 120,
+                thoughtsTokenCount: 90,
+            })
+        })
+
         it("retries an OpenAI Responses 502 before the stream starts", async () => {
             const handler = new OpenAiHandler({
                 profile: ApiProfile.create({

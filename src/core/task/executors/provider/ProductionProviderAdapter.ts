@@ -13,7 +13,7 @@ import type {
     ProviderExecutionPort,
     ProviderReplyPresentationRows,
 } from "./ProviderCommandExecutor"
-import type { ProviderReceivingEstimate, ProviderRetryNotice } from "./service/ProviderRequestReport"
+import type { ProviderAttemptTiming, ProviderReceivingEstimate, ProviderRetryNotice } from "./service/ProviderRequestReport"
 
 export type ProductionProviderChunk =
     | {
@@ -30,6 +30,8 @@ export type ProductionProviderChunk =
     | ({ readonly kind: "receiving" } & ProviderReceivingEstimate)
     /** The request failed before its first chunk and will be sent again. */
     | { readonly kind: "retry"; readonly notice: ProviderRetryNotice }
+    /** The stream completed; how long the attempt that produced it took. Sent before the final reply. */
+    | { readonly kind: "timing"; readonly timing: ProviderAttemptTiming }
     /** The user stopped the reply; what it already said is kept, and nothing it was still calling runs. */
     | {
           readonly kind: "interrupted"
@@ -98,7 +100,7 @@ export class ProductionProviderAdapter implements ProviderExecutionPort {
             // Drained rather than left: returning here would close the service before
             // it reports what the stopped reply had already said.
             if (input.signal.aborted) continue
-            if (chunk.kind === "usage" || chunk.kind === "retry" || chunk.kind === "receiving") {
+            if (chunk.kind === "usage" || chunk.kind === "retry" || chunk.kind === "receiving" || chunk.kind === "timing") {
                 yield chunk
                 continue
             }

@@ -12,6 +12,7 @@ import { type TaskTraceSource, taskTraceSource } from "@/services/telemetry/serv
 import { Logger } from "@/shared/services/Logger"
 import type { ApiProviderStreamChunk, ApiStream } from "../transform/stream"
 import { ApiRequestProgress } from "./api-request-snapshot"
+import { providerFailureAttributes } from "./provider-failure"
 
 type RequestOutcome = "completed" | "failed" | "cancelled"
 export type ApiCancellationReason = "handler_abort" | "consumer_closed" | "abort_error" | "unknown"
@@ -122,6 +123,8 @@ export class ApiRequestObservation {
                 ...this.progress.attributes(performance.now()),
                 outcome,
                 ...(outcome === "cancelled" ? { cancel_reason: cancellationReason ?? "unknown" } : {}),
+                // The keys the diagnostics console reads a provider error by (otel contract §9).
+                ...(outcome === "failed" ? { ...providerFailureAttributes(error), duration_ms: Math.round(duration) } : {}),
             }
             this.run(() => {
                 if (outcome === "failed") this.safely(() => this.span?.recordException(error))

@@ -109,17 +109,20 @@ development 模式可以保留额外本地关联字段，但不等于远端授�
 
 ### 发送内容
 
-每个已结算的服务商请求只计数一次，取消和失败的请求也计入。Dline 把计数归入封闭的 60 秒窗口，每分钟最多发送一批，每批最多 10 个窗口。没有请求的分钟不发送任何内容。
+每个已结算的服务商请求只计数一次，取消和失败的请求也计入；扩展每次启动也计数一次。Dline 把计数归入封闭的 60 秒窗口，每分钟最多发送一批；一批通常只含一个窗口，只有离线或重启之后才会最多合并 10 个窗口。既没有请求也没有扩展启动的分钟不发送任何内容。
 
 | 指标 | 含义 |
 |---|---|
+| `dline.usage.session.started` | 扩展启动次数 |
 | `dline.usage.requests.<purpose>.<outcome>` | 请求数 |
 | `dline.usage.tokens.input.<purpose>`、`.output.<purpose>`、`.cache_read.<purpose>`、`.cache_write.<purpose>` | 服务商报告的 token 总量 |
-| `dline.usage.cost_micro_usd.<purpose>` | 以百万分之一美元计的成本，仅限以美元定价的模型 |
 | `dline.usage.request_duration_ms.<purpose>` | 请求时长的次数、总和、最小值和最大值 |
-| `dline.usage.model.<provider>.requests.<model>`、`.tokens_input.<model>`、`.tokens_output.<model>` | 按 provider 和模型统计的请求数与输入/输出 token，用于 provider 和模型排名 |
+| `dline.usage.model.<provider>.<counter>.<model>` | 按 provider 和模型统计：`requests`、`requests_failed`、`requests_cancelled`，以及 token 总量 `tokens_input`、`tokens_output`、`tokens_cache_read`、`tokens_cache_write` 和 `tokens_reasoning` |
+| `dline.usage.model.<provider>.<timing>.<model>` | 按 provider 和模型统计：请求时长 `request_duration_ms`、首个输出耗时 `ttft_ms` 和输出耗时 `generation_ms`，每项包含次数、总和、最小值、最大值，以及边界从 250 ms 到 120 s 的直方图 |
+| `dline.usage.errors.<provider>.<class>` | 按类别统计的失败请求：`rate_limited`、`overloaded`、`timeout`、`auth`、`network`、`invalid_request` 或 `other` |
+| `dline.usage.retries.<provider>`、`dline.usage.retry_wait_ms.<provider>` | 自动重试次数及重试前的等待时间 |
 
-`<purpose>` 为 `task`、`subagent`、`compaction` 或 `other`；`<outcome>` 为 `completed`、`cancelled` 或 `failed`。`<provider>` 是 Profile 的 provider ID，`<model>` 是模型 ID，均转为小写，字母、数字、`_`、`.`、`-` 以外的字符替换为 `_`。一批超过服务端 128 个指标名的上限时，使用最少的模型合并计入 `_other`。每批只附带 `client_version`、`platform`、`architecture`、`vscode_version` 和 `is_dev`。
+`<purpose>` 为 `task`、`subagent`、`compaction` 或 `other`；`<outcome>` 为 `completed`、`cancelled` 或 `failed`。`<provider>` 是 Profile 的 provider ID，`<model>` 是模型 ID，均转为小写，字母、数字、`_`、`.`、`-` 以外的字符替换为 `_`。自定义模型统一报告为 `_custom`，其 ID 永不发送：服务商运行在你自己的机器或网络上（Ollama、LM Studio、LiteLLM）、Profile 使用了服务商默认地址以外的端点，或模型不在 Dline 内置模型目录中（你自行添加的模型视为不在目录中）时，该模型即为自定义模型。时长指标描述请求在重试之后的最后一次尝试。一批超过服务端 128 个指标名的上限时，使用最少的模型合并计入 `_other`。每批只附带 `client_version`、`platform`、`architecture`、`vscode_version` 和 `is_dev`。
 
 不会发送 API 格式、Task 或 workspace 身份、`distinct_id`、account ID、提示词、响应、文件内容、路径、命令和错误文本。当前构建中该投递是只能承载这一目录的专用路径；把它纳入上文的 canonical admission boundary 仍属于目标的一部分。
 
@@ -166,7 +169,7 @@ development 模式可以保留额外本地关联字段，但不等于远端授�
 | `task.provider_api_error`、`task.browser_error`、`user.extension_storage_error`、`workspace.init_error` | error |
 | `user.auth_failed`、`task.diff_edit_failed`、`task.terminal_output_failure`、`task.terminal_hang`、`task.mention_failed` | warning |
 
-每条记录包含事件名、通道（`error` 或 `runtime`）、严重度、时间戳和最多 32 个属性。属性只有在值为数字、布尔值或由字母、数字、`_`、`.`、`+`、`-` 组成的短 token（最多 64 个字符），且名称不指向自由文本、位置或身份（例如 message、stack、path、URL、command、Task、workspace、session、device、account 或凭据）时才会保留。请求 resource 只包含客户端版本和操作系统类型。
+每条记录包含事件名、通道（`error` 或 `runtime`）、严重度、时间戳和最多 32 个属性。属性只有在值为数字、布尔值或由字母、数字、`_`、`.`、`+`、`-` 组成的短 token（最多 64 个字符），且名称不指向自由文本、位置或身份（例如 message、stack、path、URL、command、Task、workspace、session、device、account 或凭据）时才会保留。服务端用于识别错误的属性（`error.class`、`error.code`、`error.type`、`http.status`、`provider`、`model`、`model.custom`、`api.format`、`retry.attempt`、`retryable`、`phase` 和 `duration_ms`）优先于其他属性保留。服务商错误按与使用统计相同的方式命名模型，因此自定义模型只显示为 `_custom`。请求 resource 只包含客户端版本、操作系统类型、发布通道（`stable` 或 `insiders`）和编辑器类别（`vscode`、`cursor`、`vscodium`、`windsurf` 或 `other`）。
 
 不会发送错误消息、堆栈、提示词、响应、文件内容、路径、URL、命令、Task 或 workspace 身份、`distinct_id` 和 account ID。
 

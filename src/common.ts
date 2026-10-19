@@ -26,6 +26,7 @@ import { isTelemetryDevelopmentMode } from "./services/telemetry/development-mod
 import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
 import { PostHogClientProvider } from "./services/telemetry/providers/posthog/PostHogClientProvider"
+import { hostEditorOf, releaseChannelOf } from "./services/telemetry/remote/diagnostics/diagnosticRecord"
 import { HostDiagnosticsPolicy } from "./services/telemetry/remote/policy/hostDiagnosticsPolicy"
 import { readHostUsagePolicyInputs } from "./services/telemetry/remote/policy/hostUsagePolicyInputs"
 import {
@@ -446,10 +447,13 @@ async function startRemoteDiagnosticsReporting(dataDir: string): Promise<void> {
     const policy = await HostDiagnosticsPolicy.start(() => {
         void refreshRemoteDiagnostics().catch((error) => Logger.warn("[Dline] Failed to re-check remote diagnostics:", error))
     })
+    const host = await HostProvider.env.getHostVersion({}).catch(() => undefined)
     startRemoteDiagnostics({
         dataDir,
         clientVersion: ExtensionRegistryInfo.version,
         platform: process.platform,
+        releaseChannel: releaseChannelOf(ExtensionRegistryInfo.name),
+        hostEditor: hostEditorOf(host?.platform),
         allowed: policy.allowed,
         hostSettings: policy.hostSettings,
         addProvider: (provider) => telemetryService.addProvider(provider),

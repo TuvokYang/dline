@@ -632,7 +632,42 @@ describe("ProviderCommandExecutor request reporting", () => {
 
         await executor.execute(command)
 
-        expect(report.settle).toHaveBeenCalledWith({ usage: undefined, outcome: "failed" })
+        // The failure travels with the settlement so usage can classify it.
+        expect(report.settle).toHaveBeenCalledWith({ usage: undefined, outcome: "failed", failure: expect.any(Error) })
+    })
+
+    it("settles a completed request with the timing of the attempt that produced it", async () => {
+        const report = reporter()
+        const executor = new ProviderCommandExecutor(
+            "task-1",
+            {
+                start: () =>
+                    chunks([
+                        { kind: "usage", usage: { inputTokens: 10 } },
+                        { kind: "timing", timing: { durationMs: 900, ttftMs: 300, generationMs: 600 } },
+                        {
+                            kind: "final",
+                            turnId: "turn-request",
+                            payloadRef: "payload:final",
+                            turnPlan: { mode: "serial", blocks: [] },
+                        },
+                    ]),
+            },
+            new InMemoryConversationJournal(),
+            new InMemoryTaskViewPort(),
+            recorder().sink,
+            undefined,
+            report.port,
+        )
+
+        await executor.execute(command)
+
+        expect(report.settle).toHaveBeenCalledWith({
+            usage: { inputTokens: 10 },
+            contextUsage: { inputTokens: 10 },
+            outcome: "completed",
+            attemptTiming: { durationMs: 900, ttftMs: 300, generationMs: 600 },
+        })
     })
 
     it("settles a cancelled request as cancelled rather than failed", async () => {

@@ -39,6 +39,7 @@ import {
 } from "./NativeToolCallMaterialization"
 import { repairProviderPairing } from "./ProviderPairingRepair"
 import type { PreparedProviderRequest, ProviderRequestFactory, ProviderServerToolRequestContext } from "./ProviderRequest"
+import type { ProviderAttemptTiming } from "./ProviderRequestReport"
 import { ProviderUsageIncrements } from "./ProviderUsageIncrements"
 import { TurnRequest } from "./TurnRequest"
 import { assistantProse, mayPreviewToolCall, proseOf, XmlToolPreview } from "./XmlToolPreview"
@@ -52,6 +53,24 @@ interface RetryBudget {
 interface AttemptClock {
     providerRequestStartedAtMs: number
     firstChunkAtMs: number
+    /** The first chunk that carried content or reasoning; a usage-only opening chunk does not count. */
+    firstContentAtMs?: number
+}
+
+/** Stream chunks that carry what the model generated, as opposed to usage bookkeeping. */
+const CONTENT_CHUNK_TYPES: ReadonlySet<string> = new Set(["text", "reasoning", "tool_calls", "server_tool"])
+
+/** The completed attempt's own timing; earlier attempts and their backoff never enter it. */
+function attemptTimingOf(clock: AttemptClock, streamCompletedAtMs: number): ProviderAttemptTiming {
+    const sentAt = clock.providerRequestStartedAtMs
+    const durationMs = Math.max(0, Math.round(streamCompletedAtMs - sentAt))
+    const firstContentAt = clock.firstContentAtMs
+    if (firstContentAt === undefined) return { durationMs }
+    return {
+        durationMs,
+        ttftMs: Math.max(0, Math.round(firstContentAt - sentAt)),
+        generationMs: Math.max(0, Math.round(streamCompletedAtMs - firstContentAt)),
+    }
 }
 
 /** What a retry chunk tells the chat about the attempt being waited for. */
@@ -356,6 +375,9 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                             turn.request.api.abort?.()
                             break
                         }
+                        if (clock.firstContentAtMs === undefined && CONTENT_CHUNK_TYPES.has(chunk.type)) {
+                            clock.firstContentAtMs = performance.now()
+                        }
                         switch (chunk.type) {
                             case "usage":
                                 yield { kind: "usage", usage: usage.next(chunk) }
@@ -522,6 +544,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
         }
         if (streamCompletedAtMs !== undefined) {
             this.options.onRequestTiming?.(calculateApiRequestTiming({ requestStartedAtMs, ...clock, streamCompletedAtMs }))
+            yield { kind: "timing", timing: attemptTimingOf(clock, streamCompletedAtMs) }
         }
 
         // The request that produced the stream decides how its reply is read.
@@ -736,6 +759,7 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             let failure: unknown
             try {
                 clock.providerRequestStartedAtMs = performance.now()
+                clock.firstContentAtMs = undefined
                 const apiStream = this.bindRound(
                     request.turnId,
                     budget.attempts,

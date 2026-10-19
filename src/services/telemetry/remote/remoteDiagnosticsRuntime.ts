@@ -7,7 +7,7 @@ import type { TelemetryProviderInput } from "../providers/capabilities"
 import type { TelemetrySettings } from "../providers/ITelemetryProvider"
 import { DeviceTokenBroker } from "./auth/DeviceTokenBroker"
 import { DiagnosticDeliveryWorker } from "./diagnostics/DiagnosticDeliveryWorker"
-import { type DiagnosticRecord, toDiagnosticRecord } from "./diagnostics/diagnosticRecord"
+import { type DiagnosticRecord, type DiagnosticResource, toDiagnosticRecord } from "./diagnostics/diagnosticRecord"
 import { DlineOtelHttpClient } from "./transport/DlineOtelHttpClient"
 
 /** Records gathered in memory are written to the shared outbox this often. */
@@ -22,6 +22,9 @@ export interface RemoteDiagnosticsRuntimeOptions {
     readonly dataDir: string
     readonly clientVersion: string
     readonly platform: string
+    /** Which build this is and which editor hosts it, for the logs resource. */
+    readonly releaseChannel?: DiagnosticResource["releaseChannel"]
+    readonly hostEditor?: string
     /** Whether error reporting may leave the machine now: consent, organization and host level. */
     readonly allowed: () => boolean
     /** The host telemetry settings, used by the shared policy for severity filtering. */
@@ -71,7 +74,12 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
         tokens,
         transport,
         owner,
-        resource: { clientVersion: options.clientVersion, platform: options.platform },
+        resource: {
+            clientVersion: options.clientVersion,
+            platform: options.platform,
+            ...(options.releaseChannel ? { releaseChannel: options.releaseChannel } : {}),
+            ...(options.hostEditor ? { hostEditor: options.hostEditor } : {}),
+        },
         log: options.log,
     })
     const state: RunningDiagnostics = {

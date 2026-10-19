@@ -1,12 +1,9 @@
 import type { CompactionAttemptDiagnostics } from "@core/context/context-management/compaction-attempt-diagnostics"
-import type { ModelInfo } from "@shared/api"
 import { describe, expect, it } from "vitest"
 import type { ApiRequestRoundUsage } from "../../performance/api-request-round-types"
 import type { ProviderRequestRoundAdmission, ProviderRequestRoundPort } from "../../performance/provider-request-round-port"
 import { compactionAttemptSettlement, settleSubagentRoundUsage } from "../NestedUsageSettlement"
 import type { UsageSettlement } from "../UsageSettlement"
-
-const DOLLAR_PRICED = { pricing: { inputPrice: 3, outputPrice: 15 } } as unknown as ModelInfo
 
 function diagnostics(overrides: Partial<CompactionAttemptDiagnostics>): CompactionAttemptDiagnostics {
     return {
@@ -61,12 +58,12 @@ const ROUND_USAGE: ApiRequestRoundUsage = {
 }
 
 describe("compactionAttemptSettlement", () => {
-    it("charges an accepted Pass attempt priced by the handler that served it", () => {
+    it("charges an accepted Pass attempt to the handler that served it", () => {
         const settlement = compactionAttemptSettlement(
             diagnostics({
                 usage: { inputTokens: 1_000, outputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, totalTokens: 1_100 },
             }),
-            { modelInfo: DOLLAR_PRICED, servedBy: { provider: "anthropic", model: "claude-haiku-4.5" } },
+            { provider: "anthropic", model: "claude-haiku-4.5" },
         )
 
         expect(settlement).toEqual({
@@ -77,21 +74,21 @@ describe("compactionAttemptSettlement", () => {
             outputTokens: 100,
             cacheWriteTokens: 0,
             cacheReadTokens: 0,
-            costMicroUsd: 4_500,
             durationMs: 2_000,
+            streamTiming: { ttftMs: 400, generationMs: 1_600 },
             servedBy: { provider: "anthropic", model: "claude-haiku-4.5" },
         })
     })
 
-    it("counts a failed attempt that reported nothing without inventing a cost", () => {
+    it("counts a failed attempt that reported nothing without inventing a serving model", () => {
         const settlement = compactionAttemptSettlement(
             diagnostics({ outcome: "failed", authorizationAttemptId: "" }),
-            { modelInfo: DOLLAR_PRICED },
+            undefined,
             () => "fresh",
         )
 
         expect(settlement).toMatchObject({ observationId: "fresh", outcome: "failed", inputTokens: 0, outputTokens: 0 })
-        expect(settlement.costMicroUsd).toBeUndefined()
+        expect(settlement.servedBy).toBeUndefined()
     })
 })
 
@@ -130,8 +127,8 @@ describe("settleSubagentRoundUsage", () => {
                 outputTokens: 20,
                 cacheReadTokens: 50,
                 cacheWriteTokens: 0,
-                costMicroUsd: 12_300,
                 durationMs: 750,
+                streamTiming: { ttftMs: 750, generationMs: 0 },
                 servedBy,
             },
             {
@@ -143,10 +140,41 @@ describe("settleSubagentRoundUsage", () => {
                 cacheReadTokens: 50,
                 cacheWriteTokens: 0,
                 durationMs: 0,
+                failureClass: "other",
                 servedBy,
             },
         ])
         expect(attached.map(({ source }) => source)).toEqual(["subagent", "subagent"])
+    })
+
+    it("counts a resent attempt as a retry of the round and times only the attempt that answered", async () => {
+        const { port } = roundPort()
+        const recorded: UsageSettlement[] = []
+        let now = 0
+        const rounds = settleSubagentRoundUsage(
+            port,
+            { record: (settlement) => void recorded.push(settlement) },
+            { clock: () => now },
+        )
+        const admission = rounds?.admit({ source: "subagent" })
+        if (!admission) throw new Error("expected an admission")
+
+        const limited = Object.assign(new Error("Too Many Requests"), { status: 429 })
+        await expect(drain(admission.bindAttempt(chunks(limited), 0))).rejects.toThrow("Too Many Requests")
+        now = 1_000
+        const answered = admission.bindAttempt(chunks(), 1)
+        now = 1_500
+        await drain(answered)
+        admission.attachExactUsage({ ...ROUND_USAGE, thoughtsTokens: 8 })
+
+        expect(recorded).toHaveLength(1)
+        expect(recorded[0]).toMatchObject({
+            outcome: "completed",
+            reasoningTokens: 8,
+            durationMs: 500,
+            retries: { waitsMs: [1_000] },
+        })
+        expect(recorded[0].failureClass).toBeUndefined()
     })
 
     it("leaves ordinary and compaction rounds to their own settlement", () => {
