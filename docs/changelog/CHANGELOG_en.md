@@ -33,7 +33,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 
 ### Fixes
-- Fixed two Checkpoint rows appearing directly one above the other: when the previous checkpoint could not save files (for example because the commit failed) and the conversation has not moved since, the next round's file-backed checkpoint replaces it instead of standing beside a checkpoint that can only restore the chat; a row a pre-edit checkpoint still restores through is kept
+- Fixed a failed API request leaving only Retry / Start New Task in the chat with no error card: when the round checkpoint sorts after the failed request, the error still appears on that request, and an exhausted provider balance such as DeepSeek's shows the insufficient-balance card with its top-up link again; an exhausted automatic-retry card that already explains the same failure is not duplicated
+- Fixed two Checkpoint rows appearing directly one above the other
 - Fixed the values of `${env:VAR}` references in the MCP settings being shown expanded on the settings page and written back to `mcp_settings.json` when a setting such as the timeout changed: the configuration now keeps the original references and resolves them only when connecting
 - Documentation links for MCP, rules, workflows, hooks, terminal, auto-approve and worktrees now open the matching pages on docs.dline.cc, the About telemetry and privacy links open the telemetry and privacy documentation on docs.dline.cc, and the account page's terms of service and privacy policy now point to dline.cc; the extension homepage is now dline.cc
 - On Windows, a directory holding a file a task read

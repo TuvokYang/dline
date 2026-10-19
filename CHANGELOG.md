@@ -33,7 +33,8 @@
 
 
 ### Fixes
-- 修复聊天中两个 Checkpoint 上下紧挨着出现的问题：上一个 checkpoint 没能保存文件（例如 commit 失败）而对话之后没有任何推进时，下一轮带文件的 checkpoint 会取代它，不再并排显示一个只能恢复对话的 checkpoint；仍被编辑前 checkpoint 引用的行保留
+- 修复 API 请求失败后聊天里只剩 Retry / Start New Task、看不到错误卡片的问题：本轮 checkpoint 排到失败请求之后时，错误仍显示在失败的请求上，DeepSeek 等账户余额不足时会重新显示余额不足卡片和充值入口；已用尽的自动重试卡片已在说明同一失败时不重复显示
+- 修复聊天中两个 Checkpoint 上下紧挨着出现的问题
 - 修复 MCP 设置中 `${env:VAR}` 引用的值被展开后显示在设置页、并在修改超时等设置时被写回 `mcp_settings.json` 的问题：配置现在保留原始引用，只在连接时解析
 - MCP、规则、工作流、hooks、终端、自动审批与 worktrees 中的文档链接改为指向 docs.dline.cc 的对应页面，About 中的遥测与隐私链接指向 docs.dline.cc 的遥测与隐私文档，账号页的服务条款与隐私政策改为 dline.cc；扩展主页改为 dline.cc
 - Windows 上任务读过文件所在的目录

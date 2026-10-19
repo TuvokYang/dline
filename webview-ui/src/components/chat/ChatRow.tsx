@@ -1,4 +1,5 @@
 import { COMMAND_OUTPUT_STRING } from "@shared/combineCommandSequences"
+import { findApiFailurePresentedBy } from "@shared/combineErrorRetryMessages"
 import {
     COMPLETION_RESULT_CHANGES_FLAG,
     UiApiReqInfo,
@@ -285,9 +286,15 @@ export const ChatRowContent = memo(
             return [undefined, undefined, undefined, undefined, undefined]
         }, [message.text, message.say])
 
+        // A round checkpoint may render after the failed request; the request still
+        // owns its failure, so ownership comes from the messages, not row position.
+        const presentedFailure = useMemo(
+            () => (message.say === "api_req_started" ? findApiFailurePresentedBy(clineMessages, message.ts) : undefined),
+            [clineMessages, message.say, message.ts],
+        )
         const apiRequestFailedMessage = resolveApiErrorMessage({
-            isLast,
-            lastModifiedMessage,
+            isLast: isLast || presentedFailure !== undefined,
+            lastModifiedMessage: presentedFailure ?? lastModifiedMessage,
             streamingFailedMessage: apiReqStreamingFailedMessage,
             taskViewState,
         })

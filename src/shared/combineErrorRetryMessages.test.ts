@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { combineErrorRetryMessages } from "./combineErrorRetryMessages"
+import { combineErrorRetryMessages, findApiFailurePresentedBy } from "./combineErrorRetryMessages"
 import type { UiMessage } from "./ExtensionMessage"
 
 const exhaustedRetry = (): UiMessage => ({
@@ -249,5 +249,43 @@ describe("combineErrorRetryMessages", () => {
         ]
 
         expect(combineErrorRetryMessages(messages)).toContainEqual(messages[0])
+    })
+
+    it("projects the failure onto its request when a round checkpoint lands after the failure ask", () => {
+        const request: UiMessage = {
+            type: "say",
+            say: "api_req_started",
+            text: JSON.stringify({ request: "DeepSeek request" }),
+            ts: 1,
+        }
+        const failure: UiMessage = { type: "ask", ask: "api_req_failed", text: "Insufficient Balance", ts: 2 }
+        const checkpoint: UiMessage = { type: "say", say: "checkpoint_created", ts: 3 }
+
+        const result = combineErrorRetryMessages([request, failure, checkpoint])
+
+        expect(JSON.parse(result[0].text || "{}")).toMatchObject({ streamingFailedMessage: "Insufficient Balance" })
+    })
+})
+
+describe("findApiFailurePresentedBy", () => {
+    const request = (ts: number): UiMessage => ({ type: "say", say: "api_req_started", text: "{}", ts })
+    const failure = (ts: number): UiMessage => ({ type: "ask", ask: "api_req_failed", text: "Insufficient Balance", ts })
+    const checkpoint = (ts: number): UiMessage => ({ type: "say", say: "checkpoint_created", ts })
+
+    it("keeps the failure on its request whichever side of the ask a round checkpoint sorts", () => {
+        expect(findApiFailurePresentedBy([request(1), checkpoint(2), failure(3)], 1)?.ts).toBe(3)
+        expect(findApiFailurePresentedBy([request(1), failure(2), checkpoint(3)], 1)?.ts).toBe(2)
+    })
+
+    it("presents nothing on an earlier request or after a later request supersedes the failure", () => {
+        expect(findApiFailurePresentedBy([request(1), failure(2), request(3), failure(4)], 1)).toBeUndefined()
+        expect(findApiFailurePresentedBy([request(1), failure(2), request(3)], 1)).toBeUndefined()
+    })
+
+    it("leaves the failure to an exhausted retry card that already explains it", () => {
+        const exhausted = { ...exhaustedRetry(), ts: 2 }
+
+        expect(findApiFailurePresentedBy([request(1), exhausted, failure(3)], 1)).toBeUndefined()
+        expect(findApiFailurePresentedBy([request(1), { ...activeRetry(), ts: 2 }, failure(3)], 1)?.ts).toBe(3)
     })
 })

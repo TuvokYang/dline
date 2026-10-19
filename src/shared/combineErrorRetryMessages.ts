@@ -43,23 +43,74 @@ function isRecoveredStreamMessage(message: UiMessage, conversationHistoryIndex: 
     )
 }
 
-function projectCanonicalApiError(messages: UiMessage[]): UiMessage[] {
-    const canonicalError = messages.at(-1)
-    if (canonicalError?.type !== "ask" || canonicalError.ask !== "api_req_failed" || !canonicalError.text) {
-        return messages
-    }
-
-    let requestIndex = -1
-    for (let index = messages.length - 2; index >= 0; index--) {
-        if (messages[index].type === "say" && messages[index].say === "api_req_started") {
-            requestIndex = index
-            break
+/**
+ * Index of the failure ask that still governs the task, or -1.
+ *
+ * Rows that are not interactions, such as a round checkpoint written after a
+ * slow commit, may land after the ask; they do not supersede it. A later
+ * request or another ask does.
+ */
+function governingFailureAskIndex(messages: UiMessage[]): number {
+    for (let index = messages.length - 1; index >= 0; index--) {
+        const message = messages[index]
+        if (message.type === "ask") {
+            return message.ask === "api_req_failed" && message.text ? index : -1
+        }
+        if (message.type === "say" && message.say === "api_req_started") {
+            return -1
         }
     }
-    if (requestIndex === -1) {
+    return -1
+}
+
+interface GoverningApiFailure {
+    failureIndex: number
+    requestIndex: number
+}
+
+/** The governing failure ask together with the request it failed, if both exist. */
+function findGoverningApiFailure(messages: UiMessage[]): GoverningApiFailure | undefined {
+    const failureIndex = governingFailureAskIndex(messages)
+    if (failureIndex === -1) {
+        return undefined
+    }
+    for (let index = failureIndex - 1; index >= 0; index--) {
+        if (messages[index].type === "say" && messages[index].say === "api_req_started") {
+            return { failureIndex, requestIndex: index }
+        }
+    }
+    return undefined
+}
+
+/**
+ * The failure ask that the request row with `requestTs` presents, or undefined.
+ *
+ * Ownership is causal, not positional: the governing failure belongs to the
+ * request it failed even when a round checkpoint sorts after that request or
+ * after the ask. An exhausted automatic-retry card after the request already
+ * explains the same failure, so the request row then stays silent.
+ */
+export function findApiFailurePresentedBy(messages: UiMessage[], requestTs: number): UiMessage | undefined {
+    const governing = findGoverningApiFailure(messages)
+    if (!governing || messages[governing.requestIndex].ts !== requestTs) {
+        return undefined
+    }
+    for (let index = governing.requestIndex + 1; index < messages.length; index++) {
+        const message = messages[index]
+        if (message.say === "error_retry" && isTerminalRetryFailure(message)) {
+            return undefined
+        }
+    }
+    return messages[governing.failureIndex]
+}
+
+function projectCanonicalApiError(messages: UiMessage[]): UiMessage[] {
+    const governing = findGoverningApiFailure(messages)
+    if (!governing) {
         return messages
     }
-
+    const canonicalError = messages[governing.failureIndex]
+    const requestIndex = governing.requestIndex
     const request = messages[requestIndex]
     try {
         const requestInfo = JSON.parse(request.text || "{}")
