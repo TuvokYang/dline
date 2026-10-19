@@ -71,6 +71,11 @@ export async function renameSymbol(request: RenameSymbolRequest): Promise<Rename
 
         const position = new vscode.Position(request.line - 1, request.character - 1)
 
+        // VS Code runs this command through a model-and-position wrapper whose branch for a
+        // document without a loaded model forwards the new name as an array, which the rename
+        // command rejects with "Unexpected type". Loading the document keeps the call on the
+        // branch that forwards it as a string; no editor is shown.
+        await vscode.workspace.openTextDocument(uri)
         const edit = await vscode.commands.executeCommand<vscode.WorkspaceEdit>(
             "vscode.executeDocumentRenameProvider",
             uri,
