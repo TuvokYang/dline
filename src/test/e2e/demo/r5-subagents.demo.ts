@@ -14,7 +14,7 @@ import { WINDOW_RECORDING } from "./utils/recording-presets"
  * about 3 s beyond the slowest observed run; 5.5 s left none and failed on every run.
  */
 const RECORDING_LEAD_IN_MS = 2_500
-const R5_RECORDING = { ...WINDOW_RECORDING, fps: 6 } as const
+const R5_RECORDING = { ...WINDOW_RECORDING, fps: 4 } as const
 
 demo("R5", async ({ finishRecording, focusCamera, helper, pace, page, registerRecording, server, sidebar, userDataDir }) => {
     demo.setTimeout(180_000)
@@ -69,7 +69,7 @@ demo("R5", async ({ finishRecording, focusCamera, helper, pace, page, registerRe
         await expect(activity.getByTestId("subagent-tool-step-name")).toHaveText([ITEMS[index].tool, "attempt_completion"])
         await expect(activity.getByTestId("subagent-tool-step-status")).toHaveText([/Done$/, /Done$/])
     }
-    await pace(1_000)
+    await pace(600)
 
     const workTab = sidebar.getByRole("tab", { name: "Work", exact: true })
     await focusCamera(workTab, 0)
@@ -77,7 +77,7 @@ demo("R5", async ({ finishRecording, focusCamera, helper, pace, page, registerRe
     const parentResult = sidebar.getByText(PARENT_RESULT, { exact: false }).last()
     await expect(parentResult).toBeVisible({ timeout: 30_000 })
     await focusCamera(parentResult, 0)
-    await pace(1_200)
+    await pace(800)
     await finishRecording()
 
     const consumptions = server.getMockConsumptions("openai-compatible-chat")

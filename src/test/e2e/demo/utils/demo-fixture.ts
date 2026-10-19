@@ -1,8 +1,9 @@
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { expect, type Locator, type Page } from "@playwright/test"
 import { E2ETestHelper, e2e } from "../../utils/helpers"
 import { resizePrimarySidebar } from "../../utils/resize-primary-sidebar"
+import { DEMO_THEMES, type DemoTheme, type DemoThemeOptions, themedAssetId } from "./demo-theme"
 
 export const DEMO_VIEWPORT = { width: 1_920, height: 1_080 } as const
 export const DEMO_VIDEO_SIZE = DEMO_VIEWPORT
@@ -154,6 +155,25 @@ async function configureScreencastSurface(page: Page): Promise<void> {
     }
 }
 
+/** Select the color theme in the isolated user profile before VS Code starts, so no frame shows the default. */
+async function writeColorThemeSetting(userDataDir: string, theme: DemoTheme): Promise<void> {
+    const settingsDir = path.join(userDataDir, "User")
+    const settingsPath = path.join(settingsDir, "settings.json")
+    const settings = await readFile(settingsPath, "utf8").then(
+        (raw) => JSON.parse(raw) as Record<string, unknown>,
+        (error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return {}
+            throw error
+        },
+    )
+    await mkdir(settingsDir, { recursive: true })
+    await writeFile(
+        settingsPath,
+        `${JSON.stringify({ ...settings, "workbench.colorTheme": DEMO_THEMES[theme].settingsId }, null, "\t")}\n`,
+        "utf8",
+    )
+}
+
 async function dismissVSCodeNotifications(page: Page): Promise<void> {
     const visibleNotifications = page.locator(".notifications-toasts.visible .notification-toast")
     let consecutiveQuietChecks = 0
@@ -175,12 +195,17 @@ async function dismissVSCodeNotifications(page: Page): Promise<void> {
     await expect(visibleNotifications).toHaveCount(0)
 }
 
-export const demo = e2e.extend<DemoFixtures>({
+export const demo = e2e.extend<DemoFixtures & DemoThemeOptions>({
+    demoTheme: ["dark", { option: true }],
     _demoRecordingState: async ({}, use) => {
         await use({})
     },
-    app: async ({ openVSCode, workspaceType, workspaceDir, multiRootWorkspaceDir, _demoRecordingState }, use, testInfo) => {
+    app: async (
+        { demoTheme, openVSCode, userDataDir, workspaceType, workspaceDir, multiRootWorkspaceDir, _demoRecordingState },
+        use,
+    ) => {
         const workspacePath = workspaceType === "single" ? workspaceDir : multiRootWorkspaceDir
+        await writeColorThemeSetting(userDataDir, demoTheme)
         const app = await openVSCode(workspacePath, undefined, {
             windowSize: DEMO_VIEWPORT,
             forceDeviceScaleFactor: 1,
@@ -244,8 +269,10 @@ export const demo = e2e.extend<DemoFixtures>({
         }
     },
     _demoLayout: [
-        async ({ page, sidebar }, use) => {
-            void sidebar
+        async ({ demoTheme, page, sidebar }, use) => {
+            await expect
+                .poll(() => sidebar.locator("body").getAttribute("data-vscode-theme-kind"), { timeout: 15_000 })
+                .toBe(DEMO_THEMES[demoTheme].webviewKind)
             await page.setViewportSize(DEMO_VIEWPORT)
             expect(page.viewportSize()).toEqual(DEMO_VIEWPORT)
             await expect
@@ -262,9 +289,10 @@ export const demo = e2e.extend<DemoFixtures>({
     pace: async ({ page }, use) => {
         await use((milliseconds = DEFAULT_PACE_MS) => page.waitForTimeout(milliseconds))
     },
-    registerRecording: async ({ page, _demoRecordingState }, use, testInfo) => {
-        await use(async (id, options = {}) => {
-            assertAssetId(id)
+    registerRecording: async ({ demoTheme, page, _demoRecordingState }, use, testInfo) => {
+        await use(async (baseId, options = {}) => {
+            assertAssetId(baseId)
+            const id = themedAssetId(baseId, demoTheme)
             await dismissVSCodeNotifications(page)
             await configureScreencastSurface(page)
             if (_demoRecordingState.registration) {
@@ -331,11 +359,11 @@ export const demo = e2e.extend<DemoFixtures>({
             await page.waitForTimeout(settleMs)
         })
     },
-    captureScreenshot: async ({ page }, use) => {
-        await use(async (id, target) => {
-            assertAssetId(id)
+    captureScreenshot: async ({ demoTheme, page }, use) => {
+        await use(async (baseId, target) => {
+            assertAssetId(baseId)
             await mkdir(DEMO_ASSET_DIR, { recursive: true })
-            const screenshotPath = path.join(DEMO_ASSET_DIR, `${id}.png`)
+            const screenshotPath = path.join(DEMO_ASSET_DIR, `${themedAssetId(baseId, demoTheme)}.png`)
             if (target) {
                 await target.screenshot({ path: screenshotPath, animations: "disabled" })
             } else {

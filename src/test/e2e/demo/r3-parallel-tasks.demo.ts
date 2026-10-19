@@ -21,11 +21,18 @@ const RIGHT_PANEL_REASONING = "The second editor task is checking delivery risks
 const SIDEBAR_DONE = "Sidebar review complete."
 const LEFT_PANEL_DONE = "Implementation plan complete."
 const RIGHT_PANEL_DONE = "Risk review complete."
-const SIDEBAR_STREAM_HOLD_MS = 10_000
-const LEFT_PANEL_STREAM_HOLD_MS = 8_000
-const RIGHT_PANEL_STREAM_HOLD_MS = 6_500
+// The new right task needs the longest to reach its first request, so it is sent first and holds longest;
+// later sends hold less so all three finish together. The sidebar is sent last, so its hold must outlast the
+// camera move and the running-state pace, and its finish sets the clip length inside the GIF duration budget.
+const SIDEBAR_STREAM_HOLD_MS = 5_000
+const LEFT_PANEL_STREAM_HOLD_MS = 5_500
+const RIGHT_PANEL_STREAM_HOLD_MS = 6_000
+const INTRO_PACE_MS = 1_000
+const RUNNING_PACE_MS = 1_200
+const RESULT_PACE_MS = 1_500
 const REQUEST_OVERLAP_WINDOW_MS = RIGHT_PANEL_STREAM_HOLD_MS
 const BETWEEN_SENDS_MS = 50
+const MOVE_EDITOR_TO_NEXT_GROUP_KEY = process.platform === "darwin" ? "Control+Meta+ArrowRight" : "Control+Alt+ArrowRight"
 const R3_PROFILE_NAMES = [
     E2E_PROFILE_NAMES.mockDeepSeek,
     E2E_PROFILE_NAMES.mockOpenAiResponses,
@@ -63,22 +70,6 @@ async function disableHostedWebTools(dlineDir: string): Promise<string> {
     const rightProfile = profiles.find((profile) => profile.name === E2E_PROFILE_NAMES.mockOpenAiOfficialResponses)
     if (!rightProfile) throw new Error(`Missing R3 E2E profile: ${E2E_PROFILE_NAMES.mockOpenAiOfficialResponses}`)
     return rightProfile.id
-}
-
-async function setDefaultProfileForNewTask(dlineDir: string, profileId: string): Promise<void> {
-    const settingsPath = path.join(dlineDir, "data", "settings", "settings.json")
-    const settings = await E2ETestHelper.waitForValue(async () => {
-        try {
-            return JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>
-        } catch {
-            return undefined
-        }
-    }, 15_000)
-    settings.actModeProfile = E2E_PROFILE_NAMES.mockOpenAiOfficialResponses
-    settings.actModeProfileId = profileId
-    settings.planModeProfile = E2E_PROFILE_NAMES.mockOpenAiOfficialResponses
-    settings.planModeProfileId = profileId
-    await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8")
 }
 
 async function selectProfile(frame: Frame, profileName: string): Promise<void> {
@@ -159,9 +150,14 @@ async function moveActivePanelToRightGroup(page: Page): Promise<void> {
     const newTaskTab = page.locator('.tabs-container > .tab[aria-label^="Dline, Editor Group"]')
     await expect(newTaskTab).toHaveCount(1)
     await newTaskTab.click()
-    await newTaskTab.click({ button: "right" })
-    await page.getByRole("menuitem", { name: /Split & Move/i }).click()
-    await page.getByRole("menuitem", { name: /^Move Right$/ }).click()
+    // Default keybinding of workbench.action.moveEditorToNextGroup; the tab context menu races its hover tooltip.
+    await page.keyboard.press(MOVE_EDITOR_TO_NEXT_GROUP_KEY)
+    await expectRightGroupHoldsOnePanel(page)
+}
+
+async function expectRightGroupHoldsOnePanel(page: Page): Promise<void> {
+    const rightGroup = page.locator(".editor-group-container").last()
+    await expect(rightGroup.locator(".tabs-container > .tab")).toHaveCount(1)
 }
 
 async function sendAndWait(frame: Frame, prompt: string, result: string): Promise<void> {
@@ -188,7 +184,7 @@ async function waitForReasoning(frame: Frame, reasoning: string): Promise<void> 
 demo(
     "R3",
     async ({ dlineDir, finishRecording, focusCamera, helper, pace, page, registerRecording, server, sidebar, userDataDir }) => {
-        const rightProfileId = await disableHostedWebTools(dlineDir)
+        await disableHostedWebTools(dlineDir)
         await helper.signin(sidebar)
 
         await selectProfile(sidebar, E2E_PROFILE_NAMES.mockDeepSeek)
@@ -218,8 +214,6 @@ demo(
         await expect(sidebarProfile).toHaveText(E2E_PROFILE_NAMES.mockDeepSeek)
         await expect(leftProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiResponses)
 
-        await setDefaultProfileForNewTask(dlineDir, rightProfileId)
-        await page.waitForTimeout(500)
         await prepareRightEditorGroup(page)
 
         server.resetOpenAiMock()
@@ -253,11 +247,10 @@ demo(
             expectedRequestIncludes: [RIGHT_PANEL_TASK],
         })
 
-        await dismissDemoNotifications(page)
-        await registerRecording("r3-parallel-tasks", WINDOW_RECORDING)
-        await focusCamera(page.getByRole("button", { name: "New Task", exact: true }), STEP_SETTLE_MS)
         const rightPanel = await createDlinePanel(page)
         await moveActivePanelToRightGroup(page)
+        // A new panel starts on the profile the last panel chose; each task picks its own model.
+        await selectProfile(rightPanel, E2E_PROFILE_NAMES.mockOpenAiOfficialResponses)
 
         const rightProfile = rightPanel.getByRole("button", { name: "Select model" })
         await Promise.all([
@@ -269,14 +262,19 @@ demo(
             expect(rightProfile).toHaveText(E2E_PROFILE_NAMES.mockOpenAiOfficialResponses),
         ])
 
+        // Recording starts with the three panels in place: opening a webview panel takes several seconds
+        // that vary from run to run and would push the clip past its duration budget.
+        await dismissDemoNotifications(page)
+        await registerRecording("r3-parallel-tasks", WINDOW_RECORDING)
         // Three independent tasks side by side: frame all of their model pickers and inputs at once.
         const taskInputs = [sidebar, leftPanel, rightPanel].map((frame) => frame.getByTestId("chat-input"))
         await focusCamera([...taskInputs, sidebarProfile, leftProfile, rightProfile], STEP_SETTLE_MS)
-        await sendPrompt(sidebar, SIDEBAR_TURN)
+        await pace(INTRO_PACE_MS)
+        await sendPrompt(rightPanel, RIGHT_PANEL_TASK)
         await pace(BETWEEN_SENDS_MS)
         await sendPrompt(leftPanel, LEFT_PANEL_TURN)
         await pace(BETWEEN_SENDS_MS)
-        await sendPrompt(rightPanel, RIGHT_PANEL_TASK)
+        await sendPrompt(sidebar, SIDEBAR_TURN)
         await Promise.all([
             waitForReasoning(sidebar, SIDEBAR_REASONING),
             waitForReasoning(leftPanel, LEFT_PANEL_REASONING),
@@ -295,7 +293,7 @@ demo(
             frame.locator('[data-testid="send-button"][data-action="cancel"]'),
         )
         await Promise.all(cancelButtons.map((button) => expect(button).toBeVisible()))
-        await pace()
+        await pace(RUNNING_PACE_MS)
         await Promise.all(cancelButtons.map((button) => expect(button).toBeVisible()))
 
         const completions = [
@@ -305,8 +303,9 @@ demo(
         ]
         await Promise.all(completions.map((completion) => expect(completion).toBeVisible({ timeout: 30_000 })))
         await focusCamera(completions, 0)
-        await pace()
+        await pace(RESULT_PACE_MS)
         await finishRecording()
+        await expectRightGroupHoldsOnePanel(page)
 
         await Promise.all([
             expect(sidebarProfile).toHaveText(E2E_PROFILE_NAMES.mockDeepSeek),
