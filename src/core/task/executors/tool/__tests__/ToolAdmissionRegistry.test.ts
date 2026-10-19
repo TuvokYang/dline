@@ -6,7 +6,9 @@ import { DEFAULT_AUTO_APPROVAL_SETTINGS } from "@shared/AutoApprovalSettings"
 import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { resolvePermissionScope } from "../../../kernel/turn/approval-kind"
+import { AccessMcpResourceHandler } from "../../../tools/handlers/AccessMcpResourceHandler"
 import { GenerateImageToolHandler } from "../../../tools/handlers/GenerateImageToolHandler"
+import { UseMcpToolHandler } from "../../../tools/handlers/UseMcpToolHandler"
 import { ToolExecutorCoordinator } from "../../../tools/ToolExecutorCoordinator"
 import {
     prepareRegisteredToolAdmission,
@@ -110,6 +112,46 @@ describe("ToolAdmissionRegistry", () => {
                 prompt: "A blue owl",
                 count: 2,
             },
+        })
+    })
+
+    it("presents MCP approvals as the typed request the approval card reads", () => {
+        // The card reads camelCase serverName/toolName/type; the raw snake_case
+        // tool-call parameters rendered an empty server and the wrong action.
+        const coordinator = new ToolExecutorCoordinator()
+        coordinator.register(new UseMcpToolHandler())
+        coordinator.register(new AccessMcpResourceHandler())
+        const manual = snapshot({
+            settings: { ...snapshot().settings, actions: { ...snapshot().settings.actions, useMcp: false } },
+            mcpToolAutoApprove: false,
+        })
+
+        const toolCall = coordinator.prepareAdmission(
+            block(DlineDefaultTool.MCP_USE, { server_name: "docs", tool_name: "search", arguments: '{"q":"owl"}' }),
+            manual,
+            async () => undefined,
+        )
+        const resourceRead = coordinator.prepareAdmission(
+            block(DlineDefaultTool.MCP_ACCESS, { server_name: "docs", uri: "docs://index" }),
+            manual,
+            async () => undefined,
+        )
+
+        if (toolCall.outcome !== "admitted" || resourceRead.outcome !== "admitted") throw new Error("expected admission")
+        expect(toolCall.decision.kind).toBe("manual")
+        expect(toolCall.presentation?.ask).toBe("use_mcp_server")
+        expect(JSON.parse(toolCall.presentation?.body ?? "{}")).toEqual({
+            type: "use_mcp_tool",
+            serverName: "docs",
+            toolName: "search",
+            arguments: '{"q":"owl"}',
+        })
+        expect(resourceRead.decision.kind).toBe("manual")
+        expect(resourceRead.presentation?.ask).toBe("use_mcp_server")
+        expect(JSON.parse(resourceRead.presentation?.body ?? "{}")).toEqual({
+            type: "access_mcp_resource",
+            serverName: "docs",
+            uri: "docs://index",
         })
     })
 

@@ -6,6 +6,7 @@ import { telemetryService } from "@/services/telemetry"
 import { boundToolText } from "@/shared/content-limits"
 import { Logger } from "@/shared/services/Logger"
 import { DlineDefaultTool } from "@/shared/tools"
+import type { ToolApprovalPresentation } from "../../executors/tool/ToolPreflight"
 import type { ToolHandlerResult } from "../ToolExecutionResult"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
@@ -21,6 +22,20 @@ function failed(
     return { response, failure: { stage, code } }
 }
 
+/**
+ * The `use_mcp_server` row body for a tool call. The partial row, the approval
+ * ask and the executed row all carry this one shape, which is what the chat and
+ * the approval card parse.
+ */
+function useMcpToolMessage(serverName?: string, toolName?: string, mcpArguments?: string): string {
+    return JSON.stringify({
+        type: "use_mcp_tool",
+        serverName: serverName ?? "",
+        toolName,
+        arguments: mcpArguments,
+    } satisfies UiAskUseMcpServer)
+}
+
 export class UseMcpToolHandler implements IFullyManagedTool {
     readonly name = DlineDefaultTool.MCP_USE
 
@@ -28,17 +43,21 @@ export class UseMcpToolHandler implements IFullyManagedTool {
         return `[${block.name} for '${block.params.server_name}']`
     }
 
-    async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-        const server_name = block.params.server_name
-        const tool_name = block.params.tool_name
-        const mcp_arguments = block.params.arguments
+    /** The approval shows the typed MCP request, not the raw tool-call parameters. */
+    getApprovalPresentation(block: ToolUse, notify: boolean): ToolApprovalPresentation {
+        return {
+            ask: "use_mcp_server",
+            body: useMcpToolMessage(block.params.server_name, block.params.tool_name, block.params.arguments),
+            notify,
+        }
+    }
 
-        const partialMessage = JSON.stringify({
-            type: "use_mcp_tool",
-            serverName: uiHelpers.removeClosingTag(block, "server_name", server_name),
-            toolName: uiHelpers.removeClosingTag(block, "tool_name", tool_name),
-            arguments: uiHelpers.removeClosingTag(block, "arguments", mcp_arguments),
-        } satisfies UiAskUseMcpServer)
+    async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
+        const partialMessage = useMcpToolMessage(
+            uiHelpers.removeClosingTag(block, "server_name", block.params.server_name),
+            uiHelpers.removeClosingTag(block, "tool_name", block.params.tool_name),
+            uiHelpers.removeClosingTag(block, "arguments", block.params.arguments),
+        )
 
         await uiHelpers.say("use_mcp_server", partialMessage, undefined, undefined, true, block.ts)
     }
@@ -99,12 +118,7 @@ export class UseMcpToolHandler implements IFullyManagedTool {
 
         config.taskState.consecutiveMistakeCount = 0
 
-        const completeMessage = JSON.stringify({
-            type: "use_mcp_tool",
-            serverName: server_name,
-            toolName: tool_name,
-            arguments: mcp_arguments,
-        } satisfies UiAskUseMcpServer)
+        const completeMessage = useMcpToolMessage(server_name, tool_name, mcp_arguments)
 
         const requestTs =
             (await config.callbacks.say("use_mcp_server", completeMessage, undefined, undefined, false, block.ts)) ?? block.ts

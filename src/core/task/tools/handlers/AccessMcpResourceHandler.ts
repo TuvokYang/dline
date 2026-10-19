@@ -5,11 +5,26 @@ import { UiAskUseMcpServer, UiSayMcpServerResponse } from "@shared/ExtensionMess
 import { telemetryService } from "@/services/telemetry"
 import { boundToolText } from "@/shared/content-limits"
 import { DlineDefaultTool } from "@/shared/tools"
+import type { ToolApprovalPresentation } from "../../executors/tool/ToolPreflight"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
 import type { TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 import { resolveSelfBoundResultBytes } from "../utils/tool-result-budget"
+
+/**
+ * The `use_mcp_server` row body for a resource read; the partial row, the
+ * approval ask and the executed row all carry this one shape.
+ */
+function accessMcpResourceMessage(serverName?: string, uri?: string): string {
+    return JSON.stringify({
+        type: "access_mcp_resource",
+        serverName: serverName ?? "",
+        toolName: undefined,
+        uri,
+        arguments: undefined,
+    } satisfies UiAskUseMcpServer)
+}
 
 export class AccessMcpResourceHandler implements IFullyManagedTool {
     readonly name = DlineDefaultTool.MCP_ACCESS
@@ -18,17 +33,20 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
         return `[${block.name} for '${block.params.server_name}']`
     }
 
-    async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
-        const server_name = block.params.server_name
-        const uri = block.params.uri
+    /** The approval shows the typed MCP request, not the raw tool-call parameters. */
+    getApprovalPresentation(block: ToolUse, notify: boolean): ToolApprovalPresentation {
+        return {
+            ask: "use_mcp_server",
+            body: accessMcpResourceMessage(block.params.server_name, block.params.uri),
+            notify,
+        }
+    }
 
-        const partialMessage = JSON.stringify({
-            type: this.name,
-            serverName: uiHelpers.removeClosingTag(block, "server_name", server_name),
-            toolName: undefined,
-            uri: uiHelpers.removeClosingTag(block, "uri", uri),
-            arguments: undefined,
-        } satisfies UiAskUseMcpServer)
+    async handlePartialBlock(block: ToolUse, uiHelpers: StronglyTypedUIHelpers): Promise<void> {
+        const partialMessage = accessMcpResourceMessage(
+            uiHelpers.removeClosingTag(block, "server_name", block.params.server_name),
+            uiHelpers.removeClosingTag(block, "uri", block.params.uri),
+        )
 
         await uiHelpers.say("use_mcp_server", partialMessage, undefined, undefined, true, block.ts)
     }
@@ -66,13 +84,7 @@ export class AccessMcpResourceHandler implements IFullyManagedTool {
         config.taskState.consecutiveMistakeCount = 0
 
         // Handle approval flow
-        const completeMessage = JSON.stringify({
-            type: "access_mcp_resource",
-            serverName: server_name,
-            toolName: undefined,
-            uri: uri,
-            arguments: undefined,
-        } satisfies UiAskUseMcpServer)
+        const completeMessage = accessMcpResourceMessage(server_name, uri)
 
         const requestTs =
             (await config.callbacks.say("use_mcp_server", completeMessage, undefined, undefined, false, block.ts)) ?? block.ts
