@@ -30,6 +30,7 @@ const FOREGROUND_CHILD_RESULT = "WORK_FOREGROUND_SUBAGENT_CHILD_OK"
 const BACKGROUND_CHILD_TASK = "WORK_BACKGROUND_SUBAGENT_CHILD_TASK"
 const BACKGROUND_CHILD_CONTEXT = "Read README.md, remain active briefly, and return the background observation."
 const BACKGROUND_CHILD_RESULT = "WORK_BACKGROUND_SUBAGENT_CHILD_OK"
+const BACKGROUND_CHILD_GATE = "work-background-child-complete"
 const COMPLETE = "WORK_DAILY_BACKGROUND_SUBAGENTS_COMPLETE"
 const FOREGROUND_COMMAND = `node -e "console.log('WORK_FOREGROUND_COMMAND_START'); console.log('WORK_FOREGROUND_COMMAND_END')"`
 const BACKGROUND_COMMAND = `node -e "console.log('WORK_BACKGROUND_COMMAND_START'); setTimeout(()=>console.log('WORK_BACKGROUND_COMMAND_END'),30000)"`
@@ -390,7 +391,9 @@ e2e(
                 id: "call_work_background_child_complete",
                 name: "attempt_completion",
                 arguments: { result: BACKGROUND_CHILD_RESULT },
-                delayMs: 8_000,
+                // Keep the child running until the running-state assertions are done; a fixed delay
+                // raced slow runners and let the child finish before Activities was opened.
+                holdUntilReleased: BACKGROUND_CHILD_GATE,
                 expectedToolResults: [{ callId: "call_work_background_child_read", contentIncludes: "# Test Workspace" }],
             },
         )
@@ -465,6 +468,7 @@ e2e(
             await openWorkTab(sidebar)
             await sendWorkMessage(sidebar, DURING_SUBAGENT_INPUT)
             await expectWorkMessageVisible(sidebar, "WORK_DURING_BACKGROUND_SUBAGENT_OK", { timeout: 60_000 })
+            server.releaseResponseGate(BACKGROUND_CHILD_GATE)
 
             activities = await openWorkActivities(sidebar)
             await expect(subagentActivity).toHaveAttribute("data-activity-status", "completed", { timeout: 60_000 })

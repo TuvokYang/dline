@@ -113,6 +113,11 @@ interface MockResponseOptions {
     reasoning?: string
     hiddenReasoning?: string
     delayMs?: number
+    /**
+     * Hold the response until the test calls `releaseResponseGate` with this name, so a test can
+     * observe the in-flight state for as long as its assertions need instead of racing a fixed delay.
+     */
+    holdUntilReleased?: string
     /** Keep a chat-family stream open after its first content or tool-call chunk. */
     afterChatContentDelayMs?: number
     afterReasoningDelayMs?: number
@@ -638,8 +643,22 @@ function toOpenAiUsage(usage: MockTokenUsage) {
     }
 }
 
+interface ResponseGate {
+    readonly released: Promise<void>
+    readonly release: () => void
+}
+
+function createResponseGate(): ResponseGate {
+    let release: () => void = () => {}
+    const released = new Promise<void>((resolve) => {
+        release = resolve
+    })
+    return { released, release }
+}
+
 export class ClineApiServerMock {
     static globalSharedServer: ClineApiServerMock | null = null
+    private responseGates = new Map<string, ResponseGate>()
     static globalSockets: Set<Socket> = new Set()
 
     private currentUser: UserResponse | null = null
@@ -705,6 +724,25 @@ export class ClineApiServerMock {
         this.mockResponses[target] = []
     }
 
+    /** Release every response held with `holdUntilReleased: name`, including ones that arrive later. */
+    public releaseResponseGate(name: string): void {
+        this.responseGate(name).release()
+    }
+
+    /** Settles once the named gate is released; a gate is created on first use by either side. */
+    public responseGateReleased(name: string): Promise<void> {
+        return this.responseGate(name).released
+    }
+
+    private responseGate(name: string): ResponseGate {
+        let gate = this.responseGates.get(name)
+        if (!gate) {
+            gate = createResponseGate()
+            this.responseGates.set(name, gate)
+        }
+        return gate
+    }
+
     public enqueueOpenAIImageResponses(...responses: MockOpenAIImageResponse[]): void {
         this.mockOpenAIImageResponses.push(...responses)
     }
@@ -714,6 +752,9 @@ export class ClineApiServerMock {
     }
 
     public resetOpenAiMock(): void {
+        // A reset must not strand a held response; release it before forgetting the gate.
+        for (const gate of this.responseGates.values()) gate.release()
+        this.responseGates.clear()
         this.mockResponses = createResponseQueues()
         this.mockConsumptions = []
         this.mockOpenAIImageResponses = []
@@ -1316,6 +1357,13 @@ export class ClineApiServerMock {
                             })
                         })
                         if (res.destroyed || res.writableEnded) return
+                    }
+                    const gateName = "holdUntilReleased" in scriptedResponse ? scriptedResponse.holdUntilReleased : undefined
+                    if (gateName) {
+                        await new Promise<void>((resolve) => {
+                            void controller.responseGateReleased(gateName).then(resolve)
+                            res.once("close", resolve)
+                        })
                     }
                     if (res.destroyed || res.writableEnded) return
 
