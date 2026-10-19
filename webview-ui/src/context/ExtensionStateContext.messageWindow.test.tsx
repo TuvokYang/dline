@@ -363,10 +363,11 @@ describe("ExtensionStateContext persisted message reconciliation", () => {
         act(() => {
             subscriptions.state?.onResponse({ stateJson: JSON.stringify(preparingState) })
         })
-        // The history task is still being prepared: the composer names Resume but cannot take it yet.
+        // The history task is still being prepared: both the composer and the
+        // full-width footer button name Resume, and neither can take it yet.
         await waitFor(() => expect(screen.getByTestId("send-button")).toHaveAttribute("data-action", "unavailable"))
         expect(screen.getByTestId("send-button")).toHaveAccessibleName("Resume task")
-        expect(screen.queryByRole("button", { name: "Resume" })).toBeNull()
+        expect(screen.getByRole("button", { name: "Resume" })).toHaveAttribute("aria-disabled", "true")
 
         const completed = completionInteractionState(2)
         if (!completed.taskViewState?.activeInteraction) throw new Error("Expected active completion interaction")

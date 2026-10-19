@@ -3,6 +3,12 @@ import { render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 import ErrorRow from "./ErrorRow"
 
+const mocks = vi.hoisted(() => ({
+    extensionState: { accountEnabled: { featureFlag: true, user: true } } as Record<string, unknown>,
+}))
+
+vi.mock("@/context/ExtensionStateContext", () => ({ useExtensionState: () => mocks.extensionState }))
+
 // Mock the auth context
 vi.mock("@/context/ClineAuthContext", () => ({
     useClineAuth: () => ({
@@ -148,6 +154,28 @@ describe("ErrorRow", () => {
             expect(screen.queryByText("Authentication failed")).not.toBeInTheDocument()
             expect(screen.getByText(/Whoops looks like you're logged out/)).toBeInTheDocument()
             expect(screen.getByText("Sign in to Dline")).toBeInTheDocument()
+        })
+
+        it("shows the plain failure instead of a sign-in prompt while the account feature is off", async () => {
+            const mockClineError = {
+                message: "Authentication failed",
+                isErrorType: vi.fn((type) => type === "auth"),
+                providerId: "cline",
+                _error: {},
+            }
+
+            const { ClineError } = await import("../../../../src/services/error/ClineError")
+            vi.mocked(ClineError.parse).mockReturnValue(mockClineError as any)
+            mocks.extensionState = { accountEnabled: { featureFlag: false, user: true } }
+
+            try {
+                render(<ErrorRow apiRequestFailedMessage="Authentication failed" errorType="error" message={mockMessage} />)
+
+                expect(screen.queryByText("Sign in to Dline")).not.toBeInTheDocument()
+                expect(screen.queryByText(/Whoops looks like you're logged out/)).not.toBeInTheDocument()
+            } finally {
+                mocks.extensionState = { accountEnabled: { featureFlag: true, user: true } }
+            }
         })
 
         it("renders a PowerShell API failure without adding unrelated legacy content", async () => {

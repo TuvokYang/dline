@@ -31,6 +31,7 @@ const EXPECTED_TASK_VIEW_FILES = [
     "webview-ui/src/components/chat/UserMessage.tsx",
     "webview-ui/src/components/chat/chat-view/components/layout/MessagesArea.stories.tsx",
     "webview-ui/src/components/chat/chat-view/components/layout/MessagesArea.tsx",
+    "webview-ui/src/components/chat/chat-view/utils/footerOwnedApproval.ts",
     "webview-ui/src/components/chat/chat-view/utils/messageUtils.ts",
     "webview-ui/src/components/chat/input/TaskRuntimeControls.tsx",
     "webview-ui/src/components/chat/task-header/ModelSwitcher.tsx",
@@ -44,6 +45,7 @@ const EXPECTED_TASK_VIEW_FILES = [
     "webview-ui/src/services/task-messages.ts",
     "webview-ui/src/task-interaction/FooterActions.tsx",
     "webview-ui/src/task-interaction/InteractionHost.tsx",
+    "webview-ui/src/task-interaction/approval-card.ts",
     "webview-ui/src/task-interaction/task-actions.ts",
     "webview-ui/src/task-interaction/types.ts",
 ] as const
