@@ -19,6 +19,11 @@ export type McpConnection = {
      * closed until its configuration changes or the user restarts it or clears its values.
      */
     missingVariable?: string
+    /**
+     * The `${env:...}` variable that has no value yet and could not be asked for
+     * because no Dline view had been shown. The server connects once one is.
+     */
+    waitingForDline?: string
 }
 
 export type McpTransportType = "stdio" | "sse" | "http"

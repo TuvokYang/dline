@@ -3,6 +3,7 @@ import * as vscode from "vscode"
 import { handleGrpcRequest, handleGrpcRequestCancel } from "@/core/controller/grpc-handler"
 import { OrchestratorController } from "@/core/orchestrator/OrchestratorController"
 import { normalizeTaskPanelTitle } from "@/core/task/TaskPanelTitle"
+import { dlineUiPresence } from "@/core/webview/DlineUiPresence"
 import { HostProvider } from "@/hosts/host-provider"
 import type { ClineExtensionContext } from "@/shared/cline"
 import type { ExtensionMessage } from "@/shared/ExtensionMessage"
@@ -61,6 +62,7 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
             },
         )
         this.panel = panel
+        dlineUiPresence.markShown()
         panel.iconPath = iconPath
         dlineEditorGroup.register(panel)
         this.registerPanelVisibilityListener(panel)

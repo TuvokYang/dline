@@ -79,7 +79,7 @@ On the **Configure** tab, select **Configure MCP Servers**. Dline opens `<docume
 | `disabled` | Disables the server when `true` |
 | `autoApprove` | Names of tools allowed to be auto-approved |
 
-`${env:VAR}` is resolved each time the server connects. Dline uses the value saved for this server first, then the environment variable of the VS Code process. If neither exists, Dline asks for the value in a masked input box and saves it for this server only, in the owner-only secret store under the Dline data directory rather than in the configuration file. If you cancel or submit an empty value, the server is not connected and shows an error; restart it to be asked again. **Clear Saved Variables** on the server row in the MCP settings forgets the values saved for that server and reconnects it.
+`${env:VAR}` is resolved each time the server connects. Dline uses the value saved for this server first, then the environment variable of the VS Code process. If neither exists, Dline asks for the value in a masked input box and saves it for this server only, in the owner-only secret store under the Dline data directory rather than in the configuration file. Dline only asks after the Dline sidebar or a Dline panel has been opened in the window; until then the server waits, and the other servers connect as usual. If you cancel or submit an empty value, the server is not connected and shows an error; restart it to be asked again. The key icon (**Clear Saved Variables**) on the server row in the MCP settings forgets the values saved for that server and reconnects it.
 
 ## Workspace servers
 
@@ -139,7 +139,7 @@ Enabling or disabling a server is saved per task while a task is open, and per w
 
 On the **Configure** tab, each server can be:
 
-- enabled or disabled with its switch (not available for workspace servers);
+- enabled or disabled with its switch, including workspace servers. The switch applies to the current workspace and is kept in Dline's local workspace state; it does not change `mcp_settings.json` or a descriptor file in the repository;
 - restarted with **Restart Server**, or reconnected with **Retry Connection** after a failed connection;
 - given a timeout from 30 seconds to 1 hour in **Request Timeout** (servers from the global configuration only);
 - configured to auto-approve individual tools with **Auto-approve**, or all tools with **Auto-approve all tools** (not available for workspace servers);

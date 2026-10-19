@@ -36,6 +36,7 @@ import * as fs from "fs/promises"
 import ReconnectingEventSource from "reconnecting-eventsource"
 import { z } from "zod"
 import { getMcpVariableStore } from "@/core/storage/secrets/McpVariableStore"
+import { dlineUiPresence } from "@/core/webview/DlineUiPresence"
 import { HostProvider } from "@/hosts/host-provider"
 import { fetch } from "@/shared/net"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
@@ -87,6 +88,9 @@ export class McpHub {
     private readonly variableResolver = new McpVariableResolver({
         store: getMcpVariableStore(),
         prompt: promptForMcpVariable,
+        // Starting VS Code connects servers before anyone opens Dline; asking then would
+        // pop input boxes the user never invited. Such servers connect once Dline is shown.
+        canPrompt: () => dlineUiPresence.isShown,
     })
     connections: McpConnection[] = []
     isConnecting = false
@@ -517,6 +521,26 @@ export class McpHub {
                 transport: null as unknown as Transport,
                 missingVariable: resolution.variable,
             })
+            await this.notifyWebviewOfServerChanges()
+            return
+        }
+        if (resolution.kind === "deferred") {
+            this.connections.push({
+                server: {
+                    name,
+                    ...metadata,
+                    config: JSON.stringify(config),
+                    status: "disconnected",
+                    disabled: false,
+                    error: `Waiting for Dline to open: \${env:${resolution.variable}} has no saved value yet.`,
+                    uid: this.getMcpServerKey(name),
+                },
+                client: null as unknown as Client,
+                transport: null as unknown as Transport,
+                waitingForDline: resolution.variable,
+            })
+            Logger.info(`[MCP ${name}] waiting for Dline to open before asking for \${env:${resolution.variable}}`)
+            this.connectWaitingServersWhenDlineOpens()
             await this.notifyWebviewOfServerChanges()
             return
         }
@@ -1197,6 +1221,37 @@ export class McpHub {
     private removeAllFileWatchers() {
         this.fileWatchers.forEach((watcher) => watcher.close())
         this.fileWatchers.clear()
+    }
+
+    private waitingForDlineSubscribed = false
+
+    /** Connect the servers whose variables could not be asked for yet, once a Dline view is first shown. */
+    private connectWaitingServersWhenDlineOpens(): void {
+        if (this.waitingForDlineSubscribed) return
+        this.waitingForDlineSubscribed = true
+        dlineUiPresence.onFirstShown(() => {
+            void this.connectServersWaitingForDline()
+        })
+    }
+
+    private async connectServersWaitingForDline(): Promise<void> {
+        const waiting = this.connections.filter((connection) => connection.waitingForDline !== undefined)
+        for (const connection of waiting) {
+            const name = connection.server.name
+            try {
+                await this.deleteConnection(name)
+                await this.connectToServer(
+                    name,
+                    JSON.parse(connection.server.config),
+                    "internal",
+                    this.getConnectionMetadata(name),
+                )
+            } catch (error) {
+                Logger.error(`Failed to connect MCP server ${name} after Dline opened:`, error)
+            }
+        }
+        await this.notifyWebviewOfServerChanges()
+        this.publishPromptCatalogIfChanged()
     }
 
     /** Forget the values saved for this server's `${env:...}` references in its own scope, then reconnect. */

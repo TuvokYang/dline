@@ -37,6 +37,19 @@ describe("McpVariableResolver", () => {
         expect(prompt).not.toHaveBeenCalled()
     })
 
+    it("defers instead of asking while prompting is not allowed, and still uses known values", async () => {
+        await store.save(GLOBAL_SERVER, "KNOWN", "saved")
+        const prompt = vi.fn<McpVariablePrompt>()
+        const resolver = new McpVariableResolver({ store, prompt, environment: () => undefined, canPrompt: () => false })
+
+        const known = await resolver.resolve(GLOBAL_SERVER, "GitHub", { url: "${env:KNOWN}" })
+        const unknown = await resolver.resolve(GLOBAL_SERVER, "GitHub", { url: "${env:TOKEN}" })
+
+        expect(known).toEqual({ kind: "resolved", config: { url: "saved" } })
+        expect(unknown).toEqual({ kind: "deferred", variable: "TOKEN" })
+        expect(prompt).not.toHaveBeenCalled()
+    })
+
     it("falls back to the process environment without prompting or saving", async () => {
         const prompt = vi.fn<McpVariablePrompt>()
         const resolver = resolverWith(prompt, { TOKEN: "env-token" })

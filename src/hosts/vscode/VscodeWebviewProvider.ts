@@ -2,6 +2,7 @@ import { sendShowWebviewEvent } from "@core/controller/ui/subscribeToShowWebview
 import { shouldUseWebviewHmr, WebviewProvider } from "@core/webview"
 import * as vscode from "vscode"
 import { handleGrpcRequest, handleGrpcRequestCancel } from "@/core/controller/grpc-handler"
+import { dlineUiPresence } from "@/core/webview/DlineUiPresence"
 import { HostProvider } from "@/hosts/host-provider"
 import { ExtensionRegistryInfo } from "@/registry"
 import type { ClineExtensionContext } from "@/shared/cline"
@@ -75,6 +76,8 @@ export class VscodeWebviewProvider extends WebviewProvider implements vscode.Web
         // One provider outlives multiple WebviewView instances. Release only the
         // previous view bindings; the Controller and provider-level listeners live on.
         this.disposeViewBindings()
+        // VS Code resolves the sidebar view only when the user opens it.
+        dlineUiPresence.markShown()
         const generation = ++this.viewGeneration
         const viewDisposables: vscode.Disposable[] = []
         this.viewDisposables = viewDisposables

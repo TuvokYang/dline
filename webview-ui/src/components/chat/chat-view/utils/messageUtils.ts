@@ -11,6 +11,7 @@ import React from "react"
 import type { ToolMessageGroup } from "./chatRowKinds"
 import { groupExplorationRuns } from "./explorationRuns"
 import { supersededFailureIndexes } from "./failurePresentation"
+import { dropSupersededChatOnlyCheckpoints } from "./supersededCheckpoints"
 
 export { isToolGroup, type ToolMessageGroup } from "./chatRowKinds"
 
@@ -224,6 +225,11 @@ export function indexPreEditCheckpointAttachments(messages: readonly UiMessage[]
  * Filter messages that should be visible in the chat
  */
 export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
+    return dropSupersededChatOnlyCheckpoints(filterDrawnMessages(messages))
+}
+
+/** Rows each drawn on their own merit, before comparing neighbouring rows. */
+function filterDrawnMessages(messages: UiMessage[]): UiMessage[] {
     const attachedCheckpointTimestamps = new Set(
         Array.from(indexPreEditCheckpointAttachments(messages).values(), (checkpoints) =>
             checkpoints.map((message) => message.ts),

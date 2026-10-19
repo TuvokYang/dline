@@ -12,12 +12,16 @@ export type McpVariableResolution<T> =
     | { readonly kind: "resolved"; readonly config: T }
     /** The user declined to provide this variable; the server must not connect. */
     | { readonly kind: "missing"; readonly variable: string }
+    /** No value is known and asking is not allowed yet; connect again once it is. */
+    | { readonly kind: "deferred"; readonly variable: string }
 
 export interface McpVariableResolverOptions {
     readonly store: Pick<McpVariableStore, "read" | "save">
     readonly prompt: McpVariablePrompt
     /** Defaults to the extension host's process environment. */
     readonly environment?: EnvironmentLookup
+    /** Whether the user may be asked now. Defaults to always. */
+    readonly canPrompt?: () => boolean
 }
 
 /**
@@ -38,7 +42,11 @@ export class McpVariableResolver {
     async resolve<T>(owner: McpVariableOwner, serverLabel: string, config: T): Promise<McpVariableResolution<T>> {
         const values = new Map<string, string>()
         for (const variable of collectEnvironmentReferences(config)) {
-            const value = this.lookup(owner, variable) ?? (await this.ask(owner, serverLabel, variable))
+            let value = this.lookup(owner, variable)
+            if (value === undefined) {
+                if (this.options.canPrompt?.() === false) return { kind: "deferred", variable }
+                value = await this.ask(owner, serverLabel, variable)
+            }
             if (value === undefined) return { kind: "missing", variable }
             values.set(variable, value)
         }

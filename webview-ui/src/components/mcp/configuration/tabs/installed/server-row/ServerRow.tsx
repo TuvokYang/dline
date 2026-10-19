@@ -15,7 +15,7 @@ import {
     VSCodePanelTab,
     VSCodePanelView,
 } from "@vscode/webview-ui-toolkit/react"
-import { RefreshCcwIcon, Trash2Icon } from "lucide-react"
+import { KeyRoundIcon, RefreshCcwIcon, Trash2Icon } from "lucide-react"
 import { type FormEvent, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -64,7 +64,6 @@ const ServerRow = ({
     const isServerEnabled = enabled ?? !server.disabled
     const isWorkspaceServer = server.source === "workspace"
     const serverDisplayName = server.displayName ?? getMcpServerDisplayName(server.name, mcpMarketplaceCatalog)
-    const canToggleServer = !isWorkspaceServer || onToggleEnabled !== undefined
     // Only servers that reference ${env:...} can have saved variable values to clear.
     const hasEnvironmentReferences = server.config.includes("${env:")
 
@@ -264,6 +263,20 @@ const ServerRow = ({
                 )}
                 <span className="flex-1 overflow-hidden break-all whitespace-normal flex items-center">{serverDisplayName}</span>
                 {/* Collapsed view controls */}
+                {/* On the row itself, so clearing a wrong saved value does not depend on expanding the server first. */}
+                {hasEnvironmentReferences && (
+                    <Button
+                        disabled={server.status === "connecting" || isRestarting || isClearingVariables}
+                        onClick={(e) => {
+                            e.stopPropagation()
+                            handleClearVariables()
+                        }}
+                        size="icon"
+                        title="Clear Saved Variables"
+                        variant="icon">
+                        <KeyRoundIcon />
+                    </Button>
+                )}
                 {!server.error && (
                     <Button
                         disabled={server.status === "connecting" || isRestarting || !isServerEnabled}
@@ -290,28 +303,28 @@ const ServerRow = ({
                         <Trash2Icon />
                     </Button>
                 )}
-                {/* Toggle Switch */}
-                {canToggleServer && (
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <div className="flex items-center gap-2">
-                                <Switch
-                                    checked={isServerEnabled}
-                                    disabled={isAlwaysEnabled}
-                                    key={server.name}
-                                    onClick={(e) => {
-                                        e.stopPropagation()
-                                        handleToggleMcpServer()
-                                    }}
-                                />
-                                {isAlwaysEnabled && <i className="codicon codicon-lock text-description text-sm" />}
-                            </div>
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs" hidden={!isAlwaysEnabled} side="top">
-                            This server can't be disabled because it is enabled by your organization
-                        </TooltipContent>
-                    </Tooltip>
-                )}
+                {/* Toggle Switch: every server, including workspace descriptor servers, is switched for
+                    the current workspace; a task can still switch a server off for itself. */}
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <div className="flex items-center gap-2">
+                            <Switch
+                                aria-label={`Enable ${serverDisplayName}`}
+                                checked={isServerEnabled}
+                                disabled={isAlwaysEnabled}
+                                key={server.name}
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleToggleMcpServer()
+                                }}
+                            />
+                            {isAlwaysEnabled && <i className="codicon codicon-lock text-description text-sm" />}
+                        </div>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs" hidden={!isAlwaysEnabled} side="top">
+                        This server can't be disabled because it is enabled by your organization
+                    </TooltipContent>
+                </Tooltip>
                 <div
                     className={cn("h-2 w-2 ml-0.5 rounded-full", {
                         "bg-success": server.status === "connected",

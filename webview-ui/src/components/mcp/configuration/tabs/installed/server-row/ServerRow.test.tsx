@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import ServerRow from "./ServerRow"
 
 const mocks = vi.hoisted(() => ({
+    clearMcpServerVariables: vi.fn(),
     setMcpServers: vi.fn(),
     toggleMcpServer: vi.fn(),
     toggleToolAutoApprove: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("@/context/ExtensionStateContext", () => ({
 vi.mock("@/services/grpc-client", () => ({
     McpServiceClient: {
         authenticateMcpServer: vi.fn(),
+        clearMcpServerVariables: mocks.clearMcpServerVariables,
         deleteMcpServer: vi.fn(),
         restartMcpServer: vi.fn(),
         toggleMcpServer: mocks.toggleMcpServer,
@@ -78,7 +80,6 @@ describe("ServerRow workspace descriptor presentation", () => {
 
         expect(screen.getByText("docs")).toBeInTheDocument()
         expect(screen.queryByText("docs@a1b2c3d4")).not.toBeInTheDocument()
-        expect(screen.queryByRole("switch")).not.toBeInTheDocument()
         expect(screen.queryByTitle("Delete Server")).not.toBeInTheDocument()
 
         fireEvent.click(screen.getByText("docs"))
@@ -88,6 +89,20 @@ describe("ServerRow workspace descriptor presentation", () => {
         expect(screen.queryByText("Auto-approve")).not.toBeInTheDocument()
         expect(screen.queryByRole("button", { name: "Delete Server" })).not.toBeInTheDocument()
         expect(screen.getAllByRole("button", { name: "Restart Server" })).toHaveLength(2)
+    })
+
+    it("switches a workspace server for the workspace when no task scope is given", () => {
+        mocks.toggleMcpServer.mockResolvedValue({ mcpServers: [] })
+        render(<ServerRow server={workspaceServer} />)
+
+        const toggle = screen.getByRole("switch")
+        expect(toggle).toHaveAttribute("aria-checked", "true")
+        fireEvent.click(toggle)
+
+        // The backend routes a workspace server to the workspace-level toggle, not mcp_settings.json.
+        expect(mocks.toggleMcpServer).toHaveBeenCalledWith(
+            expect.objectContaining({ serverName: "docs@a1b2c3d4", disabled: true }),
+        )
     })
 
     it("keeps the existing task-scoped toggle", () => {
@@ -149,5 +164,33 @@ describe("ServerRow workspace descriptor presentation", () => {
             toolNames: ["search"],
             autoApprove: false,
         })
+    })
+})
+
+describe("ServerRow saved variables", () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mocks.clearMcpServerVariables.mockResolvedValue({ mcpServers: [] })
+    })
+
+    it("offers clearing saved variables on the collapsed row of a server that references ${env:...}", () => {
+        const server: McpServer = {
+            ...workspaceServer,
+            config: JSON.stringify({ type: "stdio", command: "node", env: { API_TOKEN: "${env:DOCS_TOKEN}" } }),
+        }
+        render(<ServerRow server={server} />)
+
+        // Reachable without expanding the row.
+        fireEvent.click(screen.getByTitle("Clear Saved Variables"))
+
+        expect(mocks.clearMcpServerVariables).toHaveBeenCalledWith({ value: "docs@a1b2c3d4" })
+    })
+
+    it("offers no clearing for a server without ${env:...} references, which never has saved values", () => {
+        render(<ServerRow server={workspaceServer} />)
+        fireEvent.click(screen.getByText("docs"))
+
+        expect(screen.queryByTitle("Clear Saved Variables")).not.toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Clear Saved Variables" })).not.toBeInTheDocument()
     })
 })
