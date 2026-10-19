@@ -290,6 +290,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
             },
             rows: {
                 write: (input) => this.writeCheckpointRow(input),
+                retire: (row) => this.retireCheckpointRow(row),
             },
             bundles: { capture: (input) => this.captureCheckpointBundle(input) },
             initialState: () => this.latestCheckpointState(),
@@ -396,7 +397,24 @@ export class TaskCheckpointManager implements ICheckpointManager {
                 : {}),
         })
         const row = await begun.persistence
-        return { ts: row.ts, position: row.conversationJournalSeq }
+        return { ts: row.ts, position: row.conversationJournalSeq, hasFiles: fileCheckpoint !== undefined }
+    }
+
+    /**
+     * Remove a chat-only round row that a newer file-backed row at the same
+     * conversation position replaces, so the chat does not show two adjacent
+     * checkpoints. Its bundle is left in place: nothing restores to it once the
+     * row is gone.
+     */
+    private async retireCheckpointRow(row: CheckpointRow): Promise<boolean> {
+        if (this.disposed) return false
+        const messages = this.services.messageStateHandler.clineMessages
+        const target = messages.find((message) => message.ts === row.ts)
+        if (target?.say !== "checkpoint_created" || hasFileCheckpoint(readCheckpointReferenceSet(target))) return false
+        // A pre-edit row restores its chat through this row, so this row must stay.
+        if (messages.some((message) => message.checkpointAnchorTs === row.ts)) return false
+        await this.services.messageStateHandler.removeMessagesByTs([row.ts])
+        return true
     }
 
     private async currentWorkspaceDelta(references: CheckpointReferenceSet): Promise<CheckpointChangedFile[]> {
@@ -446,7 +464,15 @@ export class TaskCheckpointManager implements ICheckpointManager {
         const latestRoundSource: CheckpointRoundSource | undefined =
             latestSource?.kind === "round_start" || latestSource?.kind === "pre_compaction" ? latestSource : undefined
         return {
-            ...(latestRound ? { latestChat: { ts: latestRound.ts, position: latestRound.conversationJournalSeq } } : {}),
+            ...(latestRound
+                ? {
+                      latestChat: {
+                          ts: latestRound.ts,
+                          position: latestRound.conversationJournalSeq,
+                          hasFiles: hasFileCheckpoint(readCheckpointReferenceSet(latestRound)),
+                      },
+                  }
+                : {}),
             ...(latestRoundSource ? { latestSource: latestRoundSource } : {}),
             ...(latestRefs ? { latestRefs } : {}),
         }

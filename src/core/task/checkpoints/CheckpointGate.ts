@@ -32,12 +32,20 @@ export interface CheckpointRow {
     readonly ts: number
     /** The conversation position the row restores to; undefined on a surface without a journal. */
     readonly position: number | undefined
+    /** Whether the row also restores files; undefined when the surface does not say. */
+    readonly hasFiles?: boolean
 }
 
 /** The visible side of a checkpoint. */
 export interface CheckpointRowPort<Refs> {
     /** Register one complete restore point in presentation order and resolve once it is durable. */
     write(input: { readonly source?: CheckpointSource; readonly refs?: Refs }): Promise<CheckpointRow>
+    /**
+     * Remove a chat-only row that a newer row fully replaces: both restore the same
+     * conversation and only the newer one restores files. Resolves false when the row
+     * must stay, for example because another restore point depends on it.
+     */
+    retire?(row: CheckpointRow): Promise<boolean>
 }
 
 /** The chat side of a checkpoint, stored beside the journal. */
@@ -158,7 +166,11 @@ export class CheckpointGate<Refs> {
             })
             if (!row) return FAILED
             await this.captureBundle(run, { row, ...(refs === undefined ? {} : { refs }) })
+            const previousChat = this.latestChat
             this.latestChat = row
+            // The conversation still stands where a chat-only row left it, and this row
+            // restores that same conversation plus the files, so the older row adds nothing.
+            if (!advanced && previousChat?.hasFiles === false && row.hasFiles === true) await this.retire(previousChat)
             return { outcome: "created", row }
         })
     }
@@ -271,6 +283,18 @@ export class CheckpointGate<Refs> {
         } catch (error) {
             run.fail("row", error)
             return undefined
+        }
+    }
+
+    /** Removing a superseded row is cosmetic: when it fails the task keeps one extra restore point. */
+    private async retire(row: CheckpointRow): Promise<void> {
+        try {
+            await this.options.rows.retire?.(row)
+        } catch (error) {
+            Logger.warn(
+                `[CheckpointGate] Could not remove the superseded checkpoint ${row.ts} of task ${this.options.taskId}:`,
+                error,
+            )
         }
     }
 

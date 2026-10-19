@@ -13,11 +13,13 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs> } = {
     const workspace = { dirty: true, head: 0, commitError: undefined as Error | undefined, commits: 0 }
     const rows: Array<{ row: CheckpointRow; refs?: Refs; anchor?: CheckpointRow; source?: CheckpointSource }> = []
     const bundles: Array<{ row: CheckpointRow; refs?: Refs; anchor?: CheckpointRow }> = []
+    const retired: CheckpointRow[] = []
     const observations: CheckpointGateObservation[] = []
     const failures = {
         row: undefined as Error | undefined,
         bundle: undefined as Error | undefined,
         conversation: undefined as Error | undefined,
+        retire: undefined as Error | undefined,
     }
     let nextTs = 100
     const hooks = { onRowWrite: undefined as (() => Promise<void>) | undefined }
@@ -44,9 +46,14 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs> } = {
             write: async (input) => {
                 await hooks.onRowWrite?.()
                 if (failures.row) throw failures.row
-                const row: CheckpointRow = { ts: nextTs++, position: journal.length }
+                const row: CheckpointRow = { ts: nextTs++, position: journal.length, hasFiles: input.refs !== undefined }
                 rows.push({ row, ...input })
                 return row
+            },
+            retire: async (row) => {
+                if (failures.retire) throw failures.retire
+                retired.push(row)
+                return true
             },
         },
         bundles: {
@@ -66,6 +73,7 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs> } = {
         workspace,
         rows,
         bundles,
+        retired,
         observations,
         failures,
         hooks,
@@ -422,9 +430,67 @@ describe("CheckpointGate", () => {
         })
     })
 
+    describe("superseded chat-only rows", () => {
+        it("replaces a chat-only row when the next round adds files without the conversation moving", async () => {
+            const subject = harness()
+            subject.say()
+            subject.workspace.commitError = new Error("index.lock exists")
+            const chatOnly = await subject.gate.ensureRound("round_start")
+            subject.workspace.commitError = undefined
+
+            const result = await subject.gate.ensureRound("round_start")
+
+            expect(chatOnly).toMatchObject({ outcome: "created", row: { hasFiles: false } })
+            expect(result).toMatchObject({ outcome: "created", row: { hasFiles: true } })
+            expect(subject.rows.map((entry) => entry.refs)).toEqual([undefined, "refs-0"])
+            expect(subject.retired).toEqual([chatOnly.row])
+        })
+
+        it("keeps the chat-only row when the conversation moved before the file-backed row", async () => {
+            const subject = harness()
+            subject.say()
+            subject.workspace.commitError = new Error("index.lock exists")
+            await subject.gate.ensureRound("round_start")
+            subject.workspace.commitError = undefined
+            subject.say()
+
+            const result = await subject.gate.ensureRound("round_start")
+
+            expect(result.outcome).toBe("created")
+            expect(subject.rows).toHaveLength(2)
+            expect(subject.retired).toEqual([])
+        })
+
+        it("never retires a row that restores files", async () => {
+            const subject = harness()
+            subject.say()
+            await subject.gate.ensureRound("round_start")
+            subject.write()
+
+            const result = await subject.gate.ensureRound("round_start")
+
+            expect(result.outcome).toBe("created")
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
+            expect(subject.retired).toEqual([])
+        })
+
+        it("keeps the new row when removing the old one fails", async () => {
+            const subject = harness({ initialState: () => ({ latestChat: { ts: 1, position: 0, hasFiles: false } }) })
+            subject.workspace.dirty = false
+            subject.failures.retire = new Error("ui store closed")
+
+            const result = await subject.gate.ensureRound("round_start")
+
+            expect(result.outcome).toBe("created")
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0"])
+            expect(subject.retired).toEqual([])
+            expect(subject.observations.at(-1)?.outcome).toBe("created")
+        })
+    })
+
     describe("reopened task", () => {
-        it("creates a file-backed row when the reopened checkpoint has no reusable refs", async () => {
-            const subject = harness({ initialState: () => ({ latestChat: { ts: 1, position: 0 } }) })
+        it("replaces a reopened chat-only row with a file-backed row at the same conversation position", async () => {
+            const subject = harness({ initialState: () => ({ latestChat: { ts: 1, position: 0, hasFiles: false } }) })
             subject.workspace.dirty = false
 
             const result = await subject.gate.ensureRound("round_start")
@@ -432,6 +498,17 @@ describe("CheckpointGate", () => {
             expect(result.outcome).toBe("created")
             expect(subject.workspace.commits).toBe(1)
             expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0"])
+            expect(subject.retired).toEqual([{ ts: 1, position: 0, hasFiles: false }])
+        })
+
+        it("keeps a reopened row whose file state is unknown", async () => {
+            const subject = harness({ initialState: () => ({ latestChat: { ts: 1, position: 0 } }) })
+            subject.workspace.dirty = false
+
+            const result = await subject.gate.ensureRound("round_start")
+
+            expect(result.outcome).toBe("created")
+            expect(subject.retired).toEqual([])
         })
 
         it("reuses the restored checkpoint when only the producer kind changed", async () => {
