@@ -35,6 +35,7 @@ import deepEqual from "fast-deep-equal"
 import * as fs from "fs/promises"
 import ReconnectingEventSource from "reconnecting-eventsource"
 import { z } from "zod"
+import { getMcpVariableStore } from "@/core/storage/secrets/McpVariableStore"
 import { HostProvider } from "@/hosts/host-provider"
 import { fetch } from "@/shared/net"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
@@ -51,6 +52,9 @@ import { mcpTransportObserver } from "./mcp-transport-observation"
 import { StreamableHttpReconnectHandler } from "./StreamableHttpReconnectHandler"
 import { BaseConfigSchema, McpSettingsSchema, ServerConfigSchema } from "./schemas"
 import { McpConnection, McpServerConfig, Transport } from "./types"
+import { safeParseWithEnvReferences } from "./variables/envReferenceValidation"
+import { promptForMcpVariable } from "./variables/hostVariablePrompt"
+import { McpVariableResolver } from "./variables/McpVariableResolver"
 import { WorkspaceMcpRegistry } from "./WorkspaceMcpRegistry"
 
 type McpConnectionMetadata = {
@@ -79,6 +83,11 @@ export class McpHub {
      * logs ("transport onclose" -> "spawning" every few seconds).
      */
     private reconcileQueue: Promise<void> = Promise.resolve()
+    /** Resolves `${env:...}` at connect time from saved values, the environment, or a masked prompt. */
+    private readonly variableResolver = new McpVariableResolver({
+        store: getMcpVariableStore(),
+        prompt: promptForMcpVariable,
+    })
     connections: McpConnection[] = []
     isConnecting = false
     /**
@@ -324,12 +333,9 @@ export class McpHub {
                 return undefined
             }
 
-            // Expand environment variables before validation
-            // This allows ${env:VAR_NAME} syntax in URLs, headers, env vars, etc.
-            config = expandEnvironmentVariables(config)
-
-            // Validate against schema
-            const result = McpSettingsSchema.safeParse(config)
+            // Validate with ${env:...} references masked: they are resolved at connect time and
+            // never stored, compared, written back, or sent to the webview expanded.
+            const result = safeParseWithEnvReferences(McpSettingsSchema, config)
             if (!result.success) {
                 HostProvider.window.showMessage({
                     type: ShowMessageType.ERROR,
@@ -490,12 +496,35 @@ export class McpHub {
             return
         }
 
+        // Resolve ${env:...} before the connect timeout starts: a missing value may wait for the user.
+        const resolution = await this.variableResolver.resolve(
+            { source: metadata?.source ?? "settings", serverName: name },
+            metadata?.displayName ?? name,
+            config,
+        )
+        if (resolution.kind === "missing") {
+            this.connections.push({
+                server: {
+                    name,
+                    ...metadata,
+                    config: JSON.stringify(config),
+                    status: "disconnected",
+                    disabled: false,
+                    error: `Not connected: no value was provided for \${env:${resolution.variable}}. Restart the server to enter it.`,
+                    uid: this.getMcpServerKey(name),
+                },
+                client: null as unknown as Client,
+                transport: null as unknown as Transport,
+                missingVariable: resolution.variable,
+            })
+            await this.notifyWebviewOfServerChanges()
+            return
+        }
+
         try {
             // Store unexpanded config for display/comparison (keeps credentials out of stored config)
             const configForStorage = JSON.stringify(config)
-
-            // Expand environment variables in config before using it
-            const expandedConfig = expandEnvironmentVariables(config)
+            const expandedConfig = resolution.config
 
             // Each MCP server requires its own transport connection and has unique capabilities, configurations, and error handling. Having separate clients also allows proper scoping of resources/tools and independent server management like reconnection.
             const client = new Client(
@@ -1062,6 +1091,9 @@ export class McpHub {
                     } catch (error) {
                         Logger.error(`Failed to reconnect MCP server ${name}:`, error)
                     }
+                } else if (currentConnection.missingVariable !== undefined) {
+                    // The user declined a variable for this unchanged config: stay closed instead of
+                    // prompting again on every reconcile. Restart or clearing saved values reconnects.
                 } else if (currentConnection.server.status === "disconnected") {
                     // Config is unchanged but the connection is down (e.g. the
                     // first connect attempt failed while the server was still
@@ -1165,6 +1197,18 @@ export class McpHub {
     private removeAllFileWatchers() {
         this.fileWatchers.forEach((watcher) => watcher.close())
         this.fileWatchers.clear()
+    }
+
+    /** Forget the values saved for this server's `${env:...}` references in its own scope, then reconnect. */
+    async clearSavedVariablesRPC(serverName: string): Promise<McpServer[]> {
+        const connection = this.connections.find((conn) => conn.server.name === serverName)
+        if (!connection) {
+            throw new Error(`MCP server ${serverName} not found`)
+        }
+        // Same owner resolution as connectToServer, so the cleared scope is the one the next connect reads.
+        const source = this.getConnectionMetadata(serverName)?.source ?? "settings"
+        await getMcpVariableStore().clear({ source, serverName })
+        return this.restartConnectionRPC(serverName)
     }
 
     async restartConnectionRPC(serverName: string): Promise<McpServer[]> {

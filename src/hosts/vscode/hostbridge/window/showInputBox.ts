@@ -6,6 +6,8 @@ export async function showInputBox(request: ShowInputBoxRequest): Promise<ShowIn
         title: request.title,
         prompt: request.prompt,
         value: request.value,
+        password: request.password,
+        ignoreFocusOut: request.ignoreFocusOut,
     })
     return ShowInputBoxResponse.create({ response })
 }

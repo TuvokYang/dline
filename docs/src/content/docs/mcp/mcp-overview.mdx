@@ -79,7 +79,7 @@ On the **Configure** tab, select **Configure MCP Servers**. Dline opens `<docume
 | `disabled` | Disables the server when `true` |
 | `autoApprove` | Names of tools allowed to be auto-approved |
 
-`${env:VAR}` in the configuration file is replaced with the environment variable's value. If the variable is not set, the text is left as-is and a warning is logged.
+`${env:VAR}` is resolved each time the server connects. Dline uses the value saved for this server first, then the environment variable of the VS Code process. If neither exists, Dline asks for the value in a masked input box and saves it for this server only, in the owner-only secret store under the Dline data directory rather than in the configuration file. If you cancel or submit an empty value, the server is not connected and shows an error; restart it to be asked again. **Clear Saved Variables** on the server row in the MCP settings forgets the values saved for that server and reconnects it.
 
 ## Workspace servers
 
@@ -128,7 +128,7 @@ timeout: 120
 
 - `name` is required and must be unique within the workspace. When two files use the same `name`, the file that sorts first by path is loaded and the other is ignored with a warning. `description` is optional. Other fields are the same as in the global configuration, without the outer `mcpServers` object.
 - `${workspaceFolder}` is replaced with the workspace root. A `stdio` server without `cwd` uses the workspace root as its working directory.
-- `${env:VAR}` is resolved from the environment of the VS Code process when the server connects, so set the variable before starting VS Code. An unset variable is left as-is and a warning is logged.
+- `${env:VAR}` is resolved when the server connects, in the same order as for global servers. A value you enter is saved for this server in this workspace only and is not shared with global servers, other servers, or other workspaces.
 - Credentials must come from `${env:VAR}`. A descriptor is rejected when plain text appears in a field whose name has `token`, `secret`, `password`, `credential`, `cookie`, `authorization`, or `api_key` as a whole segment (for example `API_TOKEN`, `db-password`, or `Authorization`), in a URL query parameter with such a name, or in an argument written as `--token=<value>`. Pass credentials through `env` or `headers` rather than `args`.
 - `autoApprove` in a workspace descriptor is ignored, so a descriptor cannot auto-approve tools.
 - Dline watches `.agents/mcp/`. Adding, editing, or deleting a descriptor takes effect without reloading the window. A descriptor that fails validation is skipped and the error is logged.

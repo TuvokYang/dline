@@ -15,6 +15,8 @@ service McpService {
   rpc downloadMcp(StringRequest) returns (McpDownloadResponse);
   rpc restartMcpServer(StringRequest) returns (McpServers);
   rpc deleteMcpServer(StringRequest) returns (McpServers);
+  // Forget the values saved for the server's ${env:...} references in its own scope, then reconnect.
+  rpc clearMcpServerVariables(StringRequest) returns (McpServers);
   rpc toggleToolAutoApprove(ToggleToolAutoApproveRequest) returns (McpServers);
   rpc refreshMcpMarketplace(EmptyRequest) returns (McpMarketplaceCatalog);
   rpc openMcpSettings(EmptyRequest) returns (Empty);

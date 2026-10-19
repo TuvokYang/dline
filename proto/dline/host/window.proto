@@ -131,6 +131,10 @@ message ShowInputBoxRequest {
   string title = 1;
   optional string prompt = 2;
   optional string value = 3;
+  // Mask the typed text, for secrets.
+  optional bool password = 4;
+  // Keep the box open when focus moves elsewhere, so switching windows does not count as cancelling.
+  optional bool ignore_focus_out = 5;
 }
 
 message ShowInputBoxResponse {

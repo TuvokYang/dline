@@ -4,6 +4,7 @@
 import * as AccountStore from "./AccountStore"
 import * as ApiKeyStore from "./ApiKeyStore"
 import * as McpOAuthStore from "./McpOAuthStore"
+import { resetMcpVariableStore } from "./McpVariableStore"
 import * as OcaTokenStore from "./OcaTokenStore"
 import * as OpenAiCodexAuthStore from "./OpenAiCodexAuthStore"
 import * as ProviderSecretStore from "./ProviderSecretStore"
@@ -113,6 +114,7 @@ export function resetAllStores(): void {
     AccountStore.resetAccountStore()
     ApiKeyStore.resetApiKeyStore()
     McpOAuthStore.resetMcpOAuthStore()
+    resetMcpVariableStore()
     OcaTokenStore.resetOcaTokenStore()
     OpenAiCodexAuthStore.resetOpenAiCodexAuthStore()
     ProviderSecretStore.resetProviderSecretStore()

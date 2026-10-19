@@ -60,10 +60,13 @@ const ServerRow = ({
     const [isExpanded, setIsExpanded] = useState(false)
     const [isDeleting, setIsDeleting] = useState(false)
     const [isRestarting, setIsRestarting] = useState(false)
+    const [isClearingVariables, setIsClearingVariables] = useState(false)
     const isServerEnabled = enabled ?? !server.disabled
     const isWorkspaceServer = server.source === "workspace"
     const serverDisplayName = server.displayName ?? getMcpServerDisplayName(server.name, mcpMarketplaceCatalog)
     const canToggleServer = !isWorkspaceServer || onToggleEnabled !== undefined
+    // Only servers that reference ${env:...} can have saved variable values to clear.
+    const hasEnvironmentReferences = server.config.includes("${env:")
 
     // Check if user is managed by remote config and if this server is remote-managed.
     // Remote MCP servers from enterprise config are always URL-based (SSE/HTTP).
@@ -137,6 +140,35 @@ const ServerRow = ({
                 console.error("Error restarting MCP server", error)
             })
     }
+
+    const handleClearVariables = () => {
+        setIsClearingVariables(true)
+        McpServiceClient.clearMcpServerVariables({
+            value: server.name,
+        } as StringRequest)
+            .then((response: McpServers) => {
+                setMcpServers(convertProtoMcpServersToMcpServers(response.mcpServers))
+                setIsClearingVariables(false)
+            })
+            .catch((error) => {
+                setIsClearingVariables(false)
+                console.error("Error clearing MCP server variables", error)
+            })
+    }
+
+    const clearVariablesButton = (className: string) => (
+        <Button
+            className={className}
+            disabled={server.status === "connecting" || isRestarting || isClearingVariables}
+            onClick={(e) => {
+                e.stopPropagation()
+                handleClearVariables()
+            }}
+            title="Forget the values saved for this server's ${env:...} references and reconnect"
+            variant="secondary">
+            {isClearingVariables ? "Clearing..." : "Clear Saved Variables"}
+        </Button>
+    )
 
     const handleDelete = () => {
         setIsDeleting(true)
@@ -312,6 +344,8 @@ const ServerRow = ({
                         </Button>
                     )}
 
+                    {hasEnvironmentReferences && clearVariablesButton("m-2.5 mt-0 max-w-[calc(100%-20px)]")}
+
                     {!isRemoteManagedServer && !isWorkspaceServer && (
                         <Button
                             className="m-2.5 mt-0 max-w-[calc(100%-20px)]"
@@ -415,6 +449,8 @@ const ServerRow = ({
                             variant="secondary">
                             {server.status === "connecting" || isRestarting ? "Restarting..." : "Restart Server"}
                         </Button>
+
+                        {hasEnvironmentReferences && clearVariablesButton("w-[calc(100%-14px)] mt-1 mx-1.5 mb-3")}
 
                         {!isRemoteManagedServer && !isWorkspaceServer && (
                             <Button

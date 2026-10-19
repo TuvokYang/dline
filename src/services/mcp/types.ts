@@ -14,6 +14,11 @@ export type McpConnection = {
     client: Client
     transport: Transport
     authProvider?: OAuthClientProvider
+    /**
+     * The `${env:...}` variable the user declined to provide. Such a connection stays
+     * closed until its configuration changes or the user restarts it or clears its values.
+     */
+    missingVariable?: string
 }
 
 export type McpTransportType = "stdio" | "sse" | "http"
