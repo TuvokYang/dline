@@ -6,6 +6,12 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ### Changed
 - The Account rollout reaches only devices that report Dline usage statistics, grouped by the device id the usage service issued; turning usage reporting off leaves the rollout at once and clears the cached rollout answers
+- Usage reporting no longer stops for good after the service or its network edge refuses it: it tries again after 30 minutes and once whenever a VS Code window starts; a service that still refuses is left alone for another 30 minutes instead of being asked on every cycle
+- Opening a history task shows the full-width Resume button in the footer again, so it is easy to notice; the composer's merged action button still resumes the task, and Cancel stays only in the composer button
+- Error reporting is now on by default, and while it is on, failure events such as provider API errors and terminal hangs are sent to `otel.dline.cc` as OTLP logs: only the event name, severity, and short codes, never error messages, stack traces, paths, or Task, workspace, or account identity; error diagnostics and usage reporting each use their own token and queue, so turning one off deletes only its token and unsent data and leaves the other running; it can be turned off in Settings → About
+- Dline no longer copies Cline data at startup (`~/.cline`, `Documents/Cline`, and the legacy Cline extension storage); to keep a Cline configuration, copy it into Dline's folders by hand as described in "Migrating from Cline"; the `DLINE_SKIP_MIGRATION` environment variable is removed with it
+- Rollout checks are shared across the machine:
+- `${env:VAR}` in an MCP configuration is resolved at connect time from the value saved for that server, then from the VS Code process environment; when neither exists, a masked input box asks for it, and the value is saved for that server only, in its own scope (global for a server from the global settings, the current workspace for a workspace descriptor server), never shared with other servers; cancelling or leaving it empty keeps the server disconnected with an error, and restarting the server asks again; each server row in the MCP settings gains "Clear Saved Variables", which forgets the server's saved values and reconnects it
 - Account is now a gradually rolled out feature and hidden by default: the account sign-in choice in onboarding, the sidebar Account button,
 - The composer's send, resume, queue, and cancel actions are merged into one action button:
 - Images in a message are referenced in place with `<image_ref>`, and their pixels are sent to the model after the message
@@ -27,6 +33,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 
 ### Fixes
+- Fixed two Checkpoint rows appearing directly one above the other: when the previous checkpoint could not save files (for example because the commit failed) and the conversation has not moved since, the next round's file-backed checkpoint replaces it instead of standing beside a checkpoint that can only restore the chat; a row a pre-edit checkpoint still restores through is kept
+- Fixed the values of `${env:VAR}` references in the MCP settings being shown expanded on the settings page and written back to `mcp_settings.json` when a setting such as the timeout changed: the configuration now keeps the original references and resolves them only when connecting
 - Documentation links for MCP, rules, workflows, hooks, terminal, auto-approve and worktrees now open the matching pages on docs.dline.cc, the About telemetry and privacy links open the telemetry and privacy documentation on docs.dline.cc, and the account page's terms of service and privacy policy now point to dline.cc; the extension homepage is now dline.cc
 - On Windows, a directory holding a file a task read
 - Scroll areas such as What's New, an expanded exploration run and tool results no longer show a white scrollbar in dark themes: every scroll area in the Webview now uses the thin theme-colored scrollbar of the MCP card by default
