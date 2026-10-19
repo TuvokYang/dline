@@ -4,6 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ErrorRenderer } from "../PresentationRenderers"
 
 const auth = vi.hoisted(() => ({ clineUser: null as unknown, useClineAuth: vi.fn() }))
+const extension = vi.hoisted(() => ({ accountEnabled: { featureFlag: true, user: true } as unknown }))
+
+vi.mock("@/context/ExtensionStateContext", () => ({
+    useExtensionState: () => ({ accountEnabled: extension.accountEnabled }),
+}))
 
 vi.mock("@/context/ClineAuthContext", () => ({
     useClineAuth: auth.useClineAuth,
@@ -30,6 +35,7 @@ function failure(error: Record<string, unknown>): UiMessage {
 describe("ErrorRenderer", () => {
     beforeEach(() => {
         auth.clineUser = null
+        extension.accountEnabled = { featureFlag: true, user: true }
         auth.useClineAuth.mockReset()
         auth.useClineAuth.mockImplementation(() => ({ clineUser: auth.clineUser }))
     })
@@ -76,6 +82,15 @@ describe("ErrorRenderer", () => {
         expect(screen.getByText(/looks like you're logged out/)).toBeInTheDocument()
         expect(screen.getByRole("button", { name: "Sign in to Dline" })).toBeEnabled()
         expect(screen.queryByTestId("error-presentation-box")).toBeNull()
+    })
+
+    it("shows the failure itself while the account feature is not rolled out to this user", () => {
+        extension.accountEnabled = { featureFlag: false, user: true }
+
+        render(<ErrorRenderer message={failure({ message: "Unauthorized", status: 401, providerId: "cline" })} />)
+
+        expect(screen.getByTestId("error-presentation-box")).toHaveTextContent("Unauthorized")
+        expect(screen.queryByRole("button", { name: "Sign in to Dline" })).toBeNull()
     })
 
     it("shows the failure itself when the Dline account is signed in", () => {
