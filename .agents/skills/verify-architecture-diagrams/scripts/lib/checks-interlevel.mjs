@@ -32,8 +32,12 @@ function normalize(label) {
 // node's own concept, its id and its normalized label.
 export function resolveNode(fineNode, coarseDiagram, fineDiagram = null) {
     const concept = fineDiagram?.concepts?.get(fineNode.id) ?? null
+    const exact = coarseDiagram.nodes.get(fineNode.id)
     if (concept) {
         const wanted = normalize(concept)
+        // Several coarse nodes may share one concept (a parent and a child journal are both Journal).
+        // The coarse node with the same id and the same concept is the one the author refines.
+        if (exact && normalize(coarseDiagram.concepts?.get(exact.id) ?? "") === wanted) return { node: exact, strategy: "id" }
         for (const candidate of coarseDiagram.nodes.values()) {
             const candidateConcept = coarseDiagram.concepts?.get(candidate.id) ?? null
             if (candidateConcept && normalize(candidateConcept) === wanted) return { node: candidate, strategy: "concept" }
@@ -41,7 +45,6 @@ export function resolveNode(fineNode, coarseDiagram, fineDiagram = null) {
                 return { node: candidate, strategy: "concept" }
         }
     }
-    const exact = coarseDiagram.nodes.get(fineNode.id)
     if (exact) return { node: exact, strategy: "id" }
     const label = normalize(fineNode.label)
     if (label.length > 0) {

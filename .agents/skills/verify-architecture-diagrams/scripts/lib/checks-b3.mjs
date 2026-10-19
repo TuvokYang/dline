@@ -5,6 +5,20 @@ function normalize(label) {
     return (label ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "")
 }
 
+// Only a command verb makes an edge a canonical write. Participles and nouns such as
+// "committed facts", "persisted record" or "writer" describe data or a role, not a write
+// into the target.
+const CANONICAL_WRITE = /\b(commit|commits|committing|write|writes|writing|persist|persists|persisting)\b/
+
+// Mermaid renders a node declared without brackets as a rectangle labelled with its id.
+function shapeOf(node) {
+    return node.shape === "bare" ? "rect" : node.shape
+}
+
+function keyOf(diagram, id) {
+    return normalize(diagram.nodes.get(id)?.label) || normalize(id)
+}
+
 function finding(severity, diagram, subject, rule, message, task) {
     return {
         severity,
@@ -42,9 +56,12 @@ export function checkTaskHorizontally({ entries }) {
             if (!owners.has(key)) owners.set(key, [])
             owners.get(key).push({ taskId, node, diagram })
         }
+        // A solid command answered by a dotted fact in the opposite direction is the normal
+        // command/report pair, so only solid edges can contradict each other's direction.
         for (const edge of diagram.edges) {
-            const fromKey = normalize(diagram.nodes.get(edge.from)?.label) || normalize(edge.from)
-            const toKey = normalize(diagram.nodes.get(edge.to)?.label) || normalize(edge.to)
+            if (edge.style !== "solid") continue
+            const fromKey = keyOf(diagram, edge.from)
+            const toKey = keyOf(diagram, edge.to)
             const key = `${fromKey}->${toKey}`
             if (!directions.has(key)) directions.set(key, [])
             directions.get(key).push({ taskId, edge, diagram })
@@ -70,16 +87,19 @@ export function checkTaskHorizontally({ entries }) {
         for (const edge of diagram.edges) {
             if (edge.style !== "solid") continue
             const label = (edge.label ?? "").toLowerCase()
-            if (!/\bcommit|\bwrite|\bpersist\b/.test(label)) continue
-            const toKey = normalize(diagram.nodes.get(edge.to)?.label) || normalize(edge.to)
+            if (!CANONICAL_WRITE.test(label)) continue
+            const toKey = keyOf(diagram, edge.to)
             if (!writers.has(toKey)) writers.set(toKey, [])
-            writers.get(toKey).push({ taskId, writer: edge.from })
+            writers.get(toKey).push({ taskId, writer: edge.from, writerKey: keyOf(diagram, edge.from) })
         }
     }
 
     for (const [key, claims] of writers) {
         const taskSet = new Set(claims.map((claim) => claim.taskId))
         if (taskSet.size <= 1) continue
+        // The same writer drawn by several tasks is still one authority.
+        const writerIdentities = new Set(claims.map((claim) => claim.writerKey))
+        if (writerIdentities.size <= 1) continue
         const uniqueWriters = new Set(claims.map((claim) => `${claim.taskId}:${claim.writer}`))
         findings.push(
             finding(
@@ -118,7 +138,7 @@ export function checkTaskHorizontally({ entries }) {
     for (const [key, claims] of owners) {
         const tasks = new Set(claims.map((claim) => claim.taskId))
         if (tasks.size <= 1) continue
-        const shapes = new Set(claims.map((claim) => claim.node.shape))
+        const shapes = new Set(claims.map((claim) => shapeOf(claim.node)))
         if (shapes.size <= 1) continue
         findings.push(
             finding(
