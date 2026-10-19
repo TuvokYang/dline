@@ -186,9 +186,9 @@ const USER_SETTINGS_FIELDS = {
     // Usage and error reporting are consented to separately. The former
     // `telemetrySetting` covered both at once and is deliberately not migrated:
     // an answer to the combined question does not answer either of these.
-    // Usage reporting is on until the user turns it off; error reporting stays opt-in.
+    // Both are on until the user turns them off in Settings → About.
     usageReportingSetting: { default: "enabled" as TelemetrySetting },
-    errorReportingSetting: { default: "unset" as TelemetrySetting },
+    errorReportingSetting: { default: "enabled" as TelemetrySetting },
     planActSeparateModelsSetting: { default: false as boolean, isComputed: true },
     enableCheckpointsSetting: { default: true as boolean },
     shellIntegrationTimeout: { default: 4000 as number },

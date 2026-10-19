@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest"
+import { routeOfEvent } from "../events/event-routes"
 import type {
     EventTelemetryCapability,
+    JournalTelemetrySignal,
     TelemetryProviderRegistration,
     TelemetrySpanHandle,
     TraceTelemetryCapability,
@@ -62,6 +64,31 @@ describe("TelemetryChannelPolicy", () => {
 
         expect(usageAllowed.isChannelEnabled("account")).toBe(true)
         expect(errorOnly.isChannelEnabled("account")).toBe(false)
+    })
+
+    it("delivers catalog failures to error sinks under error consent while usage events need usage consent", () => {
+        const received: JournalTelemetrySignal[] = []
+        const registry = new TelemetryProviderRegistry(
+            [registration([{ kind: "journal", append: (signal) => received.push(signal) }], ["error", "usage"])],
+            {
+                policy: new TelemetryChannelPolicy({
+                    readConsents: () => ({ usage: "disabled", error: "enabled" }),
+                }),
+            },
+        )
+        const capture = (event: string) => {
+            const route = routeOfEvent(event)
+            registry.logEvent(event, () => ({}), false, route.channel, route.severity)
+        }
+
+        capture("task.provider_api_error")
+        capture("task.terminal_hang")
+        capture("task.started")
+
+        expect(received.map((signal) => [signal.name, signal.channel, signal.severity])).toEqual([
+            ["task.provider_api_error", "error", "error"],
+            ["task.terminal_hang", "error", "warn"],
+        ])
     })
 
     it("routes runtime traces through error consent without requiring an event capability", () => {

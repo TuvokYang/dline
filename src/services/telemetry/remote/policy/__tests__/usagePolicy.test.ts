@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest"
 import {
     advanceUsagePolicy,
     describeUsagePolicyDecision,
+    isServerStopExpired,
+    parseServerStop,
     parseUsagePolicyDecision,
     resolveUsagePolicy,
+    SERVER_STOP_RETRY_INTERVAL_MS,
     type UsagePolicyInputs,
 } from "../usagePolicy"
 
@@ -48,6 +51,38 @@ describe("remote usage policy", () => {
         const everythingOff = { ...allowedInputs, usageConsent: "disabled", organizationDisabled: true } as const
 
         expect(resolveUsagePolicy(everythingOff)).toEqual({ allowed: false, reason: "consent_off" })
+    })
+})
+
+describe("server stop retry", () => {
+    const stoppedAt = 1_900_000_000_000
+    const stop = { scope: "all", code: "edge_blocked", stoppedAt } as const
+
+    it("holds a refusal for one retry interval and lets it lapse at the interval", () => {
+        expect(isServerStopExpired(stop, stoppedAt + SERVER_STOP_RETRY_INTERVAL_MS - 1)).toBe(false)
+        expect(isServerStopExpired(stop, stoppedAt + SERVER_STOP_RETRY_INTERVAL_MS)).toBe(true)
+    })
+
+    it("lets a refusal lapse when the clock moved back by more than one interval", () => {
+        expect(isServerStopExpired(stop, stoppedAt - SERVER_STOP_RETRY_INTERVAL_MS)).toBe(true)
+        expect(isServerStopExpired(stop, stoppedAt - 1)).toBe(false)
+    })
+
+    it("never lapses a refusal without a time on its own; the repository stamps it first", () => {
+        expect(isServerStopExpired({ scope: "all", code: "edge_blocked" }, Number.MAX_SAFE_INTEGER)).toBe(false)
+    })
+
+    it("reads the recorded time and treats an unreadable time as absent instead of failing the stop", () => {
+        expect(parseServerStop({ scope: "all", code: "edge_blocked", stopped_at: stoppedAt })).toEqual(stop)
+        expect(parseServerStop({ scope: "profile", code: "forbidden", stopped_at: "soon" })).toEqual({
+            scope: "profile",
+            code: "forbidden",
+        })
+        expect(parseServerStop({ scope: "profile", code: "forbidden", stopped_at: 0 })).toEqual({
+            scope: "profile",
+            code: "forbidden",
+        })
+        expect(parseServerStop({ scope: "nowhere", code: "forbidden", stopped_at: stoppedAt })).toBeUndefined()
     })
 })
 

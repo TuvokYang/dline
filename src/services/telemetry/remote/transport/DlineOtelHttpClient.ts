@@ -37,6 +37,13 @@ export interface UsageTransport {
     sendUsage(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse>
 }
 
+/** Sends one `/v1/logs` request; the body is an OTLP/HTTP JSON logs request. */
+export interface DiagnosticLogsTransport {
+    sendLogs(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse>
+}
+
+const LOGS_PATH = "/v1/logs"
+
 export interface DlineOtelHttpClientOptions {
     /** Origin of the service; a loopback origin is used for the local contract smoke. */
     readonly endpoint?: string
@@ -52,7 +59,7 @@ export interface DlineOtelHttpClientOptions {
  * `json: undefined` for the classifiers. It does not retry: retry policy
  * belongs to the delivery layer, which knows whether a replay is safe.
  */
-export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransport {
+export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransport, DiagnosticLogsTransport {
     private readonly endpoint: URL
     private readonly timeoutMs: number
 
@@ -77,6 +84,15 @@ export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransp
             "x-dline-request-id": delivery.requestId,
         }
         return this.post(USAGE_PATH, headers, delivery.body, signal)
+    }
+
+    sendLogs(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse> {
+        const headers = {
+            authorization: `Bearer ${delivery.accessToken}`,
+            "content-type": "application/json",
+            "x-dline-request-id": delivery.requestId,
+        }
+        return this.post(LOGS_PATH, headers, delivery.body, signal)
     }
 
     private async post(

@@ -3,9 +3,11 @@ import path from "node:path"
 import { writeJsonAtomic } from "@shared/storage/atomic-file"
 import {
     advanceUsagePolicy,
+    isServerStopExpired,
     parseServerStop,
     parseUsagePolicyDecision,
     resolveUsagePolicy,
+    type ServerRefusal,
     type ServerStop,
     stopUsagePolicy,
     type UsagePolicyDecision,
@@ -32,8 +34,16 @@ const KNOWN_DOCUMENT_KEYS = new Set(["schema_version", "usage", "server_stop"])
 /** The machine-wide remote telemetry policy every window consults before it claims, sends or acknowledges work. */
 export interface RemotePolicyState {
     readonly usage?: UsagePolicyRecord
-    /** A refusal from the service, held until the user changes consent or resets the identity. */
+    /** A refusal from the service; it lapses after the retry interval or when a window starts. */
     readonly serverStop?: ServerStop
+}
+
+export interface ResolveUsageOptions {
+    /**
+     * The first resolution after a window starts. Any recorded refusal is dropped so
+     * this start tries the service once; a service that still refuses records it again.
+     */
+    readonly startup?: boolean
 }
 
 /** Everything the policy depends on except the server refusal, which the repository owns. */
@@ -94,17 +104,21 @@ export class RemotePolicyRepository {
      *
      * Returns `undefined` when a newer Dline owns the document; delivery stays off.
      */
-    async resolveUsage(inputs: LocalUsagePolicyInputs): Promise<UsagePolicyRecord | undefined> {
+    async resolveUsage(
+        inputs: LocalUsagePolicyInputs,
+        options: ResolveUsageOptions = {},
+    ): Promise<UsagePolicyRecord | undefined> {
         return this.mutate((state, floor) => {
-            const decision = resolveUsagePolicy({ ...inputs, serverStop: state.serverStop })
-            return { ...state, usage: this.nextRecord(state.usage, decision, floor) }
+            const serverStop = this.heldServerStop(state.serverStop, options.startup === true)
+            const decision = resolveUsagePolicy({ ...inputs, serverStop })
+            return { ...(serverStop ? { serverStop } : {}), usage: this.nextRecord(state.usage, decision, floor) }
         })
     }
 
-    /** Persist a refusal from the service and turn usage delivery off in the same write. */
-    async recordServerStop(stop: ServerStop): Promise<UsagePolicyRecord | undefined> {
+    /** Persist a refusal from the service, stamped with the current time, and turn usage delivery off in the same write. */
+    async recordServerStop(refusal: ServerRefusal): Promise<UsagePolicyRecord | undefined> {
         return this.mutate((state, floor) => ({
-            serverStop: stop,
+            serverStop: { scope: refusal.scope, code: refusal.code, stoppedAt: this.clock() },
             usage: state.usage
                 ? stopUsagePolicy(state.usage)
                 : this.nextRecord(undefined, { allowed: false, reason: "server_stopped" }, floor),
@@ -118,6 +132,18 @@ export class RemotePolicyRepository {
      */
     async clearServerStop(): Promise<void> {
         await this.mutate((state) => (state.usage ? { usage: state.usage } : {}))
+    }
+
+    /**
+     * The refusal that still applies. A refusal without a time comes from a build that
+     * held it forever; it is stamped now, so it lapses one interval later instead of at
+     * once, which would let such a build and this one take turns probing on every cycle.
+     */
+    private heldServerStop(stop: ServerStop | undefined, startup: boolean): ServerStop | undefined {
+        if (!stop || startup) return undefined
+        const now = this.clock()
+        if (stop.stoppedAt === undefined) return { ...stop, stoppedAt: now }
+        return isServerStopExpired(stop, now) ? undefined : stop
     }
 
     private nextRecord(
@@ -225,7 +251,15 @@ function serialize(state: RemotePolicyState): Record<string, unknown> {
     return {
         schema_version: REMOTE_POLICY_SCHEMA_VERSION,
         ...(state.usage ? { usage: { epoch: state.usage.epoch, decision: state.usage.decision } } : {}),
-        ...(state.serverStop ? { server_stop: { scope: state.serverStop.scope, code: state.serverStop.code } } : {}),
+        ...(state.serverStop ? { server_stop: serializeServerStop(state.serverStop) } : {}),
+    }
+}
+
+function serializeServerStop(stop: ServerStop): Record<string, unknown> {
+    return {
+        scope: stop.scope,
+        code: stop.code,
+        ...(stop.stoppedAt === undefined ? {} : { stopped_at: stop.stoppedAt }),
     }
 }
 

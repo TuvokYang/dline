@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { classifyExchangeResponse, classifyUsageResponse, type WireResponse } from "../classification"
+import { classifyDiagnosticResponse, classifyExchangeResponse, classifyUsageResponse, type WireResponse } from "../classification"
 import { buildDeviceExchangeRequest, parseRetryAfterMs, type UsageAggregateWire, validateUsageAggregate } from "../wire"
 
 // Response bodies below follow the service's documented wire format.
@@ -15,6 +15,36 @@ const json = (status: number, body: unknown, retryAfter: string | null = null): 
 const edge = (status: number): WireResponse => ({ status, json: undefined, retryAfter: null })
 const failure = (status: number, code: string, extra: Record<string, unknown> = {}) =>
     json(status, { ok: false, request_id: "r", retryable: status >= 500, error: { code, message: "x" }, ...extra })
+
+describe("diagnostic logs response classification", () => {
+    it("acknowledges only a 200 that confirms the batch, even when some records were rejected", () => {
+        expect(classifyDiagnosticResponse(json(200, { ok: true, accepted: 3, rejected: 1 }))).toEqual({ kind: "acknowledged" })
+        expect(classifyDiagnosticResponse(json(200, { accepted: 3 })).kind).toBe("replay")
+        expect(classifyDiagnosticResponse(edge(200)).kind).toBe("replay")
+    })
+    it("waits and resends the same bytes on a rate limit instead of merging like usage", () => {
+        expect(classifyDiagnosticResponse(failure(429, "rate_limited", {}))).toEqual({ kind: "replay" })
+        expect(classifyDiagnosticResponse(json(429, { ok: false, error: { code: "rate_limited" } }, "30"))).toEqual({
+            kind: "replay",
+            retryAfterMs: 30_000,
+        })
+        expect(classifyDiagnosticResponse(failure(503, "unavailable")).kind).toBe("replay")
+    })
+    it("refreshes a rejected token, stops a refused profile and discards a batch refused for good", () => {
+        expect(classifyDiagnosticResponse(failure(401, "token_expired"))).toEqual({ kind: "refresh_token" })
+        expect(classifyDiagnosticResponse(failure(403, "diagnostic_profile_required"))).toEqual({
+            kind: "stop",
+            scope: "profile",
+            code: "diagnostic_profile_required",
+        })
+        expect(classifyDiagnosticResponse(edge(403))).toEqual({ kind: "stop", scope: "all", code: "edge_blocked" })
+        expect(classifyDiagnosticResponse(failure(409, "idempotency_conflict"))).toEqual({
+            kind: "discard",
+            code: "idempotency_conflict",
+        })
+        expect(classifyDiagnosticResponse(failure(422, "usage_channel_forbidden")).kind).toBe("discard")
+    })
+})
 
 describe("usage response classification", () => {
     it("acknowledges an accepted batch and a duplicate of one", () => {

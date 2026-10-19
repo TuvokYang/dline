@@ -181,8 +181,9 @@ A Git-based checkpoint is created after every tool execution, so file changes ca
 
 - API keys and credentials are stored only in the local key store; they are never written into profile configuration or task history.
 - Code, prompts, and conversation content are sent only to the providers you configure in your profiles.
-- Usage reporting and error reporting are separate settings: usage reporting is on by default, and error reporting and runtime diagnostics start only after you enable them.
-- Usage reporting is on by default and can be turned off in Settings → About. While it is on, Dline sends per-minute request, token, cache, and cost counts, including request and token counts per provider and model for rankings, to its telemetry service at `otel.dline.cc`. Prompts, code, file paths, and account identity are not included, and turning usage reporting off deletes counts that have not been sent. Error reporting stays off until you turn it on.
+- Usage reporting and error reporting are separate settings. Both are on by default, and each can be turned off on its own in Settings → About.
+- While usage reporting is on, Dline sends per-minute request, token, cache, and cost counts, including request and token counts per provider and model for rankings, to its telemetry service at `otel.dline.cc`. Prompts, code, file paths, and account identity are not included, and turning usage reporting off deletes counts that have not been sent.
+- While error reporting is on, Dline sends failure events such as provider API errors and terminal hangs, with their severity and short codes, to `otel.dline.cc`. Error messages, stack traces, prompts, code, file paths, and Task, workspace, or account identity are not included, and turning error reporting off deletes diagnostics that have not been sent.
 - When troubleshooting, a diagnostic bundle can be exported to the local machine in one click. The ZIP contains no code, prompts, or credentials.
 
 ## Relationship to Cline

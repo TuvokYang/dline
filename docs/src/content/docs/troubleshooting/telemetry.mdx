@@ -1,6 +1,6 @@
 ---
 title: Telemetry, Privacy, and Issue Diagnostics
-description: Understand Dline's reporting levels, data purposes, identity separation, local retention, usage delivery to otel.dline.cc, and the planned Issue authorization flow.
+description: Understand Dline's reporting levels, data purposes, identity separation, local retention, usage and error diagnostics delivery to otel.dline.cc, and the planned Issue authorization flow.
 ---
 
 import { Aside } from "@astrojs/starlight/components"
@@ -8,12 +8,12 @@ import { Aside } from "@astrojs/starlight/components"
 Dline asks for consent to product usage reporting and error/runtime diagnostics separately. The two checkboxes define the effective reporting level, but they remain independent permissions.
 
 <Aside>
-Usage delivery to `otel.dline.cc` is active as described below. The unified journal migration, diagnostic profiles on `otel.dline.cc`, and Issue diagnostics authorization described as planned on this page are not active in the current build.
+Usage delivery and error diagnostics delivery to `otel.dline.cc` are active as described below. The unified journal migration, the `issue_diagnostic` and `development` profiles, and Issue diagnostics authorization described as planned on this page are not active in the current build.
 </Aside>
 
 ## Reporting levels
 
-Open **Settings → About** to find **Allow usage reporting** and **Allow error reporting**. Both are unchecked by default. `unset` and `disabled` deny the corresponding channel; only an explicit check grants consent.
+Open **Settings → About** to find **Allow usage reporting** and **Allow error reporting**. Both are checked by default. Unchecking either one stores `disabled` and denies that channel at once; an `unset` value also denies it.
 
 | Effective level | Usage | Errors | Data and purpose |
 |---|---:|---:|---|
@@ -143,23 +143,54 @@ Only one Dline window sends at a time. At most eleven pending minutes are kept, 
 
 ### Turning usage delivery off
 
-When any condition above stops delivery, Dline aborts the current send and deletes unsent observations, pending minutes, and stored request bodies. Unchecking **Allow usage reporting** also deletes the local access tokens; the device secret is kept so that opting in again does not register a new device. Error reporting is unaffected. Data already accepted by the service is not deleted.
+When any condition above stops delivery, Dline aborts the current send and deletes unsent observations, pending minutes, and stored request bodies. Unchecking **Allow usage reporting** also deletes the local usage access token; the device secret is kept so that opting in again does not register a new device. Error diagnostics delivery and its token are unaffected. Data already accepted by the service is not deleted.
 
 The service's retention, access, and deletion policy must be published before this delivery reaches production releases.
 
-## Planned `otel.dline.cc` diagnostics
+## Error diagnostics delivery to `otel.dline.cc`
 
-The planned diagnostic profiles are sinks inside the same canonical mechanism, not a second telemetry system.
+Dline sends error and runtime diagnostics to `https://otel.dline.cc/v1/logs` only while every condition holds:
+
+- **Allow error reporting** is checked. It is on by default; unchecking it in **Settings → About** stops delivery at once and deletes unsent diagnostics.
+- Organization policy has not disabled error reporting.
+- VS Code's `telemetry.telemetryLevel` is not `off`. At `error` only error and fatal records are sent, and at `crash` only fatal records; a level that cannot be read stops delivery.
+- The service has not refused this device or the diagnostics stream.
+- The run is not an automated test.
+
+### What is sent
+
+Only log records are sent, no metrics or traces. A record is created for one of these failure events, or for a runtime lifecycle event that the runtime diagnostics pipeline rates as a warning or worse:
+
+| Event | Severity |
+|---|---|
+| `task.provider_api_error`, `task.browser_error`, `user.extension_storage_error`, `workspace.init_error` | error |
+| `user.auth_failed`, `task.diff_edit_failed`, `task.terminal_output_failure`, `task.terminal_hang`, `task.mention_failed` | warning |
+
+Each record carries the event name, its channel (`error` or `runtime`), its severity, a timestamp, and at most 32 attributes. An attribute is kept only when its value is a number, a boolean, or a short token of letters, digits, `_`, `.`, `+`, and `-` (at most 64 characters), and its name does not refer to free text, a location, or an identity, such as a message, stack, path, URL, command, Task, workspace, session, device, account, or credential. The request resource names only the client version and the operating-system type.
+
+Error messages, stack traces, prompts, responses, file contents, paths, URLs, commands, Task or workspace identity, `distinct_id`, and account ID are not sent.
+
+### Device identity, queue, and limits
+
+Diagnostics use the same pseudonymous device secret as usage delivery but exchange it for their own `production` access token, so each consent controls only its own token. The queue is `telemetry/remote/diagnostics/outbox.json` below the Dline data root and is shared by every Dline window:
+
+- Windows write gathered records to the queue every 5 seconds, and one window at a time sends a batch about every 20 seconds.
+- A batch holds at most 256 records and stays well below 512 KiB. At most 2,000 records wait; the oldest are dropped first.
+- A batch whose outcome is unknown is sent again with the same request ID and bytes, so the service stores it once. A rate limit or server error waits as long as the service asks, or one minute.
+- When the service refuses the diagnostics stream, every window stops sending for 30 minutes before trying again.
+
+### Turning error diagnostics off
+
+Unchecking **Allow error reporting**, a host telemetry level of `off`, or an organization policy that disables error reporting deletes the unsent diagnostics queue and the local `production` access token. Usage delivery and its token are unaffected, and the device secret is kept. Data already accepted by the service is not deleted.
+
+### Planned profiles
 
 | Profile | Authorization | Data |
 |---|---|---|
-| `production` | Error reporting | Content-safe `error`/`runtime` logs, metrics, and traces |
 | `issue_diagnostic` | Error reporting plus an active per-Issue grant | A higher-frequency view of the same diagnostic categories |
 | `development` | Matching consent plus valid development enrollment | Development-only streams unavailable to ordinary users |
 
-Before rollout, diagnostic delivery must enforce the same transport, credential, and policy-epoch rules as usage delivery, plus privacy canaries and server policy that can only narrow consent. Diagnostic outbox count, byte, and age limits must be fixed before release. Outboxes are sink-owned delivery state and never use forensic journals as upload queues.
-
-Disabling error reporting must stop capture and sends, abort in-flight requests, delete the unsent diagnostic outbox and its local token, and leave usage delivery unchanged.
+Both are planned sinks inside the same mechanism and are not active in the current build.
 
 ## Planned Issue diagnostics flow
 

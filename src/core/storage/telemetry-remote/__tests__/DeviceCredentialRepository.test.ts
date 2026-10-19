@@ -197,6 +197,28 @@ describe("DeviceCredentialRepository", () => {
         expect(await quarantined(layout)).toEqual([])
     })
 
+    it("clears only the named profile's token so the other stream keeps running", async () => {
+        const repository = new DeviceCredentialRepository(layout)
+        await repository.ensure()
+        await repository.mutate((current) => ({
+            next: { ...current, tokens: { usage: token(TOKEN_A), production: token(TOKEN_B) } },
+            value: undefined,
+        }))
+
+        await repository.clearTokens(["usage"])
+
+        const stored = await repository.read()
+        if (stored.status !== "valid") throw new Error("expected a device")
+        expect(Object.keys(stored.document.tokens)).toEqual(["production"])
+        expect(stored.document.tokens.production?.accessToken).toBe(TOKEN_B)
+        expect(stored.document.generation).toBe(3)
+
+        // Clearing a profile that holds no token leaves the document untouched.
+        await repository.clearTokens(["usage"])
+        const again = await repository.read()
+        expect(again.status === "valid" && again.document.generation).toBe(3)
+    })
+
     it("does not create a device when clearing tokens for a user who never enrolled", async () => {
         await new DeviceCredentialRepository(layout).clearTokens()
 

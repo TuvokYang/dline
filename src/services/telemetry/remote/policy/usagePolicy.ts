@@ -4,10 +4,35 @@ import type { StopScope } from "../contracts/classification"
 /** VS Code's `telemetry.telemetryLevel`; usage data is only allowed at `all`. */
 export type HostTelemetryLevel = "all" | "error" | "crash" | "off"
 
-/** A refusal the service returned, kept until the user or an explicit reset clears it. */
+/**
+ * A refusal the service returned. It holds for {@link SERVER_STOP_RETRY_INTERVAL_MS}
+ * and lapses earlier when a window starts, so a block that was lifted, or an edge
+ * rule that was fixed, does not keep a device silent until someone edits its files.
+ */
 export interface ServerStop {
     readonly scope: StopScope
     readonly code: string
+    /** When the refusal was recorded; absent only on stops written by builds that held them forever. */
+    readonly stoppedAt?: number
+}
+
+/** A refusal in the form the service returns it, before the repository records when it happened. */
+export type ServerRefusal = Pick<ServerStop, "scope" | "code">
+
+/**
+ * How long a refusal keeps delivery off before the next cycle tries again. A service
+ * that still refuses answers the retry with a new refusal, so the device asks at most
+ * once per interval instead of on every cycle.
+ */
+export const SERVER_STOP_RETRY_INTERVAL_MS = 30 * 60_000
+
+/**
+ * Whether a recorded refusal has lapsed. A clock that moved by more than one interval
+ * in either direction also lapses it, so a refusal stamped in the future cannot hold forever.
+ */
+export function isServerStopExpired(stop: ServerStop, now: number): boolean {
+    if (stop.stoppedAt === undefined) return false
+    return Math.abs(now - stop.stoppedAt) >= SERVER_STOP_RETRY_INTERVAL_MS
 }
 
 export interface UsagePolicyInputs {
@@ -77,13 +102,20 @@ export function parseUsagePolicyDecision(value: unknown): UsagePolicyDecision | 
     return undefined
 }
 
+/**
+ * Strict on scope and code, lenient on the time: an unreadable `stopped_at` reads as
+ * absent, which the repository stamps with the current time, so the refusal still holds
+ * for a full interval instead of failing the whole document.
+ */
 export function parseServerStop(value: unknown): ServerStop | undefined {
     if (!isRecord(value)) return undefined
-    const { scope, code } = value
+    const { scope, code, stopped_at: stoppedAt } = value
     if ((scope !== "profile" && scope !== "all") || typeof code !== "string" || code.length === 0 || code.length > 128) {
         return undefined
     }
-    return { scope, code }
+    return Number.isSafeInteger(stoppedAt) && (stoppedAt as number) > 0
+        ? { scope, code, stoppedAt: stoppedAt as number }
+        : { scope, code }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

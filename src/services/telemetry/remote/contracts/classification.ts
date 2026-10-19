@@ -58,6 +58,39 @@ export function classifyUsageResponse(response: WireResponse): UsageOutcome {
     return { kind: "replay", ...delay }
 }
 
+export type DiagnosticOutcome =
+    /** The server holds the batch, possibly minus records it rejected: drop the inflight. */
+    | { readonly kind: "acknowledged" }
+    /** The server may not hold the batch: send the same request ID with the same bytes later. */
+    | { readonly kind: "replay"; readonly retryAfterMs?: number }
+    | { readonly kind: "refresh_token" }
+    /** The server will never accept this batch. */
+    | { readonly kind: "discard"; readonly code: string }
+    | { readonly kind: "stop"; readonly scope: StopScope; readonly code: string }
+
+/**
+ * Classify a `/v1/logs` response.
+ *
+ * Diagnostics are not counted, so a rate limit simply waits and sends the same
+ * bytes again; nothing is merged. A 200 that rejected some records is still an
+ * acknowledgement: resending would be refused the same way.
+ */
+export function classifyDiagnosticResponse(response: WireResponse): DiagnosticOutcome {
+    const { status } = response
+    if (status === 200) {
+        const acknowledged = (response.json as { ok?: unknown } | undefined)?.ok === true
+        return acknowledged ? { kind: "acknowledged" } : { kind: "replay" }
+    }
+    const error = parseServiceError(response.json, response.retryAfter)
+    const delay = error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }
+    if (status === 401) return { kind: "refresh_token" }
+    if (status === 403) return stopFor(response, error.code)
+    if (status === 429 || status === 408 || status >= 500) return { kind: "replay", ...delay }
+    if (status === 404 || status === 405) return { kind: "stop", scope: "profile", code: error.code ?? "endpoint_unavailable" }
+    if (status >= 400) return { kind: "discard", code: error.code ?? `http_${status}` }
+    return { kind: "replay", ...delay }
+}
+
 export type ExchangeOutcome =
     | { readonly kind: "granted"; readonly grant: DeviceGrant }
     /** Try again later; every instance shares this delay so the enrollment budget is not spent in a loop. */

@@ -26,7 +26,13 @@ import { isTelemetryDevelopmentMode } from "./services/telemetry/development-mod
 import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
 import { PostHogClientProvider } from "./services/telemetry/providers/posthog/PostHogClientProvider"
+import { HostDiagnosticsPolicy } from "./services/telemetry/remote/policy/hostDiagnosticsPolicy"
 import { readHostUsagePolicyInputs } from "./services/telemetry/remote/policy/hostUsagePolicyInputs"
+import {
+    refreshRemoteDiagnostics,
+    startRemoteDiagnostics,
+    stopRemoteDiagnostics,
+} from "./services/telemetry/remote/remoteDiagnosticsRuntime"
 import {
     acquireUsageDeviceId,
     onUsageReportingChanged,
@@ -212,6 +218,10 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
     const remoteUsageStarted = startRemoteUsageReporting(storageContext.dataDir).catch((error) =>
         Logger.warn("[Dline] Failed to start remote usage reporting:", error),
     )
+    // Error and runtime diagnostics ride their own outbox and token; usage reporting is not involved.
+    void startRemoteDiagnosticsReporting(storageContext.dataDir).catch((error) =>
+        Logger.warn("[Dline] Failed to start remote diagnostics:", error),
+    )
     // Rollout answers only re-project state; a missing service leaves every switch at its default.
     featureFlagsService.onDidChange(() => {
         for (const controller of OrchestratorController.getInstance().getActiveControllers()) {
@@ -360,6 +370,11 @@ export async function tearDown(): Promise<void> {
         } catch (error) {
             Logger.internalError("[Dline] Remote usage shutdown failed:", error)
         }
+        try {
+            await stopRemoteDiagnostics()
+        } catch (error) {
+            Logger.internalError("[Dline] Remote diagnostics shutdown failed:", error)
+        }
         // Flush even after failed cleanup, before storage removes the consent authority.
         try {
             await deactivateRuntimeTelemetry()
@@ -409,15 +424,44 @@ async function startFeatureFlagRolloutInBackground(): Promise<void> {
     })
 }
 
-async function startRemoteUsageReporting(dataDir: string): Promise<void> {
-    const host = await HostProvider.env.getHostVersion({}).catch(() => undefined)
+/**
+ * The telemetry service endpoint for this run: a loopback override, the real
+ * service, or none at all for a test run without its own loopback service.
+ */
+function resolveRemoteTelemetryEndpoint(): { readonly endpoint: string | undefined } | undefined {
     const endpoint = loopbackEndpointOverride(process.env.DLINE_OTEL_ENDPOINT)
     if (process.env.DLINE_OTEL_ENDPOINT && !endpoint) {
         Logger.warn("[Dline] Ignoring DLINE_OTEL_ENDPOINT: only a loopback origin may replace the telemetry service")
     }
     // A test run reports only to a loopback service it started; it never reaches the real one.
     const isTestRun = envFlagEnabled(process.env.E2E_TEST) || envFlagEnabled(process.env.IS_TEST)
-    if (isTestRun && !endpoint) return
+    return isTestRun && !endpoint ? undefined : { endpoint }
+}
+
+async function startRemoteDiagnosticsReporting(dataDir: string): Promise<void> {
+    const target = resolveRemoteTelemetryEndpoint()
+    if (!target) return
+    // A host that turns telemetry off removes what is waiting at once, not at the next send.
+    const policy = await HostDiagnosticsPolicy.start(() => {
+        void refreshRemoteDiagnostics().catch((error) => Logger.warn("[Dline] Failed to re-check remote diagnostics:", error))
+    })
+    startRemoteDiagnostics({
+        dataDir,
+        clientVersion: ExtensionRegistryInfo.version,
+        platform: process.platform,
+        allowed: policy.allowed,
+        hostSettings: policy.hostSettings,
+        addProvider: (provider) => telemetryService.addProvider(provider),
+        endpoint: target.endpoint,
+        log: (message) => Logger.warn(message),
+    })
+}
+
+async function startRemoteUsageReporting(dataDir: string): Promise<void> {
+    const host = await HostProvider.env.getHostVersion({}).catch(() => undefined)
+    const target = resolveRemoteTelemetryEndpoint()
+    if (!target) return
+    const { endpoint } = target
     await startRemoteUsage({
         dataDir,
         readPolicyInputs: readHostUsagePolicyInputs,

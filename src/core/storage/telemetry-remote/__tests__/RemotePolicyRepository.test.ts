@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { SERVER_STOP_RETRY_INTERVAL_MS } from "@/services/telemetry/remote/policy/usagePolicy"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
 import { type LocalUsagePolicyInputs, RemotePolicyRepository } from "../RemotePolicyRepository"
 
@@ -53,7 +54,61 @@ describe("RemotePolicyRepository", () => {
 
         expect(afterStop?.decision).toEqual({ allowed: false, reason: "server_stopped" })
         expect(afterStop?.epoch).toBeGreaterThan(enabled?.epoch ?? Number.POSITIVE_INFINITY)
-        expect((await windowA.read())?.serverStop).toEqual({ scope: "profile", code: "forbidden" })
+        expect((await windowA.read())?.serverStop).toEqual({ scope: "profile", code: "forbidden", stoppedAt: now })
+    })
+
+    it("holds a refusal for one retry interval, then lets the next resolution try the service again", async () => {
+        const policy = repository()
+        await policy.resolveUsage(ALLOWED)
+        const stopped = await policy.recordServerStop({ scope: "all", code: "edge_blocked" })
+
+        now += SERVER_STOP_RETRY_INTERVAL_MS - 1
+        const held = await policy.resolveUsage(ALLOWED)
+        now += 1
+        const retried = await policy.resolveUsage(ALLOWED)
+
+        expect(held).toEqual(stopped)
+        expect(retried).toEqual({ epoch: (stopped?.epoch ?? 0) + 1, decision: { allowed: true, profile: "usage" } })
+        expect(await policy.read()).toEqual({ usage: retried })
+    })
+
+    it("drops a recorded refusal on the first resolution after a window starts", async () => {
+        const policy = repository()
+        await policy.resolveUsage(ALLOWED)
+        const stopped = await policy.recordServerStop({ scope: "profile", code: "endpoint_unavailable" })
+
+        const otherWindow = await policy.resolveUsage(ALLOWED)
+        const startedWindow = await repository().resolveUsage(ALLOWED, { startup: true })
+
+        expect(otherWindow).toEqual(stopped)
+        expect(startedWindow?.decision).toEqual({ allowed: true, profile: "usage" })
+        expect((await policy.read())?.serverStop).toBeUndefined()
+    })
+
+    it("stamps a refusal written without a time by an older build and holds it for a full interval", async () => {
+        await fs.mkdir(path.dirname(layout.policyPath), { recursive: true })
+        await fs.writeFile(
+            layout.policyPath,
+            JSON.stringify({
+                schema_version: 2,
+                usage: { epoch: 7, decision: { allowed: false, reason: "server_stopped" } },
+                server_stop: { scope: "all", code: "edge_blocked" },
+            }),
+        )
+        const policy = repository()
+
+        const held = await policy.resolveUsage(ALLOWED)
+        const stored = JSON.parse(await fs.readFile(layout.policyPath, "utf8")) as { server_stop?: unknown }
+        now += SERVER_STOP_RETRY_INTERVAL_MS
+        const retried = await policy.resolveUsage(ALLOWED)
+
+        expect(held).toEqual({ epoch: 7, decision: { allowed: false, reason: "server_stopped" } })
+        expect(stored.server_stop).toEqual({
+            scope: "all",
+            code: "edge_blocked",
+            stopped_at: now - SERVER_STOP_RETRY_INTERVAL_MS,
+        })
+        expect(retried).toEqual({ epoch: 8, decision: { allowed: true, profile: "usage" } })
     })
 
     it("only re-enables after a stop is cleared and the decision is resolved again", async () => {

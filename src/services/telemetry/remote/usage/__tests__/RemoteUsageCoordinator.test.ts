@@ -7,6 +7,7 @@ import { type LocalUsagePolicyInputs, RemotePolicyRepository } from "@/core/stor
 import { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import type { UsageSettlement } from "@/core/task/telemetry/UsageSettlement"
+import { SERVER_STOP_RETRY_INTERVAL_MS } from "../../policy/usagePolicy"
 import { RemoteUsageCoordinator, type UsageScheduler } from "../RemoteUsageCoordinator"
 import type { UsageCycleResult } from "../UsageDeliveryWorker"
 import type { RemoteUsageLogLevel } from "../usageCycleLog"
@@ -75,6 +76,7 @@ describe("RemoteUsageCoordinator", () => {
     let scheduler: ManualScheduler
     let worker: FakeWorker
     let tokenClears: number
+    let clearedProfiles: unknown[]
     let policy: RemotePolicyRepository
     let now: number
     let reportingChanges: boolean[]
@@ -86,6 +88,7 @@ describe("RemoteUsageCoordinator", () => {
         scheduler = new ManualScheduler()
         worker = new FakeWorker()
         tokenClears = 0
+        clearedProfiles = []
         now = 1_900_000_000_000
         policy = new RemotePolicyRepository(layout, { clock: () => now })
         reportingChanges = []
@@ -99,8 +102,9 @@ describe("RemoteUsageCoordinator", () => {
         return new RemoteUsageCoordinator({
             policy,
             credentials: {
-                clearTokens: async () => {
+                clearTokens: async (profiles) => {
                     tokenClears++
+                    clearedProfiles.push(profiles)
                 },
             },
             outbox: new UsageOutboxRepository(layout, { clock: () => now }),
@@ -149,6 +153,8 @@ describe("RemoteUsageCoordinator", () => {
 
         expect(epoch).toBe(now)
         expect(tokenClears).toBe(1)
+        // Usage consent owns only the usage token; the diagnostics token is not touched.
+        expect(clearedProfiles).toEqual([["usage"]])
         expect(await spooled()).toEqual([])
         expect((await new UsageOutboxRepository(layout).read())?.policyEpoch).toBe(now + 1)
         await usage.dispose()
@@ -253,6 +259,32 @@ describe("RemoteUsageCoordinator", () => {
         })
         expect(await spooled()).toEqual([])
         expect(scheduler.pending).toHaveLength(1)
+        await usage.dispose()
+    })
+
+    it("tries a refused service again when the window starts and after the retry interval, not on every cycle", async () => {
+        await policy.resolveUsage(ALLOWED)
+        await policy.recordServerStop({ scope: "all", code: "edge_blocked" })
+        const usage = coordinator()
+
+        await usage.start()
+        const allowedAtStart = usage.reportingAllowed
+        worker.next = { kind: "stopped", scope: "all", code: "edge_blocked" }
+        scheduler.fire()
+        await waitFor(() => scheduler.pending.length === 1)
+        const allowedAfterRefusal = usage.reportingAllowed
+        worker.next = { kind: "idle" }
+        scheduler.fire()
+        await waitFor(() => scheduler.pending.length === 1)
+        const attemptsWhileHeld = worker.epochs.length
+        now += SERVER_STOP_RETRY_INTERVAL_MS
+        scheduler.fire()
+        await waitFor(() => scheduler.pending.length === 1)
+
+        expect([allowedAtStart, allowedAfterRefusal, usage.reportingAllowed]).toEqual([true, false, true])
+        expect(attemptsWhileHeld).toBe(1)
+        expect(worker.epochs).toHaveLength(2)
+        expect((await policy.read())?.serverStop).toBeUndefined()
         await usage.dispose()
     })
 

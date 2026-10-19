@@ -175,10 +175,22 @@ export class DeviceCredentialRepository {
     }
 
     /**
-     * Remove every bearer token, including any inside quarantined copies, while
-     * keeping the device secret so the machine principal stays stable.
+     * Remove bearer tokens while keeping the device secret so the machine
+     * principal stays stable. With `profiles`, only those streams lose their
+     * token, so turning one stream off leaves the other running; without it every
+     * token goes, including any inside quarantined copies.
      */
-    async clearTokens(): Promise<void> {
+    async clearTokens(profiles?: readonly RemoteProfile[]): Promise<void> {
+        if (profiles) {
+            await this.withDocumentLock(async () => {
+                const current = await this.readLatestForWrite()
+                if (current.status !== "valid" || !profiles.some((profile) => current.document.tokens[profile])) return
+                const tokens = { ...current.document.tokens }
+                for (const profile of profiles) delete tokens[profile]
+                await this.write({ ...current.document, generation: current.document.generation + 1, tokens }, current.raw)
+            })
+            return
+        }
         await this.withDocumentLock(async () => {
             const current = await this.readLatestForWrite()
             if (current.status === "valid" && hasTokenState(current.document)) {

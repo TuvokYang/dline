@@ -63,6 +63,8 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
     /** Last steady cycle state printed, so a state that holds for hours is logged once. */
     private loggedSteadyState: string | undefined
     private ownedByNewerBuild = false
+    /** Until the first decision is stored, a recorded server refusal is retried once for this start. */
+    private startupResolved = false
 
     constructor(private readonly options: RemoteUsageCoordinatorOptions) {
         this.clock = options.clock ?? Date.now
@@ -141,7 +143,8 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
             return
         }
         try {
-            await this.apply(await this.options.policy.resolveUsage(inputs))
+            await this.apply(await this.options.policy.resolveUsage(inputs, { startup: !this.startupResolved }))
+            this.startupResolved = true
         } catch (error) {
             this.adopt(undefined)
             this.log("warn", `usage policy could not be applied: ${describe(error)}`)
@@ -165,8 +168,9 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
         this.cycleAbort?.abort()
         await this.options.outbox.reset(next.epoch)
         await this.options.spool.purge()
+        // Only the usage token: error diagnostics follow their own consent and keep theirs.
         if (next.decision.reason === "consent_off") {
-            await this.options.credentials.clearTokens()
+            await this.options.credentials.clearTokens(["usage"])
         }
     }
 

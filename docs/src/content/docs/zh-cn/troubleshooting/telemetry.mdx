@@ -1,6 +1,6 @@
 ---
 title: 遥测、隐私与 Issue 诊断
-description: 了解 Dline 的报告等级、数据用途、身份分离、本地保留边界、向 otel.dline.cc 投递使用统计，以及计划中的 Issue 授权流程。
+description: 了解 Dline 的报告等级、数据用途、身份分离、本地保留边界、向 otel.dline.cc 投递使用统计和错误诊断，以及计划中的 Issue 授权流程。
 ---
 
 import { Aside } from "@astrojs/starlight/components"
@@ -8,12 +8,12 @@ import { Aside } from "@astrojs/starlight/components"
 Dline 分别征求产品使用统计和错误/运行时诊断的同意。两个复选框共同形成有效报告等级，但仍是独立权限。
 
 <Aside>
-向 `otel.dline.cc` 投递使用统计已按下文所述启用。本页标为“计划”的统一 journal 迁移、`otel.dline.cc` 诊断 profile 和 Issue 诊断授权在当前构建中尚未启用。
+向 `otel.dline.cc` 投递使用统计和错误诊断已按下文所述启用。本页标为“计划”的统一 journal 迁移、`issue_diagnostic` 与 `development` profile，以及 Issue 诊断授权在当前构建中尚未启用。
 </Aside>
 
 ## 报告等级
 
-在 **Settings → About** 中可以找到 **Allow usage reporting** 和 **Allow error reporting**。两者默认未勾选；`unset` 和 `disabled` 都表示拒绝对应通道，只有明确勾选才算同意。
+在 **Settings → About** 中可以找到 **Allow usage reporting** 和 **Allow error reporting**。两者默认勾选。取消勾选任一项会保存为 `disabled` 并立即拒绝对应通道；`unset` 同样表示拒绝。
 
 | 有效等级 | 使用统计 | 错误报告 | 数据与用途 |
 |---|---:|---:|---|
@@ -143,23 +143,54 @@ development 模式可以保留额外本地关联字段，但不等于远端授�
 
 ### 关闭使用统计投递
 
-上述任一条件导致投递停止时，Dline 会中止当前发送，并删除未发送的 observation、待发分钟和已保存的请求正文。取消勾选 **Allow usage reporting** 还会删除本地访问令牌；设备密钥会保留，因此重新同意不会注册新设备。错误报告不受影响。服务端已接收的数据不会被删除。
+上述任一条件导致投递停止时，Dline 会中止当前发送，并删除未发送的 observation、待发分钟和已保存的请求正文。取消勾选 **Allow usage reporting** 还会删除本地使用统计访问令牌；设备密钥会保留，因此重新同意不会注册新设备。错误诊断投递及其令牌不受影响。服务端已接收的数据不会被删除。
 
 该投递进入 production 版本之前，必须公开服务端的保留、访问和删除政策。
 
-## 计划中的 `otel.dline.cc` 诊断
+## 向 `otel.dline.cc` 投递错误诊断
 
-计划中的 diagnostic profile 是同一 canonical mechanism 内的 sink，不是第二套遥测系统。
+只有以下条件全部成立时，Dline 才会向 `https://otel.dline.cc/v1/logs` 发送错误和运行时诊断：
+
+- 已勾选 **Allow error reporting**。该项默认开启；在 **Settings → About** 中取消勾选会立即停止投递并删除尚未发送的诊断。
+- 组织 policy 没有禁用错误报告。
+- VS Code 的 `telemetry.telemetryLevel` 不是 `off`。为 `error` 时只发送 error 和 fatal 记录，为 `crash` 时只发送 fatal 记录；无法读取的等级会停止投递。
+- 服务端没有拒绝该设备或诊断流。
+- 当前不是自动化测试运行。
+
+### 发送内容
+
+只发送 log 记录，不发送 metrics 或 traces。只有以下失败事件，或运行时诊断管线评为 warning 及以上的运行时生命周期事件，才会生成记录：
+
+| 事件 | 严重度 |
+|---|---|
+| `task.provider_api_error`、`task.browser_error`、`user.extension_storage_error`、`workspace.init_error` | error |
+| `user.auth_failed`、`task.diff_edit_failed`、`task.terminal_output_failure`、`task.terminal_hang`、`task.mention_failed` | warning |
+
+每条记录包含事件名、通道（`error` 或 `runtime`）、严重度、时间戳和最多 32 个属性。属性只有在值为数字、布尔值或由字母、数字、`_`、`.`、`+`、`-` 组成的短 token（最多 64 个字符），且名称不指向自由文本、位置或身份（例如 message、stack、path、URL、command、Task、workspace、session、device、account 或凭据）时才会保留。请求 resource 只包含客户端版本和操作系统类型。
+
+不会发送错误消息、堆栈、提示词、响应、文件内容、路径、URL、命令、Task 或 workspace 身份、`distinct_id` 和 account ID。
+
+### 设备身份、队列与上限
+
+诊断与使用统计共用同一个假名化设备密钥，但交换各自的 `production` 访问令牌，因此每项同意只控制自己的令牌。队列位于 Dline data root 下的 `telemetry/remote/diagnostics/outbox.json`，由所有 Dline 窗口共享：
+
+- 各窗口每 5 秒把收集到的记录写入队列，同一时间只有一个窗口约每 20 秒发送一批。
+- 每批最多 256 条记录，且远低于 512 KiB。最多保留 2,000 条待发记录，超出时先丢弃最旧的记录。
+- 结果未知的批次会以相同请求 ID 和字节重发，服务端只存储一次。遇到限流或服务端错误时，按服务端要求的时间等待，否则等待一分钟。
+- 服务端拒绝诊断流时，所有窗口停止发送 30 分钟后再重试。
+
+### 关闭错误诊断
+
+取消勾选 **Allow error reporting**、宿主遥测等级为 `off`，或组织 policy 禁用错误报告时，Dline 会删除未发送的诊断队列和本地 `production` 访问令牌。使用统计投递及其令牌不受影响，设备密钥会保留。服务端已接收的数据不会被删除。
+
+### 计划中的 profile
 
 | Profile | 授权 | 数据 |
 |---|---|---|
-| `production` | 错误报告 | 经过内容过滤的 `error`/`runtime` logs、metrics 和 traces |
 | `issue_diagnostic` | 错误报告加 active per-Issue grant | 相同诊断类别的更高频视图 |
 | `development` | 对应同意加有效 development enrollment | 普通用户不可加入的开发流 |
 
-发布前，诊断投递必须落实与使用统计投递相同的 transport、credential 和 policy epoch 规则，并加上 privacy canary 和只能收紧 consent 的服务端 policy。diagnostic outbox 的 count、byte、age 上限必须在发布前固定。outbox 只是 sink 投递状态，不把 forensic journal 当作上传队列。
-
-关闭错误报告必须停止 capture 与发送、取消 in-flight request、删除未发送的诊断 outbox 及其本地 token，并保持使用统计投递不变。
+两者都是同一机制内计划中的 sink，在当前构建中尚未启用。
 
 ## 计划中的 Issue 诊断流程
 

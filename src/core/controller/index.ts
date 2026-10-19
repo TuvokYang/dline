@@ -93,6 +93,7 @@ import { getDistinctId } from "@/services/logging/distinctId"
 import { telemetryService } from "@/services/telemetry"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "@/services/telemetry/instrumentation/perf-domains"
+import { refreshRemoteDiagnostics } from "@/services/telemetry/remote/remoteDiagnosticsRuntime"
 import { refreshRemoteUsagePolicy } from "@/services/telemetry/remote/remoteUsageRuntime"
 import { getRuntimeTelemetryLifecycle } from "@/services/telemetry/runtime/host"
 import { ClineExtensionContext } from "@/shared/cline"
@@ -1931,6 +1932,12 @@ export class Controller {
             // Diagnostics are an aid; failing to apply consent must not stop the
             // setting itself from being saved or the webview from being refreshed.
             Logger.error("[Controller] Failed to apply runtime diagnostics consent:", error)
+        }
+        // Withdrawing consent deletes the diagnostics waiting to be sent, not only future ones.
+        try {
+            await refreshRemoteDiagnostics()
+        } catch (error) {
+            Logger.error("[Controller] Failed to apply remote diagnostics consent:", error)
         }
 
         await this.postStateToWebview()

@@ -1,6 +1,7 @@
 import type { ClineAccountUserInfo } from "@/services/auth/AuthService"
 import type { TelemetryContext } from "../context/telemetry-context"
 import type { TelemetryCategory } from "../events/catalog"
+import { routeOfEvent } from "../events/event-routes"
 import type { TelemetryProperties } from "../providers/ITelemetryProvider"
 import type { TelemetryCategoryPolicy } from "./category-policy"
 import type { TelemetryProviderRegistry } from "./provider-registry"
@@ -22,11 +23,13 @@ export class TelemetrySignalDispatcher implements TelemetrySignalSink {
     ) {}
 
     captureEvent(event: string, properties?: TelemetryProperties): void {
-        this.providers.logEvent(event, () => this.context.eventProperties(properties), false)
+        const route = routeOfEvent(event)
+        this.providers.logEvent(event, () => this.context.eventProperties(properties), false, route.channel, route.severity)
     }
 
     captureRequiredEvent(event: string, properties?: TelemetryProperties): void {
-        this.providers.logEvent(event, () => this.context.eventProperties(properties), true)
+        const route = routeOfEvent(event)
+        this.providers.logEvent(event, () => this.context.eventProperties(properties), true, route.channel, route.severity)
     }
 
     recordCounter(name: string, value: number, attributes?: TelemetryProperties, description?: string): void {
