@@ -5,7 +5,7 @@ import {
     type RemoteFeatureFlagsStartOptions,
     rolloutPollIntervalMs,
 } from "../providers/RemoteFeatureFlagsProvider"
-import type { CachedFeatureFlags, FeatureFlagsCache } from "../remote/FeatureFlagsCacheFile"
+import type { CachedFeatureFlags, FeatureFlagsCache, FeatureFlagsRequestClaim } from "../remote/FeatureFlagsCacheFile"
 import type { FeatureFlagsSource } from "../remote/FeatureFlagsHttpSource"
 import type { FeatureFlagsDocument } from "../remote/flagsDocument"
 
@@ -57,6 +57,17 @@ class MemoryCache implements FeatureFlagsCache {
     async clear(): Promise<void> {
         this.entry = undefined
     }
+
+    /** Another window's claim this cache reports, or undefined to grant every claim. */
+    deniedUntil: number | undefined
+    readonly grantedIds: string[] = []
+
+    async claimRequest(): Promise<FeatureFlagsRequestClaim> {
+        if (this.deniedUntil !== undefined) return { granted: false, recheckAt: this.deniedUntil }
+        const requestId = `request-${this.grantedIds.length + 1}`
+        this.grantedIds.push(requestId)
+        return { granted: true, requestId }
+    }
 }
 
 /** Start a session of a device that reports usage, at {@link INTERVAL}, unless the test says otherwise. */
@@ -72,12 +83,16 @@ function document(flags: Record<string, boolean>, ttlSeconds = 3_600): FeatureFl
     return { flags, ttlSeconds }
 }
 
-function sourceAnswering(...answers: Array<FeatureFlagsDocument | Error>): FeatureFlagsSource & { calls: number } {
+function sourceAnswering(
+    ...answers: Array<FeatureFlagsDocument | Error>
+): FeatureFlagsSource & { calls: number; requestIds: string[] } {
     const source = {
         calls: 0,
-        async fetchFlags(): Promise<FeatureFlagsDocument> {
+        requestIds: [] as string[],
+        async fetchFlags(requestId: string): Promise<FeatureFlagsDocument> {
             const answer = answers[Math.min(source.calls, answers.length - 1)]
             source.calls++
+            source.requestIds.push(requestId)
             if (answer instanceof Error) throw answer
             return answer
         },
@@ -111,6 +126,45 @@ describe("RemoteFeatureFlagsProvider", () => {
         expect(provider.resolveFlags(["account"])).toEqual({ account: true })
         // The service's 600 s ttl does not set the pace; 100 s of the interval are already spent.
         expect(scheduler.delays()).toEqual([INTERVAL - 100_000])
+    })
+
+    it("sends the id of the request it claimed, a new one for each request", async () => {
+        const scheduler = new ManualScheduler()
+        const cache = new MemoryCache()
+        const source = sourceAnswering(document({ account: true }))
+        let now = NOW
+        const provider = new RemoteFeatureFlagsProvider(["account"])
+
+        await start(provider, { source, cache, scheduler, now: () => now })
+        await scheduler.fireAll()
+        now += INTERVAL
+        await scheduler.fireAll()
+
+        expect(source.requestIds).toEqual(["request-1", "request-2"])
+    })
+
+    it("does not ask while another window holds the interval's request, and looks at the shared cache when it said", async () => {
+        const scheduler = new ManualScheduler()
+        const cache = new MemoryCache()
+        cache.deniedUntil = NOW + 15_000
+        const source = sourceAnswering(document({ account: true }))
+        let now = NOW
+        const provider = new RemoteFeatureFlagsProvider(["account"])
+
+        await start(provider, { source, cache, scheduler, now: () => now })
+        await scheduler.fireAll()
+
+        expect(source.calls).toBe(0)
+        expect(scheduler.delays()).toEqual([15_000])
+
+        // The other window's answer lands in the shared cache; this window applies it without asking.
+        cache.entry = { document: document({ account: true }), fetchedAt: NOW + 2_000 }
+        now = NOW + 15_000
+        await scheduler.fireAll()
+
+        expect(source.calls).toBe(0)
+        expect(provider.resolveFlags(["account"])).toEqual({ account: true })
+        expect(scheduler.delays()).toEqual([INTERVAL - 13_000])
     })
 
     it("answers only the eligible switches, whatever the service sends", async () => {

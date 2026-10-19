@@ -10,6 +10,7 @@ import {
 import { MAX_FEATURE_FLAGS_TTL_SECONDS, MIN_FEATURE_FLAGS_TTL_SECONDS, parseFeatureFlagsDocument } from "../remote/flagsDocument"
 
 const QUERY = { version: "0.11.0", platform: "win32", flags: ["account"] }
+const REQUEST_ID = "5f0c3a52-7d9e-4b8a-9c1d-2e3f4a5b6c7d"
 
 function createSource(options: Partial<FeatureFlagsHttpSourceOptions> = {}): FeatureFlagsHttpSource {
     return new FeatureFlagsHttpSource({ query: QUERY, deviceId: async () => "dev_device-1", ...options })
@@ -34,7 +35,7 @@ describe("FeatureFlagsHttpSource", () => {
 
         const document = await mockFetchForTesting(
             respondWith(200, { schema_version: 1, flags: { account: true }, ttl_seconds: 600 }, captured),
-            () => source.fetchFlags(),
+            () => source.fetchFlags(REQUEST_ID),
         )
 
         expect(document).toEqual({ flags: { account: true }, ttlSeconds: 600 })
@@ -43,6 +44,7 @@ describe("FeatureFlagsHttpSource", () => {
         expect(captured[0].init).toMatchObject({ method: "POST", redirect: "error" })
         expect(new Headers(captured[0].init?.headers).has("authorization")).toBe(false)
         expect(new Headers(captured[0].init?.headers).get("user-agent")).toBe(`Dline/${ExtensionRegistryInfo.version}`)
+        expect(new Headers(captured[0].init?.headers).get("x-dline-request-id")).toBe(REQUEST_ID)
         expect(JSON.parse(String(captured[0].init?.body))).toEqual({
             schema_version: 1,
             device_id: "dev_device-1",
@@ -57,7 +59,7 @@ describe("FeatureFlagsHttpSource", () => {
         const source = createSource({ deviceId: async () => undefined })
 
         const failure = await mockFetchForTesting(respondWith(200, { schema_version: 1, flags: {} }, captured), () =>
-            source.fetchFlags().catch((error: unknown) => error),
+            source.fetchFlags(REQUEST_ID).catch((error: unknown) => error),
         )
 
         expect(failure).toMatchObject({ failure: "no_device" })
@@ -73,7 +75,7 @@ describe("FeatureFlagsHttpSource", () => {
         })
 
         const failure = await mockFetchForTesting(respondWith(200, { schema_version: 1, flags: {} }, captured), () =>
-            source.fetchFlags().catch((error: unknown) => error),
+            source.fetchFlags(REQUEST_ID).catch((error: unknown) => error),
         )
 
         expect(failure).toBeInstanceOf(FeatureFlagsFetchError)
@@ -86,7 +88,7 @@ describe("FeatureFlagsHttpSource", () => {
         const source = createSource()
 
         const failure = await mockFetchForTesting(respondWith(503, { schema_version: 1, flags: { account: true } }), () =>
-            source.fetchFlags().catch((error: unknown) => error),
+            source.fetchFlags(REQUEST_ID).catch((error: unknown) => error),
         )
 
         expect(failure).toBeInstanceOf(FeatureFlagsFetchError)
@@ -97,7 +99,7 @@ describe("FeatureFlagsHttpSource", () => {
         const source = createSource()
 
         const failure = await mockFetchForTesting(respondWith(200, "<html>captive portal</html>"), () =>
-            source.fetchFlags().catch((error: unknown) => error),
+            source.fetchFlags(REQUEST_ID).catch((error: unknown) => error),
         )
 
         expect(failure).toMatchObject({ failure: "invalid_document" })

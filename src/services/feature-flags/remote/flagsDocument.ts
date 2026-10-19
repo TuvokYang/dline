@@ -1,5 +1,5 @@
 /**
- * Wire contract of the Dline feature service (`GET /v1/flags`).
+ * Response contract of the Dline feature service (`POST /v1/features`).
  *
  * ```json
  * { "schema_version": 1, "flags": { "account": true }, "ttl_seconds": 3600 }

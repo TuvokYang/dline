@@ -1,4 +1,4 @@
-import type { FeatureFlagsCache } from "../remote/FeatureFlagsCacheFile"
+import type { FeatureFlagsCache, FeatureFlagsRequestClaim } from "../remote/FeatureFlagsCacheFile"
 import type { FeatureFlagsSource } from "../remote/FeatureFlagsHttpSource"
 import type { FeatureFlagPayload, FeatureFlagsSettings, IFeatureFlagsProvider } from "./IFeatureFlagsProvider"
 
@@ -220,10 +220,19 @@ class RefreshSession {
     }
 
     private async fetchAndApply(): Promise<void> {
-        this.nextRequestAt = this.now() + this.options.pollIntervalMs
+        const claimedAt = this.now()
+        this.nextRequestAt = claimedAt + this.options.pollIntervalMs
+        const claim = await this.claimRequest(claimedAt)
+        if (this.abort.signal.aborted) return
+        if (!claim.granted) {
+            // Another window asked within the interval; its answers arrive through the shared cache.
+            this.options.log?.("debug", "[FeatureFlags] Another window holds this interval's rollout request")
+            this.schedule(claim.recheckAt - this.now())
+            return
+        }
         const nextIn = `${this.options.pollIntervalMs / 1000} s`
         try {
-            const document = await this.options.source.fetchFlags(this.abort.signal)
+            const document = await this.options.source.fetchFlags(claim.requestId, this.abort.signal)
             if (this.abort.signal.aborted) return
             // Participation may have ended while the request was out; its answer must not outlive it.
             if (!this.options.participates()) return await this.withdraw()
@@ -249,6 +258,16 @@ class RefreshSession {
         const level = outcome === this.announcedOutcome ? "debug" : "info"
         this.announcedOutcome = outcome
         this.options.log?.(level, message)
+    }
+
+    /** A gate that cannot be read or written never turns into extra requests: this window waits one interval. */
+    private async claimRequest(now: number): Promise<FeatureFlagsRequestClaim> {
+        try {
+            return await this.options.cache.claimRequest(now, this.options.pollIntervalMs)
+        } catch (error) {
+            this.options.log?.("warn", `[FeatureFlags] Could not claim the rollout request: ${describe(error)}`)
+            return { granted: false, recheckAt: now + this.options.pollIntervalMs }
+        }
     }
 
     private async readCache() {

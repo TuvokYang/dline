@@ -32,7 +32,11 @@ export class FeatureFlagsFetchError extends Error {
 
 /** Where the remote rollout answers come from. */
 export interface FeatureFlagsSource {
-    fetchFlags(signal?: AbortSignal): Promise<FeatureFlagsDocument>
+    /**
+     * Ask for the answers once. `requestId` names this request; the same id is
+     * never reused for another request, so the service can recognise a repeat.
+     */
+    fetchFlags(requestId: string, signal?: AbortSignal): Promise<FeatureFlagsDocument>
 }
 
 export interface FeatureFlagsHttpSourceOptions {
@@ -78,7 +82,7 @@ export class FeatureFlagsHttpSource implements FeatureFlagsSource {
         return this.url.origin
     }
 
-    async fetchFlags(signal?: AbortSignal): Promise<FeatureFlagsDocument> {
+    async fetchFlags(requestId: string, signal?: AbortSignal): Promise<FeatureFlagsDocument> {
         // Acquired before the request deadline starts: an enrollment has its own bound.
         const deviceId = await this.acquireDeviceId(signal)
         const deadline = new AbortController()
@@ -90,7 +94,12 @@ export class FeatureFlagsHttpSource implements FeatureFlagsSource {
             const response = await fetch(this.url, {
                 method: "POST",
                 // Every Dline client announces itself with the same agent; the runtime default would only say "node".
-                headers: { ...buildExternalBasicHeaders(), accept: "application/json", "content-type": "application/json" },
+                headers: {
+                    ...buildExternalBasicHeaders(),
+                    accept: "application/json",
+                    "content-type": "application/json",
+                    "x-dline-request-id": requestId,
+                },
                 body: JSON.stringify({
                     schema_version: FEATURE_FLAGS_SCHEMA_VERSION,
                     device_id: deviceId,
