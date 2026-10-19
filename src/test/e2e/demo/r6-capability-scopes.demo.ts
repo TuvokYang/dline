@@ -159,7 +159,7 @@ demo(
         const completion = sidebar.getByText(COMPLETION_TEXT, { exact: false }).last()
         await expect(completion).toBeVisible({ timeout: 60_000 })
         await focusCamera(completion)
-        await pace(600)
+        await pace(400)
 
         const showCapabilities = sidebar.getByRole("button", { name: "Show Dline Rules & Workflows", exact: true }).first()
         await focusCamera(showCapabilities, STEP_SETTLE_MS)
@@ -190,7 +190,8 @@ demo(
         await expect(freshnessTooltip).toContainText("Rules changed")
         await expect(freshnessTooltip).toContainText("MCP tools changed")
         await focusCamera([refreshButton, freshnessTooltip], 0)
-        await pace(1_800)
+        // Keeps the clip inside the 20 s GIF budget while leaving the freshness tooltip readable.
+        await pace(800)
         await finishRecording()
 
         const consumptions = server.getMockConsumptions("openai-compatible-chat")

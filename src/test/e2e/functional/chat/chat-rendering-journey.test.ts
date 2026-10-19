@@ -295,16 +295,14 @@ e2e(
             ].join("\n")
 
             server.resetOpenAiMock()
-            server.enqueueResponses(
-                "openai-compatible-responses",
-                { type: "message", text: answer },
-                {
-                    type: "tool",
-                    id: "call_latex_rendering_completion",
-                    name: "attempt_completion",
-                    arguments: { result: completionMarker },
-                },
-            )
+            // Plain assistant text between tool calls is not shown in the chat, so the
+            // Markdown under test is part of the completion result.
+            server.enqueueResponses("openai-compatible-responses", {
+                type: "tool",
+                id: "call_latex_rendering_completion",
+                name: "attempt_completion",
+                arguments: { result: `${answer}\n\n${completionMarker}` },
+            })
 
             await sendTask(sidebar, taskText)
             await expect(sidebar.getByText(completionMarker, { exact: false }).last()).toBeVisible({ timeout: 90_000 })

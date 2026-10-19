@@ -39,20 +39,15 @@ demo("R10", async ({ captureScreenshot, helper, page, server, sidebar, userDataD
     await selectProfile(sidebar, E2E_PROFILE_NAMES.mockOpenAiResponses)
 
     server.resetOpenAiMock()
-    server.enqueueResponses(
-        "openai-compatible-responses",
-        {
-            type: "message",
-            text: RICH_MARKDOWN,
-            expectedRequestIncludes: [TASK_TEXT],
-        },
-        {
-            type: "tool",
-            id: "call_r10_complete",
-            name: "attempt_completion",
-            arguments: { result: COMPLETION_TEXT },
-        },
-    )
+    // Plain assistant text between tool calls is not shown in the chat, so the rich
+    // content is part of the completion result, which renders as Markdown.
+    server.enqueueResponses("openai-compatible-responses", {
+        type: "tool",
+        id: "call_r10_complete",
+        name: "attempt_completion",
+        arguments: { result: `${RICH_MARKDOWN}\n\n${COMPLETION_TEXT}` },
+        expectedRequestIncludes: [TASK_TEXT],
+    })
 
     await dismissDemoNotifications(page)
     const input = sidebar.getByTestId("chat-input")
@@ -85,10 +80,7 @@ demo("R10", async ({ captureScreenshot, helper, page, server, sidebar, userDataD
     expect(asset.bytes).toBeLessThanOrEqual(500_000)
 
     const consumptions = server.getMockConsumptions("openai-compatible-responses")
-    expect(consumptions.map(({ responseType, toolName }) => [responseType, toolName])).toEqual([
-        ["message", undefined],
-        ["tool", "attempt_completion"],
-    ])
+    expect(consumptions.map(({ responseType, toolName }) => [responseType, toolName])).toEqual([["tool", "attempt_completion"]])
     expect(consumptions.every(({ contractError }) => contractError === undefined)).toBe(true)
     await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir, [/Error fetching OpenRouter models/])
 })
