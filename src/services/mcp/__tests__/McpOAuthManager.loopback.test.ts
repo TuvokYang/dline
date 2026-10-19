@@ -115,14 +115,19 @@ function readBody(request: http.IncomingMessage): Promise<string> {
     })
 }
 
+interface BrowserPage {
+    status: number
+    callbackUrl: string
+    body: string
+}
+
 /** Browser stand-in: follows the authorization redirect and loads the callback page. */
-function followAuthorizationInBrowser(pages: { status: number; callbackUrl: string }[]) {
+function followAuthorizationInBrowser(pages: BrowserPage[]) {
     browser.open = async (authorizationUrl) => {
         const authorization = await fetch(authorizationUrl, { redirect: "manual" })
         const callbackUrl = authorization.headers.get("location") ?? ""
         const page = await fetch(callbackUrl)
-        await page.text()
-        pages.push({ status: page.status, callbackUrl })
+        pages.push({ status: page.status, callbackUrl, body: await page.text() })
     }
 }
 
@@ -160,9 +165,9 @@ describe("McpOAuthManager redirect for MCP authorization servers", () => {
         expect(isWebUri(registered)).toBe(true)
         expect(new URL(registered).hostname).toBe("127.0.0.1")
 
-        const pages: { status: number; callbackUrl: string }[] = []
+        const pages: BrowserPage[] = []
         followAuthorizationInBrowser(pages)
-        const flow = await manager.startOAuthFlow(SERVER_NAME, authorizationServer.url)
+        const flow = await manager.startOAuthFlow(SERVER_NAME, authorizationServer.url, "Show 3D <dev>")
         await flow?.result
 
         expect(flow).toBeDefined()
@@ -170,6 +175,9 @@ describe("McpOAuthManager redirect for MCP authorization servers", () => {
         expect(pages).toHaveLength(1)
         expect(pages[0].status).toBe(200)
         expect(new URL(pages[0].callbackUrl).origin).toBe(new URL(registered).origin)
+        // The result page names the server the user authorized, HTML-escaped.
+        const description = /<p>(.*?)<\/p>/s.exec(pages[0].body)?.[1]
+        expect(description).toContain("Show 3D &lt;dev&gt;")
         expect((await provider.tokens())?.access_token).toBe("access-token-1")
         // The callback endpoint exists only while an authorization is pending.
         await expect(fetch(registered)).rejects.toThrow()
@@ -187,7 +195,7 @@ describe("McpOAuthManager redirect for MCP authorization servers", () => {
         const provider = await manager.getOrCreateProvider(SERVER_NAME, authorizationServer.url)
         await auth(provider, { serverUrl: authorizationServer.url })
 
-        const pages: { status: number; callbackUrl: string }[] = []
+        const pages: BrowserPage[] = []
         followAuthorizationInBrowser(pages)
         const first = await manager.startOAuthFlow(SERVER_NAME, authorizationServer.url)
         await expect(first?.result).rejects.toThrow()

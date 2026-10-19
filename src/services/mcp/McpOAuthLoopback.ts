@@ -12,19 +12,22 @@ const LOOPBACK_HOST = "127.0.0.1"
  */
 const LOOPBACK_PORTS: readonly number[] = Array.from({ length: 20 }, (_, index) => 48820 + index)
 
-export const MCP_OAUTH_CALLBACK_PAGES: LocalOAuthCallbackPages = {
-    success: renderAuthResultPage({
-        status: "success",
-        title: "Authorization successful",
-        description: "Dline received the authorization for this MCP server and is reconnecting it.",
-        hint: "Close this window and return to your editor.",
-    }),
-    failure: renderAuthResultPage({
-        status: "failure",
-        title: "Authorization failed",
-        description: "Dline could not complete the authorization for this MCP server.",
-        hint: "Close this window and click Authenticate again in Dline's MCP settings.",
-    }),
+/** Browser pages for one MCP server's loopback authorization, naming the server the user authorized. */
+export function mcpOAuthCallbackPages(serverDisplayName: string): LocalOAuthCallbackPages {
+    return {
+        success: renderAuthResultPage({
+            status: "success",
+            title: "Authorization successful",
+            description: `Dline received the authorization for MCP server "${serverDisplayName}" and is reconnecting it.`,
+            hint: "Close this window and return to your editor.",
+        }),
+        failure: renderAuthResultPage({
+            status: "failure",
+            title: "Authorization failed",
+            description: `Dline could not complete the authorization for MCP server "${serverDisplayName}".`,
+            hint: "Close this window and click Authenticate again in Dline's MCP settings.",
+        }),
+    }
 }
 
 /**

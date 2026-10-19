@@ -1874,9 +1874,10 @@ export class McpHub {
         }
 
         // Start OAuth flow - opens the SDK-generated authorization URL in browser
+        const displayName = connection.server.displayName ?? serverName
         let flow: McpOAuthFlow | undefined
         try {
-            flow = await this.mcpOAuthManager.startOAuthFlow(serverName, serverUrl)
+            flow = await this.mcpOAuthManager.startOAuthFlow(serverName, serverUrl, displayName)
         } catch (error) {
             if (error instanceof McpOAuthReregistrationRequiredError) {
                 // Reconnecting registers a redirect Dline can serve and stores a new authorization URL.
@@ -1885,13 +1886,14 @@ export class McpHub {
             throw error
         }
         if (flow) {
-            void this.settleOAuthFlow(getServerAuthHash(serverName, serverUrl), flow)
+            void this.settleOAuthFlow(getServerAuthHash(serverName, serverUrl), flow, displayName)
         }
     }
 
     /** Completes an authorization that came back through the URI handler and tells the user the outcome. */
     async completeOAuthFromCallback(serverHash: string, code: string, state: string | null): Promise<void> {
-        await this.reportOAuthOutcome(() => this.completeOAuth(serverHash, code, state))
+        const server = this.lookupOAuthConnection(serverHash)?.server
+        await this.reportOAuthOutcome(server?.displayName ?? server?.name, () => this.completeOAuth(serverHash, code, state))
     }
 
     /**
@@ -1911,44 +1913,48 @@ export class McpHub {
     }
 
     /** Waits for a loopback authorization on the shared coordinator, then reconnects the server. */
-    private async settleOAuthFlow(serverHash: string, flow: McpOAuthFlow): Promise<void> {
+    private async settleOAuthFlow(serverHash: string, flow: McpOAuthFlow, displayName: string): Promise<void> {
         try {
             await flow.result
         } catch (error) {
             if (!isOAuthFlowCancelled(error)) {
-                this.reportOAuthFailure(error)
+                this.reportOAuthFailure(displayName, error)
             }
             return
         }
-        await this.reportOAuthOutcome(() => this.reconnectAuthenticated(serverHash))
+        await this.reportOAuthOutcome(displayName, () => this.reconnectAuthenticated(serverHash))
     }
 
-    private async reportOAuthOutcome(complete: () => Promise<void>): Promise<void> {
+    private async reportOAuthOutcome(displayName: string | undefined, complete: () => Promise<void>): Promise<void> {
         try {
             await complete()
             HostProvider.window.showMessage({
                 type: ShowMessageType.INFORMATION,
-                message: "Successfully authenticated MCP server",
+                message: `Successfully authenticated ${describeMcpServer(displayName)}`,
             })
         } catch (error) {
-            this.reportOAuthFailure(error)
+            this.reportOAuthFailure(displayName, error)
         }
     }
 
-    private reportOAuthFailure(error: unknown): void {
+    private reportOAuthFailure(displayName: string | undefined, error: unknown): void {
         Logger.error("Failed to complete MCP OAuth:", error)
         const reason = error instanceof Error ? error.message : String(error)
         HostProvider.window.showMessage({
             type: ShowMessageType.ERROR,
-            message: `Failed to authenticate MCP server: ${reason}`,
+            message: `Failed to authenticate ${describeMcpServer(displayName)}: ${reason}`,
+        })
+    }
+
+    private lookupOAuthConnection(serverHash: string): McpConnection | undefined {
+        return this.connections.find((conn) => {
+            const config = JSON.parse(conn.server.config)
+            return config.url ? getServerAuthHash(conn.server.name, config.url) === serverHash : false
         })
     }
 
     private findOAuthConnection(serverHash: string): McpConnection {
-        const connection = this.connections.find((conn) => {
-            const config = JSON.parse(conn.server.config)
-            return config.url ? getServerAuthHash(conn.server.name, config.url) === serverHash : false
-        })
+        const connection = this.lookupOAuthConnection(serverHash)
         if (!connection) {
             throw new Error(`No connection found for server hash: ${serverHash}`)
         }
@@ -2003,4 +2009,9 @@ export class McpHub {
         await this.workspaceMcpRegistry.dispose()
         await this.mcpOAuthManager.dispose()
     }
+}
+
+/** Names the server in a user-facing message, or falls back to a generic label when it is no longer known. */
+function describeMcpServer(displayName: string | undefined): string {
+    return displayName ? `MCP server "${displayName}"` : "MCP server"
 }

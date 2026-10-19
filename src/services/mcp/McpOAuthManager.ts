@@ -376,13 +376,21 @@ export class McpOAuthManager {
      * The URL comes from redirectToAuthorization(), stored when the SDK found the server needs OAuth.
      * A loopback redirect runs on the shared OAuth coordinator and returns its flow; a host callback
      * (VS Code Web) opens the URL with a fresh state and completes through the URI handler.
+     *
+     * @param serverDisplayName Name the user sees for the server, used on the browser result page and in errors.
      */
-    async startOAuthFlow(serverName: string, serverUrl: string): Promise<McpOAuthFlow | undefined> {
+    async startOAuthFlow(
+        serverName: string,
+        serverUrl: string,
+        serverDisplayName: string = serverName,
+    ): Promise<McpOAuthFlow | undefined> {
         const serverHash = getServerAuthHash(serverName, serverUrl)
         const sdkAuthorizationUrl = getMcpOAuthSecrets()[serverHash]?.pending_auth_url
         if (!sdkAuthorizationUrl) {
             // The SDK has not been triggered yet, e.g. the server was just added and has not connected.
-            throw new Error(`No pending authorization URL found for ${serverName}. Please try restarting the server first.`)
+            throw new Error(
+                `No pending authorization URL found for ${serverDisplayName}. Please try restarting the server first.`,
+            )
         }
 
         const provider = this.providers.get(providerKey(serverName, serverUrl))
@@ -390,7 +398,7 @@ export class McpOAuthManager {
             await this.openWithFreshState(serverHash, sdkAuthorizationUrl)
             return undefined
         }
-        return this.startLoopbackFlow({ serverName, serverUrl, serverHash, provider, sdkAuthorizationUrl })
+        return this.startLoopbackFlow({ serverName, serverUrl, serverDisplayName, serverHash, provider, sdkAuthorizationUrl })
     }
 
     /**
@@ -416,14 +424,15 @@ export class McpOAuthManager {
     private async startLoopbackFlow(target: {
         serverName: string
         serverUrl: string
+        serverDisplayName: string
         serverHash: string
         provider: OAuthClientProvider
         sdkAuthorizationUrl: string
     }): Promise<McpOAuthFlow> {
-        const { serverName, serverUrl, serverHash, provider, sdkAuthorizationUrl } = target
+        const { serverName, serverUrl, serverDisplayName, serverHash, provider, sdkAuthorizationUrl } = target
         const strategy = new McpOAuthFlowStrategy({
             serverHash,
-            serverName,
+            serverDisplayName,
             redirectUrl: String(provider.redirectUrl),
             sdkAuthorizationUrl,
             exchange: async (code, codeVerifier) => {
@@ -432,7 +441,7 @@ export class McpOAuthManager {
                 await this.exchangeCode(serverHash, code)
                 const tokens = await provider.tokens()
                 if (!tokens) {
-                    throw new Error(`The authorization server returned no tokens for MCP server "${serverName}".`)
+                    throw new Error(`The authorization server returned no tokens for MCP server "${serverDisplayName}".`)
                 }
                 return tokens
             },
@@ -440,7 +449,7 @@ export class McpOAuthManager {
         if (!strategy.matchesRegisteredRedirect()) {
             this.forgetRedirect(serverName, serverUrl, serverHash)
             throw new McpOAuthReregistrationRequiredError(
-                `The authorization request for MCP server "${serverName}" was built for an earlier callback. Dline is registering again; click Authenticate once it asks for authentication.`,
+                `The authorization request for MCP server "${serverDisplayName}" was built for an earlier callback. Dline is registering again; click Authenticate once it asks for authentication.`,
             )
         }
 
@@ -459,7 +468,7 @@ export class McpOAuthManager {
             }
             this.forgetRedirect(serverName, serverUrl, serverHash)
             throw new McpOAuthReregistrationRequiredError(
-                `The OAuth callback port ${strategy.callbackPort} for MCP server "${serverName}" is in use by another program. Dline is registering a new callback; click Authenticate again.`,
+                `The OAuth callback port ${strategy.callbackPort} for MCP server "${serverDisplayName}" is in use by another program. Dline is registering a new callback; click Authenticate again.`,
             )
         }
 

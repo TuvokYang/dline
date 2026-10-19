@@ -1,10 +1,16 @@
 import type { OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js"
-import type { OAuthAuthorizationInput, OAuthAuthorizationStrategy, OAuthCodeExchangeInput } from "@/services/oauth"
-import { MCP_OAUTH_CALLBACK_PAGES } from "./McpOAuthLoopback"
+import type {
+    LocalOAuthCallbackPages,
+    OAuthAuthorizationInput,
+    OAuthAuthorizationStrategy,
+    OAuthCodeExchangeInput,
+} from "@/services/oauth"
+import { mcpOAuthCallbackPages } from "./McpOAuthLoopback"
 
 export interface McpOAuthFlowTarget {
     serverHash: string
-    serverName: string
+    /** Name the user sees for the server, shown on the browser result page. */
+    serverDisplayName: string
     /** Loopback redirect registered for this server's client. */
     redirectUrl: string
     /**
@@ -30,14 +36,15 @@ export class McpOAuthFlowStrategy implements OAuthAuthorizationStrategy<OAuthTok
     readonly callbackPort: number
     readonly callbackPath: string
     readonly providerDisplayName: string
-    readonly callbackPages = MCP_OAUTH_CALLBACK_PAGES
+    readonly callbackPages: LocalOAuthCallbackPages
 
     constructor(private readonly target: McpOAuthFlowTarget) {
         const redirect = new URL(target.redirectUrl)
         this.strategyId = `mcp:${target.serverHash}`
         this.callbackPort = Number(redirect.port)
         this.callbackPath = redirect.pathname
-        this.providerDisplayName = target.serverName
+        this.providerDisplayName = target.serverDisplayName
+        this.callbackPages = mcpOAuthCallbackPages(target.serverDisplayName)
     }
 
     /** Whether the SDK URL was built for the redirect this strategy listens on. */
