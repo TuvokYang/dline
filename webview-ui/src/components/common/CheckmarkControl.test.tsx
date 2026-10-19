@@ -75,6 +75,14 @@ describe("CheckmarkControl", () => {
         )
     })
 
+    it("offers neither compare nor restore while the round is still building the restore point", () => {
+        render(<CheckmarkControl hasWorkspaceCheckpoint messageTs={42} pending />)
+
+        expect(screen.getByText("Checkpoint", { exact: true })).toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Compare", exact: true, hidden: true })).not.toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Restore", exact: true, hidden: true })).not.toBeInTheDocument()
+    })
+
     it("hides file operations when the current checkpoint backend is unhealthy", () => {
         checkpointManagerErrorMessage = "One workspace checkpoint backend is unhealthy."
         render(<CheckmarkControl hasWorkspaceCheckpoint messageTs={42} />)

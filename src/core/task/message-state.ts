@@ -685,11 +685,32 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
      * queue behind this row even when the physical commit is delayed by a file lock.
      */
     beginDurableClineMessage(message: UiMessage): RegisteredClineMessagePersistence {
+        const prepared: UiMessage = { ...this.placeShownRow(message), partial: false }
+        this.upsertTransientClineMessage(prepared)
+        return {
+            message: prepared,
+            persistence: this.commitTransientClineMessageByTimestamp(prepared, true),
+        }
+    }
+
+    /**
+     * Show a row that has not settled yet at its presentation place, stamped with
+     * where the conversation stands now.
+     *
+     * The row stays in memory as a partial row until `beginDurableClineMessage`
+     * commits it under the same ts, which keeps this place, or
+     * `removeTransientClineMessage` drops it. It never reaches disk unsettled.
+     */
+    holdClineMessage(message: UiMessage): UiMessage {
+        return this.upsertTransientClineMessage({ ...this.placeShownRow(message), partial: true })
+    }
+
+    /** A row that is already shown keeps the conversation place it was first shown at. */
+    private placeShownRow(message: UiMessage): UiMessage {
         const existing = this.clineMessages.find((candidate) => candidate.ts === message.ts)
-        const prepared: UiMessage = {
+        return {
             ...existing,
             ...message,
-            partial: false,
             conversationHistoryIndex:
                 existing?.conversationHistoryIndex ?? message.conversationHistoryIndex ?? this.conversationSize() - 1,
             conversationJournalSeq:
@@ -698,11 +719,6 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
                 existing?.conversationHistoryDeletedRange ??
                 message.conversationHistoryDeletedRange ??
                 this.metadata.conversationHistoryDeletedRange,
-        }
-        this.upsertTransientClineMessage(prepared)
-        return {
-            message: prepared,
-            persistence: this.commitTransientClineMessageByTimestamp(prepared, true),
         }
     }
 
@@ -725,11 +741,17 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         if (durableIndex >= 0) {
             committed = await uiMessage.updateMessage(durableIndex, { ...message, partial: false })
             await uiMessage.flush()
-        } else {
+        } else if (this.sortsAfterDurableRows(message.ts)) {
             // Rows elsewhere are patched in place and left staged (a request's
             // cost, a dialog anchor) until the store's timer commits them. A new
             // row must not depend on that timer having run first.
             committed = await uiMessage.commitPendingAndAppendDurable({ ...message, partial: false })
+        } else {
+            // A row shown before rows written while it was settling keeps that place
+            // on disk too: restore truncates the stored sequence by position, so the
+            // stored order must be the presentation order.
+            committed = (await uiMessage.upsertMessage({ ...message, partial: false })).message
+            await uiMessage.flush()
         }
 
         this.transientClineMessages.delete(message.ts)
@@ -742,6 +764,13 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         }
         await this.updateTaskHistoryOnly()
         return committed
+    }
+
+    /** Whether a new row would follow every stored row in presentation order. */
+    private sortsAfterDurableRows(ts: number): boolean {
+        const stored = this.durableClineMessages
+        const last = stored[stored.length - 1]
+        return last === undefined || last.ts < ts
     }
 
     /**

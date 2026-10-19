@@ -188,6 +188,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
             diffViewProvider,
             say: callbackOwner.callbacks.say,
             beginRow: (fields) => callbackOwner.beginCheckpointRow(fields),
+            holdRow: (fields) => callbackOwner.holdCheckpointRow(fields),
             workspaceManager: this.options.workspaceManager,
             conversationRewind: context.conversationRewind,
             checkpoints: context.checkpoints,

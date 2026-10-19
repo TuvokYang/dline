@@ -46,6 +46,21 @@ export interface CheckpointRowPort<Refs> {
      * must stay, for example because another restore point depends on it.
      */
     retire?(row: CheckpointRow): Promise<boolean>
+    /**
+     * Hold a round's place in the chat when the round is requested. The provider may
+     * stream the round's rows while its workspace commit still runs, so a row placed
+     * only after the commit would sort below them. Each reservation is later filled
+     * or withdrawn exactly once.
+     */
+    reserve?(input: { readonly source?: CheckpointSource }): CheckpointRowReservation<Refs>
+}
+
+/** A held checkpoint row that does not offer restore until it is filled. */
+export interface CheckpointRowReservation<Refs> {
+    /** Complete the held row as the round's restore point and resolve once it is durable. */
+    fill(input: { readonly refs?: Refs }): Promise<CheckpointRow>
+    /** Remove the held row because the round added no restore point. */
+    withdraw(): Promise<void>
 }
 
 /** The chat side of a checkpoint, stored beside the journal. */
@@ -139,7 +154,9 @@ export class CheckpointGate<Refs> {
     ): Promise<CheckpointGateResult> {
         const source = sourceOrSignal instanceof AbortSignal ? undefined : sourceOrSignal
         const operationSignal = sourceOrSignal instanceof AbortSignal ? sourceOrSignal : signal
-        return this.exclusive(reason, operationSignal, async (run) => {
+        // Reserve before any await so the row keeps the round's place in the chat.
+        const reservation = this.closed || this.holding.getStore() ? undefined : this.reserveRow(source)
+        const settled = this.exclusive(reason, operationSignal, async (run) => {
             const advanced = await this.conversationAdvanced()
             const changed = this.options.workspace.hasChanges()
             if (!advanced && !changed && this.latestRefs !== undefined) return COVERED
@@ -160,10 +177,14 @@ export class CheckpointGate<Refs> {
                 if (committed.ok && !advanced && this.options.workspace.sameRefs(refs, previousRefs)) return COVERED
             }
 
-            const row = await this.writeRow(run, {
-                ...(source ? { source } : {}),
-                ...(refs === undefined ? {} : { refs }),
-            })
+            const row = await this.writeRow(
+                run,
+                {
+                    ...(source ? { source } : {}),
+                    ...(refs === undefined ? {} : { refs }),
+                },
+                reservation,
+            )
             if (!row) return FAILED
             await this.captureBundle(run, { row, ...(refs === undefined ? {} : { refs }) })
             const previousChat = this.latestChat
@@ -172,6 +193,11 @@ export class CheckpointGate<Refs> {
             // restores that same conversation plus the files, so the older row adds nothing.
             if (!advanced && previousChat?.hasFiles === false && row.hasFiles === true) await this.retire(previousChat)
             return { outcome: "created", row }
+        })
+        if (!reservation) return settled
+        return settled.then(async (result) => {
+            if (result.outcome !== "created") await this.withdraw(reservation)
+            return result
         })
     }
 
@@ -277,12 +303,33 @@ export class CheckpointGate<Refs> {
     private async writeRow(
         run: GateRun,
         input: { readonly source?: CheckpointSource; readonly refs?: Refs },
+        reservation?: CheckpointRowReservation<Refs>,
     ): Promise<CheckpointRow | undefined> {
         try {
-            return await this.options.rows.write(input)
+            if (!reservation) return await this.options.rows.write(input)
+            return await reservation.fill(input.refs === undefined ? {} : { refs: input.refs })
         } catch (error) {
             run.fail("row", error)
             return undefined
+        }
+    }
+
+    /** Without a reservation the row is placed when it is written, as before. */
+    private reserveRow(source: CheckpointSource | undefined): CheckpointRowReservation<Refs> | undefined {
+        try {
+            return this.options.rows.reserve?.(source ? { source } : {})
+        } catch (error) {
+            Logger.warn(`[CheckpointGate] Could not reserve a checkpoint row for task ${this.options.taskId}:`, error)
+            return undefined
+        }
+    }
+
+    /** A held row that stays shows a checkpoint without restore; it never restores anything. */
+    private async withdraw(reservation: CheckpointRowReservation<Refs>): Promise<void> {
+        try {
+            await reservation.withdraw()
+        } catch (error) {
+            Logger.warn(`[CheckpointGate] Could not remove a held checkpoint row of task ${this.options.taskId}:`, error)
         }
     }
 

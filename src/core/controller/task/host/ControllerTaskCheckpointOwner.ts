@@ -8,7 +8,7 @@ import type { CheckpointRestoreFence } from "@core/task/session/ActiveTaskSessio
 import type { DefaultToolHandlerState } from "@core/task/tools/state/ToolHandlerState"
 import type { TaskCallbacks } from "@core/task/tools/types/TaskConfig"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
-import type { BegunCheckpointRow, CheckpointRowFields } from "@integrations/checkpoints"
+import type { BegunCheckpointRow, CheckpointRowFields, HeldCheckpointRow } from "@integrations/checkpoints"
 import { buildCheckpointManager } from "@integrations/checkpoints/factory"
 import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
@@ -32,6 +32,8 @@ export interface ControllerTaskCheckpointOwnerOptions {
     readonly say: TaskCallbacks["say"]
     /** Registers a checkpoint row in presentation order. */
     readonly beginRow: (fields: CheckpointRowFields) => BegunCheckpointRow
+    /** Shows a round's checkpoint row in presentation order before its restore point exists. */
+    readonly holdRow: (fields: CheckpointRowFields) => HeldCheckpointRow
     readonly workspaceManager?: WorkspaceRootManager
     readonly conversationRewind?: ConversationRewindPort
     readonly checkpoints: TaskSessionCheckpointPort
@@ -78,6 +80,7 @@ export class ControllerTaskCheckpointOwner {
             updateTaskHistory: (historyItem) => options.controller.updateTaskHistory(historyItem),
             say: (...args) => options.say(...(args as Parameters<TaskCallbacks["say"]>)),
             beginRow: (fields) => options.beginRow(fields),
+            holdRow: (fields) => options.holdRow(fields),
             cancelTask: () => options.controller.cancelTask(),
             restoreChatRuntime: (input) => this.reopenAfterChatRestore(input),
             postStateToWebview: () => options.controller.postStateToWebview(),

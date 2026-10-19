@@ -13,7 +13,7 @@ import type { TaskApiHandlerOwner } from "@core/task/session/TaskApiHandlerOwner
 import type { TaskInteractionOwner } from "@core/task/session/TaskInteractionOwner"
 import type { DefaultToolHandlerState } from "@core/task/tools/state/ToolHandlerState"
 import type { TaskCallbacks } from "@core/task/tools/types/TaskConfig"
-import type { BegunCheckpointRow, CheckpointRowFields } from "@integrations/checkpoints"
+import type { BegunCheckpointRow, CheckpointRowFields, HeldCheckpointRow } from "@integrations/checkpoints"
 import type { ICheckpointManager } from "@integrations/checkpoints/types"
 import type { CommandExecutor } from "@integrations/terminal/CommandExecutor"
 import { BrowserSession } from "@services/browser/BrowserSession"
@@ -277,18 +277,44 @@ export class ControllerTaskCallbacksOwner {
      * to the view follows the durable write and is not awaited as a failure.
      */
     beginCheckpointRow(fields: CheckpointRowFields): BegunCheckpointRow {
-        const ts = this.options.nextPresentationId()
-        const registered = this.options.messages.beginDurableClineMessage({
-            ts,
+        return this.registerCheckpointRow({
+            ts: this.options.nextPresentationId(),
             type: "say",
             say: "checkpoint_created",
             ...fields,
         })
+    }
+
+    /**
+     * Show a `checkpoint_created` row in presentation order before its restore
+     * point exists.
+     *
+     * The id is drawn now, so rows the round streams meanwhile sort after it. The
+     * held row is partial and lives only in memory: the view shows it without
+     * restore controls, and a crash leaves nothing behind to recover.
+     */
+    holdCheckpointRow(fields: CheckpointRowFields): HeldCheckpointRow {
+        const ts = this.options.nextPresentationId()
+        const held = this.options.messages.holdClineMessage({ ts, type: "say", say: "checkpoint_created", ...fields })
+        void this.publishRow(held, `held checkpoint row ${ts}`)
         return {
             ts,
-            persistence: registered.persistence.then((row) => {
-                void this.publishRow(row, `checkpoint row ${ts}`)
-                return row
+            fill: (filled) => this.registerCheckpointRow({ ...held, ...filled, partial: false }),
+            withdraw: () => {
+                // The view keeps a row it was sent until its window is refreshed.
+                if (this.options.messages.removeTransientClineMessage(ts)) void this.options.controller.postStateToWebview()
+            },
+        }
+    }
+
+    /** The row enters the store's write queue before this returns; delivery to the view follows the durable write. */
+    private registerCheckpointRow(row: UiMessage): BegunCheckpointRow {
+        const registered = this.options.messages.beginDurableClineMessage(row)
+        return {
+            ts: row.ts,
+            persistence: registered.persistence.then((stored) => {
+                void this.publishRow(stored, `checkpoint row ${row.ts}`)
+                return stored
             }),
         }
     }

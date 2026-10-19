@@ -37,6 +37,8 @@ function createManager(
         canonicalCheckpoint?: CanonicalCheckpointPort
         /** Conversation position every new row records; omitted rows record none. */
         journalSeq?: number
+        /** Whether rounds hold their row before the commit settles, as the chat view does. */
+        holdRows?: boolean
     },
 ) {
     const messages = options?.messages ?? []
@@ -58,6 +60,28 @@ function createManager(
         }
         messages.push(message)
         return { ts: message.ts, persistence: Promise.resolve(message) }
+    })
+    const holdRow = vi.fn((fields: CheckpointRowFields) => {
+        const held: UiMessage = {
+            ts: ++nextRowTs,
+            type: "say",
+            say: "checkpoint_created",
+            partial: true,
+            ...(options?.journalSeq === undefined ? {} : { conversationJournalSeq: options.journalSeq }),
+            ...fields,
+        }
+        messages.push(held)
+        return {
+            ts: held.ts,
+            fill: (filled: CheckpointRowFields) => {
+                Object.assign(held, filled, { partial: false })
+                return { ts: held.ts, persistence: Promise.resolve(held) }
+            },
+            withdraw: () => {
+                const index = messages.indexOf(held)
+                if (index >= 0) messages.splice(index, 1)
+            },
+        }
     })
     const updateClineMessage = vi.fn(async (index: number, updates: Partial<UiMessage>) => {
         Object.assign(messages[index], updates)
@@ -93,6 +117,7 @@ function createManager(
             restoreChatRuntime: vi.fn(),
             say,
             beginRow,
+            ...(options?.holdRows ? { holdRow } : {}),
             postStateToWebview,
             publishMessage,
         } as never,
@@ -505,6 +530,82 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
 
             expect(messages.map((message) => message.ts)).toContain(chatOnlyTs)
             expect(messages.filter((message) => message.lastCheckpointHash?.[0] === "file-hash")).toHaveLength(1)
+        })
+    })
+
+    describe("held round rows", () => {
+        it("places the round's row before rows streamed during its commit and completes that row in place", async () => {
+            const messages: UiMessage[] = []
+            let releaseCommit: (hash: string) => void = () => undefined
+            const tracker = {
+                setTaskFileTracker: vi.fn(),
+                commit: vi.fn(() => new Promise<string>((resolve) => (releaseCommit = resolve))),
+            } as unknown as CheckpointTracker
+            const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
+            const harness = createManager(create, undefined, {
+                messages,
+                tracker,
+                canonicalCheckpoint: { capture: vi.fn(async () => undefined), restore: vi.fn() },
+                journalSeq: 5,
+                holdRows: true,
+            })
+
+            const round = harness.manager.ensureRoundCheckpoint("round_start", { kind: "round_start", turnId: "turn-1" })
+            await vi.waitFor(() => expect(tracker.commit).toHaveBeenCalledOnce())
+            // The provider streams the round's reply while the shadow commit is still running.
+            messages.push({ ts: 99, type: "say", say: "text", text: "Working on it" })
+            expect(messages[0]).toMatchObject({ say: "checkpoint_created", partial: true })
+            expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
+
+            releaseCommit("round-hash")
+            await round
+
+            expect(messages.map((message) => message.ts)).toEqual([42, 99])
+            expect(messages[0]).toMatchObject({
+                say: "checkpoint_created",
+                partial: false,
+                conversationJournalSeq: 5,
+                lastCheckpointHash: ["round-hash"],
+                checkpointSource: { kind: "round_start", turnId: "turn-1" },
+            })
+            expect(harness.beginRow).not.toHaveBeenCalled()
+        })
+
+        it("continues from the latest settled row, not from a round row still being held", async () => {
+            const messages: UiMessage[] = [
+                {
+                    ts: 10,
+                    type: "say",
+                    say: "checkpoint_created",
+                    conversationJournalSeq: 3,
+                    lastCheckpointHash: ["old-hash"],
+                    checkpointWorkspaceRoots: ["C:/workspace"],
+                },
+            ]
+            const tracker = {
+                setTaskFileTracker: vi.fn(),
+                commit: vi.fn().mockRejectedValue(new Error("shadow index is locked")),
+            } as unknown as CheckpointTracker
+            const create = vi.fn<CreateCheckpointTracker>().mockResolvedValue(tracker)
+            const harness = createManager(create, undefined, {
+                messages,
+                tracker,
+                // The conversation moved on after the reopened task's latest row at 3.
+                canonicalCheckpoint: {
+                    capture: vi.fn(async () => undefined),
+                    restore: vi.fn(),
+                    advancedSince: vi.fn(async (seq: number) => seq < 7),
+                },
+                journalSeq: 7,
+                holdRows: true,
+            })
+
+            await harness.manager.ensureRoundCheckpoint("round_start")
+
+            // Without files to commit, the round still keeps a restore point for its conversation.
+            expect(messages).toHaveLength(2)
+            expect(messages[1]).toMatchObject({ say: "checkpoint_created", partial: false, conversationJournalSeq: 7 })
+            expect(messages[1]).not.toHaveProperty("lastCheckpointHash")
         })
     })
 

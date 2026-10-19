@@ -8,6 +8,7 @@ export function CheckpointMarker({ message }: { message: UiMessage }) {
             hasWorkspaceCheckpoint={message.lastCheckpointHash?.some(Boolean) === true}
             isCheckpointCheckedOut={message.isCheckpointCheckedOut}
             messageTs={message.ts}
+            pending={message.partial === true}
             source={message.checkpointSource}
             workspaceCheckpointCoverage={{
                 available: message.lastCheckpointHash?.filter(Boolean).length ?? 0,

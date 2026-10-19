@@ -1,6 +1,12 @@
 import type { CheckpointSource } from "@shared/ExtensionMessage"
 import { describe, expect, it, vi } from "vitest"
-import { CheckpointGate, type CheckpointGateObservation, type CheckpointGateState, type CheckpointRow } from "./CheckpointGate"
+import {
+    CheckpointGate,
+    type CheckpointGateObservation,
+    type CheckpointGateState,
+    type CheckpointRow,
+    type CheckpointRowPort,
+} from "./CheckpointGate"
 
 type Refs = string
 
@@ -8,7 +14,7 @@ type Refs = string
  * A task as the gate sees it: a journal of entries, a workspace that records
  * writes until they are committed, and the rows and bundles the gate wrote.
  */
-function harness(options: { initialState?: () => CheckpointGateState<Refs> } = {}) {
+function harness(options: { initialState?: () => CheckpointGateState<Refs>; reserve?: boolean } = {}) {
     const journal: Array<"message" | "marker"> = []
     const workspace = { dirty: true, head: 0, commitError: undefined as Error | undefined, commits: 0 }
     const rows: Array<{ row: CheckpointRow; refs?: Refs; anchor?: CheckpointRow; source?: CheckpointSource }> = []
@@ -20,9 +26,31 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs> } = {
         bundle: undefined as Error | undefined,
         conversation: undefined as Error | undefined,
         retire: undefined as Error | undefined,
+        reserve: undefined as Error | undefined,
     }
     let nextTs = 100
     const hooks = { onRowWrite: undefined as (() => Promise<void>) | undefined }
+    /** Rows held in the chat before their round settled, like the view's partial rows. */
+    const holds: Array<{ ts: number; position: number; source?: CheckpointSource; state: "held" | "filled" | "withdrawn" }> = []
+    const reserve: CheckpointRowPort<Refs>["reserve"] = (input) => {
+        if (failures.reserve) throw failures.reserve
+        const hold = { ts: nextTs++, position: journal.length, ...input, state: "held" as const }
+        const entry: (typeof holds)[number] = hold
+        holds.push(entry)
+        return {
+            fill: async ({ refs }) => {
+                await hooks.onRowWrite?.()
+                if (failures.row) throw failures.row
+                entry.state = "filled"
+                const row: CheckpointRow = { ts: entry.ts, position: entry.position, hasFiles: refs !== undefined }
+                rows.push({ row, ...(refs === undefined ? {} : { refs }), ...(input.source ? { source: input.source } : {}) })
+                return row
+            },
+            withdraw: async () => {
+                entry.state = "withdrawn"
+            },
+        }
+    }
 
     const gate = new CheckpointGate<Refs>({
         taskId: "task-1",
@@ -55,6 +83,7 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs> } = {
                 retired.push(row)
                 return true
             },
+            ...(options.reserve ? { reserve } : {}),
         },
         bundles: {
             capture: async (input) => {
@@ -72,6 +101,7 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs> } = {
         journal,
         workspace,
         rows,
+        holds,
         bundles,
         retired,
         observations,
@@ -538,6 +568,87 @@ describe("CheckpointGate", () => {
             expect(result.outcome).toBe("covered")
             expect(subject.workspace.commits).toBe(1)
             expect(subject.rows).toHaveLength(0)
+        })
+    })
+
+    describe("held rows", () => {
+        const source = { kind: "round_start" as const, turnId: "turn-1" }
+
+        it("holds the round's place before waiting for the lock and fills that same row", async () => {
+            const subject = harness({ reserve: true })
+            subject.say()
+            const settleMutation = await subject.gate.beginMutation()
+
+            const round = subject.gate.ensureRound("round_start", source)
+
+            // The provider streams the round's rows while the gate waits; the row must already be placed.
+            expect(subject.holds).toEqual([{ ts: 100, position: 1, source, state: "held" }])
+            expect(subject.rows).toEqual([])
+            settleMutation()
+            const result = await round
+            expect(result).toEqual({ outcome: "created", row: { ts: 100, position: 1, hasFiles: true } })
+            expect(subject.holds.map((hold) => hold.state)).toEqual(["filled"])
+            expect(subject.rows).toEqual([{ row: result.row, refs: "refs-0", source }])
+            expect(subject.bundles).toEqual([{ row: result.row, refs: "refs-0" }])
+        })
+
+        it("withdraws the held row when the latest checkpoint still covers the round", async () => {
+            const subject = harness({ reserve: true })
+            subject.say()
+            await subject.gate.ensureRound("round_start", source)
+
+            const result = await subject.gate.ensureRound("round_start", source)
+
+            expect(result.outcome).toBe("covered")
+            expect(subject.holds.map((hold) => hold.state)).toEqual(["filled", "withdrawn"])
+            expect(subject.rows).toHaveLength(1)
+        })
+
+        it("withdraws the held row when the files could not be committed and the conversation stands still", async () => {
+            const subject = harness({ reserve: true })
+            subject.say()
+            await subject.gate.ensureRound("round_start", source)
+            subject.write()
+            subject.workspace.commitError = new Error("index.lock exists")
+
+            const result = await subject.gate.ensureRound("round_start", source)
+
+            expect(result.outcome).toBe("failed")
+            expect(subject.holds.map((hold) => hold.state)).toEqual(["filled", "withdrawn"])
+            expect(subject.rows).toHaveLength(1)
+        })
+
+        it("withdraws the held row when the row cannot be completed", async () => {
+            const subject = harness({ reserve: true })
+            subject.say()
+            subject.failures.row = new Error("store closed")
+
+            const result = await subject.gate.ensureRound("round_start", source)
+
+            expect(result.outcome).toBe("failed")
+            expect(subject.holds.map((hold) => hold.state)).toEqual(["withdrawn"])
+            expect(subject.bundles).toEqual([])
+        })
+
+        it("holds nothing once the gate is closed", async () => {
+            const subject = harness({ reserve: true })
+            await subject.gate.close()
+            subject.say()
+
+            expect((await subject.gate.ensureRound("round_start", source)).outcome).toBe("skipped")
+            expect(subject.holds).toEqual([])
+        })
+
+        it("places the row when it is written if the round could not hold one", async () => {
+            const subject = harness({ reserve: true })
+            subject.failures.reserve = new Error("view detached")
+            subject.say()
+
+            const result = await subject.gate.ensureRound("round_start", source)
+
+            expect(result.outcome).toBe("created")
+            expect(subject.holds).toEqual([])
+            expect(subject.rows).toEqual([{ row: result.row, refs: "refs-0", source }])
         })
     })
 })

@@ -7,6 +7,7 @@ import {
     type CheckpointRowFields,
     type CheckpointRuntimeState,
     createTaskCheckpointManager,
+    type HeldCheckpointRow,
 } from "@integrations/checkpoints"
 import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { CanonicalCheckpointPort, ConversationRewindPort, ICheckpointManager } from "@integrations/checkpoints/types"
@@ -33,6 +34,8 @@ type BuildArgs = {
     say: (...args: any[]) => Promise<number | undefined>
     /** Register one checkpoint row in presentation order; see CheckpointManagerCallbacks.beginRow. */
     beginRow: (fields: CheckpointRowFields) => BegunCheckpointRow
+    /** Show a round's row before its restore point exists; see CheckpointManagerCallbacks.holdRow. */
+    holdRow: (fields: CheckpointRowFields) => HeldCheckpointRow
     cancelTask: () => Promise<void>
     restoreChatRuntime: (input: { apiIndex: number; editedText?: string }) => Promise<void>
     postStateToWebview: () => Promise<void>
@@ -64,6 +67,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
         updateTaskHistory,
         say,
         beginRow,
+        holdRow,
         cancelTask,
         restoreChatRuntime,
         postStateToWebview,
@@ -93,6 +97,7 @@ export function buildCheckpointManager(args: BuildArgs): ICheckpointManager {
             updateTaskHistory,
             say,
             beginRow,
+            holdRow,
             cancelTask,
             restoreChatRuntime,
             postStateToWebview,

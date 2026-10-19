@@ -35,7 +35,9 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 
 ### Fixes
-- Fixed workspace MCP servers (`.agents/mcp/` descriptors) showing no Auto-approve checkboxes and still asking for approval of every call with Use MCP servers turned on: you can now turn on Auto-approve for their tools, unchecked by default; the choice is stored only in Dline's settings for the current workspace, never in the repository, and must be made again after the descriptor changes; this also fixes the same workspace tools being treated as auto-approved on first connect and as needing approval afterwards
+- Fixed a round's checkpoint sometimes appearing below the round's tool rows, right next to the following round's checkpoint: the checkpoint row now takes its place when the round starts, shows no Compare or Restore while the file snapshot is being committed, and is completed in place afterwards; when no file changed, the round reuses the previous snapshot instead of committing again
+- Fixed the `rename` tool always failing with `Unexpected type` when the target file was not open in an editor: VS Code passed the new name as an array when renaming in a document it had not loaded, so Dline now loads the document first and cross-file renames work on files that are not open
+- Fixed workspace MCP servers (`.agents/mcp/` descriptors) showing no Auto-approve checkboxes
 - Fixed task history losing tasks when the Documents folder has been moved
 - Fixed a failed API request leaving only Retry / Start New Task in the chat with no error card
 - Fixed the approval card for MCP tool calls and resource reads showing an empty server name and describing a tool call as accessing a resource; the card now shows the MCP server, the tool and its arguments

@@ -10,6 +10,7 @@ import {
     type CheckpointRoundReason,
     type CheckpointRoundSource,
     type CheckpointRow,
+    type CheckpointRowReservation,
 } from "@core/task/checkpoints/CheckpointGate"
 import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import CheckpointTracker, { type CheckpointChangedFile } from "@integrations/checkpoints/CheckpointTracker"
@@ -69,6 +70,19 @@ function sameReferences(left: CheckpointReferenceSet | undefined, right: Checkpo
     return checkpointReferenceSetsEqual(left, right)
 }
 
+/** The row fields that let a checkpoint restore files; empty when the references hold none. */
+function fileCheckpointFields(
+    refs: CheckpointReferenceSet | undefined,
+): Pick<CheckpointRowFields, "lastCheckpointHash" | "checkpointWorkspaceRoots"> {
+    if (!refs || !hasFileCheckpoint(refs)) return {}
+    return { lastCheckpointHash: refs.hashes, checkpointWorkspaceRoots: refs.workspaceRoots }
+}
+
+/** A checkpoint row as the gate tracks it, once the row is durable. */
+function checkpointRowOf(row: UiMessage, hasFiles: boolean): CheckpointRow {
+    return { ts: row.ts, position: row.conversationJournalSeq, hasFiles }
+}
+
 /**
  * Where a checkpoint row restores to when its canonical bundle was never written.
  *
@@ -122,6 +136,15 @@ export type CheckpointRowFields = Pick<
 export interface BegunCheckpointRow {
     readonly ts: number
     readonly persistence: Promise<UiMessage>
+}
+
+/** A row shown in presentation order before its restore point exists. */
+export interface HeldCheckpointRow {
+    readonly ts: number
+    /** Commit the held row in its place, adding the fields it was missing. */
+    fill(fields: CheckpointRowFields): BegunCheckpointRow
+    /** Drop the held row; nothing was written for it. */
+    withdraw(): void
 }
 
 interface CheckpointManagerTask {
@@ -180,6 +203,12 @@ interface CheckpointManagerCallbacks {
      * before this returns, so rows written later always sort after it.
      */
     readonly beginRow: (fields: CheckpointRowFields) => BegunCheckpointRow
+    /**
+     * Show a `checkpoint_created` row in presentation order before its restore
+     * point exists. The held row offers no restore and is not written until it is
+     * filled. Absent on a surface that places a row only when it is written.
+     */
+    readonly holdRow?: (fields: CheckpointRowFields) => HeldCheckpointRow
     readonly postStateToWebview: () => Promise<void>
     /**
      * Redraws one row the view already shows. A state post only carries the
@@ -277,6 +306,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
         this.state = { ...initialState }
         this.changes =
             config.enableCheckpoints && services.taskFileTracker ? new WorkspaceChangeFeed(services.taskFileTracker) : undefined
+        const holdRow = callbacks.holdRow
         this.gate = new CheckpointGate<CheckpointReferenceSet>({
             taskId: this.task.taskId,
             workspace: {
@@ -291,6 +321,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
             rows: {
                 write: (input) => this.writeCheckpointRow(input),
                 retire: (row) => this.retireCheckpointRow(row),
+                ...(holdRow ? { reserve: (input) => this.reserveCheckpointRow(holdRow, input) } : {}),
             },
             bundles: { capture: (input) => this.captureCheckpointBundle(input) },
             initialState: () => this.latestCheckpointState(),
@@ -381,23 +412,42 @@ export class TaskCheckpointManager implements ICheckpointManager {
         readonly refs?: CheckpointReferenceSet
     }): Promise<CheckpointRow> {
         if (this.disposed) throw new Error("The task is closing")
-        const messages = this.services.messageStateHandler.clineMessages
-        // A new restore point supersedes the one the workspace was checked out to.
-        for (const message of messages) {
-            if (message.say === "checkpoint_created") message.isCheckpointCheckedOut = false
-        }
-        const fileCheckpoint = input.refs && hasFileCheckpoint(input.refs) ? input.refs : undefined
+        this.releaseCheckedOutRows()
+        const files = fileCheckpointFields(input.refs)
         const begun = this.callbacks.beginRow({
             ...(input.source ? { checkpointSource: input.source } : {}),
-            ...(fileCheckpoint
-                ? {
-                      lastCheckpointHash: fileCheckpoint.hashes,
-                      checkpointWorkspaceRoots: fileCheckpoint.workspaceRoots,
-                  }
-                : {}),
+            ...files,
         })
-        const row = await begun.persistence
-        return { ts: row.ts, position: row.conversationJournalSeq, hasFiles: fileCheckpoint !== undefined }
+        return checkpointRowOf(await begun.persistence, files.lastCheckpointHash !== undefined)
+    }
+
+    /**
+     * Hold a round's row in the chat while its workspace commit runs. The provider
+     * streams the round's rows meanwhile, so a row placed only once the commit
+     * settled would sort below them. The held row takes the conversation position
+     * of the round boundary, which is what the model is about to see.
+     */
+    private reserveCheckpointRow(
+        holdRow: (fields: CheckpointRowFields) => HeldCheckpointRow,
+        input: { readonly source?: CheckpointSource },
+    ): CheckpointRowReservation<CheckpointReferenceSet> {
+        const held = holdRow(input.source ? { checkpointSource: input.source } : {})
+        return {
+            fill: async ({ refs }) => {
+                if (this.disposed) throw new Error("The task is closing")
+                this.releaseCheckedOutRows()
+                const files = fileCheckpointFields(refs)
+                return checkpointRowOf(await held.fill(files).persistence, files.lastCheckpointHash !== undefined)
+            },
+            withdraw: async () => held.withdraw(),
+        }
+    }
+
+    /** A new restore point supersedes the one the workspace was checked out to. */
+    private releaseCheckedOutRows(): void {
+        for (const message of this.services.messageStateHandler.clineMessages) {
+            if (message.say === "checkpoint_created") message.isCheckpointCheckedOut = false
+        }
     }
 
     /**
@@ -448,9 +498,11 @@ export class TaskCheckpointManager implements ICheckpointManager {
     /** Where a reopened task continues from: its latest round row and non-stale file references. */
     private latestCheckpointState(): CheckpointGateState<CheckpointReferenceSet> {
         const messages = this.services.messageStateHandler.clineMessages
+        // A held row is still waiting for its round and restores nothing yet.
         const latestRoundIndex = findLastIndex(
             messages,
-            (message) => message.say === "checkpoint_created" && message.checkpointAnchorTs === undefined,
+            (message) =>
+                message.say === "checkpoint_created" && message.partial !== true && message.checkpointAnchorTs === undefined,
         )
         const latestFileIndex = findLastIndex(messages, (message) => hasFileCheckpoint(readCheckpointReferenceSet(message)))
         const latestRound = latestRoundIndex >= 0 ? messages[latestRoundIndex] : undefined

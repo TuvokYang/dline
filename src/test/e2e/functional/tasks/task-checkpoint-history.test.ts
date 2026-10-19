@@ -308,6 +308,15 @@ e2e(
                 return Boolean(firstRound?.lastCheckpointHash)
             })
             .toBe(true)
+        // The round's restore point keeps its place ahead of the rows the round showed while
+        // its baseline commit ran, and the stored order is the order the chat shows.
+        const persisted = await readTaskUiMessages(dlineDocsDir, taskId)
+        const firstCheckpointIndex = persisted.findIndex((message) => message.say === "checkpoint_created")
+        const firstToolIndex = persisted.findIndex((message) => message.ask === "tool" || message.say === "tool")
+        expect(firstCheckpointIndex).toBeGreaterThanOrEqual(0)
+        expect(firstCheckpointIndex).toBeLessThan(firstToolIndex)
+        const storedTimestamps = persisted.map((message) => message.ts)
+        expect(storedTimestamps).toEqual([...storedTimestamps].sort((left, right) => left - right))
         await page.waitForTimeout(1_000)
 
         const checkpointLabels = sidebar.getByText("Checkpoint", { exact: true })
@@ -404,14 +413,16 @@ e2e(
         await expect(approveButton).toBeVisible({ timeout: 60_000 })
         await approveButton.click()
         await expect.poll(() => server.openAiRequestCount, { timeout: 60_000 }).toBe(2)
-        await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible({ timeout: 30_000 })
+        // The read round sits between its own restore point and the next round's, so it folds into one row.
+        const readRound = sidebar.getByRole("button", { name: "Dline read 1 file", exact: true })
+        await expect(readRound).toBeVisible({ timeout: 30_000 })
         await expect(sidebar.getByRole("button", { name: /README\.md/ }).last()).toBeVisible()
         await closeCurrentTask(sidebar)
         await reopenTask(sidebar, taskText)
 
         const resumeButton = sidebar.locator('[data-testid="send-button"][data-action="resume"]')
         await expect(resumeButton).toBeVisible({ timeout: 30_000 })
-        await expect(sidebar.getByText("Dline read 1 file:", { exact: true })).toBeVisible()
+        await expect(readRound).toBeVisible()
         await expect(sidebar.getByRole("button", { name: /README\.md/ }).last()).toBeVisible()
         await expect(sidebar.getByText("Approve", { exact: true })).toHaveCount(0)
         await expect(sidebar.getByText("Reject", { exact: true })).toHaveCount(0)
@@ -584,6 +595,15 @@ e2e(
             const ids = await taskDirectoryIds(dlineDocsDir)
             return ids.length === 1 ? ids : undefined
         })
+        // The stored chat is edited below; a restore point the closing task still owes
+        // would be written on top of that edit, so let the round's baseline settle first.
+        await expect
+            .poll(async () =>
+                (await readTaskUiMessages(dlineDocsDir, taskId)).some(
+                    (message) => message.say === "checkpoint_created" && Boolean(message.lastCheckpointHash),
+                ),
+            )
+            .toBe(true)
 
         await closeCurrentTask(sidebar)
         await markPersistedApprovalAnchorPartial(dlineDocsDir, taskId)
