@@ -1,0 +1,105 @@
+---
+title: VS Code 命令
+description: 通过 VS Code 命令面板、编辑器菜单和快捷键使用 Dline，并在任务历史或 Dline 视图出问题时使用恢复命令。
+---
+
+import { Aside, Steps } from "@astrojs/starlight/components"
+
+Dline 的操作都注册为 VS Code 命令。用 `Ctrl+Shift+P`（macOS 上为 `Cmd+Shift+P`）打开命令面板，输入 `Dline` 即可列出。大多数命令也可以从菜单或快捷键触发，见下文。
+
+## 面板命令
+
+Dline 面板标题栏上的按钮也是命令。它们在命令面板中没有 `Dline:` 前缀。
+
+| 命令 | 作用 |
+|---|---|
+| **New Task** | 在新的编辑器标签页中打开一个新的 Dline 任务。侧边栏和其他已打开标签页中的任务不受影响 |
+| **MCP Servers** | 在侧边栏打开 MCP 服务器管理 |
+| **History** | 在侧边栏打开任务历史 |
+| **Settings** | 在侧边栏打开 Dline 设置 |
+| **Account** | 打开账户视图。仅在账户功能启用时列出 |
+
+## 处理代码
+
+| 命令 | 入口 | 作用 |
+|---|---|---|
+| **Dline: Add to Dline** | 有选区时的编辑器右键菜单、有选区时按 `Ctrl+'`（`Cmd+'`）、快速修复菜单 | 把选中的代码及该范围内的诊断信息加入 Dline 输入框 |
+| **Dline: Add to Dline**（终端） | 终端右键菜单 | 把终端中当前选中的内容作为终端输出加入输入框。没有选中内容时不做任何事 |
+| **Dline: Jump to Chat Input** | 没有选区时按 `Ctrl+'`（`Cmd+'`） | 显示 Dline 侧边栏并聚焦输入框 |
+| **Dline: Explain with Dline** | 快速修复菜单（`Ctrl+.`） | 让 Dline 解释选中的代码 |
+| **Dline: Improve with Dline** | 快速修复菜单 | 让 Dline 对选中的代码提出改进 |
+| **Fix with Dline** | 快速修复菜单，仅当该范围有诊断信息时出现 | 让 Dline 修复该范围内报告的问题 |
+
+从快速修复菜单调用时，如果没有覆盖光标的选区，Dline 会发送光标处的代码以及上下各三行。
+
+## 源代码管理
+
+| 命令 | 入口 | 作用 |
+|---|---|---|
+| **Dline: Generate Commit Message with Dline** | 源代码管理标题栏、`Ctrl+G`（`Cmd+G`） | 根据当前 Git 改动生成提交信息并写入提交输入框 |
+| **Dline: Generate Commit Message with Dline - Stop** | 生成过程中的同一按钮 | 停止生成 |
+
+两个命令都要求 VS Code 中启用了 Git，且当前源代码管理提供方是 Git。
+
+## Jupyter Notebook
+
+| 命令 | 入口 | 作用 |
+|---|---|---|
+| **Dline: Generate Jupyter Cell with Dline** | Notebook 工具栏 | 先询问提示词，再由 Dline 在当前单元格附近插入新单元格 |
+| **Dline: Explain Jupyter Cell with Dline** | 单元格标题栏 | 解释当前单元格 |
+| **Dline: Improve Jupyter Cell with Dline** | 单元格标题栏 | 先询问提示词，再由 Dline 改进当前单元格 |
+
+这些命令需要打开一个 `.ipynb` Notebook。它们发送的上下文见 [Jupyter Notebook](/zh-cn/features/jupyter-notebooks/)。
+
+## 审查评论
+
+`/explain-changes` 会把解释以评论线程的形式放在 diff 视图中。每个线程提供 **Reply**（就该段代码向 Dline 追问）和 **Dline: Add to Dline Chat**（把整个线程复制到 Dline 输入框）。**Reply** 不在命令面板中列出。
+
+## 恢复命令
+
+### Dline: Reconstruct Task History
+
+当任务历史列表缺少任务，或 **Workspace Only** 筛选把属于当前工作区的任务隐藏掉时，使用这个命令。它会根据 `<documents-root>/tasks/` 下的任务目录重建历史索引（`<documents-root>` 默认是系统“文档”文件夹中的 `dline`，可用 `DLINE_DOCS_DIR` 覆盖）。
+
+<Steps>
+
+1. 打开命令面板，运行 **Dline: Reconstruct Task History**。
+2. 在警告框中选择 **Yes, Reconstruct** 确认。
+3. 查看结果提示：新增、保留和移除了多少任务。
+
+</Steps>
+
+重建对索引的改动如下：
+
+- 任务目录仍然存在的条目原样保留，包括它的工作区、收藏标记和完成状态。
+- 没有对应条目的任务目录会被加入。标题、时间和 token 用量来自任务消息；工作区来自任务首条请求中记录的工作目录，因此 **Workspace Only** 筛选能重新包含它。
+- 任务目录已不存在的条目会被移除。
+- 没有任何消息的任务目录会被跳过。
+
+<Aside type="caution">
+历史索引由所有 Dline 窗口共享。只需在一个窗口中运行该命令，其他窗口会自动获取结果。
+</Aside>
+
+如果任务首条请求只记录了多根工作区的主文件夹名称，或者请求无法读取，这样补回的任务没有工作区：它会出现在完整历史中，但不会出现在 **Workspace Only** 下。补回任务的收藏标记和完成状态无法从目录中恢复。
+
+### Dline: Recover UI Messages from API History
+
+当某个任务的对话视图为空或损坏，但它与模型的对话记录完好时，使用这个命令。先在侧边栏打开该任务：命令会根据对话记录重建这个任务的聊天行；没有打开任务时会报错。
+
+替换之前，它会把当前聊天行保存到任务目录中的 `ui_messages.backup.<timestamp>.json`。如果恢复的消息没有显示，重新打开该任务即可。重建结果是对原视图的近似：工具行和用量数字由对话记录重新构造，可能与之前显示的不同。
+
+### Dline: Reload Dline View
+
+当可见的 Dline 视图停止渲染时，使用这个命令。它会重新加载所有可见的 Dline 视图，无需重启 VS Code。如果没有可见的 Dline 视图，它会给出提示；请先显示该视图，或运行 **Developer: Reload Window**。
+
+## 其他命令
+
+**Dline: Open Walkthrough** 在 VS Code 中打开 Dline 入门引导。
+
+仅在开发构建中存在的命令不在本页范围内。
+
+## 相关页面
+
+- [任务管理](/zh-cn/core-workflows/task-management/)
+- [使用斜杠命令](/zh-cn/core-workflows/using-commands/)
+- [Jupyter Notebook](/zh-cn/features/jupyter-notebooks/)

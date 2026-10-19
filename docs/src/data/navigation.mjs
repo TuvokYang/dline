@@ -75,6 +75,7 @@ export const sidebar = [
                     "core-workflows/plan-and-act",
                     "core-workflows/working-with-files",
                     "core-workflows/using-commands",
+                    "core-workflows/vscode-commands",
                     "core-workflows/task-management",
                     "core-workflows/checkpoints",
                     "features/auto-compact",
