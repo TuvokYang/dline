@@ -1,4 +1,4 @@
-import { isFeatureSettingActive } from "@shared/ClineFeatureSetting"
+import { isFeatureSettingActive } from "@shared/DlineFeatureSettings"
 import { HistoryIcon, PlusIcon, SettingsIcon, UserCircleIcon } from "lucide-react"
 import { useMemo } from "react"
 import { Button } from "@/components/ui/button"

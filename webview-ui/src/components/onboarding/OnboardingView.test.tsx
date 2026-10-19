@@ -1,4 +1,4 @@
-import type { DlineFeatureSettings } from "@shared/ClineFeatureSetting"
+import type { DlineFeatureSettings } from "@shared/DlineFeatureSettings"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import OnboardingView from "./OnboardingView"

@@ -1,6 +1,6 @@
 import { StateManager } from "@/core/storage/StateManager"
 import { featureFlagsService } from "@/services/feature-flags"
-import { type DlineFeatureSettings, isFeatureSettingActive } from "@/shared/ClineFeatureSetting"
+import { type DlineFeatureSettings, isFeatureSettingActive } from "@/shared/DlineFeatureSettings"
 
 type AccountSettingsReader = Pick<StateManager, "getGlobalSettingsKey">
 

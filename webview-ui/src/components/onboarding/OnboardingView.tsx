@@ -1,4 +1,4 @@
-import { isFeatureSettingActive } from "@shared/ClineFeatureSetting"
+import { isFeatureSettingActive } from "@shared/DlineFeatureSettings"
 import { AlertCircleIcon, CircleCheckIcon, CircleIcon, LoaderCircleIcon } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
 import DlineLogo from "@/assets/DlineLogo"

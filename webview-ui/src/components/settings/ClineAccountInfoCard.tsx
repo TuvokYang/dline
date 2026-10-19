@@ -1,4 +1,4 @@
-import { isFeatureSettingActive } from "@shared/ClineFeatureSetting"
+import { isFeatureSettingActive } from "@shared/DlineFeatureSettings"
 import { EmptyRequest } from "@shared/proto/dline/common"
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import { useState } from "react"

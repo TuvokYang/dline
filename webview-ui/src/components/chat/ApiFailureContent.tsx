@@ -1,4 +1,4 @@
-import { isFeatureSettingActive } from "@shared/ClineFeatureSetting"
+import { isFeatureSettingActive } from "@shared/DlineFeatureSettings"
 import { memo, type ReactElement } from "react"
 import CreditLimitError from "@/components/chat/CreditLimitError"
 import SpendLimitError from "@/components/chat/SpendLimitError"
