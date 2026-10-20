@@ -1026,6 +1026,8 @@ export const ChatRowContent = memo(
                             activityId={tool.activityId}
                             command={tool.path || ""}
                             result={Array.isArray(tool.content) ? tool.content.join("\n") : tool.content || ""}
+                            taskId={runningTaskId}
+                            taskInstanceId={runningTaskInstanceId}
                         />
                     )
                 default:

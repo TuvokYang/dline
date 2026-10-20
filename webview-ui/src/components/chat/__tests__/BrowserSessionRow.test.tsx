@@ -132,7 +132,7 @@ describe("BrowserSessionRow", () => {
         expect(screen.getByTestId("browser-session-header").textContent).toContain("Dline used the browser")
         expect(screen.getByTestId("browser-session-header").getAttribute("aria-expanded")).toBe("true")
         expect(screen.getByTestId("browser-session-steps-toggle").getAttribute("aria-expanded")).toBe("false")
-        expect(screen.getByTestId("browser-session-steps-toggle").textContent).toBe("4 steps · 2 thoughts")
+        expect(screen.getByTestId("browser-session-steps-toggle").textContent).toBe("1 launch, 2 clicks · 2 thoughts · 4 rounds")
     })
 
     it("lists every round from the toggle under the frame and opens a round's page from its call", () => {
@@ -175,7 +175,7 @@ describe("BrowserSessionRow", () => {
         expect(screen.queryByTestId("browser-session-frame")).toBeNull()
         expect(screen.queryByRole("img", { name: "Browser screenshot" })).toBeNull()
         expect(screen.getByTestId("browser-session-header").getAttribute("aria-expanded")).toBe("false")
-        expect(screen.getByTestId("browser-session-header").textContent).toContain("4 steps · 2 thoughts")
+        expect(screen.getByTestId("browser-session-header").textContent).toContain("1 launch, 2 clicks · 2 thoughts · 4 rounds")
         expect(screen.getByTestId("browser-session-url-line").textContent).toBe("https://three.example")
         expect(screen.getByTestId("checkpoint-1")).toBeInTheDocument()
     })

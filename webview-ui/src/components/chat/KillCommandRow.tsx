@@ -1,6 +1,5 @@
 import { ActivityIcon, CircleStopIcon, LoaderCircleIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useTaskActivityNavigation } from "./activity/TaskActivityNavigationContext"
 import { useTaskActivities } from "./activity/useTaskActivities"
 import { TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
@@ -12,10 +11,15 @@ interface KillCommandRowProps {
     activityId?: string
 }
 
+/** The task that owns the targeted command activity. */
+interface KillCommandRowOwner {
+    taskId?: string
+    taskInstanceId?: string
+}
+
 /** A kill_command row that follows the targeted command activity to its terminal state. */
-export function KillCommandRow(props: KillCommandRowProps) {
-    const { taskViewState } = useExtensionState()
-    const { getById } = useTaskActivities(taskViewState?.taskId, taskViewState?.taskInstanceId ?? "")
+export function KillCommandRow({ taskId, taskInstanceId, ...props }: KillCommandRowProps & KillCommandRowOwner) {
+    const { getById } = useTaskActivities(taskId, taskInstanceId ?? "")
     const status = props.activityId ? getById(props.activityId)?.status : undefined
     return <KillCommandRowView {...props} status={status} />
 }

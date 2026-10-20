@@ -112,10 +112,10 @@ const chatRowContentContainerStyle: CSSProperties = { padding: "10px 0 10px 0" }
  *
  * The restore point taken before the session heads the card, then a header
  * that reports what the session is doing. Open, the card shows the screenshot
- * frame; a toggle at the bottom of the frame lists every round in order — its
- * restore point, its thinking and the browser call, which opens that round's
- * page — the way an exploration run lists its rounds. Folded, only the header
- * and the page URL remain.
+ * frame; below it, a summary that counts the calls the way an exploration run
+ * does lists every round in order — its restore point, its thinking and the
+ * browser call, which opens that round's page. Folded, only the header and the
+ * page URL remain.
  *
  * Rounds fold into the card because browser calls change no workspace files.
  * A restore point that brings back different files or is checked out, and a
@@ -269,19 +269,22 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
             {isFolded ? <ChevronRightIcon className="!size-3 shrink-0" /> : <ChevronDownIcon className="!size-3 shrink-0" />}
         </button>
     )
+    // Outside the frame, so it reads like an exploration run's summary rather than part of the card.
     const stepsToggle =
         steps.length > 0 ? (
             <button
                 aria-controls={stepsId}
                 aria-expanded={stepsVisible}
-                className="flex w-full min-w-0 items-center gap-1 border-0 bg-transparent px-2 py-1.5 text-left text-foreground cursor-pointer"
+                className="flex w-full min-w-0 items-center gap-0.5 border-0 bg-transparent p-0 text-left text-[13px] font-semibold text-description cursor-pointer"
                 data-testid="browser-session-steps-toggle"
                 onClick={() => setStepsVisible((visible) => !visible)}
                 type="button">
-                {stepsVisible ? <ChevronDownIcon size={16} /> : <ChevronRightIcon size={16} />}
-                <span className="truncate" style={consoleLogsTextStyle}>
-                    {summary || "Steps"}
-                </span>
+                <span className="min-w-0 truncate">{summary || "Steps"}</span>
+                {stepsVisible ? (
+                    <ChevronDownIcon className="!size-3 shrink-0" />
+                ) : (
+                    <ChevronRightIcon className="!size-3 shrink-0" />
+                )}
             </button>
         ) : undefined
 
@@ -406,14 +409,10 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
             )}
 
             {!isFolded && stepsToggle && (
-                <div data-testid="browser-session-steps-card" style={{ ...browserFrameStyle, maxWidth }}>
+                <div className="mb-2" style={{ maxWidth }}>
                     {stepsToggle}
                     {stepsVisible && (
-                        <div
-                            className={cn(TOOL_RESPONSE_SCROLL_CLASS, "px-2 pb-1")}
-                            data-testid="browser-session-steps"
-                            id={stepsId}
-                            style={{ borderTop: "1px solid var(--vscode-editorGroup-border)" }}>
+                        <div className={cn(TOOL_RESPONSE_SCROLL_CLASS, "pt-1")} data-testid="browser-session-steps" id={stepsId}>
                             {steps.map((step) => (
                                 <div className="pb-1" data-testid="browser-session-step" key={step.key}>
                                     {step.checkpoint && step.checkpoint !== head && (

@@ -150,9 +150,32 @@ describe("browser session restore points", () => {
 })
 
 describe("summarizeBrowserSession", () => {
-    it("counts the rounds that called the browser and the thoughts between them", () => {
-        expect(summarizeBrowserSession(projectBrowserSession(session).steps)).toBe("4 steps · 2 thoughts")
-        expect(summarizeBrowserSession(projectBrowserSession([launch(1)]).steps)).toBe("1 step")
+    it("counts the calls by kind, then the thoughts and the rounds that called the browser", () => {
+        expect(summarizeBrowserSession(projectBrowserSession(session).steps)).toBe(
+            "1 launch, 1 click, 1 scroll · 2 thoughts · 4 rounds",
+        )
+        expect(summarizeBrowserSession(projectBrowserSession([launch(1)]).steps)).toBe("1 launch")
+    })
+
+    it("pluralizes each kind and counts scrolling in either direction as one kind", () => {
+        const busy: UiMessage[] = [
+            launch(1),
+            result(2, "https://example.com"),
+            action(3, { action: "click", coordinate: "1,1" }),
+            result(4, "https://example.com/a"),
+            action(5, { action: "type", text: "query" }),
+            result(6, "https://example.com/a"),
+            action(7, { action: "click", coordinate: "2,2" }),
+            result(8, "https://example.com/b"),
+            action(9, { action: "scroll_down" }),
+            result(10, "https://example.com/b"),
+            action(11, { action: "scroll_up" }),
+            result(12, "https://example.com/b"),
+        ]
+
+        expect(summarizeBrowserSession(projectBrowserSession(busy).steps)).toBe(
+            "1 launch, 2 clicks, 1 input, 2 scrolls · 6 rounds",
+        )
     })
 })
 

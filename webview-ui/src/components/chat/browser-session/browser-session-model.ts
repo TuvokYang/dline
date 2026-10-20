@@ -281,13 +281,30 @@ export function unfoldableCheckpoints(steps: readonly BrowserSessionStep[]): UiM
     )
 }
 
-/** "6 steps · 2 thoughts" */
+/**
+ * How the summary counts browser calls, in the order it lists them. Closing
+ * the browser is how a session ends, which the header already reports.
+ */
+const ACTION_TALLIES: readonly { readonly unit: string; readonly units: string; readonly actions: readonly BrowserAction[] }[] = [
+    { unit: "launch", units: "launches", actions: ["launch"] },
+    { unit: "click", units: "clicks", actions: ["click"] },
+    { unit: "input", units: "inputs", actions: ["type"] },
+    { unit: "scroll", units: "scrolls", actions: ["scroll_down", "scroll_up"] },
+]
+
+/** "1 launch, 3 clicks, 2 scrolls · 2 thoughts · 6 rounds", counted the way an exploration run counts its calls. */
 export function summarizeBrowserSession(steps: readonly BrowserSessionStep[]): string {
-    const acted = steps.filter((step) => step.actions.length > 0).length
+    const actions = steps.flatMap((step) => step.actions)
+    const calls = ACTION_TALLIES.flatMap(({ unit, units, actions: kinds }) => {
+        const count = actions.filter((entry) => kinds.includes(entry.action)).length
+        return count > 0 ? [`${count} ${count === 1 ? unit : units}`] : []
+    })
     const thoughts = steps.reduce((count, step) => count + step.thoughts.length, 0)
+    const rounds = steps.filter((step) => step.actions.length > 0).length
     const parts: string[] = []
-    if (acted > 0) parts.push(`${acted} step${acted === 1 ? "" : "s"}`)
+    if (calls.length > 0) parts.push(calls.join(", "))
     if (thoughts > 0) parts.push(`${thoughts} thought${thoughts === 1 ? "" : "s"}`)
+    if (rounds > 1) parts.push(`${rounds} rounds`)
     return parts.join(" · ")
 }
 
