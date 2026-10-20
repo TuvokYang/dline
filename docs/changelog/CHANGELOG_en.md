@@ -22,6 +22,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Typing only `/compact` (optionally with what to keep) while the task works writes the summary right away beside the work in progress; its review opens once the round ends or before the next one starts, and the next request waits until you accept it. It no longer enters the input queue, so it is never taken as a dialog's answer at the end of a turn or sent as an empty message in a tool round
 - The header compact button also works while the task runs, through the same immediate compaction; in every state it only compacts, without answering a waiting dialog or resuming an interrupted task. The context bar's token counts, progress bar and compact button are vertically centered
 - Choosing Retry after a manual compaction ran out of retries continues the task once the compaction lands, instead of stopping on a state read from before the compaction was requested
+- When the wrap-up request a subagent makes after a timeout or a finish request fails, the subagent reports the provider's actual error instead of five empty responses
 
 ## [0.11.1]
 

@@ -1709,6 +1709,36 @@ describe("SubagentRunner", () => {
         assertFinishTurnReusesRequestShape(createMessage, [DlineDefaultTool.LIST_FILES, DlineDefaultTool.ATTEMPT])
     })
 
+    it("reports the real provider error when the timeout finish turn itself fails", async () => {
+        let runner: SubagentRunner
+        const createMessage = vi.fn()
+        createMessage.mockImplementationOnce(async function* () {
+            await runner.requestFinish("timeout")
+            yield { type: "text", text: "partial findings" }
+        })
+        createMessage.mockImplementation(async function* () {
+            yield* []
+            throw new Error("400 e2e_mock_queue_exhausted: no scripted response left")
+        })
+        vi.spyOn(systemPromptFacade, "getSystemPrompt").mockResolvedValue({
+            systemPrompt: "system prompt",
+            tools: [{ type: "function", function: { name: DlineDefaultTool.ATTEMPT, description: "Complete" } }] as never,
+            profile: PromptProfile.Standard,
+            warnings: [],
+        })
+        vi.spyOn(skills, "discoverSkills").mockResolvedValue([])
+        vi.spyOn(skills, "getAvailableSkills").mockReturnValue([])
+        stubApiHandler(createMessage, 200_000, false, vi.fn())
+        initializeHostProvider()
+        runner = new SubagentRunner(createTaskConfig(true))
+
+        const result = await runner.run("Explore until timeout", () => {})
+
+        assert.equal(result.status, "failed")
+        assert.match(result.error ?? "", /e2e_mock_queue_exhausted/)
+        assert.doesNotMatch(result.error ?? "", /empty/i)
+    })
+
     it("reports the effective runtime configuration before the first provider request", async () => {
         const createMessage = vi.fn().mockImplementation(async function* () {
             yield {

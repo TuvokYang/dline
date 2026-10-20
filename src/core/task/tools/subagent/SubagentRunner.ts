@@ -1971,6 +1971,10 @@ export class SubagentRunner {
     ) {
         let cumulativeRetryDelayMs = 0
         for (let attempt = 1; attempt <= MAX_INITIAL_STREAM_ATTEMPTS; attempt += 1) {
+            // A finish request aborts the attempt in flight, and that abort is expected. An
+            // attempt started after the request is the finish turn itself: its failure is the
+            // real outcome and must be reported, not read as an empty response.
+            const startedBeforeFinish = this.finishRequested === undefined
             const truncatedConversation = contextState.roundContexts.project(
                 contextManager
                     .getTruncatedMessages(fullConversation, contextState.conversationHistoryDeletedRange)
@@ -2036,7 +2040,7 @@ export class SubagentRunner {
                     return
                 }
             } catch (error) {
-                if (this.finishRequested && !this.shouldAbort()) {
+                if (startedBeforeFinish && this.finishRequested && !this.shouldAbort()) {
                     if (!didYieldUnreplayableOutput) onReplayableAttemptDiscarded()
                     return
                 }
@@ -2089,7 +2093,7 @@ export class SubagentRunner {
                 try {
                     await waitForSubagentRetry(delayMs, this.activeRetryAbortController?.signal)
                 } catch (waitError) {
-                    if (this.finishRequested && !this.shouldAbort()) return
+                    if (startedBeforeFinish && this.finishRequested && !this.shouldAbort()) return
                     throw waitError
                 }
             }
