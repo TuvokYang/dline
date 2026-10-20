@@ -1,5 +1,6 @@
 import { ExecuteCommandInTerminalRequest, ExecuteCommandInTerminalResponse } from "@shared/proto/dline/host/workspace"
 import * as vscode from "vscode"
+import { ExtensionRegistryInfo } from "@/registry"
 import { Logger } from "@/shared/services/Logger"
 
 /**
@@ -13,8 +14,8 @@ export async function executeCommandInTerminal(
     try {
         // Create terminal with fixed options
         const terminalOptions: vscode.TerminalOptions = {
-            name: "Dline",
-            iconPath: new vscode.ThemeIcon("dline-icon"),
+            name: ExtensionRegistryInfo.displayName,
+            iconPath: new vscode.ThemeIcon(ExtensionRegistryInfo.productIconId),
             env: {
                 DLINE_ACTIVE: "true",
             },

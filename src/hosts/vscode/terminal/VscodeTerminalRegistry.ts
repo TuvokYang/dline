@@ -1,5 +1,6 @@
 import * as vscode from "vscode"
 import type { TerminalAcquisitionSource, TerminalLaunchConfiguration } from "@/integrations/terminal/types"
+import { ExtensionRegistryInfo } from "@/registry"
 
 export interface TerminalInfo {
     terminal: vscode.Terminal
@@ -35,8 +36,8 @@ export class TerminalRegistry {
     ): TerminalInfo {
         const terminalOptions: vscode.TerminalOptions = {
             cwd,
-            name: "Dline",
-            iconPath: new vscode.ThemeIcon("dline-icon"),
+            name: ExtensionRegistryInfo.displayName,
+            iconPath: new vscode.ThemeIcon(ExtensionRegistryInfo.productIconId),
             env: {
                 ...launchConfiguration?.environment,
                 DLINE_ACTIVE: "true",

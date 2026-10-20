@@ -5,6 +5,7 @@ import { OrchestratorController } from "@/core/orchestrator/OrchestratorControll
 import { normalizeTaskPanelTitle } from "@/core/task/TaskPanelTitle"
 import { dlineUiPresence } from "@/core/webview/DlineUiPresence"
 import { HostProvider } from "@/hosts/host-provider"
+import { ExtensionRegistryInfo } from "@/registry"
 import type { ClineExtensionContext } from "@/shared/cline"
 import type { ExtensionMessage } from "@/shared/ExtensionMessage"
 import { Logger } from "@/shared/services/Logger"
@@ -52,7 +53,7 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
         }
 
         const panel = vscode.window.createWebviewPanel(
-            "dlineTask",
+            ExtensionRegistryInfo.panelViewType,
             normalizeTaskPanelTitle(title),
             { viewColumn: dlineEditorGroup.getCreateViewColumn(), preserveFocus: true },
             {
@@ -149,7 +150,7 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
 
         const taskId = state?.taskId
         if (!taskId) {
-            panel.title = "Dline"
+            panel.title = ExtensionRegistryInfo.displayName
             await provider.controller.postStateToWebview()
             const { sendChatButtonClickedEvent } = await import("@/core/controller/ui/subscribeToChatButtonClicked")
             await sendChatButtonClickedEvent(provider.controller)
@@ -180,7 +181,7 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
                 })
                 .catch(async (error) => {
                     Logger.warn(`[VscodeWebviewPanelProvider] Failed to restore task ${taskId}, showing blank state:`, error)
-                    panel.title = "Dline"
+                    panel.title = ExtensionRegistryInfo.displayName
                     try {
                         await provider.controller.postStateToWebview()
                         await revealRestoredTask()
@@ -190,7 +191,7 @@ export class VscodeWebviewPanelProvider extends WebviewProvider {
                 })
         } catch (error) {
             Logger.warn(`[VscodeWebviewPanelProvider] Task ${taskId} not found, showing blank state:`, error)
-            panel.title = "Dline"
+            panel.title = ExtensionRegistryInfo.displayName
             await provider.controller.postStateToWebview()
             const { sendChatButtonClickedEvent } = await import("@/core/controller/ui/subscribeToChatButtonClicked")
             await sendChatButtonClickedEvent(provider.controller)

@@ -3,10 +3,11 @@ import * as path from "path"
 import * as vscode from "vscode"
 import { DecorationController } from "@/hosts/vscode/DecorationController"
 import { NotebookDiffView } from "@/hosts/vscode/NotebookDiffView"
+import { ExtensionRegistryInfo } from "@/registry"
 import { Logger } from "@/shared/services/Logger"
 import { arePathsEqual } from "@/utils/path"
 
-export const DIFF_VIEW_URI_SCHEME = "cline-diff"
+export const DIFF_VIEW_URI_SCHEME = ExtensionRegistryInfo.diffUriScheme
 
 export class VscodeDiffViewProvider extends DiffViewProvider {
     private activeDiffEditor?: vscode.TextEditor

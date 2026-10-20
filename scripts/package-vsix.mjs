@@ -36,6 +36,7 @@ import { execSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { createDistributionManifest, INSIDERS_PACKAGE_NAME } from "./extension-manifest-identity.mjs"
 import { withMarketplaceReadme } from "./marketplace-readme.mjs"
 import { assertChannelVersion, createInsidersVersion as createPolicyInsidersVersion } from "./release-version-policy.mjs"
 import { packageVsix } from "./vsix-packager.mjs"
@@ -54,8 +55,6 @@ const DEV_TAG_PATTERN = /^dev-v(\d+\.\d+\.\d+)$/
 const INSIDERS_DRAFT_TAG_PATTERN = /^insiders-[0-9a-f]{40}$/
 
 const PRE_RELEASE_CHANNEL = "pre-release"
-const INSIDERS_SUFFIX = "-insiders"
-const INSIDERS_DISPLAY_SUFFIX = " (Insiders)"
 const SUPPORTED_CHANNELS = new Set(["auto", "ci", "production", PRE_RELEASE_CHANNEL, "insiders"])
 
 /**
@@ -349,15 +348,9 @@ function parseArguments(argv) {
 function applyChannelIdentity(pkg, channel, version) {
     if (channel !== "insiders") return false
 
-    const displayName = pkg.displayName + INSIDERS_DISPLAY_SUFFIX
-
-    pkg.preview = true
-    pkg.name += INSIDERS_SUFFIX
-    pkg.displayName = displayName
-    pkg.version = version
-    if (pkg.contributes?.viewsContainers?.activitybar?.title) {
-        pkg.contributes.viewsContainers.activitybar.title = displayName
-    }
+    const transformed = createDistributionManifest(pkg, INSIDERS_PACKAGE_NAME, version)
+    for (const key of Object.keys(pkg)) delete pkg[key]
+    Object.assign(pkg, transformed)
     return true
 }
 

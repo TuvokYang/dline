@@ -16,7 +16,8 @@ import { registerExtensionReloadWatcher } from "./dev/ExtensionReloadWatcher"
 import { createClineAPI } from "./exports"
 import { accountFeatureGate, isAccountFeatureActive } from "./services/account/accountFeatureGate"
 import { initializeTestMode } from "./services/test/TestMode"
-import "./utils/path" // necessary to have access to String.prototype.toPosix
+// Necessary to have access to String.prototype.toPosix.
+import "./utils/path"
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { ExtensionContext } from "vscode"
@@ -162,7 +163,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // 5. Register WebviewPanelSerializer for Editor Tab panel restoration
     // VSCode calls deserializeWebviewPanel when restoring the window with previously-open panels.
     context.subscriptions.push(
-        vscode.window.registerWebviewPanelSerializer("dlineTask", {
+        vscode.window.registerWebviewPanelSerializer(ExtensionRegistryInfo.panelViewType, {
             async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: any) {
                 // Dynamic import to avoid circular deps at module load time
                 const { VscodeWebviewPanelProvider } = await import("./hosts/vscode/VscodeWebviewPanelProvider")
@@ -218,7 +219,7 @@ export async function activate(context: vscode.ExtensionContext) {
             // The sidebar and any existing panels are unaffected.
             const { VscodeWebviewPanelProvider } = await import("./hosts/vscode/VscodeWebviewPanelProvider")
             const panelProvider = new VscodeWebviewPanelProvider(context as any, { deferController: false })
-            await panelProvider.createPanel("Dline")
+            await panelProvider.createPanel(ExtensionRegistryInfo.displayName)
             // Push initial state so the new panel shows the welcome/ready UI
             await panelProvider.controller.postStateToWebview()
             await sendChatButtonClickedEvent(panelProvider.controller)
@@ -254,7 +255,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // The sidebar title button follows the account feature through this context key.
     context.subscriptions.push({
         dispose: accountFeatureGate.onDidChange((active) => {
-            void vscode.commands.executeCommand("setContext", "dline.accountEnabled", active)
+            void vscode.commands.executeCommand("setContext", ExtensionRegistryInfo.contextKeys.accountEnabled, active)
         }),
     })
     accountFeatureGate.reevaluate()
@@ -309,7 +310,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Register size testing commands in development mode
     if (IS_DEV) {
-        vscode.commands.executeCommand("setContext", "cline.isDevMode", IS_DEV)
+        vscode.commands.executeCommand("setContext", ExtensionRegistryInfo.contextKeys.isDevMode, IS_DEV)
         // Use dynamic import to avoid loading the module in production
         import("./dev/commands/tasks")
             .then((module) => {
@@ -413,6 +414,11 @@ export async function activate(context: vscode.ExtensionContext) {
         }),
     )
 
+    const addToTitle = `Add to ${ExtensionRegistryInfo.displayName}`
+    const explainTitle = `Explain with ${ExtensionRegistryInfo.displayName}`
+    const improveTitle = `Improve with ${ExtensionRegistryInfo.displayName}`
+    const fixTitle = `Fix with ${ExtensionRegistryInfo.displayName}`
+
     // Register code action provider
     context.subscriptions.push(
         vscode.languages.registerCodeActionsProvider(
@@ -461,39 +467,39 @@ export async function activate(context: vscode.ExtensionContext) {
                     }
 
                     // Add to Dline (Always available)
-                    const addAction = new vscode.CodeAction("Add to Dline", vscode.CodeActionKind.QuickFix)
+                    const addAction = new vscode.CodeAction(addToTitle, vscode.CodeActionKind.QuickFix)
                     addAction.command = {
                         command: commands.AddToChat,
-                        title: "Add to Dline",
+                        title: addToTitle,
                         arguments: [expandedRange, context.diagnostics],
                     }
                     actions.push(addAction)
 
                     // Explain with Dline (Always available)
-                    const explainAction = new vscode.CodeAction("Explain with Dline", vscode.CodeActionKind.RefactorExtract) // Using a refactor kind
+                    const explainAction = new vscode.CodeAction(explainTitle, vscode.CodeActionKind.RefactorExtract) // Using a refactor kind
                     explainAction.command = {
                         command: commands.ExplainCode,
-                        title: "Explain with Dline",
+                        title: explainTitle,
                         arguments: [expandedRange],
                     }
                     actions.push(explainAction)
 
                     // Improve with Cline (Always available)
-                    const improveAction = new vscode.CodeAction("Improve with Dline", vscode.CodeActionKind.RefactorRewrite) // Using a refactor kind
+                    const improveAction = new vscode.CodeAction(improveTitle, vscode.CodeActionKind.RefactorRewrite) // Using a refactor kind
                     improveAction.command = {
                         command: commands.ImproveCode,
-                        title: "Improve with Dline",
+                        title: improveTitle,
                         arguments: [expandedRange],
                     }
                     actions.push(improveAction)
 
                     // Fix with Dline (Only if diagnostics exist)
                     if (context.diagnostics.length > 0) {
-                        const fixAction = new vscode.CodeAction("Fix with Dline", vscode.CodeActionKind.QuickFix)
+                        const fixAction = new vscode.CodeAction(fixTitle, vscode.CodeActionKind.QuickFix)
                         fixAction.isPreferred = true
                         fixAction.command = {
                             command: commands.FixWithCline,
-                            title: "Fix with Dline",
+                            title: fixTitle,
                             arguments: [expandedRange, context.diagnostics],
                         }
                         actions.push(fixAction)
@@ -514,7 +520,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Register the command handlers
     context.subscriptions.push(
         vscode.commands.registerCommand(commands.AddToChat, async (range?: vscode.Range, diagnostics?: vscode.Diagnostic[]) => {
-            const context = await getContextForCommand(range, diagnostics, { panelTitle: "Add to Dline" })
+            const context = await getContextForCommand(range, diagnostics, { panelTitle: addToTitle })
             if (!context) {
                 return
             }
@@ -525,7 +531,7 @@ export async function activate(context: vscode.ExtensionContext) {
     )
     context.subscriptions.push(
         vscode.commands.registerCommand(commands.FixWithCline, async (range: vscode.Range, diagnostics: vscode.Diagnostic[]) => {
-            const context = await getContextForCommand(range, diagnostics, { panelTitle: "Fix with Dline" })
+            const context = await getContextForCommand(range, diagnostics, { panelTitle: fixTitle })
             if (!context) {
                 return
             }
@@ -534,7 +540,7 @@ export async function activate(context: vscode.ExtensionContext) {
     )
     context.subscriptions.push(
         vscode.commands.registerCommand(commands.ExplainCode, async (range: vscode.Range) => {
-            const context = await getContextForCommand(range, undefined, { panelTitle: "Explain with Dline" })
+            const context = await getContextForCommand(range, undefined, { panelTitle: explainTitle })
             if (!context) {
                 return
             }
@@ -543,7 +549,7 @@ export async function activate(context: vscode.ExtensionContext) {
     )
     context.subscriptions.push(
         vscode.commands.registerCommand(commands.ImproveCode, async (range: vscode.Range) => {
-            const context = await getContextForCommand(range, undefined, { panelTitle: "Improve with Dline" })
+            const context = await getContextForCommand(range, undefined, { panelTitle: improveTitle })
             if (!context) {
                 return
             }
@@ -690,7 +696,10 @@ ${ctx.cellJson || "{}"}
     // Register the openWalkthrough command handler
     context.subscriptions.push(
         vscode.commands.registerCommand(commands.Walkthrough, async () => {
-            await vscode.commands.executeCommand("workbench.action.openWalkthrough", `${context.extension.id}#DlineWalkthrough`)
+            await vscode.commands.executeCommand(
+                "workbench.action.openWalkthrough",
+                ExtensionRegistryInfo.walkthrough.qualifiedId,
+            )
             telemetryService.captureButtonClick("command_openWalkthrough")
         }),
     )
@@ -746,7 +755,7 @@ async function showReloadWindowPromptIfNeeded(context: vscode.ExtensionContext) 
     }
 
     const selected = await vscode.window.showInformationMessage(
-        `Dline v${currentVersion} is installed. Reload VS Code to finish activating the extension.`,
+        `${ExtensionRegistryInfo.displayName} v${currentVersion} is installed. Reload VS Code to finish activating the extension.`,
         RELOAD_WINDOW_ACTION,
     )
     await context.globalState.update(RELOAD_WINDOW_PROMPT_VERSION_KEY, currentVersion)

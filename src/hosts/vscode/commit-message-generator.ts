@@ -3,6 +3,7 @@ import * as path from "path"
 import * as vscode from "vscode"
 import { Controller } from "@/core/controller"
 import { HostProvider } from "@/hosts/host-provider"
+import { ExtensionRegistryInfo } from "@/registry"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
 import { getGitDiff } from "@/utils/git"
@@ -168,7 +169,7 @@ async function generateCommitMsgForRepository(controller: Controller, repository
 
 async function performCommitMsgGeneration(controller: Controller, gitDiff: string, inputBox: any) {
     try {
-        vscode.commands.executeCommand("setContext", "cline.isGeneratingCommit", true)
+        vscode.commands.executeCommand("setContext", ExtensionRegistryInfo.contextKeys.isGeneratingCommit, true)
 
         const prompts = [PROMPT.instruction]
 
@@ -226,13 +227,13 @@ async function performCommitMsgGeneration(controller: Controller, gitDiff: strin
             message: `Failed to generate commit message: ${errorMessage}`,
         })
     } finally {
-        vscode.commands.executeCommand("setContext", "cline.isGeneratingCommit", false)
+        vscode.commands.executeCommand("setContext", ExtensionRegistryInfo.contextKeys.isGeneratingCommit, false)
     }
 }
 
 export function abortCommitGeneration() {
     commitGenerationAbortController?.abort()
-    vscode.commands.executeCommand("setContext", "cline.isGeneratingCommit", false)
+    vscode.commands.executeCommand("setContext", ExtensionRegistryInfo.contextKeys.isGeneratingCommit, false)
 }
 
 /**

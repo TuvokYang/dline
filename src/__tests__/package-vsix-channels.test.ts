@@ -29,16 +29,26 @@ describe("package-vsix release channels", () => {
         expect(source).not.toMatch(/function isOnTag\b/)
     })
 
-    it("keeps the production identity for pre-releases and renames only Insiders", async () => {
+    it("keeps the production identity for pre-releases and projects only Insiders", async () => {
         const source = await readPackageVsix()
+        const identities = JSON.parse(
+            await fs.readFile(path.join(PROJECT_ROOT, "src/shared/extension-distributions.json"), "utf8"),
+        ) as Record<string, { packageName: string; displayName: string; contributionNamespace: string }>
 
         // A pre-release is tuvokyang.dline on the Marketplace pre-release track,
         // selected by the VSIX pre-release marker rather than a separate name.
         expect(source).toContain('const PRE_RELEASE_CHANNEL = "pre-release"')
         expect(source).toContain('if (channel !== "insiders") return false')
         expect(source).toContain("const preRelease = channel === PRE_RELEASE_CHANNEL")
-        expect(source).toContain('const INSIDERS_SUFFIX = "-insiders"')
-        expect(source).toContain('const INSIDERS_DISPLAY_SUFFIX = " (Insiders)"')
+        expect(source).toContain('from "./extension-manifest-identity.mjs"')
+        expect(source).toContain("createDistributionManifest(pkg, INSIDERS_PACKAGE_NAME, version)")
+        expect(identities["dline-insiders"]).toMatchObject({
+            packageName: "dline-insiders",
+            displayName: "Dline (Insiders)",
+            contributionNamespace: "dline-insiders",
+        })
+        expect(source).not.toContain("INSIDERS_SUFFIX")
+        expect(source).not.toContain("INSIDERS_DISPLAY_SUFFIX")
         expect(source).not.toContain("-preview")
     })
 

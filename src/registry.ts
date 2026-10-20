@@ -1,47 +1,6 @@
 import { name, publisher, version } from "../package.json"
 import { HostProvider } from "./hosts/host-provider"
-
-/**
- * Contribution IDs are a stable public namespace shared by every distribution package.
- *
- * Insiders changes package.json.name to `dline-insiders` before esbuild runs, but its
- * commands and view IDs intentionally remain `dline.*`. Deriving contributions from
- * the distribution name leaves the installed extension unable to resolve its Webview.
- */
-const CONTRIBUTION_NAMESPACE = "dline"
-
-const ClineCommands = {
-    PlusButton: `${CONTRIBUTION_NAMESPACE}.plusButtonClicked`,
-    McpButton: `${CONTRIBUTION_NAMESPACE}.mcpButtonClicked`,
-    SettingsButton: `${CONTRIBUTION_NAMESPACE}.settingsButtonClicked`,
-    HistoryButton: `${CONTRIBUTION_NAMESPACE}.historyButtonClicked`,
-    AccountButton: `${CONTRIBUTION_NAMESPACE}.accountButtonClicked`,
-    WorktreesButton: `${CONTRIBUTION_NAMESPACE}.worktreesButtonClicked`,
-    TerminalOutput: `${CONTRIBUTION_NAMESPACE}.addTerminalOutputToChat`,
-    AddToChat: `${CONTRIBUTION_NAMESPACE}.addToChat`,
-    FixWithCline: `${CONTRIBUTION_NAMESPACE}.fixWithCline`,
-    ExplainCode: `${CONTRIBUTION_NAMESPACE}.explainCode`,
-    ImproveCode: `${CONTRIBUTION_NAMESPACE}.improveCode`,
-    FocusChatInput: `${CONTRIBUTION_NAMESPACE}.focusChatInput`,
-    Walkthrough: `${CONTRIBUTION_NAMESPACE}.openWalkthrough`,
-    GenerateCommit: `${CONTRIBUTION_NAMESPACE}.generateGitCommitMessage`,
-    AbortCommit: `${CONTRIBUTION_NAMESPACE}.abortGitCommitMessage`,
-    ReconstructTaskHistory: `${CONTRIBUTION_NAMESPACE}.reconstructTaskHistory`,
-    RecoverUiMessages: `${CONTRIBUTION_NAMESPACE}.recoverUiMessages`,
-    ReloadWebview: `${CONTRIBUTION_NAMESPACE}.reloadWebview`,
-    // Jupyter Notebook commands
-    JupyterGenerateCell: `${CONTRIBUTION_NAMESPACE}.jupyterGenerateCell`,
-    JupyterExplainCell: `${CONTRIBUTION_NAMESPACE}.jupyterExplainCell`,
-    JupyterImproveCell: `${CONTRIBUTION_NAMESPACE}.jupyterImproveCell`,
-}
-
-const ClineViewContainerIds = {
-    ActivityBar: `${CONTRIBUTION_NAMESPACE}-ActivityBar`,
-}
-
-const ClineViewIds = {
-    Sidebar: `${CONTRIBUTION_NAMESPACE}.SidebarProvider`,
-}
+import distributions from "./shared/extension-distributions.json"
 
 interface DistributionIdentity {
     name: string
@@ -49,17 +8,86 @@ interface DistributionIdentity {
     version: string
 }
 
-/** Build runtime identity without coupling stable contribution IDs to the distribution package name. */
+interface ContributionIdentity {
+    packageName: string
+    displayName: string
+    preview: boolean
+    contributionNamespace: string
+    activityBarId: string
+    sidebarViewId: string
+    panelViewType: string
+    diffUriScheme: string
+    commentControllerId: string
+    productIconId: string
+    walkthroughId: string
+    contextKeys: {
+        accountEnabled: string
+        isGeneratingCommit: string
+        isDevMode: string
+        isTestMode: string
+    }
+}
+
+const contributionIdentities: Record<string, ContributionIdentity> = distributions
+
+function commandIds(namespace: string) {
+    const command = (suffix: string) => `${namespace}.${suffix}`
+    return {
+        PlusButton: command("plusButtonClicked"),
+        McpButton: command("mcpButtonClicked"),
+        SettingsButton: command("settingsButtonClicked"),
+        HistoryButton: command("historyButtonClicked"),
+        AccountButton: command("accountButtonClicked"),
+        WorktreesButton: command("worktreesButtonClicked"),
+        TerminalOutput: command("addTerminalOutputToChat"),
+        AddToChat: command("addToChat"),
+        FixWithCline: command("fixWithCline"),
+        ExplainCode: command("explainCode"),
+        ImproveCode: command("improveCode"),
+        FocusChatInput: command("focusChatInput"),
+        Walkthrough: command("openWalkthrough"),
+        GenerateCommit: command("generateGitCommitMessage"),
+        AbortCommit: command("abortGitCommitMessage"),
+        ReconstructTaskHistory: command("reconstructTaskHistory"),
+        RecoverUiMessages: command("recoverUiMessages"),
+        ReloadWebview: command("reloadWebview"),
+        JupyterGenerateCell: command("jupyterGenerateCell"),
+        JupyterExplainCell: command("jupyterExplainCell"),
+        JupyterImproveCell: command("jupyterImproveCell"),
+        ReviewCommentReply: command("reviewComment.reply"),
+        ReviewCommentAddToChat: command("reviewComment.addToChat"),
+        DevCreateTestTasks: command("dev.createTestTasks"),
+        DevExpireMcpOAuthTokens: command("dev.expireMcpOAuthTokens"),
+    }
+}
+
+/** Build the runtime registry from the distribution identity compiled into this bundle. */
 export function createExtensionRegistryInfo(distribution: DistributionIdentity) {
+    const contribution = contributionIdentities[distribution.name]
+    if (!contribution) {
+        throw new Error(`No VS Code contribution identity is registered for '${distribution.name}'.`)
+    }
+
     return {
         id: `${distribution.publisher}.${distribution.name}`,
         name: distribution.name,
         version: distribution.version,
         publisher: distribution.publisher,
-        contributionNamespace: CONTRIBUTION_NAMESPACE,
-        commands: ClineCommands,
-        viewContainers: ClineViewContainerIds,
-        views: ClineViewIds,
+        displayName: contribution.displayName,
+        isInsiders: contribution.preview,
+        contributionNamespace: contribution.contributionNamespace,
+        commands: commandIds(contribution.contributionNamespace),
+        viewContainers: { ActivityBar: contribution.activityBarId },
+        views: { Sidebar: contribution.sidebarViewId },
+        contextKeys: contribution.contextKeys,
+        panelViewType: contribution.panelViewType,
+        diffUriScheme: contribution.diffUriScheme,
+        commentControllerId: contribution.commentControllerId,
+        productIconId: contribution.productIconId,
+        walkthrough: {
+            id: contribution.walkthroughId,
+            qualifiedId: `${distribution.publisher}.${distribution.name}#${contribution.walkthroughId}`,
+        },
     }
 }
 

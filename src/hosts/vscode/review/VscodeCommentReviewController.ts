@@ -2,6 +2,7 @@ import * as vscode from "vscode"
 import { sendAddToInputEvent } from "@/core/controller/ui/subscribeToAddToInput"
 import { WebviewProvider } from "@/core/webview"
 import { CommentReviewController, type OnReplyCallback, type ReviewComment } from "@/integrations/editor/CommentReviewController"
+import { ExtensionRegistryInfo } from "@/registry"
 import { Logger } from "@/shared/services/Logger"
 import { DIFF_VIEW_URI_SCHEME } from "../VscodeDiffViewProvider"
 
@@ -31,12 +32,15 @@ export class VscodeCommentReviewController extends CommentReviewController imple
     constructor() {
         super()
         // Create the comment controller
-        this.commentController = vscode.comments.createCommentController("dline-ai-review", "Dline AI Review")
+        this.commentController = vscode.comments.createCommentController(
+            ExtensionRegistryInfo.commentControllerId,
+            `${ExtensionRegistryInfo.displayName} AI Review`,
+        )
 
         // Configure options for the reply input
         this.commentController.options = {
             placeHolder: "Ask a question about this code...",
-            prompt: "Reply to Dline",
+            prompt: `Reply to ${ExtensionRegistryInfo.displayName}`,
         }
 
         // Configure the commenting range provider (optional - allows commenting on any line)
@@ -50,16 +54,22 @@ export class VscodeCommentReviewController extends CommentReviewController imple
 
         // Register reply command - this is called when user clicks the Reply button
         this.disposables.push(
-            vscode.commands.registerCommand("dline.reviewComment.reply", async (reply: vscode.CommentReply) => {
-                await this.handleReply(reply)
-            }),
+            vscode.commands.registerCommand(
+                ExtensionRegistryInfo.commands.ReviewCommentReply,
+                async (reply: vscode.CommentReply) => {
+                    await this.handleReply(reply)
+                },
+            ),
         )
 
         // Register add to chat command - sends the conversation to Cline's main chat
         this.disposables.push(
-            vscode.commands.registerCommand("dline.reviewComment.addToChat", async (thread: vscode.CommentThread) => {
-                await this.handleAddToChat(thread)
-            }),
+            vscode.commands.registerCommand(
+                ExtensionRegistryInfo.commands.ReviewCommentAddToChat,
+                async (thread: vscode.CommentThread) => {
+                    await this.handleAddToChat(thread)
+                },
+            ),
         )
     }
 

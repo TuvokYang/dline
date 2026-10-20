@@ -49,7 +49,9 @@ import { execFileSync, execSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { createDistributionManifest, INSIDERS_PACKAGE_NAME } from "./extension-manifest-identity.mjs"
 import { restore as restoreMarketplaceReadme, swapIn as swapInMarketplaceReadme } from "./marketplace-readme.mjs"
+import { createInsidersVersion } from "./release-version-policy.mjs"
 
 // Get __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url)
@@ -72,10 +74,6 @@ const log = {
 
 // Configuration
 const config = {
-    // The name and display name for the insiders version
-    insidersName: "dline-insiders",
-    originalName: "dline",
-    insidersDisplayName: "Dline (Insiders)",
     projectRoot: path.join(__dirname, ".."),
     get packageJsonPath() {
         return path.join(this.projectRoot, "package.json")
@@ -199,33 +197,11 @@ class InsidersPublisher {
     }
 
     /**
-     * Generate new version with timestamp
-     * Format: major.minor.timestamp
-     */
-    generateVersion(currentVersion) {
-        // Extract major.minor from current version (e.g., "3.27.1" -> "3.27")
-        const versionParts = currentVersion.split(".")
-        if (versionParts.length < 2) {
-            throw new Error(`Invalid version format: ${currentVersion}`)
-        }
-
-        const major = versionParts[0]
-        const minor = versionParts[1]
-        const timestamp = Math.floor(Date.now() / 1000)
-
-        return `${major}.${minor}.${timestamp}`
-    }
-
-    /**
-     * Update package.json with insiders configuration
+     * Update package.json with the canonical Insiders distribution identity.
      */
     updatePackageJson() {
-        // Replace any occurrences cline. or claude-dev with insiders name
-        const rawContent = fs.readFileSync(config.packageJsonPath, "utf-8")
-        const content = rawContent.replaceAll("claude-dev", config.insidersName).replaceAll('"cline.', `"${config.insidersName}.`)
-
-        const pkg = JSON.parse(content)
-        const currentVersion = pkg.version
+        const sourceManifest = JSON.parse(fs.readFileSync(config.packageJsonPath, "utf-8"))
+        const currentVersion = sourceManifest.version
 
         if (!currentVersion) {
             throw new Error("Could not read version from package.json")
@@ -233,18 +209,13 @@ class InsidersPublisher {
 
         log.info(`Current version: ${currentVersion}`)
 
-        const newVersion = this.generateVersion(currentVersion)
+        const newVersion = createInsidersVersion(currentVersion)
         log.info(`New version: ${newVersion}`)
 
-        // Update package.json fields
-        pkg.version = newVersion
-        pkg.name = config.insidersName
-        pkg.displayName = config.insidersDisplayName
-        pkg.contributes.viewsContainers.activitybar.title = config.insidersDisplayName
+        const insidersManifest = createDistributionManifest(sourceManifest, INSIDERS_PACKAGE_NAME, newVersion)
 
-        // Save updated package.json
         log.info("Updating package.json for insiders build")
-        fs.writeFileSync(config.packageJsonPath, JSON.stringify(pkg, null, "\t"))
+        fs.writeFileSync(config.packageJsonPath, `${JSON.stringify(insidersManifest, null, "\t")}\n`)
 
         return newVersion
     }

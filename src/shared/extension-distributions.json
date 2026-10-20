@@ -1,0 +1,40 @@
+{
+    "dline": {
+        "packageName": "dline",
+        "displayName": "Dline",
+        "preview": false,
+        "contributionNamespace": "dline",
+        "activityBarId": "dline-ActivityBar",
+        "sidebarViewId": "dline.SidebarProvider",
+        "panelViewType": "dlineTask",
+        "diffUriScheme": "cline-diff",
+        "commentControllerId": "dline-ai-review",
+        "productIconId": "dline-icon",
+        "walkthroughId": "DlineWalkthrough",
+        "contextKeys": {
+            "accountEnabled": "dline.accountEnabled",
+            "isGeneratingCommit": "dline.isGeneratingCommit",
+            "isDevMode": "dline.isDevMode",
+            "isTestMode": "dline.isTestMode"
+        }
+    },
+    "dline-insiders": {
+        "packageName": "dline-insiders",
+        "displayName": "Dline (Insiders)",
+        "preview": true,
+        "contributionNamespace": "dline-insiders",
+        "activityBarId": "dline-insiders-ActivityBar",
+        "sidebarViewId": "dline-insiders.SidebarProvider",
+        "panelViewType": "dlineInsidersTask",
+        "diffUriScheme": "dline-insiders-diff",
+        "commentControllerId": "dline-insiders-ai-review",
+        "productIconId": "dline-insiders-icon",
+        "walkthroughId": "DlineWalkthrough",
+        "contextKeys": {
+            "accountEnabled": "dlineInsiders.accountEnabled",
+            "isGeneratingCommit": "dlineInsiders.isGeneratingCommit",
+            "isDevMode": "dlineInsiders.isDevMode",
+            "isTestMode": "dlineInsiders.isTestMode"
+        }
+    }
+}
