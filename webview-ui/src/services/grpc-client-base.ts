@@ -14,6 +14,42 @@ export interface Callbacks<TResponse> {
     onComplete: () => void
 }
 
+/** How long a unary RPC may stay unanswered before its promise rejects. */
+export const UNARY_RPC_TIMEOUT_MS = 30_000
+
+/** Identity of a unary RPC that the extension did not answer in time. */
+export interface UnaryRpcTimeout {
+    service: string
+    method: string
+}
+
+type UnaryRpcTimeoutListener = (timeout: UnaryRpcTimeout) => void
+
+const unaryRpcTimeoutListeners = new Set<UnaryRpcTimeoutListener>()
+
+/**
+ * Observe unary RPCs that hit the timeout guard.
+ *
+ * The rejection alone only reaches the caller, which usually just resets its
+ * pending state, so an unanswered RPC would otherwise leave no trace of which
+ * method stalled. Listeners run synchronously before the rejection and must
+ * not throw; a throwing listener is ignored. Returns an unsubscribe function.
+ */
+export function onUnaryRpcTimeout(listener: UnaryRpcTimeoutListener): () => void {
+    unaryRpcTimeoutListeners.add(listener)
+    return () => unaryRpcTimeoutListeners.delete(listener)
+}
+
+function notifyUnaryRpcTimeout(timeout: UnaryRpcTimeout): void {
+    for (const listener of unaryRpcTimeoutListeners) {
+        try {
+            listener(timeout)
+        } catch {
+            // A diagnostic listener must never change how the RPC settles.
+        }
+    }
+}
+
 export abstract class ProtoBusClient {
     static serviceName: string
 
@@ -34,9 +70,10 @@ export abstract class ProtoBusClient {
                 if (!settled) {
                     settled = true
                     window.removeEventListener("message", handleResponse)
+                    notifyUnaryRpcTimeout({ service: this.serviceName, method: methodName })
                     reject(new Error(`Unary RPC ${methodName} timed out after 30s`))
                 }
-            }, 30_000)
+            }, UNARY_RPC_TIMEOUT_MS)
 
             // Set up one-time listener for this specific request
             const handleResponse = (event: MessageEvent) => {

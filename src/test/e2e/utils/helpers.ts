@@ -745,6 +745,7 @@ export const e2e = test
                 installVsix,
                 devWebview,
                 server,
+                actionTimeout,
             },
             use,
             testInfo,
@@ -855,6 +856,10 @@ export const e2e = test
                         workspacePath,
                     ],
                 })
+                // Playwright applies `use.actionTimeout` while setting up a context of a browser launched
+                // through a BrowserType; `_electron.launch` skips that step, so without this one stalled
+                // action in the VS Code window would consume the whole test timeout.
+                if (actionTimeout) app.context().setDefaultTimeout(actionTimeout)
                 await E2ETestHelper.waitUntil(() => app.windows().length > 0)
                 return app
             })

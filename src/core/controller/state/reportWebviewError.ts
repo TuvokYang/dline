@@ -3,7 +3,7 @@ import type { WebviewErrorReport } from "@shared/proto/dline/state"
 import { Logger } from "@/shared/services/Logger"
 import type { Controller } from "../index"
 
-const WEBVIEW_ERROR_KINDS = new Set(["render", "uncaught", "unhandled_rejection"])
+const WEBVIEW_ERROR_KINDS = new Set(["render", "uncaught", "unhandled_rejection", "rpc_timeout"])
 const MAX_MESSAGE_LENGTH = 1_000
 const MAX_STACK_LENGTH = 4_000
 

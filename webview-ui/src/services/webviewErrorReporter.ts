@@ -1,6 +1,10 @@
 import { StateServiceClient } from "@/services/grpc-client"
+import { onUnaryRpcTimeout, type UnaryRpcTimeout } from "@/services/grpc-client-base"
 
-export type WebviewErrorKind = "render" | "uncaught" | "unhandled_rejection"
+export type WebviewErrorKind = "render" | "uncaught" | "unhandled_rejection" | "rpc_timeout"
+
+/** The method this reporter calls; see {@link isErrorReportRpc}. */
+const ERROR_REPORT_METHOD = "reportWebviewError"
 
 const MAX_REPORTS_PER_SESSION = 20
 const MAX_MESSAGE_LENGTH = 1_000
@@ -58,6 +62,27 @@ export function installGlobalWebviewErrorReporting(): void {
         reportWebviewError("uncaught", event.error ?? event.message)
     })
     window.addEventListener("unhandledrejection", (event) => reportWebviewError("unhandled_rejection", event.reason))
+    onUnaryRpcTimeout(reportUnaryRpcTimeout)
+}
+
+/**
+ * Name the RPC the extension left unanswered. The caller only sees a rejection
+ * it typically swallows, so without this the extension log cannot tell which
+ * request stalled. The report carries the RPC identity as its message, which
+ * also makes deduplication per method.
+ */
+function reportUnaryRpcTimeout(timeout: UnaryRpcTimeout): void {
+    if (isErrorReportRpc(timeout)) return
+    const error = new Error(`${timeout.service}.${timeout.method}`)
+    error.name = "UnaryRpcTimeout"
+    // The timer callback's stack says nothing about the stalled request.
+    error.stack = undefined
+    reportWebviewError("rpc_timeout", error)
+}
+
+/** A stalled report cannot be reported through the same stalled transport. */
+function isErrorReportRpc(timeout: UnaryRpcTimeout): boolean {
+    return timeout.service === StateServiceClient.serviceName && timeout.method === ERROR_REPORT_METHOD
 }
 
 /** A notice carries no thrown value; anything that was thrown is a real failure even if its text matches. */

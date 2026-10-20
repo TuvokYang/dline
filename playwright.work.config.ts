@@ -10,8 +10,20 @@ import {
 
 const isCI = Boolean(process.env.CI)
 
+/**
+ * Bound for a single UI action. Waits for product state go through `expect`
+ * with their own timeouts; an action that cannot complete in this window is
+ * stalled, and failing it here names the step instead of the test timeout.
+ */
+const WORK_ACTION_TIMEOUT_MS = 15_000
+
 export default defineConfig({
     ...baseConfig,
+    use: {
+        ...baseConfig.use,
+        actionTimeout: WORK_ACTION_TIMEOUT_MS,
+        trace: "retain-on-failure",
+    },
     workers: 1,
     retries: 0,
     fullyParallel: false,

@@ -38,6 +38,21 @@ describe("reportWebviewError", () => {
         expect(error.stack).toContain("at ChatView")
     })
 
+    it("keeps an RPC timeout distinct so the log names the stalled method", async () => {
+        const errorSpy = vi.spyOn(Logger, "error").mockImplementation(() => {})
+
+        await reportWebviewError(controller, {
+            kind: "rpc_timeout",
+            message: "dline.TaskService.fetchMessage",
+            name: "UnaryRpcTimeout",
+        })
+
+        expect(errorSpy.mock.calls[0]?.[0]).toBe("[Webview] rpc_timeout error")
+        const error = loggedError(errorSpy)
+        expect(error.name).toBe("WebviewError(rpc_timeout):UnaryRpcTimeout")
+        expect(error.message).toBe("dline.TaskService.fetchMessage")
+    })
+
     it("normalizes an unknown kind and falls back to a generic message", async () => {
         const errorSpy = vi.spyOn(Logger, "error").mockImplementation(() => {})
 

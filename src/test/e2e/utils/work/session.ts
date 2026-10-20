@@ -15,6 +15,9 @@ export async function expectWorkComposerReady(sidebar: Frame, timeoutMs = 60_000
     await expect(sidebar.getByTestId("send-button")).toBeVisible({ timeout: timeoutMs })
 }
 
+/** A scroll click that cannot land quickly is retried by the next poll instead of holding it. */
+const SCROLL_TO_BOTTOM_CLICK_TIMEOUT_MS = 2_000
+
 export async function expectWorkMessageVisible(
     sidebar: Frame,
     text: string,
@@ -27,7 +30,7 @@ export async function expectWorkMessageVisible(
             async () => {
                 if (await message.isVisible().catch(() => false)) return true
                 if (await scrollToBottom.isVisible().catch(() => false)) {
-                    await scrollToBottom.click().catch(() => undefined)
+                    await scrollToBottom.click({ timeout: SCROLL_TO_BOTTOM_CLICK_TIMEOUT_MS }).catch(() => undefined)
                 }
                 return message.isVisible().catch(() => false)
             },
