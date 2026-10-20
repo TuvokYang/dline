@@ -125,7 +125,7 @@ describe("VscodeTerminalPool", () => {
 
     it("creates three warm terminals concurrently for an empty partition", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const target = preparation()
 
@@ -140,9 +140,27 @@ describe("VscodeTerminalPool", () => {
         })
     })
 
-    it("coalesces concurrent ensureWarm calls without exceeding three standby terminals", async () => {
+    it("keeps one warm terminal by default and still runs three commands at once", async () => {
         const runtime = new FakeTerminalPoolRuntime()
         const pool = new VscodeTerminalPool(runtime)
+        pools.push(pool)
+        const target = preparation()
+
+        await pool.ensureWarm(target)
+        assert.equal(runtime.created.length, 1)
+
+        const leases = await Promise.all([
+            pool.acquire(target, target.cwd, "reusable"),
+            pool.acquire(target, target.cwd, "reusable"),
+            pool.acquire(target, target.cwd, "reusable"),
+        ])
+        assert.equal(new Set(leases.map((lease) => lease.terminalInfo.id)).size, 3)
+        await assert.rejects(pool.acquire(target, target.cwd, "reusable"), /lease capacity reached/)
+    })
+
+    it("coalesces concurrent ensureWarm calls without exceeding three standby terminals", async () => {
+        const runtime = new FakeTerminalPoolRuntime()
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const target = preparation()
 
@@ -154,7 +172,7 @@ describe("VscodeTerminalPool", () => {
 
     it("atomically leases distinct terminals and replenishes the three standby slots", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const target = preparation()
         await pool.ensureWarm(target)
@@ -176,7 +194,7 @@ describe("VscodeTerminalPool", () => {
         const runtime = new FakeTerminalPoolRuntime()
         runtime.blockedPreparationIds.add(2)
         runtime.blockedPreparationIds.add(3)
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const target = preparation()
         const warming = pool.ensureWarm(target)
@@ -194,7 +212,7 @@ describe("VscodeTerminalPool", () => {
         runtime.blockedPreparationIds.add(1)
         runtime.blockedPreparationIds.add(2)
         runtime.blockedPreparationIds.add(3)
-        const pool = new VscodeTerminalPool(runtime, { acquireWaitTimeoutMs: 1_000, maxGlobalTerminals: 3 })
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3, acquireWaitTimeoutMs: 1_000, maxGlobalTerminals: 3 })
         pools.push(pool)
         const target = preparation()
         const warming = pool.ensureWarm(target)
@@ -221,7 +239,7 @@ describe("VscodeTerminalPool", () => {
         runtime.blockedPreparationIds.add(1)
         runtime.blockedPreparationIds.add(2)
         runtime.blockedPreparationIds.add(3)
-        const pool = new VscodeTerminalPool(runtime, { maxGlobalTerminals: 3 })
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3, maxGlobalTerminals: 3 })
         pools.push(pool)
         pool.configureShellIntegrationTimeout(1_000)
         const target = preparation()
@@ -249,7 +267,7 @@ describe("VscodeTerminalPool", () => {
         runtime.blockedPreparationIds.add(1)
         runtime.blockedPreparationIds.add(2)
         runtime.blockedPreparationIds.add(3)
-        const pool = new VscodeTerminalPool(runtime, { acquireWaitTimeoutMs: 10, maxGlobalTerminals: 3 })
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3, acquireWaitTimeoutMs: 10, maxGlobalTerminals: 3 })
         pools.push(pool)
         const target = preparation()
         const warming = pool.ensureWarm(target)
@@ -269,7 +287,7 @@ describe("VscodeTerminalPool", () => {
         Object.defineProperty(process, "platform", { value: "win32" })
         try {
             const runtime = new FakeTerminalPoolRuntime()
-            const pool = new VscodeTerminalPool(runtime)
+            const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
             pools.push(pool)
             const target = preparation("config-a", "C:\\Workspace")
             await pool.ensureWarm(target)
@@ -284,7 +302,7 @@ describe("VscodeTerminalPool", () => {
 
     it("keeps a repeatedly reused terminal ready while three replacements are still warming", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const target = preparation()
         await pool.ensureWarm(target)
@@ -312,7 +330,7 @@ describe("VscodeTerminalPool", () => {
 
     it("returns a healthy reusable lease to the ready pool", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const target = preparation()
         await pool.ensureWarm(target)
@@ -328,7 +346,7 @@ describe("VscodeTerminalPool", () => {
 
     it("disposes a consumed lease and replaces it with a different terminal", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const target = preparation()
         await pool.ensureWarm(target)
@@ -344,7 +362,7 @@ describe("VscodeTerminalPool", () => {
 
     it("isolates terminals by configuration partition", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const first = preparation("config-a", "C:\\workspace-a")
         const second = preparation("config-b", "C:\\workspace-b")
@@ -359,7 +377,7 @@ describe("VscodeTerminalPool", () => {
 
     it("rejects a fourth concurrent lease even after replacement terminals are ready", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const target = preparation()
         await pool.ensureWarm(target)
@@ -375,7 +393,7 @@ describe("VscodeTerminalPool", () => {
 
     it("replenishes a ready terminal closed by the user", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const target = preparation()
         await pool.ensureWarm(target)
@@ -389,7 +407,7 @@ describe("VscodeTerminalPool", () => {
 
     it("drains the previous configuration generation within the same workspace scope", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const first = preparation("config-a")
         const second = preparation("config-b")
@@ -408,7 +426,7 @@ describe("VscodeTerminalPool", () => {
 
     it("prunes an idle partition after its TTL", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime, { idlePartitionTtlMs: 10, cleanupIntervalMs: 60_000 })
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3, idlePartitionTtlMs: 10, cleanupIntervalMs: 60_000 })
         pools.push(pool)
         const target = preparation()
         await pool.ensureWarm(target)
@@ -423,7 +441,7 @@ describe("VscodeTerminalPool", () => {
         vi.useFakeTimers()
         const runtime = new FakeTerminalPoolRuntime()
         runtime.prepareFailuresRemaining = 3
-        const pool = new VscodeTerminalPool(runtime, { retryDelaysMs: [1], cleanupIntervalMs: 60_000 })
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3, retryDelaysMs: [1], cleanupIntervalMs: 60_000 })
         pools.push(pool)
         const target = preparation()
 
@@ -439,7 +457,7 @@ describe("VscodeTerminalPool", () => {
 
     it("does not exceed the global terminal capacity", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime, { maxGlobalTerminals: 4, retryDelaysMs: [60_000] })
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3, maxGlobalTerminals: 4, retryDelaysMs: [60_000] })
         pools.push(pool)
         const first = preparation("config-a", "C:\\workspace-a")
         const second = preparation("config-b", "C:\\workspace-b")
@@ -454,7 +472,7 @@ describe("VscodeTerminalPool", () => {
 
     it("drains ready terminals while allowing an existing lease to retire on release", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime)
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
         const target = preparation()
         await pool.ensureWarm(target)

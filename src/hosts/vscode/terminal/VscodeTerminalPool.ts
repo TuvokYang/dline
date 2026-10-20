@@ -7,7 +7,13 @@ import { Logger } from "@/shared/services/Logger"
 import { arePathsEqual } from "@/utils/path"
 import type { TerminalInfo } from "./VscodeTerminalRegistry"
 
-export const DEFAULT_TERMINAL_STANDBY_COUNT = 3
+/** Idle terminals each partition keeps warm for the next command. */
+export const DEFAULT_TERMINAL_STANDBY_COUNT = 1
+/**
+ * Commands one partition may run at once. It is independent of the standby
+ * count: a command beyond the warm standby waits for a terminal to warm.
+ */
+export const DEFAULT_TERMINAL_LEASE_CAPACITY = 3
 
 /**
  * Why the pool could not hand out a warm terminal.
@@ -202,7 +208,7 @@ export class VscodeTerminalPool {
         options: VscodeTerminalPoolOptions = {},
     ) {
         this.targetStandby = options.targetStandby ?? DEFAULT_TERMINAL_STANDBY_COUNT
-        this.maxConcurrentLeases = options.maxConcurrentLeases ?? DEFAULT_TERMINAL_STANDBY_COUNT
+        this.maxConcurrentLeases = options.maxConcurrentLeases ?? DEFAULT_TERMINAL_LEASE_CAPACITY
         this.maxGlobalTerminals = options.maxGlobalTerminals ?? 24
         this.idlePartitionTtlMs = options.idlePartitionTtlMs ?? 10 * 60_000
         this.retryDelaysMs = options.retryDelaysMs ?? [1_000, 5_000, 30_000]
@@ -590,7 +596,12 @@ export class VscodeTerminalPool {
             }
 
             const ready = this.selectReadyTerminal(partition, cwd, reusePolicy)
-            if (ready) return ready
+            if (ready) {
+                // Claim it before returning across an await: another waiter woken by the
+                // same state change would otherwise select the same terminal.
+                ready.state = "leased"
+                return ready
+            }
 
             const snapshot = this.snapshot(partition)
             if (partition.retryTimer && !partition.ensurePromise && snapshot.warming === 0) {

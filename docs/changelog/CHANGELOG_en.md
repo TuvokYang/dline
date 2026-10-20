@@ -4,6 +4,12 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+### Changed
+- Each terminal partition keeps one idle terminal warm instead of three; up to three commands still run at once, and a command beyond the warm terminal waits for a new one to warm up
+
+### Fixed
+- Commands waiting for a warm terminal at the same time are no longer given the same terminal
+
 ## [0.11.1]
 
 ### Changed
