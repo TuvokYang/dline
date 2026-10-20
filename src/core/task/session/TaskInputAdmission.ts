@@ -62,6 +62,14 @@ export interface LifecycleBarrierPort {
      * accepted - the owner binds it to the generation current at that moment.
      */
     request(command: LifecycleCommand): void
+    /**
+     * Carry out a command the user sent on its own while a dialog stays open.
+     *
+     * A reply holding nothing but the command answers nothing, so it must not
+     * resolve the dialog: the owner acts now, outside any round, and the dialog
+     * keeps waiting for its answer. Resolves whether the command was admitted.
+     */
+    perform(command: LifecycleCommand): Promise<boolean>
 }
 
 /**
@@ -96,6 +104,13 @@ export interface ReviewedReply {
     readonly claimedBarrier?: string
     /** Carry out the reply's command; call only after the reply was accepted. */
     commit(): void
+    /**
+     * Carry out the command instead of answering the dialog.
+     *
+     * Present only when the reply holds nothing besides the command, which
+     * then is everything the user asked for.
+     */
+    readonly performAlone?: () => Promise<boolean>
 }
 
 export type TaskInputAdmissionResult =

@@ -6,7 +6,7 @@ import { InMemoryConversationJournal } from "../../stores/InMemoryRuntimeStores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import { JournalConversationView } from "../provider/service/JournalConversationView"
 import { ProviderJournalMessageMaterializer } from "../provider/service/ProviderJournalMessageMaterializer"
-import { ProductionComposeAdapter, type TurnContinuationInput } from "./ProductionComposeAdapter"
+import { LIFECYCLE_ROUND_SETTLED, ProductionComposeAdapter, type TurnContinuationInput } from "./ProductionComposeAdapter"
 
 /** Minimal payload store: content-addressing is irrelevant to round composition. */
 function payloadStore(): TaskPayloadStore & { contents: Map<string, Uint8Array> } {
@@ -227,6 +227,66 @@ describe("ProductionComposeAdapter background results", () => {
 
         expect(result).toEqual({ withdrawn: { reason: "manual_compaction_withdrawn" } })
         expect(await journaledKinds(journal, store)).toEqual([])
+    })
+
+    // A bare `/compact` asked for a smaller context and nothing else; going on
+    // to the provider sent an empty message the model could only guess at.
+    describe("a round that only carried a lifecycle command", () => {
+        async function composeAfterCompaction(
+            admittedText: string,
+            attached: { readonly images?: string[]; readonly context?: string } = {},
+        ) {
+            const store = payloadStore()
+            const journal = new InMemoryConversationJournal()
+            const entryRef = await store.put(
+                encodeTaskPayload({
+                    kind: "user_input",
+                    text: `/compact keep the audit ${admittedText}`.trim(),
+                    admittedText,
+                    lifecycle: { commandId: "command.compact", premessage: "keep the audit" },
+                    ...attached,
+                }),
+            )
+            const state = stateWithEntry(entryRef)
+            const settleBeforeRound = vi.fn(async () => ({ kind: "ready" as const }))
+            const adapter = new ProductionComposeAdapter({
+                payloads: store,
+                journal,
+                readState: () => state,
+                compactionBarrier: { settleBeforeRound },
+            })
+            const result = await adapter.compose({ admittedEntryIds: ["entry-1"], signal: new AbortController().signal })
+            return { result, settleBeforeRound, kinds: await journaledKinds(journal, store) }
+        }
+
+        it("settles without a request once the barrier carried the command out", async () => {
+            const composed = await composeAfterCompaction("")
+
+            expect(composed.settleBeforeRound).toHaveBeenCalledOnce()
+            expect(composed.result).toEqual({ withdrawn: { reason: LIFECYCLE_ROUND_SETTLED, carriedOut: true } })
+            expect(composed.kinds).toEqual([])
+        })
+
+        it("still sends an image the user attached beside the command", async () => {
+            const composed = await composeAfterCompaction("", { images: ["data:image/png;base64,AAAA"] })
+
+            expect("draftRef" in composed.result).toBe(true)
+            expect(composed.kinds).toEqual(["user_input"])
+        })
+
+        it("still sends what the user typed beside the command", async () => {
+            const composed = await composeAfterCompaction("then summarize the API")
+
+            expect("draftRef" in composed.result).toBe(true)
+            expect(composed.kinds).toEqual(["user_input"])
+        })
+
+        it("still resumes the turn when the input carries resume context beside the command", async () => {
+            const composed = await composeAfterCompaction("", { context: "[TASK RESUMPTION] The task was interrupted." })
+
+            expect("draftRef" in composed.result).toBe(true)
+            expect(composed.kinds).toEqual(["user_input"])
+        })
     })
 })
 

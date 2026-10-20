@@ -623,8 +623,12 @@ export class TaskCheckpointManager implements ICheckpointManager {
                 return index === -1 ? undefined : index
             }
 
-            const recentMessages = clineMessages.slice(-3)
-            const lastCompletionResultMessage = findLast(recentMessages, (m) => m.say === "completion_result")
+            // By its ts when known: the completion's dialog takes the row over
+            // while this runs and clears its `say`.
+            const lastCompletionResultMessage =
+                completionMessageTs === undefined
+                    ? findLast(clineMessages.slice(-3), (m) => m.say === "completion_result")
+                    : clineMessages.find((m) => m.ts === completionMessageTs)
             const existingReferences = lastCompletionResultMessage && readCheckpointReferenceSet(lastCompletionResultMessage)
             if (existingReferences && hasFileCheckpoint(existingReferences)) {
                 Logger.log("Completion checkpoint already exists, skipping duplicate checkpoint creation")
@@ -1092,16 +1096,20 @@ export class TaskCheckpointManager implements ICheckpointManager {
 
     /**
      * Checks if the latest task completion has new changes
+     * @param completionMessageTs - The completion's row; its dialog may already have rewritten it as an ask
      * @returns Promise<boolean> - True if there are new changes since last completion
      */
-    async doesLatestTaskCompletionHaveNewChanges(): Promise<boolean> {
+    async doesLatestTaskCompletionHaveNewChanges(completionMessageTs?: number): Promise<boolean> {
         try {
             if (!this.config.enableCheckpoints) {
                 return false
             }
 
             const clineMessages = this.services.messageStateHandler.clineMessages
-            const messageIndex = findLastIndex(clineMessages, (m) => m.say === "completion_result")
+            const messageIndex =
+                completionMessageTs === undefined
+                    ? findLastIndex(clineMessages, (m) => m.say === "completion_result")
+                    : clineMessages.findIndex((m) => m.ts === completionMessageTs)
             const message = clineMessages[messageIndex]
             if (!message) {
                 Logger.error(`[TaskCheckpointManager] Completion message not found for task ${this.task.taskId}`)

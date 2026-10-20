@@ -106,11 +106,13 @@ export interface FlowState {
     readonly phase: FlowPhase
     readonly error?: string
     /**
-     * One ordinary reply the user may send after a dismissed provider failure,
-     * as dev's `ordinaryInput: profile_recovery`. Any other waiting state keeps
-     * the composer closed; the next submission or turn spends the permission.
+     * One ordinary reply the user may send while no dialog owns the composer:
+     * after a dismissed provider failure (`profile_recovery`, as dev's
+     * `ordinaryInput`), or after a round that ended with nothing to send, such
+     * as a bare `/compact` (`user_turn`). Any other waiting state keeps the
+     * composer closed; the next submission or turn spends the permission.
      */
-    readonly replyAdmission?: "profile_recovery"
+    readonly replyAdmission?: "profile_recovery" | "user_turn"
     readonly completionId?: string
     readonly terminalReason?: "consumed"
     readonly consumedRef?: string
@@ -509,6 +511,11 @@ export type ComposeEvent =
           readonly reason: string
           readonly turnId?: TurnId
           readonly queueDisposition?: "released" | "uncertain"
+          /**
+           * The round's inputs held nothing but lifecycle commands, which ran:
+           * they are consumed, not released, so they stop taking intake capacity.
+           */
+          readonly carriedOut?: boolean
       })
 export type CompactionEvent =
     | (EventBase & {

@@ -91,6 +91,8 @@ export interface CompactionReviewPort {
         readonly compactionId: string
         readonly attempt: string
         readonly summary: string
+        /** The chat row the review takes over: the run's own progress card. */
+        readonly existingTs?: number
         readonly signal: AbortSignal
     }): Promise<CompactionReviewDecision>
 }
@@ -109,15 +111,20 @@ export interface CompactionFailurePresentationPort {
 }
 
 /**
- * Withdraws the progress a run still shows when it ends without a record.
+ * The progress card a run shows, as the run's other steps take it over.
  *
- * A landed summary and a failure card each take over the run's progress card;
- * a stopped run, or one withdrawn in review, writes neither, and its card would
- * otherwise stay on screen as if the run were still working.
+ * A landed summary and a failure card each take over the run's progress card.
+ * A review takes it over too, so the summary the user decides on is the card
+ * the run drew rather than a second copy beside it, and a regenerated summary
+ * is drawn on that same row again. A stopped run, or one withdrawn in review,
+ * writes no record, and its card would otherwise stay on screen as if the run
+ * were still working.
  */
-export interface CompactionProgressWithdrawalPort {
+export interface CompactionProgressCardPort {
     /** Returns whether any card was withdrawn. */
     withdraw(compactionId: string): boolean
+    /** Hand the run's card to its review; returns the row, or undefined when none is on screen. */
+    handOver(compactionId: string): number | undefined
 }
 
 /**
@@ -144,8 +151,8 @@ export interface ProductionCompactionAdapterOptions {
     readonly review?: CompactionReviewPort
     /** Shows a run that failed; absent in headless assemblies, where the kernel event is the record. */
     readonly failure?: CompactionFailurePresentationPort
-    /** Clears the progress of a run that ended without a record; absent where no progress is shown. */
-    readonly progress?: CompactionProgressWithdrawalPort
+    /** The run's progress card; absent where no progress is shown. */
+    readonly progress?: CompactionProgressCardPort
     /** Writes the round's restore point before the rewrite; absent without workspace history. */
     readonly checkpoint?: CompactionCheckpointPort
 }
@@ -278,10 +285,12 @@ export class ProductionCompactionAdapter implements CompactionPort {
             if (input.signal.aborted) throw input.signal.reason
             const summary = readCompactionSummary(result)
             if (!review || !summary) return { result, summary, canonicalCheckpointed }
+            const existingTs = this.options.progress?.handOver(input.compactionId)
             const decision = await review.review({
                 compactionId: input.compactionId,
                 attempt: input.attempt,
                 summary: summary.summary,
+                ...(existingTs === undefined ? {} : { existingTs }),
                 signal: input.signal,
             })
             if (input.signal.aborted) throw input.signal.reason

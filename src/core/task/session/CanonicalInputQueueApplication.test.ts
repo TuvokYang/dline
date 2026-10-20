@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest"
 import { createInitialTaskState, type TaskEvent, type TaskState, transition } from "../kernel"
 import type { EventSubmissionResult, RuntimeFacade } from "../runtime"
 import type { TaskPayloadStore } from "../stores"
-import { CanonicalInputQueueApplication } from "./CanonicalInputQueueApplication"
+import { CanonicalInputQueueApplication, QUEUE_COMMAND_PERFORMED } from "./CanonicalInputQueueApplication"
 import type { CanonicalQueueTurnEndPort } from "./InputQueueApplicationPort"
-import type { TaskInputAdmissionPort } from "./TaskInputAdmission"
+import type { LifecycleBarrierPort, TaskInputAdmissionPort } from "./TaskInputAdmission"
 import { TaskInputMaterializer } from "./TaskInputMaterializer"
 
 function deferred() {
@@ -38,9 +38,60 @@ const admittingPlainText: TaskInputAdmissionPort = {
     }),
 }
 
+/** Admits `/compact keep the audit`, optionally after `/explain then `, as an owned compaction barrier. */
+function admittingCompact(before = ""): TaskInputAdmissionPort {
+    return {
+        admit: async (input) => ({
+            ok: true,
+            admitted: {
+                document: {
+                    schemaVersion: 1,
+                    parserVersion: "test",
+                    catalogRevision: "test",
+                    documentId: "test-input",
+                    rawText: input.text ?? "",
+                    nodes: [
+                        ...(before ? [{ kind: "text" as const, text: before }] : []),
+                        { kind: "slash_command", entityId: "compact-1", sourceText: "/compact" } as never,
+                        { kind: "text", text: " keep the audit" },
+                    ],
+                    resources: [],
+                },
+                admittedText: `${before}<compact-instructions> keep the audit`,
+                parts: [{ kind: "text", text: `${before}<compact-instructions> keep the audit` }],
+                authorizedTools: ["summarize_task"],
+                explicitInstructions: [{ type: "summarize_task", source: "manual_compact_command" }],
+                barrier: {
+                    commandId: "command.compact",
+                    entityId: "compact-1",
+                    turnText: before.trim(),
+                    turnParts: before ? [{ kind: "text", text: before.trim() }] : [],
+                    premessage: "keep the audit",
+                    instructionsBefore: [],
+                    toolsBefore: [],
+                },
+            },
+        }),
+    }
+}
+
+function performingBarriers(accepts: boolean) {
+    const performed: Parameters<LifecycleBarrierPort["perform"]>[0][] = []
+    const port: LifecycleBarrierPort = {
+        owns: () => true,
+        request: () => {},
+        perform: async (command) => {
+            performed.push(command)
+            return accepts
+        },
+    }
+    return { port, performed }
+}
+
 function harness(
     deliveryResult: "accepted" | "stale" | "failed" | "uncertain" = "accepted",
     admission: TaskInputAdmissionPort = admittingPlainText,
+    barriers?: LifecycleBarrierPort,
 ) {
     let state: TaskState = {
         ...createInitialTaskState("task-1"),
@@ -104,11 +155,19 @@ function harness(
             nextSequence: () => entrySequence,
         },
         admission,
+        barriers,
     )
     const deliverTurnEnd = vi.fn<CanonicalQueueTurnEndPort["deliverTurnEnd"]>(async () => deliveryResult)
+    const shownRows: { readonly text: string; readonly rowId: string }[] = []
+    const consumedRows = {
+        show: async (shown: { readonly text: string }, rowId: string) => {
+            shownRows.push({ text: shown.text, rowId })
+        },
+    }
     return {
-        application: new CanonicalInputQueueApplication(runtime, inputs, payloads, { deliverTurnEnd }),
+        application: new CanonicalInputQueueApplication(runtime, inputs, payloads, { deliverTurnEnd }, consumedRows),
         deliverTurnEnd,
+        shownRows,
         durable,
         runtime,
         payloads,
@@ -118,6 +177,65 @@ function harness(
         },
     }
 }
+
+describe("CanonicalInputQueueApplication bare lifecycle commands", () => {
+    it("carries out a bare /compact at once instead of queueing it", async () => {
+        const barriers = performingBarriers(true)
+        const h = harness("accepted", admittingCompact(), barriers.port)
+
+        expect(
+            await h.application.mutate({ kind: "enqueue", draft: { text: "/compact keep the audit", images: [], files: [] } }),
+        ).toEqual({ accepted: true, result: QUEUE_COMMAND_PERFORMED })
+
+        expect(barriers.performed).toEqual([{ commandId: "command.compact", premessage: "keep the audit" }])
+        expect(h.runtime.getState().intake.queued).toEqual([])
+        expect(h.payloads.put).not.toHaveBeenCalled()
+        expect(h.deliverTurnEnd).not.toHaveBeenCalled()
+        // Never an intake entry, the command is shown as the user typed it.
+        expect(h.shownRows).toEqual([{ text: "/compact keep the audit", rowId: expect.stringMatching(/^command:/) }])
+    })
+
+    it("gives every performed command a row of its own", async () => {
+        const h = harness("accepted", admittingCompact(), performingBarriers(true).port)
+        const draft = { text: "/compact keep the audit", images: [], files: [] }
+
+        await h.application.mutate({ kind: "enqueue", draft })
+        await h.application.mutate({ kind: "enqueue", draft })
+
+        expect(h.shownRows).toHaveLength(2)
+        expect(new Set(h.shownRows.map((row) => row.rowId)).size).toBe(2)
+    })
+
+    it("keeps a refused bare command out of the queue and says so", async () => {
+        const barriers = performingBarriers(false)
+        const h = harness("accepted", admittingCompact(), barriers.port)
+
+        expect(
+            await h.application.mutate({ kind: "enqueue", draft: { text: "/compact keep the audit", images: [], files: [] } }),
+        ).toEqual({ accepted: false, result: "command_refused" })
+        expect(h.runtime.getState().intake.queued).toEqual([])
+        // The draft stays with the user, so nothing claims it was sent.
+        expect(h.shownRows).toEqual([])
+    })
+
+    it("queues a command that arrives with a message of its own", async () => {
+        const barriers = performingBarriers(true)
+        const h = harness("accepted", admittingCompact("/explain then "), barriers.port)
+        h.durable.resolve()
+
+        const result = await h.application.mutate({
+            kind: "enqueue",
+            draft: { text: "/explain then /compact keep the audit", images: [], files: [] },
+        })
+
+        expect(result.accepted).toBe(true)
+        expect(result.result).not.toBe(QUEUE_COMMAND_PERFORMED)
+        expect(barriers.performed).toEqual([])
+        expect(h.runtime.getState().intake.queued.map((entry) => entry.entryId)).toEqual([result.result])
+        // Its admission shows the queued message; showing it here would draw it twice.
+        expect(h.shownRows).toEqual([])
+    })
+})
 
 describe("CanonicalInputQueueApplication", () => {
     it("refuses empty input without creating a payload or queue entry", async () => {

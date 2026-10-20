@@ -90,15 +90,44 @@ const admittingBarrier: TaskInputAdmissionPort = {
     }),
 }
 
+/** "/compact keep the audit" sent on its own: nothing precedes the barrier. */
+const bareBarrierDocument: SemanticInputDocument = {
+    ...document,
+    rawText: "/compact keep the audit",
+    nodes: [
+        { kind: "slash_command", entityId: "compact-1", sourceText: "/compact" } as never,
+        { kind: "text", text: " keep the audit" },
+    ],
+}
+
+const admittingBareBarrier: TaskInputAdmissionPort = {
+    admit: async () => ({
+        ok: true,
+        admitted: {
+            document: bareBarrierDocument,
+            admittedText: "<compact-instructions> keep the audit",
+            parts: [{ kind: "text", text: "<compact-instructions> keep the audit" }],
+            authorizedTools: ["summarize_task"],
+            explicitInstructions: [{ type: "summarize_task", source: "manual_compact_command" }],
+            barrier: { ...compactBarrier, turnText: "", turnParts: [], instructionsBefore: [], toolsBefore: [] },
+        },
+    }),
+}
+
 function recordingBarriers(owns: boolean) {
     const requested: LifecycleCommand[] = []
+    const performed: LifecycleCommand[] = []
     const port: LifecycleBarrierPort = {
         owns: () => owns,
         request: (command) => {
             requested.push(command)
         },
+        perform: async (command) => {
+            performed.push(command)
+            return true
+        },
     }
-    return { port, requested }
+    return { port, requested, performed }
 }
 
 const refusing: TaskInputAdmissionPort = {
@@ -301,8 +330,28 @@ describe("TaskInputMaterializer", () => {
             expect(reviewed?.document.nodes).toEqual([{ kind: "text", text: "/explain then" }])
             expect(reviewed?.document.rawText).toBe("/explain then")
             expect(barriers.requested).toEqual([])
+            // The kept text is the answer, so the command waits for the round it opens.
+            expect(reviewed?.performAlone).toBeUndefined()
             reviewed?.commit()
             expect(barriers.requested).toEqual([{ commandId: "command.compact", premessage: "keep the audit" }])
+        })
+
+        it("offers to carry out a command sent on its own instead of answering with nothing", async () => {
+            const barriers = recordingBarriers(true)
+            const materializer = new TaskInputMaterializer(
+                recordingPayloads().payloads,
+                identity,
+                admittingBareBarrier,
+                barriers.port,
+            )
+
+            const reviewed = await materializer.reviewReply({ text: "/compact keep the audit" })
+
+            expect(reviewed?.text).toBe("")
+            await expect(reviewed?.performAlone?.()).resolves.toBe(true)
+            // Performed with its guidance, never also owed to a round.
+            expect(barriers.performed).toEqual([{ commandId: "command.compact", premessage: "keep the audit" }])
+            expect(barriers.requested).toEqual([])
         })
 
         it("leaves the reply as typed when no domain owns the barrier", async () => {

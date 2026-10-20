@@ -147,12 +147,16 @@ export class TaskInputMaterializer {
         if (!document) throw new Error(`InconsistentReplyBarrier:${owned.entityId}`)
         const parts = replyPartsOf(document, owned.turnParts)
         const command = { commandId: owned.commandId, premessage: owned.premessage }
+        const barriers = this.barriers
+        // Nothing left to answer with: the command is the whole message.
+        const keepsNothing = !document.rawText.trim() && !hasResourceParts(parts) && !reply.images?.length && !reply.files?.length
         return {
             text: document.rawText,
             document,
             parts,
             claimedBarrier: owned.entityId,
-            commit: () => this.barriers?.request(command),
+            commit: () => barriers?.request(command),
+            ...(keepsNothing && barriers ? { performAlone: () => barriers.perform(command) } : {}),
         }
     }
 

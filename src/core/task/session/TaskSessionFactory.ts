@@ -3,6 +3,7 @@ import { composeTask, type TaskCompositionOptions } from "../composition/TaskCom
 import type { DraftAttachmentPort } from "../interaction/DraftAttachments"
 import { ActiveTaskSession, type ActiveTaskSessionReleasePort } from "./ActiveTaskSession"
 import { CanonicalInputQueueApplication } from "./CanonicalInputQueueApplication"
+import { showConsumedInput } from "./ConsumedInputRow"
 import type { LifecycleBarrierPort, TaskInputAdmissionPort } from "./TaskInputAdmission"
 import { type TaskInputIdentityPort, TaskInputMaterializer } from "./TaskInputMaterializer"
 import type { TaskSessionOwners } from "./TaskSessionOwners"
@@ -48,7 +49,9 @@ export async function openActiveTaskSession(options: OpenActiveTaskSessionOption
         assembly: composed.assembly,
         payloads: composed.payloads,
         inputs,
-        inputQueue: new CanonicalInputQueueApplication(composed.runtime, inputs, composed.payloads, options.owners.interactions),
+        inputQueue: new CanonicalInputQueueApplication(composed.runtime, inputs, composed.payloads, options.owners.interactions, {
+            show: (shown, rowId) => showConsumedInput(options.owners.messages, options.owners.nextPresentationId, shown, rowId),
+        }),
         transitionDrafts: new TransitionDraftApplication(composed.runtime, composed.payloads),
         owners: options.owners,
         approvalFeedback: composed.approvalFeedback,

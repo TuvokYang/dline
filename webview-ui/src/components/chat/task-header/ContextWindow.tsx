@@ -219,8 +219,9 @@ const ContextWindow: React.FC<ContextWindowProgressProps> = ({
                     <span className="cursor-pointer text-sm" title="Current tokens used in this request">
                         {formatTokenNumber(tokenData.used)}
                     </span>
+                    {/* Centered in the row so the bar sits on the same line as the token counts and the compact control. */}
                     <div
-                        className="relative min-w-0 w-full h-full"
+                        className="relative flex min-w-0 w-full items-center self-stretch"
                         data-testid="context-window-progress-track"
                         onMouseEnter={() => setIsOpened(true)}>
                         <HoverCard closeDelay={0} open={isOpened} openDelay={0}>

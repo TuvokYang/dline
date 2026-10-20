@@ -318,6 +318,8 @@ export function reduceIntake(state: IntakeSlice, event: TaskEvent, context: Inta
                         event.type === "user.cancel" ||
                         event.type === "user.terminate")
                 if (uncertain) return { ...entry, state: "uncertain" }
+                // Carried out in full, so nothing is left to release or to hold capacity.
+                if (event.type === "compose.withdrawn" && event.carriedOut && !queueState) return { ...entry, state: "consumed" }
                 if (!delivery || !queueState) return { ...entry, state: "released" }
                 const { delivery: _delivery, ...queue } = queueState
                 return { ...entry, state: "released", queue }

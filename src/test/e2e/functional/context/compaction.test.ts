@@ -2080,18 +2080,28 @@ e2e(
 )
 
 e2e(
-    "OpenAI compaction budget - manual request uses the same formula and preserves feedback",
+    "OpenAI compaction budget - manual request uses the same formula and preserves guidance",
     async ({ dlineDir, helper, openVSCode, server, workspaceDir }) => {
         e2e.setTimeout(120_000)
         await configureResponsesContextPressure(dlineDir)
         server.enqueueResponses(
             "openai-compatible-responses",
+            // An answered exchange before the dialog: /compact beside an open
+            // dialog condenses only answered history, never the turn it waits on.
+            {
+                type: "tool",
+                id: "call_manual_budget_read",
+                name: "read_file",
+                arguments: { path: "README.md" },
+                expectedRequestIncludes: ["E2E_MANUAL_BUDGET_TASK"],
+            },
             {
                 type: "tool",
                 id: "call_manual_budget_ready",
                 name: "qna_respond",
                 arguments: { response: "E2E_MANUAL_BUDGET_READY" },
                 usage: { inputTokens: 50_000, outputTokens: 100 },
+                expectedToolResults: [{ callId: "call_manual_budget_read", contentIncludes: "# Test Workspace" }],
             },
             {
                 type: "message",
@@ -2108,9 +2118,9 @@ e2e(
             await sendTask(sidebar, "/compact E2E_MANUAL_BUDGET_FEEDBACK")
             await expect
                 .poll(() => server.getRequestCount("openai-compatible-responses"), { timeout: 60_000 })
-                .toBeGreaterThanOrEqual(2)
+                .toBeGreaterThanOrEqual(3)
 
-            const compactionRequest = server.getMockConsumptions("openai-compatible-responses")[1]
+            const compactionRequest = server.getMockConsumptions("openai-compatible-responses")[2]
             const requestText = JSON.stringify(compactionRequest.requestBody)
             expectCompactionBudgetFormula(compactionRequest.requestBody)
             expect(requestText).toContain("E2E_MANUAL_BUDGET_FEEDBACK")

@@ -9,7 +9,7 @@ import type { CompactionPort } from "../executors/compaction/CompactionCommandEx
 import type {
     CompactionCheckpointPort,
     CompactionFailurePresentationPort,
-    CompactionProgressWithdrawalPort,
+    CompactionProgressCardPort,
     CompactionReviewPort,
 } from "../executors/compaction/ProductionCompactionAdapter"
 import {
@@ -126,8 +126,8 @@ export interface TaskCompositionOptions {
     readonly compactionReview?: CompactionReviewPort
     /** Shows a compaction that failed to produce a summary; see CompactionFailurePresentationPort. */
     readonly compactionFailure?: CompactionFailurePresentationPort
-    /** Clears a run's progress when it ends without a record; see CompactionProgressWithdrawalPort. */
-    readonly compactionProgress?: CompactionProgressWithdrawalPort
+    /** The progress card a run shows; see CompactionProgressCardPort. */
+    readonly compactionProgress?: CompactionProgressCardPort
     /**
      * The task's in-memory conversation over `persistence`; see JournalConversationView.
      *

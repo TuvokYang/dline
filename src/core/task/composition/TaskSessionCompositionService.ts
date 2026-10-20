@@ -860,7 +860,9 @@ export class TaskSessionCompositionService {
             ]),
             // A summary the user asked for is theirs to accept or regenerate before
             // it replaces the conversation, through the same dialog every task uses.
-            compactionReview: new InteractionCompactionReview(interactions),
+            // The barrier says when it may open, so it never takes the slot from a
+            // round that can still end on a dialog of its own.
+            compactionReview: new InteractionCompactionReview(interactions, compaction),
             compactionFailure,
             compactionProgress: compactionCards,
             postCommit,

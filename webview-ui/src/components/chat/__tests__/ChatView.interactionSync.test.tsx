@@ -62,6 +62,7 @@ const mocks = vi.hoisted(() => {
         askResponse: vi.fn(async () => ({})),
         dispatchInteraction: vi.fn(async () => ({ accepted: true, result: "accepted" })),
         compactTask: vi.fn(async () => ({ accepted: true, result: "accepted" })),
+        mutateInputQueue: vi.fn(async () => ({ accepted: true, result: "command_performed" })),
         closeTask: vi.fn(async () => undefined),
         closeButtonAction: undefined as (() => Promise<void>) | undefined,
         footerRejected: undefined as ((settlement: AcceptedInteractionSettlement) => void) | undefined,
@@ -91,6 +92,7 @@ vi.mock("@/services/grpc-client", () => ({
         askResponse: mocks.askResponse,
         compactTask: mocks.compactTask,
         dispatchInteraction: mocks.dispatchInteraction,
+        mutateInputQueue: mocks.mutateInputQueue,
     },
     UiServiceClient: {
         subscribeToAddToInput: vi.fn(() => () => undefined),
@@ -303,6 +305,8 @@ describe("ChatView interaction anchor synchronization", () => {
         mocks.compactTask.mockResolvedValue({ accepted: true, result: "accepted" })
         mocks.dispatchInteraction.mockReset()
         mocks.dispatchInteraction.mockResolvedValue({ accepted: true, result: "accepted" })
+        mocks.mutateInputQueue.mockReset()
+        mocks.mutateInputQueue.mockResolvedValue({ accepted: true, result: "command_performed" })
         mocks.useChatState.mockClear()
         mocks.setDraft("draft")
         mocks.chatState.activeQuote = null
@@ -445,8 +449,9 @@ describe("ChatView interaction anchor synchronization", () => {
         expect(screen.getByRole("button", { name: "Compact task" })).toBeEnabled()
     })
 
-    it("keeps Compact visible but disabled when the footer input is unavailable", () => {
+    it("keeps Compact visible but disabled when the task can neither take input nor deliver it", () => {
         const view = taskView()
+        view.phase = "completed"
         view.input.enabled = false
         renderChat([ASK], view)
 
@@ -455,7 +460,60 @@ describe("ChatView interaction anchor synchronization", () => {
         expect(compactButton).toBeDisabled()
         fireEvent.click(compactButton)
         expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+        expect(mocks.mutateInputQueue).not.toHaveBeenCalled()
         expect(mocks.compactTask).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        ["a dialog waiting for a reply", (_view: TaskViewState) => undefined],
+        [
+            "an approval whose Enter would reject it",
+            (view: TaskViewState) => {
+                view.input.enterAction = "reject"
+            },
+        ],
+        [
+            "an interrupted task whose Enter would resume it",
+            (view: TaskViewState) => {
+                view.phase = "paused"
+                view.input.enterAction = "resume"
+            },
+        ],
+        [
+            "a working task with no dialog",
+            (view: TaskViewState) => {
+                view.phase = "executing"
+                view.activeInteraction = undefined
+                view.input = { ...view.input, enabled: false, enterAction: undefined, queueable: true }
+            },
+        ],
+        [
+            "a dialog whose input is unavailable",
+            (view: TaskViewState) => {
+                view.input.enabled = false
+            },
+        ],
+    ] as const)("sends Compact as a bare command for %s instead of answering anything", async (_case, shape) => {
+        const view = taskView()
+        shape(view)
+        renderChat([ASK], view)
+
+        const compactButton = screen.getByRole("button", { name: "Compact task" })
+        expect(compactButton).toBeEnabled()
+        await act(async () => {
+            fireEvent.click(compactButton)
+        })
+
+        expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
+        expect(mocks.mutateInputQueue).toHaveBeenCalledTimes(1)
+        const [request] = mocks.mutateInputQueue.mock.calls[0] as unknown as [
+            { taskId: string; enqueue?: { draft?: { text?: string }; steering?: boolean } },
+        ]
+        expect(request.taskId).toBe("task-1")
+        expect(request.enqueue?.draft?.text).toBe("/cmd:compact")
+        expect(request.enqueue?.steering).toBe(false)
+        // The accepted command keeps the button pending until the backend reports compaction.
+        expect(compactButton).toBeDisabled()
     })
 
     it("keeps Compact mounted but disabled while backend compaction is active", () => {
@@ -486,12 +544,12 @@ describe("ChatView interaction anchor synchronization", () => {
         expect(screen.getByRole("textbox", { name: "Task input" })).toHaveAttribute("data-can-queue", "true")
     })
 
-    it("disables Compact immediately while the command dispatch is pending and rejects a duplicate dispatch", async () => {
-        let resolveDispatch!: (value: { accepted: boolean; result: string }) => void
-        mocks.dispatchInteraction.mockImplementationOnce(
+    it("disables Compact immediately while the command is pending and rejects a duplicate submission", async () => {
+        let resolveEnqueue!: (value: { accepted: boolean; result: string }) => void
+        mocks.mutateInputQueue.mockImplementationOnce(
             () =>
                 new Promise((resolve) => {
-                    resolveDispatch = resolve
+                    resolveEnqueue = resolve
                 }),
         )
         renderChat([ASK])
@@ -500,58 +558,56 @@ describe("ChatView interaction anchor synchronization", () => {
         fireEvent.click(compactButton)
         await waitFor(() => expect(compactButton).toBeDisabled())
         fireEvent.click(compactButton)
-        expect(mocks.dispatchInteraction).toHaveBeenCalledOnce()
+        expect(mocks.mutateInputQueue).toHaveBeenCalledOnce()
         expect(mocks.compactTask).not.toHaveBeenCalled()
 
         await act(async () => {
-            resolveDispatch({ accepted: true, result: "accepted" })
+            resolveEnqueue({ accepted: true, result: "command_performed" })
         })
     })
 
-    it("re-enables Compact when the command dispatch rejects the request", async () => {
-        mocks.dispatchInteraction.mockResolvedValueOnce({ accepted: false, result: "stale_state" })
+    it("re-enables Compact when the task refuses the command", async () => {
+        mocks.mutateInputQueue.mockResolvedValueOnce({ accepted: false, result: "command_refused" })
         renderChat([ASK])
         const compactButton = screen.getByRole("button", { name: "Compact task" })
 
         fireEvent.click(compactButton)
-        await waitFor(() => expect(mocks.dispatchInteraction).toHaveBeenCalledOnce())
+        await waitFor(() => expect(mocks.mutateInputQueue).toHaveBeenCalledOnce())
         await waitFor(() => expect(compactButton).toBeEnabled())
         expect(mocks.compactTask).not.toHaveBeenCalled()
     })
 
-    it("routes Compact through the active interaction as /cmd:compact without clearing the current draft", async () => {
-        const view = taskView()
-        view.input.enterAction = "reject"
+    it("sends Compact as the confirmed /cmd:compact command node without clearing the current draft", async () => {
         mocks.chatState.activeQuote = "quoted context"
-        renderChat([ASK], view)
+        renderChat([ASK])
 
         fireEvent.click(screen.getByRole("button", { name: "Compact task" }))
 
-        await waitFor(() => expect(mocks.dispatchInteraction).toHaveBeenCalledOnce())
-        expect(mocks.dispatchInteraction).toHaveBeenCalledWith(
+        await waitFor(() => expect(mocks.mutateInputQueue).toHaveBeenCalledOnce())
+        expect(mocks.mutateInputQueue).toHaveBeenCalledWith(
             expect.objectContaining({
-                actionId: "reject",
-                // The command travels as a confirmed command node, not as text to re-lex.
-                draft: expect.objectContaining({
-                    text: "/cmd:compact",
-                    images: [],
-                    files: [],
-                    semanticInput: expect.objectContaining({
-                        nodes: expect.arrayContaining([
-                            expect.objectContaining({
-                                slashCommand: expect.objectContaining({
-                                    commandId: "command.compact",
-                                    canonicalName: "compact",
+                taskId: "task-1",
+                enqueue: expect.objectContaining({
+                    // The command travels as a confirmed command node, not as text to re-lex.
+                    draft: expect.objectContaining({
+                        text: "/cmd:compact",
+                        images: [],
+                        files: [],
+                        semanticInput: expect.objectContaining({
+                            nodes: expect.arrayContaining([
+                                expect.objectContaining({
+                                    slashCommand: expect.objectContaining({
+                                        commandId: "command.compact",
+                                        canonicalName: "compact",
+                                    }),
                                 }),
-                            }),
-                        ]),
+                            ]),
+                        }),
                     }),
                 }),
-                interactionId: "interaction-1",
-                stateRevision: 8,
-                taskId: "task-1",
             }),
         )
+        expect(mocks.dispatchInteraction).not.toHaveBeenCalled()
         expect(mocks.compactTask).not.toHaveBeenCalled()
         expect(mocks.chatState.composer.retire).not.toHaveBeenCalled()
         expect(mocks.chatState.composer.clear).not.toHaveBeenCalled()

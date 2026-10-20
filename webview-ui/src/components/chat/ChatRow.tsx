@@ -836,8 +836,10 @@ export const ChatRowContent = memo(
                                 ? isSummaryRefit
                                     ? "Summary refit was interrupted; retrying:"
                                     : "Compaction was interrupted; retrying:"
-                                : status === "completed" && isSummaryRefit
-                                  ? "Cumulative summary refit completed:"
+                                : status === "completed"
+                                  ? isSummaryRefit
+                                      ? "Cumulative summary refit completed:"
+                                      : "Dline condensed the conversation:"
                                   : status === "receiving" && isSummaryRefit
                                     ? "Dline is refitting the cumulative summary:"
                                     : "Dline is condensing the conversation:"

@@ -18,6 +18,9 @@ import { type RetainedBatchReceipt, RetainedInputJournalBatch } from "./Retained
 import type { RetainedInputPresentationCommit, RetainedInputPresentationPort } from "./RetainedInputPresentationPort"
 import { materializeToolTerminalManifest, type ToolDenialPort } from "./ToolTerminalManifestMaterializer"
 
+/** Why a round opened only to carry out lifecycle commands, such as a bare `/compact`, settled without a request. */
+export const LIFECYCLE_ROUND_SETTLED = "lifecycle_round_settled"
+
 /**
  * Renders the dynamic environment block for one provider round.
  *
@@ -188,7 +191,9 @@ export class ProductionComposeAdapter implements ComposePort {
 
     async compose(input: ComposeRoundInput): Promise<ComposeRoundResult> {
         if (input.signal.aborted) throw input.signal.reason
-        const lifecycle = await this.lifecycleOf([...this.admittedEntries(input), ...(input.respondedQueue?.entries ?? [])])
+        const admitted = [...this.admittedEntries(input), ...(input.respondedQueue?.entries ?? [])]
+        const inputs = await this.userInputsOf(admitted)
+        const lifecycle = inputs.flatMap((payload) => (payload.lifecycle ? [payload.lifecycle] : []))
         // Canonicalize the completed turn before compaction reads it. Landing the
         // summary first and appending this manifest afterwards would reintroduce the
         // very tool results the summary replaced.
@@ -213,6 +218,11 @@ export class ProductionComposeAdapter implements ComposePort {
         if (readiness.kind === "failed") {
             const { reason, presentation } = readiness
             return { failed: { reason, ...(presentation === undefined ? {} : { presentation }) } }
+        }
+        // The barrier carried the commands out; a round that held nothing else
+        // has nothing to ask, and sending it would make an empty request.
+        if (this.options.compactionBarrier && lifecycle.length > 0 && carriesOnlyCommands(input, admitted.length, inputs)) {
+            return { withdrawn: { reason: LIFECYCLE_ROUND_SETTLED, carriedOut: true } }
         }
         // Read again: the compaction advanced the revision this round is keyed by.
         const state = this.options.readState()
@@ -356,18 +366,19 @@ export class ProductionComposeAdapter implements ComposePort {
     }
 
     /**
-     * The lifecycle commands the admitted inputs carry.
+     * The user inputs this round admitted, in admission order.
      *
-     * Read from the inputs rather than handed over at admission, so only an
-     * input the kernel accepted and this round admitted can carry one out.
+     * Lifecycle commands are read from these rather than handed over at
+     * admission, so only an input the kernel accepted and this round admitted
+     * can carry one out.
      */
-    private async lifecycleOf(entries: readonly { readonly payloadRef: string }[]): Promise<LifecycleCommand[]> {
-        const commands: LifecycleCommand[] = []
+    private async userInputsOf(entries: readonly { readonly payloadRef: string }[]): Promise<UserInputEnvelope[]> {
+        const inputs: UserInputEnvelope[] = []
         for (const entry of entries) {
             const payload = decodeTaskPayload<UserInputEnvelope>(await this.options.payloads.read(entry.payloadRef))
-            if (payload.kind === "user_input" && payload.lifecycle) commands.push(payload.lifecycle)
+            if (payload.kind === "user_input") inputs.push(payload)
         }
-        return commands
+        return inputs
     }
 
     /**
@@ -420,4 +431,28 @@ export class ProductionComposeAdapter implements ComposePort {
             causation: { generation, turnId: input.turnId },
         })
     }
+}
+
+/**
+ * Whether a round holds nothing but the lifecycle commands its inputs named.
+ *
+ * Such a round was opened to carry those commands out - a bare `/compact` -
+ * and once they ran there is nothing to ask the model. A round the kernel
+ * continued, a tool round's results, a dialog's answer, a delivered queue
+ * batch or an input carrying resume context always holds something else and
+ * never settles here.
+ */
+function carriesOnlyCommands(input: ComposeRoundInput, admitted: number, inputs: readonly UserInputEnvelope[]): boolean {
+    if (input.continuation || input.toolTerminals || input.respondedQueue || input.queueDelivery) return false
+    // An admitted entry that is not user input is content of its own.
+    if (inputs.length !== admitted) return false
+    return inputs.every(
+        (payload) =>
+            payload.lifecycle !== undefined &&
+            !(payload.admittedText ?? "").trim() &&
+            !(payload.context ?? "").trim() &&
+            !payload.admittedParts?.some((part) => part.kind === "resource") &&
+            !payload.images?.length &&
+            !payload.files?.length,
+    )
 }

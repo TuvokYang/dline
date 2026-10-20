@@ -29,8 +29,22 @@ describe("InteractionCompactionReview", () => {
 
         expect(decision).toEqual({ action: "accept" })
         expect(probe.opened).toEqual([
-            { turnId: "compaction:1", interactionId: "compaction:1:1:review:0", kind: "condense", presentation: "THE SUMMARY" },
+            {
+                turnId: "compaction:1",
+                interactionId: "compaction:1:1:review:0",
+                kind: "condense",
+                presentation: "THE SUMMARY",
+                placement: "interrupt",
+            },
         ])
+    })
+
+    it("takes over the row the run's progress card was drawn on", async () => {
+        const probe = answering({ actionId: "confirm_utility" })
+
+        await new InteractionCompactionReview(probe.dialogs).review({ ...reviewInput(), existingTs: 42 })
+
+        expect(probe.opened[0]?.existingTs).toBe(42)
     })
 
     it("regenerates with what the user typed when they reject", async () => {
@@ -60,6 +74,44 @@ describe("InteractionCompactionReview", () => {
             "compaction:1:1:review:0",
             "compaction:1:1:review:1",
         ])
+    })
+
+    // A round still in flight may end on a dialog of its own; a review that
+    // held the slot first would make the kernel refuse it.
+    it("opens only once the slot says the review may take it", async () => {
+        const probe = answering({ actionId: "confirm_utility" })
+        let release: () => void = () => undefined
+        const asked: string[] = []
+        const review = new InteractionCompactionReview(probe.dialogs, {
+            reviewable: (compactionId) => {
+                asked.push(compactionId)
+                return new Promise<void>((resolve) => {
+                    release = resolve
+                })
+            },
+        })
+
+        const decision = review.review(reviewInput())
+        await Promise.resolve()
+        expect(asked).toEqual(["compaction:1"])
+        expect(probe.opened).toEqual([])
+
+        release()
+        await expect(decision).resolves.toEqual({ action: "accept" })
+        expect(probe.opened).toHaveLength(1)
+    })
+
+    it("opens nothing when the run stops while it waits for the slot", async () => {
+        const probe = answering({ actionId: "confirm_utility" })
+        const controller = new AbortController()
+        const review = new InteractionCompactionReview(probe.dialogs, {
+            reviewable: async () => {
+                controller.abort(new Error("stopped"))
+            },
+        })
+
+        await expect(review.review(reviewInput(controller.signal))).rejects.toThrow("stopped")
+        expect(probe.opened).toEqual([])
     })
 
     it("reports a dialog withdrawn by a stop as a withdrawn review, not a failure", async () => {

@@ -246,7 +246,8 @@ export interface TaskCallbacks {
     killCommandTool?: (functionId: string) => Promise<CommandCancellationResult>
     cancelRunningCommandTool?: () => Promise<boolean>
 
-    doesLatestTaskCompletionHaveNewChanges: () => Promise<boolean>
+    /** `completionMessageTs` names the completion row, which its dialog may already have rewritten. */
+    doesLatestTaskCompletionHaveNewChanges: (completionMessageTs?: number) => Promise<boolean>
 
     /**
      * Publish the checklist a tool call carried.

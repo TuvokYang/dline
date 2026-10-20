@@ -9,6 +9,12 @@ export interface OpenInteractionRequest {
     kind: InteractionKind
     presentation: string
     existingTs?: number
+    /**
+     * `interrupt` takes the slot over from a dialog already waiting for the
+     * user, which comes back unchanged once this one is answered. Without it a
+     * waiting dialog refuses the request.
+     */
+    placement?: "interrupt"
 }
 
 export interface CompleteInteractionRequest {

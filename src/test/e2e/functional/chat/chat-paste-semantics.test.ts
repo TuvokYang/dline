@@ -147,7 +147,7 @@ e2e(
                 id: "call_paste_confirmed_completion",
                 name: "attempt_completion",
                 arguments: { result: "E2E_PASTE_DONE" },
-                expectedRequestIncludes: [summary],
+                expectedRequestIncludes: [summary, "E2E_PASTE_AFTER_COMPACT"],
                 expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, guidance],
             },
         )
@@ -193,12 +193,21 @@ e2e(
 
             await input.press("Enter")
             await expect(sidebar.getByText(summary, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+            // The summary lands once the user condenses it, and a command sent on its own
+            // answers nothing: the open question waits for the user's real reply.
             const confirmButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
-            await expect(confirmButton).toBeVisible()
+            await expect(confirmButton).toBeVisible({ timeout: 60_000 })
+            await confirmButton.click()
+            await expect(confirmButton).toHaveCount(0)
+            const compactionPass = sidebar.getByTestId("compaction-pass")
+            await expect(compactionPass).toHaveAttribute("data-compaction-status", "completed", { timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(3)
 
-            await confirmButton.click()
+            await expect(input).toBeEnabled()
+            await input.fill("E2E_PASTE_AFTER_COMPACT")
+            await input.press("Enter")
             await expect(sidebar.getByText("E2E_PASTE_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+            await expect(compactionPass).toHaveCount(1)
             await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(4)
 
             const requests = server.getMockConsumptions("anthropic-messages")

@@ -153,11 +153,12 @@ export function reduceFlow(state: FlowState, event: TaskEvent): FlowReduction {
             }
         case "compose.withdrawn":
             // Waiting, not error: nothing failed that a retry could fix, and the
-            // user decides what the task does next.
+            // user decides what the task does next, so the composer takes a reply.
             return {
                 state: {
                     ...state,
                     phase: "waiting",
+                    replyAdmission: "user_turn",
                     compose: state.compose && { ...state.compose, status: "cancelled" },
                 },
                 commands: [],

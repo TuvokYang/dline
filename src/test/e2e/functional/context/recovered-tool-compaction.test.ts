@@ -564,12 +564,14 @@ e2e(
             await expect(sidebar.getByTestId("compaction-failure")).toHaveCount(0)
             expect(E2ETestHelper.readDlineOutputIfPresent(userDataDir) ?? "").not.toContain("hydrated_interaction_mismatch")
 
+            // The resumed round goes on from the accepted summary.
             await confirmButton.click()
             await expect(confirmButton).toHaveCount(0)
             await expect(sidebar.getByText("E2E_RESUME_MANUAL_COMPACT_CONTINUED", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
+            await expect(sidebar.getByTestId("compaction-pass")).toHaveAttribute("data-compaction-status", "completed")
             for (const request of server.getMockConsumptions("openai-compatible-responses")) {
                 expect(request.contractError).toBeUndefined()
             }

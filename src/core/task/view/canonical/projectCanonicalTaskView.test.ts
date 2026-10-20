@@ -85,7 +85,7 @@ describe("projectCanonicalTaskView", () => {
         expect(view.taskActions).toEqual([{ actionId: "cancel", enabled: true }])
     })
 
-    it("admits one ordinary reply only while a dismissed failure left the task waiting", () => {
+    it("admits one ordinary reply only while the task waits on the user without a dialog", () => {
         const base = state()
 
         expect(projectCanonicalTaskView(state({ flow: { ...base.flow, phase: "waiting" } })).input).toEqual({
@@ -94,6 +94,9 @@ describe("projectCanonicalTaskView", () => {
         expect(
             projectCanonicalTaskView(state({ flow: { ...base.flow, phase: "waiting", replyAdmission: "profile_recovery" } }))
                 .input,
+        ).toEqual({ mode: "reply" })
+        expect(
+            projectCanonicalTaskView(state({ flow: { ...base.flow, phase: "waiting", replyAdmission: "user_turn" } })).input,
         ).toEqual({ mode: "reply" })
         // A dialog that owns the input still takes precedence over the admission.
         expect(

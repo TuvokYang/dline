@@ -51,9 +51,16 @@ export interface CompactionRecordPort {
  * it was, and the chat only fetches rows when that count moves, so it kept
  * rendering the withdrawn progress card - a second summary beside the landed
  * one, a broken-off attempt's text, or a partial row that held the composer.
+ *
+ * A review of a requested summary takes that row over as well, so the summary
+ * the user decides on is the card the run drew. Whatever the run draws next -
+ * a regenerated summary, its record, or its failure - returns to the same row,
+ * and one compaction stays one card.
  */
 export class MessageStateCompactionCards implements CompactionProgressPort, CompactionRecordPort {
     private readonly presentation = new ContextCompactionPresentation()
+    /** The row each run's review took over, which the run's next card is drawn on. */
+    private readonly handedOver = new Map<string, number>()
 
     constructor(
         private readonly messages: MessageStateHandler,
@@ -64,7 +71,7 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
     async present(operationId: string, event: ContextCompactionSessionEvent): Promise<boolean> {
         const snapshot = this.snapshotOf(operationId, event)
         if (!snapshot) return false
-        const ts = snapshot.existingTs ?? this.nextPresentationId()
+        const ts = snapshot.existingTs ?? this.takeHandedOver(operationId) ?? this.nextPresentationId()
         const row = this.messages.upsertTransientClineMessage({
             ts,
             type: "say",
@@ -119,27 +126,55 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
 
     async record(operationId: string, card: UiSayTool): Promise<void> {
         const claimed = this.claim(operationId)
+        const handedOver = this.takeHandedOver(operationId)
         // A landed Pass keeps the identity of the unit whose row it takes over.
         const recorded = claimed && claimed.unitKind === card.compactionUnitKind ? { ...unitIdentityOf(claimed), ...card } : card
         const row = { type: "say", say: "tool", partial: false, text: JSON.stringify(recorded) } satisfies Partial<UiMessage>
-        if (claimed?.existingTs === undefined) {
+        const existingTs = claimed?.existingTs ?? handedOver
+        if (existingTs === undefined) {
             await this.messages.addToClineMessages({ ts: this.nextPresentationId(), ...row })
             return
         }
-        await this.commitRow({ ts: claimed.existingTs, ...row })
+        await this.commitRow({ ts: existingTs, ...row })
     }
 
     /**
      * Withdraw the cards of a run that ended without a record, as a stopped run
      * does. Returns whether any card was withdrawn.
+     *
+     * A row a review took over keeps the review it shows; only a card still
+     * drawn over it, before the review opened or while it regenerates, goes.
      */
     withdraw(operationId: string): boolean {
         let withdrawn = false
         for (const { existingTs } of this.transientUnits(operationId)) {
             withdrawn = this.messages.removeTransientClineMessage(existingTs) || withdrawn
         }
+        const handedOver = this.handedOver.get(operationId)
+        if (handedOver !== undefined) withdrawn = this.messages.removeTransientClineMessage(handedOver) || withdrawn
         this.presentation.clear(operationId)
+        this.handedOver.delete(operationId)
         return withdrawn
+    }
+
+    /**
+     * Hand the run's card to the review of its summary.
+     *
+     * Returns the row the review is drawn on, or undefined when the run shows no
+     * card. Older cards of the run are withdrawn as a record would withdraw them.
+     */
+    handOver(operationId: string): number | undefined {
+        const ts = this.claim(operationId)?.existingTs ?? this.takeHandedOver(operationId)
+        if (ts !== undefined) this.handedOver.set(operationId, ts)
+        return ts
+    }
+
+    /** The row a review took over for this run, if it is still on screen. */
+    private takeHandedOver(operationId: string): number | undefined {
+        const ts = this.handedOver.get(operationId)
+        this.handedOver.delete(operationId)
+        if (ts === undefined) return undefined
+        return this.messages.clineMessages.some((message) => message.ts === ts) ? ts : undefined
     }
 
     /** Write a completed step the run builds on as a card of its own. */

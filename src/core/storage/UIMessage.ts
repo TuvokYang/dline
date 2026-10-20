@@ -196,6 +196,18 @@ export class UIMessage {
     }
 
     /**
+     * Finalize onto the stored row with the same ts, keeping every field `msg`
+     * does not set.
+     *
+     * Merged under the store lock, so a patch already queued for the row - one
+     * the caller could not see yet - is kept rather than replaced.
+     */
+    async finalizeMessageOnto(msg: UiMessage): Promise<UiMessage> {
+        msg.partial = false
+        return (await this.store.stageMergeByTimestamp(msg)).item
+    }
+
+    /**
      * Update a message at the given index and mark it for the next flush.
      * For streaming chunk updates — disk persistence happens at key lifecycle points.
      *

@@ -386,29 +386,31 @@ e2e(
     async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(180_000)
         await configureManualCompact(dlineDir)
-        const restoredQnaReply = "E2E_CONDENSE_ORPHAN_REPLY continue after the confirmed summary."
+        const restoredQnaReply = "E2E_CONDENSE_ORPHAN_REPLY continue after the landed summary."
         server.enqueueResponses(
             "openai-compatible-responses",
+            // Compaction beside an open dialog condenses the answered history before it,
+            // so the question follows one answered tool exchange.
+            {
+                type: "tool",
+                id: "call_condense_orphan_read",
+                name: "read_file",
+                arguments: { path: "README.md" },
+                expectedRequestIncludes: ["E2E_CONDENSE_ORPHAN_TASK"],
+            },
             {
                 type: "tool",
                 id: "call_condense_orphan_ready",
                 name: "qna_respond",
                 arguments: { response: "E2E_CONDENSE_ORPHAN_READY" },
                 usage: { inputTokens: 80_000, outputTokens: 100 },
+                expectedToolResults: [{ callId: "call_condense_orphan_read", contentIncludes: "# Test Workspace" }],
             },
             {
                 type: "message",
                 text: "<thinking>E2E orphan-safe summary</thinking><summarize_task><context>E2E_CONDENSE_ORPHAN_SUMMARY preserves the task and current intent.</context></summarize_task>",
                 expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, "E2E_CONDENSE_ORPHAN_TASK"],
                 expectedRequestExcludes: ["__dline_mode_switch_compact__", "/compact"],
-            },
-            {
-                type: "tool",
-                id: "call_condense_orphan_continued",
-                name: "qna_respond",
-                arguments: { response: "E2E_CONDENSE_ORPHAN_CONTINUED" },
-                expectedRequestIncludes: ["E2E_CONDENSE_ORPHAN_SUMMARY"],
-                expectedRequestExcludes: ["__dline_mode_switch_compact__", COMPACT_INSTRUCTION_MARKER, "/cmd:compact"],
             },
             {
                 type: "tool",
@@ -443,20 +445,26 @@ e2e(
             await expect(sidebar.getByText("E2E_CONDENSE_ORPHAN_SUMMARY", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(2)
+            // The summary is the user's to accept; it takes the question's place until then.
             const confirmCompactionButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
             await expect(confirmCompactionButton).toBeVisible({ timeout: 60_000 })
+            await expect(sidebar.locator('vscode-button[aria-label="Regenerate Summary"]')).toBeVisible()
             await attachScreenshot(app, "manual-compaction-summary-review")
             await confirmCompactionButton.click()
             await expect(confirmCompactionButton).toHaveCount(0)
             await expect(sidebar.locator('vscode-button[aria-label="Regenerate Summary"]')).toHaveCount(0)
-
-            const input = sidebar.getByTestId("chat-input")
-            await expect(sidebar.getByText("E2E_CONDENSE_ORPHAN_CONTINUED", { exact: false }).last()).toBeVisible({
+            // The review was drawn on the run's own card, so one card remains.
+            await expect(sidebar.getByTestId("compaction-pass")).toHaveCount(1)
+            await expect(sidebar.getByTestId("compaction-pass")).toHaveAttribute("data-compaction-status", "completed", {
                 timeout: 60_000,
             })
+            await expect(sidebar.getByText("Dline wants to condense your conversation:", { exact: true })).toHaveCount(0)
+            await attachScreenshot(app, "manual-compaction-summary-landed")
+            // The header compacted beside the open question, so no round ran after it.
+            expect(server.getRequestCount("openai-compatible-responses")).toBe(3)
+
+            const input = sidebar.getByTestId("chat-input")
             await expect(input).toBeEnabled()
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
             await input.fill(restoredQnaReply)
             await input.press("Enter")
             await expectComposerText(input, "")
@@ -467,9 +475,9 @@ e2e(
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
 
             const requests = server.getMockConsumptions("openai-compatible-responses")
-            expect(requests[1]).toMatchObject({ responseType: "message" })
-            expect(requestToolNames(requests[1])).toEqual(requestToolNames(requests[0]))
-            expect(requestToolNames(requests[1])).not.toContain("summarize_task")
+            expect(requests[2]).toMatchObject({ responseType: "message" })
+            expect(requestToolNames(requests[2])).toEqual(requestToolNames(requests[1]))
+            expect(requestToolNames(requests[2])).not.toContain("summarize_task")
             for (const request of requests) {
                 expect(request.contractError).toBeUndefined()
                 // The post-condense request must not carry orphaned tool outputs.
@@ -477,7 +485,7 @@ e2e(
             }
             expect(responsesUserTextBlocks(requests[3]).every((text) => text.trim().length > 0)).toBe(true)
             expect(requests[3].requestToolResults.some((result) => result.content.includes(restoredQnaReply))).toBe(true)
-            await attachScreenshot(app, "manual-compaction-confirmed-final-state")
+            await attachScreenshot(app, "manual-compaction-final-state")
             await attachJson("manual-compaction-provider-consumptions", requests)
             await attachDlineOutput(userDataDir, "manual-compaction-dline-output")
             await attachVsCodeLogEvidence(userDataDir, "manual-compaction-vscode-log-scan")
@@ -508,12 +516,22 @@ e2e(
         const continuationInput = "E2E_CONDENSE_POST_COMPACTION_INPUT continue with the unresolved verification."
         server.enqueueResponses(
             "anthropic-messages",
+            // Compaction beside an open dialog condenses the answered history before it,
+            // so the question follows one answered tool exchange.
+            {
+                type: "tool",
+                id: "call_condense_input_read",
+                name: "read_file",
+                arguments: { path: "README.md" },
+                expectedRequestIncludes: ["E2E_CONDENSE_INPUT_TASK"],
+            },
             {
                 type: "tool",
                 id: "call_condense_input_ready",
                 name: "qna_respond",
                 arguments: { response: "E2E_CONDENSE_INPUT_READY" },
                 usage: { inputTokens: 80_000, outputTokens: 100 },
+                expectedToolResults: [{ callId: "call_condense_input_read", contentIncludes: "# Test Workspace" }],
             },
             {
                 type: "tool",
@@ -522,14 +540,6 @@ e2e(
                 arguments: { context: summary },
                 expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, "E2E_CONDENSE_INPUT_TASK", guidance],
                 expectedRequestExcludes: ["/compact", continuationInput],
-            },
-            {
-                type: "tool",
-                id: "call_condense_input_completion",
-                name: "qna_respond",
-                arguments: { response: "E2E_CONDENSE_INPUT_DONE" },
-                expectedRequestIncludes: [summaryMarker],
-                expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, guidance, continuationInput],
             },
             {
                 type: "tool",
@@ -558,31 +568,26 @@ e2e(
                 .getByTestId("summary-scroll-container")
                 .filter({ hasText: summaryMarker })
                 .last()
-            await expect(confirmButton).toBeVisible()
+            await expect(confirmButton).toBeVisible({ timeout: 60_000 })
             await expectSummaryScrollLayout(summaryScrollContainer)
             await input.fill(continuationInput)
             await attachScreenshot(app, "condense-input-summary-review")
 
             await confirmButton.click()
+            // Condensing starts no round, so the draft stays in the composer until Enter.
             await expectComposerText(input, continuationInput)
-            await expect(sidebar.getByText("E2E_CONDENSE_INPUT_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(3)
-
-            let requests = server.getMockConsumptions("anthropic-messages")
-            const postCompactionRequest = requests[2]
-            expect(postCompactionRequest.contractError).toBeUndefined()
-            const postCompactionRequestText = JSON.stringify(postCompactionRequest.requestBody)
-            expect(postCompactionRequestText).toContain(summaryMarker)
-            expect(postCompactionRequestText).not.toContain(continuationInput)
-            expect(postCompactionRequest.requestToolResults.some((result) => result.content.includes(continuationInput))).toBe(
-                false,
-            )
+            await expect(confirmButton).toHaveCount(0)
+            await expect(sidebar.getByTestId("compaction-pass")).toHaveAttribute("data-compaction-status", "completed", {
+                timeout: 60_000,
+            })
+            expect(server.getRequestCount("anthropic-messages")).toBe(3)
 
             await input.press("Enter")
             await expectComposerText(input, "")
             await expect(sidebar.getByText("E2E_CONDENSE_INPUT_SENT", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(4)
-            requests = server.getMockConsumptions("anthropic-messages")
+            const requests = server.getMockConsumptions("anthropic-messages")
+            expect(JSON.stringify(requests[2].requestBody)).not.toContain(continuationInput)
             const explicitContinuationRequest = requests[3]
             expect(explicitContinuationRequest.contractError).toBeUndefined()
             const explicitContinuationRequestText = JSON.stringify(explicitContinuationRequest.requestBody)
@@ -851,14 +856,25 @@ e2e(
         const guidance = "E2E_REGENERATE_EMPTY_GUIDANCE"
         const firstSummary = "E2E_REGENERATE_EMPTY_FIRST_SUMMARY must remain uncommitted."
         const regeneratedSummary = "E2E_REGENERATE_EMPTY_SECOND_SUMMARY uses a fresh request."
+        const reply = "E2E_REGENERATE_EMPTY_REPLY continue after the accepted summary."
         server.enqueueResponses(
             "anthropic-messages",
+            // Compaction beside an open dialog condenses the answered history before it,
+            // so the question follows one answered tool exchange.
+            {
+                type: "tool",
+                id: "call_regenerate_empty_read",
+                name: "read_file",
+                arguments: { path: "README.md" },
+                expectedRequestIncludes: ["E2E_REGENERATE_EMPTY_TASK"],
+            },
             {
                 type: "tool",
                 id: "call_regenerate_empty_ready",
                 name: "qna_respond",
                 arguments: { response: "E2E_REGENERATE_EMPTY_READY" },
                 usage: { inputTokens: 80_000, outputTokens: 100 },
+                expectedToolResults: [{ callId: "call_regenerate_empty_read", contentIncludes: "# Test Workspace" }],
             },
             {
                 type: "tool",
@@ -883,7 +899,7 @@ e2e(
                 name: "attempt_completion",
                 arguments: { result: "E2E_REGENERATE_EMPTY_DONE" },
                 matchRequestContract: true,
-                expectedRequestIncludes: [regeneratedSummary],
+                expectedRequestIncludes: [regeneratedSummary, reply],
                 expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, guidance, firstSummary],
             },
         )
@@ -902,38 +918,49 @@ e2e(
             const regenerateButton = sidebar.locator('vscode-button[aria-label="Regenerate Summary"]')
             const confirmButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
             const input = sidebar.getByTestId("chat-input")
-            await expect(regenerateButton).toBeVisible()
+            await expect(regenerateButton).toBeVisible({ timeout: 60_000 })
             await expect(confirmButton).toBeVisible()
             await expectComposerText(input, "")
-            await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(2)
+            await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(3)
             await attachScreenshot(app, "regenerate-empty-first-summary-review")
 
             await regenerateButton.click()
             await expectComposerText(input, "")
             await expect(sidebar.getByText(regeneratedSummary, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await expect(regenerateButton).toBeVisible()
+            await expect(regenerateButton).toBeVisible({ timeout: 60_000 })
             await expect(confirmButton).toBeVisible()
-            await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(3)
+            await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(4)
+            // The regenerated summary is drawn on the same card as the rejected one.
+            await expect(sidebar.getByText(firstSummary, { exact: false })).toHaveCount(0)
             await attachScreenshot(app, "regenerate-empty-second-summary-review")
 
             await confirmButton.click()
+            await expect(confirmButton).toHaveCount(0)
+            await expect(sidebar.getByTestId("compaction-pass")).toHaveAttribute("data-compaction-status", "completed", {
+                timeout: 60_000,
+            })
+            // Condensing beside the question leaves it open, so nothing runs until it is answered.
+            expect(server.getRequestCount("anthropic-messages")).toBe(4)
+            await expect(input).toBeEnabled()
+            await input.fill(reply)
+            await input.press("Enter")
             await expect(sidebar.getByText("E2E_REGENERATE_EMPTY_DONE", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })
-            await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(4)
+            await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(5)
 
             const requests = server.getMockConsumptions("anthropic-messages")
-            expect(requests[1]).toMatchObject({
+            expect(requests[2]).toMatchObject({
                 responseType: "tool",
                 toolName: "summarize_task",
                 toolCallId: "call_regenerate_empty_summary_first",
             })
-            expect(requests[2]).toMatchObject({
+            expect(requests[3]).toMatchObject({
                 responseType: "tool",
                 toolName: "summarize_task",
                 toolCallId: "call_regenerate_empty_summary_second",
             })
-            expect(requests[2].toolCallId).not.toBe(requests[1].toolCallId)
+            expect(requests[3].toolCallId).not.toBe(requests[2].toolCallId)
             for (const [requestIndex, request] of requests.entries()) {
                 expect(request.contractError).toBeUndefined()
                 assertAnthropicToolPairing(request, requestIndex)
@@ -960,6 +987,7 @@ e2e(
         const firstSummary = "E2E_REGENERATE_FIRST_SUMMARY must remain uncommitted."
         const feedback = "E2E_REGENERATE_FEEDBACK preserve the unresolved checkpoint requirement."
         const regeneratedSummary = "E2E_REGENERATE_SECOND_SUMMARY preserves the checkpoint requirement."
+        const reply = "E2E_REGENERATE_REPLY continue after the accepted summary."
         server.enqueueResponses(
             "anthropic-messages",
             {
@@ -981,12 +1009,7 @@ e2e(
                 id: "call_regenerate_summary_first",
                 name: "summarize_task",
                 arguments: { context: firstSummary },
-                expectedRequestIncludes: [
-                    COMPACT_INSTRUCTION_MARKER,
-                    "E2E_REGENERATE_TASK",
-                    "E2E_REGENERATE_HISTORY",
-                    "E2E_REGENERATE_GUIDANCE",
-                ],
+                expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, "E2E_REGENERATE_TASK", "E2E_REGENERATE_GUIDANCE"],
                 expectedRequestExcludes: ["/compact", feedback],
             },
             {
@@ -995,7 +1018,7 @@ e2e(
                 name: "summarize_task",
                 arguments: { context: regeneratedSummary },
                 matchRequestContract: true,
-                expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, "E2E_REGENERATE_TASK", "E2E_REGENERATE_HISTORY", feedback],
+                expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, "E2E_REGENERATE_TASK", feedback],
                 expectedRequestExcludes: ["/compact", firstSummary],
             },
             {
@@ -1013,7 +1036,7 @@ e2e(
                 name: "attempt_completion",
                 arguments: { result: "E2E_REGENERATE_DONE" },
                 matchRequestContract: true,
-                expectedRequestIncludes: [regeneratedSummary],
+                expectedRequestIncludes: [regeneratedSummary, reply],
                 expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, firstSummary, feedback],
             },
         )
@@ -1036,7 +1059,7 @@ e2e(
             ).toHaveCount(0)
             const regenerateButton = sidebar.locator('vscode-button[aria-label="Regenerate Summary"]')
             const confirmButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
-            await expect(regenerateButton).toBeVisible()
+            await expect(regenerateButton).toBeVisible({ timeout: 60_000 })
             await expect(confirmButton).toBeVisible()
             await expect(sidebar.getByText("E2E_REGENERATE_DONE", { exact: false })).toHaveCount(0)
             await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(3)
@@ -1050,13 +1073,21 @@ e2e(
             await expect(
                 sidebar.getByText("Error executing summarize_task: Current ask promise was ignored", { exact: false }),
             ).toHaveCount(0)
-            await expect(regenerateButton).toBeVisible()
+            await expect(regenerateButton).toBeVisible({ timeout: 60_000 })
             await expect(confirmButton).toBeVisible()
             await expect(sidebar.getByText("E2E_REGENERATE_DONE", { exact: false })).toHaveCount(0)
             await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(4)
             await attachScreenshot(app, "regenerate-second-summary-review")
 
             await confirmButton.click()
+            await expect(confirmButton).toHaveCount(0)
+            await expect(sidebar.getByTestId("compaction-pass")).toHaveAttribute("data-compaction-status", "completed", {
+                timeout: 60_000,
+            })
+            expect(server.getRequestCount("anthropic-messages")).toBe(4)
+            await expect(input).toBeEnabled()
+            await input.fill(reply)
+            await input.press("Enter")
             await expect(sidebar.getByText("E2E_REGENERATE_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("anthropic-messages")).toBe(5)
 

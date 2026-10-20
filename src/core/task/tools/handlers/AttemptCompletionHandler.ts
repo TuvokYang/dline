@@ -143,7 +143,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
 
         // Staged before the result is shown: a close from here on keeps the task finished.
         await config.interactions.stageCompletion?.(completion)
-        await commitCompletion({
+        const commit = await commitCompletion({
             publishResult: () => config.callbacks.say("completion_result", result, undefined, undefined, false, block.ts),
             // A task surface without workspace history has nothing to commit, so
             // completion stays available to one that only produces an answer.
@@ -152,22 +152,32 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
             },
             markWorkspaceChanges: (completionMessageTs) => this.markCompletionWorkspaceChanges(config, completionMessageTs),
             captureTelemetry: () => telemetryService.captureTaskCompleted(config.ulid ?? "", getTaskCompletionTelemetry(config)),
+            // Observation-only, so they run beside the open dialog: the checkpoint
+            // they may inspect is saved before them, the user's answer is not.
+            announce: async () => {
+                await this.runTaskCompleteHook(config, block)
+                await NotificationHook.emitTaskCompleteNotification(
+                    {
+                        messageStateHandler: config.messageState,
+                        taskId: config.taskId,
+                        hooksEnabled: getHooksEnabledSafe(config.services.stateManager.getGlobalSettingsKey("hooksEnabled")),
+                        model: getHookModelContext(config.api, config.services.stateManager),
+                    },
+                    { message: result },
+                )
+            },
         })
 
-        // Run TaskComplete hook BEFORE presenting the "Start New Task" button
-        // At this point we know: task is complete, checkpoint saved, result shown to user
-        await this.runTaskCompleteHook(config, block)
-        await NotificationHook.emitTaskCompleteNotification(
-            {
-                messageStateHandler: config.messageState,
-                taskId: config.taskId,
-                hooksEnabled: getHooksEnabledSafe(config.services.stateManager.getGlobalSettingsKey("hooksEnabled")),
-                model: getHookModelContext(config.api, config.services.stateManager),
-            },
-            { message: result },
-        )
-
-        const outcome = await config.interactions.complete(completion)
+        // The dialog opens while the completion settles, so input queued for it is
+        // delivered at once; the round its answer starts waits for the settlement.
+        // A stop ends the wait for an answer, not the checkpoint already under way;
+        // and a settlement that fails once the user answered must not drop the answer.
+        let outcome: InteractionOutcome
+        try {
+            outcome = await config.interactions.complete(completion)
+        } finally {
+            await commit.settled.catch((error: unknown) => Logger.warn("[attempt_completion] Completion did not settle:", error))
+        }
         return this.continueInteraction(config, block, outcome)
     }
 
@@ -181,7 +191,7 @@ export class AttemptCompletionHandler implements IToolHandler, IPartialBlockHand
      * clears `say`.
      */
     private async markCompletionWorkspaceChanges(config: TaskConfig, completionMessageTs: number | undefined): Promise<void> {
-        const hasNewChanges = await config.callbacks.doesLatestTaskCompletionHaveNewChanges()
+        const hasNewChanges = await config.callbacks.doesLatestTaskCompletionHaveNewChanges(completionMessageTs)
         if (!hasNewChanges) {
             return
         }

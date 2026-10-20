@@ -594,8 +594,15 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
 
     /**
      * Finalize a partial message — persist to disk.
+     *
+     * `keepRecordedFields` merges onto the stored row under the store lock instead
+     * of replacing it, for a writer that takes over a row others still record
+     * fields on (a completion's checkpoint settles beside the dialog anchoring it).
      */
-    async finalizeClineMessage(message: Partial<UiMessage>): Promise<UiMessage> {
+    async finalizeClineMessage(
+        message: Partial<UiMessage>,
+        options?: { readonly keepRecordedFields?: boolean },
+    ): Promise<UiMessage> {
         if (message.ts === undefined) {
             throw new Error("finalizeClineMessage: ts is required")
         }
@@ -626,7 +633,8 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
         }
 
         // Persist via store only at the terminal boundary, then remove the transient overlay.
-        await this.uiMessage?.finalizeMessage(msg)
+        if (options?.keepRecordedFields && durableIndex >= 0) await this.uiMessage?.finalizeMessageOnto(msg)
+        else await this.uiMessage?.finalizeMessage(msg)
         this.transientClineMessages.delete(msg.ts)
 
         const freshAll = this.clineMessages

@@ -83,11 +83,36 @@ async function pasteScreenshot(input: Locator): Promise<void> {
     }, ONE_PIXEL_PNG_BASE64)
 }
 
-async function expectSummaryUnderReview(sidebar: Frame, summary: string): Promise<Locator> {
+/**
+ * Accept the summary under review, then wait for it to land.
+ *
+ * The review is drawn on the run's own card, so the landed summary remains the
+ * one compaction card and no confirm control is left behind.
+ */
+async function condenseReviewedSummary(sidebar: Frame, summary: string): Promise<void> {
     await expect(sidebar.getByText(summary, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
     const confirmButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
     await expect(confirmButton).toBeVisible({ timeout: 60_000 })
-    return confirmButton
+    await confirmButton.click()
+    await expect(confirmButton).toHaveCount(0)
+    await expect(sidebar.getByTestId("compaction-pass")).toHaveCount(1)
+    await expect(sidebar.getByTestId("compaction-pass")).toHaveAttribute("data-compaction-status", "completed", {
+        timeout: 60_000,
+    })
+}
+
+/**
+ * Compaction beside an open dialog condenses the answered history before it, so
+ * each dialog below follows one answered exchange besides the opening request.
+ */
+function answeredRead(callId: string, task: string) {
+    return {
+        type: "tool" as const,
+        id: callId,
+        name: "read_file",
+        arguments: { path: "README.md" },
+        expectedRequestIncludes: [task],
+    }
 }
 
 async function attachJson(name: string, value: unknown): Promise<void> {
@@ -159,43 +184,47 @@ const DIALOG_CASES: readonly DialogCase[] = [
 for (const dialogCase of DIALOG_CASES) {
     const tag = dialogCase.kind.toUpperCase()
     e2e(
-        `Compact barrier - /compact replied to a ${dialogCase.kind} dialog compacts before any ordinary turn`,
+        `Compact barrier - /compact sent to a ${dialogCase.kind} dialog compacts the history before it and keeps the dialog`,
         async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
             e2e.setTimeout(210_000)
             await configureAnthropicManualCompact(dlineDir)
             const task = `E2E_BARRIER_${tag}_TASK`
             const ready = `E2E_BARRIER_${tag}_READY`
+            const reply = `E2E_BARRIER_${tag}_REPLY`
             const done = `E2E_BARRIER_${tag}_DONE`
             const guidance = `E2E_BARRIER_${tag}_GUIDANCE`
             const summary = `E2E_BARRIER_${tag}_SUMMARY keeps the ${dialogCase.kind} context.`
             const callIds = [
+                `call_barrier_${dialogCase.kind}_read`,
                 `call_barrier_${dialogCase.kind}_ready`,
                 `call_barrier_${dialogCase.kind}_summary`,
                 `call_barrier_${dialogCase.kind}_done`,
             ]
             server.enqueueResponses(
                 PROVIDER,
-                {
-                    type: "tool",
-                    id: callIds[0],
-                    name: dialogCase.dialogTool,
-                    arguments: dialogCase.dialogArguments(ready),
-                    usage: { inputTokens: 80_000, outputTokens: 100 },
-                    expectedRequestIncludes: [task],
-                },
+                answeredRead(callIds[0], task),
                 {
                     type: "tool",
                     id: callIds[1],
+                    name: dialogCase.dialogTool,
+                    arguments: dialogCase.dialogArguments(ready),
+                    usage: { inputTokens: 80_000, outputTokens: 100 },
+                    expectedToolResults: [{ callId: callIds[0], contentIncludes: "# Test Workspace" }],
+                },
+                {
+                    type: "tool",
+                    id: callIds[2],
                     name: "summarize_task",
                     arguments: { context: summary },
                     expectedRequestIncludes: [COMPACT_INSTRUCTION_MARKER, task, guidance],
                 },
                 {
+                    // The user's own reply answers the dialog, after the summary.
                     type: "tool",
-                    id: callIds[2],
+                    id: callIds[3],
                     name: dialogCase.dialogTool,
                     arguments: dialogCase.dialogArguments(done),
-                    expectedRequestIncludes: [summary],
+                    expectedRequestIncludes: [summary, reply],
                     expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, guidance],
                 },
             )
@@ -214,20 +243,22 @@ for (const dialogCase of DIALOG_CASES) {
                 await dialogCase.awaitDialog(sidebar)
 
                 await sendText(sidebar, `/compact ${guidance}`)
-                const confirmButton = await expectSummaryUnderReview(sidebar, summary)
-                // The barrier runs first: no ordinary turn slipped in between the reply and the summary.
-                expect(server.getRequestCount(PROVIDER)).toBe(2)
+                await condenseReviewedSummary(sidebar, summary)
+                // The command answered nothing: the dialog comes back after the review and no
+                // ordinary turn ran.
+                await dialogCase.awaitDialog(sidebar)
+                expect(server.getRequestCount(PROVIDER)).toBe(3)
 
-                await confirmButton.click()
+                await sendText(sidebar, reply)
                 await expect(sidebar.getByText(done, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-                await expect.poll(() => server.getRequestCount(PROVIDER)).toBe(3)
+                await expect.poll(() => server.getRequestCount(PROVIDER)).toBe(4)
 
                 const requests = server.getMockConsumptions(PROVIDER)
                 await attachJson(`barrier-${dialogCase.kind}-provider-consumptions`, requests)
                 expect(requests.map((request) => request.toolCallId)).toEqual(callIds)
                 for (const request of requests) expect(request.contractError).toBeUndefined()
-                expectOnlyInsideCompactionInstruction(requests[1], guidance)
-                expect(stringsMentioning(requests[2].requestBody, guidance)).toEqual([])
+                expectOnlyInsideCompactionInstruction(requests[2], guidance)
+                expect(stringsMentioning(requests[3].requestBody, guidance)).toEqual([])
                 expectCommandNeverSent(requests)
                 await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
             } finally {
@@ -238,25 +269,26 @@ for (const dialogCase of DIALOG_CASES) {
 }
 
 e2e(
-    "Compact barrier - text sent while the summary is pending stays durable and editable in the input queue",
+    "Compact barrier - a reply sent while the summary is pending reaches the model only after the summary",
     async ({ dlineDir, helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(240_000)
         await configureAnthropicManualCompact(dlineDir)
         const guidance = "E2E_PENDING_GUIDANCE"
         const summary = "E2E_PENDING_SUMMARY keeps the pending-barrier context."
         const later = "E2E_PENDING_LATER_TEXT continue after the summary."
-        const editedLater = "E2E_PENDING_EDITED_TEXT continue after the summary."
         server.enqueueResponses(
             PROVIDER,
+            answeredRead("call_pending_read", "E2E_PENDING_TASK"),
             {
                 type: "tool",
                 id: "call_pending_ready",
                 name: "qna_respond",
                 arguments: { response: "E2E_PENDING_READY" },
                 usage: { inputTokens: 80_000, outputTokens: 100 },
+                expectedToolResults: [{ callId: "call_pending_read", contentIncludes: "# Test Workspace" }],
             },
             {
-                // Held open long enough for the user to send while the barrier is running.
+                // Held open long enough for the user to reply while the compaction runs.
                 type: "tool",
                 id: "call_pending_summary",
                 name: "summarize_task",
@@ -266,20 +298,12 @@ e2e(
                 expectedRequestExcludes: [later],
             },
             {
-                // The round the barrier held resumes on the summary alone.
-                type: "tool",
-                id: "call_pending_resumed",
-                name: "qna_respond",
-                arguments: { response: "E2E_PENDING_RESUMED" },
-                expectedRequestIncludes: [summary],
-                expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, guidance, later],
-            },
-            {
+                // The reply's round waited for the summary, so it carries both.
                 type: "tool",
                 id: "call_pending_later",
                 name: "attempt_completion",
                 arguments: { result: "E2E_PENDING_LATER_DONE" },
-                expectedRequestIncludes: [summary, editedLater],
+                expectedRequestIncludes: [summary, later],
                 expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, guidance],
             },
         )
@@ -291,47 +315,27 @@ e2e(
             await expect(sidebar.getByText("E2E_PENDING_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
             await sendText(sidebar, `/compact ${guidance}`)
-            await expect.poll(() => server.getRequestCount(PROVIDER), { timeout: 60_000 }).toBe(2)
+            await expect.poll(() => server.getRequestCount(PROVIDER), { timeout: 60_000 }).toBe(3)
 
-            // The queue owns input sent while the immutable compaction source is in flight.
-            const input = sidebar.getByTestId("chat-input")
-            await input.fill(later)
-            await input.press("Enter")
-            await expectComposerText(input, "", { timeout: 30_000 })
-            const queueToggle = sidebar.getByTestId("input-queue-toggle")
-            await expect(queueToggle).toContainText("Queue 1")
-            await queueToggle.click()
-            const queueOverlay = sidebar.getByTestId("input-queue-overlay")
-            await expect(queueOverlay).toContainText(later)
-            await queueOverlay.getByLabel("Edit queued input").click()
-            await expectComposerText(input, later)
-            await input.fill(editedLater)
-            await input.press("Enter")
-            await expectComposerText(input, "")
-            await expect(queueToggle).toContainText("Queue 1")
-
-            const confirmButton = await expectSummaryUnderReview(sidebar, summary)
-            await expectComposerText(input, "")
-            expect(server.getRequestCount(PROVIDER)).toBe(2)
-
-            await confirmButton.click()
-            await expect(sidebar.getByText("E2E_PENDING_RESUMED", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await expect.poll(() => server.getRequestCount(PROVIDER)).toBe(3)
+            // The question is still open, so this text answers it; its round waits for the
+            // summary and the user's verdict on it.
+            await sendText(sidebar, later)
+            expect(server.getRequestCount(PROVIDER)).toBe(3)
+            await condenseReviewedSummary(sidebar, summary)
             await expect(sidebar.getByText("E2E_PENDING_LATER_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount(PROVIDER)).toBe(4)
 
             const requests = server.getMockConsumptions(PROVIDER)
             await attachJson("barrier-pending-provider-consumptions", requests)
             expect(requests.map((request) => request.toolCallId)).toEqual([
+                "call_pending_read",
                 "call_pending_ready",
                 "call_pending_summary",
-                "call_pending_resumed",
                 "call_pending_later",
             ])
             for (const request of requests) expect(request.contractError).toBeUndefined()
-            expect(requests.slice(0, 3).some((request) => requestText(request).includes(editedLater))).toBe(false)
-            await expect(sidebar.getByTestId("queued-user-input").filter({ hasText: editedLater })).toHaveCount(1)
-            expectOnlyInsideCompactionInstruction(requests[1], guidance)
+            expect(requests.slice(0, 3).some((request) => requestText(request).includes(later))).toBe(false)
+            expectOnlyInsideCompactionInstruction(requests[2], guidance)
             expectCommandNeverSent(requests)
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
@@ -404,9 +408,9 @@ e2e(
             await input.press("Enter")
             await expectComposerText(input, "")
 
-            const confirmButton = await expectSummaryUnderReview(sidebar, summary)
-            expect(server.getRequestCount(PROVIDER)).toBe(2)
-            await confirmButton.click()
+            // The image keeps this reply from being a bare command, so it still answers the
+            // question: the round compacts first and then carries the image.
+            await condenseReviewedSummary(sidebar, summary)
             await expect(sidebar.getByText("E2E_RESOURCE_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount(PROVIDER)).toBe(3)
 

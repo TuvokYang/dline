@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { projectCanonicalTaskView } from "../../view/canonical/projectCanonicalTaskView"
 import { transition } from "../transition"
 import type { ComposeRoundCommand, TaskState, TransitionResult } from "../types"
 import { createInitialTaskState } from "../types"
@@ -20,10 +21,10 @@ function composing() {
 }
 
 /**
- * A round withdrawn at its barrier - a `/compact` the user stopped or whose
- * review they withdrew - must neither reach the provider nor open an error to
- * retry: the user made that decision, and the task waits for them. A `/compact`
- * that failed is not withdrawn; it fails the round so Retry is offered.
+ * A round withdrawn at its barrier - a `/compact` the user stopped, or one that
+ * carried nothing else - must neither reach the provider nor open an error to
+ * retry: nothing failed, and the task waits for the user. A `/compact` that
+ * failed is not withdrawn; it fails the round so Retry is offered.
  */
 describe("task kernel compose.withdrawn", () => {
     it("settles the round without a provider request or an error dialog", () => {
@@ -45,6 +46,29 @@ describe("task kernel compose.withdrawn", () => {
         expect(result.state.dialog.primary).toBeUndefined()
         // The input is released, not re-admitted by the next round.
         expect(result.state.intake.queued[0]?.state).toBe("released")
+        // No dialog owns the composer, so without the admission it stayed closed
+        // and the task could only be resumed by reopening it.
+        expect(result.state.flow.replyAdmission).toBe("user_turn")
+        expect(projectCanonicalTaskView(result.state).input).toEqual({ mode: "reply" })
+    })
+
+    // A bare `/compact` settles this way every time; released inputs would keep
+    // counting against intake capacity until submissions were refused.
+    it("consumes inputs a settled round carried out instead of releasing them", () => {
+        const compose = composing()
+        const result = accepted(
+            transition(compose.state, {
+                type: "compose.withdrawn",
+                generation: 0,
+                commandId: compose.command.commandId,
+                originRevision: compose.command.originRevision,
+                reason: "lifecycle_round_settled",
+                carriedOut: true,
+            }),
+        )
+
+        expect(result.state.intake.queued[0]?.state).toBe("consumed")
+        expect(result.state.flow.replyAdmission).toBe("user_turn")
     })
 
     it("lets the next submission open a fresh round", () => {

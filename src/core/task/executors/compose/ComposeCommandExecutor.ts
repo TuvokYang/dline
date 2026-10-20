@@ -47,7 +47,7 @@ export interface ComposeRoundInput {
  */
 export type ComposeRoundResult =
     | { readonly draftRef: string; readonly queueJournalReceipt?: QueueJournalReceipt }
-    | { readonly withdrawn: { readonly reason: string } }
+    | { readonly withdrawn: { readonly reason: string; readonly carriedOut?: boolean } }
     | { readonly failed: { readonly reason: string; readonly presentation?: string } }
 
 export interface ComposePort {
@@ -167,6 +167,7 @@ export class ComposeCommandExecutor implements CommandExecutor, HaltParticipant 
                 originRevision: command.originRevision,
                 turnId: command.turnId,
                 reason: result.withdrawn.reason,
+                ...(result.withdrawn.carriedOut ? { carriedOut: true } : {}),
             })
             return
         }

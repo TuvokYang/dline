@@ -43,6 +43,7 @@ interface ReviewedReplyFixture {
     readonly parts?: readonly AdmittedInputPart[]
     readonly claimedBarrier?: string
     readonly commit: () => void
+    readonly performAlone?: () => Promise<boolean>
 }
 
 interface ControllerOptions {
@@ -572,6 +573,71 @@ describe("dispatchInteraction", () => {
         await dispatchInteraction(host.value as never, compactReply())
 
         expect(host.clineMessages.filter((row) => row.say === "user_feedback")).toHaveLength(1)
+    })
+
+    // A reply that is only a command answers nothing: resolving the dialog with
+    // it handed the model an empty answer and ended the waiting completion.
+    describe("a command sent on its own", () => {
+        it("acts without answering, so the dialog keeps waiting", async () => {
+            const commit = vi.fn()
+            const performAlone = vi.fn(async () => true)
+            const host = controller(state("completion", "reply"), { reviewed: { text: "", commit, performAlone } })
+
+            const result = await dispatchInteraction(host.value as never, compactReply())
+
+            expect(result).toMatchObject({ accepted: true, result: "accepted" })
+            expect(performAlone).toHaveBeenCalledOnce()
+            expect(host.respond).not.toHaveBeenCalled()
+            expect(host.resolve).not.toHaveBeenCalled()
+            expect(host.put).not.toHaveBeenCalled()
+            // Nothing is owed to a round: no round is opened by this reply.
+            expect(commit).not.toHaveBeenCalled()
+            expect(host.clineMessages.filter((row) => row.say === "user_feedback")).toEqual([
+                expect.objectContaining({ text: "/compact keep the API notes", interactionId: "command:interaction-1:12" }),
+            ])
+        })
+
+        it("does not reject the tool an approval is waiting on", async () => {
+            const performAlone = vi.fn(async () => true)
+            const host = controller(approvalState(), { reviewed: { text: "", commit: vi.fn(), performAlone } })
+
+            const result = await dispatchInteraction(
+                host.value as never,
+                DispatchInteractionRequest.create({ ...compactReply(), actionId: "reject" }),
+            )
+
+            expect(result).toMatchObject({ accepted: true, result: "accepted" })
+            expect(performAlone).toHaveBeenCalledOnce()
+            expect(host.respond).not.toHaveBeenCalled()
+            expect(host.approvalFeedback.take("block-1")).toBeUndefined()
+        })
+
+        it("leaves the draft with the user when the command is refused", async () => {
+            const host = controller(state("completion", "reply"), {
+                reviewed: { text: "", commit: vi.fn(), performAlone: async () => false },
+            })
+
+            const result = await dispatchInteraction(host.value as never, compactReply())
+
+            expect(result).toMatchObject({ accepted: false, result: "command_refused" })
+            expect(host.respond).not.toHaveBeenCalled()
+            expect(host.beginDurableClineMessage).not.toHaveBeenCalled()
+        })
+
+        it("still rides the round Retry opens, which means the same with or without text", async () => {
+            const commit = vi.fn()
+            const performAlone = vi.fn(async () => true)
+            const host = controller(state("error_retry", "retry"), { reviewed: { text: "", commit, performAlone } })
+
+            await dispatchInteraction(
+                host.value as never,
+                DispatchInteractionRequest.create({ ...compactReply(), actionId: "retry" }),
+            )
+
+            expect(performAlone).not.toHaveBeenCalled()
+            expect(host.respond).toHaveBeenCalledOnce()
+            expect(commit).toHaveBeenCalledOnce()
+        })
     })
 
     it("leaves the row to the dialog handler when the command keeps some text", async () => {

@@ -36,6 +36,7 @@ interface InteractionRequest {
     readonly presentation: string
     readonly existingTs?: number
     readonly completionId?: string
+    readonly placement?: OpenInteractionRequest["placement"]
 }
 
 function actionRules(kind: OpenInteractionRequest["kind"]): readonly DialogActionRule[] {
@@ -248,10 +249,11 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
      * then pushed like any host ask: the reply surface must not depend on a
      * later state publication reaching the webview.
      */
-    private async presentAnchor(anchor: UiMessage): Promise<void> {
-        if (this.messages.clineMessages.some((message) => message.ts === anchor.ts))
-            await this.messages.finalizeClineMessage(anchor)
-        else await this.messages.addToClineMessages(anchor)
+    private async presentAnchor(anchor: UiMessage, options?: { readonly keepRecordedFields?: boolean }): Promise<void> {
+        if (this.messages.clineMessages.some((message) => message.ts === anchor.ts)) {
+            if (options) await this.messages.finalizeClineMessage(anchor, options)
+            else await this.messages.finalizeClineMessage(anchor)
+        } else await this.messages.addToClineMessages(anchor)
         await this.messages.flushUiMessages()
         if (!this.publishRow) return
         const committed = this.messages.clineMessages.find((message) => message.ts === anchor.ts) ?? anchor
@@ -698,11 +700,19 @@ export class TaskInteractionOwner implements TaskInteractionPorts, CanonicalQueu
             }),
         )
         const definition = getInteraction(request.kind)
-        await this.presentAnchor(createCanonicalAskRow(definition.taskAsk, request.presentation, anchorTs, request.interactionId))
+        // A completion's checkpoint and change verdict settle beside its dialog and
+        // may land on the row first, so taking that row over keeps what they recorded.
+        // Every other dialog replaces its streamed row outright, as its renderer expects.
+        const anchor = createCanonicalAskRow(definition.taskAsk, request.presentation, anchorTs, request.interactionId)
+        if (request.kind === "completion") await this.presentAnchor(anchor, { keepRecordedFields: true })
+        else await this.presentAnchor(anchor)
         const session = this.requireSession()
         const state = session.state()
+        // An interrupt only differs from a request when a dialog holds the slot;
+        // with the slot free it is an ordinary dialog the kernel can admit.
+        const interrupts = request.placement === "interrupt" && state.dialog.primary !== undefined
         const event: TaskEvent = {
-            type: "dialog.requested",
+            type: interrupts ? "dialog.interrupt_requested" : "dialog.requested",
             generation: state.generation,
             interactionId: request.interactionId,
             turnId: request.turnId,

@@ -76,13 +76,22 @@ e2e(
         server.resetOpenAiMock()
         server.enqueueResponses(
             "openai-compatible-responses",
+            // Compaction while a dialog is open condenses the answered history before it,
+            // so the task first needs one answered exchange besides the opening request.
+            {
+                type: "tool",
+                id: "call_task_header_compact_read",
+                name: "read_file",
+                arguments: { path: "README.md" },
+                expectedRequestIncludes: ["E2E_TASK_HEADER_COMPACT_TASK"],
+            },
             {
                 type: "tool",
                 id: "call_task_header_compact_ready",
                 name: "qna_respond",
                 arguments: { response: "E2E_TASK_HEADER_COMPACT_READY" },
                 usage: { inputTokens: 80_000, outputTokens: 100 },
-                expectedRequestIncludes: ["E2E_TASK_HEADER_COMPACT_TASK"],
+                expectedToolResults: [{ callId: "call_task_header_compact_read", contentIncludes: "# Test Workspace" }],
             },
             {
                 type: "tool",
@@ -98,7 +107,7 @@ e2e(
                 id: "call_task_header_compact_continued",
                 name: "qna_respond",
                 arguments: { response: "E2E_TASK_HEADER_COMPACT_CONTINUED" },
-                expectedRequestIncludes: ["E2E_TASK_HEADER_COMPACT_SUMMARY"],
+                expectedRequestIncludes: ["E2E_TASK_HEADER_COMPACT_SUMMARY", "E2E_TASK_HEADER_COMPACT_PRESERVED_DRAFT"],
                 expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER, "/cmd:compact"],
             },
         )
@@ -138,7 +147,9 @@ e2e(
             await expectComposerText(input, "E2E_TASK_HEADER_COMPACT_PRESERVED_DRAFT")
             await sidebar.locator('vscode-button[aria-label="Condense Conversation"]').click()
 
-            const compactionPass = sidebar.getByTestId("compaction-pass").last()
+            // The review was drawn on the run's own card, so that card is the only compaction row.
+            const compactionPass = sidebar.getByTestId("compaction-pass")
+            await expect(compactionPass).toHaveCount(1)
             // The task runtime names every compaction run `compaction:<uuid>` and records the
             // cause as its trigger, not in the id; neither the Webview nor the product
             // keys on a `manual-compaction:` prefix any more.
@@ -149,15 +160,23 @@ e2e(
             await expect
                 .poll(async () => Number(await durableSegment.getAttribute("data-authoritative-tokens")), { timeout: 30_000 })
                 .toBeLessThan(durableBeforeCompaction)
+            await expect(sidebar.locator('vscode-button[aria-label="Condense Conversation"]')).toHaveCount(0)
+
+            // Compacting from the header answers nothing: the dialog the task stopped on
+            // stays open, the draft stays in the composer, and no round starts until the
+            // user replies.
+            expect(server.getRequestCount("openai-compatible-responses")).toBe(3)
+            await expectComposerText(input, "E2E_TASK_HEADER_COMPACT_PRESERVED_DRAFT")
+            await expect(input).toBeEnabled()
+            await sidebar.getByTestId("send-button").click()
             await expect(sidebar.getByText("E2E_TASK_HEADER_COMPACT_CONTINUED", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(3)
+            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
             const requests = server.getMockConsumptions("openai-compatible-responses")
-            expect(requests[1]).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
-            expect(requests[1].contractError).toBeUndefined()
-            expect(requests[2].contractError).toBeUndefined()
-            await expectComposerText(input, "E2E_TASK_HEADER_COMPACT_PRESERVED_DRAFT")
+            expect(requests[2]).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
+            for (const request of requests) expect(request.contractError).toBeUndefined()
+            await expect(compactionPass).toHaveCount(1)
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await app.close()

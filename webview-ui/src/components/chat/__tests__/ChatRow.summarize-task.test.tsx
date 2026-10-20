@@ -115,6 +115,7 @@ describe("ChatRow summarizeTask rendering", () => {
         ["preparing", "Preparing a context-safe summary:"],
         ["waiting", "Waiting for the model to begin compaction:"],
         ["receiving", "Dline is condensing the conversation:"],
+        ["completed", "Dline condensed the conversation:"],
     ] as const)("renders an explicit %s lifecycle card before summary content", (compactionStatus, expectedTitle) => {
         render(
             <ChatRowContent

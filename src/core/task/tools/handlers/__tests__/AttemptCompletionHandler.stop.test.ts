@@ -92,6 +92,15 @@ function createBlock(): ToolUse {
     } as ToolUse
 }
 
+/** Hold the completion checkpoint until the returned release is called. */
+function holdCheckpoint(config: TaskConfig): () => void {
+    const saveCheckpoint = config.callbacks.saveCheckpoint
+    if (!saveCheckpoint) throw new Error("The fixture saves checkpoints")
+    let release = () => {}
+    vi.mocked(saveCheckpoint).mockImplementation(() => new Promise<void>((resolve) => (release = resolve)))
+    return () => release()
+}
+
 describe("AttemptCompletionHandler stop behavior", () => {
     it("returns terminal completion when the runtime starts a new task", async () => {
         const taskState = new DefaultToolHandlerState()
@@ -157,6 +166,46 @@ describe("AttemptCompletionHandler stop behavior", () => {
 
             assert.equal(result, "[attempt_completion] Result: Done")
         }
+    })
+
+    // Input queued while the model worked is delivered when this dialog opens;
+    // waiting for the checkpoint first left it unsent for the whole commit.
+    it("opens the dialog before the checkpoint settles and goes on only after it", async () => {
+        const config = createConfig(new DefaultToolHandlerState(), { actionId: "reply", text: "next" })
+        const releaseCheckpoint = holdCheckpoint(config)
+        let settled = false
+
+        const execution = new AttemptCompletionHandler().execute(config, createBlock()).then((result) => {
+            settled = true
+            return result
+        })
+        await vi.waitFor(() => expect(config.interactions.complete).toHaveBeenCalledOnce())
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        // Answered already, but the round that answer starts waits for the checkpoint.
+        expect(settled).toBe(false)
+        expect(config.callbacks.doesLatestTaskCompletionHaveNewChanges).not.toHaveBeenCalled()
+        releaseCheckpoint()
+        await execution
+        expect(config.callbacks.doesLatestTaskCompletionHaveNewChanges).toHaveBeenCalledOnce()
+    })
+
+    it("lets the checkpoint finish when a stop ends the dialog", async () => {
+        const config = createConfig(new DefaultToolHandlerState())
+        const releaseCheckpoint = holdCheckpoint(config)
+        vi.mocked(config.interactions.complete).mockRejectedValue(new Error("stopped"))
+        let rejected = false
+
+        const execution = new AttemptCompletionHandler().execute(config, createBlock()).catch((error: unknown) => {
+            rejected = true
+            throw error
+        })
+        await vi.waitFor(() => expect(config.interactions.complete).toHaveBeenCalledOnce())
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(rejected).toBe(false)
+        releaseCheckpoint()
+        await expect(execution).rejects.toThrow("stopped")
     })
 
     it("returns completion feedback when the user replies", async () => {

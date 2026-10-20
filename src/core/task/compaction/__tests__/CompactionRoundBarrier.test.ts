@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
 import type { CompactionPort } from "../../executors/compaction/CompactionCommandExecutor"
-import { CompactionReviewWithdrawnError } from "../../executors/compaction/ProductionCompactionAdapter"
 import { createInitialTaskState, type TaskState } from "../../kernel"
 import type { ActiveTaskSession } from "../../session/ActiveTaskSession"
 import { decodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
@@ -77,13 +76,18 @@ async function drain(): Promise<void> {
 async function run(
     barrier: CompactionRoundBarrier,
     compactionId: string,
-    outcome: "resolve" | "reject" | "withdraw" = "resolve",
+    outcome: "resolve" | "reject" | "stop" = "resolve",
     signal = new AbortController().signal,
 ): Promise<void> {
+    const stop = new AbortController()
+    if (outcome === "stop") signal = stop.signal
     const port: CompactionPort = {
         run: async () => {
             if (outcome === "reject") throw new Error("provider refused")
-            if (outcome === "withdraw") throw new CompactionReviewWithdrawnError("stopped")
+            if (outcome === "stop") {
+                stop.abort("stopped")
+                throw stop.signal.reason
+            }
             return { resultRef: "result-ref" }
         },
     }
@@ -435,6 +439,27 @@ describe("CompactionRoundBarrier - manual", () => {
         expect(p.contexts[0].context).toMatchObject({ guidance: "keep the audit" })
     })
 
+    it("keeps waiting through a commit published after the request yet older than it", async () => {
+        // The retried round's request committed at revision 5; a commit from
+        // before it, still holding the failed run being retried, arrives late.
+        const live = { ...running(), revision: 5 } as TaskState
+        const p = probe(() => live)
+        const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => live })
+
+        let settled = false
+        const waiting = barrier.settleBeforeRound(round([COMPACT])).then((readiness) => {
+            settled = true
+            return readiness
+        })
+        await drain()
+        barrier.committed({ ...withCompaction(running(), "compaction:failed-before", "expired"), revision: 4 } as TaskState)
+        await drain()
+        expect(settled).toBe(false)
+
+        await run(barrier, p.scheduled[0])
+        await expect(waiting).resolves.toEqual({ kind: "ready" })
+    })
+
     it("runs once for every /compact the round owes, keeping each one's guidance in order", async () => {
         const state = running()
         const p = probe(() => state)
@@ -519,14 +544,14 @@ describe("CompactionRoundBarrier - manual", () => {
         expect(p.scheduled).toHaveLength(1)
     })
 
-    it("withdraws the round when the user withdraws the review", async () => {
+    it("withdraws the round when the user stops the compaction", async () => {
         const state = running()
         const p = probe(() => state)
         const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
 
         const waiting = barrier.settleBeforeRound(round([COMPACT]))
         await drain()
-        await run(barrier, p.scheduled[0], "withdraw")
+        await run(barrier, p.scheduled[0], "stop")
 
         await expect(waiting).resolves.toEqual({ kind: "withdrawn", reason: "manual_compaction_withdrawn" })
     })
@@ -546,7 +571,7 @@ describe("CompactionRoundBarrier - manual", () => {
         expect(p.contexts.map((context) => context.trigger)).toEqual(["manual"])
     })
 
-    it("keeps waiting while the user reviews, however long it takes", async () => {
+    it("keeps waiting on the run the user asked for, however long it takes", async () => {
         vi.useFakeTimers()
         try {
             const state = running()
@@ -605,5 +630,152 @@ describe("CompactionRoundBarrier - manual", () => {
 
         await expect(barrier.settleBeforeRound(round())).resolves.toEqual({ kind: "ready" })
         expect(p.submitted).toEqual([])
+    })
+
+    // A `/compact` sent alone while a dialog waits must not answer that dialog.
+    it("compacts at once for a command performed on its own, owing no round anything", async () => {
+        const state = running()
+        const p = probe(() => state)
+        const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+
+        await expect(barrier.perform({ commandId: COMPACT_COMMAND_ID, premessage: " keep the API notes " })).resolves.toBe(true)
+
+        expect(p.submitted).toEqual(["compaction.requested"])
+        expect(p.contexts[0]).toMatchObject({ trigger: "manual", context: { guidance: "keep the API notes" } })
+        // The dialog's answer can open a round before the summary lands: that
+        // round waits for it, and does not compact a second time.
+        let settled = false
+        const waiting = barrier.settleBeforeRound(round()).then((readiness) => {
+            settled = true
+            return readiness
+        })
+        await drain()
+        expect(settled).toBe(false)
+        await run(barrier, p.scheduled[0])
+        await expect(waiting).resolves.toEqual({ kind: "ready" })
+        expect(p.submitted).toEqual(["compaction.requested"])
+    })
+
+    it("reports a performed command the kernel refused, so the dialog keeps the draft", async () => {
+        const state = running()
+        const p = probe(() => state, { kind: "rejected", reason: "duplicate" })
+        const failures: string[] = []
+        const barrier = new CompactionRoundBarrier({
+            session: () => p.session,
+            state: () => state,
+            onFailure: (message) => failures.push(message),
+        })
+
+        await expect(barrier.perform({ commandId: COMPACT_COMMAND_ID, premessage: "" })).resolves.toBe(false)
+        await expect(barrier.perform({ commandId: "command.explain", premessage: "" })).resolves.toBe(false)
+        expect(failures).toEqual(["manual compaction not scheduled: duplicate"])
+    })
+})
+
+/** `state` holding one `kind` dialog in `status`. */
+function withDialog(state: TaskState, kind: string, status: "planned" | "awaiting"): TaskState {
+    return {
+        ...state,
+        dialog: {
+            ...state.dialog,
+            primary: {
+                interactionId: `${kind}-1`,
+                turnId: "turn-1",
+                kind,
+                status,
+                createdRevision: 1,
+                presentationRef: kind,
+                actionRules: [],
+            },
+        },
+    } as TaskState
+}
+
+/** A task waiting on one turn-end dialog in `status`. */
+function waitingOn(status: "planned" | "awaiting"): TaskState {
+    return withDialog({ ...createInitialTaskState("task-1"), flow: { phase: "waiting" } } as TaskState, "completion", status)
+}
+
+/** Whether a promise has settled after the microtasks queued so far. */
+async function settled(promise: Promise<unknown>): Promise<boolean> {
+    let done = false
+    void promise.then(
+        () => {
+            done = true
+        },
+        () => {
+            done = true
+        },
+    )
+    await drain()
+    return done
+}
+
+describe("CompactionRoundBarrier - review slot", () => {
+    // A round in flight may end on a dialog of its own, which the kernel would
+    // refuse while a review held the slot.
+    it("keeps a review closed while a round runs, until the task waits on a dialog it can interrupt", async () => {
+        let state = running()
+        const barrier = new CompactionRoundBarrier({ session: () => undefined, state: () => state })
+
+        const reviewable = barrier.reviewable("compact-1", new AbortController().signal)
+        expect(await settled(reviewable)).toBe(false)
+
+        // The turn ended on a completion that is still being drawn.
+        state = waitingOn("planned")
+        barrier.committed(state)
+        expect(await settled(reviewable)).toBe(false)
+
+        state = waitingOn("awaiting")
+        barrier.committed(state)
+        await expect(reviewable).resolves.toBeUndefined()
+    })
+
+    // A tool-owned dialog waits inside its round, so the task stays running
+    // while the user is asked; that round cannot end on another dialog first.
+    it("opens a review beside a tool-owned dialog that waits for the user while its round runs", async () => {
+        let state = withDialog(running(), "qna_response", "planned")
+        const barrier = new CompactionRoundBarrier({ session: () => undefined, state: () => state })
+
+        const reviewable = barrier.reviewable("compact-1", new AbortController().signal)
+        expect(await settled(reviewable)).toBe(false)
+
+        state = withDialog(running(), "qna_response", "awaiting")
+        barrier.committed(state)
+        await expect(reviewable).resolves.toBeUndefined()
+    })
+
+    it("opens a review once the next round is held for its run", async () => {
+        const state = running()
+        const p = probe(() => state)
+        const barrier = new CompactionRoundBarrier({ session: () => p.session, state: () => state })
+        await barrier.perform(COMPACT)
+        const compactionId = p.scheduled[0]
+
+        const reviewable = barrier.reviewable(compactionId, new AbortController().signal)
+        expect(await settled(reviewable)).toBe(false)
+
+        const roundReady = barrier.settleBeforeRound(round())
+        await expect(reviewable).resolves.toBeUndefined()
+        await run(barrier, compactionId)
+        await expect(roundReady).resolves.toEqual({ kind: "ready" })
+    })
+
+    it("opens a review at once when the task waits with the slot free", async () => {
+        const state = { ...createInitialTaskState("task-1"), flow: { phase: "waiting" } } as TaskState
+        const barrier = new CompactionRoundBarrier({ session: () => undefined, state: () => state })
+
+        await expect(barrier.reviewable("compact-1", new AbortController().signal)).resolves.toBeUndefined()
+    })
+
+    it("stops waiting for the slot when the run stops", async () => {
+        const state = running()
+        const barrier = new CompactionRoundBarrier({ session: () => undefined, state: () => state })
+        const stop = new AbortController()
+
+        const reviewable = barrier.reviewable("compact-1", stop.signal)
+        stop.abort("compaction_cancelled")
+
+        await expect(reviewable).rejects.toBe("compaction_cancelled")
     })
 })

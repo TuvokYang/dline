@@ -18,7 +18,7 @@ export interface TaskCompactionRequestInput {
     /** Revision the requester observed; a newer revision means the request is stale. */
     readonly stateRevision: number
     readonly mode: TaskCompactionMode
-    /** Who asked; required so the recorded cause is never guessed. A manual request is reviewed before it lands. */
+    /** Who asked; required so the recorded cause is never guessed. */
     readonly trigger: CompactionTrigger
     /** What the user asked the summary to keep; sent with this request only. */
     readonly guidance?: string

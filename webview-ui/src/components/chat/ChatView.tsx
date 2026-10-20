@@ -600,17 +600,15 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
         compactCommandPendingRef.current = false
         setCompactCommandPending(false)
     }, [contextCompactionActive])
-    const compactTaskDisabled =
-        !taskInputEnabled || contextCompactionActive || compactCommandPending || forceTruncateTaskRpcPending
+    // A working task has no dialog to answer, yet it can still compact beside the work in progress.
+    const compactCanRun = taskInputEnabled || queueCanDeliver
+    const compactTaskDisabled = !compactCanRun || contextCompactionActive || compactCommandPending || forceTruncateTaskRpcPending
     const forceTruncateTaskDisabled =
         !taskInputEnabled || contextCompactionActive || compactCommandPending || forceTruncateTaskRpcPending
     const submitCompactTask = useCallback(async (): Promise<boolean> => {
-        const view = taskViewState
-        if (!view?.taskId || !taskInputEnabled || contextCompactionActive || compactCommandPendingRef.current) {
+        if (!taskViewState?.taskId || !compactCanRun || contextCompactionActive || compactCommandPendingRef.current) {
             return false
         }
-        const actionId = view.input.enterAction
-        if (!actionId) return false
         // The header button means compaction, so it sends the command node itself
         // rather than text that only reads as the command under this catalog.
         const atom = createCommandAtom(semanticCatalog, MANUAL_COMPACT_COMMAND_ID, MANUAL_COMPACT_COMMAND)
@@ -618,20 +616,22 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
             ? [{ kind: "atom", atom }]
             : [{ kind: "text", text: MANUAL_COMPACT_COMMAND, source: "typed" }]
         const command = composeComposerSubmission(segments, { catalog: semanticCatalog, documentId: crypto.randomUUID() })
-        const request = buildInteractionRequest(view, actionId, {
+        const draft = {
             text: command.text,
             images: [],
             files: [],
             ...(command.semanticInput === undefined ? {} : { semanticInput: command.semanticInput }),
-        })
-        if (!request?.draft) return false
+        }
 
         compactCommandPendingRef.current = true
         setCompactCommandPending(true)
         let accepted = false
         try {
-            const response = await TaskServiceClient.dispatchInteraction(request)
-            accepted = response.accepted
+            // Compaction is an action, not an answer. The task carries a bare command
+            // out at once beside whatever is open - a dialog keeps waiting, an
+            // interrupted task stays paused, a working task goes on - instead of
+            // answering, resuming or queueing anything for it.
+            accepted = await inputQueue.enqueue(draft, "queued")
             return accepted
         } finally {
             if (!accepted) {
@@ -639,7 +639,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                 setCompactCommandPending(false)
             }
         }
-    }, [contextCompactionActive, semanticCatalog, taskInputEnabled, taskViewState])
+    }, [compactCanRun, contextCompactionActive, inputQueue.enqueue, semanticCatalog, taskViewState?.taskId])
     const submitForceTruncateTask = useCallback(async (): Promise<boolean> => {
         if (!taskViewState?.taskId || !taskInputEnabled || contextCompactionActive || forceTruncateTaskRpcPendingRef.current) {
             return false

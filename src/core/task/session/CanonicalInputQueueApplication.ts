@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto"
+import { submittedInputRow } from "@shared/input-semantics/submitted-input"
 import { Logger } from "@shared/services/Logger"
 import { hasTransitionDraftContent } from "@shared/TransitionDraft"
 import { renderRetainedInputs } from "../continuation/RetainedInputContent"
@@ -9,6 +11,7 @@ import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import { materializeCanonicalInputQueue } from "../view/materializeCanonicalInputQueue"
+import type { ConsumedInputRowPort } from "./ConsumedInputRow"
 import type {
     CanonicalInputQueueDraft,
     CanonicalInputQueueMutation,
@@ -26,6 +29,20 @@ import type { TaskInputMaterializer } from "./TaskInputMaterializer"
  * Only a new entry can be held back by the task's phase: a compaction in
  * progress keeps the send with the user until its summary has landed.
  */
+/** Result of an enqueue that carried out a bare lifecycle command instead of queueing it. */
+export const QUEUE_COMMAND_PERFORMED = "command_performed"
+
+/**
+ * Whether a draft could be nothing but a lifecycle command and its premessage.
+ *
+ * Text before a command is kept as a message, so a bare command always starts
+ * the draft; this keeps every ordinary message off the admission it would
+ * otherwise run twice.
+ */
+function mayBeBareCommand(draft: CanonicalInputQueueDraft): boolean {
+    return (draft.text ?? "").trimStart().startsWith("/")
+}
+
 function refusalOf(mutation: CanonicalInputQueueMutation, reason: RejectReason | RuntimeRejection["reason"]): string {
     if (reason === "read_only") return "task_read_only"
     if (reason === "capacity_exceeded") return "queue_full"
@@ -44,6 +61,8 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
         private readonly inputs: TaskInputMaterializer,
         private readonly payloads: TaskPayloadStore,
         private readonly turnEnd: CanonicalQueueTurnEndPort,
+        /** Shows a command carried out instead of queued; absent means the command acts unseen. */
+        private readonly consumedRows?: ConsumedInputRowPort,
     ) {}
 
     async mutate(mutation: CanonicalInputQueueMutation): Promise<CanonicalInputQueueMutationResult> {
@@ -53,6 +72,12 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
         switch (mutation.kind) {
             case "enqueue": {
                 if (!hasTransitionDraftContent(mutation.draft)) return { accepted: false, result: "empty_input" }
+                const performed = await this.performBareCommand(mutation.draft)
+                if (performed !== undefined) {
+                    return performed
+                        ? { accepted: true, result: QUEUE_COMMAND_PERFORMED }
+                        : { accepted: false, result: "command_refused" }
+                }
                 const mode = mutation.mode ?? "queued"
                 const input = await this.inputs.materialize(mutation.draft, mode)
                 event = {
@@ -133,6 +158,43 @@ export class CanonicalInputQueueApplication implements InputQueueApplicationPort
 
     project() {
         return materializeCanonicalInputQueue(this.runtime.getState(), this.payloads, this.payloadCache)
+    }
+
+    /**
+     * Carry out a draft that holds only a lifecycle command, such as a bare `/compact`.
+     *
+     * Queued, such a draft would later answer whatever dialog the turn ends on,
+     * or reach the model as an empty message at a tool round. It is an action,
+     * so it runs now, beside the work in progress, and the next round waits for
+     * it. Returns undefined for any draft that is a message and must be queued.
+     *
+     * Never an intake entry, the command's draft is shown here as the user's own
+     * row, just as a reply a command consumed is.
+     */
+    private async performBareCommand(draft: CanonicalInputQueueDraft): Promise<boolean | undefined> {
+        if (!mayBeBareCommand(draft)) return undefined
+        let reviewed: Awaited<ReturnType<TaskInputMaterializer["reviewReply"]>>
+        try {
+            reviewed = await this.inputs.reviewReply(draft)
+        } catch {
+            // Materializing the entry reports the same refusal with its own diagnostics.
+            return undefined
+        }
+        if (!reviewed?.performAlone) return undefined
+        if (!(await reviewed.performAlone())) return false
+        const shown = submittedInputRow(
+            [{ text: draft.text, ...(draft.semanticInput === undefined ? {} : { semanticInput: draft.semanticInput }) }],
+            {
+                admitted: false,
+                ...(reviewed.claimedBarrier === undefined ? {} : { claimedBarrier: reviewed.claimedBarrier }),
+            },
+        )
+        await this.consumedRows?.show(shown, `command:${randomUUID()}`).catch((error: unknown) => {
+            Logger.warn(
+                `[inputQueue] Could not show a performed command: ${error instanceof Error ? error.message : String(error)}`,
+            )
+        })
+        return true
     }
 
     onTurnEndAwaiting(interaction: CanonicalQueueAwaitingInteraction): void {

@@ -365,4 +365,59 @@ describe("MessageStateCompactionCards", () => {
         expect(await progress.present(OPERATION, event({ kind: "failed", error: "provider unavailable" }))).toBe(false)
         expect(cardOf(rows.get(501)).compactionStatus).toBe("waiting")
     })
+
+    // A reviewed compaction stays one card: the review, a regenerated summary
+    // and the landed record all take the row the first progress was drawn on.
+    it("draws the review, the regenerated summary and the record on the run's one card", async () => {
+        const { handler, rows, durable } = createMessageStub()
+        const cards = new MessageStateCompactionCards(handler, sequence())
+        await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+
+        expect(cards.handOver(OPERATION)).toBe(501)
+        // The review writes its dialog row there.
+        rows.set(501, { ts: 501, type: "ask", ask: "condense", text: "first summary", partial: false })
+        durable.add(501)
+
+        await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt1 }))
+        expect([...rows.keys()]).toEqual([501])
+        expect(cardOf(rows.get(501))).toMatchObject({ tool: "summarizeTask", compactionStatus: "waiting" })
+
+        expect(cards.handOver(OPERATION)).toBe(501)
+        await cards.record(OPERATION, { tool: "summarizeTask", content: "accepted", compactionStatus: "completed" })
+
+        expect([...rows.keys()]).toEqual([501])
+        expect(rows.get(501)?.partial).toBe(false)
+        expect(cardOf(rows.get(501))).toMatchObject({ content: "accepted", compactionStatus: "completed" })
+    })
+
+    it("lands the record on a review's row when the run drew nothing after it", async () => {
+        const { handler, rows, durable } = createMessageStub()
+        const cards = new MessageStateCompactionCards(handler, sequence())
+        await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+        cards.handOver(OPERATION)
+        rows.set(501, { ts: 501, type: "ask", ask: "condense", text: "summary", partial: false })
+        durable.add(501)
+
+        await cards.record(OPERATION, { tool: "summarizeTask", content: "summary", compactionStatus: "completed" })
+
+        expect([...rows.keys()]).toEqual([501])
+        expect(cardOf(rows.get(501)).compactionStatus).toBe("completed")
+    })
+
+    it("withdraws a handed-over card the review never took, as when the run stops waiting for the slot", async () => {
+        const { handler, rows } = createMessageStub()
+        const cards = new MessageStateCompactionCards(handler, sequence())
+        await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+        cards.handOver(OPERATION)
+
+        expect(cards.withdraw(OPERATION)).toBe(true)
+        expect(rows.size).toBe(0)
+    })
+
+    it("hands over nothing when the run shows no card", () => {
+        const { handler } = createMessageStub()
+        const cards = new MessageStateCompactionCards(handler, sequence())
+
+        expect(cards.handOver(OPERATION)).toBeUndefined()
+    })
 })

@@ -302,6 +302,49 @@ describe("ProductionCompactionAdapter", () => {
         expect(landed).toEqual(["summary 3"])
     })
 
+    // One compaction is one card: the review is drawn on the row the run's
+    // progress occupied, instead of a second copy of the summary beside it.
+    it("hands the run's progress card to every review of its summary", async () => {
+        const payloads = new MemoryPayloads()
+        const context: CompactionContextEnvelope = {
+            kind: "compaction_context",
+            trigger: "manual",
+            context: { sourceHistory: [] },
+        }
+        const contextRef = await payloads.put(encodeTaskPayload(context))
+        const handed: string[] = []
+        const reviewedRows: Array<number | undefined> = []
+        const decisions = [{ action: "regenerate", feedback: "" } as const, { action: "accept" } as const]
+        const adapter = new ProductionCompactionAdapter({
+            payloads,
+            service: { run: async () => ({ summary: "summary" }) },
+            progress: {
+                withdraw: () => false,
+                handOver: (compactionId) => {
+                    handed.push(compactionId)
+                    return 17
+                },
+            },
+            review: {
+                review: async ({ existingTs }) => {
+                    reviewedRows.push(existingTs)
+                    return decisions.shift() ?? { action: "accept" }
+                },
+            },
+        })
+
+        await adapter.run({
+            compactionId: "compact-1",
+            attempt: "attempt-1",
+            contextRef,
+            signal: new AbortController().signal,
+            publish: () => undefined,
+        })
+
+        expect(handed).toEqual(["compact-1", "compact-1"])
+        expect(reviewedRows).toEqual([17, 17])
+    })
+
     it("never asks for review of an automatic summary", async () => {
         const payloads = new MemoryPayloads()
         const context: CompactionContextEnvelope = { kind: "compaction_context", context: { sourceHistory: [] } }
@@ -485,6 +528,7 @@ describe("ProductionCompactionAdapter", () => {
                     withdrawn.push(compactionId)
                     return true
                 },
+                handOver: () => undefined,
             },
         })
 
@@ -521,6 +565,7 @@ describe("ProductionCompactionAdapter", () => {
                     // The landing took the card over, so nothing was left.
                     return false
                 },
+                handOver: () => undefined,
             },
         })
 

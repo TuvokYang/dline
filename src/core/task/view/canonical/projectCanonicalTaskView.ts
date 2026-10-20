@@ -122,7 +122,7 @@ function projectInput(
     if (isCompletionBeingPresented(state)) return { mode: "queued" }
     if (terminal !== "active") return { mode: "disabled" }
     if (state.flow.phase === "idle") return { mode: "disabled" }
-    if (state.flow.phase === "waiting" && state.flow.replyAdmission === "profile_recovery") return { mode: "reply" }
+    if (state.flow.phase === "waiting" && state.flow.replyAdmission !== undefined) return { mode: "reply" }
     return { mode: "queued" }
 }
 

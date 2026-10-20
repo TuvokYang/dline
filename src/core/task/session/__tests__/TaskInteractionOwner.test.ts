@@ -106,6 +106,47 @@ function continuationPort(outcome: UnownedDialogOutcome): UnownedDialogContinuat
 }
 
 describe("TaskInteractionOwner", () => {
+    // A compaction review typed beside a completion takes the slot over until it
+    // is answered; the kernel restores the completion afterwards.
+    it("interrupts the dialog holding the slot when asked to, and requests normally when the slot is free", async () => {
+        let state = restoredPrimary("completion-1", "completion")
+        const { owner, submitted, whenSubmitted } = createOwner({ state: () => state })
+
+        let next = whenSubmitted()
+        void owner.open({
+            turnId: "compact-1",
+            interactionId: "review-0",
+            kind: "condense",
+            presentation: "s",
+            placement: "interrupt",
+        })
+        await next
+
+        state = createInitialTaskState("task-1")
+        next = whenSubmitted()
+        void owner.open({
+            turnId: "compact-2",
+            interactionId: "review-1",
+            kind: "condense",
+            presentation: "s",
+            placement: "interrupt",
+        })
+        await next
+
+        expect(submitted).toEqual(["dialog.interrupt_requested", "dialog.requested"])
+    })
+
+    it("never interrupts a dialog without being asked to", async () => {
+        const state = restoredPrimary("completion-1", "completion")
+        const { owner, submitted, whenSubmitted } = createOwner({ state: () => state })
+
+        const next = whenSubmitted()
+        void owner.open({ turnId: "turn-2", interactionId: "followup-1", kind: "followup", presentation: "q" })
+        await next
+
+        expect(submitted).toEqual(["dialog.requested"])
+    })
+
     it("fails a receiver whose answer a stop has made impossible", async () => {
         const { owner, whenSubmitted } = createOwner()
         const waiting = owner.open({

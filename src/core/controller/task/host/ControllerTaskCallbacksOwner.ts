@@ -130,8 +130,8 @@ export class ControllerTaskCallbacksOwner {
                 this.requireCommandExecutor().execute(command, timeout, executionOptions),
             killCommandTool: (functionId) => this.requireCommandExecutor().cancelCommandByFunctionId(functionId),
             cancelRunningCommandTool: () => this.requireCommandExecutor().cancelBackgroundCommand(),
-            doesLatestTaskCompletionHaveNewChanges: () =>
-                this.checkpointManager?.doesLatestTaskCompletionHaveNewChanges() ?? Promise.resolve(false),
+            doesLatestTaskCompletionHaveNewChanges: (completionMessageTs) =>
+                this.checkpointManager?.doesLatestTaskCompletionHaveNewChanges(completionMessageTs) ?? Promise.resolve(false),
             updateFCListFromToolResponse: async (progress) => {
                 await this.focusChain.updateFCListFromToolResponse(progress)
                 // The tab title carries checklist progress, as on dev.

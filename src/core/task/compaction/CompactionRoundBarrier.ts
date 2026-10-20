@@ -3,7 +3,6 @@ import type {
     CompactionExecutionResult,
     CompactionPort,
 } from "../executors/compaction/CompactionCommandExecutor"
-import { CompactionReviewWithdrawnError } from "../executors/compaction/ProductionCompactionAdapter"
 import type { ComposeCompactionBarrierPort, RoundReadiness } from "../executors/compose/ProductionComposeAdapter"
 import type { TaskState } from "../kernel"
 import type { ActiveTaskSession } from "../session/ActiveTaskSession"
@@ -18,6 +17,7 @@ import {
     type CompactionRunOutcome,
 } from "./CompactionRecovery"
 import type { AdmissionCompaction, AdmissionCompactionPort } from "./FinalContextWindowGuard"
+import type { CompactionReviewSlotPort } from "./InteractionCompactionReview"
 import { COMPACTION_FAILURE_MESSAGE } from "./MessageStateCompactionFailure"
 import { NOTHING_TO_COMPACT, requestTaskCompaction } from "./TaskCompactionRequest"
 
@@ -88,7 +88,8 @@ export class CompactionRoundBarrier
         CompactionSettlementObserverPort,
         LifecycleBarrierPort,
         CompactionRecoveryPort,
-        AdmissionCompactionPort
+        AdmissionCompactionPort,
+        CompactionReviewSlotPort
 {
     private observed: ObservedPressure | undefined
     /** The last round stopped on a failed automatic compaction and has not been retried. */
@@ -108,10 +109,16 @@ export class CompactionRoundBarrier
      * when the user dismisses the failure instead of retrying it.
      */
     private failedManual: { readonly command: LifecycleCommand; readonly generation: number } | undefined
+    /** A `/compact` performed beside an open dialog, still owed to the round that dialog's answer opens. */
+    private beside: string | undefined
     /** Rounds waiting on a run, keyed by the run so a stale one only releases its own waiter. */
-    private readonly waiters = new Map<string, (result: CompactionRunResult) => void>()
+    private readonly waiters = new Map<string, RunWaiter>()
     /** The last run that ended before any round waited on it. */
     private unclaimed: { readonly compactionId: string; readonly result: CompactionRunResult } | undefined
+    /** Runs a round is held for before it is drafted, so that round cannot end on a dialog first. */
+    private readonly holding = new Set<string>()
+    /** Reviews waiting for the dialog slot; each re-checks it on every commit and hold. */
+    private readonly reviewWaiters = new Set<() => void>()
 
     constructor(private readonly options: CompactionRoundBarrierOptions) {}
 
@@ -147,14 +154,46 @@ export class CompactionRoundBarrier
      * starts - and only the committed state says so. Completed and failed runs
      * never reach this path: their executor settles the waiter before it submits
      * the terminal event the kernel commits.
+     *
+     * Committed states are published after their durable write, so one can
+     * arrive after a round began waiting yet predate the request it waits on.
+     * Its slot then still holds the previous run - a failed `/compact` the user
+     * is retrying, say - which says nothing about this run.
      */
     committed(state: Readonly<TaskState>): void {
         if (this.failedManual && dismissedFailure(state)) this.failedManual = undefined
-        for (const [compactionId, release] of [...this.waiters]) {
-            if (!isAbandoned(state, compactionId)) continue
+        for (const [compactionId, waiter] of [...this.waiters]) {
+            if (state.revision < waiter.since || !isAbandoned(state, compactionId)) continue
             this.waiters.delete(compactionId)
-            release({ outcome: "withdrawn" })
+            waiter.release({ outcome: "withdrawn" })
         }
+        this.wakeReviews()
+    }
+
+    /**
+     * Wait until a review of this run may take the dialog slot.
+     *
+     * A `/compact` performed beside a round in flight produces its summary while
+     * that round goes on, and the round may still end on a dialog of its own -
+     * one the kernel refuses while a review holds the slot. So the review waits
+     * until the round is held for this run, or the task stops running and waits
+     * for the user; then the slot is free or holds a waiting dialog the review
+     * can interrupt.
+     */
+    async reviewable(compactionId: string, signal: AbortSignal): Promise<void> {
+        while (!reviewSlotOpen(this.options.state(), this.holding.has(compactionId))) {
+            if (signal.aborted) throw signal.reason
+            await new Promise<void>((resolve) => {
+                const wake = () => {
+                    this.reviewWaiters.delete(wake)
+                    signal.removeEventListener("abort", wake)
+                    resolve()
+                }
+                this.reviewWaiters.add(wake)
+                signal.addEventListener("abort", wake, { once: true })
+            })
+        }
+        if (signal.aborted) throw signal.reason
     }
 
     /**
@@ -191,6 +230,34 @@ export class CompactionRoundBarrier
     }
 
     /**
+     * Compact now, for a `/compact` sent on its own while a dialog waits.
+     *
+     * No round is owed anything, so this schedules the run exactly as the header
+     * control does and does not wait for it: the summary lands beside the open
+     * dialog, whose answer stays the user's. The open turn is not condensed, so
+     * the call that dialog answers is still there when the answer arrives.
+     */
+    async perform(command: LifecycleCommand): Promise<boolean> {
+        const session = this.options.session()
+        if (!this.owns(command.commandId) || !session) return false
+        const guidance = command.premessage.trim()
+        try {
+            const request = await requestTaskCompaction(session, {
+                stateRevision: this.options.state().revision,
+                mode: "summarize",
+                trigger: "manual",
+                ...(guidance ? { guidance } : {}),
+            })
+            if (!request.accepted) this.options.onFailure?.(`manual compaction not scheduled: ${request.result}`)
+            else this.beside = request.compactionId
+            return request.accepted
+        } catch (error) {
+            this.options.onFailure?.(`manual compaction not scheduled: ${error instanceof Error ? error.message : String(error)}`)
+            return false
+        }
+    }
+
+    /**
      * Observe when a compaction run finishes, and how.
      *
      * The barrier waits for the run itself rather than for a kernel revision,
@@ -210,9 +277,8 @@ export class CompactionRoundBarrier
                     this.stoppedOnFailure = false
                     return result
                 } catch (error) {
-                    // A stop or a withdrawn review is the user's own decision, not a failure.
-                    if (input.signal.aborted || error instanceof CompactionReviewWithdrawnError)
-                        settled = { outcome: "withdrawn" }
+                    // A stop is the user's own decision, not a failure.
+                    if (input.signal.aborted) settled = { outcome: "withdrawn" }
                     else if (error instanceof Error && error.message.trim())
                         settled = { outcome: "failed", error: error.message.trim() }
                     throw error
@@ -248,6 +314,12 @@ export class CompactionRoundBarrier
         readonly signal: AbortSignal
         readonly lifecycle: readonly LifecycleCommand[]
     }): Promise<RoundReadiness> {
+        // The dialog stayed answerable while that run went on, so its answer can
+        // open a round before the summary lands; the round still goes after it.
+        const beside = this.beside
+        this.beside = undefined
+        const besideCompleted = beside ? (await this.awaitRun(beside, input.signal, true)).outcome === "completed" : false
+        if (input.signal.aborted) return { kind: "withdrawn", reason: "manual_compaction_withdrawn" }
         const replied = this.takeReplied()
         const retried = this.takeFailedManual()
         const manual = mergeOwedCompactions([
@@ -264,7 +336,7 @@ export class CompactionRoundBarrier
         // A successful explicit truncation belongs to this retried round. Consume
         // it once so the final guard sends the truncated conversation instead of
         // immediately compacting again from the previous request's stale usage.
-        this.compactedThisRound = this.recoveredByTruncation
+        this.compactedThisRound = this.recoveredByTruncation || besideCompleted
         this.recoveredByTruncation = false
         const session = this.options.session()
         if (!session) return ROUND_READY
@@ -273,8 +345,8 @@ export class CompactionRoundBarrier
             const result = await this.compact(session, "manual", input.signal, manual.premessage)
             if (result.outcome === "completed") return ROUND_READY
             // A run that failed after its retries is an error the user can retry,
-            // as dev offers Retry and Start New Task; a stop, a withdrawn review or
-            // a refused schedule is not, and simply gives the round up.
+            // as dev offers Retry and Start New Task; a stop or a refused schedule
+            // is not, and simply gives the round up.
             if (result.outcome !== "failed") return { kind: "withdrawn", reason: `manual_compaction_${result.outcome}` }
             this.failedManual = { command: manual, generation: this.options.state().generation }
             return {
@@ -340,7 +412,7 @@ export class CompactionRoundBarrier
             )
             return { outcome: "refused" }
         }
-        return await this.awaitRun(compactionId, signal)
+        return await this.awaitRun(compactionId, signal, true)
     }
 
     /**
@@ -348,16 +420,33 @@ export class CompactionRoundBarrier
      *
      * A stopped round stops waiting even if the run never reports back, because
      * the stop may have fenced it before it could; a run the kernel has already
-     * abandoned releases the round through `committed`.
+     * abandoned releases the round through `committed`. A round that waits holds
+     * the run, which is what lets that run's review open.
      */
-    private async awaitRun(compactionId: string, signal: AbortSignal): Promise<CompactionRunResult> {
+    private async awaitRun(compactionId: string, signal: AbortSignal, holdsRound = false): Promise<CompactionRunResult> {
+        if (!holdsRound) return await this.awaitSettled(compactionId, signal)
+        this.holding.add(compactionId)
+        this.wakeReviews()
+        try {
+            return await this.awaitSettled(compactionId, signal)
+        } finally {
+            this.holding.delete(compactionId)
+        }
+    }
+
+    private async awaitSettled(compactionId: string, signal: AbortSignal): Promise<CompactionRunResult> {
         const unclaimed = this.unclaimed
         if (unclaimed?.compactionId === compactionId) {
             this.unclaimed = undefined
             return unclaimed.result
         }
-        if (isAbandoned(this.options.state(), compactionId)) return { outcome: "withdrawn" }
-        const settled = new Promise<CompactionRunResult>((resolve) => this.waiters.set(compactionId, resolve))
+        // The live state already holds the accepted request, so it can judge the
+        // run now; only commits at least this recent may judge it later.
+        const current = this.options.state()
+        if (isAbandoned(current, compactionId)) return { outcome: "withdrawn" }
+        const settled = new Promise<CompactionRunResult>((release) =>
+            this.waiters.set(compactionId, { release, since: current.revision }),
+        )
         try {
             return await untilAborted(settled, signal)
         } finally {
@@ -365,15 +454,25 @@ export class CompactionRoundBarrier
         }
     }
 
+    private wakeReviews(): void {
+        for (const wake of [...this.reviewWaiters]) wake()
+    }
+
     private settle(compactionId: string, result: CompactionRunResult): void {
         const waiter = this.waiters.get(compactionId)
         if (waiter) {
             this.waiters.delete(compactionId)
-            waiter(result)
+            waiter.release(result)
             return
         }
         this.unclaimed = { compactionId, result }
     }
+}
+
+interface RunWaiter {
+    readonly release: (result: CompactionRunResult) => void
+    /** The live revision when the round began waiting; older commits predate its request. */
+    readonly since: number
 }
 
 /**
@@ -403,6 +502,23 @@ function isAbandoned(state: Readonly<TaskState>, compactionId: string): boolean 
     if (!compaction) return false
     if (compaction.compactionId !== compactionId) return true
     return compaction.status !== "scheduled" && compaction.status !== "running"
+}
+
+/**
+ * Whether a review may take the dialog slot now.
+ *
+ * A round held for this run waits on it, so nothing else can claim the slot
+ * meanwhile. One dialog that waits for the user offers the slot whatever the
+ * phase: a tool-owned dialog keeps its round running while it waits, and that
+ * round cannot end on another dialog before this one is answered, so the review
+ * interrupts it until it is resolved. With no dialog, a round in flight may
+ * still end on one, so only a task that waits for the user offers a free slot.
+ */
+function reviewSlotOpen(state: Readonly<TaskState>, roundHeld: boolean): boolean {
+    if (roundHeld) return true
+    const primary = state.dialog.primary
+    if (primary) return primary.status === "awaiting" && !state.dialog.interrupted
+    return state.flow.phase !== "running" && state.flow.phase !== "initializing"
 }
 
 /**

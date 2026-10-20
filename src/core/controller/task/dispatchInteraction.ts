@@ -1,16 +1,13 @@
+import type { InteractionKind } from "@core/task/interaction/Interaction"
 import type { InteractionOutcome } from "@core/task/interaction/InteractionProtocol"
-import type { MessageStateHandler } from "@core/task/message-state"
+import { getInteraction, INTERACTION_KINDS } from "@core/task/interaction/InteractionRegistry"
+import { showConsumedInput } from "@core/task/session/ConsumedInputRow"
 import { type ReviewedReply, SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
 import { encodeTaskPayload } from "@core/task/stores/payload/TaskPayloadCodec"
 import type { DialogDraftEnvelope, DialogSelectionEnvelope } from "@core/task/stores/payload/TaskPayloadEnvelopes"
 import type { AdmittedInputPart } from "@shared/input-semantics/admitted-parts"
 import { isResourceNode, type SemanticInputDocument } from "@shared/input-semantics/document"
-import {
-    rowHasVisibleContent,
-    type SubmittedInputRow,
-    submittedInputRow,
-    submittedRowFields,
-} from "@shared/input-semantics/submitted-input"
+import { submittedInputRow } from "@shared/input-semantics/submitted-input"
 import { type DispatchInteractionRequest, DispatchInteractionResponse } from "@shared/proto/dline/task"
 import { decodeAdmissibleSemanticInputDocument } from "@shared/proto-conversions/input-semantics/document"
 import { Logger } from "@shared/services/Logger"
@@ -27,6 +24,8 @@ type DispatchInteractionResult =
     | "missing_task"
     | "invalid_runtime_event"
     | "task_read_only"
+    /** A command sent on its own, which its owner did not carry out; the dialog still waits. */
+    | "command_refused"
 
 function response(accepted: boolean, result: DispatchInteractionResult): DispatchInteractionResponse {
     return DispatchInteractionResponse.create({ accepted, result })
@@ -65,45 +64,6 @@ function mixesResourceCarriers(draft: DispatchInteractionRequest["draft"], docum
 }
 
 /**
- * Show a reply whose lifecycle command consumed all of it, as the user typed it.
- *
- * The dialog handler echoes only the text a reply keeps; when the command took
- * everything, that is nothing, and the user's own row would never appear.
- * Keyed by the interaction so a replayed dispatch cannot show it twice, and
- * durable before the reply is acknowledged: once the dialog is answered no
- * replay can recreate a row a crash dropped from the buffer.
- *
- * The row is registered before the first await, so it is in the chat before
- * the caller releases the command and the dialog: a summary they produce
- * quickly is published after the user's row, as dev shows the reply first.
- *
- * Built from the reply as submitted, never from its resolved attachments: the
- * receiver reads the resources, the row only names them, so no image data or
- * local path enters the chat history and no file is read twice.
- */
-async function showConsumedReply(
-    messages: MessageStateHandler,
-    nextPresentationId: (() => number) | undefined,
-    request: DispatchInteractionRequest,
-    shown: SubmittedInputRow,
-): Promise<void> {
-    const rowId = `reply:${request.interactionId}`
-    if (!rowHasVisibleContent(shown) || messages.clineMessages.some((row) => row.interactionId === rowId)) return
-    // Rows are ordered by the session's shared sequence; drawing from it keeps
-    // the reply ahead of the summary and the turn it causes.
-    const lastTs = messages.clineMessages.at(-1)?.ts ?? 0
-    const ts = nextPresentationId ? nextPresentationId() : Math.max(Date.now(), lastTs + 1)
-    const registered = messages.beginDurableClineMessage({
-        ts,
-        type: "say",
-        say: "user_feedback",
-        ...submittedRowFields(shown),
-        interactionId: rowId,
-    })
-    await registered.persistence
-}
-
-/**
  * What a reply persists as its attachments.
  *
  * A structured reply's resources are its admitted parts; flat lists remain only
@@ -130,6 +90,20 @@ function partsFieldOf(attachments: ReplyAttachments): { readonly admittedParts?:
 
 /** The dialog action that abandons the task for a fresh one instead of answering it. */
 const START_NEW_TASK_ACTION = "start_new_task"
+
+/**
+ * Actions whose meaning is the typed text itself: a reply answers with it and
+ * an approval's typed note rejects with it. Retry, Resume and Acknowledge mean
+ * the same with or without text, so a command typed with them still rides the
+ * round they open.
+ */
+const TEXT_ANSWER_ACTIONS: ReadonlySet<string> = new Set(["reply", "reject"])
+
+/** Whether the action is the dialog's typed answer, the one its composer's Enter sends. */
+function answersWithText(kind: string, actionId: string): boolean {
+    if (!TEXT_ANSWER_ACTIONS.has(actionId) || !(INTERACTION_KINDS as readonly string[]).includes(kind)) return false
+    return getInteraction(kind as InteractionKind).input.enterAction === actionId
+}
 
 /**
  * Close the task after the user chose Start New Task on one of its dialogs.
@@ -235,6 +209,31 @@ export async function dispatchInteraction(
         if (!(error instanceof SemanticInputRejectedError)) throw error
         Logger.warn(`dispatchInteraction: reply to ${request.interactionId} was rejected: ${error.message}`)
         return response(false, "invalid_payload")
+    }
+    // A reply holding nothing but a command answers nothing. Resolving the
+    // dialog with it would hand the model an empty answer - or reject the tool
+    // an approval waited on - so the command acts on its own instead, and the
+    // dialog keeps waiting for the answer the user has not given yet.
+    if (reviewed?.performAlone && answersWithText(interaction.kind, request.actionId)) {
+        if (!(await reviewed.performAlone())) return response(false, "command_refused")
+        await showConsumedInput(
+            session.messages,
+            session.owners.nextPresentationId,
+            submittedInputRow(
+                [{ text: request.draft?.text, ...(draftDocument === undefined ? {} : { semanticInput: draftDocument }) }],
+                {
+                    admitted: false,
+                    ...(reviewed.claimedBarrier === undefined ? {} : { claimedBarrier: reviewed.claimedBarrier }),
+                },
+            ),
+            // The dialog may still receive its own reply row, and a later command another one.
+            `command:${request.interactionId}:${session.state().revision}`,
+        ).catch((error: unknown) => {
+            Logger.warn(
+                `dispatchInteraction: could not show the command sent to ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,
+            )
+        })
+        return response(true, "accepted")
     }
     const draftText = request.draft ? (reviewed?.text ?? request.draft.text) : undefined
     // A structured reply persists its verified resources as parts; a receiver that
@@ -373,10 +372,9 @@ export async function dispatchInteraction(
     // already accepted the reply, so its command and receiver settle first and
     // a failed or slow write cannot strand either of them.
     const consumedRow = showsReply
-        ? showConsumedReply(
+        ? showConsumedInput(
               session.messages,
               session.owners.nextPresentationId,
-              request,
               // The whole reply as the user typed it: only a command its owner
               // claimed acted, the rest reached the dialog as written.
               submittedInputRow(
@@ -393,6 +391,8 @@ export async function dispatchInteraction(
                       ...(reviewed?.claimedBarrier === undefined ? {} : { claimedBarrier: reviewed.claimedBarrier }),
                   },
               ),
+              // Keyed by the interaction so a replayed dispatch cannot show it twice.
+              `reply:${request.interactionId}`,
           ).catch((error: unknown) => {
               Logger.warn(
                   `dispatchInteraction: could not show the reply for ${request.interactionId}: ${error instanceof Error ? error.message : String(error)}`,

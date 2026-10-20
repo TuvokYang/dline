@@ -83,7 +83,7 @@ export interface ICheckpointManager {
 
     restoreCheckpoint(messageTs: number, restoreType: any, offset?: number, editedText?: string): Promise<any>
 
-    doesLatestTaskCompletionHaveNewChanges(): Promise<boolean>
+    doesLatestTaskCompletionHaveNewChanges(completionMessageTs?: number): Promise<boolean>
 
     getTaskChangesForCheckpoint(messageTs: number): Promise<CheckpointChangedFile[]>
 

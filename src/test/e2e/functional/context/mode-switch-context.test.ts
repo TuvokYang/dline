@@ -390,12 +390,22 @@ async function waitForCompletionDialog(sidebar: Frame): Promise<void> {
     await expect(sidebar.locator('vscode-button[aria-label="Start New Task"]')).toBeVisible({ timeout: 60_000 })
 }
 
-async function confirmManualCompaction(sidebar: Frame, summary: string): Promise<void> {
+/**
+ * Accept a manual summary under review and wait for it to land on its card.
+ *
+ * A command sent on its own answers nothing, so the dialog it was sent to
+ * comes back after the review and still waits for the user's reply.
+ */
+async function expectManualCompactionLanded(sidebar: Frame, summary: string): Promise<void> {
     await expect(sidebar.getByText(summary, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
     const confirmButton = sidebar.locator('vscode-button[aria-label="Condense Conversation"]')
     await expect(confirmButton).toBeVisible({ timeout: 60_000 })
     await expectNoInternalCompactionEcho(sidebar)
     await confirmButton.click()
+    await expect(confirmButton).toHaveCount(0)
+    await expect(sidebar.getByTestId("compaction-pass").last()).toHaveAttribute("data-compaction-status", "completed", {
+        timeout: 60_000,
+    })
 }
 
 async function taskDirectoryIds(dlineDocsDir: string): Promise<string[]> {
@@ -1435,7 +1445,7 @@ e2e(
                 id: "call_manual_priority_done",
                 name: "attempt_completion",
                 arguments: { result: "E2E_MANUAL_PRIORITY_DONE" },
-                expectedRequestIncludes: ["E2E_MANUAL_PRIORITY_SUMMARY"],
+                expectedRequestIncludes: ["E2E_MANUAL_PRIORITY_SUMMARY", "E2E_MANUAL_PRIORITY_REPLY"],
                 expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER],
             },
         )
@@ -1453,7 +1463,9 @@ e2e(
             })
 
             await sendTask(sidebar, "/compact E2E_MANUAL_PRIORITY_GUIDANCE")
-            await confirmManualCompaction(sidebar, "E2E_MANUAL_PRIORITY_SUMMARY preserves the latest manual guidance.")
+            await expectManualCompactionLanded(sidebar, "E2E_MANUAL_PRIORITY_SUMMARY preserves the latest manual guidance.")
+            expect(server.getRequestCount("openai-compatible-responses")).toBe(3)
+            await sendTask(sidebar, "E2E_MANUAL_PRIORITY_REPLY")
             await expect(sidebar.getByText("E2E_MANUAL_PRIORITY_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
@@ -1508,7 +1520,7 @@ e2e(
                 id: "call_manual_accept_done",
                 name: "attempt_completion",
                 arguments: { result: "E2E_MANUAL_ACCEPT_DONE" },
-                expectedRequestIncludes: ["E2E_MANUAL_ACCEPT_SUMMARY"],
+                expectedRequestIncludes: ["E2E_MANUAL_ACCEPT_SUMMARY", "E2E_MANUAL_ACCEPT_REPLY"],
                 expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER],
             },
         )
@@ -1524,7 +1536,9 @@ e2e(
             await expect(sidebar.getByText("E2E_MANUAL_ACCEPT_READY", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
 
             await sendTask(sidebar, "/compact E2E_MANUAL_ACCEPT_GUIDANCE")
-            await confirmManualCompaction(sidebar, "E2E_MANUAL_ACCEPT_SUMMARY replaces the original high-context history.")
+            await expectManualCompactionLanded(sidebar, "E2E_MANUAL_ACCEPT_SUMMARY replaces the original high-context history.")
+            expect(server.getRequestCount("openai-compatible-responses")).toBe(3)
+            await sendTask(sidebar, "E2E_MANUAL_ACCEPT_REPLY")
             await expect(sidebar.getByText("E2E_MANUAL_ACCEPT_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
             await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
             const requests = server.getMockConsumptions("openai-compatible-responses")
@@ -1700,14 +1714,8 @@ e2e(
                 expectedRequestExcludes: [COMPACT_SIGNAL, "/compact"],
             },
             {
-                type: "tool",
-                id: "call_manual_compact_applied",
-                name: "qna_respond",
-                arguments: { response: "E2E_MANUAL_COMPACT_APPLIED" },
-                expectedRequestIncludes: ["E2E_MANUAL_COMPACT_SUMMARY"],
-                expectedRequestExcludes: ["E2E_MANUAL_COMPACT_PRESERVED_DRAFT", COMPACT_SIGNAL, COMPACT_INSTRUCTION_MARKER],
-            },
-            {
+                // The question stays open after the summary, so the draft the user
+                // kept in the composer is its answer.
                 type: "tool",
                 id: "call_manual_compact_completion",
                 name: "attempt_completion",
@@ -1747,31 +1755,23 @@ e2e(
             await sidebar.getByTitle("Yes, compact the task").click()
             await expect(compactButton).toBeVisible()
             await expect(compactButton).toHaveAttribute("aria-disabled", "true")
-            await confirmManualCompaction(sidebar, "E2E_MANUAL_COMPACT_SUMMARY preserves the task and current intent.")
+            await expectManualCompactionLanded(sidebar, "E2E_MANUAL_COMPACT_SUMMARY preserves the task and current intent.")
             await expectComposerText(input, "E2E_MANUAL_COMPACT_PRESERVED_DRAFT")
-            await expect(sidebar.getByText("E2E_MANUAL_COMPACT_APPLIED", { exact: false }).last()).toBeVisible({
-                timeout: 60_000,
-            })
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
-            const resumedRequests = server.getMockConsumptions("openai-compatible-responses")
-            expect(resumedRequests[2]).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
-            expect(requestToolNames(resumedRequests[2])).toEqual(requestToolNames(resumedRequests[1]))
-            expect(requestToolNames(resumedRequests[2])).not.toContain("summarize_task")
-            expect(resumedRequests[2].contractError).toBeUndefined()
-            expect(resumedRequests[3]).toMatchObject({ responseType: "tool", toolName: "qna_respond" })
-            expect(resumedRequests[3].contractError).toBeUndefined()
-            expect(JSON.stringify(resumedRequests[3].requestBody)).not.toContain("E2E_MANUAL_COMPACT_PRESERVED_DRAFT")
             await expect(compactButton).toHaveAttribute("aria-disabled", "false")
+            // The header compacted beside the open question and started no round of its own.
+            expect(server.getRequestCount("openai-compatible-responses")).toBe(3)
+            const compactedRequests = server.getMockConsumptions("openai-compatible-responses")
+            expect(compactedRequests[2]).toMatchObject({ responseType: "tool", toolName: "summarize_task" })
+            expect(requestToolNames(compactedRequests[2])).toEqual(requestToolNames(compactedRequests[1]))
+            expect(requestToolNames(compactedRequests[2])).not.toContain("summarize_task")
+            expect(compactedRequests[2].contractError).toBeUndefined()
             await sidebar.getByTestId("send-button").click()
 
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBeGreaterThanOrEqual(5)
-            const requests = server.getMockConsumptions("openai-compatible-responses")
-            expect(requests[4]).toBeDefined()
-            expect(requests[4].contractError).toBeUndefined()
             await expect(sidebar.getByText("E2E_MANUAL_COMPACT_DONE", { exact: false }).last()).toBeVisible({
                 timeout: 60_000,
             })
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(5)
+            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
+            expect(server.getMockConsumptions("openai-compatible-responses")[3].contractError).toBeUndefined()
             await expectCompactionSummary(sidebar, "E2E_MANUAL_COMPACT_SUMMARY preserves the task and current intent.")
             await expect(sidebar.getByText("/compact", { exact: true })).toHaveCount(0)
             await expect.poll(async () => Number(await progress.getAttribute("aria-valuenow"))).toBeLessThan(beforeCompact)
@@ -1816,14 +1816,6 @@ e2e(
             },
             {
                 type: "tool",
-                id: "call_manual_followup_applied",
-                name: "qna_respond",
-                arguments: { response: "E2E_MANUAL_FOLLOWUP_APPLIED" },
-                expectedRequestIncludes: ["E2E_MANUAL_FOLLOWUP_SUMMARY"],
-                expectedRequestExcludes: [COMPACT_INSTRUCTION_MARKER],
-            },
-            {
-                type: "tool",
                 id: "call_manual_followup_done",
                 name: "attempt_completion",
                 arguments: { result: "E2E_MANUAL_FOLLOWUP_DONE" },
@@ -1845,13 +1837,12 @@ e2e(
             })
 
             await sendTask(sidebar, "/compact E2E_MANUAL_FOLLOWUP_GUIDANCE")
-            await confirmManualCompaction(
+            await expectManualCompactionLanded(
                 sidebar,
                 "E2E_MANUAL_FOLLOWUP_SUMMARY keeps the command decisions and unresolved failures.",
             )
-            await expect(sidebar.getByText("E2E_MANUAL_FOLLOWUP_APPLIED", { exact: false }).last()).toBeVisible({
-                timeout: 60_000,
-            })
+            // Landing starts no round: the open question waits for the next Enter.
+            expect(server.getRequestCount("openai-compatible-responses")).toBe(3)
             await expectCompactionSummary(
                 sidebar,
                 "E2E_MANUAL_FOLLOWUP_SUMMARY keeps the command decisions and unresolved failures.",
@@ -1865,7 +1856,7 @@ e2e(
             await expectComposerText(input, "")
             await expect(sidebar.getByText("E2E_MANUAL_FOLLOWUP_MESSAGE", { exact: true }).last()).toBeVisible()
             await expect(sidebar.getByText("E2E_MANUAL_FOLLOWUP_DONE", { exact: false }).last()).toBeVisible({ timeout: 60_000 })
-            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(5)
+            await expect.poll(() => server.getRequestCount("openai-compatible-responses")).toBe(4)
             const requests = server.getMockConsumptions("openai-compatible-responses")
             expect(requests.slice(1).every((request) => request.contractError === undefined)).toBe(true)
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)

@@ -18,7 +18,7 @@ export async function compactTask(controller: Controller, request: CompactTaskRe
     }
     if (!session.writable) return CompactTaskResponse.create({ accepted: false, result: "task_read_only" })
 
-    // The header control is the user asking, so the summary is theirs to review.
+    // The header control is the user asking, so the run is recorded as manual.
     const result = await requestTaskCompaction(session, {
         // Promotion hydrates a fresh active runtime from the same durable snapshot
         // and may advance its revision before this RPC resumes. The history

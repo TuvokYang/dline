@@ -107,6 +107,8 @@ describe("AttemptCompletionHandler workspace change verdict", () => {
         // The rewrite must not be able to erase the verdict, and the presented
         // text must stay exactly what the model produced.
         expect(completionRow?.text).toBe("done")
+        // The dialog may have rewritten the row already, so it is named by its ts, not its `say`.
+        expect(config.callbacks.doesLatestTaskCompletionHaveNewChanges).toHaveBeenCalledWith(COMPLETION_TS)
     })
 
     it("leaves the verdict unset when the completion produced no workspace changes", async () => {
