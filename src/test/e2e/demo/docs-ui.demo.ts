@@ -33,8 +33,9 @@ const WORKFLOW_NAME = "release-review"
 const MCP_NAME = "release-tools"
 const HEADER_TASK_TEXT = "Summarize the release checklist for this workspace."
 const HEADER_TASK_RESULT = "Release checklist summarized."
-// View-title actions contributed by package.json `menus.view/title`, in their display order.
-const PANEL_TITLE_ACTIONS = ["New Task", "MCP Servers", "History", "Account", "Settings"] as const
+// View-title actions contributed by package.json `menus.view/title`, in their display order. Account is
+// left out: it shows only while the account rollout includes the device, which a capture does not.
+const PANEL_TITLE_ACTIONS = ["New Task", "MCP Servers", "History", "Settings"] as const
 
 async function seedWorkspaceCapabilities(workspaceDir: string): Promise<void> {
     const files: Record<string, string> = {
@@ -113,13 +114,14 @@ function taskHeaderIconButton(header: Locator, icon: string): Locator {
     return header.locator(`button:has(svg.lucide-${icon})`).first()
 }
 
-demo("docs UI stills", async ({ helper, page, server, sidebar, workspaceDir }) => {
+demo("docs UI stills", async ({ demoTheme, helper, page, server, sidebar, workspaceDir }) => {
     demo.setTimeout(240_000)
     await seedWorkspaceCapabilities(workspaceDir)
     await helper.signin(sidebar)
 
     const panelTitle = page.locator('[id="workbench.parts.sidebar"] .composite.title').first()
     await captureDocScreenshot(page, sidebar, "panel-title-bar", {
+        theme: demoTheme,
         regions: [panelTitle],
         padding: 4,
         markers: PANEL_TITLE_ACTIONS.map((name, index) => ({
@@ -130,6 +132,7 @@ demo("docs UI stills", async ({ helper, page, server, sidebar, workspaceDir }) =
 
     const modeSwitch = sidebar.getByTestId("mode-switch")
     await captureDocScreenshot(page, sidebar, "chat-input-toolbar", {
+        theme: demoTheme,
         regions: [autoApproveToggle(sidebar, false), sidebar.getByTestId("chat-input"), modeSwitch],
         markers: [
             { label: "1", target: sidebar.getByTestId("context-button") },
@@ -155,7 +158,7 @@ demo("docs UI stills", async ({ helper, page, server, sidebar, workspaceDir }) =
     for (const { tab, id, item } of capabilityTabs) {
         await selectCapabilityTab(popup, tab)
         await expect(item).toBeVisible({ timeout: 30_000 })
-        await captureDocScreenshot(page, sidebar, id, { regions: [popup], padding: 4 })
+        await captureDocScreenshot(page, sidebar, id, { theme: demoTheme, regions: [popup], padding: 4 })
     }
     await sidebar.getByRole("button", { name: "Hide Dline Rules & Workflows", exact: true }).first().click()
     await expect(popup).toBeHidden()
@@ -164,6 +167,7 @@ demo("docs UI stills", async ({ helper, page, server, sidebar, workspaceDir }) =
     const autoApproveIntro = sidebar.getByText("Let Dline take these actions without asking for approval.", { exact: false })
     await expect(autoApproveIntro).toBeVisible()
     await captureDocScreenshot(page, sidebar, "auto-approve-menu", {
+        theme: demoTheme,
         regions: [
             autoApproveIntro,
             sidebar.getByText("Notifications may show abbreviated tool details", { exact: false }),
@@ -177,6 +181,7 @@ demo("docs UI stills", async ({ helper, page, server, sidebar, workspaceDir }) =
     const serverName = sidebar.getByText(MCP_NAME, { exact: true })
     await expect(serverName).toBeVisible({ timeout: 30_000 })
     await captureDocScreenshot(page, sidebar, "mcp-servers-popup", {
+        theme: demoTheme,
         regions: [
             sidebar.getByText("MCP Servers", { exact: true }),
             sidebar.getByRole("button", { name: "Go to MCP server settings" }),
@@ -208,6 +213,7 @@ demo("docs UI stills", async ({ helper, page, server, sidebar, workspaceDir }) =
     await expect(metrics).toBeVisible({ timeout: 30_000 })
     await expect(sidebar.getByTestId("context-window-indicator")).toBeVisible({ timeout: 30_000 })
     await captureDocScreenshot(page, sidebar, "task-header", {
+        theme: demoTheme,
         regions: [header],
         padding: 8,
         markers: [

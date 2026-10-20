@@ -1,4 +1,4 @@
-import { DOCS_ASSETS_ALIAS } from "../../src/data/assets.mjs"
+import { DOCS_ASSETS_ALIAS, docsAssetPath, LIGHT_EDITION_SUFFIX, lightEditionOf } from "../../src/data/assets.mjs"
 import { CHINESE_LOCALE } from "../../src/data/locales.mjs"
 import { pagePath, ROOT_LOCALE } from "./content-files.mjs"
 import { findForbiddenText } from "./forbidden-patterns.mjs"
@@ -28,10 +28,11 @@ const EDITION_NAME = Object.freeze({ [ROOT_LOCALE]: "English", [CHINESE_LOCALE]:
 
 /**
  * Validate one content page against the migration rules.
- * @param {{ page: PageIdentity, source: string, basePrefix: string }} input
+ * @param {{ page: PageIdentity, source: string, basePrefix: string, assetExists?: (filePath: string) => boolean }} input
+ *   `assetExists` enables the check that every captured image has a light edition.
  * @returns {Issue[]}
  */
-export function checkPage({ page, source, basePrefix }) {
+export function checkPage({ page, source, basePrefix, assetExists }) {
     /** @type {Issue[]} */
     const issues = []
     /**
@@ -71,7 +72,7 @@ export function checkPage({ page, source, basePrefix }) {
         }
     }
     for (const link of collectLinks(prose)) {
-        const problem = checkLink(link, page.locale, basePrefix)
+        const problem = checkLink(link, page.locale, basePrefix) ?? (assetExists && checkThemedImage(link, assetExists))
         if (problem) {
             report(`${problem}: ${link.url}`, prose, link.index)
         }
@@ -125,6 +126,27 @@ export function checkLink({ url, kind }, locale, basePrefix) {
     const target = path === `/${CHINESE_LOCALE}/` || path.startsWith(CHINESE_PREFIX) ? CHINESE_LOCALE : ROOT_LOCALE
     if (target !== locale) {
         return `${EDITION_NAME[locale]} page links to ${target === ROOT_LOCALE ? "an" : "a"} ${EDITION_NAME[target]} page`
+    }
+    return undefined
+}
+
+/**
+ * A captured image is referenced by its dark edition, and its light edition
+ * must exist beside it so light-theme readers see a matching capture.
+ * @param {Pick<ContentLink, "url" | "kind">} link
+ * @param {(filePath: string) => boolean} assetExists
+ * @returns {string | undefined}
+ */
+export function checkThemedImage({ url, kind }, assetExists) {
+    if (kind !== "image" || !url.startsWith(`${DOCS_ASSETS_ALIAS}/`)) {
+        return undefined
+    }
+    const light = lightEditionOf(url)
+    if (!light) {
+        return `image names its light edition; reference the plain name and the ${LIGHT_EDITION_SUFFIX} edition is shown under the light theme`
+    }
+    if (!assetExists(docsAssetPath(light))) {
+        return `image has no light edition; record it with DLINE_DEMO_THEME=light as ${light}`
     }
     return undefined
 }

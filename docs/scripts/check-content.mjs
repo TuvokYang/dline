@@ -5,6 +5,7 @@
  * base-safe and locale-consistent links, conversion of Mintlify components,
  * and the absence of forbidden tracking or stale service references.
  */
+import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { resolveSiteConfig } from "../site.config.mjs"
 import { sidebar, unlistedSlugs } from "../src/data/navigation.mjs"
@@ -18,7 +19,11 @@ const pages = await listPages()
 
 const issues = [
     ...(
-        await Promise.all(pages.map(async (page) => checkPage({ page, source: await readFile(page.file, "utf8"), basePrefix })))
+        await Promise.all(
+            pages.map(async (page) =>
+                checkPage({ page, source: await readFile(page.file, "utf8"), basePrefix, assetExists: existsSync }),
+            ),
+        )
     ).flat(),
     ...checkLocaleParity(pages),
     ...checkNavigation(pages, sidebar, unlistedSlugs),

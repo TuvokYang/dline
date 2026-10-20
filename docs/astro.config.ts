@@ -8,6 +8,7 @@ import { locales, ROOT_LOCALE } from "./src/data/locales.mjs"
 import { sidebar } from "./src/data/navigation.mjs"
 import { redirects } from "./src/data/redirects.mjs"
 import { remarkBaseLinks, toPrefix, withBase } from "./src/plugins/remark-base-links.mjs"
+import { remarkThemedImages } from "./src/plugins/remark-themed-images.mjs"
 
 const { site, base } = resolveSiteConfig()
 const repositoryUrl = "https://github.com/TuvokYang/dline"
@@ -24,6 +25,7 @@ export default defineConfig({
     },
     integrations: [
         baseSafeContentLinks(),
+        themedContentImages(),
         starlight({
             title: {
                 en: "Dline Docs",
@@ -74,14 +76,34 @@ function baseSafeContentLinks(): AstroIntegration {
                 // Registered here rather than at the top level so a `--base` CLI override
                 // (used by `npm run dev`) also reaches redirect destinations.
                 updateConfig({ redirects: withBaseDestinations(redirects, config.base) })
-                const processor = config.markdown.processor
-                if (!processor || !isUnifiedProcessor(processor)) {
-                    throw new Error(
-                        `dline-docs:base-safe-links requires the unified Markdown processor, got "${processor?.name ?? "none"}".`,
-                    )
-                }
-                processor.options.remarkPlugins.push([remarkBaseLinks, { base: config.base }])
+                remarkPluginsOf(config, "dline-docs:base-safe-links").push([remarkBaseLinks, { base: config.base }])
             },
         },
     }
+}
+
+/**
+ * Show every documentation capture in the edition of the reader's color theme.
+ * Fails fast like the base-link rewrite, because skipping it would silently
+ * publish dark captures on light pages.
+ */
+function themedContentImages(): AstroIntegration {
+    return {
+        name: "dline-docs:themed-images",
+        hooks: {
+            "astro:config:setup": ({ config }) => {
+                remarkPluginsOf(config, "dline-docs:themed-images").push([remarkThemedImages, {}])
+            },
+        },
+    }
+}
+
+type AstroSetupConfig = Parameters<NonNullable<AstroIntegration["hooks"]["astro:config:setup"]>>[0]["config"]
+
+function remarkPluginsOf(config: AstroSetupConfig, integrationName: string) {
+    const processor = config.markdown.processor
+    if (!processor || !isUnifiedProcessor(processor)) {
+        throw new Error(`${integrationName} requires the unified Markdown processor, got "${processor?.name ?? "none"}".`)
+    }
+    return processor.options.remarkPlugins
 }

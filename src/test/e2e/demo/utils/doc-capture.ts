@@ -3,6 +3,7 @@ import path from "node:path"
 import type { Frame, Locator, Page } from "@playwright/test"
 import sharp from "sharp"
 import { E2ETestHelper } from "../../utils/helpers"
+import { type DemoTheme, themedAssetId } from "./demo-theme"
 import { dismissDemoNotifications } from "./png-asset"
 
 /**
@@ -30,6 +31,8 @@ export interface DocMarker {
 }
 
 export interface DocCaptureOptions {
+    /** Theme the window is in; it names the asset edition, so a light capture never replaces the dark one. */
+    theme: DemoTheme
     /** Area of the window to keep; the union of these boxes plus padding becomes the image. */
     regions: Locator[]
     /** Numbered callouts drawn next to each target, in reading order. */
@@ -146,7 +149,7 @@ export async function captureDocScreenshot(
     }
 
     await mkdir(DOC_UI_ASSET_DIR, { recursive: true })
-    const outputPath = path.join(DOC_UI_ASSET_DIR, `${id}.png`)
+    const outputPath = path.join(DOC_UI_ASSET_DIR, `${themedAssetId(id, options.theme)}.png`)
     await writeFile(outputPath, data)
     return { path: outputPath, width: info.width, height: info.height, bytes: data.byteLength }
 }

@@ -1,7 +1,17 @@
 import assert from "node:assert/strict"
+import path from "node:path"
 import { describe, it } from "node:test"
+import { DOCS_ASSETS_DIR } from "../../src/data/assets.mjs"
 import { ROOT_LOCALE } from "../lib/content-files.mjs"
-import { checkLink, checkLocaleParity, checkNavigation, checkPage, checkRedirects, checkSections } from "../lib/content-rules.mjs"
+import {
+    checkLink,
+    checkLocaleParity,
+    checkNavigation,
+    checkPage,
+    checkRedirects,
+    checkSections,
+    checkThemedImage,
+} from "../lib/content-rules.mjs"
 
 const BASE = "/dline"
 
@@ -71,6 +81,41 @@ describe("checkLink", () => {
     it("rejects root-relative images, which bypass the image pipeline", () => {
         assert.match(check("/assets/ui/demo.gif", ROOT_LOCALE, "image") ?? "", /bypasses Astro's image pipeline/)
         assert.match(check("/assets/ui/demo.gif", ZH, "image") ?? "", /@docs-assets/)
+    })
+})
+
+describe("checkThemedImage", () => {
+    const lightFiles = new Set([path.join(DOCS_ASSETS_DIR, "ui", "demo-light.gif")])
+    /** @param {string} filePath */
+    const exists = (filePath) => lightFiles.has(filePath)
+    /** @param {string} url */
+    const check = (url) => checkThemedImage({ url, kind: "image" }, exists)
+
+    it("accepts a capture whose light edition lies beside it", () => {
+        assert.equal(check("@docs-assets/ui/demo.gif"), undefined)
+    })
+
+    it("names the light file to record when it is missing", () => {
+        assert.match(check("@docs-assets/ui/other.png") ?? "", /no light edition.*@docs-assets\/ui\/other-light\.png/)
+    })
+
+    it("rejects a reference to the light edition itself, which would show it under the dark theme too", () => {
+        assert.match(check("@docs-assets/ui/demo-light.gif") ?? "", /names its light edition/)
+    })
+
+    it("leaves links and images outside the docs assets alone", () => {
+        assert.equal(checkThemedImage({ url: "@docs-assets/ui/other.png", kind: "link" }, exists), undefined)
+        assert.equal(check("https://example.com/shot.png"), undefined)
+    })
+
+    it("reports a missing light edition from a page once the asset check is enabled", () => {
+        const source = "---\ntitle: T\ndescription: D\n---\n\n![Shot](@docs-assets/ui/other.png)\n"
+        const issues = checkPage({ page: enGuide, source, basePrefix: BASE, assetExists: exists })
+        assert.deepEqual(
+            issues.map((issue) => issue.line),
+            [6],
+        )
+        assert.equal(checkPage({ page: enGuide, source, basePrefix: BASE }).length, 0)
     })
 })
 
