@@ -23,6 +23,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - The header compact button also works while the task runs, through the same immediate compaction; in every state it only compacts, without answering a waiting dialog or resuming an interrupted task. The context bar's token counts, progress bar and compact button are vertically centered
 - Choosing Retry after a manual compaction ran out of retries continues the task once the compaction lands, instead of stopping on a state read from before the compaction was requested
 - When the wrap-up request a subagent makes after a timeout or a finish request fails, the subagent reports the provider's actual error instead of five empty responses
+- The page the browser opens after authorizing an MCP server or another remote service shows the Dline mark instead of the old Cline icon
 
 ## [0.11.1]
 

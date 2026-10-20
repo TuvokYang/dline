@@ -1,3 +1,4 @@
+import { DLINE_MARK_PATH } from "@shared/brand/dlineMarkPaths"
 import { describe, expect, it } from "vitest"
 import { renderAuthResultPage } from "../authResultPage"
 
@@ -93,6 +94,8 @@ describe("renderAuthResultPage", () => {
         expect(html).not.toContain("http://")
         expect(html).not.toContain("https://fonts")
         expect(html).not.toContain("<script")
-        expect(html).toContain('<svg viewBox="0 0 92 96"')
+        // The mark is the generated brand path, inlined; the old Cline robot drew circles and rects.
+        expect(html).toContain(`<path fill="currentColor" d="${DLINE_MARK_PATH}">`)
+        expect(html).not.toMatch(/<circle|<rect/)
     })
 })

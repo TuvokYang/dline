@@ -1,7 +1,7 @@
 import type { SVGProps } from "react"
+import { DLINE_MARK_PATH, DLINE_MARK_SLEEPY_PATH, DLINE_MARK_VIEW_BOX } from "../../../src/shared/brand/dlineMarkPaths"
 import type { Environment } from "../../../src/shared/config-types"
 import { getEnvironmentColor } from "../utils/environmentColors"
-import { DLINE_MARK_PATH, DLINE_MARK_SLEEPY_PATH, DLINE_MARK_VIEW_BOX } from "./dlineMarkPaths"
 
 export type DlineLogoExpression = "default" | "sleepy"
 

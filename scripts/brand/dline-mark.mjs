@@ -297,8 +297,8 @@ export function fontSvg() {
     ].join("")
 }
 
-/** TypeScript module exposing the Webview's copy of the robot paths. */
-export function webviewPathsModule() {
+/** TypeScript module exposing the robot paths to the Webview and the extension host. */
+export function markPathsModule() {
     return [
         `// ${NOTE}`,
         "",
