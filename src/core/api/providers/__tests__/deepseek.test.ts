@@ -334,7 +334,7 @@ describe("DeepSeekHandler", () => {
                 profile: ApiProfile.create({
                     provider: "deepseek",
                     apiKey: "test-api-key",
-                    modelId: "deepseek-flash",
+                    modelId: "deepseek-v4-pro",
                     deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_RESPONSES }),
                 }),
                 mode: "act",
@@ -878,6 +878,63 @@ describe("DeepSeekHandler", () => {
             localToolEnabled: true,
             serverTools: [],
         })
+    })
+
+    // DeepSeek runs `web_search` for `deepseek-v4-pro` only and ignores it for
+    // `deepseek-flash`. A stale declaration would route Auto to a hosted search the
+    // endpoint never runs while withholding the local tool, leaving no web search.
+    for (const apiFormat of [ApiFormat.OPENAI_RESPONSES, ApiFormat.ANTHROPIC_CHAT]) {
+        it(`keeps DeepSeek flash on local Web Search when it selects ${ApiFormat[apiFormat]}`, () => {
+            const handler = new DeepSeekHandler({
+                profile: ApiProfile.create({
+                    provider: "deepseek",
+                    apiKey: "test-api-key",
+                    modelId: "deepseek-flash",
+                    deepseek: BaseProviderConfig.create({ apiFormat }),
+                }),
+                mode: "act",
+            })
+
+            expect(createRequestApiScope(handler, "act", undefined, true).webSearchRoutingPlan).to.deep.include({
+                route: "local",
+                localToolEnabled: true,
+                serverTools: [],
+            })
+            expect(handler.getModel().info.capabilities?.tools ?? []).to.deep.equal([])
+        })
+    }
+
+    // The routing plan decides both the hosted declaration and whether the local tool
+    // survives. Sending the plan's own serverTools is what a real request does, so this
+    // proves the local function reaches the wire instead of only asserting the plan.
+    it("sends the local web_search function on the DeepSeek Responses transport", async () => {
+        const handler = new DeepSeekHandler({
+            profile: ApiProfile.create({
+                provider: "deepseek",
+                apiKey: "test-api-key",
+                modelId: "deepseek-flash",
+                deepseek: BaseProviderConfig.create({ apiFormat: ApiFormat.OPENAI_RESPONSES }),
+            }),
+            mode: "act",
+        })
+        const responsesCreate = vi.fn().mockResolvedValue(createStream())
+        vi.spyOn(handler as unknown as { ensureClient: () => unknown }, "ensureClient").mockReturnValue({
+            responses: { create: responsesCreate },
+        })
+        const tools: OpenAI.Chat.ChatCompletionTool[] = [
+            {
+                type: "function",
+                function: { name: "web_search", description: "Local search", parameters: { type: "object" } },
+            },
+        ]
+        const plan = createRequestApiScope(handler, "act", undefined, true).webSearchRoutingPlan
+
+        await collectChunks(handler, undefined, tools, { serverTools: plan.serverTools })
+
+        const request = responsesCreate.mock.calls[0]?.[0]
+        const names = (request?.tools ?? []).map((tool: { name?: string; type: string }) => tool.name ?? tool.type)
+        expect(names).to.deep.equal(["web_search"])
+        expect(request?.tools).to.not.deep.include({ type: "web_search" })
     })
 
     it("defaults DeepSeek pro to Chat while preserving its compatibility formats", () => {
