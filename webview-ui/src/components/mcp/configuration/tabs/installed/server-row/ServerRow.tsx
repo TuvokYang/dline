@@ -337,7 +337,7 @@ const ServerRow = ({
             {server.error ? (
                 <div className="text-sm bg-text-block-background rounded-b-sm">
                     <div className="text-failed-icon mb-2 px-2.5 break-words">{server.error}</div>
-                    {server.oauthRequired && server.oauthAuthStatus === "unauthenticated" ? (
+                    {server.oauthRequired && server.oauthAuthStatus === "unauthenticated" && (
                         <Button
                             className="m-2.5 mt-0 max-w-[calc(100%-20px)]"
                             onClick={(e) => {
@@ -347,15 +347,15 @@ const ServerRow = ({
                             variant="default">
                             Authenticate
                         </Button>
-                    ) : (
-                        <Button
-                            className="m-2.5 mt-0 max-w-[calc(100%-20px)]"
-                            disabled={server.status === "connecting"}
-                            onClick={handleRestart}
-                            variant="secondary">
-                            {server.status === "connecting" || isRestarting ? "Retrying..." : "Retry Connection"}
-                        </Button>
                     )}
+                    {/* Authentication state can outlive the server that asked for it, so retrying stays available. */}
+                    <Button
+                        className="m-2.5 mt-0 max-w-[calc(100%-20px)]"
+                        disabled={server.status === "connecting" || isRestarting}
+                        onClick={handleRestart}
+                        variant="secondary">
+                        {server.status === "connecting" || isRestarting ? "Retrying..." : "Retry Connection"}
+                    </Button>
 
                     {hasEnvironmentReferences && clearVariablesButton("m-2.5 mt-0 max-w-[calc(100%-20px)]")}
 

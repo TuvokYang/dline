@@ -44,6 +44,7 @@ import { Logger } from "@/shared/services/Logger"
 import { hashStableJson } from "@/shared/stable-json"
 import { expandEnvironmentVariables } from "@/utils/envExpansion"
 import { TelemetryService } from "../telemetry/TelemetryService"
+import { describeMcpConnectionError } from "./connection-error"
 import { DEFAULT_REQUEST_TIMEOUT_MS, MCP_CONNECT_TIMEOUT_MS } from "./constants"
 import { McpAuthentication } from "./McpAuthentication"
 import { type McpToolApprovalConfig, resolveMcpToolAutoApprove, updateMcpToolAutoApproveConfig } from "./mcp-auto-approval"
@@ -622,7 +623,7 @@ export class McpHub {
                         if (connection) {
                             connection.server.status = "disconnected"
                             McpHub.mcpServerKeys.delete(connection.server.uid || name)
-                            this.appendErrorMessage(connection, error instanceof Error ? error.message : `${error}`)
+                            this.appendErrorMessage(connection, describeMcpConnectionError(error))
                         }
                         await this.notifyWebviewOfServerChanges()
                         this.publishPromptCatalogIfChanged()
@@ -717,7 +718,7 @@ export class McpHub {
                         if (connection) {
                             connection.server.status = "disconnected"
                             McpHub.mcpServerKeys.delete(connection.server.uid || name)
-                            this.appendErrorMessage(connection, error instanceof Error ? error.message : `${error}`)
+                            this.appendErrorMessage(connection, describeMcpConnectionError(error))
                         }
                         await this.notifyWebviewOfServerChanges()
                     }
@@ -805,7 +806,7 @@ export class McpHub {
                 }
             } catch (error) {
                 if (error instanceof UnauthorizedError) {
-                    // Server requires OAuth authentication
+                    // Only an HTTP 401 from the server reaches here; a server that is down fails the fetch instead.
                     Logger.log(`Server "${name}" requires OAuth authentication`)
                     const unauthConnection: McpConnection = {
                         server: {
@@ -816,7 +817,7 @@ export class McpHub {
                             disabled: false,
                             oauthRequired: true,
                             oauthAuthStatus: "unauthenticated",
-                            error: "This MCP server requires authentication to get started.",
+                            error: "The server answered 401 Unauthorized: authenticate to connect, or retry if it was restarted.",
                             uid: this.getMcpServerKey(name),
                         },
                         client,
@@ -924,7 +925,7 @@ export class McpHub {
             const connection = this.findConnection(name, source)
             if (connection) {
                 connection.server.status = "disconnected"
-                this.appendErrorMessage(connection, error instanceof Error ? error.message : String(error))
+                this.appendErrorMessage(connection, describeMcpConnectionError(error))
             }
             throw error
         }

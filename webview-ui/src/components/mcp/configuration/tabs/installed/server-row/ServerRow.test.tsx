@@ -7,7 +7,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import ServerRow from "./ServerRow"
 
 const mocks = vi.hoisted(() => ({
+    authenticateMcpServer: vi.fn(),
     clearMcpServerVariables: vi.fn(),
+    restartMcpServer: vi.fn(),
     setMcpServers: vi.fn(),
     toggleMcpServer: vi.fn(),
     toggleToolAutoApprove: vi.fn(),
@@ -24,10 +26,10 @@ vi.mock("@/context/ExtensionStateContext", () => ({
 
 vi.mock("@/services/grpc-client", () => ({
     McpServiceClient: {
-        authenticateMcpServer: vi.fn(),
+        authenticateMcpServer: mocks.authenticateMcpServer,
         clearMcpServerVariables: mocks.clearMcpServerVariables,
         deleteMcpServer: vi.fn(),
-        restartMcpServer: vi.fn(),
+        restartMcpServer: mocks.restartMcpServer,
         toggleMcpServer: mocks.toggleMcpServer,
         toggleToolAutoApprove: mocks.toggleToolAutoApprove,
         updateMcpTimeout: vi.fn(),
@@ -184,6 +186,42 @@ describe("ServerRow workspace descriptor presentation", () => {
             toolNames: ["search"],
             autoApprove: false,
         })
+    })
+})
+
+describe("ServerRow connection errors", () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        mocks.restartMcpServer.mockResolvedValue({ mcpServers: [] })
+    })
+
+    it("keeps retrying available beside Authenticate when the server asked for authentication", () => {
+        const server: McpServer = {
+            ...workspaceServer,
+            name: "show3d",
+            displayName: undefined,
+            source: "settings",
+            config: JSON.stringify({ type: "streamableHttp", url: "http://127.0.0.1:3000/mcp" }),
+            status: "disconnected",
+            oauthRequired: true,
+            oauthAuthStatus: "unauthenticated",
+            error: "The server answered 401 Unauthorized: authenticate to connect, or retry if it was restarted.",
+        }
+        render(<ServerRow server={server} />)
+
+        fireEvent.click(screen.getByRole("button", { name: "Authenticate" }))
+        expect(mocks.authenticateMcpServer).toHaveBeenCalledWith({ value: "show3d" })
+
+        fireEvent.click(screen.getByRole("button", { name: "Retry Connection" }))
+        expect(mocks.restartMcpServer).toHaveBeenCalledWith({ value: "show3d" })
+    })
+
+    it("offers only retrying when the connection failed for another reason", () => {
+        render(<ServerRow server={{ ...workspaceServer, error: "fetch failed: connect ECONNREFUSED", status: "disconnected" }} />)
+
+        expect(screen.queryByRole("button", { name: "Authenticate" })).not.toBeInTheDocument()
+        fireEvent.click(screen.getByRole("button", { name: "Retry Connection" }))
+        expect(mocks.restartMcpServer).toHaveBeenCalledWith({ value: "docs@a1b2c3d4" })
     })
 })
 

@@ -10,10 +10,11 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ### Fixed
 - Commands waiting for a warm terminal at the same time are no longer given the same terminal
-- The browser session card is organized by round:
+- The browser session card is organized by round: each round's checkpoint and thinking fold into the card instead of piling up as empty checkpoints below the screenshot. The checkpoint taken before the launch stays at the top of the card, and a checkpoint whose files changed during the session or that is checked out stays visible. Below the frame, a summary counts the calls by kind the way file reads are counted (for example 1 launch, 2 clicks · 4 rounds) and expands to list each round's checkpoint, thinking and actions; clicking an action shows its page. The whole card folds from its header down to the header and the page URL
 - The browser session header reports the actual state (using, used, waiting for approval, not approved, interrupted or failed) instead of always saying "Dline is using the browser"
 - Browser screenshot results are never shown as base64 text in the chat, including when the loaded message window starts mid-session or browsing continues after a cancelled request
 - The kill command row follows the targeted command to its actual state (terminating, terminated, already finished, interrupted, or no running command matched) instead of always saying "Dline requested command termination"
+- An MCP server with a connection error always offers Retry Connection; when the server answers 401 and asks for authentication, Authenticate is shown beside it instead of replacing it. The authentication message says the server answered 401, and a network failure names its reason (such as ECONNREFUSED and the address) instead of only "fetch failed"
 
 ## [0.11.1]
 

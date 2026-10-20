@@ -1,4 +1,5 @@
 import { Logger } from "@/shared/services/Logger"
+import { describeMcpConnectionError } from "./connection-error"
 import { type McpTransportObserver, mcpTransportObserver } from "./mcp-transport-observation"
 
 /**
@@ -111,7 +112,7 @@ export class StreamableHttpReconnectHandler {
             Logger.error(`StreamableHTTP reconnect exhausted after ${this.config.maxAttempts} attempts.`)
             connection.server.status = "disconnected"
             this.callbacks.deleteServerKey(connection.server.uid || this.serverName)
-            this.callbacks.appendErrorMessage(connection, error instanceof Error ? error.message : `${error}`)
+            this.callbacks.appendErrorMessage(connection, describeMcpConnectionError(error))
             await this.callbacks.notifyWebviewOfServerChanges()
             return
         }
@@ -212,7 +213,7 @@ export class StreamableHttpReconnectHandler {
         if (exhaustedConnection) {
             exhaustedConnection.server.status = "disconnected"
             this.callbacks.deleteServerKey(exhaustedConnection.server.uid || this.serverName)
-            this.callbacks.appendErrorMessage(exhaustedConnection, error instanceof Error ? error.message : `${error}`)
+            this.callbacks.appendErrorMessage(exhaustedConnection, describeMcpConnectionError(error))
         }
         await this.callbacks.notifyWebviewOfServerChanges()
     }
