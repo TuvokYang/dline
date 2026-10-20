@@ -15,6 +15,14 @@ Format rules, enforced by webview-ui/vite-whats-new.ts at build time:
   Unit tests enforce both.
 -->
 
+## 0.11.1
+
+- **Unified task runtime and recovery**: task state is driven by runtime events and a reducer, so interruption, resume and handoff follow an explicit state machine instead of being inferred when a history task reopens.
+- **Semantic composer**: a structured composer replaces the plain text area, splitting the prompt by source (mentions, commands, pastes, drops) and passing unreadable content through to the model byte for byte.
+- **Task performance**: chat history is validated and replaced at the tail instead of being read and rewritten whole on every update, so the cost no longer grows with task length.
+- **MCP tools on demand**: the "Load MCP Tools on Demand" setting (on by default) stops sending every MCP tool definition with each request; the model picks a tool from a prompt catalog and calls `load_mcp` for its parameter schema.
+- **Composer button interaction**: send, restore, queue, and cancel share a single button that queues the draft while a task runs and turns into cancel after a three-second hover on the queue state.
+
 ## 0.11.0
 
 - **Unified task runtime and recovery**: task state is driven by runtime events and a reducer, so interruption, resume and handoff follow an explicit state machine instead of being inferred when a history task reopens.

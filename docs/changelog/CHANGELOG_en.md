@@ -4,6 +4,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+## [0.11.1]
+
 ### Changed
 - Usage statistics use the structured request body of telemetry contract v2: each batch carries client details, the minutes it covers, extension starts, and statistics per purpose, per model (at most 8, including the batch's busiest minute), and per provider (only those with failures or retries, at most 8), with the rest summed under `_other`; a batch covers up to 60 active minutes that need not be contiguous, stays within 32 KiB, and is checked locally against the service's rules before it is sent
 - Usage statistics send a batch at most every 10 minutes and error diagnostics at most every 5 minutes by default, and both follow the time the service names for the next batch; after a rate limit or telemetry pause (HTTP 429), that channel sends nothing until the wait ends, which is the time the service asks for or else one minute doubling up to 30 minutes, plus up to 10% random spread and never more than 7 days, and which survives a restart; the two channels wait independently
