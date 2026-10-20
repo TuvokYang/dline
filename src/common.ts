@@ -19,6 +19,7 @@ import { ExtensionRegistryInfo } from "./registry"
 import { ErrorService } from "./services/error"
 import { featureFlagsService, revalidateFeatureFlagRollout, startFeatureFlagRollout } from "./services/feature-flags"
 import { loopbackFeaturesEndpointOverride } from "./services/feature-flags/remote/FeatureFlagsHttpSource"
+import { rolloutChannelOpen } from "./services/feature-flags/remote/remoteFeatureFlagsRuntime"
 import { getDistinctId } from "./services/logging/distinctId"
 import { DlineRuntimeFileManager } from "./services/runtime-files"
 import { disposeTelemetryService, telemetryService } from "./services/telemetry"
@@ -410,20 +411,42 @@ async function startFeatureFlagRolloutInBackground(): Promise<void> {
     const isTestRun = envFlagEnabled(process.env.E2E_TEST) || envFlagEnabled(process.env.IS_TEST)
     if (isTestRun && !endpoint) return
     const { getDlineCacheDir } = await import("./core/storage/disk")
-    // Turning usage reporting on or off joins or leaves the rollout at once, not at the next refresh.
-    onUsageReportingChanged(() => {
-        void revalidateFeatureFlagRollout().catch((error) =>
-            Logger.warn("[Dline] Failed to re-check feature flag rollout participation:", error),
-        )
+    // Turning either consent on or off joins or leaves the rollout at once, not at the next refresh.
+    onUsageReportingChanged(revalidateRolloutParticipation)
+    // A consent changed in another window reaches this one only as an external settings commit.
+    StateManager.get().registerCallbacks({
+        onSyncExternalChange: (event) => {
+            if (event.source !== "settings") return
+            if (event.commit.changedKeys.some((key) => ROLLOUT_CONSENT_KEYS.has(key))) revalidateRolloutParticipation()
+        },
     })
     await startFeatureFlagRollout({
         cacheDir: getDlineCacheDir(),
-        identity: { participates: usageReportingAllowed, deviceId: acquireUsageDeviceId },
+        identity: { participates: rolloutParticipates, deviceId: acquireUsageDeviceId },
         version: ExtensionRegistryInfo.version,
         platform: process.platform,
         endpoint,
         log: (level, message) => Logger[level](message),
     })
+}
+
+/** The consents the rollout channel depends on; see {@link rolloutChannelOpen}. */
+const ROLLOUT_CONSENT_KEYS: ReadonlySet<string> = new Set(["usageReportingSetting", "errorReportingSetting"])
+
+/** Whether this device takes part in the rollout now; an unreadable consent is no consent. */
+function rolloutParticipates(): boolean {
+    try {
+        return rolloutChannelOpen(usageReportingAllowed(), StateManager.get().getGlobalSettingsKey("errorReportingSetting"))
+    } catch {
+        return false
+    }
+}
+
+/** Re-check rollout participation after a consent it depends on changed. */
+function revalidateRolloutParticipation(): void {
+    void revalidateFeatureFlagRollout().catch((error) =>
+        Logger.warn("[Dline] Failed to re-check feature flag rollout participation:", error),
+    )
 }
 
 /**

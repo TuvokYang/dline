@@ -7,6 +7,7 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 ### Changed
 - Each terminal partition keeps one idle terminal warm instead of three; up to three commands still run at once, and a command beyond the warm terminal waits for a new one to warm up
 - After a rate limit or telemetry pause (HTTP 429), the refused telemetry batch is kept unchanged and sent first once the wait ends, with the same request ID and content, instead of rejoining the pending data under a new request ID; data gathered during the wait forms its own batch, and neither the 429 nor its wait counts toward the 12-attempt and 24-hour retry limits
+- The Account rollout is fetched only while both usage statistics and error reporting are on; turning either off, including in another window, leaves the rollout at once and deletes the rollout answers stored on the device instead of keeping them
 
 ### Fixed
 - Commands waiting for a warm terminal at the same time are no longer given the same terminal

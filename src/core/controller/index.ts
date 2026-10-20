@@ -88,7 +88,7 @@ import { readAccountFeatureSetting } from "@/services/account/accountFeatureGate
 import { AuthService } from "@/services/auth/AuthService"
 import { OcaAuthService } from "@/services/auth/oca/OcaAuthService"
 import { LogoutReason } from "@/services/auth/types"
-import { featureFlagsService } from "@/services/feature-flags"
+import { featureFlagsService, revalidateFeatureFlagRollout } from "@/services/feature-flags"
 import { getDistinctId } from "@/services/logging/distinctId"
 import { telemetryService } from "@/services/telemetry"
 import { recordPerfPhase } from "@/services/telemetry/instrumentation/duration-recorder"
@@ -1939,6 +1939,11 @@ export class Controller {
         } catch (error) {
             Logger.error("[Controller] Failed to apply remote diagnostics consent:", error)
         }
+        // The rollout channel needs this consent as well; withdrawing it leaves
+        // the rollout and deletes its stored answers now, not at the next refresh.
+        void revalidateFeatureFlagRollout().catch((error) =>
+            Logger.warn("[Controller] Failed to re-check feature flag rollout participation:", error),
+        )
 
         await this.postStateToWebview()
     }
