@@ -1,7 +1,7 @@
 import { mockFetchForTesting } from "@shared/net"
 import { describe, expect, it } from "vitest"
 import { ExtensionRegistryInfo } from "@/registry"
-import { classifyUsageResponse } from "../../contracts/classification"
+import { classifyDeliveryResponse } from "../../contracts/classification"
 import { DlineOtelHttpClient, DlineOtelTransportError, loopbackEndpointOverride } from "../DlineOtelHttpClient"
 
 const TOKEN = "tok_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcd"
@@ -38,11 +38,14 @@ function failure(promise: Promise<unknown>): Promise<DlineOtelTransportError> {
 }
 
 describe("DlineOtelHttpClient", () => {
-    it("posts the exact usage bytes with the bearer and request ID and refuses to follow redirects", async () => {
+    it("posts the exact usage bytes with the bearer, request ID and contract version and refuses to follow redirects", async () => {
         const captured: Captured[] = []
-        const body = new TextEncoder().encode('{"schema_version":1}')
+        const body = new TextEncoder().encode('{"schema_version":2}')
         const ok = () =>
-            new Response(JSON.stringify({ ok: true, disposition: "duplicate" }), { status: 200, headers: { "retry-after": "3" } })
+            new Response(JSON.stringify({ ok: true, disposition: "duplicate", next_eligible_at: 5 }), {
+                status: 200,
+                headers: { "retry-after": "3" },
+            })
 
         const response = await mockFetchForTesting(respondWith(ok, captured), () =>
             new DlineOtelHttpClient({ endpoint: "https://otel.example.test" }).sendUsage({
@@ -60,8 +63,9 @@ describe("DlineOtelHttpClient", () => {
             authorization: `Bearer ${TOKEN}`,
             "content-type": "application/json",
             "x-dline-request-id": REQUEST_ID,
+            "x-dline-contract": "2",
         })
-        expect(classifyUsageResponse(response)).toEqual({ kind: "acknowledged", duplicate: true })
+        expect(classifyDeliveryResponse(response)).toEqual({ kind: "acknowledged", disposition: "duplicate", nextEligibleAt: 5 })
         expect(response.retryAfter).toBe("3")
     })
 
@@ -92,7 +96,7 @@ describe("DlineOtelHttpClient", () => {
         )
 
         expect(response.json).toBeUndefined()
-        expect(classifyUsageResponse(response)).toMatchObject({ kind: "stop", scope: "all" })
+        expect(classifyDeliveryResponse(response)).toMatchObject({ kind: "stop", scope: "all" })
     })
 
     it("does not parse a response larger than the service ever sends", async () => {
@@ -103,7 +107,7 @@ describe("DlineOtelHttpClient", () => {
         )
 
         expect(response.json).toBeUndefined()
-        expect(classifyUsageResponse(response)).toEqual({ kind: "replay" })
+        expect(classifyDeliveryResponse(response)).toEqual({ kind: "replay" })
     })
 
     it("turns a stalled request into a timeout and a caller abort into an abort", async () => {

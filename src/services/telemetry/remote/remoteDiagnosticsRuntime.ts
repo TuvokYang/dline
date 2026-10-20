@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto"
+import { rm } from "node:fs/promises"
 import path from "node:path"
+import { backupPathOf } from "@shared/storage/atomic-file"
 import { DeviceCredentialRepository } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
 import { DiagnosticOutboxRepository } from "@/core/storage/telemetry-remote/DiagnosticOutboxRepository"
 import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
@@ -7,14 +9,20 @@ import type { TelemetryProviderInput } from "../providers/capabilities"
 import type { TelemetrySettings } from "../providers/ITelemetryProvider"
 import { DeviceTokenBroker } from "./auth/DeviceTokenBroker"
 import { DiagnosticDeliveryWorker } from "./diagnostics/DiagnosticDeliveryWorker"
-import { type DiagnosticRecord, type DiagnosticResource, toDiagnosticRecord } from "./diagnostics/diagnosticRecord"
+import {
+    aggregateDiagnostics,
+    type DiagnosticRecord,
+    type DiagnosticResource,
+    encodeDiagnosticLogs,
+    toDiagnosticRecord,
+} from "./diagnostics/diagnosticRecord"
 import { DlineOtelHttpClient } from "./transport/DlineOtelHttpClient"
 
 /** Records gathered in memory are written to the shared outbox this often. */
 export const DIAGNOSTICS_FLUSH_INTERVAL_MS = 5_000
 /** One delivery attempt this often; the outbox decides whether anything is due. */
 export const DIAGNOSTICS_DELIVERY_INTERVAL_MS = 20_000
-/** Bound on records held in memory between flushes. */
+/** Bound on distinct records held in memory between flushes; repeats of one merge and never count. */
 const MAX_BUFFERED_RECORDS = 500
 
 export interface RemoteDiagnosticsRuntimeOptions {
@@ -24,7 +32,7 @@ export interface RemoteDiagnosticsRuntimeOptions {
     readonly platform: string
     /** Which build this is and which editor hosts it, for the logs resource. */
     readonly releaseChannel?: DiagnosticResource["releaseChannel"]
-    readonly hostEditor?: string
+    readonly hostEditor?: DiagnosticResource["hostEditor"]
     /** Whether error reporting may leave the machine now: consent, organization and host level. */
     readonly allowed: () => boolean
     /** The host telemetry settings, used by the shared policy for severity filtering. */
@@ -42,7 +50,11 @@ interface RunningDiagnostics {
     readonly allowed: () => boolean
     readonly timers: ReturnType<typeof setInterval>[]
     readonly abort: AbortController
+    /** Where the v1 build queued its records; removed so nothing of it lingers after the upgrade. */
+    readonly legacyOutboxPath: string
     buffer: DiagnosticRecord[]
+    /** Records the full buffer could not take since the last flush, reported as dropped. */
+    bufferDropped: number
     delivering: Promise<void> | undefined
     /** Set once withdrawn consent has removed the waiting records and the token. */
     withdrawn: boolean
@@ -61,7 +73,15 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
     const owner = `${process.pid}-${randomUUID().slice(0, 8)}`
     const transport = new DlineOtelHttpClient({ endpoint: options.endpoint })
     const credentials = new DeviceCredentialRepository(layout)
-    const outbox = new DiagnosticOutboxRepository(path.join(layout.remoteDir, "diagnostics", "outbox.json"))
+    const resource: DiagnosticResource = {
+        clientVersion: options.clientVersion,
+        platform: options.platform,
+        ...(options.releaseChannel ? { releaseChannel: options.releaseChannel } : {}),
+        ...(options.hostEditor ? { hostEditor: options.hostEditor } : {}),
+    }
+    const outbox = new DiagnosticOutboxRepository(diagnosticOutboxPath(options.dataDir), {
+        encode: (records, dropped) => encodeDiagnosticLogs(records, resource, dropped),
+    })
     const tokens = new DeviceTokenBroker({
         repository: credentials,
         transport,
@@ -69,19 +89,7 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
         platform: options.platform,
         ownerId: owner,
     })
-    const worker = new DiagnosticDeliveryWorker({
-        outbox,
-        tokens,
-        transport,
-        owner,
-        resource: {
-            clientVersion: options.clientVersion,
-            platform: options.platform,
-            ...(options.releaseChannel ? { releaseChannel: options.releaseChannel } : {}),
-            ...(options.hostEditor ? { hostEditor: options.hostEditor } : {}),
-        },
-        log: options.log,
-    })
+    const worker = new DiagnosticDeliveryWorker({ outbox, tokens, transport, owner, log: options.log })
     const state: RunningDiagnostics = {
         outbox,
         credentials,
@@ -89,11 +97,14 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
         allowed: options.allowed,
         timers: [],
         abort: new AbortController(),
+        legacyOutboxPath: legacyDiagnosticOutboxPath(options.dataDir),
         buffer: [],
+        bufferDropped: 0,
         delivering: undefined,
         withdrawn: false,
     }
     running = state
+    void removeLegacyOutbox(state).catch((error: unknown) => options.log?.(`[RemoteDiagnostics] ${describe(error)}`))
     options.addProvider({
         kind: "registration",
         base: {
@@ -110,8 +121,11 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
                 append: (signal) => {
                     const record = toDiagnosticRecord(signal, Date.now())
                     if (!record || !state.allowed()) return
-                    if (state.buffer.length >= MAX_BUFFERED_RECORDS) state.buffer.shift()
-                    state.buffer.push(record)
+                    // A storm of one failure stays one record; the outbox applies the device limits.
+                    const room = () => state.buffer.length < MAX_BUFFERED_RECORDS
+                    const merged = aggregateDiagnostics(state.buffer, [record], room)
+                    state.buffer = merged.records
+                    state.bufferDropped += merged.refused
                 },
             },
         ],
@@ -147,11 +161,35 @@ export async function stopRemoteDiagnostics(): Promise<void> {
 }
 
 async function flush(state: RunningDiagnostics): Promise<void> {
-    if (state.buffer.length === 0) return
+    if (state.buffer.length === 0 && state.bufferDropped === 0) return
     const records = state.buffer
+    const dropped = state.bufferDropped
     state.buffer = []
+    state.bufferDropped = 0
     if (!state.allowed()) return
-    await state.outbox.append(records)
+    await state.outbox.append(records, Date.now(), dropped)
+}
+
+/**
+ * The shared outbox of this data root; tests read it through the same path.
+ * It is a different file from the v1 queue, so a window still running the
+ * previous build and a window on this one never rewrite each other's queue.
+ */
+export function diagnosticOutboxPath(dataDir: string): string {
+    return path.join(diagnosticsDir(dataDir), "outbox-v2.json")
+}
+
+function legacyDiagnosticOutboxPath(dataDir: string): string {
+    return path.join(diagnosticsDir(dataDir), "outbox.json")
+}
+
+function diagnosticsDir(dataDir: string): string {
+    return path.join(resolveOtelStorageLayout(dataDir).remoteDir, "diagnostics")
+}
+
+/** Its records use the v1 attribute set, which the service no longer keeps, so they are not carried over. */
+async function removeLegacyOutbox(state: RunningDiagnostics): Promise<void> {
+    await Promise.all([rm(state.legacyOutboxPath, { force: true }), rm(backupPathOf(state.legacyOutboxPath), { force: true })])
 }
 
 /**
@@ -175,7 +213,8 @@ async function reconcileConsent(state: RunningDiagnostics): Promise<boolean> {
     }
     if (state.withdrawn) return false
     state.buffer = []
-    await state.outbox.clear()
+    state.bufferDropped = 0
+    await Promise.all([state.outbox.clear(), removeLegacyOutbox(state)])
     await state.credentials.clearTokens(["production"])
     state.withdrawn = true
     return false

@@ -3,17 +3,22 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { PendingUsageObservation, SettledUsageShard } from "@/services/telemetry/remote/usage/usageOutbox"
+import { projectUsageSettlement } from "@/services/telemetry/remote/usage/usageTally"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
 import { SEALED_SHARD_SETTLE_MS, UsageObservationSpool } from "../UsageObservationSpool"
 
 function observation(id: string, inputTokens = 10): PendingUsageObservation {
-    return {
-        id,
-        receivedAt: 1_900_000_000_000,
-        policyEpoch: 7,
-        counters: { "dline.usage.requests.task.completed": 1, "dline.usage.tokens.input.task": inputTokens },
-        measurements: { "dline.usage.request_duration_ms.task": { count: 1, sum: 250, min: 250, max: 250 } },
-    }
+    const tally = projectUsageSettlement({
+        observationId: id,
+        purpose: "task",
+        outcome: "completed",
+        inputTokens,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        durationMs: 250,
+    })
+    return { id, receivedAt: 1_900_000_000_000, policyEpoch: 7, tally }
 }
 
 function ids(shards: readonly SettledUsageShard[]): string[] {
@@ -102,7 +107,7 @@ describe("UsageObservationSpool", () => {
         expect(ids(later.shards)).toEqual(["obs-1", "obs-2"])
     })
 
-    it("skips torn and invalid lines without losing the valid observations around them", async () => {
+    it("skips torn, invalid and v1-catalog lines without losing the valid observations around them", async () => {
         const sealedAt = futureSeal()
         await fs.mkdir(layout.usageObservationsDir, { recursive: true })
         await fs.writeFile(
@@ -110,8 +115,15 @@ describe("UsageObservationSpool", () => {
             [
                 JSON.stringify(observation("obs-1")),
                 '{"id":"torn","receivedAt":19',
-                JSON.stringify({ ...observation("negative"), counters: { "dline.usage.tokens.input.task": -1 } }),
+                JSON.stringify({ ...observation("negative"), tally: { ...observation("negative").tally, sessions_started: -1 } }),
                 JSON.stringify({ ...observation("no-epoch"), policyEpoch: undefined }),
+                JSON.stringify({
+                    id: "v1",
+                    receivedAt: 1_900_000_000_000,
+                    policyEpoch: 7,
+                    counters: { "dline.usage.requests.task.completed": 1 },
+                    measurements: {},
+                }),
                 JSON.stringify(observation("obs-2")),
                 "",
             ].join("\n"),
@@ -120,7 +132,7 @@ describe("UsageObservationSpool", () => {
         const settled = await new UsageObservationSpool(layout, "host-b").readSettled(sealedAt + SEALED_SHARD_SETTLE_MS)
 
         expect(ids(settled.shards)).toEqual(["obs-1", "obs-2"])
-        expect(settled.skipped).toBe(3)
+        expect(settled.skipped).toBe(4)
     })
 
     it("reports an observation that appears in two sealed shards once", async () => {

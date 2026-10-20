@@ -3,7 +3,9 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { INITIAL_PACING } from "@/services/telemetry/remote/contracts/pacing"
 import { emptyUsageOutbox, sha256Hex, type UsageOutboxState } from "@/services/telemetry/remote/usage/usageOutbox"
+import { projectUsageSettlement, sessionStartedTally } from "@/services/telemetry/remote/usage/usageTally"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
 import { USAGE_OUTBOX_SCHEMA_VERSION, USAGE_SENDER_LEASE_MS, UsageOutboxRepository } from "../UsageOutboxRepository"
 
@@ -11,15 +13,24 @@ const REQUEST_ID = "0b4f8a52-5d0e-4e55-9a0c-5a1f1e7c0a01"
 const OTHER_REQUEST_ID = "0b4f8a52-5d0e-4e55-9a0c-5a1f1e7c0a02"
 
 function pendingState(policyEpoch = 1): UsageOutboxState {
+    const tally = projectUsageSettlement({
+        observationId: "o",
+        purpose: "task",
+        outcome: "completed",
+        inputTokens: 12,
+        outputTokens: 3,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        durationMs: 30,
+        servedBy: { provider: "anthropic", model: "claude-sonnet-4" },
+        streamTiming: { ttftMs: 10, generationMs: 20 },
+    })
     return {
         ...emptyUsageOutbox(policyEpoch),
-        nextEligibleAt: 1_900_000_120_000,
-        windows: [
-            {
-                startedAt: 1_899_999_960_000,
-                counters: { "dline.usage.tokens.input.task": 12 },
-                measurements: { "dline.usage.request_duration_ms.task": { count: 2, sum: 30, min: 10, max: 20 } },
-            },
+        pacing: { nextEligibleAt: 1_900_000_120_000, waitUntil: 1_900_007_200_000, consecutiveWaits: 2 },
+        minutes: [
+            { startedAt: 1_899_999_960_000, tally },
+            { startedAt: 1_900_000_020_000, tally: sessionStartedTally() },
         ],
     }
 }
@@ -129,8 +140,8 @@ describe("UsageOutboxRepository", () => {
             inflight: {
                 requestId: REQUEST_ID,
                 bodySha256: sha256Hex(body),
-                windows: pendingState().windows,
-                droppedWindows: 2,
+                minutes: pendingState().minutes,
+                droppedMinutes: 2,
                 createdAt: now,
                 attempts: 1,
                 notBefore: now + 30_000,
@@ -161,7 +172,7 @@ describe("UsageOutboxRepository", () => {
         await expect(repository().writeBody("../escape", body)).rejects.toThrow()
     })
 
-    it("resets pending work from any window while keeping the lease and the server gate", async () => {
+    it("resets pending work from any window while keeping the lease, the server gate and a running wait", async () => {
         const grant = await repository().claim("window-a")
         if (!grant) throw new Error("expected a lease")
         await repository().transact(grant, () => ({ state: pendingState(), result: undefined }))
@@ -169,9 +180,48 @@ describe("UsageOutboxRepository", () => {
 
         await repository().reset(9)
 
-        expect(await repository().read()).toEqual({ ...emptyUsageOutbox(9), nextEligibleAt: pendingState().nextEligibleAt })
+        expect(await repository().read()).toEqual({ ...emptyUsageOutbox(9), pacing: pendingState().pacing })
         expect(await fs.readdir(layout.usageInflightDir)).toEqual([])
         expect(await repository().claim("window-b")).toBeUndefined()
+    })
+
+    it("carries a v1 outbox forward: its minutes are dropped and counted, its gate, lease and folded shards survive", async () => {
+        await fs.mkdir(layout.usageDir, { recursive: true })
+        const legacyWindow = {
+            started_at: 1_899_999_960_000,
+            counters: { "dline.usage.requests.task.completed": 1 },
+            measurements: {},
+        }
+        await fs.writeFile(
+            layout.usageOutboxPath,
+            JSON.stringify({
+                schema_version: 1,
+                generation: 3,
+                lease: { owner_id: "window-a", generation: 3, expires_at: now + 60_000 },
+                state: {
+                    policy_epoch: 4,
+                    next_eligible_at: now + 30_000,
+                    sealed_through: 1_900_000_020_000,
+                    dropped_windows: 1,
+                    windows: [legacyWindow, legacyWindow],
+                    folded_shards: ["a.1.sealed.jsonl"],
+                    inflight: { request_id: REQUEST_ID, windows: [legacyWindow], dropped_windows: 2 },
+                },
+            }),
+        )
+
+        const migrated = await repository().read()
+        const contender = await repository().claim("window-b")
+
+        expect(migrated).toEqual({
+            ...emptyUsageOutbox(4, {
+                pacing: { ...INITIAL_PACING, nextEligibleAt: now + 30_000 },
+                foldedShards: ["a.1.sealed.jsonl"],
+            }),
+            sealedThrough: 1_900_000_020_000,
+            droppedMinutes: 1 + 2 + 1 + 2,
+        })
+        expect(contender).toBeUndefined()
     })
 
     it("quarantines an unreadable outbox and starts over instead of guessing its contents", async () => {

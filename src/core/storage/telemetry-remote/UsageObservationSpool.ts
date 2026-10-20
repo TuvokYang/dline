@@ -1,8 +1,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { renameWithRetry } from "@shared/storage/atomic-file"
-import { parseUsageObservation } from "@/services/telemetry/remote/usage/usageCatalog"
 import type { PendingUsageObservation, SettledUsageShard } from "@/services/telemetry/remote/usage/usageOutbox"
+import { parseUsageTally } from "@/services/telemetry/remote/usage/usageTally"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
 
 /**
@@ -65,7 +65,8 @@ export class UsageObservationSpool {
     /**
      * Read every sealed shard that has settled. Malformed lines are skipped and
      * counted rather than failing the shard, so one torn write cannot block every
-     * later minute. An ID seen in an earlier shard of the same read is dropped.
+     * later minute; so are lines of the v1 catalog an older build appended. An ID
+     * seen in an earlier shard of the same read is dropped.
      */
     async readSettled(now: number): Promise<{ readonly shards: SettledUsageShard[]; readonly skipped: number }> {
         const shards: SettledUsageShard[] = []
@@ -147,6 +148,6 @@ function parseObservation(line: string): PendingUsageObservation | undefined {
     const { id, receivedAt, policyEpoch } = value
     if (typeof id !== "string" || id.length === 0) return undefined
     if (!Number.isSafeInteger(receivedAt) || !Number.isSafeInteger(policyEpoch)) return undefined
-    const observation = parseUsageObservation(value)
-    return observation && { id, receivedAt: receivedAt as number, policyEpoch: policyEpoch as number, ...observation }
+    const tally = parseUsageTally(value.tally)
+    return tally && { id, receivedAt: receivedAt as number, policyEpoch: policyEpoch as number, tally }
 }

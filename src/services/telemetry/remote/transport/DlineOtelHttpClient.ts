@@ -11,6 +11,8 @@ export const DLINE_OTEL_REQUEST_TIMEOUT_MS = 15_000
 const MAX_RESPONSE_BYTES = 16 * 1024
 const DEVICE_EXCHANGE_PATH = "/v1/auth/device/exchange"
 const USAGE_PATH = "/v1/usage"
+/** The telemetry contract version every usage and logs request is written against. */
+export const DLINE_TELEMETRY_CONTRACT = "2"
 
 export type DlineOtelTransportFailure = "timeout" | "aborted" | "network"
 
@@ -78,21 +80,11 @@ export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransp
     }
 
     sendUsage(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse> {
-        const headers = {
-            authorization: `Bearer ${delivery.accessToken}`,
-            "content-type": "application/json",
-            "x-dline-request-id": delivery.requestId,
-        }
-        return this.post(USAGE_PATH, headers, delivery.body, signal)
+        return this.post(USAGE_PATH, deliveryHeaders(delivery), delivery.body, signal)
     }
 
     sendLogs(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse> {
-        const headers = {
-            authorization: `Bearer ${delivery.accessToken}`,
-            "content-type": "application/json",
-            "x-dline-request-id": delivery.requestId,
-        }
-        return this.post(LOGS_PATH, headers, delivery.body, signal)
+        return this.post(LOGS_PATH, deliveryHeaders(delivery), delivery.body, signal)
     }
 
     private async post(
@@ -130,6 +122,16 @@ export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransp
             clearTimeout(timer)
             signal?.removeEventListener("abort", forwardAbort)
         }
+    }
+}
+
+/** Headers of a usage or logs request; the user agent `Dline/<version>` comes from the shared basic headers. */
+function deliveryHeaders(delivery: UsageDelivery): Record<string, string> {
+    return {
+        authorization: `Bearer ${delivery.accessToken}`,
+        "content-type": "application/json",
+        "x-dline-request-id": delivery.requestId,
+        "x-dline-contract": DLINE_TELEMETRY_CONTRACT,
     }
 }
 

@@ -1,25 +1,11 @@
 /**
- * Wire contract of the Dline OTEL service (`otel.dline.cc`).
+ * Wire contract of the Dline OTEL service (`otel.dline.cc`): device exchange,
+ * acknowledgements and error bodies. The usage body lives in `usageBody.ts`.
  *
  * Parsers validate only the fields the client acts on and ignore everything
- * else, so a server that adds fields does not break delivery. Builders and the
- * aggregate validator mirror the server's rejection rules: a batch the server
- * would refuse with 4xx is a permanent loss once written as an inflight body,
- * so it must be caught before that point.
+ * else, so a server that adds fields does not break delivery.
  */
 
-export const USAGE_SCHEMA_VERSION = 1
-export const USAGE_BODY_LIMIT_BYTES = 64 * 1024
-export const USAGE_MAX_METRIC_NAMES = 128
-export const USAGE_MAX_AGGREGATED_WINDOWS = 10
-export const USAGE_WINDOW_MS = 60_000
-/** How far the server lets a window end ahead of its own clock. */
-export const USAGE_MAX_CLOCK_SKEW_MS = 5 * 60_000
-
-const METRIC_NAME_PATTERN = /^dline\.[a-z0-9][a-z0-9_.-]{0,126}$/
-/** The longest name `METRIC_NAME_PATTERN` admits: the `dline.` prefix plus 127 characters. */
-export const USAGE_MAX_METRIC_NAME_LENGTH = "dline.".length + 127
-const ATTRIBUTE_VALUE_PATTERN = /^[A-Za-z0-9_.+ -]{1,64}$/
 const BASE64URL_43_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const CLIENT_FIELD_MAX_LENGTH = 64
 const UNKNOWN_CLIENT_FIELD = "unknown"
@@ -85,125 +71,30 @@ export function parseDeviceGrant(body: unknown): DeviceGrant | undefined {
     }
 }
 
-export type UsageAttributeKey = "client_version" | "platform" | "architecture" | "vscode_version" | "is_dev"
-const USAGE_ATTRIBUTE_KEYS: readonly UsageAttributeKey[] = [
-    "client_version",
-    "platform",
-    "architecture",
-    "vscode_version",
-    "is_dev",
-]
+/**
+ * How the service settled a batch it confirmed. `ignored_version` means this
+ * client version is not on the service's list: nothing was stored, and the
+ * batch must not be sent again.
+ */
+export type DeliveryDisposition = "accepted" | "duplicate" | "ignored_version"
+const DELIVERY_DISPOSITIONS: readonly DeliveryDisposition[] = ["accepted", "duplicate", "ignored_version"]
 
-export interface UsageMeasurementWire {
-    readonly count: number
-    readonly sum: number
-    readonly min: number
-    readonly max: number
+/** A confirmed batch and the earliest time, server epoch milliseconds, the next new batch may follow. */
+export interface DeliveryAcknowledgement {
+    readonly disposition: DeliveryDisposition
+    readonly nextEligibleAt?: number
 }
 
-/** Upper bounds, in milliseconds, of every latency histogram; the last bucket counts what exceeds them. */
-export const USAGE_HISTOGRAM_BOUNDS_MS: readonly number[] = [250, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000, 120000]
-
-/** Latency distribution of the measurement with the same name; `counts` sums to that measurement's `count`. */
-export interface UsageHistogramWire {
-    readonly bounds: readonly number[]
-    readonly counts: readonly number[]
-}
-
-export interface UsageAggregateWire {
-    readonly schema_version: typeof USAGE_SCHEMA_VERSION
-    readonly window_started_at: number
-    readonly window_ended_at: number
-    readonly aggregation_count: number
-    readonly dropped_windows?: number
-    readonly counters: Readonly<Record<string, number>>
-    readonly measurements?: Readonly<Record<string, UsageMeasurementWire>>
-    /** Older servers ignore this field, so it is sent before they read it. */
-    readonly histograms?: Readonly<Record<string, UsageHistogramWire>>
-    readonly attributes?: Readonly<Partial<Record<UsageAttributeKey, string | boolean>>>
-}
-
-export type UsageAggregateViolation =
-    | "schema_version"
-    | "window_span"
-    | "window_future"
-    | "aggregation_count"
-    | "dropped_windows"
-    | "metric_count"
-    | "metric_name"
-    | "counter_value"
-    | "measurement_bounds"
-    | "histogram"
-    | "attribute_key"
-    | "attribute_value"
-
-/** Every server rule the aggregate breaks; empty when the server would accept its schema. */
-export function validateUsageAggregate(aggregate: UsageAggregateWire, now: number): UsageAggregateViolation[] {
-    const violations = new Set<UsageAggregateViolation>()
-    const { window_started_at: start, window_ended_at: end, aggregation_count: count } = aggregate
-    if (aggregate.schema_version !== USAGE_SCHEMA_VERSION) violations.add("schema_version")
-    if (!isSafeNonNegativeInteger(count) || count < 1 || count > USAGE_MAX_AGGREGATED_WINDOWS) violations.add("aggregation_count")
-    if (aggregate.dropped_windows !== undefined && !isSafeNonNegativeInteger(aggregate.dropped_windows)) {
-        violations.add("dropped_windows")
-    }
-    if (!isSafeNonNegativeInteger(start) || !isSafeNonNegativeInteger(end) || start > end) violations.add("window_span")
-    else if (end - start > count * USAGE_WINDOW_MS + USAGE_WINDOW_MS) violations.add("window_span")
-    if (end > now + USAGE_MAX_CLOCK_SKEW_MS) violations.add("window_future")
-
-    const counters = Object.entries(aggregate.counters)
-    const measurements = Object.entries(aggregate.measurements ?? {})
-    const histograms = Object.entries(aggregate.histograms ?? {})
-    const scalarNames = [...counters, ...measurements].map(([name]) => name)
-    // A histogram shares its measurement's name but still counts against the batch's name budget.
-    const nameCount = scalarNames.length + histograms.length
-    if (scalarNames.length === 0 || nameCount > USAGE_MAX_METRIC_NAMES || new Set(scalarNames).size !== scalarNames.length) {
-        violations.add("metric_count")
-    }
-    if (scalarNames.some((name) => !METRIC_NAME_PATTERN.test(name))) violations.add("metric_name")
-    if (counters.some(([, value]) => !isSafeNonNegativeInteger(value))) violations.add("counter_value")
-    if (measurements.some(([, value]) => !isConsistentMeasurement(value))) violations.add("measurement_bounds")
-    if (histograms.some(([name, value]) => !isConsistentHistogram(value, aggregate.measurements?.[name]))) {
-        violations.add("histogram")
-    }
-
-    for (const [key, value] of Object.entries(aggregate.attributes ?? {})) {
-        if (!USAGE_ATTRIBUTE_KEYS.includes(key as UsageAttributeKey)) violations.add("attribute_key")
-        else if (!isAllowedUsageAttribute(key as UsageAttributeKey, value)) violations.add("attribute_value")
-    }
-    return [...violations]
-}
-
-/** Whether the server accepts this value for an allowlisted attribute; a refused one would reject the whole batch. */
-export function isAllowedUsageAttribute(key: UsageAttributeKey, value: unknown): boolean {
-    return key === "is_dev" ? typeof value === "boolean" : typeof value === "string" && ATTRIBUTE_VALUE_PATTERN.test(value)
-}
-
-/** A histogram the server accepts: the fixed bounds, one bucket more than bounds, summing to its measurement's count. */
-export function isConsistentHistogram(histogram: UsageHistogramWire, measurement: UsageMeasurementWire | undefined): boolean {
-    if (!measurement) return false
-    const { bounds, counts } = histogram
-    if (bounds.length !== USAGE_HISTOGRAM_BOUNDS_MS.length) return false
-    if (bounds.some((bound, index) => bound !== USAGE_HISTOGRAM_BOUNDS_MS[index])) return false
-    if (counts.length !== bounds.length + 1 || !counts.every(isSafeNonNegativeInteger)) return false
-    return counts.reduce((total, count) => total + count, 0) === measurement.count
-}
-
-function isConsistentMeasurement({ count, sum, min, max }: UsageMeasurementWire): boolean {
-    if (!isSafeNonNegativeInteger(count) || count < 1) return false
-    if (![sum, min, max].every((value) => Number.isFinite(value) && value >= 0)) return false
-    return min <= max && min * count <= sum && sum <= max * count
-}
-
-/** A confirmed usage batch. */
-export interface UsageAcknowledgement {
-    readonly duplicate: boolean
-}
-
-export function parseUsageAcknowledgement(body: unknown): UsageAcknowledgement | undefined {
+/** `200 ok:true` with a known disposition; anything else is not a confirmation. */
+export function parseAcknowledgement(body: unknown): DeliveryAcknowledgement | undefined {
     if (!isRecord(body) || body.ok !== true) return undefined
-    if (body.disposition === "accepted") return { duplicate: false }
-    if (body.disposition === "duplicate") return { duplicate: true }
-    return undefined
+    const disposition = body.disposition
+    if (!DELIVERY_DISPOSITIONS.includes(disposition as DeliveryDisposition)) return undefined
+    const next = body.next_eligible_at
+    return {
+        disposition: disposition as DeliveryDisposition,
+        ...(isSafeNonNegativeInteger(next) ? { nextEligibleAt: next } : {}),
+    }
 }
 
 /** The machine-readable part of an error body; some error bodies carry no message at all. */

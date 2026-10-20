@@ -1,3 +1,4 @@
+import type { DeliveryDisposition } from "../contracts/wire"
 import type { UsageCycleResult } from "./UsageDeliveryWorker"
 
 export type RemoteUsageLogLevel = "debug" | "info" | "warn"
@@ -40,19 +41,17 @@ export function describeUsageCycle(result: UsageCycleResult): UsageCycleLogLine 
             }
         }
         case "delivered":
-            return {
-                level: "debug",
-                message: result.duplicate
-                    ? `batch ${batchName(result.requestId)} had already been accepted (duplicate)`
-                    : `batch ${batchName(result.requestId)} delivered`,
-            }
+            return { level: "debug", message: `batch ${batchName(result.requestId)} ${DISPOSITION_TEXT[result.disposition]}` }
         case "retrying":
             return {
                 level: "warn",
                 message: `batch ${batchName(result.requestId)} was not acknowledged; the same bytes are sent again later`,
             }
-        case "deferred":
-            return { level: "debug", message: `batch ${batchName(result.requestId)} deferred by the service (${result.code})` }
+        case "paused":
+            return {
+                level: "info",
+                message: `the service asked to wait (${result.code}); usage is held until ${new Date(result.until).toISOString()} and batch ${batchName(result.requestId)} is rebuilt then`,
+            }
         case "discarded":
             return { level: "warn", message: `batch ${batchName(result.requestId)} discarded (${result.code})` }
         case "rejected":
@@ -60,6 +59,12 @@ export function describeUsageCycle(result: UsageCycleResult): UsageCycleLogLine 
         case "stopped":
             return { level: "warn", message: `usage reporting stopped by the service (${result.scope}: ${result.code})` }
     }
+}
+
+const DISPOSITION_TEXT: Record<DeliveryDisposition, string> = {
+    accepted: "delivered",
+    duplicate: "had already been accepted (duplicate)",
+    ignored_version: "acknowledged; the service ignores this Dline version",
 }
 
 function batchName(requestId: string): string {

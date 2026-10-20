@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto"
 import type { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import type { UsageOutboxRepository, UsageSenderGrant } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import type { DeviceTokenBroker } from "../auth/DeviceTokenBroker"
-import { classifyUsageResponse, type StopScope, type UsageOutcome } from "../contracts/classification"
-import type { UsageAttributeKey } from "../contracts/wire"
+import { classifyDeliveryResponse, type DeliveryOutcome, type StopScope } from "../contracts/classification"
+import type { UsageClientWire } from "../contracts/usageBody"
+import type { DeliveryDisposition } from "../contracts/wire"
 import { DlineOtelTransportError, type UsageTransport } from "../transport/DlineOtelHttpClient"
 import {
     alignUsagePolicyEpoch,
@@ -14,8 +15,6 @@ import {
     type UsageInflight,
     type UsageInflightResolution,
 } from "./usageOutbox"
-
-export type UsageAttributes = Readonly<Partial<Record<UsageAttributeKey, string | boolean>>>
 
 export type UsageCycleResult =
     /** Another window holds the sender lease, or a newer Dline owns the outbox. */
@@ -30,9 +29,10 @@ export type UsageCycleResult =
           readonly reason: "enrollment_backoff" | "refresh_in_progress" | "token_unavailable"
           readonly retryAt?: number
       }
-    | { readonly kind: "delivered"; readonly requestId: string; readonly duplicate: boolean }
+    | { readonly kind: "delivered"; readonly requestId: string; readonly disposition: DeliveryDisposition }
     | { readonly kind: "retrying"; readonly requestId: string }
-    | { readonly kind: "deferred"; readonly requestId: string; readonly code: string }
+    /** A 429 or a pause: nothing is sent on this channel until `until`, and the batch is rebuilt afterwards. */
+    | { readonly kind: "paused"; readonly requestId: string; readonly code: string; readonly until: number }
     | { readonly kind: "discarded"; readonly requestId: string; readonly code: string }
     | { readonly kind: "rejected"; readonly violations: readonly string[] }
     /** The service refused the device or profile; the caller records the stop and drops pending usage. */
@@ -43,13 +43,16 @@ export interface UsageDeliveryWorkerOptions {
     readonly spool: UsageObservationSpool
     readonly tokens: Pick<DeviceTokenBroker, "acquire">
     readonly transport: UsageTransport
-    readonly attributes: UsageAttributes
+    /** The `client` section of every body, already reduced to values the service accepts. */
+    readonly client: UsageClientWire
     /** Identity of this window in the sender lease. */
     readonly ownerId: string
     /** How long after a minute ends observations from other shards may still arrive. */
     readonly batchSettleMs: number
     readonly clock?: () => number
     readonly newRequestId?: () => string
+    /** Source of the 429 wait jitter. */
+    readonly random?: () => number
 }
 
 type Prepared = (
@@ -62,7 +65,7 @@ type Prepared = (
 }
 
 type Attempt =
-    | { readonly kind: "outcome"; readonly outcome: UsageOutcome }
+    | { readonly kind: "outcome"; readonly outcome: DeliveryOutcome }
     | { readonly kind: "result"; readonly result: UsageCycleResult }
 
 /** Code reported when the service rejects a freshly exchanged token as well. */
@@ -73,7 +76,7 @@ export const USAGE_TOKEN_REJECTED = "token_rejected"
  *
  * Only the lease holder works: it seals every process shard, folds settled
  * ones into pending minutes, and either replays the inflight or creates the
- * next batch once the machine gate opened. HTTP runs outside every lock; the
+ * next batch once the service's gate opened and no 429 wait runs. HTTP runs outside every lock; the
  * outcome is applied under the lease, so a sender that lost its lease while
  * waiting cannot acknowledge. Policy decisions stay with the caller: a refusal
  * is returned, not recorded.
@@ -137,7 +140,7 @@ export class UsageDeliveryWorker {
             const decision = takeUsageBatch(state, {
                 now,
                 requestId: this.newRequestId(),
-                attributes: this.options.attributes,
+                client: this.options.client,
                 settleMs: this.options.batchSettleMs,
             })
             if (decision.kind === "none") return { state, result: { kind: "idle", keepRequestId: undefined } }
@@ -148,7 +151,7 @@ export class UsageDeliveryWorker {
                 }
             }
             const { inflight } = decision
-            await outbox.writeBody(inflight.requestId, decision.body)
+            await outbox.writeBody(inflight.requestId, decision.bytes)
             return { state: decision.state, result: { kind: "send", inflight, keepRequestId: inflight.requestId } }
         })
     }
@@ -178,13 +181,13 @@ export class UsageDeliveryWorker {
             if (acquired.status === "unavailable")
                 return { kind: "result", result: { kind: "waiting", reason: "token_unavailable" } }
             const accessToken = acquired.token.accessToken
-            let outcome: UsageOutcome
+            let outcome: DeliveryOutcome
             try {
                 const response = await this.options.transport.sendUsage(
                     { accessToken, requestId: inflight.requestId, body },
                     signal,
                 )
-                outcome = classifyUsageResponse(response)
+                outcome = classifyDeliveryResponse(response)
             } catch (error) {
                 if (!(error instanceof DlineOtelTransportError)) throw error
                 if (error.failure === "aborted") return { kind: "result", result: { kind: "aborted" } }
@@ -204,7 +207,7 @@ export class UsageDeliveryWorker {
     ): Promise<UsageCycleResult> {
         const { outbox } = this.options
         const committed = await outbox.transact(grant, (state, now) => ({
-            state: settleUsageInflight(state, inflight.requestId, resolution, now),
+            state: settleUsageInflight(state, inflight.requestId, resolution, now, this.options.random),
             result: undefined,
         }))
         if (committed.status === "fenced") return { kind: "fenced" }
@@ -213,13 +216,15 @@ export class UsageDeliveryWorker {
         const { requestId } = inflight
         switch (resolution.kind) {
             case "acknowledged":
-                return { kind: "delivered", requestId, duplicate: resolution.duplicate }
+                return { kind: "delivered", requestId, disposition: resolution.disposition }
             case "replay":
                 return settled?.inflight?.requestId === requestId
                     ? { kind: "retrying", requestId }
                     : { kind: "discarded", requestId, code: "replay_budget_exhausted" }
-            case "defer":
-                return { kind: "deferred", requestId, code: resolution.code }
+            case "wait":
+                return { kind: "paused", requestId, code: resolution.code, until: settled?.pacing.waitUntil ?? 0 }
+            case "too_large":
+                return { kind: "discarded", requestId, code: "payload_too_large" }
             case "discard":
                 return { kind: "discarded", requestId, code: resolution.code }
             case "body_lost":

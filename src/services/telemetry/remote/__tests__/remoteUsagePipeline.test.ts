@@ -9,11 +9,11 @@ import { USAGE_SENDER_LEASE_MS, UsageOutboxRepository } from "@/core/storage/tel
 import type { UsageSettlement } from "@/core/task/telemetry/UsageSettlement"
 import type { AcquireOptions, TokenAcquisition } from "../auth/DeviceTokenBroker"
 import type { WireResponse } from "../contracts/classification"
-import { USAGE_WINDOW_MS, type UsageAggregateWire, validateUsageAggregate } from "../contracts/wire"
+import { USAGE_MINUTE_MS, type UsageBodyWire, validateUsageBody } from "../contracts/usageBody"
 import { DlineOtelTransportError, type UsageDelivery, type UsageTransport } from "../transport/DlineOtelHttpClient"
 import { RemoteUsageCoordinator, type UsageScheduler } from "../usage/RemoteUsageCoordinator"
 import { UsageDeliveryWorker } from "../usage/UsageDeliveryWorker"
-import { windowStartOf } from "../usage/usageWindow"
+import { minuteStartOf } from "../usage/usageBatch"
 
 /**
  * The remote usage path assembled from its real parts: coordinator, observation
@@ -21,25 +21,15 @@ import { windowStartOf } from "../usage/usageWindow"
  * HTTP transport replaced. It proves what actually leaves the machine.
  */
 
-const MINUTE = USAGE_WINDOW_MS
+const MINUTE = USAGE_MINUTE_MS
 const SETTLE = 20_000
-const ATTRIBUTES = { client_version: "0.11.0", platform: "win32", architecture: "x64", is_dev: false } as const
+const CLIENT = { version: "0.11.1", platform: "win32", architecture: "x64", host_editor: "vscode", is_dev: false } as const
 const ALLOWED: LocalUsagePolicyInputs = {
     usageConsent: "enabled",
     organizationDisabled: false,
     hostTelemetryLevel: "all",
 }
-const WIRE_KEYS = new Set([
-    "schema_version",
-    "window_started_at",
-    "window_ended_at",
-    "aggregation_count",
-    "dropped_windows",
-    "counters",
-    "measurements",
-    "histograms",
-    "attributes",
-])
+const WIRE_KEYS = new Set(["schema_version", "client", "window", "sessions_started", "purposes", "models", "providers"])
 
 class FakeTokens {
     async acquire(_profile: "usage", _options: AcquireOptions = {}): Promise<TokenAcquisition> {
@@ -89,7 +79,7 @@ describe("remote usage pipeline", () => {
         root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-otel-pipeline-"))
         layout = resolveOtelStorageLayout(path.join(root, "data"))
         // A minute boundary ahead of the wall clock, so shard settling follows the fake clock rather than file times.
-        start = windowStartOf(Date.now()) + 2 * MINUTE
+        start = minuteStartOf(Date.now()) + 2 * MINUTE
         now = start + 1_000
     })
 
@@ -106,7 +96,7 @@ describe("remote usage pipeline", () => {
             spool,
             tokens: new FakeTokens(),
             transport,
-            attributes: ATTRIBUTES,
+            client: CLIENT,
             ownerId,
             batchSettleMs: SETTLE,
             clock: () => now,
@@ -148,7 +138,7 @@ describe("remote usage pipeline", () => {
         return lines
     }
 
-    it("sends only catalog counts and allowlisted attributes, and keeps no trace of the request identities", async () => {
+    it("sends only the v2 sections, and keeps no trace of the request identities", async () => {
         // Canaries stand in for the identities a caller could put into an observation ID.
         const canaries = ["C:/Users/alice/secret-project/billing.ts", "task-1792149608241"]
         const transport = new FakeTransport()
@@ -163,33 +153,32 @@ describe("remote usage pipeline", () => {
         expect(transport.deliveries).toHaveLength(1)
         const raw = transport.deliveries[0].body
         for (const canary of canaries) expect(raw).not.toContain(canary)
-        const sent = JSON.parse(raw) as UsageAggregateWire
+        const sent = JSON.parse(raw) as UsageBodyWire
+        const duration = { count: 1, sum: 800, min: 800, max: 800 }
+        const tokens = { input: 120, output: 30, cache_read: 0, cache_write: 0 }
         expect(Object.keys(sent).filter((key) => !WIRE_KEYS.has(key))).toEqual([])
-        expect(validateUsageAggregate(sent, now)).toEqual([])
-        expect(sent).toMatchObject({ window_started_at: start, window_ended_at: start + MINUTE, attributes: ATTRIBUTES })
-        expect(sent.counters).toEqual({
-            "dline.usage.requests.task.completed": 1,
-            "dline.usage.tokens.input.task": 120,
-            "dline.usage.tokens.output.task": 30,
-            "dline.usage.model.anthropic.requests.claude-sonnet-4.5": 1,
-            "dline.usage.model.anthropic.tokens_input.claude-sonnet-4.5": 120,
-            "dline.usage.model.anthropic.tokens_output.claude-sonnet-4.5": 30,
-            "dline.usage.requests.subagent.failed": 1,
-            "dline.usage.tokens.input.subagent": 120,
-            "dline.usage.tokens.output.subagent": 30,
-            "dline.usage.errors.unknown.other": 1,
+        expect(validateUsageBody(sent)).toEqual([])
+        expect(sent).toMatchObject({
+            schema_version: 2,
+            client: CLIENT,
+            window: { started_at: start, ended_at: start + MINUTE, active_minutes: 1, dropped_minutes: 0 },
+            sessions_started: 0,
         })
-        expect(sent.measurements).toEqual({
-            "dline.usage.request_duration_ms.task": { count: 1, sum: 800, min: 800, max: 800 },
-            "dline.usage.model.anthropic.request_duration_ms.claude-sonnet-4.5": { count: 1, sum: 800, min: 800, max: 800 },
-            "dline.usage.request_duration_ms.subagent": { count: 1, sum: 800, min: 800, max: 800 },
+        expect(sent.purposes).toEqual({
+            task: { requests: { completed: 1, cancelled: 0, failed: 0 }, tokens, duration_ms: duration },
+            subagent: { requests: { completed: 0, cancelled: 0, failed: 1 }, tokens, duration_ms: duration },
         })
-        expect(sent.histograms).toEqual({
-            "dline.usage.model.anthropic.request_duration_ms.claude-sonnet-4.5": {
-                bounds: [250, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000, 120000],
-                counts: [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+        expect(sent.models).toEqual([
+            {
+                provider: "anthropic",
+                model: "claude-sonnet-4.5",
+                requests: { total: 1, failed: 0, cancelled: 0 },
+                tokens,
+                duration_ms: { ...duration, buckets: [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
+                peak_minute: { requests: 1, tokens_output: 30 },
             },
-        })
+        ])
+        expect(sent.providers).toEqual([{ provider: "unknown", errors: { other: 1 }, retries: 0 }])
         expect(await fs.readdir(layout.usageObservationsDir)).toEqual([])
         expect(await fs.readdir(layout.usageInflightDir)).toEqual([])
         const outbox = await fs.readFile(layout.usageOutboxPath, "utf8")

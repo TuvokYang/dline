@@ -2,224 +2,237 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import type { StoredDeviceToken } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
 import {
-    DIAGNOSTICS_CLAIM_TTL_MS,
-    DIAGNOSTICS_STOP_RETRY_MS,
+    DIAGNOSTICS_PER_DAY,
+    DIAGNOSTICS_PER_HOUR,
     DiagnosticOutboxRepository,
     MAX_DIAGNOSTICS_PER_REQUEST,
-    MAX_PENDING_DIAGNOSTICS,
 } from "@/core/storage/telemetry-remote/DiagnosticOutboxRepository"
+import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
+import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import type { TokenAcquisition } from "../../auth/DeviceTokenBroker"
 import type { WireResponse } from "../../contracts/classification"
+import { GATE_MARGIN_MS } from "../../contracts/pacing"
 import type { UsageDelivery } from "../../transport/DlineOtelHttpClient"
-import { DIAGNOSTICS_RETRY_MS, DiagnosticDeliveryWorker } from "../DiagnosticDeliveryWorker"
-import type { DiagnosticRecord } from "../diagnosticRecord"
+import { DlineOtelTransportError } from "../../transport/DlineOtelHttpClient"
+import { DiagnosticDeliveryWorker } from "../DiagnosticDeliveryWorker"
+import { type DiagnosticRecord, encodeDiagnosticLogs } from "../diagnosticRecord"
 
+/** An hour boundary eight hours into a UTC day. */
 const START = 1_800_000_000_000
-const RESOURCE = { clientVersion: "0.11.0", platform: "linux" }
+const HOUR = 60 * 60_000
+const RESOURCE = { clientVersion: "0.11.1", platform: "win32" }
 
-function record(index: number): DiagnosticRecord {
-    return { timeUnixMs: START + index, name: `task.failure_${index}`, channel: "error", severity: "error", attributes: {} }
+function record(index: number, at = START): DiagnosticRecord {
+    return {
+        name: "task.provider_api_error",
+        channel: "error",
+        severity: "error",
+        firstSeenMs: at,
+        lastSeenMs: at,
+        occurrences: 1,
+        attributes: { "error.fingerprint": index.toString(16).padStart(16, "0") },
+    }
 }
 
-function ready(accessToken: string): TokenAcquisition {
-    return { status: "ready", token: { accessToken } as StoredDeviceToken }
-}
-
-const ok = (): WireResponse => ({ status: 200, json: { ok: true, accepted: 1, rejected: 0 }, retryAfter: null })
-const failure = (status: number, code: string, retryAfter: string | null = null): WireResponse => ({
-    status,
-    json: { ok: false, error: { code, message: "x" } },
-    retryAfter,
+const accepted = (nextEligibleAt?: number): WireResponse => ({
+    status: 200,
+    json: { ok: true, disposition: "accepted", ...(nextEligibleAt === undefined ? {} : { next_eligible_at: nextEligibleAt }) },
+    retryAfter: null,
 })
 
-/** Names of the records inside one sent OTLP body. */
-function namesIn(body: Uint8Array): string[] {
-    const request = JSON.parse(new TextDecoder().decode(body)) as {
-        resourceLogs: { scopeLogs: { logRecords: { body: { stringValue: string } }[] }[] }[]
-    }
-    return request.resourceLogs[0].scopeLogs[0].logRecords.map((log) => log.body.stringValue)
+interface SentLogs {
+    readonly requestId: string
+    readonly records: { attributes: { key: string; value: { intValue?: string } }[] }[]
+    readonly dropped: number
 }
 
-describe("diagnostic outbox and delivery", () => {
+describe("DiagnosticDeliveryWorker (contract v2 §1.5-§1.7, §3.3)", () => {
     let root: string
-    let outbox: DiagnosticOutboxRepository
     let now: number
-    let sent: UsageDelivery[]
-    let responses: (WireResponse | Error)[]
-    let acquisitions: TokenAcquisition[]
-    let acquireCalls: { rejectedAccessToken?: string }[]
+    let sent: SentLogs[]
+    let replies: (WireResponse | DlineOtelTransportError)[]
 
     beforeEach(async () => {
         root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-diagnostics-"))
-        outbox = new DiagnosticOutboxRepository(path.join(root, "diagnostics", "outbox.json"))
         now = START
         sent = []
-        responses = []
-        acquisitions = []
-        acquireCalls = []
+        replies = []
     })
 
     afterEach(async () => {
         await fs.rm(root, { recursive: true, force: true })
     })
 
-    function worker(owner = "window-a"): DiagnosticDeliveryWorker {
+    function outbox(): DiagnosticOutboxRepository {
+        return new DiagnosticOutboxRepository(path.join(root, "diagnostics", "outbox.json"), {
+            encode: (records, dropped) => encodeDiagnosticLogs(records, RESOURCE, dropped),
+            random: () => 0,
+        })
+    }
+
+    function worker(tokens: TokenAcquisition[] = []): DiagnosticDeliveryWorker {
         return new DiagnosticDeliveryWorker({
-            outbox,
-            owner,
-            resource: RESOURCE,
+            outbox: outbox(),
+            owner: "window-a",
             clock: () => now,
             tokens: {
-                acquire: async (_profile, options) => {
-                    acquireCalls.push({ rejectedAccessToken: options?.rejectedAccessToken })
-                    return acquisitions.shift() ?? ready("token-default")
-                },
+                acquire: async () =>
+                    tokens.shift() ?? {
+                        status: "ready",
+                        token: { accessToken: "token", deviceId: "device", expiresAt: Number.MAX_SAFE_INTEGER, obtainedAt: 0 },
+                    },
             },
             transport: {
-                sendLogs: async (delivery) => {
-                    sent.push(delivery)
-                    const next = responses.shift() ?? ok()
-                    if (next instanceof Error) throw next
-                    return next
+                sendLogs: async (delivery: UsageDelivery) => {
+                    const body = JSON.parse(new TextDecoder().decode(delivery.body))
+                    const [resourceLogs] = body.resourceLogs
+                    const dropped = resourceLogs.resource.attributes.find(
+                        (attribute: { key: string }) => attribute.key === "dline.dropped_records",
+                    )
+                    sent.push({
+                        requestId: delivery.requestId,
+                        records: resourceLogs.scopeLogs[0].logRecords,
+                        dropped: Number(dropped?.value.intValue),
+                    })
+                    const reply = replies.shift() ?? accepted()
+                    if (reply instanceof DlineOtelTransportError) throw reply
+                    return reply
                 },
             },
         })
     }
 
-    it("sends queued records once and leaves nothing behind after the service confirms them", async () => {
-        await outbox.append([record(1), record(2)])
+    it("starts no new batch before the gate the service named; the next one carries everything gathered since", async () => {
+        replies.push(accepted(START + HOUR))
+        await outbox().append([record(1)], now)
         await worker().deliverOnce()
+        await outbox().append([record(2), record(3)], now)
+
+        now = START + HOUR
+        await worker().deliverOnce()
+        now = START + HOUR + GATE_MARGIN_MS
         await worker().deliverOnce()
 
-        expect(sent).toHaveLength(1)
-        expect(namesIn(sent[0].body)).toEqual(["task.failure_1", "task.failure_2"])
-        expect(await outbox.read()).toMatchObject({ records: [] })
-        expect((await outbox.read()).inflight).toBeUndefined()
+        expect(sent.map((request) => request.records.length)).toEqual([1, 2])
     })
 
-    it("splits a backlog into requests of at most 256 records, oldest first", async () => {
-        await outbox.append(Array.from({ length: MAX_DIAGNOSTICS_PER_REQUEST + 10 }, (_, index) => record(index)))
-        await worker().deliverOnce()
-        await worker().deliverOnce()
+    it("replays the same id and bytes after an unknown outcome, only once the backoff passed", async () => {
+        replies.push(new DlineOtelTransportError("timeout"))
+        await outbox().append([record(1)], now)
 
-        expect(sent.map((delivery) => namesIn(delivery.body).length)).toEqual([MAX_DIAGNOSTICS_PER_REQUEST, 10])
-        expect(namesIn(sent[1].body)[0]).toBe(`task.failure_${MAX_DIAGNOSTICS_PER_REQUEST}`)
-    })
-
-    it("resends the same request id and bytes after a failure, not a new batch with later records", async () => {
-        await outbox.append([record(1)])
-        responses.push(new Error("socket hang up"))
         await worker().deliverOnce()
-        await outbox.append([record(2)])
-
-        now += DIAGNOSTICS_RETRY_MS - 1
+        now += 29_999
         await worker().deliverOnce()
-        expect(sent).toHaveLength(1)
-
         now += 1
         await worker().deliverOnce()
+
         expect(sent).toHaveLength(2)
         expect(sent[1].requestId).toBe(sent[0].requestId)
-        expect(sent[1].body).toEqual(sent[0].body)
-
-        await worker().deliverOnce()
-        expect(namesIn(sent[2].body)).toEqual(["task.failure_2"])
-        expect(sent[2].requestId).not.toBe(sent[0].requestId)
     })
 
-    it("waits as long as a rate limit asks before replaying", async () => {
-        await outbox.append([record(1)])
-        responses.push(failure(429, "rate_limited", "120"))
+    it("on a pause sends nothing, replays included, until it ends, even after a restart; then merges and resends under a new id", async () => {
+        replies.push({
+            status: 429,
+            json: { ok: false, error: { code: "telemetry_paused" }, retry_after_ms: 2 * HOUR },
+            retryAfter: null,
+        })
+        await outbox().append([record(1)], now)
+        await worker().deliverOnce()
+        await outbox().append([record(1, now + 1_000), record(2, now + 1_000)], now + 1_000)
+
+        now = START + 2 * HOUR - 1
+        await worker().deliverOnce()
+        now = START + 2 * HOUR
         await worker().deliverOnce()
 
-        now += 119_000
-        await worker().deliverOnce()
-        expect(sent).toHaveLength(1)
-        now += 1_000
-        await worker().deliverOnce()
-        expect(sent.map((delivery) => delivery.requestId)).toEqual([sent[0].requestId, sent[0].requestId])
-    })
-
-    it("exchanges a rejected token once and resends the batch with the new one", async () => {
-        await outbox.append([record(1)])
-        acquisitions.push(ready("token-old"), ready("token-new"))
-        responses.push(failure(401, "token_expired"), ok())
-        await worker().deliverOnce()
-
-        expect(sent.map((delivery) => delivery.accessToken)).toEqual(["token-old", "token-new"])
-        expect(acquireCalls).toEqual([{ rejectedAccessToken: undefined }, { rejectedAccessToken: "token-old" }])
-        expect((await outbox.read()).inflight).toBeUndefined()
-    })
-
-    it("stops every window for 30 minutes when the service refuses the stream, then retries the same batch", async () => {
-        await outbox.append([record(1)])
-        responses.push(failure(403, "diagnostic_profile_required"))
-        await worker("window-a").deliverOnce()
-        expect((await outbox.read()).stop?.code).toBe("diagnostic_profile_required")
-
-        now += DIAGNOSTICS_STOP_RETRY_MS - 1
-        await worker("window-b").deliverOnce()
-        expect(sent).toHaveLength(1)
-
-        now += 1
-        await worker("window-b").deliverOnce()
         expect(sent).toHaveLength(2)
-        expect(sent[1].requestId).toBe(sent[0].requestId)
-        expect((await outbox.read()).stop).toBeUndefined()
+        expect(sent[1].requestId).not.toBe(sent[0].requestId)
+        const occurrences = sent[1].records.map(
+            (entry) => entry.attributes.find((attribute) => attribute.key === "dline.occurrences")?.value.intValue,
+        )
+        expect(occurrences).toEqual(["2", "1"])
     })
 
-    it("sends nothing while no token is available and tries again when the broker says", async () => {
-        await outbox.append([record(1)])
-        acquisitions.push({ status: "deferred", retryAt: START + 5_000, reason: "enrollment_backoff" })
+    it("keeps waiting on logs without holding usage, whose outbox is its own", async () => {
+        replies.push({ status: 429, json: undefined, retryAfter: null })
+        await outbox().append([record(1)], now)
         await worker().deliverOnce()
-        expect(sent).toHaveLength(0)
 
-        now = START + 4_999
-        await worker().deliverOnce()
-        expect(sent).toHaveLength(0)
-        now = START + 5_000
-        await worker().deliverOnce()
-        expect(sent).toHaveLength(1)
+        const usage = new UsageOutboxRepository(resolveOtelStorageLayout(path.join(root, "data")), { clock: () => now })
+        const grant = await usage.claim("window-a")
+
+        expect((await outbox().read()).pacing.wait_until).toBe(START + 60_000)
+        expect(grant).toBeDefined()
+        expect((await usage.read())?.pacing.waitUntil ?? 0).toBe(0)
     })
 
-    it("drops a batch the service refuses for good instead of resending it", async () => {
-        await outbox.append([record(1)])
-        responses.push(failure(409, "idempotency_conflict"))
+    it("on 413 resends the first half at once under a new id and returns the rest to the queue", async () => {
+        replies.push({ status: 413, json: { ok: false, error: { code: "payload_too_large" } }, retryAfter: null })
+        await outbox().append(
+            [1, 2, 3, 4].map((index) => record(index)),
+            now,
+        )
+
         await worker().deliverOnce()
         await worker().deliverOnce()
 
-        expect(sent).toHaveLength(1)
-        expect((await outbox.read()).inflight).toBeUndefined()
+        expect(sent.map((request) => request.records.length)).toEqual([4, 2])
+        expect(sent[1].requestId).not.toBe(sent[0].requestId)
+        expect((await outbox().read()).records).toHaveLength(2)
     })
 
-    it("lets another window take over a batch only after the first window's claim expires", async () => {
-        await outbox.append([record(1)])
-        const encode = () => "{}"
-        const first = await outbox.claim("window-a", now, encode)
-        expect(await outbox.claim("window-b", now + DIAGNOSTICS_CLAIM_TTL_MS - 1, encode)).toBeUndefined()
-        const second = await outbox.claim("window-b", now + DIAGNOSTICS_CLAIM_TTL_MS, encode)
-        expect(second).toEqual(first)
+    it("drops a batch refused with 422 without retrying, and reports it as dropped in the next request", async () => {
+        replies.push({ status: 422, json: { ok: false, error: { code: "invalid_logs" } }, retryAfter: null })
+        await outbox().append([record(1), record(2)], now)
+        await worker().deliverOnce()
+        await outbox().append([record(3)], now)
+
+        now += 5 * 60_000
+        await worker().deliverOnce()
+
+        expect(sent).toHaveLength(2)
+        expect(sent[1].dropped).toBe(2)
+        expect(sent[1].records).toHaveLength(1)
     })
 
-    it("keeps the newest records when the backlog overflows and counts what it dropped", async () => {
-        await outbox.append(Array.from({ length: MAX_PENDING_DIAGNOSTICS + 3 }, (_, index) => record(index)))
-        const document = await outbox.read()
-        expect(document.records).toHaveLength(MAX_PENDING_DIAGNOSTICS)
-        expect(document.records[0].name).toBe("task.failure_3")
-        expect(document.dropped).toBe(3)
+    it("keeps 50 new records an hour and 200 a day, counting the rest in dline.dropped_records", async () => {
+        for (let hour = 0; hour < 5; hour++) {
+            const at = START + hour * HOUR
+            await outbox().append(
+                Array.from({ length: DIAGNOSTICS_PER_HOUR + 5 }, (_, index) => record(hour * 1_000 + index, at)),
+                at,
+            )
+        }
+        // A repeat of an admitted record still merges after the limit is reached.
+        await outbox().append([record(0, START + 4 * HOUR)], START + 4 * HOUR)
+
+        const document = await outbox().read()
+
+        expect(document.records).toHaveLength(DIAGNOSTICS_PER_DAY)
+        expect(document.dropped).toBe(4 * 5 + (DIAGNOSTICS_PER_HOUR + 5))
+        expect(document.records[0].occurrences).toBe(2)
+
+        now = START + 5 * HOUR
+        await worker().deliverOnce()
+        expect(sent[0].records).toHaveLength(MAX_DIAGNOSTICS_PER_REQUEST)
+        expect(sent[0].dropped).toBe(document.dropped)
     })
 
-    it("forgets every waiting record when cleared", async () => {
-        await outbox.append([record(1)])
-        responses.push(failure(500, "internal_error"))
-        await worker().deliverOnce()
-        await outbox.clear()
+    it("exchanges the token once after a 401 and stops when the fresh one is refused too", async () => {
+        const unauthorized: WireResponse = {
+            status: 401,
+            json: { ok: false, error: { code: "token_expired" } },
+            retryAfter: null,
+        }
+        replies.push(unauthorized, unauthorized)
+        await outbox().append([record(1)], now)
 
-        now += DIAGNOSTICS_RETRY_MS
         await worker().deliverOnce()
-        expect(sent).toHaveLength(1)
-        expect(await outbox.read()).toMatchObject({ records: [], dropped: 0 })
+        now += 60_000
+        await worker().deliverOnce()
+
+        expect(sent).toHaveLength(2)
+        expect((await outbox().read()).stop?.code).toBe("token_rejected")
     })
 })

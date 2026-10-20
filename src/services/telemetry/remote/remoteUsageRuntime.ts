@@ -7,10 +7,10 @@ import { SEALED_SHARD_SETTLE_MS, UsageObservationSpool } from "@/core/storage/te
 import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import type { UsageSettlementPort } from "@/core/task/telemetry/UsageSettlement"
 import { DeviceTokenBroker } from "./auth/DeviceTokenBroker"
-import { isAllowedUsageAttribute, type UsageAttributeKey } from "./contracts/wire"
+import { sanitizeUsageClient, type UsageClientWire } from "./contracts/usageBody"
 import { DlineOtelHttpClient } from "./transport/DlineOtelHttpClient"
 import { RemoteUsageCoordinator, USAGE_CYCLE_INTERVAL_MS } from "./usage/RemoteUsageCoordinator"
-import { type UsageAttributes, UsageDeliveryWorker } from "./usage/UsageDeliveryWorker"
+import { UsageDeliveryWorker } from "./usage/UsageDeliveryWorker"
 import type { RemoteUsageLog } from "./usage/usageCycleLog"
 
 /**
@@ -25,7 +25,8 @@ export interface RemoteUsageRuntimeOptions {
     readonly readPolicyInputs: () => Promise<LocalUsagePolicyInputs>
     readonly clientVersion: string
     readonly platform: string
-    readonly attributes: Readonly<Partial<Record<UsageAttributeKey, string | boolean | undefined>>>
+    /** The `client` section of every batch; a value the service would refuse is left out. */
+    readonly client: { readonly [K in keyof UsageClientWire]?: unknown }
     /** Service origin; defaults to `https://otel.dline.cc`. Loopback HTTP is allowed for the contract smoke. */
     readonly endpoint?: string
     readonly log?: RemoteUsageLog
@@ -47,6 +48,12 @@ export const remoteUsageSettlement: UsageSettlementPort = {
 /** Compose and start remote usage reporting for this extension host; a second call is ignored. */
 export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Promise<void> {
     if (coordinator) return
+    const client = sanitizeUsageClient(options.client)
+    if (!client) {
+        // The service matches its version list against `client.version`; without one no batch is valid.
+        options.log?.("warn", "[RemoteUsage] not started: the extension version is not a valid client version")
+        return
+    }
     const layout = resolveOtelStorageLayout(options.dataDir)
     // One identity per extension host: it names the observation shard and the sender lease owner.
     const ownerId = `${process.pid}-${randomUUID().slice(0, 8)}`
@@ -73,7 +80,7 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
         spool,
         tokens,
         transport,
-        attributes: allowedAttributes(options.attributes),
+        client,
         ownerId,
         batchSettleMs: USAGE_BATCH_SETTLE_MS,
     })
@@ -143,13 +150,4 @@ export async function stopRemoteUsage(): Promise<void> {
     coordinator = undefined
     tokenBroker = undefined
     await running?.dispose()
-}
-
-/** Drop any attribute the server would refuse, so one odd host value cannot reject every batch. */
-function allowedAttributes(attributes: RemoteUsageRuntimeOptions["attributes"]): UsageAttributes {
-    const allowed: Partial<Record<UsageAttributeKey, string | boolean>> = {}
-    for (const [key, value] of Object.entries(attributes) as [UsageAttributeKey, string | boolean | undefined][]) {
-        if (value !== undefined && isAllowedUsageAttribute(key, value)) allowed[key] = value
-    }
-    return allowed
 }

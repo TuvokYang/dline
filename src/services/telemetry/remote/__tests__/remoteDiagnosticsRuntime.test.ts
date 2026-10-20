@@ -3,11 +3,16 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { DiagnosticOutboxRepository } from "@/core/storage/telemetry-remote/DiagnosticOutboxRepository"
-import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
 import type { TelemetryProviderInput, TelemetryProviderRegistration } from "../../providers/capabilities"
 import type { TelemetrySettings } from "../../providers/ITelemetryProvider"
+import { encodeDiagnosticLogs } from "../diagnostics/diagnosticRecord"
 import { diagnosticsAllowed } from "../policy/hostDiagnosticsPolicy"
-import { refreshRemoteDiagnostics, startRemoteDiagnostics, stopRemoteDiagnostics } from "../remoteDiagnosticsRuntime"
+import {
+    diagnosticOutboxPath,
+    refreshRemoteDiagnostics,
+    startRemoteDiagnostics,
+    stopRemoteDiagnostics,
+} from "../remoteDiagnosticsRuntime"
 
 const HOST_ALL: TelemetrySettings = { hostEnabled: true, level: "all" }
 
@@ -32,6 +37,10 @@ describe("remote diagnostics runtime", () => {
         root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-diagnostics-runtime-"))
         allowed = true
         registration = undefined
+        start()
+    })
+
+    function start(): void {
         startRemoteDiagnostics({
             dataDir: path.join(root, "data"),
             clientVersion: "0.11.0",
@@ -44,7 +53,7 @@ describe("remote diagnostics runtime", () => {
             // A closed loopback port: nothing here may reach a real service.
             endpoint: "http://127.0.0.1:9",
         })
-    })
+    }
 
     afterEach(async () => {
         await stopRemoteDiagnostics()
@@ -52,8 +61,9 @@ describe("remote diagnostics runtime", () => {
     })
 
     function outbox(): DiagnosticOutboxRepository {
-        const layout = resolveOtelStorageLayout(path.join(root, "data"))
-        return new DiagnosticOutboxRepository(path.join(layout.remoteDir, "diagnostics", "outbox.json"))
+        return new DiagnosticOutboxRepository(diagnosticOutboxPath(path.join(root, "data")), {
+            encode: (records, dropped) => encodeDiagnosticLogs(records, { clientVersion: "0.11.0", platform: "linux" }, dropped),
+        })
     }
 
     function append(name: string, channel: "error" | "usage" = "error"): void {
@@ -64,7 +74,8 @@ describe("remote diagnostics runtime", () => {
             channel,
             severity: "error",
             name,
-            properties: { taskId: "t-1", status: 500 },
+            // Identity never leaves; older aliases travel under their catalog keys.
+            properties: { taskId: "t-1", error_status: 500, error_code: "E_UPSTREAM" },
             required: false,
         })
     }
@@ -79,7 +90,19 @@ describe("remote diagnostics runtime", () => {
         await registration?.base.forceFlush()
 
         const { records } = await outbox().read()
-        expect(records.map((record) => [record.name, record.attributes])).toEqual([["task.provider_api_error", { status: 500 }]])
+        expect(records.map((record) => [record.name, record.occurrences, record.attributes])).toEqual([
+            ["task.provider_api_error", 1, { "http.status": 500, "error.code": "E_UPSTREAM" }],
+        ])
+    })
+
+    it("merges repeats of one failure into a single counted record", async () => {
+        append("task.provider_api_error")
+        append("task.provider_api_error")
+        append("task.provider_api_error")
+        await registration?.base.forceFlush()
+
+        const { records } = await outbox().read()
+        expect(records.map((record) => [record.name, record.occurrences])).toEqual([["task.provider_api_error", 3]])
     })
 
     it("deletes what is waiting once error reporting is withdrawn, and gathers nothing afterwards", async () => {
@@ -94,4 +117,26 @@ describe("remote diagnostics runtime", () => {
 
         expect((await outbox().read()).records).toEqual([])
     })
+
+    it("removes the queue the previous build left, whose records the service no longer keeps", async () => {
+        await stopRemoteDiagnostics()
+        const legacy = path.join(path.dirname(diagnosticOutboxPath(path.join(root, "data"))), "outbox.json")
+        await fs.mkdir(path.dirname(legacy), { recursive: true })
+        await fs.writeFile(legacy, JSON.stringify({ schema_version: 1, records: [], dropped: 0 }))
+
+        start()
+
+        const deadline = Date.now() + 2_000
+        while (await fileExists(legacy)) {
+            if (Date.now() > deadline) throw new Error("the v1 queue was not removed")
+            await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+    })
 })
+
+async function fileExists(filePath: string): Promise<boolean> {
+    return fs.access(filePath).then(
+        () => true,
+        () => false,
+    )
+}

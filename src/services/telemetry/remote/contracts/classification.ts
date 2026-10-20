@@ -1,4 +1,4 @@
-import { type DeviceGrant, parseDeviceGrant, parseServiceError, parseUsageAcknowledgement } from "./wire"
+import { type DeliveryDisposition, type DeviceGrant, parseAcknowledgement, parseDeviceGrant, parseServiceError } from "./wire"
 
 /**
  * What the delivery layer needs from an HTTP response.
@@ -18,75 +18,58 @@ export type StopScope = "profile" | "all"
 
 /** Code used when the edge, not the service, refused the request. */
 export const EDGE_BLOCKED = "edge_blocked"
+/** Code used for an edge 429, which carries neither a body nor a `Retry-After`. */
+export const EDGE_RATE_LIMITED = "edge_rate_limited"
 const IP_BLOCKED = "ip_blocked"
 
-export type UsageOutcome =
-    /** The server holds the batch: drop the inflight. */
-    | { readonly kind: "acknowledged"; readonly duplicate: boolean }
+export type DeliveryOutcome =
+    /**
+     * The server holds the batch, recorded it as a duplicate, or ignores this
+     * client version: drop it and wait for the gate the server named.
+     */
+    | { readonly kind: "acknowledged"; readonly disposition: DeliveryDisposition; readonly nextEligibleAt?: number }
     /** The server may hold the batch: resend the same request ID with the same bytes. */
     | { readonly kind: "replay"; readonly retryAfterMs?: number }
-    /** The token is no longer accepted: exchange again, then replay once. */
+    /** The token is no longer accepted: exchange again, then send the same bytes once more. */
     | { readonly kind: "refresh_token" }
-    /** The server stored nothing and asks to wait: merge the batch into a later window under a new request ID. */
-    | { readonly kind: "defer"; readonly code: string; readonly retryAfterMs?: number }
+    /**
+     * A 429 or a pause: the server stored nothing. Send nothing on this channel
+     * until the wait ends, then rebuild the batch under a new request ID.
+     */
+    | { readonly kind: "wait"; readonly code: string; readonly retryAfterMs?: number }
+    /** 413: the server stored nothing; usage drops the batch, logs split it in half. */
+    | { readonly kind: "too_large" }
     /** The server will never accept this batch. */
     | { readonly kind: "discard"; readonly code: string }
     | { readonly kind: "stop"; readonly scope: StopScope; readonly code: string }
 
 /**
- * Classify a `/v1/usage` response.
+ * Classify a `/v1/usage` or `/v1/logs` response (otel contract v2 §1.5).
  *
  * The server checks idempotency before anything else, so replaying identical
- * bytes is always safe; merging is only safe when the server certainly stored
- * nothing. A 5xx or an unconfirmed 200 may follow a commit, so it replays
- * rather than merges, which would count the same usage twice.
+ * bytes is always safe; rebuilding a batch is only safe when the server
+ * certainly stored nothing. A 5xx or an unconfirmed 200 may follow a commit, so
+ * it replays rather than rebuilds, which would count the same usage twice.
  */
-export function classifyUsageResponse(response: WireResponse): UsageOutcome {
+export function classifyDeliveryResponse(response: WireResponse): DeliveryOutcome {
     const { status } = response
     if (status === 200) {
-        const acknowledgement = parseUsageAcknowledgement(response.json)
-        return acknowledgement ? { kind: "acknowledged", duplicate: acknowledgement.duplicate } : { kind: "replay" }
+        const acknowledgement = parseAcknowledgement(response.json)
+        if (!acknowledgement) return { kind: "replay" }
+        return {
+            kind: "acknowledged",
+            disposition: acknowledgement.disposition,
+            ...(acknowledgement.nextEligibleAt === undefined ? {} : { nextEligibleAt: acknowledgement.nextEligibleAt }),
+        }
     }
     const error = parseServiceError(response.json, response.retryAfter)
     const delay = error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }
     if (status === 401) return { kind: "refresh_token" }
     if (status === 403) return stopFor(response, error.code)
-    if (status === 429) return { kind: "defer", code: error.code ?? "rate_limited", ...delay }
+    if (status === 429) return { kind: "wait", code: error.code ?? EDGE_RATE_LIMITED, ...delay }
+    if (status === 413) return { kind: "too_large" }
     if (status === 404 || status === 405) return { kind: "stop", scope: "profile", code: error.code ?? "endpoint_unavailable" }
     if (status === 408 || status >= 500) return { kind: "replay", ...delay }
-    if (status >= 400) return { kind: "discard", code: error.code ?? `http_${status}` }
-    return { kind: "replay", ...delay }
-}
-
-export type DiagnosticOutcome =
-    /** The server holds the batch, possibly minus records it rejected: drop the inflight. */
-    | { readonly kind: "acknowledged" }
-    /** The server may not hold the batch: send the same request ID with the same bytes later. */
-    | { readonly kind: "replay"; readonly retryAfterMs?: number }
-    | { readonly kind: "refresh_token" }
-    /** The server will never accept this batch. */
-    | { readonly kind: "discard"; readonly code: string }
-    | { readonly kind: "stop"; readonly scope: StopScope; readonly code: string }
-
-/**
- * Classify a `/v1/logs` response.
- *
- * Diagnostics are not counted, so a rate limit simply waits and sends the same
- * bytes again; nothing is merged. A 200 that rejected some records is still an
- * acknowledgement: resending would be refused the same way.
- */
-export function classifyDiagnosticResponse(response: WireResponse): DiagnosticOutcome {
-    const { status } = response
-    if (status === 200) {
-        const acknowledged = (response.json as { ok?: unknown } | undefined)?.ok === true
-        return acknowledged ? { kind: "acknowledged" } : { kind: "replay" }
-    }
-    const error = parseServiceError(response.json, response.retryAfter)
-    const delay = error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }
-    if (status === 401) return { kind: "refresh_token" }
-    if (status === 403) return stopFor(response, error.code)
-    if (status === 429 || status === 408 || status >= 500) return { kind: "replay", ...delay }
-    if (status === 404 || status === 405) return { kind: "stop", scope: "profile", code: error.code ?? "endpoint_unavailable" }
     if (status >= 400) return { kind: "discard", code: error.code ?? `http_${status}` }
     return { kind: "replay", ...delay }
 }

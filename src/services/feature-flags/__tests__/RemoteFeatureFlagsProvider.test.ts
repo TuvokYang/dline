@@ -111,9 +111,9 @@ describe("RemoteFeatureFlagsProvider", () => {
         expect(provider.resolveFlags(["account"])).toEqual({})
     })
 
-    it("polls every 30 minutes, and every minute in a development build", () => {
-        expect(rolloutPollIntervalMs(false)).toBe(1_800_000)
-        expect(rolloutPollIntervalMs(true)).toBe(60_000)
+    it("polls every hour, and every 5 minutes in a development build", () => {
+        expect(rolloutPollIntervalMs(false)).toBe(3_600_000)
+        expect(rolloutPollIntervalMs(true)).toBe(300_000)
     })
 
     it("applies the cached answers on start and asks again one interval after they were fetched", async () => {

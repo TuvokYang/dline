@@ -40,7 +40,7 @@ The separate `account` channel emits an `account.identified` record containing t
 - The default network sink is the local OTLP/HTTP endpoint `http://127.0.0.1:4318`.
 - The default loopback sink accepts `usage`, `account`, and `runtime`; account records remain separate from ordinary records.
 - An organization-configured OTLP endpoint currently accepts consented `usage` Event and Metric signals only. It is not an account, error/runtime, or Trace sink.
-- While usage reporting is on (the default), aggregated per-minute usage counts are sent to `https://otel.dline.cc` as described in the usage delivery section below. No other channel is sent there, and no other destination falls back to it.
+- While usage reporting is on (the default), aggregated usage counts are sent to `https://otel.dline.cc` as described in the usage delivery section below, and while error reporting is on, aggregated error and runtime diagnostics as described in the diagnostics delivery section. No other channel is sent there, and no other destination falls back to it.
 
 <Aside type="caution">
 A non-loopback endpoint sends data outside your machine. Review its retention, access-control, and legal policies before enabling reporting.
@@ -67,7 +67,7 @@ All journal files are below the Dline data root in `telemetry/sessions/`.
 
 Current cleanup is file-based, not session-based. When the error-reporting lifecycle starts, it scans every `.jsonl` in the shared directory, protects only the active unprefixed runtime file, keeps up to eight other eligible files, and removes eligible files older than 3 days. Prefixed files are counted independently and usage-only sessions do not start this cleanup. Therefore canonical journals do not currently have a reliable global cross-session byte ceiling.
 
-Exporter queues remain bounded in memory when no Collector exists, and the OTLP exporters do not create a disk retry spool. Only `otel.dline.cc` usage delivery keeps a bounded disk queue, described below.
+Exporter queues remain bounded in memory when no Collector exists, and the OTLP exporters do not create a disk retry spool. Only usage and diagnostics delivery to `otel.dline.cc` keep bounded disk queues, described below.
 
 Enabling error reporting also creates an owner-only legacy pairing credential in local secret storage. No current transport sends or consumes it. Planned Issue diagnostics must migrate or discard it and cannot treat it as Issue authorization without a new explicit user action.
 
@@ -109,20 +109,18 @@ Dline sends usage counts to `https://otel.dline.cc` only while every condition h
 
 ### What is sent
 
-Each settled provider request is counted once, including cancelled and failed requests, and each start of the extension is counted once. Dline groups the counts into sealed 60-second windows and sends at most one batch per minute; a batch normally holds one window and holds up to ten only after time offline or a restart. Nothing is sent for a minute without requests or extension starts.
+Each settled provider request is counted once, including cancelled and failed requests, and each start of the extension is counted once. Dline adds the counts up per minute and records nothing for a minute without requests or extension starts. A batch covers up to 60 such minutes, which need not be contiguous, and is one JSON document (`schema_version: 2`) of at most 32 KiB:
 
-| Metric | Meaning |
+| Section | Content |
 |---|---|
-| `dline.usage.session.started` | Number of extension starts |
-| `dline.usage.requests.<purpose>.<outcome>` | Number of requests |
-| `dline.usage.tokens.input.<purpose>`, `.output.<purpose>`, `.cache_read.<purpose>`, `.cache_write.<purpose>` | Token totals reported by the provider |
-| `dline.usage.request_duration_ms.<purpose>` | Request duration as count, sum, minimum, and maximum |
-| `dline.usage.model.<provider>.<counter>.<model>` | Per provider and model: `requests`, `requests_failed`, `requests_cancelled`, and the token totals `tokens_input`, `tokens_output`, `tokens_cache_read`, `tokens_cache_write`, and `tokens_reasoning` |
-| `dline.usage.model.<provider>.<timing>.<model>` | Per provider and model: `request_duration_ms`, time to first output `ttft_ms`, and output time `generation_ms`, each as count, sum, minimum, and maximum plus a histogram with bounds of 250 ms to 120 s |
-| `dline.usage.errors.<provider>.<class>` | Failed requests by class: `rate_limited`, `overloaded`, `timeout`, `auth`, `network`, `invalid_request`, or `other` |
-| `dline.usage.retries.<provider>`, `dline.usage.retry_wait_ms.<provider>` | Automatic retries and the time waited before them |
+| `client` | Client version, operating-system type, architecture, editor version, editor family (`vscode`, `cursor`, `vscodium`, `windsurf`, or `other`), release channel (`stable` or `insiders`), and whether this is a development build |
+| `window` | Start and end of the minutes covered, the number of minutes with activity, and how many minutes were dropped locally before this batch |
+| `sessions_started` | Number of extension starts |
+| `purposes` | Per purpose (`task`, `subagent`, `compaction`, or `other`): completed, cancelled, and failed requests; fresh input, output, cache-read, and cache-write tokens; request duration as count, sum, minimum, and maximum |
+| `models` | Per provider and model: requests (total, failed, cancelled); token totals including reasoning tokens; request duration, time to first output, and output time as histograms with bounds of 250 ms to 120 s (the last two for streaming requests only); and the busiest minute of the batch by requests and by output tokens |
+| `providers` | Only providers with failed or retried requests: failures by class (`rate_limited`, `overloaded`, `timeout`, `auth`, `network`, `invalid_request`, or `other`), automatic retries, and the time waited before them |
 
-`<purpose>` is `task`, `subagent`, `compaction`, or `other`; `<outcome>` is `completed`, `cancelled`, or `failed`. `<provider>` is the Profile's provider ID and `<model>` the model ID, lowercased with any other character than letters, digits, `_`, `.`, and `-` replaced by `_`. A custom model is reported as `_custom` and its ID is never sent: a model is custom when the provider runs on your own machine or network (Ollama, LM Studio, LiteLLM), when the Profile uses an endpoint other than the provider's default, or when the model is not in Dline's built-in model catalog (a model you added yourself counts as not listed). Timings describe the last attempt of a request, after any retries. When one batch would exceed the service's 128 metric names, the least used models are summed under `_other`. Each batch carries only `client_version`, `platform`, `architecture`, `vscode_version`, and `is_dev`.
+A provider is named by the Profile's provider ID and a model by its model ID, lowercased with any other character than letters, digits, `_`, `.`, and `-` replaced by `_`. A custom model is reported as `_custom` and its ID is never sent: a model is custom when the provider runs on your own machine or network (Ollama, LM Studio, LiteLLM), when the Profile uses an endpoint other than the provider's default, or when the model is not in Dline's built-in model catalog (a model you added yourself counts as not listed). Timings describe the last attempt of a request, after any retries. A batch lists at most 8 models and 8 providers: beyond that the seven with the most requests (models) or the most failures and retries (providers) are kept and the rest are summed under `_other`, so the totals do not change.
 
 API format, Task or workspace identity, `distinct_id`, account ID, prompts, responses, file contents, paths, commands, and error text are not sent. In the current build this delivery is a dedicated path that can carry only this catalog; moving it behind the canonical admission boundary remains part of the target above.
 
@@ -130,7 +128,16 @@ API format, Task or workspace identity, `distinct_id`, account ID, prompts, resp
 
 On the first send, Dline creates a random device secret in `secrets/otel/device.json` below the Dline data root, with owner-only permissions, and exchanges it for a short-lived access token. The service sees a pseudonymous device principal shared by every Dline window that uses the same data root.
 
-Requests go only to the fixed HTTPS origin through Dline's proxy-aware transport, with redirects rejected and a bounded timeout. The `DLINE_OTEL_ENDPOINT` environment variable accepts only a loopback origin for local contract testing; any other value is ignored.
+Requests go only to the fixed HTTPS origin through Dline's proxy-aware transport, with redirects rejected and a bounded timeout. Every request names telemetry contract version 2 in the `x-dline-contract` header. The `DLINE_OTEL_ENDPOINT` environment variable accepts only a loopback origin for local contract testing; any other value is ignored.
+
+### Send timing and waits
+
+Usage and diagnostics follow the same rules, each on its own and remembered across windows and restarts:
+
+- A new batch starts at most every 10 minutes for usage and every 5 minutes for diagnostics. When the service names a later time for the next batch, Dline waits for it, up to 7 days.
+- When the service answers with a rate limit or a telemetry pause (HTTP 429), that channel sends nothing, retries included, until the wait ends: the time the service asks for, otherwise one minute doubling with each further limit up to 30 minutes, plus up to 10% random spread, never longer than 7 days. The waiting batch rejoins the pending data and later travels under a new request ID. The other channel keeps sending.
+- A batch whose outcome is unknown (a timeout, a network error, HTTP 408 or 5xx) is sent again with the same request ID and bytes, so the service stores it once. The wait starts at 30 seconds and doubles up to 30 minutes; the batch is abandoned after 12 attempts or 24 hours.
+- A batch the service rejects as invalid (HTTP 422) is dropped and never retried, and so is a usage batch that is too large (HTTP 413). A batch from a client version the service no longer accepts is acknowledged without being stored and is not sent again.
 
 ### Local queue
 
@@ -139,10 +146,10 @@ The queue lives in `telemetry/remote/usage/` below the Dline data root:
 | Artifact | Purpose |
 |---|---|
 | `observations/` | Per-process files that record settled requests before they are grouped |
-| `outbox.json` | The sender lease, the next allowed send time, pending minutes, and the request awaiting an answer |
+| `outbox.json` | The sender lease, the send timing and wait state, pending minutes, and the request awaiting an answer |
 | `inflight/` | The exact bytes of a request whose outcome is unknown |
 
-Only one Dline window sends at a time. At most eleven pending minutes are kept, and older minutes are dropped. A request whose outcome is unknown is replayed with the same request ID and bytes, and it is abandoned after 12 attempts or 24 hours.
+Only one Dline window sends at a time. Every batch is checked locally against the same rules the service applies before it is stored; a batch that fails is dropped. At most 60 pending minutes are kept and older minutes are dropped. Dropped minutes are reported as a count in the next batch.
 
 ### Turning usage delivery off
 
@@ -169,22 +176,26 @@ Only log records are sent, no metrics or traces. A record is created for one of 
 | `task.provider_api_error`, `task.browser_error`, `user.extension_storage_error`, `workspace.init_error` | error |
 | `user.auth_failed`, `task.diff_edit_failed`, `task.terminal_output_failure`, `task.terminal_hang`, `task.mention_failed` | warning |
 
-Each record carries the event name, its channel (`error` or `runtime`), its severity, a timestamp, and at most 32 attributes. An attribute is kept only when its value is a number, a boolean, or a short token of letters, digits, `_`, `.`, `+`, and `-` (at most 64 characters), and its name does not refer to free text, a location, or an identity, such as a message, stack, path, URL, command, Task, workspace, session, device, account, or credential. The attributes the service reads an error by (`error.class`, `error.code`, `error.type`, `http.status`, `provider`, `model`, `model.custom`, `api.format`, `retry.attempt`, `retryable`, `phase`, and `duration_ms`) are kept ahead of the others. A provider error names its model the same way as usage delivery, so a custom model appears only as `_custom`. The request resource names only the client version, the operating-system type, the release channel (`stable` or `insiders`), and the editor family (`vscode`, `cursor`, `vscodium`, `windsurf`, or `other`).
+Events with the same name, severity, error fingerprint, error class, provider, and model are merged into one record while they wait. A record carries the event name, its channel (`error` or `runtime`), its severity, the time of the first occurrence, the number of occurrences (`dline.occurrences`), and the time of the last one (`dline.last_seen_ms`).
+
+Its other attributes come only from the service's catalog: `error.class`, `error.code`, `error.type`, `error.fingerprint` (16 hexadecimal digits), `http.status`, `provider`, `model`, `model.custom`, `api.format`, `phase` (`connect`, `stream`, `parse`, `tool`, or `other`), `retry.attempt`, `retryable`, and `duration_ms`. A text value is kept only as a short token of letters, digits, `_`, `.`, `+`, and `-` (at most 64 characters), and a number only as a non-negative integer. Older attribute names still used inside Dline are read into these keys; every other attribute is left out. A provider error names its model the same way as usage delivery, so a custom model appears only as `_custom`.
+
+The request resource names only the client version, the operating-system type, the release channel (`stable` or `insiders`), the editor family (`vscode`, `cursor`, `vscodium`, `windsurf`, or `other`), and the number of records dropped locally since the previous request (`dline.dropped_records`).
 
 Error messages, stack traces, prompts, responses, file contents, paths, URLs, commands, Task or workspace identity, `distinct_id`, and account ID are not sent.
 
 ### Device identity, queue, and limits
 
-Diagnostics use the same pseudonymous device secret as usage delivery but exchange it for their own `production` access token, so each consent controls only its own token. The queue is `telemetry/remote/diagnostics/outbox.json` below the Dline data root and is shared by every Dline window:
+Diagnostics use the same pseudonymous device secret as usage delivery but exchange it for their own `production` access token, so each consent controls only its own token. The queue is `telemetry/remote/diagnostics/outbox-v2.json` below the Dline data root and is shared by every Dline window; the `outbox.json` queue of earlier builds is deleted, because the service no longer keeps its attributes:
 
-- Windows write gathered records to the queue every 5 seconds, and one window at a time sends a batch about every 20 seconds.
-- A batch holds at most 256 records and stays well below 512 KiB. At most 2,000 records wait; the oldest are dropped first.
-- A batch whose outcome is unknown is sent again with the same request ID and bytes, so the service stores it once. A rate limit or server error waits as long as the service asks, or one minute.
+- Windows write gathered records to the queue every 5 seconds. One window at a time checks the queue about every 20 seconds and starts a new batch at most every 5 minutes, as described in **Send timing and waits** above.
+- One device keeps at most 50 new records per UTC hour and 200 per UTC day; a repeat of a kept record still merges into it. At most 1,000 records wait. Records beyond these limits are dropped and counted in `dline.dropped_records`.
+- A request holds at most 100 records and at most 128 KiB. When the service answers that a request is too large (HTTP 413), its first half is sent again at once under a new request ID and the rest returns to the queue. Records of a request rejected as invalid (HTTP 422) are dropped and counted.
 - When the service refuses the diagnostics stream, every window stops sending for 30 minutes before trying again.
 
 ### Turning error diagnostics off
 
-Unchecking **Allow error reporting**, a host telemetry level of `off`, or an organization policy that disables error reporting deletes the unsent diagnostics queue and the local `production` access token. Usage delivery and its token are unaffected, and the device secret is kept. Data already accepted by the service is not deleted.
+Unchecking **Allow error reporting**, a host telemetry level of `off`, or an organization policy that disables error reporting deletes the unsent diagnostics and the local `production` access token. The hourly and daily limits and any wait the service asked for stay in effect, so turning reporting off and on again does not send sooner. Usage delivery and its token are unaffected, and the device secret is kept. Data already accepted by the service is not deleted.
 
 ### Planned profiles
 

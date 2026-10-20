@@ -11,6 +11,7 @@ import { SERVER_STOP_RETRY_INTERVAL_MS } from "../../policy/usagePolicy"
 import { RemoteUsageCoordinator, type UsageScheduler } from "../RemoteUsageCoordinator"
 import type { UsageCycleResult } from "../UsageDeliveryWorker"
 import type { RemoteUsageLogLevel } from "../usageCycleLog"
+import type { UsageTally } from "../usageTally"
 
 const ALLOWED: LocalUsagePolicyInputs = {
     usageConsent: "enabled",
@@ -120,7 +121,7 @@ describe("RemoteUsageCoordinator", () => {
         })
     }
 
-    async function spooled(): Promise<{ id: string; policyEpoch: number; counters: Record<string, number> }[]> {
+    async function spooled(): Promise<{ id: string; policyEpoch: number; tally: UsageTally }[]> {
         const names = await fs.readdir(layout.usageObservationsDir).catch(() => [] as string[])
         const lines: string[] = []
         for (const name of names)
@@ -159,23 +160,19 @@ describe("RemoteUsageCoordinator", () => {
         await usage.dispose()
     })
 
-    it("projects a settlement onto the catalog before it reaches the shard", async () => {
+    it("projects a settlement onto a v2 tally before it reaches the shard", async () => {
         const usage = coordinator()
         await usage.start()
 
         usage.record(settlement("obs-1"))
         await usage.dispose()
 
-        expect(await spooled()).toEqual([
-            expect.objectContaining({
-                id: "obs-1",
-                policyEpoch: now,
-                counters: expect.objectContaining({
-                    "dline.usage.requests.task.completed": 1,
-                    "dline.usage.tokens.input.task": 120,
-                }),
-            }),
-        ])
+        const [entry] = await spooled()
+        expect(entry).toMatchObject({ id: "obs-1", policyEpoch: now })
+        expect(entry.tally.purposes.task).toMatchObject({
+            requests: { completed: 1, cancelled: 0, failed: 0 },
+            tokens: { input: 120 },
+        })
     })
 
     it("counts one session start, and none while reporting is not allowed", async () => {
@@ -187,7 +184,7 @@ describe("RemoteUsageCoordinator", () => {
         expect(await spooled()).toEqual([
             expect.objectContaining({
                 policyEpoch: now,
-                counters: { "dline.usage.session.started": 1 },
+                tally: { sessions_started: 1, purposes: {}, models: [], providers: [] },
             }),
         ])
 
@@ -318,7 +315,7 @@ describe("RemoteUsageCoordinator", () => {
         const cycles: UsageCycleResult[] = [
             { kind: "idle" },
             { kind: "idle" },
-            { kind: "delivered", requestId: "11111111-aaaa", duplicate: false },
+            { kind: "delivered", requestId: "11111111-aaaa", disposition: "accepted" },
             { kind: "idle" },
             { kind: "waiting", reason: "enrollment_backoff", retryAt: now + 1_000 },
             { kind: "waiting", reason: "enrollment_backoff", retryAt: now + 2_000 },

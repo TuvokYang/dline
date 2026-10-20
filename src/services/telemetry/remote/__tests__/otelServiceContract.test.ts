@@ -8,12 +8,12 @@ import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelSt
 import { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import { DeviceTokenBroker } from "../auth/DeviceTokenBroker"
-import { classifyUsageResponse, type WireResponse } from "../contracts/classification"
-import { USAGE_WINDOW_MS, type UsageAggregateWire } from "../contracts/wire"
+import { classifyDeliveryResponse, type WireResponse } from "../contracts/classification"
+import { USAGE_MINUTE_MS, type UsageBodyWire } from "../contracts/usageBody"
 import { DlineOtelHttpClient, type UsageDelivery, type UsageTransport } from "../transport/DlineOtelHttpClient"
 import { UsageDeliveryWorker } from "../usage/UsageDeliveryWorker"
-import { projectUsageSettlement } from "../usage/usageCatalog"
-import { windowStartOf } from "../usage/usageWindow"
+import { minuteStartOf } from "../usage/usageBatch"
+import { projectUsageSettlement } from "../usage/usageTally"
 import { OtelServiceMock } from "./support/OtelServiceMock"
 
 /**
@@ -23,7 +23,7 @@ import { OtelServiceMock } from "./support/OtelServiceMock"
  * that origin as well. Every run enrolls a fresh device from a temporary data root.
  */
 const liveEndpoint = process.env.DLINE_OTEL_LIVE_ENDPOINT
-const MINUTE = USAGE_WINDOW_MS
+const MINUTE = USAGE_MINUTE_MS
 const SETTLE = 20_000
 
 class RecordingTransport implements UsageTransport {
@@ -63,10 +63,10 @@ describe("telemetry service contract", () => {
 
 /**
  * Enroll, deliver one batch through the real worker and transport, then probe
- * idempotency, request ID conflicts, the usage interval and token rejection.
+ * idempotency, request ID conflicts, the server gate and token rejection.
  * Returns the batch the client sent.
  */
-async function runContractScenario(endpoint: string): Promise<UsageAggregateWire> {
+async function runContractScenario(endpoint: string): Promise<UsageBodyWire> {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-otel-contract-"))
     cleanups.push(() => fs.rm(root, { recursive: true, force: true }))
     const layout = resolveOtelStorageLayout(root)
@@ -75,17 +75,17 @@ async function runContractScenario(endpoint: string): Promise<UsageAggregateWire
     const tokens = new DeviceTokenBroker({
         repository: new DeviceCredentialRepository(layout),
         transport: client,
-        clientVersion: "0.11.0",
+        clientVersion: "0.11.1",
         platform: process.platform,
     })
-    // The next minute boundary keeps the fake clock ahead of file times yet well inside the service's clock skew.
-    const start = windowStartOf(Date.now()) + MINUTE
+    // The next minute boundary keeps the fake clock ahead of file times yet close to the service's clock.
+    const start = minuteStartOf(Date.now()) + MINUTE
     let now = start + 1_000
     await new UsageObservationSpool(layout, "contract-observer").append({
         id: randomUUID(),
         receivedAt: now,
         policyEpoch: 1,
-        ...projectUsageSettlement({
+        tally: projectUsageSettlement({
             observationId: "contract",
             purpose: "task",
             outcome: "completed",
@@ -101,7 +101,7 @@ async function runContractScenario(endpoint: string): Promise<UsageAggregateWire
         spool: new UsageObservationSpool(layout, "contract-sender"),
         tokens,
         transport,
-        attributes: { client_version: "0.11.0", platform: process.platform, architecture: process.arch, is_dev: false },
+        client: { version: "0.11.1", platform: process.platform, architecture: process.arch, is_dev: false },
         ownerId: "contract-sender",
         batchSettleMs: SETTLE,
         clock: () => now,
@@ -112,30 +112,32 @@ async function runContractScenario(endpoint: string): Promise<UsageAggregateWire
     now = start + MINUTE + SETTLE
     const delivered = await worker.runCycle(1)
 
-    expect(delivered).toMatchObject({ kind: "delivered", duplicate: false })
+    expect(delivered).toMatchObject({ kind: "delivered", disposition: "accepted" })
     expect(transport.deliveries).toHaveLength(1)
     const first = transport.deliveries[0]
-    const sent = JSON.parse(new TextDecoder().decode(first.body)) as UsageAggregateWire
+    const sent = JSON.parse(new TextDecoder().decode(first.body)) as UsageBodyWire
 
     // The same request ID with the same bytes is acknowledged as a duplicate, not counted twice.
-    expect(classifyUsageResponse(await client.sendUsage(first))).toEqual({ kind: "acknowledged", duplicate: true })
+    const duplicate = classifyDeliveryResponse(await client.sendUsage(first))
+    expect(duplicate).toMatchObject({ kind: "acknowledged", disposition: "duplicate" })
+    expect(duplicate.kind === "acknowledged" ? duplicate.nextEligibleAt : undefined).toBeGreaterThan(0)
 
     // The same request ID with other bytes is a conflict the client must never retry.
-    const altered = encode({ ...sent, counters: { ...sent.counters, "dline.usage.requests.task.completed": 2 } })
-    expect(classifyUsageResponse(await client.sendUsage({ ...first, body: altered }))).toEqual({
+    const altered = encode({ ...sent, sessions_started: sent.sessions_started + 1 })
+    expect(classifyDeliveryResponse(await client.sendUsage({ ...first, body: altered }))).toEqual({
         kind: "discard",
         code: "request_id_conflict",
     })
 
-    // A new batch within 60 seconds is refused before anything is stored, with a retry delay.
-    const next = encode({ ...sent, window_started_at: start + MINUTE, window_ended_at: start + 2 * MINUTE })
-    const gated = classifyUsageResponse(await client.sendUsage({ ...first, requestId: randomUUID(), body: next }))
-    expect(gated).toMatchObject({ kind: "defer", code: "usage_interval_not_elapsed" })
-    expect(gated.kind === "defer" ? gated.retryAfterMs : undefined).toBeGreaterThan(0)
+    // A new batch before the gate the service named is refused before anything is stored, with a wait.
+    const next = encode({ ...sent, window: { ...sent.window, started_at: start + MINUTE, ended_at: start + 2 * MINUTE } })
+    const gated = classifyDeliveryResponse(await client.sendUsage({ ...first, requestId: randomUUID(), body: next }))
+    expect(gated).toMatchObject({ kind: "wait", code: "rate_limited" })
+    expect(gated.kind === "wait" ? gated.retryAfterMs : undefined).toBeGreaterThan(0)
 
     // A token the service never issued is answered with 401, which the client turns into one re-exchange.
     const forged = await client.sendUsage({ ...first, accessToken: `${first.accessToken.slice(0, -4)}AAAA` })
-    expect(classifyUsageResponse(forged)).toEqual({ kind: "refresh_token" })
+    expect(classifyDeliveryResponse(forged)).toEqual({ kind: "refresh_token" })
     return sent
 }
 

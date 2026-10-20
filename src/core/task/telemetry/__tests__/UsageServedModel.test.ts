@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest"
 import { isCustomModel, type ModelOriginFacts } from "@/core/api/model-origin"
-import { projectUsageSettlement } from "@/services/telemetry/remote/usage/usageCatalog"
-import { buildUsageAggregate } from "@/services/telemetry/remote/usage/usageWindow"
+import type { UsageBodyWire } from "@/services/telemetry/remote/contracts/usageBody"
+import { buildUsageBody } from "@/services/telemetry/remote/usage/usageBatch"
+import { projectUsageSettlement } from "@/services/telemetry/remote/usage/usageTally"
 import { servedModelOf } from "../UsageServedModel"
 import type { UsageSettlement } from "../UsageSettlement"
 
@@ -16,7 +17,7 @@ function handlerFor(facts: ModelOriginFacts) {
 }
 
 /** The body the service would receive for one request served by this handler. */
-function sentBody(facts: ModelOriginFacts): string {
+function sentBody(facts: ModelOriginFacts): UsageBodyWire {
     const servedBy = servedModelOf(handlerFor(facts))
     const settlement: UsageSettlement = {
         observationId: "o",
@@ -30,8 +31,10 @@ function sentBody(facts: ModelOriginFacts): string {
         streamTiming: { ttftMs: 200, generationMs: 500 },
         servedBy,
     }
-    const aggregate = buildUsageAggregate([{ startedAt: 1_900_000_020_000, ...projectUsageSettlement(settlement) }], {})
-    return JSON.stringify(aggregate)
+    const minute = { startedAt: 1_900_000_020_000, tally: projectUsageSettlement(settlement) }
+    const body = buildUsageBody([minute], { version: "0.11.1" }, 0)
+    if (!body) throw new Error("expected a usage body")
+    return body
 }
 
 describe("servedModelOf", () => {
@@ -55,8 +58,10 @@ describe("servedModelOf", () => {
     ])("reports %s only as _custom, so its ID is nowhere in the batch", (_case, facts) => {
         const body = sentBody(facts)
 
-        expect(body).not.toContain("acme-private-7b")
-        expect(body).toContain(`dline.usage.model.${facts.providerId}.requests._custom`)
+        expect(JSON.stringify(body).includes("acme-private-7b")).toBe(false)
+        expect(body.models.map(({ provider, model }) => ({ provider, model }))).toEqual([
+            { provider: facts.providerId, model: "_custom" },
+        ])
     })
 
     it("reports a built-in catalog model on the provider's own endpoint by its ID", () => {
@@ -69,7 +74,11 @@ describe("servedModelOf", () => {
         }
 
         expect(servedModelOf(handlerFor(facts))).toEqual({ provider: "anthropic", model: "claude-sonnet-4.5" })
-        expect(sentBody(facts)).toContain("dline.usage.model.anthropic.requests.claude-sonnet-4.5")
+        expect(sentBody(facts).models[0]).toMatchObject({
+            provider: "anthropic",
+            model: "claude-sonnet-4.5",
+            requests: { total: 1 },
+        })
     })
 
     it("treats a handler that cannot classify its model as serving the user's own", () => {

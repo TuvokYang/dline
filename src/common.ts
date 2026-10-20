@@ -26,7 +26,7 @@ import { isTelemetryDevelopmentMode } from "./services/telemetry/development-mod
 import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-recorder"
 import { PerfDomain } from "./services/telemetry/instrumentation/perf-domains"
 import { PostHogClientProvider } from "./services/telemetry/providers/posthog/PostHogClientProvider"
-import { hostEditorOf, releaseChannelOf } from "./services/telemetry/remote/diagnostics/diagnosticRecord"
+import { hostEditorOf, releaseChannelOf } from "./services/telemetry/remote/clientIdentity"
 import { HostDiagnosticsPolicy } from "./services/telemetry/remote/policy/hostDiagnosticsPolicy"
 import { readHostUsagePolicyInputs } from "./services/telemetry/remote/policy/hostUsagePolicyInputs"
 import {
@@ -472,11 +472,13 @@ async function startRemoteUsageReporting(dataDir: string): Promise<void> {
         readPolicyInputs: readHostUsagePolicyInputs,
         clientVersion: ExtensionRegistryInfo.version,
         platform: process.platform,
-        attributes: {
-            client_version: ExtensionRegistryInfo.version,
+        client: {
+            version: ExtensionRegistryInfo.version,
             platform: process.platform,
             architecture: process.arch,
-            vscode_version: host?.version,
+            host_version: host?.version,
+            host_editor: hostEditorOf(host?.platform),
+            channel: releaseChannelOf(ExtensionRegistryInfo.name),
             is_dev: isTelemetryDevelopmentMode(),
         },
         endpoint,

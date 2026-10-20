@@ -6,8 +6,8 @@ import type { UsageOutboxRepository } from "@/core/storage/telemetry-remote/Usag
 import type { UsageSettlement, UsageSettlementPort } from "@/core/task/telemetry/UsageSettlement"
 import { describeUsagePolicyDecision, type UsagePolicyRecord } from "../policy/usagePolicy"
 import type { UsageCycleResult, UsageDeliveryWorker } from "./UsageDeliveryWorker"
-import { projectUsageSettlement, sessionStartedObservation, type UsageObservation } from "./usageCatalog"
 import { describeUsageCycle, type RemoteUsageLog, type RemoteUsageLogLevel } from "./usageCycleLog"
+import { projectUsageSettlement, sessionStartedTally, type UsageTally } from "./usageTally"
 
 /** How often the lease holder seals shards and checks whether a batch or replay is due. */
 export const USAGE_CYCLE_INTERVAL_MS = 30_000
@@ -95,14 +95,15 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
     }
 
     /**
-     * Count this extension activation once (otel contract §7). Call after
-     * {@link start}; like a settlement, it is kept only while reporting is allowed.
+     * Count this extension activation once (`sessions_started`, otel contract v2
+     * §2.2). Call after {@link start}; like a settlement, it is kept only while
+     * reporting is allowed.
      */
     recordSessionStarted(): void {
-        this.admit(`session-${randomUUID()}`, sessionStartedObservation)
+        this.admit(`session-${randomUUID()}`, sessionStartedTally)
     }
 
-    private admit(id: string, observe: () => UsageObservation): void {
+    private admit(id: string, observe: () => UsageTally): void {
         const current = this.current
         if (!this.accepting || !current?.decision.allowed) return
         const append = this.options.spool
@@ -110,7 +111,7 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
                 id,
                 receivedAt: this.clock(),
                 policyEpoch: current.epoch,
-                ...observe(),
+                tally: observe(),
             })
             .catch((error: unknown) => this.log("warn", `usage observation was not stored: ${describe(error)}`))
             .finally(() => this.appends.delete(append))

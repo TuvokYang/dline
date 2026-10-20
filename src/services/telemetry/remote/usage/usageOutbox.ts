@@ -1,34 +1,35 @@
 import { createHash } from "node:crypto"
-import type { UsageOutcome } from "../contracts/classification"
+import type { DeliveryOutcome } from "../contracts/classification"
+import {
+    afterAcknowledged,
+    afterRateLimited,
+    type ChannelPacing,
+    INITIAL_PACING,
+    isWaiting,
+    mayStartBatch,
+    replayBudgetExhausted,
+    replayDelayMs,
+    reserveInterval,
+} from "../contracts/pacing"
 import {
     USAGE_BODY_LIMIT_BYTES,
-    USAGE_MAX_AGGREGATED_WINDOWS,
-    USAGE_WINDOW_MS,
-    type UsageAggregateViolation,
-    type UsageAggregateWire,
-    type UsageAttributeKey,
-    validateUsageAggregate,
-} from "../contracts/wire"
-import type { UsageObservation } from "./usageCatalog"
-import { buildUsageAggregate, mergeObservations, type UsageWindow, windowOf, windowStartOf } from "./usageWindow"
+    USAGE_MAX_ACTIVE_MINUTES,
+    USAGE_MINUTE_MS,
+    type UsageBodyWire,
+    type UsageClientWire,
+    validateUsageBody,
+} from "../contracts/usageBody"
+import { buildUsageBody, mergeMinutes, minuteStartOf, selectBatchMinutes, type UsageMinute } from "./usageBatch"
+import type { UsageTally } from "./usageTally"
 
-/** Extra wait past the server gate, so a small disagreement between clocks does not cost a 429. */
-export const USAGE_GATE_MARGIN_MS = 2_000
-/** Pending minutes kept locally: one full batch plus the minute still filling. */
-export const MAX_PENDING_USAGE_WINDOWS = USAGE_MAX_AGGREGATED_WINDOWS + 1
-/** An inflight whose outcome stays unknown this often, or this long, is abandoned instead of retried forever. */
-export const MAX_USAGE_REPLAY_ATTEMPTS = 12
-export const MAX_USAGE_INFLIGHT_AGE_MS = 24 * 60 * 60_000
-const REPLAY_BACKOFF_BASE_MS = 30_000
-const REPLAY_BACKOFF_CAP_MS = 30 * 60_000
-
-/** One settled request as it waits in a process shard, already projected onto the remote catalog. */
-export interface PendingUsageObservation extends UsageObservation {
+/** One settled request or activation as it waits in a process shard. */
+export interface PendingUsageObservation {
     readonly id: string
     /** Local receipt time, epoch milliseconds; the sender assigns the UTC minute. */
     readonly receivedAt: number
     /** Policy epoch the observation was admitted under; any other epoch is dropped unsent. */
     readonly policyEpoch: number
+    readonly tally: UsageTally
 }
 
 /** A sealed shard that settled, as read by the sender. */
@@ -42,9 +43,9 @@ export interface UsageInflight {
     readonly requestId: string
     readonly bodySha256: string
     /** The minutes inside the body, merged back into pending when the server certainly stored nothing. */
-    readonly windows: readonly UsageWindow[]
-    /** Windows lost before this body and reported by it. */
-    readonly droppedWindows: number
+    readonly minutes: readonly UsageMinute[]
+    /** Minutes lost before this body and reported by it. */
+    readonly droppedMinutes: number
     readonly createdAt: number
     readonly attempts: number
     readonly notBefore: number
@@ -52,15 +53,15 @@ export interface UsageInflight {
 
 /** Machine-wide usage delivery state; one sender at a time changes it under a fenced lease. */
 export interface UsageOutboxState {
-    /** Policy epoch every pending window was gathered under. */
+    /** Policy epoch every pending minute was gathered under. */
     readonly policyEpoch: number
-    /** Local time before which no new batch may be sent; replays of the inflight are not gated. */
-    readonly nextEligibleAt: number
+    /** Server gate and 429 wait of the usage channel; they survive a restart and a consent change. */
+    readonly pacing: ChannelPacing
     /** End of the newest minute already placed in a body; later arrivals for older minutes move here. */
     readonly sealedThrough: number
-    /** Windows lost before reaching a body, reported with the next one. */
-    readonly droppedWindows: number
-    readonly windows: readonly UsageWindow[]
+    /** Minutes lost before reaching a body, reported with the next one. */
+    readonly droppedMinutes: number
+    readonly minutes: readonly UsageMinute[]
     /** Sealed shards already folded, so a crash before their removal does not count them twice. */
     readonly foldedShards: readonly string[]
     readonly inflight?: UsageInflight
@@ -68,22 +69,22 @@ export interface UsageOutboxState {
 
 export function emptyUsageOutbox(
     policyEpoch: number,
-    carried: Pick<Partial<UsageOutboxState>, "nextEligibleAt" | "foldedShards"> = {},
+    carried: Pick<Partial<UsageOutboxState>, "pacing" | "foldedShards"> = {},
 ): UsageOutboxState {
     return {
         policyEpoch,
-        nextEligibleAt: carried.nextEligibleAt ?? 0,
+        pacing: carried.pacing ?? INITIAL_PACING,
         sealedThrough: 0,
-        droppedWindows: 0,
-        windows: [],
+        droppedMinutes: 0,
+        minutes: [],
         foldedShards: carried.foldedShards ?? [],
     }
 }
 
 /**
  * Bind the outbox to the current policy epoch. Data gathered under another
- * epoch spans a consent change and is dropped unsent; the server gate is
- * per device and survives.
+ * epoch spans a consent change and is dropped unsent; the server gate and any
+ * wait are per device and survive.
  */
 export function alignUsagePolicyEpoch(state: UsageOutboxState, policyEpoch: number): UsageOutboxState {
     if (state.policyEpoch === policyEpoch) return state
@@ -96,27 +97,26 @@ export function alignUsagePolicyEpoch(state: UsageOutboxState, policyEpoch: numb
  * `shards` must list every settled shard still on disk: a name folded earlier
  * and absent now was removed, so it is forgotten. An observation lands in the
  * minute it was received, never earlier than a minute already sent and never
- * later than the current one.
+ * later than the current one. At most 60 active minutes wait; the oldest beyond
+ * that are dropped and counted.
  */
 export function foldUsageShards(state: UsageOutboxState, shards: readonly SettledUsageShard[], now: number): UsageOutboxState {
     const folded = new Set(state.foldedShards)
-    const byMinute = new Map(state.windows.map((window) => [window.startedAt, window]))
-    const currentMinute = windowStartOf(now)
+    const currentMinute = minuteStartOf(now)
+    const arrivals: UsageMinute[] = []
     for (const shard of shards) {
         if (folded.has(shard.name)) continue
         for (const observation of shard.observations) {
             if (observation.policyEpoch !== state.policyEpoch) continue
-            const minute = Math.max(Math.min(windowStartOf(observation.receivedAt), currentMinute), state.sealedThrough)
-            const existing = byMinute.get(minute)
-            const merged = existing ? mergeObservations(existing, observation) : observation
-            byMinute.set(minute, windowOf(minute, merged))
+            const startedAt = Math.max(Math.min(minuteStartOf(observation.receivedAt), currentMinute), state.sealedThrough)
+            arrivals.push({ startedAt, tally: observation.tally })
         }
     }
-    const capped = capPendingWindows([...byMinute.values()])
+    const capped = capPendingMinutes(mergeMinutes(state.minutes, arrivals))
     return {
         ...state,
-        windows: capped.windows,
-        droppedWindows: state.droppedWindows + capped.dropped,
+        minutes: capped.minutes,
+        droppedMinutes: state.droppedMinutes + capped.dropped,
         foldedShards: shards.map((shard) => shard.name),
     }
 }
@@ -127,58 +127,55 @@ export type UsageBatchDecision =
           readonly kind: "batch"
           readonly state: UsageOutboxState
           readonly inflight: UsageInflight
-          readonly aggregate: UsageAggregateWire
-          readonly body: Uint8Array
+          readonly body: UsageBodyWire
+          readonly bytes: Uint8Array
       }
-    /** The batch broke a server rule; it is dropped and counted rather than sent and lost as a 4xx. */
+    /** The batch broke a service rule; it is dropped and counted rather than sent and lost to a 422. */
     | { readonly kind: "rejected"; readonly state: UsageOutboxState; readonly violations: readonly string[] }
 
 export interface UsageBatchInput {
     readonly now: number
     readonly requestId: string
-    readonly attributes: Readonly<Partial<Record<UsageAttributeKey, string | boolean>>>
+    readonly client: UsageClientWire
     /** How long after a minute ends its observations may still be arriving from other shards. */
     readonly settleMs: number
 }
 
 /**
- * Take every complete minute into a new batch once the machine gate opened.
+ * Take the oldest complete minutes, up to a 60-minute span, into a new batch
+ * once the gate opened and no wait is running.
  *
- * The gate moves a full interval ahead as soon as the batch exists: if this
- * process dies after sending, the next sender loses a slot instead of sending
- * a second new batch inside the server's window.
- *
- * Online, at most one minute completes per gate interval, so a batch carries one
- * window at its real start (`aggregation_count` 1), which the service needs for
- * peak-minute rates. Only a backlog — offline time, a restart, or the rare minute
- * the slightly longer gate falls behind — merges several minutes, and the
- * service leaves such batches out of the peak.
+ * The gate moves a default interval ahead as soon as the batch exists, so a
+ * batch that is dropped without an acknowledgement still leaves the cadence in
+ * place; the acknowledgement then sets the gate the service named.
  */
 export function takeUsageBatch(state: UsageOutboxState, input: UsageBatchInput): UsageBatchDecision {
     const { now } = input
-    if (state.inflight || now < state.nextEligibleAt) return { kind: "none" }
-    const complete = state.windows.filter((window) => window.startedAt + USAGE_WINDOW_MS + input.settleMs <= now)
-    const aggregate = buildUsageAggregate(complete, input.attributes, state.droppedWindows)
-    if (!aggregate) return { kind: "none" }
-    const kept = complete.filter((window) => window.startedAt >= aggregate.window_started_at)
-    const pending = state.windows.filter((window) => !complete.includes(window))
-    const sealedThrough = Math.max(state.sealedThrough, aggregate.window_ended_at)
-    const reportedDrops = aggregate.dropped_windows ?? 0
-    const body = new TextEncoder().encode(JSON.stringify(aggregate))
-    const violations: (UsageAggregateViolation | "body_size")[] = validateUsageAggregate(aggregate, now)
-    if (body.byteLength > USAGE_BODY_LIMIT_BYTES) violations.push("body_size")
+    if (state.inflight || !mayStartBatch(state.pacing, now)) return { kind: "none" }
+    const complete = state.minutes.filter((minute) => minute.startedAt + USAGE_MINUTE_MS + input.settleMs <= now)
+    const selected = selectBatchMinutes(complete)
+    if (selected.length === 0) return { kind: "none" }
+    const taken = new Set(selected.map((minute) => minute.startedAt))
+    const remaining = state.minutes.filter((minute) => !taken.has(minute.startedAt))
+    const sealedThrough = Math.max(state.sealedThrough, (selected.at(-1) as UsageMinute).startedAt + USAGE_MINUTE_MS)
+    const body = buildUsageBody(selected, input.client, state.droppedMinutes)
+    // Minutes without any activity hold nothing to report, so they leave without being counted as lost.
+    if (!body) return { kind: "rejected", violations: ["no_activity"], state: { ...state, minutes: remaining, sealedThrough } }
+    const bytes = new TextEncoder().encode(JSON.stringify(body))
+    const violations: string[] = validateUsageBody(body)
+    if (bytes.byteLength > USAGE_BODY_LIMIT_BYTES) violations.push("body_size")
     if (violations.length > 0) {
         return {
             kind: "rejected",
             violations,
-            state: { ...state, windows: pending, sealedThrough, droppedWindows: reportedDrops + kept.length },
+            state: { ...state, minutes: remaining, sealedThrough, droppedMinutes: state.droppedMinutes + selected.length },
         }
     }
     const inflight: UsageInflight = {
         requestId: input.requestId,
-        bodySha256: sha256Hex(body),
-        windows: kept,
-        droppedWindows: reportedDrops,
+        bodySha256: sha256Hex(bytes),
+        minutes: selected,
+        droppedMinutes: state.droppedMinutes,
         createdAt: now,
         attempts: 0,
         notBefore: now,
@@ -186,60 +183,62 @@ export function takeUsageBatch(state: UsageOutboxState, input: UsageBatchInput):
     return {
         kind: "batch",
         inflight,
-        aggregate,
         body,
+        bytes,
         state: {
             ...state,
-            windows: pending,
+            minutes: remaining,
             sealedThrough,
-            droppedWindows: 0,
+            droppedMinutes: 0,
             inflight,
-            nextEligibleAt: Math.max(state.nextEligibleAt, now + USAGE_WINDOW_MS + USAGE_GATE_MARGIN_MS),
+            pacing: reserveInterval(state.pacing, "usage", now),
         },
     }
 }
 
-/** The inflight, when it is due for another attempt. */
+/** The inflight, when it is due for another attempt and no wait holds the channel. */
 export function dueUsageReplay(state: UsageOutboxState, now: number): UsageInflight | undefined {
-    return state.inflight && now >= state.inflight.notBefore ? state.inflight : undefined
+    const inflight = state.inflight
+    if (!inflight || now < inflight.notBefore || isWaiting(state.pacing, now)) return undefined
+    return inflight
 }
 
 export type UsageInflightResolution =
-    | Extract<UsageOutcome, { kind: "acknowledged" | "replay" | "defer" | "discard" }>
+    | Extract<DeliveryOutcome, { kind: "acknowledged" | "replay" | "wait" | "too_large" | "discard" }>
     /** The exact bytes are gone or corrupt; re-serialising could count twice, so the batch is dropped. */
     | { readonly kind: "body_lost" }
 
-/** Apply what the server said about the inflight. A different request ID means another sender moved on. */
+/** Apply what the service said about the inflight. A different request ID means another sender moved on. */
 export function settleUsageInflight(
     state: UsageOutboxState,
     requestId: string,
     resolution: UsageInflightResolution,
     now: number,
+    random: () => number = Math.random,
 ): UsageOutboxState {
     const inflight = state.inflight
     if (!inflight || inflight.requestId !== requestId) return state
     const { inflight: _settled, ...rest } = state
     switch (resolution.kind) {
         case "acknowledged":
-            return { ...rest, nextEligibleAt: Math.max(state.nextEligibleAt, now + USAGE_WINDOW_MS + USAGE_GATE_MARGIN_MS) }
-        case "defer": {
-            const capped = capPendingWindows(mergeWindowLists(rest.windows, inflight.windows))
-            const delay = resolution.retryAfterMs ?? USAGE_WINDOW_MS
+            return { ...rest, pacing: afterAcknowledged(state.pacing, "usage", resolution.nextEligibleAt, now) }
+        case "wait": {
+            // The service stored nothing: the minutes return to pending and travel later under a new request ID.
+            const capped = capPendingMinutes(mergeMinutes(rest.minutes, inflight.minutes))
             return {
                 ...rest,
-                windows: capped.windows,
-                droppedWindows: state.droppedWindows + inflight.droppedWindows + capped.dropped,
-                nextEligibleAt: Math.max(state.nextEligibleAt, now + delay + USAGE_GATE_MARGIN_MS),
+                minutes: capped.minutes,
+                droppedMinutes: state.droppedMinutes + inflight.droppedMinutes + capped.dropped,
+                pacing: afterRateLimited(state.pacing, resolution.retryAfterMs, now, random),
             }
         }
         case "replay": {
             const attempts = inflight.attempts + 1
-            if (attempts >= MAX_USAGE_REPLAY_ATTEMPTS || now - inflight.createdAt >= MAX_USAGE_INFLIGHT_AGE_MS) {
-                return abandon(rest, inflight)
-            }
-            const delay = Math.max(resolution.retryAfterMs ?? 0, replayBackoffMs(attempts))
-            return { ...state, inflight: { ...inflight, attempts, notBefore: now + delay } }
+            if (replayBudgetExhausted(attempts, inflight.createdAt, now)) return abandon(rest, inflight)
+            const notBefore = now + replayDelayMs(attempts, resolution.retryAfterMs)
+            return { ...state, inflight: { ...inflight, attempts, notBefore } }
         }
+        case "too_large":
         case "discard":
         case "body_lost":
             return abandon(rest, inflight)
@@ -247,28 +246,14 @@ export function settleUsageInflight(
 }
 
 function abandon(state: Omit<UsageOutboxState, "inflight">, inflight: UsageInflight): UsageOutboxState {
-    return { ...state, droppedWindows: state.droppedWindows + inflight.droppedWindows + inflight.windows.length }
+    return { ...state, droppedMinutes: state.droppedMinutes + inflight.droppedMinutes + inflight.minutes.length }
 }
 
-function replayBackoffMs(attempts: number): number {
-    return Math.min(REPLAY_BACKOFF_CAP_MS, REPLAY_BACKOFF_BASE_MS * 2 ** (attempts - 1))
-}
-
-function mergeWindowLists(left: readonly UsageWindow[], right: readonly UsageWindow[]): UsageWindow[] {
-    const byMinute = new Map(left.map((window) => [window.startedAt, window]))
-    for (const window of right) {
-        const existing = byMinute.get(window.startedAt)
-        const merged = existing ? mergeObservations(existing, window) : window
-        byMinute.set(window.startedAt, windowOf(window.startedAt, merged))
-    }
-    return [...byMinute.values()]
-}
-
-/** Keep the newest pending minutes in order; older ones are dropped and counted. */
-function capPendingWindows(windows: readonly UsageWindow[]): { windows: UsageWindow[]; dropped: number } {
-    const sorted = [...windows].sort((left, right) => left.startedAt - right.startedAt)
-    const kept = sorted.slice(-MAX_PENDING_USAGE_WINDOWS)
-    return { windows: kept, dropped: sorted.length - kept.length }
+/** Keep the newest 60 pending minutes in order; older ones are dropped and counted. */
+function capPendingMinutes(minutes: readonly UsageMinute[]): { minutes: UsageMinute[]; dropped: number } {
+    const sorted = [...minutes].sort((left, right) => left.startedAt - right.startedAt)
+    const kept = sorted.slice(-USAGE_MAX_ACTIVE_MINUTES)
+    return { minutes: kept, dropped: sorted.length - kept.length }
 }
 
 export function sha256Hex(bytes: Uint8Array): string {

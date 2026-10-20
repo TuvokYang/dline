@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { classifyDiagnosticResponse, classifyExchangeResponse, classifyUsageResponse, type WireResponse } from "../classification"
-import { buildDeviceExchangeRequest, parseRetryAfterMs, type UsageAggregateWire, validateUsageAggregate } from "../wire"
+import { classifyDeliveryResponse, classifyExchangeResponse, type WireResponse } from "../classification"
+import { buildDeviceExchangeRequest, parseRetryAfterMs } from "../wire"
 
 // Response bodies below follow the service's documented wire format.
 const SECRET = "A".repeat(43)
@@ -16,87 +16,81 @@ const edge = (status: number): WireResponse => ({ status, json: undefined, retry
 const failure = (status: number, code: string, extra: Record<string, unknown> = {}) =>
     json(status, { ok: false, request_id: "r", retryable: status >= 500, error: { code, message: "x" }, ...extra })
 
-describe("diagnostic logs response classification", () => {
-    it("acknowledges only a 200 that confirms the batch, even when some records were rejected", () => {
-        expect(classifyDiagnosticResponse(json(200, { ok: true, accepted: 3, rejected: 1 }))).toEqual({ kind: "acknowledged" })
-        expect(classifyDiagnosticResponse(json(200, { accepted: 3 })).kind).toBe("replay")
-        expect(classifyDiagnosticResponse(edge(200)).kind).toBe("replay")
-    })
-    it("waits and resends the same bytes on a rate limit instead of merging like usage", () => {
-        expect(classifyDiagnosticResponse(failure(429, "rate_limited", {}))).toEqual({ kind: "replay" })
-        expect(classifyDiagnosticResponse(json(429, { ok: false, error: { code: "rate_limited" } }, "30"))).toEqual({
-            kind: "replay",
-            retryAfterMs: 30_000,
-        })
-        expect(classifyDiagnosticResponse(failure(503, "unavailable")).kind).toBe("replay")
-    })
-    it("refreshes a rejected token, stops a refused profile and discards a batch refused for good", () => {
-        expect(classifyDiagnosticResponse(failure(401, "token_expired"))).toEqual({ kind: "refresh_token" })
-        expect(classifyDiagnosticResponse(failure(403, "diagnostic_profile_required"))).toEqual({
-            kind: "stop",
-            scope: "profile",
-            code: "diagnostic_profile_required",
-        })
-        expect(classifyDiagnosticResponse(edge(403))).toEqual({ kind: "stop", scope: "all", code: "edge_blocked" })
-        expect(classifyDiagnosticResponse(failure(409, "idempotency_conflict"))).toEqual({
-            kind: "discard",
-            code: "idempotency_conflict",
-        })
-        expect(classifyDiagnosticResponse(failure(422, "usage_channel_forbidden")).kind).toBe("discard")
-    })
-})
+describe("usage and logs response classification (contract v2 §1.5)", () => {
+    it.each([
+        "accepted",
+        "duplicate",
+        "ignored_version",
+    ] as const)("acknowledges a 200 ok:true %s and carries the gate the service named", (disposition) => {
+        const response = json(200, { ok: true, disposition, next_eligible_at: NOW + 600_000, dropped_fields: 2 })
 
-describe("usage response classification", () => {
-    it("acknowledges an accepted batch and a duplicate of one", () => {
-        const accepted = json(200, { ok: true, disposition: "accepted", duplicate: false, next_eligible_at: NOW })
-        const duplicate = json(200, { ok: true, disposition: "duplicate", duplicate: true, next_eligible_at: NOW })
+        expect(classifyDeliveryResponse(response)).toEqual({ kind: "acknowledged", disposition, nextEligibleAt: NOW + 600_000 })
+    })
 
-        expect(classifyUsageResponse(accepted)).toEqual({ kind: "acknowledged", duplicate: false })
-        expect(classifyUsageResponse(duplicate)).toEqual({ kind: "acknowledged", duplicate: true })
+    it("acknowledges the logs answer that counted records over the service's daily limit", () => {
+        const response = json(200, { ok: true, disposition: "accepted", accepted: 3, discarded: 2, next_eligible_at: NOW })
+
+        expect(classifyDeliveryResponse(response)).toMatchObject({ kind: "acknowledged", disposition: "accepted" })
     })
 
     it("replays the same bytes when a 200 does not confirm the batch", () => {
-        expect(classifyUsageResponse(json(200, { ok: true })).kind).toBe("replay")
-    })
-
-    it("defers to a later window when the 60-second gate or the quota refuses the batch", () => {
-        const gate = failure(429, "usage_interval_not_elapsed", { retry_after_ms: 12_000, next_eligible_at: NOW + 12_000 })
-        const quota = json(429, { ok: false, retryable: true, error: { code: "rate_limited" } }, "30")
-
-        expect(classifyUsageResponse({ ...gate, retryAfter: "12" })).toEqual({
-            kind: "defer",
-            code: "usage_interval_not_elapsed",
-            retryAfterMs: 12_000,
-        })
-        expect(classifyUsageResponse(quota)).toEqual({ kind: "defer", code: "rate_limited", retryAfterMs: 30_000 })
-    })
-
-    it("refreshes the token once the server rejects it", () => {
-        expect(classifyUsageResponse(failure(401, "token_expired"))).toEqual({ kind: "refresh_token" })
-        expect(classifyUsageResponse(failure(401, "invalid_access_token"))).toEqual({ kind: "refresh_token" })
+        expect(classifyDeliveryResponse(json(200, { ok: true })).kind).toBe("replay")
+        expect(classifyDeliveryResponse(json(200, { ok: true, disposition: "stored" })).kind).toBe("replay")
+        expect(classifyDeliveryResponse(json(200, { ok: false, disposition: "accepted" })).kind).toBe("replay")
+        expect(classifyDeliveryResponse(edge(200)).kind).toBe("replay")
     })
 
     it.each([
+        ["rate_limited", 4_000],
+        ["quota_protected", 3_600_000],
+        ["telemetry_paused", 7_200_000],
+    ])("waits on a 429 %s for the retry_after_ms the body names", (code, retryAfterMs) => {
+        const response = json(429, { ok: false, error: { code }, retry_after_ms: retryAfterMs }, "1")
+
+        expect(classifyDeliveryResponse(response)).toEqual({ kind: "wait", code, retryAfterMs })
+    })
+
+    it("waits on an edge 429 that carries no body, falling back to Retry-After when one is present", () => {
+        expect(classifyDeliveryResponse(edge(429))).toEqual({ kind: "wait", code: "edge_rate_limited" })
+        expect(classifyDeliveryResponse({ status: 429, json: undefined, retryAfter: "30" })).toEqual({
+            kind: "wait",
+            code: "edge_rate_limited",
+            retryAfterMs: 30_000,
+        })
+    })
+
+    it("refreshes a rejected token, and stops a profile on 404 or 405", () => {
+        expect(classifyDeliveryResponse(failure(401, "token_expired"))).toEqual({ kind: "refresh_token" })
+        expect(classifyDeliveryResponse(failure(404, "not_found"))).toEqual({ kind: "stop", scope: "profile", code: "not_found" })
+        expect(classifyDeliveryResponse(edge(405))).toEqual({ kind: "stop", scope: "profile", code: "endpoint_unavailable" })
+    })
+
+    it("reports 413 apart from other refusals, so usage drops the batch and logs split it", () => {
+        expect(classifyDeliveryResponse(failure(413, "payload_too_large"))).toEqual({ kind: "too_large" })
+    })
+
+    it.each([
+        [422, "invalid_usage"],
         [409, "request_id_conflict"],
-        [413, "payload_too_large"],
-        [415, "unsupported_content_type"],
-        [422, "invalid_usage_aggregate"],
         [400, "request_id_required"],
-    ])("discards a batch the server permanently refuses with %i %s", (status, code) => {
-        expect(classifyUsageResponse(failure(status, code))).toEqual({ kind: "discard", code })
+    ])("discards a batch the service refuses for good with %i %s", (status, code) => {
+        expect(classifyDeliveryResponse(failure(status, code))).toEqual({ kind: "discard", code })
     })
 
-    it("replays the same bytes when the server may already have stored the batch", () => {
-        expect(classifyUsageResponse(failure(500, "internal_error")).kind).toBe("replay")
-        expect(classifyUsageResponse(failure(503, "usage_gate_unavailable")).kind).toBe("replay")
-        expect(classifyUsageResponse(edge(502)).kind).toBe("replay")
-        expect(classifyUsageResponse(edge(504)).kind).toBe("replay")
+    it("replays the same bytes on 408 and 5xx, when the service may already hold the batch", () => {
+        expect(classifyDeliveryResponse(failure(408, "timeout")).kind).toBe("replay")
+        expect(classifyDeliveryResponse(failure(500, "internal_error")).kind).toBe("replay")
+        expect(classifyDeliveryResponse(edge(502)).kind).toBe("replay")
+        expect(classifyDeliveryResponse(failure(503, "unavailable", { retry_after_ms: 9_000 }))).toEqual({
+            kind: "replay",
+            retryAfterMs: 9_000,
+        })
     })
 
-    it("stops every remote profile for an edge block or an IP ban, and only usage for a profile refusal", () => {
-        expect(classifyUsageResponse(edge(403))).toEqual({ kind: "stop", scope: "all", code: "edge_blocked" })
-        expect(classifyUsageResponse(failure(403, "ip_blocked"))).toEqual({ kind: "stop", scope: "all", code: "ip_blocked" })
-        expect(classifyUsageResponse(failure(403, "usage_profile_required"))).toEqual({
+    it("stops every remote profile for an edge block or an IP ban, and only one profile for a profile refusal", () => {
+        expect(classifyDeliveryResponse(edge(403))).toEqual({ kind: "stop", scope: "all", code: "edge_blocked" })
+        expect(classifyDeliveryResponse(failure(403, "ip_blocked"))).toEqual({ kind: "stop", scope: "all", code: "ip_blocked" })
+        expect(classifyDeliveryResponse(failure(403, "usage_profile_required"))).toEqual({
             kind: "stop",
             scope: "profile",
             code: "usage_profile_required",
@@ -184,33 +178,5 @@ describe("wire builders and validation", () => {
         expect(parseRetryAfterMs("12", NOW)).toBe(12_000)
         expect(parseRetryAfterMs(new Date(NOW + 5_000).toUTCString(), NOW)).toBe(5_000)
         expect(parseRetryAfterMs("soon", NOW)).toBeUndefined()
-    })
-
-    const valid: UsageAggregateWire = {
-        schema_version: 1,
-        window_started_at: NOW - 120_000,
-        window_ended_at: NOW - 60_000,
-        aggregation_count: 1,
-        counters: { "dline.usage.requests.task.completed": 3 },
-        measurements: { "dline.usage.request_duration_ms.task": { count: 3, sum: 300, min: 50, max: 150 } },
-        attributes: { client_version: "0.11.0", platform: "win32", is_dev: false },
-    }
-
-    it("accepts an aggregate the server schema accepts", () => {
-        expect(validateUsageAggregate(valid, NOW)).toEqual([])
-    })
-
-    it("names every rule an aggregate breaks before it can become an inflight batch", () => {
-        const broken: UsageAggregateWire = {
-            ...valid,
-            window_started_at: NOW - 10 * 60_000,
-            counters: { "Dline.Usage": 1, "dline.ok": -1 },
-            measurements: { "dline.duration": { count: 2, sum: 500, min: 10, max: 100 } },
-            attributes: { platform: "win32", account: "someone" } as UsageAggregateWire["attributes"],
-        }
-
-        expect(validateUsageAggregate(broken, NOW)).toEqual(
-            expect.arrayContaining(["window_span", "metric_name", "counter_value", "measurement_bounds", "attribute_key"]),
-        )
     })
 })

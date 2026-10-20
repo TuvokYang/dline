@@ -4,9 +4,10 @@ import type { AddressInfo } from "node:net"
 
 /**
  * Loopback stand-in for the Dline telemetry service, written from the client's
- * view of the HTTP interface only: device exchange, bearer tokens on
- * `/v1/usage`, request-ID idempotency, and the per-device usage interval.
- * It deliberately keeps no knowledge of how the real service is built.
+ * view of the HTTP interface only (contract v2): device exchange, bearer tokens
+ * on `/v1/usage`, request-ID idempotency, `next_eligible_at`, and a 429 for a new
+ * batch sent before it. It deliberately keeps no knowledge of how the real
+ * service is built.
  */
 export interface OtelServiceMockOptions {
     readonly usageIntervalMs?: number
@@ -28,13 +29,13 @@ interface IssuedToken {
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const PROFILES = new Set(["usage", "production", "development"])
-const BODY_LIMIT_BYTES = 64 * 1024
+const BODY_LIMIT_BYTES = 32 * 1024
 
 export class OtelServiceMock {
     readonly accepted: AcceptedUsage[] = []
     private readonly tokens = new Map<string, IssuedToken>()
     private readonly requests = new Map<string, { deviceId: string; digest: string }>()
-    private readonly lastAcceptedAt = new Map<string, number>()
+    private readonly nextEligibleAt = new Map<string, number>()
     private readonly server = http.createServer((request, response) => {
         void this.route(request)
             .catch((): MockReply => failure(500, "internal"))
@@ -80,6 +81,7 @@ export class OtelServiceMock {
         if (!token || token.profile !== "usage" || token.expiresAt <= Date.now()) return failure(401, "token_invalid")
         const requestId = request.headers["x-dline-request-id"]
         if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) return failure(400, "invalid_request_id")
+        if (request.headers["x-dline-contract"] !== "2") return failure(400, "contract_required")
         if (!body) return failure(413, "payload_too_large")
 
         // Idempotency is decided before anything else, so a replay is never held back by the interval.
@@ -87,24 +89,31 @@ export class OtelServiceMock {
         const previous = this.requests.get(requestId)
         if (previous) {
             return previous.deviceId === token.deviceId && previous.digest === digest
-                ? { status: 200, body: { ok: true, disposition: "duplicate" } }
+                ? this.acknowledge(token.deviceId, "duplicate")
                 : failure(409, "request_id_conflict")
         }
-        const parsed = parseJson(body)
-        if (!parsed || parsed.schema_version !== 1 || typeof parsed.counters !== "object") return failure(400, "invalid_usage")
-        const interval = this.options.usageIntervalMs ?? 60_000
-        const waitMs = Math.ceil((this.lastAcceptedAt.get(token.deviceId) ?? Number.NEGATIVE_INFINITY) + interval - Date.now())
+        const waitMs = Math.ceil((this.nextEligibleAt.get(token.deviceId) ?? 0) - Date.now())
         if (waitMs > 0) {
             return {
                 status: 429,
-                body: { ok: false, retry_after_ms: waitMs, error: { code: "usage_interval_not_elapsed" } },
+                body: { ok: false, retry_after_ms: waitMs, error: { code: "rate_limited" } },
                 retryAfterSeconds: Math.ceil(waitMs / 1_000),
             }
         }
-        this.lastAcceptedAt.set(token.deviceId, Date.now())
+        const parsed = parseJson(body)
+        const client = parsed?.client as Record<string, unknown> | undefined
+        const window = parsed?.window as Record<string, unknown> | undefined
+        if (parsed?.schema_version !== 2 || typeof client?.version !== "string" || typeof window?.started_at !== "number") {
+            return failure(422, "invalid_usage")
+        }
         this.requests.set(requestId, { deviceId: token.deviceId, digest })
         this.accepted.push({ deviceId: token.deviceId, requestId, body: parsed })
-        return { status: 200, body: { ok: true, disposition: "accepted" } }
+        this.nextEligibleAt.set(token.deviceId, Date.now() + (this.options.usageIntervalMs ?? 600_000))
+        return this.acknowledge(token.deviceId, "accepted")
+    }
+
+    private acknowledge(deviceId: string, disposition: "accepted" | "duplicate"): MockReply {
+        return { status: 200, body: { ok: true, disposition, next_eligible_at: this.nextEligibleAt.get(deviceId) ?? Date.now() } }
     }
 }
 

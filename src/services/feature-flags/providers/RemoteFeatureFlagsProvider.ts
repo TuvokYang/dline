@@ -8,9 +8,9 @@ import type { FeatureFlagPayload, FeatureFlagsSettings, IFeatureFlagsProvider } 
  * look while the device takes no part. The service's `ttl_seconds` does not
  * set the pace, so a service that is down cannot turn into a request loop.
  */
-export const FEATURE_FLAGS_POLL_INTERVAL_MS = 30 * 60_000
-/** A development build polls every minute, so a rollout change shows up while it is being tried. */
-export const FEATURE_FLAGS_DEV_POLL_INTERVAL_MS = 60_000
+export const FEATURE_FLAGS_POLL_INTERVAL_MS = 60 * 60_000
+/** A development build polls every 5 minutes, so a rollout change shows up while it is being tried. */
+export const FEATURE_FLAGS_DEV_POLL_INTERVAL_MS = 5 * 60_000
 
 export function rolloutPollIntervalMs(developmentBuild: boolean): number {
     return developmentBuild ? FEATURE_FLAGS_DEV_POLL_INTERVAL_MS : FEATURE_FLAGS_POLL_INTERVAL_MS

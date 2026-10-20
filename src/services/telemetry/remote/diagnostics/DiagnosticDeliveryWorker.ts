@@ -1,10 +1,9 @@
 import type { DiagnosticOutboxRepository, DiagnosticSettlement } from "@/core/storage/telemetry-remote/DiagnosticOutboxRepository"
 import type { TokenAcquisition } from "../auth/DeviceTokenBroker"
-import { classifyDiagnosticResponse, type WireResponse } from "../contracts/classification"
-import type { DiagnosticLogsTransport } from "../transport/DlineOtelHttpClient"
-import { type DiagnosticRecord, type DiagnosticResource, encodeDiagnosticLogs } from "./diagnosticRecord"
+import { classifyDeliveryResponse, type DeliveryOutcome } from "../contracts/classification"
+import { type DiagnosticLogsTransport, DlineOtelTransportError } from "../transport/DlineOtelHttpClient"
 
-/** Wait after a result the service did not confirm, unless it named a delay. */
+/** Wait before trying again when no token is available yet or the send was aborted. */
 export const DIAGNOSTICS_RETRY_MS = 60_000
 
 export interface DiagnosticTokenSource {
@@ -15,7 +14,6 @@ export interface DiagnosticDeliveryWorkerOptions {
     readonly outbox: Pick<DiagnosticOutboxRepository, "claim" | "settle">
     readonly tokens: DiagnosticTokenSource
     readonly transport: DiagnosticLogsTransport
-    readonly resource: DiagnosticResource
     /** This window's identity in the shared outbox claim. */
     readonly owner: string
     readonly clock?: () => number
@@ -26,9 +24,10 @@ export interface DiagnosticDeliveryWorkerOptions {
  * Sends one claimed batch of the shared diagnostic outbox to `/v1/logs`.
  *
  * A batch that may have reached the service is resent with the same request id
- * and bytes, so the service drops the copy. A rejected token is exchanged once
- * and the batch resent; a refusal of the stream records a stop in the outbox
- * that every window respects.
+ * and bytes, so the service drops the copy. A 429 or a pause holds the whole
+ * channel and returns the records to the outbox; a 413 splits the batch. A
+ * rejected token is exchanged once and the batch resent; a refusal of the
+ * stream records a stop in the outbox that every window respects.
  */
 export class DiagnosticDeliveryWorker {
     private readonly clock: () => number
@@ -39,8 +38,7 @@ export class DiagnosticDeliveryWorker {
 
     async deliverOnce(signal?: AbortSignal): Promise<void> {
         const { outbox, owner } = this.options
-        const encode = (records: readonly DiagnosticRecord[]) => encodeDiagnosticLogs(records, this.options.resource)
-        const batch = await outbox.claim(owner, this.clock(), encode)
+        const batch = await outbox.claim(owner, this.clock())
         if (!batch) return
         const settlement = await this.send(batch.requestId, batch.body, signal)
         await outbox.settle(owner, batch.requestId, settlement, this.clock())
@@ -50,36 +48,45 @@ export class DiagnosticDeliveryWorker {
         let acquisition = await this.options.tokens.acquire("production", { signal })
         for (let attempt = 0; attempt < 2; attempt++) {
             if (acquisition.status !== "ready") return this.withoutToken(acquisition)
-            let response: WireResponse
+            let outcome: DeliveryOutcome
             try {
-                response = await this.options.transport.sendLogs(
+                const response = await this.options.transport.sendLogs(
                     { accessToken: acquisition.token.accessToken, requestId, body: new TextEncoder().encode(body) },
                     signal,
                 )
-            } catch {
-                return this.retryAfter(undefined)
+                outcome = classifyDeliveryResponse(response)
+            } catch (error) {
+                // Shutdown is not a failed attempt; a timeout or a broken connection may have reached the service.
+                if (error instanceof DlineOtelTransportError && error.failure === "aborted") return this.retryLater()
+                outcome = { kind: "replay" }
             }
-            const outcome = classifyDiagnosticResponse(response)
-            switch (outcome.kind) {
-                case "acknowledged":
-                    return { kind: "delivered" }
-                case "discard":
-                    this.options.log?.(`[RemoteDiagnostics] The service refused a batch for good: ${outcome.code}`)
-                    return { kind: "delivered" }
-                case "replay":
-                    return this.retryAfter(outcome.retryAfterMs)
-                case "stop":
-                    this.options.log?.(`[RemoteDiagnostics] The service stopped diagnostics: ${outcome.code}`)
-                    return { kind: "stopped", code: outcome.code }
-                case "refresh_token":
-                    acquisition = await this.options.tokens.acquire("production", {
-                        rejectedAccessToken: acquisition.token.accessToken,
-                        signal,
-                    })
-                    break
-            }
+            if (outcome.kind !== "refresh_token") return this.settlementOf(outcome)
+            acquisition = await this.options.tokens.acquire("production", {
+                rejectedAccessToken: acquisition.token.accessToken,
+                signal,
+            })
         }
         return { kind: "stopped", code: "token_rejected" }
+    }
+
+    private settlementOf(outcome: Exclude<DeliveryOutcome, { kind: "refresh_token" }>): DiagnosticSettlement {
+        switch (outcome.kind) {
+            case "acknowledged":
+                return { kind: "acknowledged", nextEligibleAt: outcome.nextEligibleAt }
+            case "replay":
+                return { kind: "replay", retryAfterMs: outcome.retryAfterMs }
+            case "wait":
+                this.options.log?.(`[RemoteDiagnostics] The service asked to wait (${outcome.code}); diagnostics are held`)
+                return { kind: "wait", retryAfterMs: outcome.retryAfterMs }
+            case "too_large":
+                return { kind: "split" }
+            case "discard":
+                this.options.log?.(`[RemoteDiagnostics] The service refused a batch for good: ${outcome.code}`)
+                return { kind: "discard" }
+            case "stop":
+                this.options.log?.(`[RemoteDiagnostics] The service stopped diagnostics: ${outcome.code}`)
+                return { kind: "stopped", code: outcome.code }
+        }
     }
 
     private withoutToken(acquisition: Exclude<TokenAcquisition, { status: "ready" }>): DiagnosticSettlement {
@@ -89,11 +96,11 @@ export class DiagnosticDeliveryWorker {
             case "stopped":
                 return { kind: "stopped", code: acquisition.code }
             default:
-                return this.retryAfter(undefined)
+                return this.retryLater()
         }
     }
 
-    private retryAfter(delayMs: number | undefined): DiagnosticSettlement {
-        return { kind: "retry", at: this.clock() + (delayMs ?? DIAGNOSTICS_RETRY_MS) }
+    private retryLater(): DiagnosticSettlement {
+        return { kind: "retry", at: this.clock() + DIAGNOSTICS_RETRY_MS }
     }
 }
