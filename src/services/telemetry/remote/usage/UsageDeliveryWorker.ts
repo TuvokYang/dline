@@ -31,7 +31,7 @@ export type UsageCycleResult =
       }
     | { readonly kind: "delivered"; readonly requestId: string; readonly disposition: DeliveryDisposition }
     | { readonly kind: "retrying"; readonly requestId: string }
-    /** A 429 or a pause: nothing is sent on this channel until `until`, and the batch is rebuilt afterwards. */
+    /** A 429 or a pause: nothing is sent on this channel until `until`, then the same batch is replayed first. */
     | { readonly kind: "paused"; readonly requestId: string; readonly code: string; readonly until: number }
     | { readonly kind: "discarded"; readonly requestId: string; readonly code: string }
     | { readonly kind: "rejected"; readonly violations: readonly string[] }

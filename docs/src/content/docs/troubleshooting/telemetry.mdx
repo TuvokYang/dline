@@ -135,9 +135,9 @@ Requests go only to the fixed HTTPS origin through Dline's proxy-aware transport
 Usage and diagnostics follow the same rules, each on its own and remembered across windows and restarts:
 
 - A new batch starts at most every 10 minutes for usage and every 5 minutes for diagnostics. When the service names a later time for the next batch, Dline waits for it, up to 7 days.
-- When the service answers with a rate limit or a telemetry pause (HTTP 429), that channel sends nothing, retries included, until the wait ends: the time the service asks for, otherwise one minute doubling with each further limit up to 30 minutes, plus up to 10% random spread, never longer than 7 days. The waiting batch rejoins the pending data and later travels under a new request ID. The other channel keeps sending.
+- When the service answers with a rate limit or a telemetry pause (HTTP 429), that channel sends nothing, retries included, until the wait ends: the time the service asks for, otherwise one minute doubling with each further limit up to 30 minutes, plus up to 10% random spread, never longer than 7 days. The refused batch is kept unchanged and is sent first once the wait ends, with the same request ID and bytes, because an earlier timed-out attempt may already have been stored. Data gathered during the wait forms a separate batch. A wait does not count as an attempt, and its time does not count toward the 24-hour limit below. The other channel keeps sending.
 - A batch whose outcome is unknown (a timeout, a network error, HTTP 408 or 5xx) is sent again with the same request ID and bytes, so the service stores it once. The wait starts at 30 seconds and doubles up to 30 minutes; the batch is abandoned after 12 attempts or 24 hours.
-- A batch the service rejects as invalid (HTTP 422) is dropped and never retried, and so is a usage batch that is too large (HTTP 413). A batch from a client version the service no longer accepts is acknowledged without being stored and is not sent again.
+- A batch the service rejects as invalid (HTTP 422) is dropped and never retried, and so is a usage batch that is too large (HTTP 413). The service reads the client version from the `User-Agent: Dline/<version>` header; a batch from a version it no longer accepts is acknowledged without being stored and is not sent again.
 
 ### Local queue
 

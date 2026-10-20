@@ -473,7 +473,6 @@ async function startRemoteUsageReporting(dataDir: string): Promise<void> {
         clientVersion: ExtensionRegistryInfo.version,
         platform: process.platform,
         client: {
-            version: ExtensionRegistryInfo.version,
             platform: process.platform,
             architecture: process.arch,
             host_version: host?.version,

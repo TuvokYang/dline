@@ -23,10 +23,11 @@ export interface RemoteUsageRuntimeOptions {
     /** `StorageContext.dataDir`; every remote telemetry file lives below it. */
     readonly dataDir: string
     readonly readPolicyInputs: () => Promise<LocalUsagePolicyInputs>
+    /** The one version this host reports: user agent, device exchange and `client.version` of every batch. */
     readonly clientVersion: string
     readonly platform: string
-    /** The `client` section of every batch; a value the service would refuse is left out. */
-    readonly client: { readonly [K in keyof UsageClientWire]?: unknown }
+    /** The rest of the `client` section of every batch; a value the service would refuse is left out. */
+    readonly client: { readonly [K in Exclude<keyof UsageClientWire, "version">]?: unknown }
     /** Service origin; defaults to `https://otel.dline.cc`. Loopback HTTP is allowed for the contract smoke. */
     readonly endpoint?: string
     readonly log?: RemoteUsageLog
@@ -48,9 +49,9 @@ export const remoteUsageSettlement: UsageSettlementPort = {
 /** Compose and start remote usage reporting for this extension host; a second call is ignored. */
 export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Promise<void> {
     if (coordinator) return
-    const client = sanitizeUsageClient(options.client)
+    const client = sanitizeUsageClient({ ...options.client, version: options.clientVersion })
     if (!client) {
-        // The service matches its version list against `client.version`; without one no batch is valid.
+        // Every batch states the version its user agent names; without a valid one no batch is valid.
         options.log?.("warn", "[RemoteUsage] not started: the extension version is not a valid client version")
         return
     }
@@ -64,7 +65,7 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
             "warn",
             `[RemoteUsage] ${documentName} could not be read (damaged, or written by an incompatible Dline build) and was moved to quarantine; its state starts over`,
         )
-    const transport = new DlineOtelHttpClient({ endpoint: options.endpoint })
+    const transport = new DlineOtelHttpClient({ clientVersion: client.version, endpoint: options.endpoint })
     const credentials = new DeviceCredentialRepository(layout, { onQuarantine })
     const outbox = new UsageOutboxRepository(layout, { onQuarantine })
     const spool = new UsageObservationSpool(layout, ownerId)

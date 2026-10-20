@@ -198,7 +198,7 @@ describe("settleUsageInflight", () => {
         })
     })
 
-    it("on a 429 merges the batch back, sends nothing until the wait ends, then rebuilds it under a new request ID", () => {
+    it("on a 429 keeps the batch as it is and replays it first once the wait ends; newer minutes travel in their own batch", () => {
         const withLater = fold(
             sending.state,
             [observation("2", T0 + 1_500, 5), observation("3", T0 + 3 * MINUTE, 1)],
@@ -215,16 +215,51 @@ describe("settleUsageInflight", () => {
             noJitter,
         )
         const resumeAt = waiting.pacing.waitUntil
-        const next = batch(waiting, resumeAt, REQUEST_B)
+        const acknowledged = settleUsageInflight(
+            waiting,
+            REQUEST_A,
+            { kind: "acknowledged", disposition: "duplicate", nextEligibleAt: resumeAt },
+            resumeAt,
+        )
+        const next = batch(acknowledged, resumeAt + GATE_MARGIN_MS, REQUEST_B)
 
-        expect(waiting.inflight).toBeUndefined()
-        expect(waiting.droppedMinutes).toBe(0)
         expect(waiting.pacing).toMatchObject({ waitUntil: waitedAt + 90 * MINUTE, consecutiveWaits: 1 })
-        expect(takeUsageBatch(waiting, { now: resumeAt - 1, requestId: REQUEST_B, client: CLIENT, settleMs: SETTLE })).toEqual({
+        expect(waiting.inflight).toMatchObject({
+            requestId: REQUEST_A,
+            bodySha256: sending.inflight.bodySha256,
+            minutes: sending.inflight.minutes,
+            attempts: 0,
+            notBefore: resumeAt,
+        })
+        expect(waiting.minutes).toEqual(withLater.minutes)
+        expect(waiting.droppedMinutes).toBe(0)
+        expect(dueUsageReplay(waiting, resumeAt - 1)).toBeUndefined()
+        expect(dueUsageReplay(waiting, resumeAt)?.requestId).toBe(REQUEST_A)
+        expect(takeUsageBatch(waiting, { now: resumeAt, requestId: REQUEST_B, client: CLIENT, settleMs: SETTLE })).toEqual({
             kind: "none",
         })
         expect(next.inflight).toMatchObject({ requestId: REQUEST_B, attempts: 0 })
-        expect(next.sent.purposes.task?.tokens.input).toBe(16)
+        expect(next.sent.purposes.task?.tokens.input).toBe(6)
+    })
+
+    it("does not count a 429 as a replay, nor its wait against the 24-hour limit", () => {
+        const timedOut = settleUsageInflight(sending.state, REQUEST_A, { kind: "replay" }, sentAt)
+        const waitedAt = timedOut.inflight?.notBefore ?? sentAt
+        const waiting = settleUsageInflight(
+            timedOut,
+            REQUEST_A,
+            { kind: "wait", code: "telemetry_paused", retryAfterMs: 30 * 60 * MINUTE },
+            waitedAt,
+            noJitter,
+        )
+        const resumeAt = waiting.pacing.waitUntil
+
+        const replayed = settleUsageInflight(waiting, REQUEST_A, { kind: "replay" }, resumeAt)
+
+        expect(waiting.inflight?.attempts).toBe(1)
+        expect(resumeAt - sentAt).toBeGreaterThan(24 * 60 * MINUTE)
+        expect(replayed.inflight).toMatchObject({ requestId: REQUEST_A, attempts: 2 })
+        expect(replayed.droppedMinutes).toBe(0)
     })
 
     it("holds a due replay while a wait runs on the channel", () => {

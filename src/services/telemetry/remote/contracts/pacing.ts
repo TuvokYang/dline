@@ -77,8 +77,8 @@ export function afterAcknowledged(
 
 /**
  * Start the wait a 429 or a pause asks for (§1.7); it does not count as a
- * replay attempt. The refused batch is rebuilt as soon as the wait ends (§1.7
- * rules 7 and 9), so the interval reserved when it was built must not outlast the wait.
+ * replay attempt. The refused batch is replayed unchanged as soon as the wait
+ * ends (§1.7 rules 7 and 9), so the interval reserved when it was built must not outlast the wait.
  */
 export function afterRateLimited(
     pacing: ChannelPacing,

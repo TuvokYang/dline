@@ -1,5 +1,4 @@
 import { fetch } from "@shared/net"
-import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import type { DeviceExchangeTransport } from "../auth/DeviceTokenBroker"
 import type { WireResponse } from "../contracts/classification"
 import type { DeviceExchangeRequest } from "../contracts/wire"
@@ -47,6 +46,13 @@ export interface DiagnosticLogsTransport {
 const LOGS_PATH = "/v1/logs"
 
 export interface DlineOtelHttpClientOptions {
+    /**
+     * Sent as `User-Agent: Dline/<clientVersion>`, the value the service's
+     * version list is matched against (§1.2). The `client.version` of a usage
+     * body and the `service.version` of a logs resource must state the same
+     * version, so the caller passes the one it puts into those bodies.
+     */
+    readonly clientVersion: string
     /** Origin of the service; a loopback origin is used for the local contract smoke. */
     readonly endpoint?: string
     readonly timeoutMs?: number
@@ -64,10 +70,12 @@ export interface DlineOtelHttpClientOptions {
 export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransport, DiagnosticLogsTransport {
     private readonly endpoint: URL
     private readonly timeoutMs: number
+    private readonly userAgent: string
 
-    constructor(options: DlineOtelHttpClientOptions = {}) {
+    constructor(options: DlineOtelHttpClientOptions) {
         this.endpoint = parseEndpoint(options.endpoint ?? DLINE_OTEL_ENDPOINT)
         this.timeoutMs = options.timeoutMs ?? DLINE_OTEL_REQUEST_TIMEOUT_MS
+        this.userAgent = `Dline/${options.clientVersion}`
     }
 
     /** The service origin every request goes to; safe to log, it never carries a path or credentials. */
@@ -101,8 +109,7 @@ export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransp
             if (signal?.aborted) throw new DlineOtelTransportError("aborted")
             const response = await fetch(new URL(pathname, this.endpoint), {
                 method: "POST",
-                // Every Dline client announces itself with the same agent; the runtime default would only say "node".
-                headers: { ...buildExternalBasicHeaders(), ...headers },
+                headers: { "User-Agent": this.userAgent, ...headers },
                 // fetch accepts only ArrayBuffer-backed views; the copy is at most one 64 KiB body.
                 body: typeof body === "string" ? body : Uint8Array.from(body),
                 redirect: "error",
@@ -125,7 +132,7 @@ export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransp
     }
 }
 
-/** Headers of a usage or logs request; the user agent `Dline/<version>` comes from the shared basic headers. */
+/** Headers of a usage or logs request, besides the user agent every request carries. */
 function deliveryHeaders(delivery: UsageDelivery): Record<string, string> {
     return {
         authorization: `Bearer ${delivery.accessToken}`,

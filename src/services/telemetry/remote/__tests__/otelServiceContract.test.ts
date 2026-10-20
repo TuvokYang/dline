@@ -25,6 +25,7 @@ import { OtelServiceMock } from "./support/OtelServiceMock"
 const liveEndpoint = process.env.DLINE_OTEL_LIVE_ENDPOINT
 const MINUTE = USAGE_MINUTE_MS
 const SETTLE = 20_000
+const VERSION = "0.11.1"
 
 class RecordingTransport implements UsageTransport {
     readonly deliveries: UsageDelivery[] = []
@@ -45,7 +46,8 @@ afterEach(async () => {
 
 describe("telemetry service contract", () => {
     it("holds against the loopback mock of the service interface", async () => {
-        const service = new OtelServiceMock()
+        // Only this version is listed, so an acceptance proves the user agent names it.
+        const service = new OtelServiceMock({ acceptedVersions: [VERSION] })
         const endpoint = await service.start()
         cleanups.push(() => service.stop())
 
@@ -54,6 +56,8 @@ describe("telemetry service contract", () => {
         // The service received the batch exactly once, byte-for-byte as the client built it.
         expect(service.accepted).toHaveLength(1)
         expect(service.accepted[0].body).toEqual(sent)
+        // The body states the version the service matched on the user agent (§1.2).
+        expect(service.accepted[0].userAgent).toBe(`Dline/${sent.client.version}`)
     })
 
     it.skipIf(!liveEndpoint)("holds against the live service", async () => {
@@ -70,12 +74,12 @@ async function runContractScenario(endpoint: string): Promise<UsageBodyWire> {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-otel-contract-"))
     cleanups.push(() => fs.rm(root, { recursive: true, force: true }))
     const layout = resolveOtelStorageLayout(root)
-    const client = new DlineOtelHttpClient({ endpoint })
+    const client = new DlineOtelHttpClient({ clientVersion: VERSION, endpoint })
     const transport = new RecordingTransport(client)
     const tokens = new DeviceTokenBroker({
         repository: new DeviceCredentialRepository(layout),
         transport: client,
-        clientVersion: "0.11.1",
+        clientVersion: VERSION,
         platform: process.platform,
     })
     // The next minute boundary keeps the fake clock ahead of file times yet close to the service's clock.
@@ -101,7 +105,7 @@ async function runContractScenario(endpoint: string): Promise<UsageBodyWire> {
         spool: new UsageObservationSpool(layout, "contract-sender"),
         tokens,
         transport,
-        client: { version: "0.11.1", platform: process.platform, architecture: process.arch, is_dev: false },
+        client: { version: VERSION, platform: process.platform, architecture: process.arch, is_dev: false },
         ownerId: "contract-sender",
         batchSettleMs: SETTLE,
         clock: () => now,

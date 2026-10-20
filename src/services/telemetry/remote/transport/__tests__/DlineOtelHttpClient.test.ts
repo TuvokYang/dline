@@ -1,11 +1,12 @@
 import { mockFetchForTesting } from "@shared/net"
 import { describe, expect, it } from "vitest"
-import { ExtensionRegistryInfo } from "@/registry"
 import { classifyDeliveryResponse } from "../../contracts/classification"
 import { DlineOtelHttpClient, DlineOtelTransportError, loopbackEndpointOverride } from "../DlineOtelHttpClient"
 
 const TOKEN = "tok_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcd"
 const REQUEST_ID = "0b4f8a52-5d0e-4e55-9a0c-5a1f1e7c0a01"
+/** Differs from the running build, so a user agent taken from anywhere but the option shows. */
+const VERSION = "0.11.1-contract.7"
 
 interface Captured {
     url: string
@@ -38,7 +39,7 @@ function failure(promise: Promise<unknown>): Promise<DlineOtelTransportError> {
 }
 
 describe("DlineOtelHttpClient", () => {
-    it("posts the exact usage bytes with the bearer, request ID and contract version and refuses to follow redirects", async () => {
+    it("posts the exact usage bytes with the version's user agent, bearer, request ID and contract version and refuses to follow redirects", async () => {
         const captured: Captured[] = []
         const body = new TextEncoder().encode('{"schema_version":2}')
         const ok = () =>
@@ -48,7 +49,7 @@ describe("DlineOtelHttpClient", () => {
             })
 
         const response = await mockFetchForTesting(respondWith(ok, captured), () =>
-            new DlineOtelHttpClient({ endpoint: "https://otel.example.test" }).sendUsage({
+            new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "https://otel.example.test" }).sendUsage({
                 accessToken: TOKEN,
                 requestId: REQUEST_ID,
                 body,
@@ -59,7 +60,7 @@ describe("DlineOtelHttpClient", () => {
         expect(captured[0].url).toBe("https://otel.example.test/v1/usage")
         expect(captured[0].init).toMatchObject({ method: "POST", redirect: "error", body })
         expect(captured[0].init.headers).toEqual({
-            "User-Agent": `Dline/${ExtensionRegistryInfo.version}`,
+            "User-Agent": `Dline/${VERSION}`,
             authorization: `Bearer ${TOKEN}`,
             "content-type": "application/json",
             "x-dline-request-id": REQUEST_ID,
@@ -80,11 +81,11 @@ describe("DlineOtelHttpClient", () => {
 
         await mockFetchForTesting(
             respondWith(() => new Response("{}", { status: 503 }), captured),
-            () => new DlineOtelHttpClient({ endpoint: "http://127.0.0.1:8787" }).exchange(request),
+            () => new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "http://127.0.0.1:8787" }).exchange(request),
         )
 
         expect(captured[0].url).toBe("http://127.0.0.1:8787/v1/auth/device/exchange")
-        expect(new Headers(captured[0].init.headers).get("user-agent")).toBe(`Dline/${ExtensionRegistryInfo.version}`)
+        expect(new Headers(captured[0].init.headers).get("user-agent")).toBe(`Dline/${VERSION}`)
         expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
     })
 
@@ -92,7 +93,11 @@ describe("DlineOtelHttpClient", () => {
         const blockPage = () => new Response("<html>Access denied</html>", { status: 403 })
 
         const response = await mockFetchForTesting(respondWith(blockPage), () =>
-            new DlineOtelHttpClient().sendUsage({ accessToken: TOKEN, requestId: REQUEST_ID, body: new Uint8Array() }),
+            new DlineOtelHttpClient({ clientVersion: VERSION }).sendUsage({
+                accessToken: TOKEN,
+                requestId: REQUEST_ID,
+                body: new Uint8Array(),
+            }),
         )
 
         expect(response.json).toBeUndefined()
@@ -103,7 +108,11 @@ describe("DlineOtelHttpClient", () => {
         const huge = () => new Response(JSON.stringify({ ok: true, disposition: "accepted", pad: "x".repeat(20_000) }))
 
         const response = await mockFetchForTesting(respondWith(huge), () =>
-            new DlineOtelHttpClient().sendUsage({ accessToken: TOKEN, requestId: REQUEST_ID, body: new Uint8Array() }),
+            new DlineOtelHttpClient({ clientVersion: VERSION }).sendUsage({
+                accessToken: TOKEN,
+                requestId: REQUEST_ID,
+                body: new Uint8Array(),
+            }),
         )
 
         expect(response.json).toBeUndefined()
@@ -111,7 +120,7 @@ describe("DlineOtelHttpClient", () => {
     })
 
     it("turns a stalled request into a timeout and a caller abort into an abort", async () => {
-        const client = new DlineOtelHttpClient({ timeoutMs: 20 })
+        const client = new DlineOtelHttpClient({ clientVersion: VERSION, timeoutMs: 20 })
         const caller = new AbortController()
 
         const timedOut = await mockFetchForTesting(stalled, () =>
@@ -119,7 +128,7 @@ describe("DlineOtelHttpClient", () => {
         )
         const aborted = await mockFetchForTesting(stalled, () => {
             const pending = failure(
-                new DlineOtelHttpClient({ timeoutMs: 60_000 }).sendUsage(
+                new DlineOtelHttpClient({ clientVersion: VERSION, timeoutMs: 60_000 }).sendUsage(
                     { accessToken: TOKEN, requestId: REQUEST_ID, body: new Uint8Array() },
                     caller.signal,
                 ),
@@ -138,7 +147,13 @@ describe("DlineOtelHttpClient", () => {
         }
 
         const error = await mockFetchForTesting(broken, () =>
-            failure(new DlineOtelHttpClient().sendUsage({ accessToken: TOKEN, requestId: REQUEST_ID, body: new Uint8Array() })),
+            failure(
+                new DlineOtelHttpClient({ clientVersion: VERSION }).sendUsage({
+                    accessToken: TOKEN,
+                    requestId: REQUEST_ID,
+                    body: new Uint8Array(),
+                }),
+            ),
         )
 
         expect(error.failure).toBe("network")
@@ -148,9 +163,9 @@ describe("DlineOtelHttpClient", () => {
     })
 
     it("only accepts an HTTPS origin, or plain HTTP to loopback", () => {
-        expect(() => new DlineOtelHttpClient({ endpoint: "http://otel.dline.cc" })).toThrow()
-        expect(() => new DlineOtelHttpClient({ endpoint: "https://user:pw@otel.dline.cc" })).toThrow()
-        expect(() => new DlineOtelHttpClient({ endpoint: "http://localhost:8787" })).not.toThrow()
+        expect(() => new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "http://otel.dline.cc" })).toThrow()
+        expect(() => new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "https://user:pw@otel.dline.cc" })).toThrow()
+        expect(() => new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "http://localhost:8787" })).not.toThrow()
     })
 
     it("honours an environment override only when it names a loopback origin", () => {

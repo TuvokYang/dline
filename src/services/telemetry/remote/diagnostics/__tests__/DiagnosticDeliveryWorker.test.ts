@@ -43,6 +43,7 @@ const accepted = (nextEligibleAt?: number): WireResponse => ({
 
 interface SentLogs {
     readonly requestId: string
+    readonly body: string
     readonly records: { attributes: { key: string; value: { intValue?: string } }[] }[]
     readonly dropped: number
 }
@@ -85,13 +86,15 @@ describe("DiagnosticDeliveryWorker (contract v2 §1.5-§1.7, §3.3)", () => {
             },
             transport: {
                 sendLogs: async (delivery: UsageDelivery) => {
-                    const body = JSON.parse(new TextDecoder().decode(delivery.body))
+                    const text = new TextDecoder().decode(delivery.body)
+                    const body = JSON.parse(text)
                     const [resourceLogs] = body.resourceLogs
                     const dropped = resourceLogs.resource.attributes.find(
                         (attribute: { key: string }) => attribute.key === "dline.dropped_records",
                     )
                     sent.push({
                         requestId: delivery.requestId,
+                        body: text,
                         records: resourceLogs.scopeLogs[0].logRecords,
                         dropped: Number(dropped?.value.intValue),
                     })
@@ -131,7 +134,7 @@ describe("DiagnosticDeliveryWorker (contract v2 §1.5-§1.7, §3.3)", () => {
         expect(sent[1].requestId).toBe(sent[0].requestId)
     })
 
-    it("on a pause sends nothing, replays included, until it ends, even after a restart; then merges and resends under a new id", async () => {
+    it("on a pause sends nothing until it ends, then replays the same batch first; records gathered meanwhile form their own", async () => {
         replies.push({
             status: 429,
             json: { ok: false, error: { code: "telemetry_paused" }, retry_after_ms: 2 * HOUR },
@@ -144,14 +147,75 @@ describe("DiagnosticDeliveryWorker (contract v2 §1.5-§1.7, §3.3)", () => {
         now = START + 2 * HOUR - 1
         await worker().deliverOnce()
         now = START + 2 * HOUR
+        replies.push(accepted(now))
+        await worker().deliverOnce()
+        now += GATE_MARGIN_MS
         await worker().deliverOnce()
 
-        expect(sent).toHaveLength(2)
-        expect(sent[1].requestId).not.toBe(sent[0].requestId)
-        const occurrences = sent[1].records.map(
+        expect(sent).toHaveLength(3)
+        expect(sent[1].requestId).toBe(sent[0].requestId)
+        expect(sent[1].body).toBe(sent[0].body)
+        expect(sent[2].requestId).not.toBe(sent[0].requestId)
+        const occurrences = sent[2].records.map(
             (entry) => entry.attributes.find((attribute) => attribute.key === "dline.occurrences")?.value.intValue,
         )
-        expect(occurrences).toEqual(["2", "1"])
+        expect(occurrences).toEqual(["1", "1"])
+    })
+
+    it("after a timeout and a 429, replays the same bytes and takes a duplicate as delivered without sending it again", async () => {
+        replies.push(
+            new DlineOtelTransportError("timeout"),
+            { status: 429, json: undefined, retryAfter: null },
+            {
+                status: 200,
+                json: { ok: true, disposition: "duplicate" },
+                retryAfter: null,
+            },
+        )
+        await outbox().append([record(1)], now)
+
+        await worker().deliverOnce()
+        now += 30_000
+        await worker().deliverOnce()
+        now += 59_999
+        await worker().deliverOnce()
+        now += 1
+        await worker().deliverOnce()
+        now += 2 * HOUR
+        await worker().deliverOnce()
+
+        const document = await outbox().read()
+        expect(sent).toHaveLength(3)
+        expect(new Set(sent.map((request) => request.requestId)).size).toBe(1)
+        expect(new Set(sent.map((request) => request.body)).size).toBe(1)
+        expect(document.inflight).toBeUndefined()
+        expect(document.records).toEqual([])
+        expect(document.dropped).toBe(0)
+    })
+
+    it("counts neither a 429 as a replay nor its wait against the 24-hour limit", async () => {
+        replies.push(
+            new DlineOtelTransportError("timeout"),
+            {
+                status: 429,
+                json: { ok: false, error: { code: "telemetry_paused" }, retry_after_ms: 30 * HOUR },
+                retryAfter: null,
+            },
+            new DlineOtelTransportError("timeout"),
+        )
+        await outbox().append([record(1)], now)
+
+        await worker().deliverOnce()
+        now += 30_000
+        await worker().deliverOnce()
+        now = (await outbox().read()).pacing.wait_until
+        await worker().deliverOnce()
+
+        const document = await outbox().read()
+        expect(now - START).toBeGreaterThan(24 * HOUR)
+        expect(sent).toHaveLength(3)
+        expect(document.inflight).toMatchObject({ request_id: sent[0].requestId, attempts: 2 })
+        expect(document.dropped).toBe(0)
     })
 
     it("keeps waiting on logs without holding usage, whose outbox is its own", async () => {

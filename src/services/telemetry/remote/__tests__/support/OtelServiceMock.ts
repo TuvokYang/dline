@@ -4,19 +4,23 @@ import type { AddressInfo } from "node:net"
 
 /**
  * Loopback stand-in for the Dline telemetry service, written from the client's
- * view of the HTTP interface only (contract v2): device exchange, bearer tokens
- * on `/v1/usage`, request-ID idempotency, `next_eligible_at`, and a 429 for a new
+ * view of the HTTP interface only (contract v2): device exchange, the version
+ * list matched on `User-Agent` before anything else, bearer tokens on
+ * `/v1/usage`, request-ID idempotency, `next_eligible_at`, and a 429 for a new
  * batch sent before it. It deliberately keeps no knowledge of how the real
  * service is built.
  */
 export interface OtelServiceMockOptions {
     readonly usageIntervalMs?: number
     readonly tokenLifetimeMs?: number
+    /** Client versions the service accepts, matched exactly; every version when absent (§1.2). */
+    readonly acceptedVersions?: readonly string[]
 }
 
 export interface AcceptedUsage {
     readonly deviceId: string
     readonly requestId: string
+    readonly userAgent: string | undefined
     readonly body: unknown
 }
 
@@ -30,6 +34,9 @@ const SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const PROFILES = new Set(["usage", "production", "development"])
 const BODY_LIMIT_BYTES = 32 * 1024
+const USER_AGENT_PATTERN = /^Dline\/([0-9A-Za-z.+-]{1,32})$/
+/** How long a device whose version is not listed waits before it reports again. */
+const IGNORED_VERSION_INTERVAL_MS = 6 * 3_600_000
 
 export class OtelServiceMock {
     readonly accepted: AcceptedUsage[] = []
@@ -76,6 +83,13 @@ export class OtelServiceMock {
     }
 
     private usage(request: http.IncomingMessage, body: Buffer | undefined): MockReply {
+        // The version list is checked before the token and the body, so an ignored version costs nothing.
+        if (!this.acceptsVersionOf(request)) {
+            return {
+                status: 200,
+                body: { ok: true, disposition: "ignored_version", next_eligible_at: Date.now() + IGNORED_VERSION_INTERVAL_MS },
+            }
+        }
         const bearer = /^Bearer (.+)$/.exec(request.headers.authorization ?? "")?.[1]
         const token = bearer ? this.tokens.get(bearer) : undefined
         if (!token || token.profile !== "usage" || token.expiresAt <= Date.now()) return failure(401, "token_invalid")
@@ -107,9 +121,17 @@ export class OtelServiceMock {
             return failure(422, "invalid_usage")
         }
         this.requests.set(requestId, { deviceId: token.deviceId, digest })
-        this.accepted.push({ deviceId: token.deviceId, requestId, body: parsed })
+        this.accepted.push({ deviceId: token.deviceId, requestId, userAgent: request.headers["user-agent"], body: parsed })
         this.nextEligibleAt.set(token.deviceId, Date.now() + (this.options.usageIntervalMs ?? 600_000))
         return this.acknowledge(token.deviceId, "accepted")
+    }
+
+    /** With a version list, a missing or malformed user agent counts as a version not on it. */
+    private acceptsVersionOf(request: http.IncomingMessage): boolean {
+        const accepted = this.options.acceptedVersions
+        if (!accepted || accepted.length === 0) return true
+        const version = USER_AGENT_PATTERN.exec(request.headers["user-agent"] ?? "")?.[1]
+        return version !== undefined && accepted.includes(version)
     }
 
     private acknowledge(deviceId: string, disposition: "accepted" | "duplicate"): MockReply {

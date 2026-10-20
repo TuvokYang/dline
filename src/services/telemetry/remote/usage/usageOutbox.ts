@@ -42,11 +42,13 @@ export interface SettledUsageShard {
 export interface UsageInflight {
     readonly requestId: string
     readonly bodySha256: string
-    /** The minutes inside the body, merged back into pending when the server certainly stored nothing. */
+    /** The minutes inside the body, counted as lost when the batch is abandoned. */
     readonly minutes: readonly UsageMinute[]
     /** Minutes lost before this body and reported by it. */
     readonly droppedMinutes: number
+    /** Start of the replay window, moved later by every 429 wait so a wait never ages the batch. */
     readonly createdAt: number
+    /** Replays after a timeout or a retryable failure; a 429 is not one. */
     readonly attempts: number
     readonly notBefore: number
 }
@@ -223,13 +225,15 @@ export function settleUsageInflight(
         case "acknowledged":
             return { ...rest, pacing: afterAcknowledged(state.pacing, "usage", resolution.nextEligibleAt, now) }
         case "wait": {
-            // The service stored nothing: the minutes return to pending and travel later under a new request ID.
-            const capped = capPendingMinutes(mergeMinutes(rest.minutes, inflight.minutes))
+            // An earlier timed-out attempt may already be stored, so the batch keeps its request ID and bytes and
+            // is replayed first once the wait ends. The wait is the service's, not a failed attempt: it neither
+            // consumes a replay nor ages the batch towards its discard limit.
+            const pacing = afterRateLimited(state.pacing, resolution.retryAfterMs, now, random)
+            const waited = Math.max(0, pacing.waitUntil - now)
             return {
-                ...rest,
-                minutes: capped.minutes,
-                droppedMinutes: state.droppedMinutes + inflight.droppedMinutes + capped.dropped,
-                pacing: afterRateLimited(state.pacing, resolution.retryAfterMs, now, random),
+                ...state,
+                inflight: { ...inflight, createdAt: inflight.createdAt + waited, notBefore: pacing.waitUntil },
+                pacing,
             }
         }
         case "replay": {

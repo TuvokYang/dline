@@ -28,6 +28,7 @@ const MAX_BUFFERED_RECORDS = 500
 export interface RemoteDiagnosticsRuntimeOptions {
     /** `StorageContext.dataDir`; every remote telemetry file lives below it. */
     readonly dataDir: string
+    /** The one version this host reports: user agent, device exchange and the logs resource `service.version`. */
     readonly clientVersion: string
     readonly platform: string
     /** Which build this is and which editor hosts it, for the logs resource. */
@@ -71,7 +72,7 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
     if (running) return
     const layout = resolveOtelStorageLayout(options.dataDir)
     const owner = `${process.pid}-${randomUUID().slice(0, 8)}`
-    const transport = new DlineOtelHttpClient({ endpoint: options.endpoint })
+    const transport = new DlineOtelHttpClient({ clientVersion: options.clientVersion, endpoint: options.endpoint })
     const credentials = new DeviceCredentialRepository(layout)
     const resource: DiagnosticResource = {
         clientVersion: options.clientVersion,

@@ -261,6 +261,16 @@ describe("validateUsageBody (contract v2 §1.4, §2.2)", () => {
         })
         expect(sanitizeUsageClient({ version: "" })).toBeUndefined()
     })
+
+    it("keeps a client value with spaces, which the service accepts everywhere but in the version (§2.2)", () => {
+        expect(sanitizeUsageClient({ version: "0.11.1", host_version: "1.105.0 Insider", architecture: "x".repeat(65) })).toEqual(
+            {
+                version: "0.11.1",
+                host_version: "1.105.0 Insider",
+            },
+        )
+        expect(sanitizeUsageClient({ version: "0.11.1 beta" })).toBeUndefined()
+    })
 })
 
 describe("persisted tallies", () => {

@@ -33,8 +33,9 @@ export type DeliveryOutcome =
     /** The token is no longer accepted: exchange again, then send the same bytes once more. */
     | { readonly kind: "refresh_token" }
     /**
-     * A 429 or a pause: the server stored nothing. Send nothing on this channel
-     * until the wait ends, then rebuild the batch under a new request ID.
+     * A 429 or a pause: this answer stored nothing, but an earlier timed-out
+     * attempt may have. Send nothing on this channel until the wait ends, then
+     * replay the same batch under the same request ID and bytes.
      */
     | { readonly kind: "wait"; readonly code: string; readonly retryAfterMs?: number }
     /** 413: the server stored nothing; usage drops the batch, logs split it in half. */

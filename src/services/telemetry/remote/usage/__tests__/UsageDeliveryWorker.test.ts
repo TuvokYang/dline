@@ -219,7 +219,7 @@ describe("UsageDeliveryWorker", () => {
         expect(refused).toEqual({ kind: "stopped", scope: "profile", code: USAGE_TOKEN_REJECTED })
     })
 
-    it("on a pause sends nothing until it ends, even after a restart, then rebuilds the batch under a new request ID", async () => {
+    it("on a pause sends nothing until it ends, even after a restart, then replays the same batch before a new one", async () => {
         const transport = new FakeTransport()
         transport.replies.push({
             status: 429,
@@ -236,18 +236,24 @@ describe("UsageDeliveryWorker", () => {
         const restarted = worker("window-a", new FakeTokens(), transport)
         const early = await restarted.runCycle(1)
         now = pausedAt + 2 * HOUR
-        const merged = await restarted.runCycle(1)
+        transport.replies.push(accepted("accepted", now))
+        const replayed = await restarted.runCycle(1)
+        now += GATE_MARGIN_MS
+        const next = await restarted.runCycle(1)
 
         expect(paused).toMatchObject({ kind: "paused", code: "telemetry_paused", until: pausedAt + 2 * HOUR })
         expect(early).toEqual({ kind: "idle" })
-        expect(transport.deliveries).toHaveLength(2)
-        expect(merged.kind).toBe("delivered")
-        expect(transport.deliveries[1].requestId).not.toBe(transport.deliveries[0].requestId)
-        expect(inputTokens(transport.sent(1))).toBe(10)
+        expect(replayed).toMatchObject({ kind: "delivered", requestId: transport.deliveries[0].requestId })
+        expect(next.kind).toBe("delivered")
+        expect(transport.deliveries).toHaveLength(3)
+        expect(transport.deliveries[1].requestId).toBe(transport.deliveries[0].requestId)
+        expect(transport.deliveries[1].body).toBe(transport.deliveries[0].body)
+        expect(transport.deliveries[2].requestId).not.toBe(transport.deliveries[0].requestId)
+        expect(inputTokens(transport.sent(2))).toBe(3)
         expect((await pacing())?.consecutiveWaits).toBe(0)
     })
 
-    it("holds a replay during a wait without spending one of its twelve attempts", async () => {
+    it("after a timeout and a 429, replays the same bytes and takes a duplicate as delivered without counting twice", async () => {
         const transport = new FakeTransport()
         transport.replies.push(new DlineOtelTransportError("timeout"), {
             status: 429,
@@ -261,15 +267,27 @@ describe("UsageDeliveryWorker", () => {
         const inflight = (await new UsageOutboxRepository(layout).read())?.inflight
         now = inflight?.notBefore ?? now
         const edgeLimited = await sender.runCycle(1)
-        const waitUntil = (await pacing())?.waitUntil ?? 0
+        const waiting = await new UsageOutboxRepository(layout).read()
+        const waitUntil = waiting?.pacing.waitUntil ?? 0
         now = waitUntil - 1
         const held = await sender.runCycle(1)
+        now = waitUntil
+        transport.replies.push(accepted("duplicate"))
+        const replayed = await sender.runCycle(1)
+        now += DEFAULT_INTERVAL_MS.usage + GATE_MARGIN_MS
+        const after = await sender.runCycle(1)
 
         expect(edgeLimited).toMatchObject({ kind: "paused", code: "edge_rate_limited" })
         expect(waitUntil - (inflight?.notBefore ?? 0)).toBe(MINUTE)
+        expect(waiting?.inflight).toMatchObject({ requestId: inflight?.requestId, attempts: 1 })
         expect(held).toEqual({ kind: "idle" })
-        expect(transport.deliveries).toHaveLength(2)
+        expect(replayed).toMatchObject({ kind: "delivered", disposition: "duplicate" })
+        expect(after).toEqual({ kind: "idle" })
+        expect(transport.deliveries).toHaveLength(3)
+        expect(new Set(transport.deliveries.map((delivery) => delivery.requestId)).size).toBe(1)
+        expect(new Set(transport.deliveries.map((delivery) => delivery.body)).size).toBe(1)
         expect((await new UsageOutboxRepository(layout).read())?.droppedMinutes).toBe(0)
+        expect(await fs.readdir(layout.usageInflightDir)).toEqual([])
     })
 
     it("drops a batch the service refuses with 422 without retrying, and reports its minute with the next batch", async () => {

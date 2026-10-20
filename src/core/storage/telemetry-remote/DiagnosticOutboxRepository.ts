@@ -45,7 +45,7 @@ export type DiagnosticSettlement =
     | { readonly kind: "acknowledged"; readonly nextEligibleAt?: number }
     /** The service may hold the batch: the same bytes follow after a backoff. */
     | { readonly kind: "replay"; readonly retryAfterMs?: number }
-    /** A 429 or a pause: the records rejoin the pending ones and the channel sends nothing until the wait ends. */
+    /** A 429 or a pause: the channel sends nothing until the wait ends, then replays the same batch first. */
     | { readonly kind: "wait"; readonly retryAfterMs?: number }
     /** 413: the first half is resent at once under a new id, the rest rejoins the pending records. */
     | { readonly kind: "split" }
@@ -206,8 +206,16 @@ export class DiagnosticOutboxRepository {
                     return { ...released, inflight: { ...inflight, attempts, not_before: notBefore } }
                 }
                 case "wait": {
+                    // §1.7 rule 7: the batch stays as it is and is replayed first once the wait
+                    // ends, so a copy an earlier timed-out attempt stored is answered as a duplicate.
+                    // The wait does not count against the 24-hour replay age (rule 8).
                     const pacing = afterRateLimited(pacingOf(rest), settlement.retryAfterMs, now, this.options.random)
-                    return { ...this.restore(rest, inflight.records, inflight.dropped), pacing: storedPacing(pacing) }
+                    const waitedMs = Math.max(0, pacing.waitUntil - now)
+                    return {
+                        ...released,
+                        inflight: { ...inflight, created_at: inflight.created_at + waitedMs, not_before: pacing.waitUntil },
+                        pacing: storedPacing(pacing),
+                    }
                 }
                 case "split": {
                     if (inflight.records.length <= 1) return lost(rest)
