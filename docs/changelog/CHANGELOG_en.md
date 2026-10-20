@@ -10,6 +10,10 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ### Fixed
 - Commands waiting for a warm terminal at the same time are no longer given the same terminal
+- The browser session card is organized by round:
+- The browser session header reports the actual state (using, used, waiting for approval, not approved, interrupted or failed) instead of always saying "Dline is using the browser"
+- Browser screenshot results are never shown as base64 text in the chat, including when the loaded message window starts mid-session or browsing continues after a cancelled request
+- The kill command row follows the targeted command to its actual state (terminating, terminated, already finished, interrupted, or no running command matched) instead of always saying "Dline requested command termination"
 
 ## [0.11.1]
 

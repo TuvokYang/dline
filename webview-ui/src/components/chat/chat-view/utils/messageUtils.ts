@@ -8,7 +8,8 @@ import type { TaskViewState, UiMessage, UiSayBrowserAction, UiSayTool } from "@s
 import { parseImageGenerationToolText } from "@shared/image-generation"
 import { FileIcon, FolderOpenDotIcon, FolderOpenIcon, SearchIcon, ShapesIcon, WrenchIcon } from "lucide-react"
 import React from "react"
-import type { ToolMessageGroup } from "./chatRowKinds"
+import type { BrowserSessionEnd, BrowserSessionGroup, ToolMessageGroup } from "./chatRowKinds"
+import { isRoundStartCheckpoint } from "./checkpointRows"
 import { groupExplorationRuns } from "./explorationRuns"
 import { supersededFailureIndexes } from "./failurePresentation"
 import { dropSupersededChatOnlyCheckpoints } from "./supersededCheckpoints"
@@ -378,70 +379,116 @@ export function isBrowserSessionMessage(message: UiMessage): boolean {
     return false
 }
 
-/**
- * Group messages, combining browser session messages into arrays
- */
-export function groupMessages(visibleMessages: UiMessage[]): (UiMessage | UiMessage[])[] {
-    const result: (UiMessage | UiMessage[])[] = []
-    let currentGroup: UiMessage[] = []
-    let isInBrowserSession = false
+function isBrowserLaunch(message: UiMessage): boolean {
+    return message.ask === "browser_action_launch" || message.say === "browser_action_launch"
+}
 
-    const endBrowserSession = () => {
-        if (currentGroup.length > 0) {
-            result.push([...currentGroup])
-            currentGroup = []
-            isInBrowserSession = false
-        }
+/** A row that records browser work, so it can only be drawn by a session card. */
+function isBrowserRow(message: UiMessage): boolean {
+    return isBrowserLaunch(message) || message.say === "browser_action" || message.say === "browser_action_result"
+}
+
+function isCloseAction(message: UiMessage): boolean {
+    if (message.say !== "browser_action") return false
+    try {
+        return (JSON.parse(message.text || "{}") as UiSayBrowserAction).action === "close"
+    } catch {
+        return false
+    }
+}
+
+function isLastRequestCancelled(session: readonly UiMessage[]): boolean {
+    const lastRequest = [...session].reverse().find((message) => message.say === "api_req_started")
+    if (!lastRequest?.text) return false
+    try {
+        return JSON.parse(lastRequest.text).cancelReason != null
+    } catch {
+        return false
+    }
+}
+
+/**
+ * Rows a round writes before its tool call: its restore point, thinking and
+ * request notices. They follow that call into a browser session, or out of one.
+ */
+function isRoundLead(message: UiMessage): boolean {
+    return isBrowserSessionMessage(message) && !isBrowserRow(message)
+}
+
+function sameRound(rounds: RequestRounds, message: UiMessage, round: number | undefined): boolean {
+    return round !== undefined && rounds.get(message.ts) === round
+}
+
+/** Remove the trailing lead rows of `owner`'s round from `rows`, in transcript order. */
+function takeRoundLeads(rows: (UiMessage | UiMessage[])[], owner: UiMessage, rounds?: RequestRounds): UiMessage[] {
+    if (!rounds) return []
+    const round = rounds.get(owner.ts)
+    const leads: UiMessage[] = []
+    const takeLast = () => leads.unshift(rows.pop() as UiMessage)
+    const isLeadOfRound = (row: UiMessage | UiMessage[] | undefined): boolean =>
+        row !== undefined && !Array.isArray(row) && isRoundLead(row) && sameRound(rounds, row, round)
+
+    while (isLeadOfRound(rows.at(-1))) takeLast()
+    // The restore point is written before the round's request opens it, so the
+    // round index files it with the round before; it still leads this round.
+    const last = rows.at(-1)
+    if (last !== undefined && !Array.isArray(last) && isRoundStartCheckpoint(last)) takeLast()
+    return leads
+}
+
+function tagBrowserSession(messages: UiMessage[], end: BrowserSessionEnd): BrowserSessionGroup {
+    const group = messages as BrowserSessionGroup
+    group._isBrowserSession = true
+    group._browserSessionId = `browser:${(messages.find(isBrowserRow) ?? messages[0]).ts}`
+    group._end = end
+    return group
+}
+
+/**
+ * Group the rows of each browser session into one tagged row.
+ *
+ * A session runs from a launch to the close action, or until a row that is not
+ * browser work arrives. A browser row whose launch is missing — outside the
+ * loaded window, or cut off by a cancelled request — opens a session of its
+ * own, so no browser payload is ever drawn as an ordinary row.
+ *
+ * With `rounds`, indexed on the full transcript, each session owns whole
+ * rounds: the restore point and thinking written before a launch join its
+ * session, and those written before the call that ends a session leave it.
+ */
+export function groupMessages(visibleMessages: UiMessage[], rounds?: RequestRounds): (UiMessage | UiMessage[])[] {
+    const result: (UiMessage | UiMessage[])[] = []
+    let session: UiMessage[] | undefined
+
+    const endSession = (end: BrowserSessionEnd, next?: UiMessage) => {
+        if (!session) return
+        const released = next ? takeRoundLeads(session as (UiMessage | UiMessage[])[], next, rounds) : []
+        result.push(tagBrowserSession(session, end), ...released)
+        session = undefined
+    }
+    const startSession = (message: UiMessage) => {
+        session = [...takeRoundLeads(result, message, rounds), message]
     }
 
     for (const message of visibleMessages) {
-        if (message.ask === "browser_action_launch" || message.say === "browser_action_launch") {
-            // complete existing browser session if any
-            endBrowserSession()
-            // start new
-            isInBrowserSession = true
-            currentGroup.push(message)
-        } else if (isInBrowserSession) {
-            // end session if api_req_started is cancelled
-            if (message.say === "api_req_started") {
-                // get last api_req_started in currentGroup to check if it's cancelled
-                const lastApiReqStarted = [...currentGroup].reverse().find((m) => m.say === "api_req_started")
-                if (lastApiReqStarted?.text != null) {
-                    const info = JSON.parse(lastApiReqStarted.text)
-                    const isCancelled = info.cancelReason != null
-                    if (isCancelled) {
-                        endBrowserSession()
-                        result.push(message)
-                        continue
-                    }
-                }
-            }
-
-            if (isBrowserSessionMessage(message)) {
-                currentGroup.push(message)
-
-                // Check if this is a close action
-                if (message.say === "browser_action") {
-                    const browserAction = JSON.parse(message.text || "{}") as UiSayBrowserAction
-                    if (browserAction.action === "close") {
-                        endBrowserSession()
-                    }
-                }
-            } else {
-                // complete existing browser session if any
-                endBrowserSession()
-                result.push(message)
-            }
+        if (isBrowserLaunch(message)) {
+            endSession("ended", message)
+            startSession(message)
+        } else if (!session) {
+            if (isBrowserRow(message)) startSession(message)
+            else result.push(message)
+        } else if (message.say === "api_req_started" && isLastRequestCancelled(session)) {
+            endSession("interrupted", message)
+            result.push(message)
+        } else if (isBrowserSessionMessage(message)) {
+            session.push(message)
+            if (isCloseAction(message)) endSession("closed")
         } else {
+            endSession(message.say === "error" ? "failed" : "ended", message)
             result.push(message)
         }
     }
-
-    // Handle case where browser session is the last group
-    if (currentGroup.length > 0) {
-        result.push([...currentGroup])
-    }
-
+    endSession("open")
     return result
 }
 
@@ -1043,7 +1090,7 @@ export function groupChatRows(
     visibleMessages: UiMessage[] = filterVisibleMessages(messages),
 ): (UiMessage | UiMessage[])[] {
     const rounds = indexRequestRounds(messages)
-    return groupExplorationRuns(groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds)), rounds))
+    return groupExplorationRuns(groupLowStakesTools(groupMessages(placeTurnEndLast(visibleMessages, rounds), rounds), rounds))
 }
 
 /** A turn-ending interaction owns the tail of its request round, never a row in its middle. */

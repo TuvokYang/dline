@@ -1,5 +1,6 @@
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { type ExplorationRound, type ExplorationRun, isToolGroup, type ToolMessageGroup } from "./chatRowKinds"
+import { isRoundStartCheckpoint, restoresSameFiles } from "./checkpointRows"
 
 type ChatRow = UiMessage | UiMessage[]
 
@@ -108,13 +109,7 @@ function canJoin(unit: RoundUnit, reference: UiMessage | undefined): boolean {
     const checkpoint = unit.checkpoint
     if (!checkpoint) return true
     if (checkpoint.isCheckpointCheckedOut) return false
-    return !reference || sameFiles(reference.lastCheckpointHash, checkpoint.lastCheckpointHash)
-}
-
-function sameFiles(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
-    const leftHashes = left ?? []
-    const rightHashes = right ?? []
-    return leftHashes.length === rightHashes.length && leftHashes.every((hash, index) => hash === rightHashes[index])
+    return !reference || restoresSameFiles(reference, checkpoint)
 }
 
 function buildRun(units: readonly RoundUnit[]): ChatRow[] {
@@ -137,14 +132,8 @@ function rowsOf(units: readonly RoundUnit[]): ChatRow[] {
     return units.flatMap((unit) => unit.rows)
 }
 
-/**
- * The restore point a round writes before its request. Legacy rows carry no
- * source. Pre-edit and pre-compaction restore points belong to the change they
- * precede, so they stay rows of their own.
- */
 function isRoundCheckpoint(row: ChatRow): row is UiMessage {
-    if (Array.isArray(row) || row.say !== "checkpoint_created") return false
-    return row.checkpointSource === undefined || row.checkpointSource.kind === "round_start"
+    return !Array.isArray(row) && isRoundStartCheckpoint(row)
 }
 
 function isReasoning(row: ChatRow): row is UiMessage {

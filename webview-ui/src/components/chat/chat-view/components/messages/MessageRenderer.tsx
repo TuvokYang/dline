@@ -7,7 +7,7 @@ import { TOOL_RESPONSE_SCROLL_CLASS } from "@/components/chat/constants"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
 import type { MessageHandlers, RowExpansionOrigin } from "../../types/chatTypes"
-import { isExplorationRun } from "../../utils/chatRowKinds"
+import { isBrowserSession, isExplorationRun } from "../../utils/chatRowKinds"
 import {
     indexPreEditCheckpointAttachments,
     isTextMessagePendingToolCall,
@@ -134,6 +134,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     if (Array.isArray(messageOrGroup)) {
         return (
             <BrowserSessionRow
+                end={isBrowserSession(messageOrGroup) ? messageOrGroup._end : undefined}
                 expandedRows={expandedRows}
                 isLast={isLastMessage}
                 key={messageOrGroup[0]?.ts}

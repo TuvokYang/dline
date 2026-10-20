@@ -51,6 +51,7 @@ import AgentUpdateRow from "./AgentUpdateRow"
 import { ApiErrorBox } from "./ApiErrorBox"
 import { ApiFailureContent } from "./ApiFailureContent"
 import { cancelTaskActivities } from "./activity/useTaskActivities"
+import { BrowserMessageSummary } from "./browser-session/BrowserMessageSummary"
 import CodeExecutionRow from "./CodeExecutionRow"
 import { CommandOutputContent, CommandOutputRow } from "./CommandOutputRow"
 import { CompletionOutputRow } from "./CompletionOutputRow"
@@ -1081,6 +1082,11 @@ export const ChatRowContent = memo(
         switch (message.type) {
             case "say":
                 switch (message.say) {
+                    case "browser_action_launch":
+                    case "browser_action":
+                    case "browser_action_result":
+                        // The payload carries a screenshot data URL; it must never fall through to text.
+                        return <BrowserMessageSummary message={message} />
                     case "api_req_started":
                         return (
                             <RequestStartRow

@@ -1,6 +1,6 @@
 import type { TaskViewState, UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
-import { isExplorationRun } from "./chatRowKinds"
+import { isBrowserSession, isExplorationRun } from "./chatRowKinds"
 import {
     filterVisibleMessages,
     findGroupedMessageByTs,
@@ -353,6 +353,111 @@ describe("groupMessages", () => {
         expect(grouped.every(Array.isArray)).toBe(true)
         expect((grouped[0] as UiMessage[]).map((message) => message.ts)).toEqual([1, 2, 3])
         expect((grouped[1] as UiMessage[]).map((message) => message.ts)).toEqual([4, 5])
+    })
+})
+
+describe("browser session rows", () => {
+    const roundCheckpoint = (ts: number): UiMessage => ({
+        ts,
+        type: "say",
+        say: "checkpoint_created",
+        lastCheckpointHash: ["files-1"],
+        checkpointSource: { kind: "round_start", turnId: `turn-${ts}` },
+    })
+    const completedRequest = (ts: number) => createRequestMessage(ts, { cost: 0.01 })
+    const launch = (ts: number): UiMessage => ({ ts, type: "say", say: "browser_action_launch", text: "https://example.com" })
+    const browserAction = (ts: number, action: string): UiMessage => ({
+        ts,
+        type: "say",
+        say: "browser_action",
+        text: JSON.stringify({ action, coordinate: "10,10" }),
+    })
+    const browserResult = (ts: number): UiMessage => ({
+        ts,
+        type: "say",
+        say: "browser_action_result",
+        text: JSON.stringify({ currentUrl: "https://example.com", screenshot: `data:image/png;base64,${"A".repeat(64)}` }),
+    })
+    const command = (ts: number): UiMessage => ({ ts, type: "say", say: "command", text: "npm test" })
+    const timestamps = (row: UiMessage | UiMessage[]) => (Array.isArray(row) ? row.map((message) => message.ts) : row.ts)
+
+    /** Launch round, one browser round, a close round, then a command round. */
+    const transcript: UiMessage[] = [
+        roundCheckpoint(10),
+        completedRequest(11),
+        createReasoningMessage(12, "open the docs"),
+        launch(13),
+        browserResult(14),
+        roundCheckpoint(20),
+        completedRequest(21),
+        browserAction(22, "click"),
+        browserResult(23),
+        roundCheckpoint(30),
+        completedRequest(31),
+        browserAction(32, "close"),
+        roundCheckpoint(40),
+        completedRequest(41),
+        command(42),
+    ]
+
+    it("folds every browser round, including the launch round's restore point and thinking, into one closed session", () => {
+        const rows = groupChatRows(transcript)
+
+        expect(rows.map(timestamps)).toEqual([[10, 12, 13, 14, 20, 22, 23, 30, 32], 40, 42])
+        const [session] = rows
+        expect(isBrowserSession(session) && session._end).toBe("closed")
+        expect(isBrowserSession(session) && session._browserSessionId).toBe("browser:13")
+    })
+
+    it("hands the restore point and thinking of the round that leaves the browser back to the timeline", () => {
+        const rows = groupChatRows([
+            ...transcript.slice(0, 9),
+            roundCheckpoint(30),
+            completedRequest(31),
+            createReasoningMessage(33, "now run the tests"),
+            command(34),
+        ])
+
+        expect(rows.map(timestamps)).toEqual([[10, 12, 13, 14, 20, 22, 23], 30, 33, 34])
+        expect(isBrowserSession(rows[0]) && rows[0]._end).toBe("ended")
+    })
+
+    it("records an error that ends the session as a failure", () => {
+        const rows = groupMessages([
+            launch(1),
+            browserResult(2),
+            browserAction(3, "click"),
+            { ts: 4, type: "say", say: "error", text: "Navigation timeout" },
+        ])
+
+        expect(rows.map(timestamps)).toEqual([[1, 2, 3], 4])
+        expect(isBrowserSession(rows[0]) && rows[0]._end).toBe("failed")
+    })
+
+    it("ends the session as interrupted when the request it waited on was cancelled", () => {
+        const rows = groupMessages([
+            launch(1),
+            browserResult(2),
+            createRequestMessage(3, { cancelReason: "user_cancelled" }),
+            createRequestMessage(4, {}),
+        ])
+
+        expect(rows.map(timestamps)).toEqual([[1, 2, 3], 4])
+        expect(isBrowserSession(rows[0]) && rows[0]._end).toBe("interrupted")
+    })
+
+    it("gives browser rows whose launch is not loaded a session card instead of ordinary rows", () => {
+        const rows = groupChatRows(transcript.slice(7))
+
+        expect(rows.map(timestamps)).toEqual([[22, 23, 30, 32], 40, 42])
+        expect(isBrowserSession(rows[0])).toBe(true)
+        expect(rows.filter((row) => !Array.isArray(row) && row.say?.startsWith("browser_action"))).toEqual([])
+    })
+
+    it("leaves a session the transcript still ends in open", () => {
+        const rows = groupChatRows(transcript.slice(0, 9))
+
+        expect(isBrowserSession(rows[0]) && rows[0]._end).toBe("open")
     })
 })
 
