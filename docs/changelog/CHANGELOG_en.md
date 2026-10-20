@@ -4,6 +4,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 
 ## [Unreleased]
 
+## [0.11.0]
+
 ### Changed
 - The Account rollout reaches only devices that report Dline usage statistics, grouped by the device id the usage service issued; turning usage reporting off leaves the rollout at once and clears the cached rollout answers
 - Only two rollout switches remain, Account (`account`) and Worktrees (`worktree-exp`): Web tools follow only the Web Tools switch in Settings → Features and no longer depend on a rollout, and OpenAI Responses WebSocket is no longer a rollout
@@ -34,7 +36,13 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Consecutive read-only rounds (thinking plus reads, folder listings, searches, and definition or reference lookups, with no file change in between) fold into one row: collapsed, it reads like an ordinary tool group, with the checkpoint taken before the exploration, a summary of reads, searches, thoughts, and rounds, and every round's file and operation rows (click to open the file or show search results), folding away only the thinking and the checkpoints in between; clicking the summary lists each round with its checkpoint, thinking you can click to read, and tool calls; a file change, command, approval, error, or user input ends the row, and every checkpoint stays restorable
 - Added telemetry to Dline's service at `otel.dline.cc`: usage telemetry is on by default and can be turned off in Settings → About; it counts provider and model usage for rankings
 - The "Dline: Reconstruct Task History" command no longer replaces the whole task history: entries whose task folder still exists keep their workspace, favorite, and completion state, only missing tasks are added, and entries whose folder is gone are removed; an added task recovers its workspace from its first request, so the Workspace Only filter shows it again
-
+- The task runtime now stores conversations in a journal; the first time an existing task is continued after upgrading, its conversation is imported unchanged and later requests carry the full history; per-task `state.json` replaces `snapshot.json`, and the migration imports only the queued inputs, not the earlier completion state
+- Tasks from before the upgrade may reopen as interrupted, including tasks that were running or already completed, and continue through Resume or a new message; a task opened after upgrading cannot be continued by downgrading to an older Dline build
+- Per-task storage moves to `messages.db`, `activities.db`, and `metrics.db`: an existing `ui_messages.jsonl` or `activities.json` is imported on first open and renamed to `*.migrated`, an existing `<task-id>.db` becomes `metrics.db`, and `api_conversation_history.jsonl` is left unchanged
+- A task already open in another window is read-only in this window: input and footer actions are disabled, and replies, queue changes, compaction, activity controls, mode and Profile switches, and checkpoint restore are refused until you take the task over with force unlock in the lock banner
+- Removed the deprecated per-mode OCA/OpenRouter model ID, model info and reasoning effort settings (cleaned once at startup), so continued tasks use the selected Profile's default reasoning effort; also removed the legacy `updateApiConfigurationProto` RPC and unused Groq/Hugging Face/Baseten model list state in the Webview
+- Context compaction now uses the provider's official input count when available, or calibrates text estimates from real usage for the same provider, model, and API format; images and documents are counted separately, accepted passes are persisted, and multi-pass compaction resumes from the last safe checkpoint
+- Subagent costs now use the effective model's billing currency, with unambiguous labels for Chinese yuan and Japanese yen and the currency code retained for unknown currencies
 
 ### Fixes
 - Fixed a round's checkpoint sometimes appearing below the round's tool rows, right next to the following round's checkpoint: the checkpoint row now takes its place when the round starts, shows no Compare or Restore while the file snapshot is being committed, and is completed in place afterwards; when no file changed, the round reuses the previous snapshot instead of committing again
@@ -113,19 +121,6 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Fixed the mouse wheel failing to scroll the chat while the pointer rests on a short user message
 - Fixed new tasks skipping the TaskStart hook until a window reload after a hook was created, toggled, deleted, or edited: hook discovery re-warms right after every change, and a task start waits up to 1.5 seconds for a scan in progress
 - Fixed the message just sent, and the replies after it, not appearing after unlocking a large task from an earlier version and continuing it: importing the full history renumbers the messages, so the chat now replaces the window read while the task was read-only with the running task's latest page
-
-## [0.11.0]
-
-### Changed
-- The task runtime now stores conversations in a journal; the first time an existing task is continued after upgrading, its conversation is imported unchanged and later requests carry the full history; per-task `state.json` replaces `snapshot.json`, and the migration imports only the queued inputs, not the earlier completion state
-- Tasks from before the upgrade may reopen as interrupted, including tasks that were running or already completed, and continue through Resume or a new message; a task opened after upgrading cannot be continued by downgrading to an older Dline build
-- Per-task storage moves to `messages.db`, `activities.db`, and `metrics.db`: an existing `ui_messages.jsonl` or `activities.json` is imported on first open and renamed to `*.migrated`, an existing `<task-id>.db` becomes `metrics.db`, and `api_conversation_history.jsonl` is left unchanged
-- A task already open in another window is read-only in this window: input and footer actions are disabled, and replies, queue changes, compaction, activity controls, mode and Profile switches, and checkpoint restore are refused until you take the task over with force unlock in the lock banner
-- Removed the deprecated per-mode OCA/OpenRouter model ID, model info and reasoning effort settings (cleaned once at startup), so continued tasks use the selected Profile's default reasoning effort; also removed the legacy `updateApiConfigurationProto` RPC and unused Groq/Hugging Face/Baseten model list state in the Webview
-- Context compaction now uses the provider's official input count when available, or calibrates text estimates from real usage for the same provider, model, and API format; images and documents are counted separately, accepted passes are persisted, and multi-pass compaction resumes from the last safe checkpoint
-- Subagent costs now use the effective model's billing currency, with unambiguous labels for Chinese yuan and Japanese yen and the currency code retained for unknown currencies
-
-### Fixes
 - Dialogs stay within the Webview height and scroll their content, so a long dialog in a short sidebar no longer pushes its title and close button off screen
 - Fixed imported tasks retaining almost all history after tool-message mismatches, Anthropic requests being rejected, Resume repeating completed compaction ranges, and queued input being lost or locked during compaction
 - Fixed ordinary tasks and subagents failing immediately on upstream HTTP/2 stream errors; bounded retries now preserve request, task, and run identity, while a manual Retry can take over a pending automatic retry

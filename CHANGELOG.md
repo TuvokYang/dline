@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.11.0]
+
 ### Changed
 - 账号灰度只面向开启了 Dline 使用统计的设备，按使用统计签发的设备标识分组；关闭使用统计会立即退出灰度并清除已缓存的灰度结果
 - 灰度开关只保留账号（`account`）与 Worktrees（`worktree-exp`）：Web 工具只由设置 → Features 中的 Web Tools 开关控制，不再受灰度影响；OpenAI Responses WebSocket 不再作为灰度项
@@ -34,7 +36,13 @@
 - 连续的只读轮次（思考加读取、列目录、搜索、定义与引用查询，期间文件未变）合并为一行：折叠时与普通工具组一样，显示探索开始前的 Checkpoint、读取、搜索、思考、轮数的汇总，以及各轮全部文件与操作行（可点击打开文件或查看搜索结果），只收起思考内容和中间的 Checkpoint；点击汇总展开后按轮列出每轮的 Checkpoint、可点击查看的思考内容和工具调用；遇到改文件、命令、审批、错误或用户输入时自动断开，每个 Checkpoint 仍可恢复
 - 接入 Dline 遥测服务 `otel.dline.cc`：使用情况遥测默认开启，可在 Settings → About 中关闭；它统计 provider 和模型的使用信息，用于排名
 - 命令 “Dline: Reconstruct Task History” 不再整体替换任务历史：任务目录仍在的条目原样保留工作区、收藏与完成状态，只补回缺失的任务并移除目录已不存在的条目；补回的任务从首条请求中恢复工作区，Workspace Only 筛选能重新显示它们
-
+- 任务运行时改为基于日志（journal）的会话存储：升级后首次继续旧任务时，其原有对话会原样导入新存储，后续请求带着完整历史继续；任务状态由 `state.json` 取代 `snapshot.json`，迁移只导入待发送队列，旧的完成状态不迁移
+- 升级前的任务重新打开后可能显示为已中断（interrupted），包括升级时仍在进行或已完成的任务，可通过 Resume 或直接发送消息继续；升级后打开过的任务不支持降级回旧版本 Dline 继续使用
+- 每任务存储改为 `messages.db`、`activities.db` 与 `metrics.db`：旧的 `ui_messages.jsonl` 与 `activities.json` 首次打开时导入并重命名为 `*.migrated`，旧的 `<任务 ID>.db` 移为 `metrics.db`；`api_conversation_history.jsonl` 保持不变
+- 同一任务已在另一窗口打开时，本窗口只读显示：输入框与底部操作被禁用，回复、队列、压缩、活动控制、模式/Profile 切换和检查点恢复都会被拒绝，需通过任务锁提示中的强制解锁接管后才能继续
+- 移除已废弃的按模式 OCA/OpenRouter 模型 ID、模型信息与推理强度设置项（启动时一次性清理），旧任务继续时改用所选 Profile 的默认推理强度；同时移除旧的 `updateApiConfigurationProto` RPC，以及 Webview 中未使用的 Groq/Hugging Face/Baseten 模型列表状态
+- 上下文压缩改为使用 Provider 官方输入计数，或按同一 Provider、模型与 API 格式的真实用量校准文本估算；图片与文档独立计量，多轮压缩会持久保存已接受的 Pass，并从最后一个安全检查点恢复
+- Subagent 成本沿用实际模型的计费币种；人民币与日元使用无歧义标识，未知币种保留货币代码
 
 ### Fixes
 - 修复每轮的 checkpoint 有时排在该轮工具行之后、和下一轮的 checkpoint 挨在一起的问题：每轮开始时 checkpoint 行就先占住位置，提交文件快照期间不显示 Compare 和 Restore，快照完成后在原位置补全；文件没有变化时沿用上一次的快照，不再额外提交
@@ -113,19 +121,6 @@
 - 修复鼠标停在较短的用户消息上时滚轮无法滚动聊天记录的问题
 - 修复创建、启用/停用、删除或修改 hook 后，新任务在重载窗口前都不再运行 TaskStart hook 的问题：hook 发现缓存在每次变更后立即重新预热，任务启动时最多等待 1.5 秒以使用正在进行的扫描结果
 - 修复解锁较大的旧版本任务并继续对话后，刚发送的消息及其后的回复不显示的问题：导入完整历史会重新编号消息，聊天区现在用运行任务的最新一页替换只读阶段读取的窗口
-
-## [0.11.0]
-
-### Changed
-- 任务运行时改为基于日志（journal）的会话存储：升级后首次继续旧任务时，其原有对话会原样导入新存储，后续请求带着完整历史继续；任务状态由 `state.json` 取代 `snapshot.json`，迁移只导入待发送队列，旧的完成状态不迁移
-- 升级前的任务重新打开后可能显示为已中断（interrupted），包括升级时仍在进行或已完成的任务，可通过 Resume 或直接发送消息继续；升级后打开过的任务不支持降级回旧版本 Dline 继续使用
-- 每任务存储改为 `messages.db`、`activities.db` 与 `metrics.db`：旧的 `ui_messages.jsonl` 与 `activities.json` 首次打开时导入并重命名为 `*.migrated`，旧的 `<任务 ID>.db` 移为 `metrics.db`；`api_conversation_history.jsonl` 保持不变
-- 同一任务已在另一窗口打开时，本窗口只读显示：输入框与底部操作被禁用，回复、队列、压缩、活动控制、模式/Profile 切换和检查点恢复都会被拒绝，需通过任务锁提示中的强制解锁接管后才能继续
-- 移除已废弃的按模式 OCA/OpenRouter 模型 ID、模型信息与推理强度设置项（启动时一次性清理），旧任务继续时改用所选 Profile 的默认推理强度；同时移除旧的 `updateApiConfigurationProto` RPC，以及 Webview 中未使用的 Groq/Hugging Face/Baseten 模型列表状态
-- 上下文压缩改为使用 Provider 官方输入计数，或按同一 Provider、模型与 API 格式的真实用量校准文本估算；图片与文档独立计量，多轮压缩会持久保存已接受的 Pass，并从最后一个安全检查点恢复
-- Subagent 成本沿用实际模型的计费币种；人民币与日元使用无歧义标识，未知币种保留货币代码
-
-### Fixes
 - 对话框高度限制在 Webview 可视区域内并滚动显示内容，较矮的侧边栏中长对话框不再把标题和关闭按钮推出屏幕
 - 修复旧任务导入后因工具消息失配导致压缩保留几乎全部历史、Anthropic 请求被拒、Resume 重跑已完成范围，以及压缩期间排队输入丢失或不可编辑的问题
 - 修复普通任务与 Subagent 遇到上游 HTTP/2 流错误时直接失败；现在会在保持请求、任务与运行身份的前提下有界重试，手动 Retry 可接管等待中的自动重试
