@@ -53,10 +53,6 @@ function targetCommandId(commandId, sourceNamespace, targetNamespace) {
     return commandId.startsWith(prefix) ? `${targetNamespace}.${commandId.slice(prefix.length)}` : commandId
 }
 
-function appendInsidersTitle(title) {
-    return typeof title === "string" && !title.endsWith(" (Insiders)") ? `${title} (Insiders)` : title
-}
-
 /**
  * Project the stable source manifest into one distribution identity.
  *
@@ -104,7 +100,6 @@ export function createDistributionManifest(sourceManifest, packageName, version)
         const mapped = targetCommandId(command.command, source.contributionNamespace, target.contributionNamespace)
         commandMap.set(command.command, mapped)
         command.command = mapped
-        command.title = appendInsidersTitle(command.title)
         if (command.category === source.displayName) command.category = target.displayName
         if (command.icon === `$(${source.productIconId})`) command.icon = `$(${target.productIconId})`
         command.when = replaceRegisteredIdentifiers(command.when, replacements)

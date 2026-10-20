@@ -96,7 +96,9 @@ describe("extension distribution manifest identity", () => {
         const commandIds = extensionOwnedCommandIds(insiders)
         expect(commandIds.length).toBeGreaterThan(0)
         expect(commandIds.every((command) => command.startsWith(`${identity.contributionNamespace}.`))).toBe(true)
-        expect(insiders.contributes.commands.every(({ title }) => title.endsWith(" (Insiders)"))).toBe(true)
+        expect(insiders.contributes.commands.map(({ title }) => title)).toEqual(
+            sourceManifest.contributes.commands.map(({ title }) => title),
+        )
         expect(insiders.contributes.commands.find(({ icon }) => icon === `$(${identity.productIconId})`)).toBeDefined()
 
         const viewTitleItems = insiders.contributes.menus["view/title"]

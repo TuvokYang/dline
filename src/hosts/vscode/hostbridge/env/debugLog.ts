@@ -1,8 +1,7 @@
 import { Empty, StringRequest } from "@shared/proto/dline/common"
 import * as vscode from "vscode"
-import { ExtensionRegistryInfo } from "@/registry"
 
-const DLINE_OUTPUT_CHANNEL = vscode.window.createOutputChannel(ExtensionRegistryInfo.displayName)
+const DLINE_OUTPUT_CHANNEL = vscode.window.createOutputChannel("Dline")
 
 // Appends a log message to the current Dline distribution's output channel.
 export async function debugLog(request: StringRequest): Promise<Empty> {
