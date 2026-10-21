@@ -41,9 +41,11 @@ export interface CheckpointRowPort<Refs> {
     /** Register one complete restore point in presentation order and resolve once it is durable. */
     write(input: { readonly source?: CheckpointSource; readonly refs?: Refs }): Promise<CheckpointRow>
     /**
-     * Remove a chat-only row that a newer row fully replaces: both restore the same
-     * conversation and only the newer one restores files. Resolves false when the row
-     * must stay, for example because another restore point depends on it.
+     * Remove a row that a newer file-backed row replaces in the same place: either
+     * both restore the same conversation and only the newer one restores files, or
+     * the chat draws nothing between them and the newer one holds the current files.
+     * Resolves false when the row must stay, for example because another restore
+     * point depends on it.
      */
     retire?(row: CheckpointRow): Promise<boolean>
     /**
@@ -61,6 +63,11 @@ export interface CheckpointRowReservation<Refs> {
     fill(input: { readonly refs?: Refs }): Promise<CheckpointRow>
     /** Remove the held row because the round added no restore point. */
     withdraw(): Promise<void>
+    /**
+     * Whether the chat draws nothing between `row` and this held row, so the two
+     * would show as one checkpoint place. Without it every row stands on its own.
+     */
+    adjoins?(row: CheckpointRow): boolean
 }
 
 /** The chat side of a checkpoint, stored beside the journal. */
@@ -161,6 +168,12 @@ export class CheckpointGate<Refs> {
             const changed = this.options.workspace.hasChanges()
             if (!advanced && !changed && this.latestRefs !== undefined) return COVERED
 
+            const previousChat = this.latestChat
+            // The journal also moves for what the chat never draws (a reply without
+            // tools, a failure dialog, a continuation, environment details). When
+            // nothing drawn separates this round from the latest row, a new row would
+            // show as a second checkpoint in the same place.
+            const adjoining = previousChat !== undefined && this.adjoins(reservation, previousChat)
             const previousRefs = this.latestRefs
             let refs = previousRefs
             // A row always carries the workspace state at its own conversation boundary.
@@ -176,6 +189,16 @@ export class CheckpointGate<Refs> {
                 refs = committed.ok ? committed.refs : undefined
                 if (committed.ok && !advanced && this.options.workspace.sameRefs(refs, previousRefs)) return COVERED
             }
+            // The adjoining row already restores these files, and the conversation
+            // that moved since is nothing the user can see, so it stays the place.
+            if (
+                adjoining &&
+                previousChat?.hasFiles !== false &&
+                refs !== undefined &&
+                this.options.workspace.sameRefs(refs, previousRefs)
+            ) {
+                return COVERED
+            }
 
             const row = await this.writeRow(
                 run,
@@ -187,11 +210,10 @@ export class CheckpointGate<Refs> {
             )
             if (!row) return FAILED
             await this.captureBundle(run, { row, ...(refs === undefined ? {} : { refs }) })
-            const previousChat = this.latestChat
             this.latestChat = row
-            // The conversation still stands where a chat-only row left it, and this row
-            // restores that same conversation plus the files, so the older row adds nothing.
-            if (!advanced && previousChat?.hasFiles === false && row.hasFiles === true) await this.retire(previousChat)
+            if (previousChat && row.hasFiles === true && this.replaces(previousChat, { advanced, adjoining })) {
+                await this.retire(previousChat)
+            }
             return { outcome: "created", row }
         })
         if (!reservation) return settled
@@ -330,6 +352,26 @@ export class CheckpointGate<Refs> {
             await reservation.withdraw()
         } catch (error) {
             Logger.warn(`[CheckpointGate] Could not remove a held checkpoint row of task ${this.options.taskId}:`, error)
+        }
+    }
+
+    /**
+     * Whether a new file-backed row leaves nothing for `previous` to add. Either the
+     * conversation still stands where a chat-only row left it, or nothing drawn lies
+     * between the two and the new row holds the files as they are now.
+     */
+    private replaces(previous: CheckpointRow, round: { readonly advanced: boolean; readonly adjoining: boolean }): boolean {
+        return round.adjoining || (!round.advanced && previous.hasFiles === false)
+    }
+
+    /** An adjacency that cannot be decided keeps the new row: one extra row at most, never a missing one. */
+    private adjoins(reservation: CheckpointRowReservation<Refs> | undefined, row: CheckpointRow): boolean {
+        if (!reservation?.adjoins) return false
+        try {
+            return reservation.adjoins(row)
+        } catch (error) {
+            Logger.warn(`[CheckpointGate] Could not compare checkpoint rows of task ${this.options.taskId}:`, error)
+            return false
         }
     }
 

@@ -15,6 +15,9 @@ const SUMMARY_MARKER = "E2E_CHECKPOINT_COMPACTION_SUMMARY"
 const COMPLETION_MARKER = "E2E_CHECKPOINT_COMPACTION_DONE"
 const NOTE_FILE = "checkpoint-compaction-note.txt"
 const NOTE_MARKER = "E2E_CHECKPOINT_COMPACTION_NOTE"
+/** A reply without tool calls: the chat draws nothing for it, and the kernel continues with another round. */
+const TOOLLESS_REPLY_TEXT = "E2E_CHECKPOINT_COMPACTION_PLAN I will read the note next."
+const REQUEST_FAILURE_MESSAGE = "E2E_CHECKPOINT_COMPACTION_REQUEST_FAILURE"
 
 interface StoredProfile {
     name: string
@@ -116,6 +119,41 @@ async function visibleCheckpointLayout(sidebar: Frame): Promise<string[]> {
         visit(document.body)
         return tokens
     })
+}
+
+/** The chat in document order as checkpoints and the given leaf texts, such as the paths of edit rows. */
+async function visibleCheckpointsAround(sidebar: Frame, markers: readonly string[]): Promise<string[]> {
+    return await sidebar.evaluate((leafTexts) => {
+        const tokens: string[] = []
+        const visit = (element: Element) => {
+            const text = element.textContent?.trim() ?? ""
+            // The innermost element that still contains a marker stands for that row.
+            const marker = leafTexts.find(
+                (candidate) =>
+                    text.includes(candidate) &&
+                    !Array.from(element.children).some((child) => child.textContent?.includes(candidate)),
+            )
+            if (marker !== undefined) {
+                tokens.push(marker)
+                return
+            }
+            if (element.childElementCount === 0 && text === "Checkpoint") {
+                tokens.push("checkpoint")
+                return
+            }
+            for (const child of Array.from(element.children)) visit(child)
+        }
+        visit(document.body)
+        return tokens
+    }, markers)
+}
+
+/** Checkpoints drawn between the first occurrence of `from` and the first occurrence of `to` after it. */
+function checkpointsBetween(layout: readonly string[], from: string, to: string): number {
+    const start = layout.indexOf(from)
+    const end = layout.indexOf(to, start + 1)
+    if (start === -1 || end === -1) throw new Error(`Missing ${from} or ${to} in layout: ${layout.join(", ")}`)
+    return layout.slice(start + 1, end).filter((token) => token === "checkpoint").length
 }
 
 /** Checkpoints the user sees between the last condense card and the first folded run after it. */
@@ -267,6 +305,239 @@ e2e(
             await attachLayout(testInfo, "reopened", reopenedLayout, seeded)
             expect(checkpointsShownAfterCard(reopenedLayout), `reopened layout: ${reopenedLayout.join(", ")}`).toBe(1)
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await app.close()
+        }
+    },
+)
+
+e2e(
+    "Checkpoint - a reply without tools after automatic compaction leaves a single checkpoint before the next round",
+    async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, userDataDir, workspaceDir }, testInfo) => {
+        e2e.setTimeout(240_000)
+        await configureAutoCompactionWithCheckpoints(dlineDir)
+        const notePath = path.join(workspaceDir, NOTE_FILE)
+        await writeFile(notePath, `${NOTE_MARKER} before\n`, "utf8")
+
+        server.enqueueResponses(
+            "openai-compatible-responses",
+            {
+                type: "tool",
+                id: "call_checkpoint_toolless_ready",
+                name: "qna_respond",
+                arguments: { response: READY_MARKER },
+                usage: { inputTokens: 125_000, outputTokens: 100 },
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_toolless_summary",
+                name: "summarize_task",
+                arguments: { context: `${SUMMARY_MARKER} keeps the note review going.` },
+                expectedRequestIncludes: ["The current conversation is rapidly running out of context"],
+            },
+            // The first request after the landed summary answers in prose only, as a model
+            // recapping its plan does. Nothing of that round is drawn in the chat.
+            {
+                type: "message",
+                text: TOOLLESS_REPLY_TEXT,
+                expectedRequestIncludes: [SUMMARY_MARKER],
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_toolless_read_first",
+                name: "read_file",
+                arguments: { path: NOTE_FILE },
+                expectedRequestIncludes: [SUMMARY_MARKER],
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_toolless_search",
+                name: "search_files",
+                arguments: { path: ".", regex: NOTE_MARKER },
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_toolless_read_second",
+                name: "read_file",
+                arguments: { path: NOTE_FILE },
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_toolless_done",
+                name: "attempt_completion",
+                arguments: { result: COMPLETION_MARKER },
+            },
+        )
+
+        const app = await openVSCode(workspaceDir)
+        try {
+            const sidebar = await openSidebar(app, helper)
+            await setAutoApproveAction(sidebar, "Read project files", true)
+            await sendMessage(sidebar, TASK_TEXT)
+            await expect(sidebar.getByText(READY_MARKER, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+            const taskId = await onlyTaskId(dlineDocsDir)
+
+            await writeFile(notePath, `${NOTE_MARKER} after\n`, "utf8")
+            await sendMessage(sidebar, CONTINUATION_TEXT)
+            await expect(sidebar.getByText(COMPLETION_MARKER, { exact: false }).last()).toBeVisible({ timeout: 90_000 })
+            await expect(sidebar.getByTestId("compaction-pass").first()).toBeVisible()
+
+            // The prose-only round adds no row of its own, so whatever checkpoint it
+            // leaves would sit directly beside the next round's checkpoint.
+            const stored = await readTaskUiMessages(dlineDocsDir, taskId)
+            const liveLayout = await visibleCheckpointLayout(sidebar)
+            await attachLayout(testInfo, "toolless-live", liveLayout, stored)
+            expect(checkpointsShownAfterCard(liveLayout), `live layout: ${liveLayout.join(", ")}`).toBe(1)
+            await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
+        } finally {
+            await app.close()
+        }
+    },
+)
+
+e2e(
+    "Checkpoint - a failed request after automatic compaction and its Retry leave a single checkpoint before the next round",
+    async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, workspaceDir }, testInfo) => {
+        e2e.setTimeout(240_000)
+        await configureAutoCompactionWithCheckpoints(dlineDir)
+        const notePath = path.join(workspaceDir, NOTE_FILE)
+        await writeFile(notePath, `${NOTE_MARKER} before\n`, "utf8")
+
+        server.enqueueResponses(
+            "openai-compatible-responses",
+            {
+                type: "tool",
+                id: "call_checkpoint_retry_ready",
+                name: "qna_respond",
+                arguments: { response: READY_MARKER },
+                usage: { inputTokens: 125_000, outputTokens: 100 },
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_retry_summary",
+                name: "summarize_task",
+                arguments: { context: `${SUMMARY_MARKER} keeps the note review going.` },
+                expectedRequestIncludes: ["The current conversation is rapidly running out of context"],
+            },
+            // The first request after the landed summary fails for good, so the task
+            // waits on its Retry; the failed request is no longer drawn once retried.
+            {
+                type: "error",
+                status: 400,
+                message: REQUEST_FAILURE_MESSAGE,
+                expectedRequestIncludes: [SUMMARY_MARKER],
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_retry_read_first",
+                name: "read_file",
+                arguments: { path: NOTE_FILE },
+                expectedRequestIncludes: [SUMMARY_MARKER],
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_retry_search",
+                name: "search_files",
+                arguments: { path: ".", regex: NOTE_MARKER },
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_retry_read_second",
+                name: "read_file",
+                arguments: { path: NOTE_FILE },
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_retry_done",
+                name: "attempt_completion",
+                arguments: { result: COMPLETION_MARKER },
+            },
+        )
+
+        const app = await openVSCode(workspaceDir)
+        try {
+            const sidebar = await openSidebar(app, helper)
+            await setAutoApproveAction(sidebar, "Read project files", true)
+            await sendMessage(sidebar, TASK_TEXT)
+            await expect(sidebar.getByText(READY_MARKER, { exact: false }).last()).toBeVisible({ timeout: 60_000 })
+            const taskId = await onlyTaskId(dlineDocsDir)
+
+            await writeFile(notePath, `${NOTE_MARKER} after\n`, "utf8")
+            await sendMessage(sidebar, CONTINUATION_TEXT)
+            const retry = sidebar.getByRole("button", { name: "Retry", exact: true }).last()
+            await expect(retry).toBeVisible({ timeout: 90_000 })
+            await expect(sidebar.getByTestId("compaction-pass").first()).toBeVisible()
+            await retry.click()
+            await expect(sidebar.getByText(COMPLETION_MARKER, { exact: false }).last()).toBeVisible({ timeout: 90_000 })
+
+            // The failed attempt is answered by its Retry and no longer drawn, so the
+            // checkpoint each attempt wrote would sit directly beside the other.
+            const stored = await readTaskUiMessages(dlineDocsDir, taskId)
+            const liveLayout = await visibleCheckpointLayout(sidebar)
+            await attachLayout(testInfo, "retry-live", liveLayout, stored)
+            expect(checkpointsShownAfterCard(liveLayout), `live layout: ${liveLayout.join(", ")}`).toBe(1)
+        } finally {
+            await app.close()
+        }
+    },
+)
+
+e2e(
+    "Checkpoint - Retry of a request that failed after a file edit leaves a single checkpoint before the next edit",
+    async ({ dlineDir, dlineDocsDir, helper, openVSCode, server, workspaceDir }, testInfo) => {
+        e2e.setTimeout(240_000)
+        await configureAutoCompactionWithCheckpoints(dlineDir)
+        const firstEdit = "checkpoint-retry-first.txt"
+        const secondEdit = "checkpoint-retry-second.txt"
+
+        server.enqueueResponses(
+            "openai-compatible-responses",
+            {
+                type: "tool",
+                id: "call_checkpoint_edit_first",
+                name: "write_to_file",
+                arguments: { path: firstEdit, content: `${NOTE_MARKER} first\n` },
+            },
+            // The request after the edit fails for good, as an exhausted balance does,
+            // and the user answers it with Retry.
+            {
+                type: "error",
+                status: 402,
+                code: "insufficient_credits",
+                message: REQUEST_FAILURE_MESSAGE,
+                details: { current_balance: 0, message: "You have run out of credits." },
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_edit_second",
+                name: "write_to_file",
+                arguments: { path: secondEdit, content: `${NOTE_MARKER} second\n` },
+            },
+            {
+                type: "tool",
+                id: "call_checkpoint_edit_done",
+                name: "attempt_completion",
+                arguments: { result: COMPLETION_MARKER },
+            },
+        )
+
+        const app = await openVSCode(workspaceDir)
+        try {
+            const sidebar = await openSidebar(app, helper)
+            await setAutoApproveAction(sidebar, "Edit project files", true)
+            await sendMessage(sidebar, TASK_TEXT)
+            const retry = sidebar.getByRole("button", { name: "Retry", exact: true }).last()
+            await expect(retry).toBeVisible({ timeout: 90_000 })
+            const taskId = await onlyTaskId(dlineDocsDir)
+            await retry.click()
+            await expect(sidebar.getByText(COMPLETION_MARKER, { exact: false }).last()).toBeVisible({ timeout: 90_000 })
+
+            // The failed attempt is no longer drawn once retried, so the checkpoint of
+            // the failed round and the one of its Retry would sit side by side.
+            const stored = await readTaskUiMessages(dlineDocsDir, taskId)
+            const layout = await visibleCheckpointsAround(sidebar, [firstEdit, secondEdit])
+            await attachLayout(testInfo, "edit-retry-live", layout, stored)
+            expect(checkpointsBetween(layout, firstEdit, secondEdit), `live layout: ${layout.join(", ")}`).toBe(1)
         } finally {
             await app.close()
         }

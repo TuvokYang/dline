@@ -33,6 +33,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Choosing Retry after a manual compaction ran out of retries continues the task once the compaction lands, instead of stopping on a state read from before the compaction was requested
 - When the wrap-up request a subagent makes after a timeout or a finish request fails, the subagent reports the provider's actual error instead of five empty responses
 - The page the browser opens after authorizing an MCP server or another remote service shows the Dline mark instead of the old Cline icon
+- Compacting the context, a reply without tools, or Retry after a failed request no longer leaves two checkpoints next to each other: when nothing visible sits between them, an unchanged workspace reuses the previous checkpoint and a changed one replaces it with the new checkpoint
+- API error cards such as an exhausted balance no longer carry their own Retry Request button; Retry, Start New Task, and replies come only from the task footer, and the card keeps only links such as top-up or sign-in
 
 ## [0.11.1]
 

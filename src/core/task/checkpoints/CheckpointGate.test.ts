@@ -30,6 +30,8 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs>; rese
     }
     let nextTs = 100
     const hooks = { onRowWrite: undefined as (() => Promise<void>) | undefined }
+    /** Timestamps of rows the chat draws, such as a tool card; every other entry stays undrawn. */
+    const drawn: number[] = []
     /** Rows held in the chat before their round settled, like the view's partial rows. */
     const holds: Array<{ ts: number; position: number; source?: CheckpointSource; state: "held" | "filled" | "withdrawn" }> = []
     const reserve: CheckpointRowPort<Refs>["reserve"] = (input) => {
@@ -49,6 +51,7 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs>; rese
             withdraw: async () => {
                 entry.state = "withdrawn"
             },
+            adjoins: (row) => !drawn.some((ts) => ts > row.ts && ts < entry.ts),
         }
     }
 
@@ -108,6 +111,11 @@ function harness(options: { initialState?: () => CheckpointGateState<Refs>; rese
         failures,
         hooks,
         say: () => journal.push("message"),
+        /** A journal entry the chat draws as its own row. */
+        draw: () => {
+            journal.push("message")
+            drawn.push(nextTs++)
+        },
         write: () => {
             workspace.head += 1
             workspace.dirty = true
@@ -637,6 +645,51 @@ describe("CheckpointGate", () => {
 
             expect((await subject.gate.ensureRound("round_start", source)).outcome).toBe("skipped")
             expect(subject.holds).toEqual([])
+        })
+
+        it("keeps the latest row when only undrawn conversation lies between it and the next round", async () => {
+            const subject = harness({ reserve: true })
+            subject.say()
+            const first = await subject.gate.ensureRound("round_start", source)
+            // A failed request's dialog, a reply without tools, environment details.
+            subject.say()
+
+            const result = await subject.gate.ensureRound("round_start", source)
+
+            expect(result.outcome).toBe("covered")
+            expect(subject.holds.map((hold) => hold.state)).toEqual(["filled", "withdrawn"])
+            expect(subject.rows.map((entry) => entry.row)).toEqual([first.row])
+            // The next round still compares with the kept row, so it is covered as well.
+            subject.say()
+            expect((await subject.gate.ensureRound("round_start", source)).outcome).toBe("covered")
+            expect(subject.rows).toHaveLength(1)
+        })
+
+        it("replaces the adjoining row with one that holds files changed since it", async () => {
+            const subject = harness({ reserve: true })
+            subject.say()
+            const first = await subject.gate.ensureRound("round_start", source)
+            subject.say()
+            subject.write()
+
+            const result = await subject.gate.ensureRound("round_start", source)
+
+            expect(result.outcome).toBe("created")
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-1"])
+            expect(subject.retired).toEqual([first.row])
+        })
+
+        it("adds a row after a drawn row even when the files stayed the same", async () => {
+            const subject = harness({ reserve: true })
+            subject.say()
+            await subject.gate.ensureRound("round_start", source)
+            subject.draw()
+
+            const result = await subject.gate.ensureRound("round_start", source)
+
+            expect(result.outcome).toBe("created")
+            expect(subject.rows.map((entry) => entry.refs)).toEqual(["refs-0", "refs-0"])
+            expect(subject.retired).toEqual([])
         })
 
         it("places the row when it is written if the round could not hold one", async () => {

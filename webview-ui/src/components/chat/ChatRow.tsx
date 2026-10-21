@@ -1,3 +1,4 @@
+import { parseMcpServerResponse } from "@shared/chat/mcpResponseRows"
 import { COMMAND_OUTPUT_STRING } from "@shared/combineCommandSequences"
 import { findApiFailurePresentedBy } from "@shared/combineErrorRetryMessages"
 import {
@@ -57,7 +58,7 @@ import { CommandOutputContent, CommandOutputRow } from "./CommandOutputRow"
 import { CompletionOutputRow } from "./CompletionOutputRow"
 import { CheckpointMarker } from "./chat-view/components/messages/CheckpointMarker"
 import type { RowExpansionOrigin } from "./chat-view/types/chatTypes"
-import { collectMcpResponseTexts, parseMcpServerResponse, resolveApiErrorMessage } from "./chat-view/utils/messageUtils"
+import { collectMcpResponseTexts, resolveApiErrorMessage } from "./chat-view/utils/messageUtils"
 import { describeCompactionFailure } from "./compaction-failure-label"
 import { CHAT_ROW_HEADER_CLASSNAMES, TOOL_RESPONSE_SCROLL_CLASS } from "./constants"
 import { DiffEditRow } from "./DiffEditRow"
@@ -816,7 +817,6 @@ export const ChatRowContent = memo(
                                             ? `${failureReason}\n\n${tool.error ?? ""}`.trim()
                                             : (tool.error ?? "Conversation compaction failed before completion.")
                                     }
-                                    footerOwnsRetry
                                     testId="compaction-error-box"
                                     title="Conversation Compaction Failed"
                                 />

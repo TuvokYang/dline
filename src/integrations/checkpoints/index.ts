@@ -16,6 +16,7 @@ import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import CheckpointTracker, { type CheckpointChangedFile } from "@integrations/checkpoints/CheckpointTracker"
 import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import { findLast, findLastIndex } from "@shared/array"
+import { drawsNothingBetween } from "@shared/chat/drawnMessages"
 import {
     type CheckpointReferenceSet,
     checkpointReferenceSetsEqual,
@@ -440,6 +441,7 @@ export class TaskCheckpointManager implements ICheckpointManager {
                 return checkpointRowOf(await held.fill(files).persistence, files.lastCheckpointHash !== undefined)
             },
             withdraw: async () => held.withdraw(),
+            adjoins: (row) => drawsNothingBetween(this.services.messageStateHandler.clineMessages, row.ts, held.ts),
         }
     }
 
@@ -451,16 +453,15 @@ export class TaskCheckpointManager implements ICheckpointManager {
     }
 
     /**
-     * Remove a chat-only round row that a newer file-backed row at the same
-     * conversation position replaces, so the chat does not show two adjacent
-     * checkpoints. Its bundle is left in place: nothing restores to it once the
-     * row is gone.
+     * Remove a round row that the gate found replaced by a newer file-backed row in
+     * the same place, so the chat does not show two adjacent checkpoints. Its bundle
+     * is left in place: nothing restores to it once the row is gone.
      */
     private async retireCheckpointRow(row: CheckpointRow): Promise<boolean> {
         if (this.disposed) return false
         const messages = this.services.messageStateHandler.clineMessages
         const target = messages.find((message) => message.ts === row.ts)
-        if (target?.say !== "checkpoint_created" || hasFileCheckpoint(readCheckpointReferenceSet(target))) return false
+        if (target?.say !== "checkpoint_created") return false
         // A pre-edit row restores its chat through this row, so this row must stay.
         if (messages.some((message) => message.checkpointAnchorTs === row.ts)) return false
         await this.services.messageStateHandler.removeMessagesByTs([row.ts])

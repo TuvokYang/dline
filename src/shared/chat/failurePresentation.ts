@@ -1,4 +1,4 @@
-import type { UiMessage } from "@shared/ExtensionMessage"
+import type { UiMessage } from "../ExtensionMessage"
 
 /** Model work whose failure the chat presents as an API error. */
 export type ApiWork = "api_request" | "compaction"

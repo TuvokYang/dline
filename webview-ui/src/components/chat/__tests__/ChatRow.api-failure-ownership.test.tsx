@@ -92,6 +92,17 @@ describe("ChatRow API failure ownership", () => {
         expect(topUpLink(container)).not.toBeNull()
     })
 
+    it("leaves Retry to the task footer, so the balance card offers only the top-up", () => {
+        const { container } = renderRequestRow([request, balanceFailure(11)], 11)
+
+        expect(topUpLink(container)).not.toBeNull()
+        // The footer answers the failure interaction; the card may only link out of the task.
+        const controlsBesideLinks = Array.from(container.querySelectorAll("vscode-button, button")).filter(
+            (control) => !control.closest("a[href]"),
+        )
+        expect(controlsBesideLinks).toEqual([])
+    })
+
     it("keeps the recharge card when the round checkpoint sorts after the failure ask", () => {
         const { container } = renderRequestRow([request, balanceFailure(11), checkpoint(12)], 11)
 

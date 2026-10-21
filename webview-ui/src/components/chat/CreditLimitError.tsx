@@ -1,9 +1,7 @@
-import { AskResponseRequest } from "@shared/proto/dline/task"
-import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import React, { useEffect, useMemo, useState } from "react"
 import VSCodeButtonLink from "@/components/common/VSCodeButtonLink"
 import { useClineAuth } from "@/context/ClineAuthContext"
-import { AccountServiceClient, TaskServiceClient } from "@/services/grpc-client"
+import { AccountServiceClient } from "@/services/grpc-client"
 
 interface CreditLimitErrorProps {
     currentBalance: number
@@ -12,12 +10,6 @@ interface CreditLimitErrorProps {
     message: string
     buyCreditsUrl?: string
     providerId?: string
-    /**
-     * Whether the card offers its own Retry; defaults to true. Off where an
-     * interaction footer owns Retry, so the request is retried through that
-     * interaction alone.
-     */
-    showRetry?: boolean
 }
 
 /**
@@ -35,6 +27,11 @@ const DEFAULT_BUY_CREDITS_URL = {
     ORG: "https://app.dline.bot/dashboard/organization?tab=credits&redirect=true",
 }
 
+/**
+ * The account-limit card offers only what leaves the task: buying credits.
+ * Retry and Start New Task answer the failure interaction, which the task
+ * footer owns, so the card never repeats them.
+ */
 const CreditLimitError: React.FC<CreditLimitErrorProps> = ({
     message = "You have run out of credits.",
     buyCreditsUrl,
@@ -42,7 +39,6 @@ const CreditLimitError: React.FC<CreditLimitErrorProps> = ({
     providerId,
     totalPromotions,
     totalSpent,
-    showRetry = true,
 }) => {
     const { activeOrganization } = useClineAuth()
     const [fullBuyCreditsUrl, setFullBuyCreditsUrl] = useState<string>("")
@@ -112,26 +108,6 @@ const CreditLimitError: React.FC<CreditLimitErrorProps> = ({
                 <span className="codicon codicon-credit-card mr-[6px] text-[14px]" />
                 Buy Credits
             </VSCodeButtonLink>
-
-            {showRetry ? (
-                <VSCodeButton
-                    appearance="secondary"
-                    className="w-full"
-                    onClick={async () => {
-                        try {
-                            await TaskServiceClient.askResponse(
-                                AskResponseRequest.create({
-                                    responseType: "yesButtonClicked",
-                                }),
-                            )
-                        } catch (error) {
-                            console.error("Error invoking action:", error)
-                        }
-                    }}>
-                    <span className="codicon codicon-refresh mr-1.5" />
-                    Retry Request
-                </VSCodeButton>
-            ) : null}
         </div>
     )
 }

@@ -1,6 +1,6 @@
+import { supersededFailureIndexes } from "@shared/chat/failurePresentation"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import { describe, expect, it } from "vitest"
-import { supersededFailureIndexes } from "./failurePresentation"
 import { filterVisibleMessages } from "./messageUtils"
 
 function request(ts: number, failure?: string): UiMessage {

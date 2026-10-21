@@ -236,7 +236,7 @@ export function CompletionRenderer(props: PresentationProps) {
 
 /** Render API error interaction content. */
 export function ErrorRenderer(props: PresentationProps) {
-    return <ApiFailureContent error={props.message.text} footerOwnsRetry testId="error-presentation-box" />
+    return <ApiFailureContent error={props.message.text} testId="error-presentation-box" />
 }
 
 /** Render resume interaction content. */

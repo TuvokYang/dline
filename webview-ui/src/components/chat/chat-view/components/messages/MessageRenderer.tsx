@@ -1,3 +1,4 @@
+import { indexPreEditCheckpointAttachments } from "@shared/chat/drawnMessages"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import type React from "react"
 import { useMemo } from "react"
@@ -8,12 +9,7 @@ import { useExtensionState } from "@/context/ExtensionStateContext"
 import { cn } from "@/lib/utils"
 import type { MessageHandlers, RowExpansionOrigin } from "../../types/chatTypes"
 import { isBrowserSession, isExplorationRun } from "../../utils/chatRowKinds"
-import {
-    indexPreEditCheckpointAttachments,
-    isTextMessagePendingToolCall,
-    isToolGroup,
-    resolveMessageRowExpanded,
-} from "../../utils/messageUtils"
+import { isTextMessagePendingToolCall, isToolGroup, resolveMessageRowExpanded } from "../../utils/messageUtils"
 import { CheckpointMarker } from "./CheckpointMarker"
 import { ExplorationRunRenderer } from "./ExplorationRunRenderer"
 import { ToolGroupRenderer } from "./ToolGroupRenderer"

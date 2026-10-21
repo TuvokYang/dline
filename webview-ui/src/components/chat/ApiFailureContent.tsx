@@ -13,8 +13,6 @@ interface ApiFailureContentProps {
     readonly error?: string
     readonly testId?: string
     readonly title?: string
-    /** The surrounding interaction offers Retry in its footer, so the content must not add its own. */
-    readonly footerOwnsRetry?: boolean
 }
 
 /**
@@ -24,9 +22,10 @@ interface ApiFailureContentProps {
  * account offers sign-in; anything else is the structured error box. The chat's
  * error rows and the interaction that offers Retry both render through it, so
  * a failure reads the same wherever it surfaces. Only the views that depend on
- * the Dline account (balance and sign-in) read the auth context.
+ * the Dline account (balance and sign-in) read the auth context. Retry and
+ * Start New Task belong to the task footer; the content only links out.
  */
-export const ApiFailureContent = memo(({ error, testId, title, footerOwnsRetry = false }: ApiFailureContentProps) => {
+export const ApiFailureContent = memo(({ error, testId, title }: ApiFailureContentProps) => {
     const clineError = error ? ClineError.parse(error) : undefined
     const box = <ApiErrorBox error={error} testId={testId} title={title} />
     const providerId = clineError?.providerId || clineError?._error?.providerId
@@ -39,7 +38,6 @@ export const ApiFailureContent = memo(({ error, testId, title, footerOwnsRetry =
                 currentBalance={details?.current_balance}
                 message={details?.message}
                 providerId={providerId}
-                showRetry={!footerOwnsRetry}
                 totalPromotions={details?.total_promotions}
                 totalSpent={details?.total_spent}
             />
