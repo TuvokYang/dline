@@ -9,7 +9,6 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
 import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
-import { Logger } from "@/shared/services/Logger"
 import { anthropicMessagesDocumentLimits } from "../document-input-limits"
 import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
 import { withRetry } from "../retry"
@@ -20,11 +19,13 @@ import { buildClaudeCodeIdentity, type ClaudeCodeIdentity } from "./anthropic/id
 import { resolveAnthropicReasoning } from "./anthropic/reasoning"
 import { anthropicPromptCacheOn, buildAnthropicMessagesRequest, prepareAnthropicMessages } from "./anthropic/request-builder"
 import { ApiKeyAnthropicTransport } from "./anthropic/transport"
+import { TokenCountGate } from "./token-count-gate"
 
 export { ANTHROPIC_FAST_MODE_BETA } from "./anthropic/transport"
 
 export class AnthropicHandler implements ApiHandler {
     private client: Anthropic | undefined
+    private readonly tokenCount = new TokenCountGate("Anthropic")
 
     constructor(private ctx: ApiHandlerContext) {}
 
@@ -194,7 +195,7 @@ export class AnthropicHandler implements ApiHandler {
         readonly tools?: AnthropicTool[]
         readonly options?: ApiRequestOptions
     }): Promise<number | undefined> {
-        try {
+        return this.tokenCount.count(async () => {
             const model = this.getModel()
             const anthropicMessages = prepareAnthropicMessages(input.messages, model.info, input.options)
             const claudeCodeIdentity = await this.resolveClaudeCodeIdentity(anthropicMessages)
@@ -218,10 +219,7 @@ export class AnthropicHandler implements ApiHandler {
                 ...(requestBody.thinking === undefined ? {} : { thinking: requestBody.thinking }),
             })
             return result.input_tokens
-        } catch (error) {
-            Logger.warn("Anthropic token counting failed", error)
-            return undefined
-        }
+        })
     }
 
     /**

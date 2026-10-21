@@ -14,6 +14,7 @@ import { RetriableError, withRetry } from "../retry"
 import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
 import { ApiStream } from "../transform/stream"
 import { resolveGeminiThinking } from "./gemini/reasoning"
+import { TokenCountGate } from "./token-count-gate"
 
 const rateLimitPatterns = [/got status: 429/i, /429 Too Many Requests/i, /rate limit exceeded/i, /too many requests/i]
 
@@ -31,6 +32,7 @@ function getGeminiMaxOutputTokens(modelId: string, modelMaxTokens?: number): num
 
 export class GeminiHandler implements ApiHandler {
     private client: GoogleGenAI | undefined
+    private readonly tokenCount = new TokenCountGate("Gemini")
 
     constructor(private ctx: ApiHandlerContext) {}
 
@@ -350,7 +352,7 @@ export class GeminiHandler implements ApiHandler {
         readonly messages: ClineStorageMessage[]
         readonly tools?: GoogleTool[]
     }): Promise<number | undefined> {
-        try {
+        return this.tokenCount.count(async () => {
             const client = this.ensureClient()
             const { id: model } = this.getModel()
             const response = await client.models.countTokens({
@@ -366,10 +368,7 @@ export class GeminiHandler implements ApiHandler {
                 return undefined
             }
             return response.totalTokens
-        } catch (error) {
-            Logger.warn("Gemini token counting failed", error)
-            return undefined
-        }
+        })
     }
 
     private parseRetryDelay(retryAfter?: string): number {
