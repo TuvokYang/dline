@@ -19,7 +19,7 @@ const DAY = 24 * 60 * 60_000
 const noJitter = () => 0
 const fullJitter = () => 0.999_999
 
-describe("429 and pause waits (contract v2 §1.7, §1.8)", () => {
+describe("429 and pause waits (contract v2.1 §1.7, §1.8)", () => {
     it("waits for the service's delay when it names one, from the body or from Retry-After", () => {
         // The classifier already prefers retry_after_ms over Retry-After; either arrives here as one number.
         expect(rateLimitWaitMs(45_000, 1, noJitter)).toBe(45_000)
@@ -77,7 +77,7 @@ describe("429 and pause waits (contract v2 §1.7, §1.8)", () => {
     })
 })
 
-describe("server gate (contract v2 §1.6)", () => {
+describe("server gate (contract v2.1 §1.6)", () => {
     it("starts no new batch before the gate the acknowledgement named, and resets the 429 count", () => {
         const waited = { ...INITIAL_PACING, consecutiveWaits: 3 }
         const pacing = afterAcknowledged(waited, "usage", NOW + 6 * 60 * 60_000, NOW)
@@ -105,7 +105,7 @@ describe("server gate (contract v2 §1.6)", () => {
     })
 })
 
-describe("replays (contract v2 §1.5)", () => {
+describe("replays (contract v2.1 §1.5)", () => {
     it("backs off 30 seconds doubling to 30 minutes, or longer when the service asks", () => {
         expect([1, 2, 3, 7, 8, 12].map((attempts) => replayDelayMs(attempts, undefined))).toEqual([
             30_000, 60_000, 120_000, 1_800_000, 1_800_000, 1_800_000,

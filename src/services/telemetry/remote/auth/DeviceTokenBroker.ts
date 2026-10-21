@@ -54,8 +54,9 @@ type Claim =
 /**
  * Hands out the machine-wide bearer token for a remote profile.
  *
- * The service keeps only the newest eight tokens per device and limits
- * enrollments per IP, so windows must not exchange independently. Within a
+ * An exchange may retire tokens issued earlier for the same device, and a
+ * refused enrollment holds the whole machine, so windows must not exchange
+ * independently. Within a
  * process concurrent callers share one acquisition; across processes a
  * persisted refresh claim lets exactly one window exchange while the others
  * defer, and every write re-reads the latest document under the repository
@@ -198,7 +199,7 @@ export class DeviceTokenBroker {
         return { status: "ready", token: result.value }
     }
 
-    /** Record a machine-wide enrollment delay; the budget is per IP, so every window waits it out. */
+    /** Record a machine-wide enrollment delay; a refusal holds the whole machine, so every window waits it out. */
     private async backOff(deviceSecret: string, retryAfterMs: number | undefined): Promise<TokenAcquisition> {
         const now = this.clock()
         const result = await this.mutateSameDevice(deviceSecret, (current) => {

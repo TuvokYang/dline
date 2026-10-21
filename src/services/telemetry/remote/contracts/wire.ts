@@ -72,9 +72,8 @@ export function parseDeviceGrant(body: unknown): DeviceGrant | undefined {
 }
 
 /**
- * How the service settled a batch it confirmed. `ignored_version` means this
- * client version is not on the service's list: nothing was stored, and the
- * batch must not be sent again.
+ * How the service settled a batch it confirmed. `ignored_version` means the
+ * batch was confirmed without being stored (§7.1): it must not be sent again.
  */
 export type DeliveryDisposition = "accepted" | "duplicate" | "ignored_version"
 const DELIVERY_DISPOSITIONS: readonly DeliveryDisposition[] = ["accepted", "duplicate", "ignored_version"]

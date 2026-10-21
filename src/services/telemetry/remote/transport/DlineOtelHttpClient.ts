@@ -30,7 +30,7 @@ export class DlineOtelTransportError extends Error {
 export interface UsageDelivery {
     readonly accessToken: string
     readonly requestId: string
-    /** Exact bytes, sent unchanged on every attempt so the server's idempotency check holds. */
+    /** Exact bytes, sent unchanged on every attempt so a replay is answered as a duplicate (§1.7). */
     readonly body: Uint8Array
 }
 
@@ -46,10 +46,9 @@ export interface DiagnosticLogsTransport {
 
 export interface DlineOtelHttpClientOptions {
     /**
-     * Sent as `User-Agent: Dline/<clientVersion>`, the value the service's
-     * version list is matched against (§1.2). The `client.version` of a usage
-     * body and the `service.version` of a logs resource must state the same
-     * version, so the caller passes the one it puts into those bodies.
+     * Sent as `User-Agent: Dline/<clientVersion>` (§1.2). The `client.version`
+     * of a usage body and the `service.version` of a logs resource must state
+     * the same version, so the caller passes the one it puts into those bodies.
      */
     readonly clientVersion: string
     /** Origin of the service; a loopback origin is used for the local contract smoke. */

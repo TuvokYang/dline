@@ -47,7 +47,7 @@ export function mergeMinutes(left: readonly UsageMinute[], right: readonly Usage
 
 /**
  * The minutes the next batch carries: the oldest one and every later one that
- * ends within the 60-minute span the service accepts. The minutes need not be
+ * ends within the contract's 60-minute span (§2.3). The minutes need not be
  * contiguous, so a backlog from offline time drains oldest first.
  */
 export function selectBatchMinutes(minutes: readonly UsageMinute[]): UsageMinute[] {
@@ -63,7 +63,7 @@ export function selectBatchMinutes(minutes: readonly UsageMinute[]): UsageMinute
  * Beyond eight models, the least requested ones are summed into `_other`;
  * beyond eight providers with failures or retries, the same. A model's peak is
  * taken from its busiest single minute after that folding, so a batch of many
- * minutes keeps the peak the service derives RPM and TPM from.
+ * minutes still reports its per-minute peak (§2.2 `peak_minute`).
  */
 export function buildUsageBody(
     minutes: readonly UsageMinute[],

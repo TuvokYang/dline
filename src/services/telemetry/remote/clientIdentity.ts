@@ -2,7 +2,7 @@ import type { UsageHostEditor, UsageReleaseChannel } from "./contracts/usageBody
 
 /**
  * How this build describes itself to the telemetry service: the release channel
- * and the hosting editor, in the service's fixed vocabulary. Usage reports them
+ * and the hosting editor, in the contract's fixed vocabulary. Usage reports them
  * in `client`, diagnostics in the logs resource.
  */
 

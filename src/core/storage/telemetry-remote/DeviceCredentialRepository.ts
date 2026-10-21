@@ -38,7 +38,7 @@ export interface StoredDeviceToken {
     readonly obtainedAt: number
 }
 
-/** Machine-wide wait after the service refused an enrollment; the budget is per IP, so every instance honours it. */
+/** Machine-wide wait after the service refused an enrollment; the refusal holds the whole machine, so every instance honours it. */
 export interface EnrollmentBackoff {
     readonly notBefore: number
     readonly consecutiveFailures: number
@@ -104,9 +104,9 @@ type LatestDocument = ValidParsedDocument | { readonly status: "missing" } | { r
 /**
  * Owner of the machine's remote telemetry device secret and its bearer tokens.
  *
- * Every VS Code window on the machine shares one document: the service keeps
- * only the newest eight tokens per device and limits enrollments per IP, so
- * per-window credentials would revoke each other. Writes run under a short
+ * Every VS Code window on the machine shares one document: an exchange may
+ * retire tokens issued earlier for the same device, so per-window credentials
+ * would revoke each other. Writes run under a short
  * cross-process lock that never spans network I/O; callers re-read the latest
  * document inside {@link mutate} and decide from it, which makes every write a
  * compare-and-swap against what another window may have stored meanwhile.

@@ -1,11 +1,11 @@
 ---
 title: 遥测系统与统一规划
-description: Dline 的 canonical telemetry pipeline、设备与账户身份边界、当前兼容路径、当前远端 usage 投递，以及计划中的远端诊断与 Issue diagnostics 接入。
+description: Dline 的 canonical telemetry pipeline、设备与账户身份边界、当前兼容路径、当前远端 usage 与诊断投递，以及计划中的 Issue diagnostics 接入。
 ---
 
 import { Aside } from "@astrojs/starlight/components"
 
-Dline 的目标是一套 canonical telemetry mechanism。loopback OTLP、本地 journal、账户身份日志、`otel.dline.cc`、diagnostic bundle 和 Issue diagnostics 都是同一接纳与隐私系统的 sink、视图或 profile overlay。目前 `otel.dline.cc` 只接收使用计数，经由[当前远端 usage 投递](#当前远端-usage-投递)所述的专用路径。
+Dline 的目标是一套 canonical telemetry mechanism。loopback OTLP、本地 journal、账户身份日志、`otel.dline.cc`、diagnostic bundle 和 Issue diagnostics 都是同一接纳与隐私系统的 sink、视图或 profile overlay。目前 `otel.dline.cc` 接收使用计数以及错误和运行时诊断，经由[当前远端 usage 投递](#当前远端-usage-投递)所述的专用路径。
 
 面向用户的说明见[遥测、隐私与 Issue 诊断](/zh-cn/troubleshooting/telemetry/)。
 
@@ -65,13 +65,13 @@ canonical registry 每次从 `StateManager` 读取 consent。runtime 兼容 life
 
 ## 当前远端 usage 投递
 
-`otel.dline.cc` 目前只接收 `usage` profile。该路径的所有权如下：
+`otel.dline.cc` 目前经 `/usage` 接收 `usage` profile，经 `/logs` 接收 `production` profile 的错误和运行时诊断。usage 路径的所有权如下：
 
 | 层 | Owner | 职责 |
 |---|---|---|
-| Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | 每个已结算的服务商请求产生一条类型化记录：purpose、outcome、token、micro-USD 成本、时长，以及服务该请求的 provider 和模型 |
+| Settlement port | `src/core/task/telemetry/UsageSettlement.ts` | 每个已结算的服务商请求产生一条类型化记录：purpose、outcome、新输入与缓存 token、时长、流式耗时、重试、失败类别，以及服务该请求的 provider 和模型（含是否为自定义模型） |
 | Policy | `remote/policy/usagePolicy.ts`、`RemotePolicyRepository` | 把使用情况设置（默认开启）、组织、宿主等级和服务端停止解析为机器级 policy epoch，并在决策变化时记录日志 |
-| Catalog | `remote/usage/usageCatalog.ts` | 按 purpose 和 outcome 拆分的固定指标名，加上用于排名、按 provider 和模型拆分的一组指标；后者会折叠以满足服务端的指标名上限 |
+| 请求体 | `remote/usage/usageTally.ts`、`usageBatch.ts`、`remote/contracts/usageBody.ts` | 按请求累计、按分钟相加，再合并为一个 `schema_version: 2` 请求体：最多 8 个模型和 8 个 provider，其余合并为 `_other`；保存前在本地校验 |
 | Spool 与 outbox | `UsageObservationSpool`、`UsageOutboxRepository` | 按进程分片的 observation；发送租约、投递闸门、待发分钟和 exact-bytes inflight 在同一把锁下修改 |
 | 投递 | `UsageDeliveryWorker`、`RemoteUsageCoordinator` | 窗口、批次、重放、延后与停止处理；policy 离开允许状态时删除未发送数据 |
 | 凭据与传输 | `DeviceCredentialRepository`、`DeviceTokenBroker`、`DlineOtelHttpClient` | owner-only 设备密钥、single-flight 令牌交换、经 `@shared/net` 的固定 origin |
@@ -79,7 +79,9 @@ canonical registry 每次从 `StateManager` 读取 consent。runtime 兼容 life
 
 `remote/` 路径位于 `src/services/telemetry/` 下；repository 位于 `src/core/storage/telemetry-remote/`。
 
-该路径尚未达到下文目标：settlement 绕过了 `provider-registry.ts` 和 canonical channel catalog。隐私由构造保证：settlement 类型没有正文字段，catalog 固定，批次属性经过 allowlist，并在发送前按 wire 合同校验。把该路径纳入 canonical admission boundary 仍是待完成工作。
+错误和运行时诊断由 `remote/diagnostics/`、`remote/remoteDiagnosticsRuntime.ts` 和共享的 `DiagnosticOutboxRepository` 负责；发送的记录与上限见用户文档。
+
+该路径尚未达到下文目标：settlement 绕过了 `provider-registry.ts` 和 canonical channel catalog。隐私由构造保证：settlement 类型没有正文字段，请求体结构固定，批次属性经过 allowlist，并在发送前按 wire 合同校验。把该路径纳入 canonical admission boundary 仍是待完成工作。
 
 `DLINE_OTEL_ENDPOINT` 只能把 origin 替换为 loopback origin，用于针对本地 mock 服务的契约测试；其他值会被忽略并记录警告。
 
@@ -112,12 +114,12 @@ account identity ingress ────┘
 
 ## 远端 profile
 
-- `usage`（当前）：不含正文的 Provider token/cache/cost settlement，聚合为上文的固定 catalog。
-- `production`：经过内容过滤的 `error`/`runtime` logs、metrics、traces。
+- `usage`（当前）：不含正文的 Provider token、缓存和耗时 settlement，聚合为上文的 `schema_version: 2` 请求体。
+- `production`（logs 已启用）：经过内容过滤的 `error`/`runtime` log 记录；不发送 metrics 和 traces。
 - `issue_diagnostic`：需要 error consent 与 active per-Issue grant 的有时限诊断密度。
 - `development`（计划）：独立的开发流。目前 development 构建以 `usage` profile 发送使用统计并带 `is_dev=true`，自动化测试运行不发送。
 
-`production` 和 `issue_diagnostic` 仍是计划。
+`issue_diagnostic` 仍是计划。
 
 Dline remote provider 接入现有 registry，禁止新增 remote-only catalog 或 consent system。remote diagnostics 同时排除设备 `distinct_id` 和 account identity。未来 account 目的地必须是单独声明的 account-capable sink。
 

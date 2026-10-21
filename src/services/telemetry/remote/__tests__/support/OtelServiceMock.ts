@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net"
 
 /**
  * Loopback stand-in for the Dline telemetry service, written from the client's
- * view of the HTTP interface only (contract v2): device exchange, the version
+ * view of the HTTP interface only (contract v2.1): device exchange, the version
  * list matched on `User-Agent` before anything else, bearer tokens on
  * `/usage`, request-ID idempotency, `next_eligible_at`, and a 429 for a new
  * batch sent before it. It deliberately keeps no knowledge of how the real

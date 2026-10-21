@@ -24,7 +24,7 @@ export interface DiagnosticDeliveryWorkerOptions {
  * Sends one claimed batch of the shared diagnostic outbox to `/logs`.
  *
  * A batch that may have reached the service is resent with the same request id
- * and bytes, so the service drops the copy. A 429 or a pause holds the whole
+ * and bytes, so a copy is answered as a duplicate. A 429 or a pause holds the whole
  * channel and keeps the batch unchanged for the first send after it; a 413 splits the batch. A
  * rejected token is exchanged once and the batch resent; a refusal of the
  * stream records a stop in the outbox that every window respects.

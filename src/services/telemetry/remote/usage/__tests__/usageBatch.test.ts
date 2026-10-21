@@ -53,7 +53,7 @@ function bucketsSum(histogram: UsageHistogramWire | undefined): number {
     return histogram?.buckets.reduce((sum, count) => sum + count, 0) ?? 0
 }
 
-describe("usage tally projection (contract v2 §2.2)", () => {
+describe("usage tally projection (contract v2.1 §2.2)", () => {
     it("counts a request by purpose and outcome with fresh input apart from cache reads and writes", () => {
         const tally = projectUsageSettlement(settlement({ purpose: "compaction", outcome: "cancelled" }))
 
@@ -155,7 +155,7 @@ describe("usage tally projection (contract v2 §2.2)", () => {
     })
 })
 
-describe("buildUsageBody (contract v2 §2.1-§2.3)", () => {
+describe("buildUsageBody (contract v2.1 §2.1-§2.3)", () => {
     it("folds models beyond eight into _other without changing any total", () => {
         const tallies = Array.from({ length: 11 }, (_, index) =>
             Array.from({ length: index + 1 }, () =>
@@ -222,7 +222,7 @@ describe("buildUsageBody (contract v2 §2.1-§2.3)", () => {
     })
 })
 
-describe("validateUsageBody (contract v2 §1.4, §2.2)", () => {
+describe("validateUsageBody (contract v2.1 §1.4, §2.2)", () => {
     const valid = body(
         minutesOf([
             projectUsageSettlement(

@@ -48,8 +48,8 @@ export const USAGE_POLICY_BLOCKS = ["consent_off", "organization_disabled", "hos
 export type UsagePolicyBlock = (typeof USAGE_POLICY_BLOCKS)[number]
 
 /**
- * Development builds send under the same profile; their batches carry the
- * `is_dev` attribute, so the service separates them without a second stream.
+ * Development builds send under the same profile; their batches carry
+ * `client.is_dev` instead of using a second stream.
  */
 export type UsagePolicyDecision =
     | { readonly allowed: true; readonly profile: "usage" }

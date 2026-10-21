@@ -18,9 +18,8 @@ export function rolloutChannelOpen(usageReportingAllowed: boolean, errorReportin
 }
 
 /**
- * How the rollout names this device. It rides on usage reporting: the cohort
- * is the device the usage service issued, so a rollout can be measured by the
- * usage of the devices it reached.
+ * How the rollout names this device. It rides on usage reporting: the device
+ * id is the one the usage service issued.
  */
 export interface FeatureFlagsIdentity {
     /** Whether the rollout channel is open now, see {@link rolloutChannelOpen}; local and synchronous. */

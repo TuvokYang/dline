@@ -25,7 +25,7 @@ export type UsageModelTally = Omit<UsageModelWire, "peak_minute">
 
 /**
  * Usage of one request, one minute, or any set of them, in the sections of the
- * v2 body (otel contract v2 §2.2). Tallies add up exactly, so a minute is the
+ * v2 body (otel contract v2.1 §2.2). Tallies add up exactly, so a minute is the
  * sum of its requests and a batch the sum of its minutes.
  */
 export interface UsageTally {
@@ -41,7 +41,7 @@ const UNKNOWN_ID = "unknown"
 const MAX_PROVIDER_LENGTH = 32
 const MAX_MODEL_LENGTH = 64
 
-/** A provider and model reduced to the service's vocabulary. */
+/** A provider and model reduced to the contract's vocabulary (§2.2). */
 export interface UsageModelKey {
     readonly provider: string
     readonly model: string

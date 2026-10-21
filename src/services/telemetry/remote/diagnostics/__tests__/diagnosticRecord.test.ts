@@ -56,7 +56,7 @@ function decode(body: string) {
     return { resource: resourceLogs.resource.attributes, scope: resourceLogs.scopeLogs[0] }
 }
 
-describe("toDiagnosticRecord (contract v2 §3.1-§3.2)", () => {
+describe("toDiagnosticRecord (contract v2.1 §3.1-§3.2)", () => {
     it("sends only error and runtime events at warn or above with a name the service accepts", () => {
         expect(toDiagnosticRecord(event(), NOW)?.name).toBe("api.request.failed")
         expect(toDiagnosticRecord(event({ channel: "runtime", severity: "warn" }), NOW)?.channel).toBe("runtime")
@@ -189,7 +189,7 @@ describe("toDiagnosticRecord (contract v2 §3.1-§3.2)", () => {
     })
 })
 
-describe("v2 §3.5 diagnostic extension", () => {
+describe("v2.1 §3.5 diagnostic extension", () => {
     it("sends each §3.5 key only with a value its rule accepts", () => {
         const valid = record({
             "error.site": "ripgrep.search",
@@ -255,7 +255,7 @@ describe("v2 §3.5 diagnostic extension", () => {
     })
 })
 
-describe("aggregateDiagnostics (contract v2 §3.3)", () => {
+describe("aggregateDiagnostics (contract v2.1 §3.3)", () => {
     it("merges events with the same name, severity, fingerprint, class, provider and model", () => {
         const first = record(
             { "error.fingerprint": FINGERPRINT, "error.class": "timeout", provider: "p", "retry.attempt": 1 },

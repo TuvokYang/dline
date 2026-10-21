@@ -1,5 +1,5 @@
 /**
- * Delivery pacing shared by the usage and logs channels (otel contract v2 §1.5–§1.8).
+ * Delivery pacing shared by the usage and logs channels (otel contract v2.1 §1.5–§1.8).
  *
  * Every function here is pure: the owning outbox persists the state, so a pause
  * or a server interval survives a restart and is shared by every window of the

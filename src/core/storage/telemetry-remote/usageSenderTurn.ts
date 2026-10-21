@@ -10,7 +10,7 @@
  * renewing past its turn, such as a build that predates turns, is taken over
  * under a new generation once a grace period after its turn has passed; its
  * acknowledgements are fenced off and its inflight is replayed from the same
- * bytes, which the service deduplicates by request ID.
+ * bytes under the same request ID, so it is answered as a duplicate (§1.7).
  *
  * This module only decides; the outbox repository reads and writes the
  * document under its lock.

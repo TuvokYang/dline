@@ -124,9 +124,9 @@ export function usageReportingAllowed(): boolean {
 /**
  * The device id the usage service issued, for services that ride on the usage
  * consent, or `undefined` while this device may not report usage or has not
- * been enrolled yet. It names the same device as the usage it reports, so such
- * a service can be related to that usage. Only the id leaves: the bearer token
- * is a usage write credential and is sent to the usage service alone.
+ * been enrolled yet. It names the same device as the usage it reports. Only the
+ * id leaves: the bearer token is a usage write credential and is sent to the
+ * usage service alone.
  */
 export async function acquireUsageDeviceId(signal?: AbortSignal): Promise<string | undefined> {
     const running = coordinator

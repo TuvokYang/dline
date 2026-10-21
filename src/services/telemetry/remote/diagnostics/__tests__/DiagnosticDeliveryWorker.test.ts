@@ -48,7 +48,7 @@ interface SentLogs {
     readonly dropped: number
 }
 
-describe("DiagnosticDeliveryWorker (contract v2 §1.5-§1.7, §3.3)", () => {
+describe("DiagnosticDeliveryWorker (contract v2.1 §1.5-§1.7, §3.3)", () => {
     let root: string
     let now: number
     let sent: SentLogs[]

@@ -15,7 +15,7 @@ import {
 import { aggregateDiagnostics, type DiagnosticRecord } from "@/services/telemetry/remote/diagnostics/diagnosticRecord"
 import { FileLock } from "../backend/jsonl/FileLock"
 
-/** Aggregated records one device may create per UTC hour and per UTC day (otel contract v2 §3.3). */
+/** Aggregated records one device may create per UTC hour and per UTC day (otel contract v2.1 §3.3). */
 export const DIAGNOSTICS_PER_HOUR = 50
 export const DIAGNOSTICS_PER_DAY = 200
 /** Records kept while the service cannot be reached or asks to wait; more are dropped and counted. */

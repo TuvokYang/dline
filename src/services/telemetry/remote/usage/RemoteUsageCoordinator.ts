@@ -95,7 +95,7 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
     }
 
     /**
-     * Count this extension activation once (`sessions_started`, otel contract v2
+     * Count this extension activation once (`sessions_started`, otel contract v2.1
      * §2.2). Call after {@link start}; like a settlement, it is kept only while
      * reporting is allowed.
      */

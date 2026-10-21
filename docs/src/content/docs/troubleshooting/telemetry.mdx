@@ -105,7 +105,7 @@ Dline sends usage counts to `https://otel.dline.cc` only while every condition h
 - Organization policy has not disabled telemetry.
 - VS Code's `telemetry.telemetryLevel` is `all`. `error`, `crash`, `off`, or a level that cannot be read stops delivery.
 - The service has not refused this device.
-- The run is not an automated test. Development builds send too, and their batches carry `is_dev=true` so the service can separate them.
+- The run is not an automated test. Development builds send too, and their batches carry `is_dev=true`.
 
 ### What is sent
 
@@ -136,8 +136,8 @@ Usage and diagnostics follow the same rules, each on its own and remembered acro
 
 - A new batch starts at most every 10 minutes for usage and every 5 minutes for diagnostics. When the service names a later time for the next batch, Dline waits for it, up to 7 days.
 - When the service answers with a rate limit or a telemetry pause (HTTP 429), that channel sends nothing, retries included, until the wait ends: the time the service asks for, otherwise one minute doubling with each further limit up to 30 minutes, plus up to 10% random spread, never longer than 7 days. The refused batch is kept unchanged and is sent first once the wait ends, with the same request ID and bytes, because an earlier timed-out attempt may already have been stored. Data gathered during the wait forms a separate batch. A wait does not count as an attempt, and its time does not count toward the 24-hour limit below. The other channel keeps sending.
-- A batch whose outcome is unknown (a timeout, a network error, HTTP 408 or 5xx) is sent again with the same request ID and bytes, so the service stores it once. The wait starts at 30 seconds and doubles up to 30 minutes; the batch is abandoned after 12 attempts or 24 hours.
-- A batch the service rejects as invalid (HTTP 422) is dropped and never retried, and so is a usage batch that is too large (HTTP 413). The service reads the client version from the `User-Agent: Dline/<version>` header; a batch from a version it no longer accepts is acknowledged without being stored and is not sent again.
+- A batch whose outcome is unknown (a timeout, a network error, HTTP 408 or 5xx) is sent again with the same request ID and bytes, so it is not counted twice. The wait starts at 30 seconds and doubles up to 30 minutes; the batch is abandoned after 12 attempts or 24 hours.
+- A batch rejected as invalid (HTTP 422) is dropped and never retried, and so is a usage batch that is too large (HTTP 413). Every request names the client version in a `User-Agent: Dline/<version>` header. A batch the service acknowledges without storing it (`ignored_version`) is dropped like any acknowledged batch and is not sent again.
 
 ### Local queue
 
@@ -149,7 +149,7 @@ The queue lives in `telemetry/remote/usage/` below the Dline data root:
 | `outbox.json` | The sender lease, the send timing and wait state, pending minutes, and the request awaiting an answer |
 | `inflight/` | The exact bytes of a request whose outcome is unknown |
 
-Only one Dline window sends at a time, and windows take turns: a window sends for at most 10 minutes and then hands the lease to the window that has waited longest, including a window of another Dline version. A window that keeps the lease more than 90 seconds past its turn is taken over, and its unanswered request is sent again with the same bytes. Every batch is checked locally against the same rules the service applies before it is stored; a batch that fails is dropped. At most 60 pending minutes are kept and older minutes are dropped. Dropped minutes are reported as a count in the next batch.
+Only one Dline window sends at a time, and windows take turns: a window sends for at most 10 minutes and then hands the lease to the window that has waited longest, including a window of another Dline version. A window that keeps the lease more than 90 seconds past its turn is taken over, and its unanswered request is sent again with the same bytes. Every batch is checked locally against the request rules of the telemetry contract before it is stored; a batch that fails is dropped. At most 60 pending minutes are kept and older minutes are dropped. Dropped minutes are reported as a count in the next batch.
 
 ### Turning usage delivery off
 
@@ -182,7 +182,7 @@ Every other event stays on this device, including `task.error`, which repeats a 
 
 Events with the same name, severity, error fingerprint and fingerprint version, error class, provider, model, and tool are merged into one record while they wait. A record carries the event name, its channel (`error` or `runtime`), its severity, the time of the first occurrence, the number of occurrences (`dline.occurrences`), and the time of the last one (`dline.last_seen_ms`).
 
-Its other attributes come only from the service's catalog:
+Its other attributes come only from this fixed list:
 
 - `error.class`, `error.code`, `error.type`, `http.status`, `provider`, `model`, `model.custom`, `api.format`, `phase` (`connect`, `stream`, `parse`, `tool`, or `other`), `retry.attempt`, `retryable`, and `duration_ms`.
 - `error.fingerprint` (16 hexadecimal digits) and `error.fingerprint_version` (`2` or `3`). Version 3 groups a failure by the place where it was caught when one is recorded, and by its source location otherwise.
@@ -193,7 +193,7 @@ Its other attributes come only from the service's catalog:
 
 A text value is kept only as a short token of letters, digits, `_`, `.`, `+`, and `-` (at most 64 characters), and a number only as a non-negative integer. A value outside an attribute's list is left out. Older attribute names still used inside Dline are read into these keys; every other attribute is left out. A failure names its model the same way as usage delivery, and `model.custom` is `true` only for a custom model as defined above.
 
-The request resource names only the client version, the operating-system type, the release channel (`stable` or `insiders`), the editor family (`vscode`, `cursor`, `vscodium`, `windsurf`, or `other`), and the number of records dropped locally since the previous request (`dline.dropped_records`). A development build also sends `dline.is_dev=true` so the service can separate its records; other builds omit it.
+The request resource names only the client version, the operating-system type, the release channel (`stable` or `insiders`), the editor family (`vscode`, `cursor`, `vscodium`, `windsurf`, or `other`), and the number of records dropped locally since the previous request (`dline.dropped_records`). A development build also sends `dline.is_dev=true`; other builds omit it.
 
 Error messages, stack traces, prompts, responses, file contents, paths, URLs, commands, Task or workspace identity, `distinct_id`, and account ID are not sent.
 

@@ -45,12 +45,12 @@ export type DeliveryOutcome =
     | { readonly kind: "stop"; readonly scope: StopScope; readonly code: string }
 
 /**
- * Classify a `/usage` or `/logs` response (otel contract v2 §1.5).
+ * Classify a `/usage` or `/logs` response (otel contract v2.1 §1.5).
  *
- * The server checks idempotency before anything else, so replaying identical
- * bytes is always safe; rebuilding a batch is only safe when the server
- * certainly stored nothing. A 5xx or an unconfirmed 200 may follow a commit, so
- * it replays rather than rebuilds, which would count the same usage twice.
+ * A replay under the same request ID with identical bytes is answered as a
+ * duplicate (§1.7), so it is always safe; rebuilding a batch is only safe when
+ * nothing can have been stored. A 5xx or an unconfirmed 200 may follow a
+ * commit, so it replays rather than rebuilds, which would count the same usage twice.
  */
 export function classifyDeliveryResponse(response: WireResponse): DeliveryOutcome {
     const { status } = response

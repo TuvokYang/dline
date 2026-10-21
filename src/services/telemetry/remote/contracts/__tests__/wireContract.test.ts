@@ -16,7 +16,7 @@ const edge = (status: number): WireResponse => ({ status, json: undefined, retry
 const failure = (status: number, code: string, extra: Record<string, unknown> = {}) =>
     json(status, { ok: false, request_id: "r", retryable: status >= 500, error: { code, message: "x" }, ...extra })
 
-describe("usage and logs response classification (contract v2 §1.5)", () => {
+describe("usage and logs response classification (contract v2.1 §1.5)", () => {
     it.each([
         "accepted",
         "duplicate",

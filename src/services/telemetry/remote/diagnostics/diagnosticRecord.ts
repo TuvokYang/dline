@@ -10,7 +10,7 @@ export type DiagnosticSeverity = "warn" | "error" | "fatal"
 export type DiagnosticAttributeValue = string | number | boolean
 
 /**
- * One aggregated error or runtime record (otel contract v2 §3.3): every event of
+ * One aggregated error or runtime record (otel contract v2.1 §3.3): every event of
  * one interval with the same name, severity, fingerprint, class, provider and
  * model, counted once with its first and last time. The attributes are those of
  * the first occurrence and use only the catalog keys.
@@ -27,7 +27,7 @@ export interface DiagnosticRecord {
     readonly attributes: Readonly<Record<string, DiagnosticAttributeValue>>
 }
 
-/** The service rejects an event name outside this shape. */
+/** The event name shape of §3.1. */
 const EVENT_NAME = /^[A-Za-z0-9_.:/-]{1,160}$/
 /**
  * A string value leaves only as a short token: an error code, a provider, a
@@ -37,7 +37,7 @@ const EVENT_NAME = /^[A-Za-z0-9_.:/-]{1,160}$/
 const TOKEN_VALUE = /^[A-Za-z0-9_.+-]{1,64}$/
 const FINGERPRINT = /^[0-9a-f]{16}$/
 const PHASES = ["connect", "stream", "parse", "tool", "other"] as const
-/** v2 §3.5: an `area.operation` call site of at most 64 characters. */
+/** v2.1 §3.5: an `area.operation` call site of at most 64 characters. */
 const SITE = /^(?=.{1,64}$)[a-z0-9_]+(\.[a-z0-9_]+){1,3}$/
 const FAILURE_STAGES = ["validation", "authorization", "routing", "execution", "remote"] as const
 /** Only Dline's own tool ids qualify; an MCP tool's name is user content and never leaves. */
@@ -65,9 +65,9 @@ const API_FORMAT_VALUE = /^[a-z0-9-]{1,64}$/
  * The attribute catalog of §3.2, apart from the three keys the record itself
  * owns (`dline.channel`, `dline.occurrences`, `dline.last_seen_ms`). Each key
  * lists the property names it is read from, in order: the canonical pipeline
- * still carries older aliases such as `dline.exception.fingerprint`, which the
- * service no longer stores, so their values travel under the catalog key and
- * the alias itself never leaves.
+ * still carries older aliases such as `dline.exception.fingerprint`, which §3.2
+ * forbids sending, so their values travel under the catalog key and the alias
+ * itself never leaves.
  */
 const CATALOG: readonly { readonly key: string; readonly kind: AttributeKind; readonly sources: readonly string[] }[] = [
     { key: "error.class", kind: USAGE_ERROR_CLASSES, sources: ["error.class"] },
@@ -116,7 +116,7 @@ const CATALOG: readonly { readonly key: string; readonly kind: AttributeKind; re
 ]
 
 /**
- * Metrics whose breach carries `perf.*` (v2 §3.5). A ratio is sent as an
+ * Metrics whose breach carries `perf.*` (v2.1 §3.5). A ratio is sent as an
  * integer per mille, since the catalog only takes integers.
  */
 const PERF_METRIC_SCALE: Readonly<Record<string, number>> = {
@@ -288,7 +288,7 @@ export interface DiagnosticResource {
     /** Never under `dline.channel`, which separates error from runtime events. */
     readonly releaseChannel?: UsageReleaseChannel
     readonly hostEditor?: UsageHostEditor
-    /** A development build; sent only when true, since the service reads a missing value as false. */
+    /** A development build; sent only when true, since a missing `dline.is_dev` means false (§3.5). */
     readonly isDev?: boolean
 }
 

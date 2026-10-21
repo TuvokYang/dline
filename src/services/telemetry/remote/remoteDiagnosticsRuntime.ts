@@ -34,7 +34,7 @@ export interface RemoteDiagnosticsRuntimeOptions {
     /** Which build this is and which editor hosts it, for the logs resource. */
     readonly releaseChannel?: DiagnosticResource["releaseChannel"]
     readonly hostEditor?: DiagnosticResource["hostEditor"]
-    /** A development build, so the service can keep its records out of the statistics. */
+    /** A development build; the logs resource then carries `dline.is_dev`. */
     readonly isDev?: boolean
     /** Whether error reporting may leave the machine now: consent, organization and host level. */
     readonly allowed: () => boolean

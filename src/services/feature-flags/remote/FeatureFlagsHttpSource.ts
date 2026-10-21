@@ -43,8 +43,7 @@ export interface FeatureFlagsHttpSourceOptions {
     readonly query: FeatureFlagsQuery
     /**
      * The device id the usage service issued, or `undefined` when there is none
-     * right now. The service buckets by it, so every answer can be related to
-     * the usage of the device it was given to.
+     * right now. It is the same device id usage delivery reports under.
      */
     readonly deviceId: (signal?: AbortSignal) => Promise<string | undefined>
     /** Origin of the service; tests use a loopback origin. */
@@ -58,8 +57,8 @@ export interface FeatureFlagsHttpSourceOptions {
  * The device id and the query travel in a POST body rather than the URL:
  * proxies, CDNs and access logs record URLs, and an answer computed for one
  * device must not be cached for another. Without a device id nothing is sent.
- * No credential is sent either: the service only buckets a public id, and the
- * usage token is a write credential that stays with the usage service. Goes
+ * No credential is sent either: the device id is not a secret, and the usage
+ * token is a write credential that stays with the usage service. Goes
  * through the shared proxy-aware fetch, refuses redirects, bounds each request
  * in time and each response in size, and does not retry: the provider owns the
  * schedule and keeps its last answers when a fetch fails.

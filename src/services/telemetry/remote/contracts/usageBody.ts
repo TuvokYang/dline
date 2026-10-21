@@ -6,12 +6,12 @@ import {
 } from "@/core/task/telemetry/UsageSettlement"
 
 /**
- * The `/usage` request body, `schema_version` 2 (otel contract v2 §2).
+ * The `/usage` request body, `schema_version` 2 (otel contract v2.1 §2).
  *
- * The body maps one-to-one onto the service's columns, so the service stores it
- * without unpacking. The validator mirrors every rule the service answers with
- * 422: a batch it would refuse is a permanent loss once written as an inflight
- * body, so it is checked before that point and dropped locally instead.
+ * The validator applies the contract's rules (§1.4, §2.2) before a batch is
+ * written as an inflight body: a batch answered with 422 is a permanent loss,
+ * so it is dropped locally instead. It also rejects summaries and counts that
+ * contradict themselves, which only a damaged record can produce.
  */
 
 export const USAGE_SCHEMA_VERSION = 2
@@ -243,7 +243,7 @@ function isValidProviderList(providers: readonly UsageProviderWire[]): boolean {
     return new Set(providers.map((provider) => provider.provider)).size === providers.length
 }
 
-/** `min*count <= sum <= max*count` over non-negative finite values, as the service checks. */
+/** `min*count <= sum <= max*count` over non-negative finite values: anything else cannot describe real samples. */
 export function isConsistentSummary(value: unknown): value is UsageSummaryWire {
     if (!isRecord(value)) return false
     const { count, sum, min, max } = value
