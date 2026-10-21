@@ -10,7 +10,7 @@ import { recordRuntimeGauge } from "../service/pipeline-port"
 import { DiagnosisPipeline } from "./analysis/diagnosis-pipeline"
 import type { RootCauseDiagnosis } from "./analysis/root-cause-types"
 import { DevRuntimeDiagnostics } from "./dev-diagnostics"
-import { RUNTIME_METRICS, RuntimeSampler, type RuntimeSnapshot } from "./performance/runtime-sampler"
+import { PROCESS_SAMPLER_SLOT, RUNTIME_METRICS, RuntimeSampler, type RuntimeSnapshot } from "./performance/runtime-sampler"
 import { DEFAULT_METRIC_BUDGETS, type PolicyVerdict, ThresholdPolicy } from "./performance/threshold-policy"
 import { RuntimeEventBus } from "./runtime-event-bus"
 import { RuntimeTelemetryService } from "./service"
@@ -378,6 +378,8 @@ export class RuntimeTelemetryLifecycle {
         this.sampler = new RuntimeSampler({
             policy: this.policy,
             intervalMs: this.options.samplerIntervalMs,
+            // Every lifecycle in this host measures the same process; one reports its breaches.
+            slot: PROCESS_SAMPLER_SLOT,
             onSnapshot: (snapshot) => this.publishSnapshot(snapshot),
             onVerdict: (verdict) => this.publishVerdict(verdict),
         })

@@ -59,11 +59,51 @@ const defaultClock: RuntimeSamplerClock = {
     },
 }
 
+/** Missed intervals after which a slot holder counts as gone. */
+const SLOT_STALE_INTERVALS = 2
+
+/**
+ * Elects the one sampler that reports breaches for a process.
+ *
+ * Every sampler in a process measures the same process, so two running
+ * samplers would report each breach twice. The first sampler to sample holds
+ * the slot; the others keep sampling for their own snapshots and baselines but
+ * publish no verdicts. A holder that has not sampled for two of its intervals,
+ * because it stalled or was dropped without being disposed, loses the slot to
+ * the next sampler that samples. Breaches from before a takeover are not
+ * replayed. Holders must share one monotonic clock.
+ */
+export class SamplerSlot {
+    private holder: object | undefined
+    private heartbeatMs = 0
+    private staleAfterMs = 0
+
+    /** Claim or renew the slot at `nowMs`; true when `holder` holds it afterwards. */
+    claim(holder: object, nowMs: number, intervalMs: number): boolean {
+        const free = this.holder === undefined || nowMs - this.heartbeatMs > this.staleAfterMs
+        if (this.holder !== holder && !free) return false
+        this.holder = holder
+        this.heartbeatMs = nowMs
+        this.staleAfterMs = SLOT_STALE_INTERVALS * intervalMs
+        return true
+    }
+
+    /** Give the slot up, so the next sampler to sample takes it at once. */
+    release(holder: object): void {
+        if (this.holder === holder) this.holder = undefined
+    }
+}
+
+/** The slot shared by every sampler in this extension host process. */
+export const PROCESS_SAMPLER_SLOT = new SamplerSlot()
+
 export interface RuntimeSamplerOptions {
     readonly policy: ThresholdPolicy
     readonly intervalMs?: number
     readonly heapWindowMs?: number
     readonly clock?: RuntimeSamplerClock
+    /** When set, verdicts are published only while this sampler holds the slot. */
+    readonly slot?: SamplerSlot
     /** Receives every snapshot, whether healthy or not. */
     readonly onSnapshot?: (snapshot: RuntimeSnapshot) => void
     /** Receives only verdicts that opened, escalated, or closed an incident. */
@@ -80,6 +120,7 @@ export class RuntimeSampler {
     private readonly intervalMs: number
     private readonly heapWindowMs: number
     private readonly clock: RuntimeSamplerClock
+    private readonly slot?: SamplerSlot
     private readonly onSnapshot?: (snapshot: RuntimeSnapshot) => void
     private readonly onVerdict?: (verdict: PolicyVerdict, snapshot: RuntimeSnapshot) => void
 
@@ -93,6 +134,7 @@ export class RuntimeSampler {
         this.intervalMs = options.intervalMs ?? DEFAULT_SAMPLE_INTERVAL_MS
         this.heapWindowMs = options.heapWindowMs ?? DEFAULT_HEAP_WINDOW_MS
         this.clock = options.clock ?? defaultClock
+        this.slot = options.slot
         this.onSnapshot = options.onSnapshot
         this.onVerdict = options.onVerdict
     }
@@ -127,6 +169,7 @@ export class RuntimeSampler {
         this.lastCpuUsage = undefined
         this.lastSampleAtMs = undefined
         this.heapMarks.length = 0
+        this.slot?.release(this)
     }
 
     /**
@@ -165,12 +208,13 @@ export class RuntimeSampler {
         }
 
         this.onSnapshot?.(snapshot)
-        this.publish(snapshot)
+        const reportsVerdicts = this.slot?.claim(this, monotonicMs, this.intervalMs) ?? true
+        this.publish(snapshot, reportsVerdicts)
         return snapshot
     }
 
-    private publish(snapshot: RuntimeSnapshot): void {
-        if (!this.onVerdict) {
+    private publish(snapshot: RuntimeSnapshot, reportsVerdicts: boolean): void {
+        if (!this.onVerdict || !reportsVerdicts) {
             // Still feed the policy so baselines stay warm for later consumers.
             for (const sample of this.toSamples(snapshot)) {
                 this.policy.observe(sample)
