@@ -7,7 +7,13 @@ import { INITIAL_PACING } from "@/services/telemetry/remote/contracts/pacing"
 import { emptyUsageOutbox, sha256Hex, type UsageOutboxState } from "@/services/telemetry/remote/usage/usageOutbox"
 import { projectUsageSettlement, sessionStartedTally } from "@/services/telemetry/remote/usage/usageTally"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
-import { USAGE_OUTBOX_SCHEMA_VERSION, USAGE_SENDER_LEASE_MS, UsageOutboxRepository } from "../UsageOutboxRepository"
+import {
+    USAGE_OUTBOX_SCHEMA_VERSION,
+    USAGE_SENDER_LEASE_MS,
+    UsageOutboxRepository,
+    type UsageSenderTurnEvent,
+} from "../UsageOutboxRepository"
+import { USAGE_SENDER_TAKEOVER_GRACE_MS, USAGE_SENDER_TURN_MS } from "../usageSenderTurn"
 
 const REQUEST_ID = "0b4f8a52-5d0e-4e55-9a0c-5a1f1e7c0a01"
 const OTHER_REQUEST_ID = "0b4f8a52-5d0e-4e55-9a0c-5a1f1e7c0a02"
@@ -247,5 +253,123 @@ describe("UsageOutboxRepository", () => {
         expect(await repository().read()).toBeUndefined()
         expect(await fs.readFile(layout.usageOutboxPath, "utf8")).toBe(newer)
         expect(await fs.readdir(layout.usageInflightDir)).toEqual([`${REQUEST_ID}.bin`])
+    })
+
+    describe("sender rotation", () => {
+        const CYCLE = 30_000
+
+        /** Both windows run their cycle once, holder first, as two live extension hosts would. */
+        async function cycle(a: UsageOutboxRepository, b: UsageOutboxRepository) {
+            const first = await a.claim("window-a")
+            const second = await b.claim("window-b")
+            return { a: first, b: second }
+        }
+
+        it("hands the lease to a waiting window once the holder's turn is over, and does not take it straight back", async () => {
+            const a = repository()
+            const b = repository()
+            const granted = await a.claim("window-a")
+            let turn = await cycle(a, b)
+            expect(turn).toEqual({ a: granted, b: undefined })
+            while (now - 1_900_000_000_000 < USAGE_SENDER_TURN_MS) {
+                now += CYCLE
+                turn = await cycle(a, b)
+                if (now - 1_900_000_000_000 < USAGE_SENDER_TURN_MS) expect(turn).toEqual({ a: granted, b: undefined })
+            }
+
+            expect(turn.a).toBeUndefined()
+            expect(turn.b).toEqual({ ownerId: "window-b", generation: (granted?.generation ?? 0) + 1 })
+            now += CYCLE
+            expect(await cycle(a, b)).toEqual({ a: undefined, b: turn.b })
+        })
+
+        // An older build waits without writing anything, so the holder cannot see it; only a free cycle lets it in.
+        it("gives the lease up for one cycle after its turn even when nobody is seen waiting, then takes it back", async () => {
+            const start = now
+            const a = repository()
+            const granted = await a.claim("window-a")
+            let claimed = granted
+            while (now - start < USAGE_SENDER_TURN_MS) {
+                now += CYCLE
+                claimed = await a.claim("window-a")
+                if (now - start < USAGE_SENDER_TURN_MS) expect(claimed).toEqual(granted)
+            }
+
+            expect(claimed).toBeUndefined()
+            now += CYCLE
+            expect(await a.claim("window-a")).toEqual({ ownerId: "window-a", generation: (granted?.generation ?? 0) + 1 })
+        })
+
+        it("does not let a waiter that stopped asking keep the free lease from the next window", async () => {
+            const start = now
+            const a = repository()
+            const granted = await a.claim("window-a")
+            expect(await repository().claim("window-b")).toBeUndefined()
+            while (now - start < USAGE_SENDER_TURN_MS) {
+                now += CYCLE
+                await a.claim("window-a")
+            }
+
+            now += CYCLE
+            expect(await a.claim("window-a")).toEqual({ ownerId: "window-a", generation: (granted?.generation ?? 0) + 1 })
+        })
+
+        it("takes over an older build that keeps renewing past its turn, fences it and keeps its inflight bytes", async () => {
+            await fs.mkdir(layout.usageInflightDir, { recursive: true })
+            const body = new TextEncoder().encode('{"schema_version":2}')
+            await fs.writeFile(path.join(layout.usageInflightDir, `${REQUEST_ID}.bin`), body)
+            const inflight = {
+                request_id: REQUEST_ID,
+                body_sha256: sha256Hex(body),
+                minutes: [],
+                dropped_minutes: 0,
+                created_at: now,
+                attempts: 0,
+                not_before: now,
+            }
+            // What 0.11.1 writes on every renewal: its known fields only, so any waiter entry is dropped.
+            const renewByOlderBuild = () =>
+                fs.writeFile(
+                    layout.usageOutboxPath,
+                    JSON.stringify({
+                        schema_version: 2,
+                        generation: 5,
+                        lease: { owner_id: "older-build", generation: 5, expires_at: now + USAGE_SENDER_LEASE_MS },
+                        state: {
+                            policy_epoch: 1,
+                            pacing: { next_eligible_at: 0, wait_until: 0, consecutive_waits: 0 },
+                            sealed_through: 0,
+                            dropped_minutes: 0,
+                            minutes: [],
+                            folded_shards: [],
+                            inflight,
+                        },
+                    }),
+                )
+            await fs.mkdir(layout.usageDir, { recursive: true })
+            await renewByOlderBuild()
+            const events: UsageSenderTurnEvent[] = []
+            const b = new UsageOutboxRepository(layout, { clock: () => now, onSenderTurn: (event) => events.push(event) })
+            const start = now
+            let grant = await b.claim("window-b")
+            while (grant === undefined && now - start <= USAGE_SENDER_TURN_MS + USAGE_SENDER_TAKEOVER_GRACE_MS + CYCLE) {
+                now += CYCLE
+                await renewByOlderBuild()
+                grant = await b.claim("window-b")
+            }
+
+            expect(grant).toEqual({ ownerId: "window-b", generation: 6 })
+            expect(events).toEqual([{ kind: "took_over", generation: 6 }])
+            expect(now - start).toBeGreaterThanOrEqual(USAGE_SENDER_TURN_MS + USAGE_SENDER_TAKEOVER_GRACE_MS)
+            const fenced = await repository().transact({ ownerId: "older-build", generation: 5 }, (state) => ({
+                state,
+                result: "written",
+            }))
+            expect(fenced).toEqual({ status: "fenced" })
+            const state = await b.read()
+            expect(state?.inflight?.requestId).toBe(REQUEST_ID)
+            const kept = await b.readBody({ requestId: REQUEST_ID, bodySha256: sha256Hex(body) })
+            expect(kept && new TextDecoder().decode(kept)).toBe('{"schema_version":2}')
+        })
     })
 })

@@ -67,7 +67,17 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
         )
     const transport = new DlineOtelHttpClient({ clientVersion: client.version, endpoint: options.endpoint })
     const credentials = new DeviceCredentialRepository(layout, { onQuarantine })
-    const outbox = new UsageOutboxRepository(layout, { onQuarantine })
+    const outbox = new UsageOutboxRepository(layout, {
+        onQuarantine,
+        // A hand-over is routine every turn; a takeover means another build kept the lease past its turn.
+        onSenderTurn: (event) =>
+            event.kind === "yielded"
+                ? options.log?.("debug", "[RemoteUsage] sender turn over; the lease goes to the next waiting window")
+                : options.log?.(
+                      "info",
+                      `[RemoteUsage] took the sender lease (generation ${event.generation}) from a window that kept it past its turn`,
+                  ),
+    })
     const spool = new UsageObservationSpool(layout, ownerId)
     const tokens = new DeviceTokenBroker({
         repository: credentials,

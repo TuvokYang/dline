@@ -17,7 +17,7 @@ import {
 } from "./usageOutbox"
 
 export type UsageCycleResult =
-    /** Another window holds the sender lease, or a newer Dline owns the outbox. */
+    /** Another window holds the sender lease, this window's turn just ended, or a newer Dline owns the outbox. */
     | { readonly kind: "standby" }
     /** The lease lapsed during the cycle; the next holder takes over the same inflight. */
     | { readonly kind: "fenced" }

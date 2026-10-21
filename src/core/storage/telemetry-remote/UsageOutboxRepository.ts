@@ -13,33 +13,40 @@ import { parseUsageTally } from "@/services/telemetry/remote/usage/usageTally"
 import { FileLock } from "../backend/jsonl/FileLock"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
 import { type QuarantineObserver, quarantineDocument } from "./quarantine"
+import {
+    decideSenderClaim,
+    type SenderClaimMemory,
+    type SenderLease,
+    type SenderTurns,
+    type SenderWaiter,
+    type UsageSenderGrant,
+    type UsageSenderTurnEvent,
+} from "./usageSenderTurn"
 
-/** Version 2 holds v2 tallies and the channel pacing; version 1 held the dotted v1 catalog. */
+export type { UsageSenderGrant, UsageSenderTurnEvent } from "./usageSenderTurn"
+
+/**
+ * Version 2 holds v2 tallies and the channel pacing; version 1 held the dotted v1 catalog.
+ * `lease.granted_at` and `waiting` are optional additions inside version 2: a build
+ * that predates turns ignores them and drops them when it rewrites the document.
+ */
 export const USAGE_OUTBOX_SCHEMA_VERSION = 2
 const LEGACY_SCHEMA_VERSION = 1
 /** How long a sender owns delivery without renewing; longer than one HTTP attempt, short enough to take over a dead window. */
 export const USAGE_SENDER_LEASE_MS = 90_000
-/** Renew once less than this share of the lease is left; a cycle then always starts with over half a lease. */
-const LEASE_RENEW_FRACTION = 2 / 3
 const LOCK_ACQUIRE_ATTEMPTS = 50
 const BODY_SUFFIX = ".bin"
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f-]{27,55}$/i
 
-/** Proof of the sender lease; every change to the outbox must present the current one. */
-export interface UsageSenderGrant {
-    readonly ownerId: string
-    readonly generation: number
-}
-
-interface SenderLease extends UsageSenderGrant {
-    readonly expiresAt: number
-}
-
-interface OutboxDocument {
-    /** Highest lease generation ever granted; it only rises, so an old owner can never match again. */
-    readonly generation: number
-    readonly lease?: SenderLease
+interface OutboxDocument extends SenderTurns {
     readonly state: UsageOutboxState
+}
+
+/** A claim's result: the grant, or what the queued window remembers until its next claim. */
+interface ClaimOutcome {
+    readonly grant?: UsageSenderGrant
+    readonly memory?: SenderClaimMemory
+    readonly event?: UsageSenderTurnEvent
 }
 
 type LatestOutbox =
@@ -54,6 +61,8 @@ export interface UsageOutboxRepositoryOptions {
     readonly leaseMs?: number
     /** Told when an unreadable outbox was moved aside; its queue and lease start over. */
     readonly onQuarantine?: QuarantineObserver
+    /** Told when this window hands its turn on or takes the lease from a holder past its turn. */
+    readonly onSenderTurn?: (event: UsageSenderTurnEvent) => void
 }
 
 /**
@@ -65,12 +74,18 @@ export interface UsageOutboxRepositoryOptions {
  * changing the queue happen in a single critical section. The lock is never held
  * across HTTP: a sender sends outside it and acknowledges inside it, and an
  * acknowledgement from a sender whose lease lapsed is fenced off.
+ *
+ * The lease is taken in turns (see `usageSenderTurn.ts`), so no window keeps
+ * delivery to itself while others, of this build or an older one, wait.
  */
 export class UsageOutboxRepository {
     private readonly lock = new FileLock({ maxAcquireAttempts: LOCK_ACQUIRE_ATTEMPTS })
     private readonly clock: () => number
     private readonly leaseMs: number
     private readonly onQuarantine: QuarantineObserver | undefined
+    private readonly onSenderTurn: ((event: UsageSenderTurnEvent) => void) | undefined
+    /** What each waiting owner remembers between claims; an older build's rewrite cannot erase it. */
+    private readonly claimMemory = new Map<string, SenderClaimMemory>()
 
     constructor(
         private readonly layout: OtelStorageLayout,
@@ -79,25 +94,35 @@ export class UsageOutboxRepository {
         this.clock = options.clock ?? Date.now
         this.leaseMs = options.leaseMs ?? USAGE_SENDER_LEASE_MS
         this.onQuarantine = options.onQuarantine
+        this.onSenderTurn = options.onSenderTurn
     }
 
     /**
-     * Take or renew the sender lease. A live lease of another owner wins; an
-     * expired one is taken over under a new generation.
+     * Take or renew the sender lease, or queue for it. `undefined` means another
+     * window sends now, this window's turn just ended, or a newer Dline owns the
+     * outbox.
      */
     async claim(ownerId: string): Promise<UsageSenderGrant | undefined> {
-        return this.mutate((document, now) => {
-            const lease = document.lease
-            if (lease && lease.expiresAt > now && lease.ownerId !== ownerId) return { result: undefined }
-            const renewing = lease !== undefined && lease.ownerId === ownerId && lease.expiresAt > now
-            // A lease with most of its time left is kept as it is, so a quiet machine does not rewrite the outbox every cycle.
-            if (renewing && lease.expiresAt - now > this.leaseMs * LEASE_RENEW_FRACTION) {
-                return { result: { ownerId, generation: lease.generation } }
-            }
-            const generation = renewing ? lease.generation : document.generation + 1
-            const next: SenderLease = { ownerId, generation, expiresAt: now + this.leaseMs }
-            return { document: { ...document, generation, lease: next }, result: { ownerId, generation } }
+        const claimed = await this.mutate<ClaimOutcome>((document, now) => {
+            const decision = decideSenderClaim({
+                turns: document,
+                ownerId,
+                now,
+                leaseMs: this.leaseMs,
+                memory: this.claimMemory.get(ownerId),
+            })
+            if (decision.kind === "kept") return { result: { grant: decision.grant } }
+            // Built from the decided turns alone, so a lease the decision ended does not survive from the old document.
+            const { generation, lease, waiting } = decision.turns
+            const next: OutboxDocument = { generation, ...(lease ? { lease } : {}), waiting, state: document.state }
+            if (decision.kind === "granted") return { document: next, result: { grant: decision.grant, event: decision.event } }
+            return { document: next, result: { memory: decision.memory, event: decision.event } }
         })
+        if (!claimed) return undefined
+        if (claimed.memory) this.claimMemory.set(ownerId, claimed.memory)
+        else this.claimMemory.delete(ownerId)
+        if (claimed.event) this.onSenderTurn?.(claimed.event)
+        return claimed.grant
     }
 
     /** Give the lease up so another window can send at once; a lease that changed hands is left alone. */
@@ -197,7 +222,8 @@ export class UsageOutboxRepository {
             const latest = await this.readLatestForWrite()
             // A newer Dline owns the document: this build neither sends nor rewrites it.
             if (latest.status === "unsupported") return undefined
-            const previous = latest.status === "valid" ? latest.document : { generation: 0, state: emptyUsageOutbox(0) }
+            const previous: OutboxDocument =
+                latest.status === "valid" ? latest.document : { generation: 0, waiting: {}, state: emptyUsageOutbox(0) }
             const changed = await change(previous, this.clock())
             if (changed.document) {
                 const next = serialize(changed.document)
@@ -239,6 +265,7 @@ function holds(lease: SenderLease | undefined, grant: UsageSenderGrant): lease i
 
 function serialize(document: OutboxDocument): Record<string, unknown> {
     const { state } = document
+    const waiting = Object.entries(document.waiting)
     return {
         schema_version: USAGE_OUTBOX_SCHEMA_VERSION,
         generation: document.generation,
@@ -248,7 +275,15 @@ function serialize(document: OutboxDocument): Record<string, unknown> {
                       owner_id: document.lease.ownerId,
                       generation: document.lease.generation,
                       expires_at: document.lease.expiresAt,
+                      ...(document.lease.grantedAt === undefined ? {} : { granted_at: document.lease.grantedAt }),
                   },
+              }
+            : {}),
+        ...(waiting.length > 0
+            ? {
+                  waiting: Object.fromEntries(
+                      waiting.map(([ownerId, waiter]) => [ownerId, { since: waiter.since, seen_at: waiter.seenAt }]),
+                  ),
               }
             : {}),
         state: {
@@ -296,7 +331,22 @@ function parseDocument(value: unknown): LatestOutbox | { readonly status: "malfo
     }
     const state = schemaVersion === LEGACY_SCHEMA_VERSION ? parseLegacyState(value.state) : parseState(value.state)
     if (!state) return { status: "malformed" }
-    return { status: "valid", document: { generation: value.generation, ...(lease ? { lease } : {}), state } }
+    const waiting = parseWaiting(value.waiting)
+    return { status: "valid", document: { generation: value.generation, ...(lease ? { lease } : {}), waiting, state } }
+}
+
+/**
+ * The queue is advisory: an entry this build cannot read is dropped instead of
+ * quarantining the outbox, and its window re-queues on its next claim.
+ */
+function parseWaiting(value: unknown): Record<string, SenderWaiter> {
+    if (!isRecord(value)) return {}
+    const waiting: Record<string, SenderWaiter> = {}
+    for (const [ownerId, entry] of Object.entries(value)) {
+        if (ownerId.length === 0 || !isRecord(entry) || !isCount(entry.since) || !isCount(entry.seen_at)) continue
+        waiting[ownerId] = { since: entry.since, seenAt: entry.seen_at }
+    }
+    return waiting
 }
 
 /**
@@ -326,7 +376,9 @@ function parseLegacyState(value: unknown): UsageOutboxState | undefined {
 function parseLease(value: unknown): SenderLease | undefined {
     if (!isRecord(value) || typeof value.owner_id !== "string" || value.owner_id.length === 0) return undefined
     if (!isCount(value.generation) || value.generation < 1 || !isCount(value.expires_at)) return undefined
-    return { ownerId: value.owner_id, generation: value.generation, expiresAt: value.expires_at }
+    // An unreadable turn start counts like a missing one: the holder's turn restarts on its next renewal.
+    const grantedAt = isCount(value.granted_at) ? { grantedAt: value.granted_at } : {}
+    return { ownerId: value.owner_id, generation: value.generation, expiresAt: value.expires_at, ...grantedAt }
 }
 
 function parseState(value: unknown): UsageOutboxState | undefined {

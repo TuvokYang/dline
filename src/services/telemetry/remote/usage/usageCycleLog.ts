@@ -21,7 +21,11 @@ export interface UsageCycleLogLine {
 export function describeUsageCycle(result: UsageCycleResult): UsageCycleLogLine {
     switch (result.kind) {
         case "standby":
-            return { level: "debug", message: "standing by: another window holds the sender lease", steadyState: "standby" }
+            return {
+                level: "debug",
+                message: "standing by: waiting for this window's turn with the sender lease",
+                steadyState: "standby",
+            }
         case "fenced":
             return {
                 level: "debug",
