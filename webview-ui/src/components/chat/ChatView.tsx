@@ -78,6 +78,8 @@ const QUICK_WINS_HISTORY_THRESHOLD = 3
 const EMPTY_MODEL_INFO: ModelInfo = { id: "", capabilities: {}, pricing: {} }
 const MANUAL_COMPACT_COMMAND_ID = "command.compact"
 const MANUAL_COMPACT_COMMAND = "/cmd:compact"
+/** DispatchInteractionResponse.result when the task refused the draft's content itself rather than its timing. */
+const INVALID_PAYLOAD_RESULT = "invalid_payload"
 
 const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryView }: ChatViewProps) => {
     const showNavbar = useShowNavbar()
@@ -241,8 +243,9 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
     // A rejected dispatch can restore only a still-empty draft in the same
     // mounted task session, unless feedback for that interaction has already
     // been committed. A resumed task may reuse its id after a close.
+    /** Put a refused send back into the composer; false when the composer has moved on and keeps what it holds. */
     const restoreRejectedDraft = useCallback(
-        (settlement: AcceptedInteractionSettlement, submissionEpoch: number): void => {
+        (settlement: AcceptedInteractionSettlement, submissionEpoch: number): boolean => {
             if (
                 !canRestoreRejectedInteractionDraft(currentTaskIdRef.current, currentDraftRef.current, settlement, {
                     currentEpoch: taskSessionRef.current.epoch,
@@ -250,11 +253,12 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                     messages: latestMessagesRef.current,
                 })
             ) {
-                return
+                return false
             }
             // The restored draft keeps what it held back, so an edit cannot turn a
             // pasted fragment into a command (WS-041 AC-09).
             restoreDraft(settlement.draft)
+            return true
         },
         [restoreDraft],
     )
@@ -511,7 +515,11 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
             try {
                 const response = await dispatchInteraction(request)
                 if (!response.accepted) {
-                    restoreRejectedDraft(settlement, submissionEpoch)
+                    // A refused payload comes back unchanged, so without a reason the
+                    // send would look like it silently did nothing (BUGFIX-228).
+                    if (restoreRejectedDraft(settlement, submissionEpoch) && response.result === INVALID_PAYLOAD_RESULT) {
+                        composer.reportSendRefusal("submission_rejected")
+                    }
                     return undefined
                 }
                 return settlement
@@ -520,7 +528,14 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                 throw error
             }
         },
-        [clearOwnedDraft, dispatchInteraction, interactionSynchronized, restoreRejectedDraft, taskViewState],
+        [
+            clearOwnedDraft,
+            composer.reportSendRefusal,
+            dispatchInteraction,
+            interactionSynchronized,
+            restoreRejectedDraft,
+            taskViewState,
+        ],
     )
     const submitOrdinaryTaskDraft = useCallback(
         async (draft: InteractionDraft): Promise<undefined> => {

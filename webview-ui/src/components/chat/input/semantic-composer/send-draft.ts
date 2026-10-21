@@ -33,9 +33,12 @@ export type ComposerSendBlock =
  * Why a send the user made did not go out. Besides the draft's own blocks,
  * the task may not take input yet while nothing can hold the draft for it;
  * the draft then stays in the composer and the user is told so instead of
- * the send vanishing without a trace.
+ * the send vanishing without a trace. The task may also refuse the content
+ * itself, for example an attachment it can no longer read; the draft is put
+ * back and the user is told it was refused rather than seeing it reappear
+ * unexplained.
  */
-export type ComposerSendRefusal = ComposerSendBlock | "input_not_ready"
+export type ComposerSendRefusal = ComposerSendBlock | "input_not_ready" | "submission_rejected"
 
 export interface ComposerSendContext {
     readonly catalog: InputSemanticCatalog
@@ -90,5 +93,7 @@ export function describeSendBlock(refusal: ComposerSendRefusal, context: { reado
             return "An attachment could not be added. Retry or remove it before sending."
         case "input_not_ready":
             return "Dline cannot take input yet. Your message was kept; send it again once the input is ready."
+        case "submission_rejected":
+            return "Dline could not accept this message, possibly because an attachment is no longer available. Your message was kept; remove or re-add the attachment and send again."
     }
 }

@@ -741,6 +741,63 @@ describe("ChatView interaction anchor synchronization", () => {
         expect(mocks.chatState.restoreDraft).toHaveBeenCalledWith(expect.objectContaining({ text: "draft" }))
     })
 
+    // BUGFIX-228: a refused payload comes back unchanged, so without a reason the send looks like it did nothing.
+    describe("refused content", () => {
+        const holdDispatch = () => {
+            let resolveDispatch!: (response: { accepted: boolean; result: string }) => void
+            mocks.dispatchInteraction.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        resolveDispatch = resolve
+                    }),
+            )
+            return (response: { accepted: boolean; result: string }) => resolveDispatch(response)
+        }
+
+        it("explains a content refusal on the draft it puts back", async () => {
+            const settle = holdDispatch()
+            const rendered = renderChat([ASK])
+
+            fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+            mocks.setDraft("")
+            rendered.rerender(chatView())
+            mocks.chatState.composer.reportSendRefusal.mockClear()
+
+            await act(async () => settle({ accepted: false, result: "invalid_payload" }))
+            expect(mocks.chatState.restoreDraft).toHaveBeenCalledWith(expect.objectContaining({ text: "draft" }))
+            expect(mocks.chatState.composer.reportSendRefusal).toHaveBeenCalledExactlyOnceWith("submission_rejected")
+        })
+
+        it("does not call a refusal of the send's timing a content refusal", async () => {
+            const settle = holdDispatch()
+            const rendered = renderChat([ASK])
+
+            fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+            mocks.setDraft("")
+            rendered.rerender(chatView())
+            mocks.chatState.composer.reportSendRefusal.mockClear()
+
+            await act(async () => settle({ accepted: false, result: "rejected" }))
+            expect(mocks.chatState.restoreDraft).toHaveBeenCalledOnce()
+            expect(mocks.chatState.composer.reportSendRefusal).not.toHaveBeenCalled()
+        })
+
+        it("does not explain a refusal on a composer that no longer holds the refused draft", async () => {
+            const settle = holdDispatch()
+            const rendered = renderChat([ASK])
+
+            fireEvent.click(screen.getByRole("button", { name: "Invoke Enter" }))
+            mocks.setDraft("")
+            closeAndResume(rendered)
+            mocks.chatState.restoreDraft.mockClear()
+            mocks.chatState.composer.reportSendRefusal.mockClear()
+
+            await act(async () => settle({ accepted: false, result: "invalid_payload" }))
+            expect(mocks.chatState.restoreDraft).not.toHaveBeenCalled()
+            expect(mocks.chatState.composer.reportSendRefusal).not.toHaveBeenCalled()
+        })
+    })
+
     it("does not restore an old rejected response after closing and resuming the same task", async () => {
         let resolveDispatch!: (response: { accepted: boolean; result: string }) => void
         mocks.dispatchInteraction.mockImplementationOnce(

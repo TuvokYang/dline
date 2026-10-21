@@ -82,9 +82,9 @@ describe("captureComposerSend", () => {
 
 describe("describeSendBlock", () => {
     it("explains each block differently", () => {
-        const messages = (["staging", "failed"] as const).map((refusal) => describeSendBlock(refusal))
+        const messages = (["staging", "failed", "submission_rejected"] as const).map((refusal) => describeSendBlock(refusal))
 
-        expect(new Set(messages).size).toBe(2)
+        expect(new Set(messages).size).toBe(3)
         for (const message of messages) expect(message.length).toBeGreaterThan(0)
     })
 

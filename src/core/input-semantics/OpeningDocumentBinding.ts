@@ -53,18 +53,24 @@ export async function releaseOpeningOnceDurable(
 }
 
 /**
- * Bind the document that opens a task to the task's own resources.
+ * Bind a document submitted to a task to the task's own resources.
  *
- * Runs once the task exists and before admission, which verifies resources
- * against the task's store only. A failed adoption refuses the submission the
- * way admission would, so the user sees why the task did not start instead of
- * a turn that silently lacks an attachment.
+ * A composer stages into its draft whenever no task is open: before a new task
+ * starts, and while a history task is only displayed and then answered,
+ * resumed or queued to. Runs once the task exists and before admission, which
+ * verifies resources against the task's store only. A failed adoption refuses
+ * the submission the way admission would, so the user sees why it was not sent
+ * instead of a turn that silently lacks an attachment. The draft copies are
+ * kept until the caller releases them after the submission is durable.
  */
-export async function bindOpeningDocument(
+export async function bindDraftDocument(
     document: SemanticInputDocument,
     taskId: string,
     openTask: (taskId: string) => InputResourceStore = openTaskInputResources,
 ): Promise<DraftDocumentAdoption> {
+    // Only a draft reference needs the task's store; a document whose resources
+    // the task already owns is left for admission to verify.
+    if (!document.resources.some((ref) => ref.owner?.kind === "draft")) return { document, release: async () => {} }
     const adopted = await adoptDraftDocument(document, openTask(taskId))
     if (adopted.ok) return adopted.value
     throw rejectedOpening(document, adopted.failure)

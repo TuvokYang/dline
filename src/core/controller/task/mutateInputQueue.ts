@@ -1,4 +1,7 @@
+import type { DraftDocumentAdoption } from "@core/input-semantics/DraftInputResourceStore"
+import { bindDraftDocument } from "@core/input-semantics/OpeningDocumentBinding"
 import type { CanonicalInputQueueMutation } from "@core/task/session/InputQueueApplicationPort"
+import { SemanticInputRejectedError } from "@core/task/session/TaskInputAdmission"
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import type { InputQueueDraft as WireInputQueueDraft } from "@shared/proto/dline/task"
 import { MutateInputQueueRequest, MutateInputQueueResponse } from "@shared/proto/dline/task"
@@ -67,6 +70,21 @@ function emptyDraft(): DecodedDraft {
 }
 
 /**
+ * Bind the draft an enqueue or an edit carries to the task's own resources.
+ *
+ * A composer that staged while the task was only displayed holds its
+ * attachments under its draft, and the task's admission reads its own store.
+ */
+async function bindMutationDraft(
+    mutation: CanonicalInputQueueMutation,
+    taskId: string,
+): Promise<{ readonly mutation: CanonicalInputQueueMutation; readonly adoption?: DraftDocumentAdoption }> {
+    if ((mutation.kind !== "enqueue" && mutation.kind !== "commit_edit") || !mutation.draft.semanticInput) return { mutation }
+    const adoption = await bindDraftDocument(mutation.draft.semanticInput, taskId)
+    return { mutation: { ...mutation, draft: { ...mutation.draft, semanticInput: adoption.document } }, adoption }
+}
+
+/**
  * Applies one user-driven change to the current task's input queue.
  *
  * The task id is checked so a change composed against an older task cannot land
@@ -111,11 +129,22 @@ export async function mutateInputQueue(
         return MutateInputQueueResponse.create({ accepted: false, result: "invalid_payload" })
     }
     if (!mutation) return MutateInputQueueResponse.create({ accepted: false, result: "missing_operation" })
+    let bound: Awaited<ReturnType<typeof bindMutationDraft>>
+    try {
+        bound = await bindMutationDraft(mutation, task.taskId)
+    } catch (error) {
+        if (!(error instanceof SemanticInputRejectedError)) throw error
+        Logger.warn(`[inputQueue] Refusing a draft whose attachments could not be adopted: ${error.message}`)
+        return MutateInputQueueResponse.create({ accepted: false, result: "invalid_payload" })
+    }
+    mutation = bound.mutation
     const outcome = await task.inputQueue.mutate(mutation)
     if (!outcome.accepted) {
         // A refused change left the queue untouched, so there is nothing to show.
         return MutateInputQueueResponse.create(outcome)
     }
+    // The queue holds the draft's attachments now, so the draft copies go.
+    await bound.adoption?.release()
     // The Webview keeps no local queue copy, so an accepted mutation that is not
     // published stays invisible until some unrelated state change happens to
     // publish next. An idle task has no such change.

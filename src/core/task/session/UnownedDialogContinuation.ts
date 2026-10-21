@@ -157,17 +157,18 @@ export class ResumeDialogContinuation implements UnownedDialogContinuationPort {
             ? getPrompt("toolHandlers", "processAnywayContext")
             : createResumeSubmissionContext(resolution.kind)
         const manualRetry = resolution.kind === "error_retry" && resolution.outcome.actionId === "retry"
-        // A structured draft's flat lists only project its resources for receivers
-        // that read no structure; admitting the document again restores them, and
-        // passing both would claim two authorities for the same attachments.
-        const attachments =
+        // A structured draft's flat lists and text only project its resources for
+        // receivers that read no structure ("look[shot.png]"). Admitting the
+        // document again restores them, and admission requires a structured
+        // submission's text to be its document's own, so the document is the one
+        // authority for both.
+        const answer =
             draft?.semanticInput === undefined
-                ? { images: draft?.images, files: draft?.files }
-                : { semanticInput: draft.semanticInput }
+                ? { text: draft?.text, images: draft?.images, files: draft?.files }
+                : { text: draft.semanticInput.rawText, semanticInput: draft.semanticInput }
         try {
             const input = await this.resumption.materializeAnswer({
-                text: draft?.text,
-                ...attachments,
+                ...answer,
                 ...(context === undefined ? {} : { context }),
             })
             if (resolution.isCurrent && !resolution.isCurrent()) return "declined"

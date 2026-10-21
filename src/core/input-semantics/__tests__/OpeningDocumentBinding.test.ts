@@ -4,7 +4,7 @@ import type { EventSubmissionResult } from "@/core/task/runtime"
 import { SemanticInputRejectedError } from "@/core/task/session/TaskInputAdmission"
 import type { DraftDocumentAdoption } from "../DraftInputResourceStore"
 import { resourceFailed, resourceSucceeded } from "../InputResourceFailure"
-import { preflightOpeningDocument, releaseOpeningOnceDurable } from "../OpeningDocumentBinding"
+import { bindDraftDocument, preflightOpeningDocument, releaseOpeningOnceDurable } from "../OpeningDocumentBinding"
 
 const DOCUMENT = { documentId: "doc-opening", resources: [] } as unknown as SemanticInputDocument
 
@@ -15,6 +15,23 @@ const rejected = () => ({ kind: "rejected", state: {}, reason: "read_only" }) as
 function adoption(): DraftDocumentAdoption & { release: ReturnType<typeof vi.fn> } {
     return { document: DOCUMENT, release: vi.fn(async () => {}) }
 }
+
+describe("bindDraftDocument", () => {
+    it("leaves a document the task already owns as it is, without opening the task's store", async () => {
+        const taskOwned = {
+            documentId: "doc-reply",
+            resources: [{ resourceId: "res-1", owner: { kind: "task", taskId: "task-1" } }],
+        } as unknown as SemanticInputDocument
+        const openTask = vi.fn(() => {
+            throw new Error("the task store must not be opened")
+        })
+
+        const bound = await bindDraftDocument(taskOwned, "task-1", openTask)
+
+        expect(bound.document).toBe(taskOwned)
+        expect(openTask).not.toHaveBeenCalled()
+    })
+})
 
 describe("preflightOpeningDocument", () => {
     it("lets an opening whose draft resources verify through", async () => {

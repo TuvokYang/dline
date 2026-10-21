@@ -28,7 +28,7 @@ import { getHookModelContext } from "@core/hooks/hook-model-context"
 import { getHooksEnabledSafe } from "@core/hooks/hooks-utils"
 import { HookTaskStartContext } from "@core/hooks/TaskStartContextPort"
 import { IgnoreController } from "@core/ignore/IgnoreController"
-import { bindOpeningDocument, releaseOpeningOnceDurable } from "@core/input-semantics/OpeningDocumentBinding"
+import { bindDraftDocument, releaseOpeningOnceDurable } from "@core/input-semantics/OpeningDocumentBinding"
 import { TaskLockService } from "@core/locks/TaskLockService"
 import { resolveProfileReference } from "@core/profiles/profile-binding"
 import { getProfileCatalogRevision } from "@core/profiles/profile-catalog-state"
@@ -1413,7 +1413,7 @@ export class Controller {
                         // The composer staged into its draft before the task existed;
                         // admission only trusts the task's own resources.
                         const opening = options?.semanticInput
-                            ? await bindOpeningDocument(options.semanticInput, initializedTaskId)
+                            ? await bindDraftDocument(options.semanticInput, initializedTaskId)
                             : undefined
                         const input = await taskInstance.inputs.materialize({
                             text: task,

@@ -210,6 +210,32 @@ describe("ResumeDialogContinuation", () => {
         expect(ports.submit).toHaveBeenCalledOnce()
     })
 
+    // A receiver's view projects the text from the parts ("look[shot.png]"),
+    // while admission requires a structured submission's text to be its
+    // document's own; resubmitting the projection was refused as a mismatch.
+    it("resumes a structured answer with its document's own text, not the receiver's projection", async () => {
+        const ports = resumption()
+        const continuation = new ResumeDialogContinuation(ports)
+        const document = { documentId: "doc-1", rawText: "look", nodes: [], resources: [] }
+
+        const outcome = await continuation.continue({
+            interactionId: "interrupted:task-1:18",
+            kind: "resume",
+            outcome: {
+                actionId: "resume",
+                draft: { text: "look[shot.png]", images: ["data:image/png;base64,AA=="], files: [], semanticInput: document },
+            } as never,
+        })
+
+        expect(outcome).toBe("continued")
+        const [submission] = ports.materializeAnswer.mock.calls[0] as [
+            { text?: string; images?: unknown; semanticInput?: unknown },
+        ]
+        expect(submission.text).toBe("look")
+        expect(submission.semanticInput).toBe(document)
+        expect(submission.images).toBeUndefined()
+    })
+
     // The task must not be left believing the answer was consumed when the
     // submission itself failed, so the failure has to be reportable.
     it("reports a failure instead of claiming the task carried on", async () => {

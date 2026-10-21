@@ -1,3 +1,5 @@
+import type { DraftDocumentAdoption } from "@core/input-semantics/DraftInputResourceStore"
+import { bindDraftDocument } from "@core/input-semantics/OpeningDocumentBinding"
 import type { InteractionKind } from "@core/task/interaction/Interaction"
 import type { InteractionOutcome } from "@core/task/interaction/InteractionProtocol"
 import { getInteraction, INTERACTION_KINDS } from "@core/task/interaction/InteractionRegistry"
@@ -184,8 +186,7 @@ export async function dispatchInteraction(
 
     const decodedDraft = decodeDraftDocument(request)
     if (decodedDraft.invalid) return response(false, "invalid_payload")
-    const draftDocument = decodedDraft.document
-    if (draftDocument && mixesResourceCarriers(request.draft, draftDocument)) {
+    if (decodedDraft.document && mixesResourceCarriers(request.draft, decodedDraft.document)) {
         Logger.warn(`dispatchInteraction: refusing a reply to ${request.interactionId} that carries resources twice`)
         return response(false, "invalid_payload")
     }
@@ -194,6 +195,17 @@ export async function dispatchInteraction(
     // the text the reply keeps once the command and its premessage are taken out;
     // the command itself only acts once the runtime accepted the reply below.
     let reviewed: ReviewedReply | undefined
+    let draftAdoption: DraftDocumentAdoption | undefined
+    try {
+        // A composer that staged while the task was only displayed holds its
+        // attachments under its draft; the task's admission reads its own store.
+        draftAdoption = decodedDraft.document ? await bindDraftDocument(decodedDraft.document, session.taskId) : undefined
+    } catch (error) {
+        if (!(error instanceof SemanticInputRejectedError)) throw error
+        Logger.warn(`dispatchInteraction: reply to ${request.interactionId} was rejected: ${error.message}`)
+        return response(false, "invalid_payload")
+    }
+    const draftDocument = draftAdoption?.document
     try {
         reviewed = request.draft
             ? await session.inputs.reviewReply({
@@ -351,6 +363,8 @@ export async function dispatchInteraction(
         )
         return response(false, "invalid_runtime_event")
     }
+    // The task holds the reply's attachments durably now, so the draft copies go.
+    await draftAdoption?.release()
     const denialPresentation =
         approvalEntry && request.actionId === "reject"
             ? (() => {
