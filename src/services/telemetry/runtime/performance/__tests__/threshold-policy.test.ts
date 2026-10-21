@@ -104,6 +104,23 @@ describe("ThresholdPolicy", () => {
         expect(taskA.anomaly?.incidentId).not.toBe(taskB.anomaly?.incidentId)
     })
 
+    it("names incidents by lifecycle so counters from different sessions cannot collide", () => {
+        const first = new ThresholdPolicy({
+            budgets: { "test.metric": { warning: 100, critical: 1_000 } },
+            incidentNamespace: "session-a",
+        })
+        const second = new ThresholdPolicy({
+            budgets: { "test.metric": { warning: 100, critical: 1_000 } },
+            incidentNamespace: "session-b",
+        })
+
+        const firstIncident = first.observe(sample({ metric: "test.metric", value: 5_000, monotonicMs: 0 })).anomaly
+        const secondIncident = second.observe(sample({ metric: "test.metric", value: 5_000, monotonicMs: 0 })).anomaly
+
+        expect(firstIncident?.incidentId).toBe("session-a:incident-1")
+        expect(secondIncident?.incidentId).toBe("session-b:incident-1")
+    })
+
     it("flags a regression against the dynamic baseline when no fixed budget applies", () => {
         const policy = new ThresholdPolicy({ budgets: {}, baselineSigma: 3 })
 

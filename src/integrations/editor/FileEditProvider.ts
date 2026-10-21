@@ -1,4 +1,5 @@
 import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
+import { withDiagnosticSite } from "@shared/errors/diagnostic-site"
 import { HostProvider } from "@/hosts/host-provider"
 import { Logger } from "@/shared/services/Logger"
 
@@ -127,7 +128,10 @@ export class FileEditProvider extends DiffViewProvider {
             if (result.saved) this.documentContent = result.content
             return result.saved
         } catch (error) {
-            Logger.error(`Failed to save document through the host: ${this.absolutePath}:`, error)
+            Logger.error(
+                `Failed to save document through the host: ${this.absolutePath}:`,
+                withDiagnosticSite(error, "host.document_save"),
+            )
             return false
         }
     }

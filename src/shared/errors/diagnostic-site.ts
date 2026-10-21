@@ -10,7 +10,13 @@
  * Each value is `area.operation` in lowercase with underscores, at most 64
  * characters.
  */
-export const DIAGNOSTIC_SITES = ["ripgrep.search", "task_history.update", "mcp.connect"] as const
+export const DIAGNOSTIC_SITES = [
+    "ripgrep.search",
+    "task_history.update",
+    "mcp.connect",
+    "provider.execute",
+    "host.document_save",
+] as const
 
 export type DiagnosticSite = (typeof DIAGNOSTIC_SITES)[number]
 

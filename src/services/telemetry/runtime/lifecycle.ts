@@ -151,7 +151,7 @@ export class RuntimeTelemetryLifecycle {
             accept: (signal) => signalPipeline.accept(signal),
         })
         this.service = new RuntimeTelemetryService({ bus: this.bus, enabled: () => this.enabled, recorder })
-        this.policy = new ThresholdPolicy({ budgets: DEFAULT_METRIC_BUDGETS })
+        this.policy = new ThresholdPolicy({ budgets: DEFAULT_METRIC_BUDGETS, incidentNamespace: options.sessionId })
     }
 
     get isEnabled(): boolean {
@@ -380,23 +380,28 @@ export class RuntimeTelemetryLifecycle {
             intervalMs: this.options.samplerIntervalMs,
             // Every lifecycle in this host measures the same process; one reports its breaches.
             slot: PROCESS_SAMPLER_SLOT,
-            onSnapshot: (snapshot) => this.publishSnapshot(snapshot),
+            onSnapshot: (snapshot) => this.observeSnapshot(snapshot),
+            onPublishedSnapshot: (snapshot) => this.publishSnapshot(snapshot),
             onVerdict: (verdict) => this.publishVerdict(verdict),
         })
         this.sampler.start()
     }
 
-    private publishSnapshot(snapshot: RuntimeSnapshot): void {
+    private observeSnapshot(snapshot: RuntimeSnapshot): void {
         try {
             this.options.onSnapshot?.(snapshot, this.bus.peek().length, this.bus.drops.total)
         } catch {
             // Session evidence is best-effort and must not break the sampler.
         }
+        this.diagnostics.snapshot(snapshot)
+    }
+
+    /** Publish process gauges only from the sampler that owns the cross-bundle slot. */
+    private publishSnapshot(snapshot: RuntimeSnapshot): void {
         recordRuntimeGauge(RUNTIME_METRICS.eventLoopDelayMs, snapshot.eventLoopDelayMs, "Event loop delay in milliseconds")
         recordRuntimeGauge(RUNTIME_METRICS.cpuUtilizationRatio, snapshot.cpuUtilizationRatio, "CPU utilisation ratio")
         recordRuntimeGauge(RUNTIME_METRICS.heapGrowthBytes, snapshot.heapGrowthBytes, "Heap growth in bytes")
         recordRuntimeGauge(RUNTIME_METRICS.rssBytes, snapshot.rssBytes, "Resident set size in bytes")
-        this.diagnostics.snapshot(snapshot)
     }
 
     private publishVerdict(verdict: PolicyVerdict): void {

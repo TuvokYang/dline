@@ -7,6 +7,7 @@ import {
     installObservabilityPipeline,
     resetSignalRecording,
 } from "@/services/telemetry/service/pipeline-port"
+import { InteractionCancellationError } from "../interaction/InteractionCancellationError"
 import { createRunningTaskState } from "../kernel/__fixtures__/task-state"
 import { TaskTurnTelemetry } from "./task-turn-telemetry"
 import { ToolExecutionObservation } from "./tool-execution-observation"
@@ -88,6 +89,32 @@ describe("ToolExecutionObservation", () => {
             mcp_stage: "transport",
             failure_code: "remote_tool_error",
         })
+    })
+
+    it("records a withdrawn interaction as cancelled without a failed event", async () => {
+        const { exporter, provider } = setupTraceExporter()
+        const tool = new ToolExecutionObservation({
+            taskId: "task-interrupted",
+            toolName: "attempt_completion",
+            turnId: "turn-interrupted",
+            native: true,
+        })
+        const error = new InteractionCancellationError("task_terminated")
+
+        await expect(
+            tool.run(async () => {
+                throw error
+            }),
+        ).rejects.toBe(error)
+        await provider.forceFlush()
+
+        const [span] = exporter.getFinishedSpans().filter((candidate) => candidate.name === "tool.execution")
+        expect(span?.attributes).toMatchObject({
+            outcome: "cancelled",
+            tool_outcome: "cancelled",
+            cancellation_reason: "task_interrupted",
+        })
+        expect(span?.events.some((event) => event.name === "tool.execution.failed")).toBe(false)
     })
 
     it("records an aborted tool as cancelled exactly once", async () => {

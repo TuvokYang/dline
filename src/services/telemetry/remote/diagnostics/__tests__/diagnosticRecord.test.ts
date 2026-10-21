@@ -80,6 +80,17 @@ describe("toDiagnosticRecord (contract v2.1 §3.1-§3.2)", () => {
         expect(remote("feature.never_listed", "error")).toBeUndefined()
     })
 
+    it("keeps an MCP remote failure's inner event and suppresses its outer tool projection", () => {
+        const properties = {
+            tool_name: "use_mcp_tool",
+            failure_stage: "remote",
+            failure_code: "remote_tool_error",
+        }
+
+        expect(toDiagnosticRecord(event({ name: "mcp.tools.call.failed", properties }), NOW)?.name).toBe("mcp.tools.call.failed")
+        expect(toDiagnosticRecord(event({ name: "tool.execution.failed", properties }), NOW)).toBeUndefined()
+    })
+
     it("reads a catalog failure's reason, type and model under the contract keys", () => {
         const hang = toDiagnosticRecord(
             event({

@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { RUNTIME_METRICS, RuntimeSampler, type RuntimeSamplerClock, type RuntimeSnapshot, SamplerSlot } from "../runtime-sampler"
+import {
+    RUNTIME_METRICS,
+    RuntimeSampler,
+    type RuntimeSamplerClock,
+    type RuntimeSnapshot,
+    resolveProcessSamplerSlot,
+    SamplerSlot,
+} from "../runtime-sampler"
 import { AnomalySeverity, ThresholdPolicy } from "../threshold-policy"
 
 /**
@@ -208,10 +215,15 @@ describe("SamplerSlot", () => {
     const INTERVAL_MS = 1_000
 
     /** A sampler on a shared slot and clock that records the metrics it reports as breached. */
-    function slotSampler(clock: FakeClock, slot: SamplerSlot): { sampler: RuntimeSampler; reported: string[] } {
+    function slotSampler(
+        clock: FakeClock,
+        slot: SamplerSlot,
+    ): { sampler: RuntimeSampler; reported: string[]; publishedSnapshots: RuntimeSnapshot[] } {
         const reported: string[] = []
+        const publishedSnapshots: RuntimeSnapshot[] = []
         const { sampler } = makeSampler(clock, {
             slot,
+            onPublishedSnapshot: (snapshot) => publishedSnapshots.push(snapshot),
             policy: new ThresholdPolicy({
                 budgets: { [RUNTIME_METRICS.eventLoopDelayMs]: { warning: 200, critical: 1_000 } },
             }),
@@ -220,8 +232,16 @@ describe("SamplerSlot", () => {
             },
         })
         sampler.start()
-        return { sampler, reported }
+        return { sampler, reported, publishedSnapshots }
     }
+
+    it("reuses a structurally compatible slot from a process-global registry", () => {
+        const registry = {}
+        const first = resolveProcessSamplerSlot(registry)
+        const second = resolveProcessSamplerSlot(registry)
+
+        expect(second).toBe(first)
+    })
 
     it("lets only the first sampler to sample report a breach both samplers see", () => {
         const clock = new FakeClock()
@@ -234,7 +254,9 @@ describe("SamplerSlot", () => {
         second.sampler.sample()
 
         expect(first.reported).toEqual([RUNTIME_METRICS.eventLoopDelayMs])
+        expect(first.publishedSnapshots).toHaveLength(1)
         expect(second.reported).toEqual([])
+        expect(second.publishedSnapshots).toHaveLength(0)
     })
 
     it("hands the slot over at once when the holder is disposed", () => {

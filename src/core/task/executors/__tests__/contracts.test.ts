@@ -1,3 +1,4 @@
+import { diagnosticSiteOf } from "@shared/errors/diagnostic-site"
 import { Logger } from "@shared/services/Logger"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ProfileNotValidError } from "../../profile-admission"
@@ -15,6 +16,7 @@ describe("executorFailure", () => {
         expect(executorFailure("provider", new TypeError("boom"))).toBe("provider execution failed (TypeError)")
 
         expect(error).toHaveBeenCalledOnce()
+        expect(diagnosticSiteOf(error.mock.calls[0]?.[1])).toBe("provider.execute")
         expect(warn).not.toHaveBeenCalled()
     })
 

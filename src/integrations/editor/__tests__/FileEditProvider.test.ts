@@ -1,5 +1,7 @@
+import { diagnosticSiteOf } from "@shared/errors/diagnostic-site"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { HostProvider } from "@/hosts/host-provider"
+import { Logger } from "@/shared/services/Logger"
 import { FileEditProvider } from "../FileEditProvider"
 
 class FileEditProviderHarness extends FileEditProvider {
@@ -38,9 +40,11 @@ describe("FileEditProvider", () => {
 
     it("refuses to overwrite a document changed after the edit started", async () => {
         applyTextDocumentEdit.mockResolvedValue({ saved: false, conflict: true, content: "user edit\n" })
+        const logged = vi.spyOn(Logger, "error").mockImplementation(() => undefined)
         const provider = new FileEditProviderHarness()
         provider.seed("C:\\workspace\\file.ts", "before\n", "after\n")
 
         await expect(provider.save()).resolves.toBe(false)
+        expect(diagnosticSiteOf(logged.mock.calls[0]?.[1])).toBe("host.document_save")
     })
 })

@@ -94,8 +94,32 @@ export class SamplerSlot {
     }
 }
 
-/** The slot shared by every sampler in this extension host process. */
-export const PROCESS_SAMPLER_SLOT = new SamplerSlot()
+/**
+ * Process-global registry key shared by separately bundled Dline extensions.
+ *
+ * Stable and Insiders run as different extension bundles, so a module-local
+ * singleton elects one owner per bundle rather than one owner per Extension
+ * Host. Symbol.for keeps the slot contract shared across those bundles.
+ */
+const PROCESS_SAMPLER_SLOT_KEY = Symbol.for("dline.runtime.processSamplerSlot.v1")
+
+function isSamplerSlot(value: unknown): value is SamplerSlot {
+    if (typeof value !== "object" || value === null) return false
+    const candidate = value as { claim?: unknown; release?: unknown }
+    return typeof candidate.claim === "function" && typeof candidate.release === "function"
+}
+
+/** Resolve the sampler slot from a process-global registry. Exported for cross-bundle contract tests. */
+export function resolveProcessSamplerSlot(registry: object = globalThis): SamplerSlot {
+    const existing = Reflect.get(registry, PROCESS_SAMPLER_SLOT_KEY)
+    if (isSamplerSlot(existing)) return existing
+    const created = new SamplerSlot()
+    Reflect.set(registry, PROCESS_SAMPLER_SLOT_KEY, created)
+    return created
+}
+
+/** The slot shared by every Dline sampler in this extension host process. */
+export const PROCESS_SAMPLER_SLOT = resolveProcessSamplerSlot()
 
 export interface RuntimeSamplerOptions {
     readonly policy: ThresholdPolicy
@@ -106,6 +130,8 @@ export interface RuntimeSamplerOptions {
     readonly slot?: SamplerSlot
     /** Receives every snapshot, whether healthy or not. */
     readonly onSnapshot?: (snapshot: RuntimeSnapshot) => void
+    /** Receives snapshots only while this sampler owns the process-wide publication slot. */
+    readonly onPublishedSnapshot?: (snapshot: RuntimeSnapshot) => void
     /** Receives only verdicts that opened, escalated, or closed an incident. */
     readonly onVerdict?: (verdict: PolicyVerdict, snapshot: RuntimeSnapshot) => void
 }
@@ -122,6 +148,7 @@ export class RuntimeSampler {
     private readonly clock: RuntimeSamplerClock
     private readonly slot?: SamplerSlot
     private readonly onSnapshot?: (snapshot: RuntimeSnapshot) => void
+    private readonly onPublishedSnapshot?: (snapshot: RuntimeSnapshot) => void
     private readonly onVerdict?: (verdict: PolicyVerdict, snapshot: RuntimeSnapshot) => void
 
     private timer?: ReturnType<typeof setInterval>
@@ -136,6 +163,7 @@ export class RuntimeSampler {
         this.clock = options.clock ?? defaultClock
         this.slot = options.slot
         this.onSnapshot = options.onSnapshot
+        this.onPublishedSnapshot = options.onPublishedSnapshot
         this.onVerdict = options.onVerdict
     }
 
@@ -207,9 +235,10 @@ export class RuntimeSampler {
             heapGrowthBytes,
         }
 
+        const ownsPublication = this.slot?.claim(this, monotonicMs, this.intervalMs) ?? true
         this.onSnapshot?.(snapshot)
-        const reportsVerdicts = this.slot?.claim(this, monotonicMs, this.intervalMs) ?? true
-        this.publish(snapshot, reportsVerdicts)
+        if (ownsPublication) this.onPublishedSnapshot?.(snapshot)
+        this.publish(snapshot, ownsPublication)
         return snapshot
     }
 

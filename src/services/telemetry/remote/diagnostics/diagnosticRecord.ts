@@ -146,6 +146,15 @@ export function toDiagnosticRecord(signal: JournalTelemetrySignal, now: number):
     if (signal.channel !== "error" && signal.channel !== "runtime") return undefined
     if (signal.severity !== "warn" && signal.severity !== "error" && signal.severity !== "fatal") return undefined
     if (!EVENT_NAME.test(signal.name) || !isRemoteDiagnosticEvent(signal.name)) return undefined
+    // One failed MCP call also terminates its enclosing use_mcp_tool execution.
+    // Keep both local spans, but send only the MCP-owned terminal failure remotely.
+    if (
+        signal.name === "tool.execution.failed" &&
+        signal.properties?.tool_name === DlineDefaultTool.MCP_USE &&
+        signal.properties?.failure_stage === "remote" &&
+        signal.properties?.failure_code === "remote_tool_error"
+    )
+        return undefined
     return {
         name: signal.name,
         channel: signal.channel,

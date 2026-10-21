@@ -1,3 +1,4 @@
+import { withDiagnosticSite } from "@shared/errors/diagnostic-site"
 import { Logger } from "@shared/services/Logger"
 import { redactDiagnosticString } from "@shared/services/logging/safe-diagnostic-value"
 import type { HaltStopCommand, ParticipantId, TaskEvent } from "../kernel"
@@ -46,8 +47,9 @@ export function executorFailure(domain: string, error: unknown): string {
     const failure = `${domain} execution failed (${safeKind})`
     // A Profile that cannot admit the request is the user's to fix and is shown
     // to them as such; it is not a fault of the execution.
-    if (isProfileRefusal(error)) Logger.warn(failure, error)
-    else Logger.error(failure, error)
+    const reported = domain === "provider" ? withDiagnosticSite(error, "provider.execute") : error
+    if (isProfileRefusal(error)) Logger.warn(failure, reported)
+    else Logger.error(failure, reported)
     return failure
 }
 

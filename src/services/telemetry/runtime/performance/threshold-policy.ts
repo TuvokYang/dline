@@ -12,6 +12,7 @@
  * mean far enough to hide every subsequent stall.
  */
 
+import { randomUUID } from "node:crypto"
 import type { RuntimeAttributes } from "../types"
 
 /** How serious a breach is. */
@@ -57,6 +58,8 @@ export interface ThresholdPolicyOptions {
     readonly baselineSigma?: number
     readonly recoverySamples?: number
     readonly incidentWindowMs?: number
+    /** Stable namespace for one lifecycle; defaults to a random process-local value. */
+    readonly incidentNamespace?: string
 }
 
 /** One measurement handed to the policy. */
@@ -153,6 +156,7 @@ export class ThresholdPolicy {
     private readonly baselineSigma: number
     private readonly recoverySamples: number
     private readonly incidentWindowMs: number
+    private readonly incidentNamespace: string
     private readonly states = new Map<string, MetricState>()
     private incidentCounter = 0
 
@@ -162,6 +166,7 @@ export class ThresholdPolicy {
         this.baselineSigma = options.baselineSigma ?? DEFAULT_BASELINE_SIGMA
         this.recoverySamples = options.recoverySamples ?? DEFAULT_RECOVERY_SAMPLES
         this.incidentWindowMs = options.incidentWindowMs ?? DEFAULT_INCIDENT_WINDOW_MS
+        this.incidentNamespace = options.incidentNamespace ?? randomUUID()
     }
 
     /**
@@ -305,7 +310,7 @@ export class ThresholdPolicy {
         }
 
         this.incidentCounter += 1
-        const incidentId = `incident-${this.incidentCounter}`
+        const incidentId = `${this.incidentNamespace}:incident-${this.incidentCounter}`
         state.incident = {
             id: incidentId,
             startedAtMs: sample.monotonicMs,
