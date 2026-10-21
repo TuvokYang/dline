@@ -1,4 +1,5 @@
 import type { UiMessage } from "../ExtensionMessage"
+import { dropSupersededAdjacentCheckpoints } from "./checkpointAdjacency"
 import { supersededFailureIndexes } from "./failurePresentation"
 import { isAttachedMcpResponse } from "./mcpResponseRows"
 
@@ -17,7 +18,7 @@ export function filterDrawnMessages(messages: readonly UiMessage[]): UiMessage[]
         ).flat(),
     )
     const retriedFailures = supersededFailureIndexes(messages)
-    return messages.filter((message, index, arr) => {
+    const candidates = messages.filter((message, index, arr) => {
         // A failure a later attempt of the same work answered stays recorded but is not drawn.
         if (retriedFailures.has(index)) return false
         const hasNoVisibleContent = !message.text?.trim() && !message.images?.length && !message.files?.length
@@ -117,6 +118,7 @@ export function filterDrawnMessages(messages: readonly UiMessage[]): UiMessage[]
         }
         return true
     })
+    return dropSupersededAdjacentCheckpoints(candidates)
 }
 
 /**

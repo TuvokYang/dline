@@ -173,6 +173,26 @@ describe("filterVisibleMessages request rows", () => {
         expect(visible).not.toContain(earlierRequest)
         expect(visible).toContain(earlierReasoning)
     })
+
+    it("shows one checkpoint after Retry supersedes the failure between equal restore points", () => {
+        const roots = ["C:/workspace"]
+        const firstCheckpoint: UiMessage = {
+            ts: 1,
+            type: "say",
+            say: "checkpoint_created",
+            checkpointSource: { kind: "round_start", turnId: "failed-turn" },
+            lastCheckpointHash: ["same-files"],
+            checkpointWorkspaceRoots: roots,
+        }
+        const failedRequest = createRequestMessage(2, { streamingFailedMessage: "402 insufficient credits" })
+        const failure: UiMessage = { ts: 3, type: "ask", ask: "api_req_failed", text: "402 insufficient credits" }
+        const retryCheckpoint: UiMessage = { ...firstCheckpoint, ts: 4 }
+        const retryRequest = createRequestMessage(5, {})
+
+        const visible = filterVisibleMessages([firstCheckpoint, failedRequest, failure, retryCheckpoint, retryRequest])
+
+        expect(visible.filter((message) => message.say === "checkpoint_created").map((message) => message.ts)).toEqual([4])
+    })
 })
 
 /**

@@ -5,6 +5,7 @@ import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { readTaskUiMessages, rewriteTaskUiMessages } from "@e2e/utils/task-instance-store"
 import { expect, type Frame, type TestInfo } from "@playwright/test"
+import { filterDrawnMessages } from "@shared/chat/drawnMessages"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import type { ElectronApplication } from "playwright"
 
@@ -181,6 +182,25 @@ function insertChatOnlyRowBeforeFirstRoundAfterCard(messages: UiMessage[]): UiMe
     return [...messages.slice(0, roundIndex), { ...chatOnly, ts: round.ts - 1 }, ...messages.slice(roundIndex)]
 }
 
+/** Seed the durable shape left when Retry makes two equal file-backed rows adjacent only after both were written. */
+function insertFileBackedCopyBeforeFirstRoundAfterCard(messages: UiMessage[]): UiMessage[] {
+    const cardIndex = messages.findIndex((message) => message.say === "tool")
+    const roundIndex = messages.findIndex(
+        (message, index) =>
+            index > cardIndex &&
+            message.say === "checkpoint_created" &&
+            Boolean(message.lastCheckpointHash?.length) &&
+            (message.checkpointSource === undefined || message.checkpointSource.kind === "round_start"),
+    )
+    if (cardIndex === -1 || roundIndex === -1) throw new Error("No file-backed round checkpoint after the condense card")
+    const usedTimestamps = new Set(messages.map((message) => message.ts))
+    const previousTs = messages[roundIndex - 1]?.ts ?? messages[roundIndex].ts - 1_000
+    let duplicateTs = messages[roundIndex].ts - 1
+    while (usedTimestamps.has(duplicateTs) && duplicateTs > previousTs) duplicateTs -= 1
+    if (duplicateTs <= previousTs) throw new Error("No free checkpoint timestamp remains before the selected round")
+    return [...messages.slice(0, roundIndex), { ...messages[roundIndex], ts: duplicateTs }, ...messages.slice(roundIndex)]
+}
+
 async function closeCurrentTask(sidebar: Frame): Promise<void> {
     const closeButton = sidebar.getByRole("button", { name: "Close Task", exact: true })
     await expect(closeButton).toBeVisible({ timeout: 30_000 })
@@ -304,6 +324,51 @@ e2e(
             const reopenedLayout = await visibleCheckpointLayout(sidebar)
             await attachLayout(testInfo, "reopened", reopenedLayout, seeded)
             expect(checkpointsShownAfterCard(reopenedLayout), `reopened layout: ${reopenedLayout.join(", ")}`).toBe(1)
+
+            // The a37 Retry race can persist two file-backed rows before the later request
+            // hides the failure between them. Seed that final transcript deterministically:
+            // storage keeps both restore facts, while the reopened chat draws one place.
+            await closeCurrentTask(sidebar)
+            await rewriteTaskUiMessages(dlineDocsDir, taskId, () => insertFileBackedCopyBeforeFirstRoundAfterCard(stored))
+            const equalRefsSeed = await readTaskUiMessages(dlineDocsDir, taskId)
+            const fileBackedReferenceKeys = equalRefsSeed
+                .filter((message) => message.say === "checkpoint_created" && Boolean(message.lastCheckpointHash?.length))
+                .map((message) => JSON.stringify([message.lastCheckpointHash, message.checkpointWorkspaceRoots ?? []]))
+            expect(new Set(fileBackedReferenceKeys).size).toBeLessThan(fileBackedReferenceKeys.length)
+            const fileBackedRoundTurnIds = equalRefsSeed.flatMap((message) =>
+                message.say === "checkpoint_created" &&
+                message.checkpointSource?.kind === "round_start" &&
+                message.lastCheckpointHash?.length
+                    ? [message.checkpointSource.turnId]
+                    : [],
+            )
+            const duplicatedTurnId = fileBackedRoundTurnIds.find((turnId, index, turnIds) => turnIds.indexOf(turnId) !== index)
+            if (!duplicatedTurnId) throw new Error("No duplicate file-backed round checkpoint was seeded")
+            const projectedDuplicateCount = filterDrawnMessages(equalRefsSeed).filter(
+                (message) =>
+                    message.say === "checkpoint_created" &&
+                    message.checkpointSource?.kind === "round_start" &&
+                    message.checkpointSource.turnId === duplicatedTurnId &&
+                    Boolean(message.lastCheckpointHash?.length),
+            ).length
+            expect(projectedDuplicateCount).toBe(1)
+            await reopenTask(sidebar, TASK_TEXT)
+            await expect(sidebar.getByTestId("compaction-pass").first()).toBeVisible({ timeout: 30_000 })
+            const equalRefsLayout = await visibleCheckpointLayout(sidebar)
+            await attachLayout(testInfo, "equal-refs-reopened", equalRefsLayout, equalRefsSeed)
+            expect(checkpointsShownAfterCard(equalRefsLayout), `equal refs reopened layout: ${equalRefsLayout.join(", ")}`).toBe(
+                1,
+            )
+            const persistedAfterReopen = await readTaskUiMessages(dlineDocsDir, taskId)
+            expect(
+                persistedAfterReopen.filter(
+                    (message) =>
+                        message.say === "checkpoint_created" &&
+                        message.checkpointSource?.kind === "round_start" &&
+                        message.checkpointSource.turnId === duplicatedTurnId &&
+                        Boolean(message.lastCheckpointHash?.length),
+                ),
+            ).toHaveLength(2)
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await app.close()

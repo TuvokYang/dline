@@ -13,7 +13,6 @@ import React from "react"
 import type { BrowserSessionEnd, BrowserSessionGroup, ToolMessageGroup } from "./chatRowKinds"
 import { isRoundStartCheckpoint } from "./checkpointRows"
 import { groupExplorationRuns } from "./explorationRuns"
-import { dropSupersededChatOnlyCheckpoints } from "./supersededCheckpoints"
 
 export { isToolGroup, type ToolMessageGroup } from "./chatRowKinds"
 
@@ -144,7 +143,7 @@ export function collectMcpResponseTexts(messages: UiMessage[], requestTs: number
  * Filter messages that should be visible in the chat
  */
 export function filterVisibleMessages(messages: UiMessage[]): UiMessage[] {
-    return dropSupersededChatOnlyCheckpoints(filterDrawnMessages(messages))
+    return filterDrawnMessages(messages)
 }
 
 /**

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest"
 import type { UiMessage } from "../../ExtensionMessage"
-import { drawsNothingBetween } from "../drawnMessages"
+import { drawsNothingBetween, filterDrawnMessages } from "../drawnMessages"
 
 const checkpoint = (ts: number): UiMessage => ({ ts, type: "say", say: "checkpoint_created", lastCheckpointHash: ["files"] })
+const chatOnlyCheckpoint = (ts: number): UiMessage => ({ ts, type: "say", say: "checkpoint_created" })
+const heldCheckpoint = (ts: number): UiMessage => ({ ...checkpoint(ts), partial: true })
 const request = (ts: number, failure?: string): UiMessage => ({
     ts,
     type: "say",
@@ -31,6 +33,16 @@ describe("drawsNothingBetween", () => {
         // The retry's own request sorts after the row it reserved, yet it already hides the failure.
         const retried = [...failed, request(4)]
         expect(drawsNothingBetween(retried, 1, 3)).toBe(true)
+        expect(
+            filterDrawnMessages(retried)
+                .filter((message) => message.say === "checkpoint_created")
+                .map((message) => message.ts),
+        ).toEqual([3])
+    })
+
+    it("keeps held rows from erasing the checkpoint evidence between gate bounds", () => {
+        expect(drawsNothingBetween([checkpoint(1), chatOnlyCheckpoint(2), heldCheckpoint(3)], 1, 3)).toBe(false)
+        expect(drawsNothingBetween([checkpoint(1), checkpoint(2), heldCheckpoint(3)], 1, 3)).toBe(false)
     })
 
     it("sees a tool row between the bounds and nothing outside them", () => {

@@ -7,7 +7,7 @@ function checkpoint(ts: number, hash?: string, extra: Partial<UiMessage> = {}): 
         ts,
         type: "say",
         say: "checkpoint_created",
-        checkpointSource: { kind: "round_start" },
+        checkpointSource: { kind: "round_start", turnId: `turn-${ts}` },
         ...(hash ? { lastCheckpointHash: [hash] } : {}),
         ...extra,
     } as UiMessage
@@ -35,7 +35,15 @@ describe("dropSupersededChatOnlyCheckpoints", () => {
         expect(timestamps(dropSupersededChatOnlyCheckpoints([restored, checkpoint(2, "abc")]))).toEqual([1, 2])
     })
 
-    it("keeps adjacent checkpoints that both restore files", () => {
+    it("leaves out the earlier adjacent checkpoint when both restore the same files", () => {
+        const roots = { checkpointWorkspaceRoots: ["C:/workspace"] }
+
+        expect(timestamps(dropSupersededChatOnlyCheckpoints([checkpoint(1, "abc", roots), checkpoint(2, "abc", roots)]))).toEqual(
+            [2],
+        )
+    })
+
+    it("keeps adjacent checkpoints that restore different files", () => {
         expect(timestamps(dropSupersededChatOnlyCheckpoints([checkpoint(1, "abc"), checkpoint(2, "def")]))).toEqual([1, 2])
     })
 })
