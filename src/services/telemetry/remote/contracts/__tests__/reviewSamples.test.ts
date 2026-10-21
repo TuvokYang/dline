@@ -7,7 +7,7 @@ import { USAGE_HISTOGRAM_BUCKETS, type UsageBodyWire, validateUsageBody } from "
  * real validator so a documented sample cannot drift away from the wire contract
  * it claims to demonstrate.
  */
-const SAMPLES = resolve(__dirname, "../../../../../../tmp/usage-v3-samples.md")
+const SAMPLES = resolve(__dirname, "fixtures/usage-v3-samples.md")
 
 /** Every fenced JSON block of the sample document, in document order. */
 function sampleBodies(): UsageBodyWire[] {
