@@ -5,13 +5,24 @@ import { auth } from "@modelcontextprotocol/sdk/client/auth.js"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const hostCallback = vi.hoisted(() => ({ base: "vscode://tuvokyang.dline" }))
-const secretStore = vi.hoisted(() => ({ value: {} as Record<string, unknown> }))
+const secretStore = vi.hoisted(() => ({ value: {} as Record<string, Record<string, unknown>> }))
 const browser = vi.hoisted(() => ({ open: async (_url: string): Promise<void> => {} }))
 
 vi.mock("@core/storage/secrets", () => ({
-    getAllMcpOAuthSecrets: () => structuredClone(secretStore.value),
-    setAllMcpOAuthSecrets: (value: Record<string, unknown>) => {
-        secretStore.value = structuredClone(value)
+    getMcpOAuthServer: (serverHash: string) => structuredClone(secretStore.value[serverHash]),
+    updateMcpOAuthServer: (
+        serverHash: string,
+        change: (current: Record<string, unknown>) => Record<string, unknown> | undefined,
+    ) => {
+        const next = change(structuredClone(secretStore.value[serverHash] ?? {}))
+        if (next === undefined) {
+            delete secretStore.value[serverHash]
+        } else {
+            secretStore.value[serverHash] = structuredClone(next)
+        }
+    },
+    deleteMcpOAuthServer: (serverHash: string) => {
+        delete secretStore.value[serverHash]
     },
 }))
 vi.mock("@/hosts/host-provider", () => ({

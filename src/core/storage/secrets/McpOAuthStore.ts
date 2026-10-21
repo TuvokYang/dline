@@ -21,8 +21,6 @@ export interface McpOAuthServerData {
     code_verifier?: string
 }
 
-type McpOAuthData = Record<string, McpOAuthServerData>
-
 let _store: ClineFileStorage<McpOAuthServerData> | null = null
 
 function getStore(): ClineFileStorage<McpOAuthServerData> {
@@ -35,32 +33,38 @@ function getStore(): ClineFileStorage<McpOAuthServerData> {
     return _store
 }
 
-export function getAllMcpOAuthSecrets(): McpOAuthData {
-    const store = getStore()
-    const result: McpOAuthData = {}
-    for (const k of store.keys()) {
-        const v = store.get(k)
-        if (v) result[k] = v
-    }
-    return result
-}
-
+/**
+ * The latest persisted data for one server.
+ *
+ * Every Dline window shares this file, and another window may have registered a client or rotated
+ * tokens since this process last wrote it, so the file is read again on every call.
+ */
 export function getMcpOAuthServer(serverHash: string): McpOAuthServerData | undefined {
-    return getStore().get(serverHash)
+    const store = getStore()
+    store.reload()
+    return store.get(serverHash)
 }
 
-export function saveMcpOAuthServer(serverHash: string, data: McpOAuthServerData): void {
-    getStore().set(serverHash, data)
+/**
+ * Applies a change to one server's data on top of its latest persisted copy, so fields another
+ * window wrote meanwhile survive. Returning undefined removes the server's data.
+ */
+export function updateMcpOAuthServer(
+    serverHash: string,
+    change: (current: McpOAuthServerData) => McpOAuthServerData | undefined,
+): void {
+    const store = getStore()
+    store.reload()
+    const next = change({ ...(store.get(serverHash) ?? {}) })
+    if (next === undefined) {
+        store.delete(serverHash)
+    } else {
+        store.set(serverHash, next)
+    }
 }
 
 export function deleteMcpOAuthServer(serverHash: string): void {
     getStore().delete(serverHash)
-}
-
-export function setAllMcpOAuthSecrets(data: McpOAuthData): void {
-    const store = getStore()
-    for (const k of store.keys()) store.delete(k)
-    for (const [k, v] of Object.entries(data)) store.set(k, v)
 }
 
 export function resetMcpOAuthStore(): void {

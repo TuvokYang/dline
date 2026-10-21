@@ -82,11 +82,9 @@ export const saveOpenAiCodexAuth = OpenAiCodexAuthStore.saveOpenAiCodexAuth
 export const clearOpenAiCodexAuth = OpenAiCodexAuthStore.clearOpenAiCodexAuth
 
 // MCP OAuth
-export const getAllMcpOAuthSecrets = McpOAuthStore.getAllMcpOAuthSecrets
 export const getMcpOAuthServer = McpOAuthStore.getMcpOAuthServer
-export const saveMcpOAuthServer = McpOAuthStore.saveMcpOAuthServer
+export const updateMcpOAuthServer = McpOAuthStore.updateMcpOAuthServer
 export const deleteMcpOAuthServer = McpOAuthStore.deleteMcpOAuthServer
-export const setAllMcpOAuthSecrets = McpOAuthStore.setAllMcpOAuthSecrets
 
 // OCA Tokens
 export const getOcaAccessToken = OcaTokenStore.getOcaAccessToken
