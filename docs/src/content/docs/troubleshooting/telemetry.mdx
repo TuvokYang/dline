@@ -159,7 +159,7 @@ The service's retention, access, and deletion policy must be published before th
 
 ## Error diagnostics delivery to `otel.dline.cc`
 
-Dline sends error and runtime diagnostics to `https://otel.dline.cc/v1/logs` only while every condition holds:
+Dline sends error and runtime diagnostics to `https://otel.dline.cc/logs` only while every condition holds:
 
 - **Allow error reporting** is checked. It is on by default; unchecking it in **Settings → About** stops delivery at once and deletes unsent diagnostics.
 - Organization policy has not disabled error reporting.

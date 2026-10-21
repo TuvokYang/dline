@@ -31,7 +31,7 @@ const HOUR_MS = 60 * 60_000
 const DAY_MS = 24 * HOUR_MS
 const SCHEMA_VERSION = 2
 
-/** Encodes records and the count dropped since the previous request into one `/v1/logs` body. */
+/** Encodes records and the count dropped since the previous request into one `/logs` body. */
 export type DiagnosticEncoder = (records: readonly DiagnosticRecord[], droppedRecords: number) => string
 
 /** A batch this window sends now; the same id and bytes are sent again until it settles. */
@@ -100,7 +100,7 @@ export interface DiagnosticOutboxRepositoryOptions {
 }
 
 /**
- * The machine-wide queue of diagnostic records waiting for `/v1/logs`.
+ * The machine-wide queue of diagnostic records waiting for `/logs`.
  *
  * Every window appends to it and any one window sends from it, under one file
  * lock. Records with the same key merge while they wait, and the device limits

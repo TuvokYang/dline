@@ -1,5 +1,5 @@
 /**
- * Response contract of the Dline feature service (`POST /v1/features`).
+ * Response contract of the Dline feature service (`POST /features`).
  *
  * ```json
  * { "schema_version": 1, "flags": { "account": true }, "ttl_seconds": 3600 }

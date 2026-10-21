@@ -6,7 +6,7 @@ import {
 } from "@/core/task/telemetry/UsageSettlement"
 
 /**
- * The `/v1/usage` request body, `schema_version` 2 (otel contract v2 §2).
+ * The `/usage` request body, `schema_version` 2 (otel contract v2 §2).
  *
  * The body maps one-to-one onto the service's columns, so the service stores it
  * without unpacking. The validator mirrors every rule the service answers with

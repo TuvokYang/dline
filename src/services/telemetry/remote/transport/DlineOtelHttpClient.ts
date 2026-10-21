@@ -8,8 +8,9 @@ export const DLINE_OTEL_ENDPOINT = "https://otel.dline.cc"
 export const DLINE_OTEL_REQUEST_TIMEOUT_MS = 15_000
 /** Responses of the service are a few hundred bytes; anything larger is not the service and is not parsed. */
 const MAX_RESPONSE_BYTES = 16 * 1024
-const DEVICE_EXCHANGE_PATH = "/v1/auth/device/exchange"
-const USAGE_PATH = "/v1/usage"
+const DEVICE_EXCHANGE_PATH = "/auth/device/exchange"
+const USAGE_PATH = "/usage"
+const LOGS_PATH = "/logs"
 /** The telemetry contract version every usage and logs request is written against. */
 export const DLINE_TELEMETRY_CONTRACT = "2"
 
@@ -33,17 +34,15 @@ export interface UsageDelivery {
     readonly body: Uint8Array
 }
 
-/** Sends one `/v1/usage` request. */
+/** Sends one `/usage` request. */
 export interface UsageTransport {
     sendUsage(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse>
 }
 
-/** Sends one `/v1/logs` request; the body is an OTLP/HTTP JSON logs request. */
+/** Sends one `/logs` request; the body is an OTLP/HTTP JSON logs request. */
 export interface DiagnosticLogsTransport {
     sendLogs(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse>
 }
-
-const LOGS_PATH = "/v1/logs"
 
 export interface DlineOtelHttpClientOptions {
     /**

@@ -7,7 +7,7 @@ export const DLINE_FEATURES_ENDPOINT = "https://dev.dline.cc"
 export const FEATURES_REQUEST_TIMEOUT_MS = 10_000
 /** A flags document is a few hundred bytes; anything larger is not the service and is not parsed. */
 const MAX_RESPONSE_BYTES = 64 * 1024
-const FEATURES_PATH = "/v1/features"
+const FEATURES_PATH = "/features"
 
 /** What the service may target a rollout by, besides the device. None of it identifies the user. */
 export interface FeatureFlagsQuery {

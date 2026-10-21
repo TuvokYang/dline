@@ -57,7 +57,7 @@ describe("DlineOtelHttpClient", () => {
         )
 
         expect(captured).toHaveLength(1)
-        expect(captured[0].url).toBe("https://otel.example.test/v1/usage")
+        expect(captured[0].url).toBe("https://otel.example.test/usage")
         expect(captured[0].init).toMatchObject({ method: "POST", redirect: "error", body })
         expect(captured[0].init.headers).toEqual({
             "User-Agent": `Dline/${VERSION}`,
@@ -84,7 +84,7 @@ describe("DlineOtelHttpClient", () => {
             () => new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "http://127.0.0.1:8787" }).exchange(request),
         )
 
-        expect(captured[0].url).toBe("http://127.0.0.1:8787/v1/auth/device/exchange")
+        expect(captured[0].url).toBe("http://127.0.0.1:8787/auth/device/exchange")
         expect(new Headers(captured[0].init.headers).get("user-agent")).toBe(`Dline/${VERSION}`)
         expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
     })

@@ -45,7 +45,7 @@ export type DeliveryOutcome =
     | { readonly kind: "stop"; readonly scope: StopScope; readonly code: string }
 
 /**
- * Classify a `/v1/usage` or `/v1/logs` response (otel contract v2 §1.5).
+ * Classify a `/usage` or `/logs` response (otel contract v2 §1.5).
  *
  * The server checks idempotency before anything else, so replaying identical
  * bytes is always safe; rebuilding a batch is only safe when the server
@@ -85,7 +85,7 @@ export type ExchangeOutcome =
 
 const REVOKED_CREDENTIAL_CODES = new Set(["device_revoked", "device_credential_revoked"])
 
-/** Classify a `/v1/auth/device/exchange` response. */
+/** Classify an `/auth/device/exchange` response. */
 export function classifyExchangeResponse(response: WireResponse): ExchangeOutcome {
     const { status } = response
     if (status === 200) {

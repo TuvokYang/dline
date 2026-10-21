@@ -10,6 +10,7 @@
 - 账号灰度改为同时开启使用统计和错误报告才会获取；任一项关闭（包括在其他窗口中关闭）会立即退出灰度，并删除本地保存的灰度结果，不再保留旧配置
 - 自定义模型只按设置判定：在 Profile 中勾选 Use custom model ID 并手动输入模型 ID，或在 Bedrock 模型列表中选择 Custom，才算自定义模型；从模型列表中选择的模型不再算自定义，即使服务商是 Ollama、LM Studio、LiteLLM，使用了自定义 Base URL，或模型不在内置目录中。使用统计和错误报告按规范化后的模型 ID 报告所有模型，包括自定义模型，不再替换为 `_custom`，因此手动输入的 ID 也会发送（例如 Bedrock 推理配置文件 ARN 中的区域和 AWS 账号 ID）；自定义模型在使用统计中另外标记 `custom: true`，在错误报告中 `model.custom` 为 `true`
 - 错误报告只发送明确列出的失败与运行时健康事件：服务商请求失败只以 `api.request.failed` 报告一次，不再另发 `task.provider_api_error`；`task.error`、预期内的取消（如停止请求、撤回审查）和记为 warning 的日志只留在本机，只以 warning 记录的失败不再按 error 报告；同一扩展主机中只有一个采样器报告性能预算超限。记录新增 `error.site`（失败被捕获的位置）、`error.fingerprint_version`（指纹版本 3 按该位置分组）、内置工具的 `tool.name`、`failure.stage`，以及性能预算超限时的 `perf.*`；开发构建的请求带 `dline.is_dev=true`。本地 loopback OTLP 也接收 error 通道，不再记录 `dline.errors.*` 指标
+- 发往 `otel.dline.cc` 的遥测请求改用不带 `/v1` 前缀的路径：`/auth/device/exchange`、`/usage` 和 `/logs`；功能开关请求同样改用 `/features`
 
 ### Fixed
 - 服务端不提供 token 计数接口（返回 404 或 405）时，Dline 不再在每次估算上下文前反复请求计数，直接改用估算

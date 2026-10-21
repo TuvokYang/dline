@@ -40,7 +40,7 @@ describe("FeatureFlagsHttpSource", () => {
 
         expect(document).toEqual({ flags: { account: true }, ttlSeconds: 600 })
         expect(captured).toHaveLength(1)
-        expect(captured[0].url).toBe("https://dev.dline.cc/v1/features")
+        expect(captured[0].url).toBe("https://dev.dline.cc/features")
         expect(captured[0].init).toMatchObject({ method: "POST", redirect: "error" })
         expect(new Headers(captured[0].init?.headers).has("authorization")).toBe(false)
         expect(new Headers(captured[0].init?.headers).get("user-agent")).toBe(`Dline/${ExtensionRegistryInfo.version}`)

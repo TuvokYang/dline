@@ -21,7 +21,7 @@ export interface DiagnosticDeliveryWorkerOptions {
 }
 
 /**
- * Sends one claimed batch of the shared diagnostic outbox to `/v1/logs`.
+ * Sends one claimed batch of the shared diagnostic outbox to `/logs`.
  *
  * A batch that may have reached the service is resent with the same request id
  * and bytes, so the service drops the copy. A 429 or a pause holds the whole
