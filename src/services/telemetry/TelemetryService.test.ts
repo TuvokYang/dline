@@ -263,7 +263,7 @@ describe("Telemetry system is abstracted and can easily switch between providers
             const [config] = TelemetryProviderFactory.getDefaultConfigs()
             assert.strictEqual(config.type, "opentelemetry")
             if (config.type !== "opentelemetry") throw new Error("Expected OpenTelemetry config")
-            assert.deepStrictEqual(config.sink.channels, ["usage", "account", "runtime"])
+            assert.deepStrictEqual(config.sink.channels, ["usage", "account", "error", "runtime"])
             assert.strictEqual(config.sink.kind, "loopback")
         })
     })
@@ -363,7 +363,7 @@ describe("Telemetry system is abstracted and can easily switch between providers
             if (configs[0].type !== "opentelemetry") throw new Error("Expected OpenTelemetry config")
             assert.strictEqual(configs[0].sink.kind, "loopback")
             assert.strictEqual(configs[0].sink.endpoint, "http://127.0.0.1:4318")
-            assert.deepStrictEqual(configs[0].sink.channels, ["usage", "account", "runtime"])
+            assert.deepStrictEqual(configs[0].sink.channels, ["usage", "account", "error", "runtime"])
         })
 
         it("does not use NoOp as the normal factory fallback", () => {

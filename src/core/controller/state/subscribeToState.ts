@@ -352,7 +352,9 @@ async function sendPayloadToSubscribers(
             try {
                 await responseStream({ stateJson, accountUsage: accountUsageToProto(accountUsage) }, false)
             } catch (error) {
-                Logger.error("Error sending state update:", error)
+                // A failed delivery means the subscriber is gone (typically a disposed
+                // Webview); dropping it recovers, so this is a warning rather than a failure.
+                Logger.warn("Dropped a state subscriber after a failed state update:", error)
                 subs.delete(responseStream)
             }
         }),

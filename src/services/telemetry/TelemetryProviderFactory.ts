@@ -132,7 +132,8 @@ export class TelemetryProviderFactory {
                 sink: {
                     kind: "loopback",
                     origin: "default",
-                    channels: ["usage", "account", "runtime"],
+                    // The local collector sees every diagnostic, including failures on the error channel.
+                    channels: ["usage", "account", "error", "runtime"],
                     endpoint: DEFAULT_LOOPBACK_OTLP_ENDPOINT,
                     enhancement: isTelemetryDevelopmentMode() ? "debug" : "standard",
                 },

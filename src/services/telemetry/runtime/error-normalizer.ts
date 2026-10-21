@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
+import { diagnosticSiteOf } from "@shared/errors/diagnostic-site"
 import { TELEMETRY_MASK_VALUE } from "../service/pipeline-port"
-import { readErrorIdentifier } from "./exception-attributes"
+import { FINGERPRINT_VERSION, readErrorIdentifier } from "./exception-attributes"
 import type { NormalizedRuntimeError } from "./types"
 
 /**
@@ -8,8 +9,10 @@ import type { NormalizedRuntimeError } from "./types"
  * stable enough to group by.
  *
  * Producers catch values from HTTP clients, SDKs, and the platform, so this
- * accepts `unknown`. Fingerprint v2 uses only bounded type/code/status and
- * source file, never error prose or user content. Exact source lines remain
+ * accepts `unknown`. Fingerprint v3 uses only bounded type/code/status and the
+ * catalog call site, falling back to the source file, never error prose or
+ * user content. In a bundled build every source file is the bundle, so the
+ * site is what separates unrelated failures; exact source lines remain
  * available separately without fragmenting grouping when code moves.
  */
 
@@ -59,9 +62,9 @@ function extractSourceFrame(stack: string | undefined): string | undefined {
     return undefined
 }
 
-function buildFingerprint(name: string, code?: string, status?: number, sourceFrame?: string): string {
-    const sourceFile = sourceFrame?.replace(/:\d+$/, "")
-    const groupingMaterial = ["v2", name, code ?? "-", status ?? "-", sourceFile ?? "-"].join("|")
+function buildFingerprint(name: string, code?: string, status?: number, site?: string, sourceFrame?: string): string {
+    const location = site ?? sourceFrame?.replace(/:\d+$/, "")
+    const groupingMaterial = [`v${FINGERPRINT_VERSION}`, name, code ?? "-", status ?? "-", location ?? "-"].join("|")
     return createHash("sha256").update(groupingMaterial).digest("hex").slice(0, 16)
 }
 
@@ -89,6 +92,7 @@ export function normalizeRuntimeError(value: unknown, depth = 0): NormalizedRunt
     const status =
         readStatus(fields.status) ?? readStatus(fields.statusCode) ?? readStatus(wrapped.status) ?? readStatus(response.status)
     const sourceFrame = extractSourceFrame(readString(fields.stack))
+    const site = diagnosticSiteOf(value)
 
     const cause =
         fields.cause !== undefined && depth < MAX_CAUSE_DEPTH ? normalizeRuntimeError(fields.cause, depth + 1) : undefined
@@ -99,7 +103,8 @@ export function normalizeRuntimeError(value: unknown, depth = 0): NormalizedRunt
         code,
         status,
         sourceFrame,
-        fingerprint: buildFingerprint(name, code, status, sourceFrame),
+        site,
+        fingerprint: buildFingerprint(name, code, status, site, sourceFrame),
         cause,
     }
 }

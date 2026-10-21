@@ -81,12 +81,12 @@ describe("TelemetryChannelPolicy", () => {
             registry.logEvent(event, () => ({}), false, route.channel, route.severity)
         }
 
-        capture("task.provider_api_error")
+        capture("workspace.init_error")
         capture("task.terminal_hang")
         capture("task.started")
 
         expect(received.map((signal) => [signal.name, signal.channel, signal.severity])).toEqual([
-            ["task.provider_api_error", "error", "error"],
+            ["workspace.init_error", "error", "error"],
             ["task.terminal_hang", "error", "warn"],
         ])
     })

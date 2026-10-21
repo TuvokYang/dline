@@ -9,6 +9,7 @@ import { encodeDiagnosticLogs } from "../diagnostics/diagnosticRecord"
 import { diagnosticsAllowed } from "../policy/hostDiagnosticsPolicy"
 import {
     diagnosticOutboxPath,
+    legacyDiagnosticOutboxPath,
     refreshRemoteDiagnostics,
     startRemoteDiagnostics,
     stopRemoteDiagnostics,
@@ -85,28 +86,28 @@ describe("remote diagnostics runtime", () => {
     })
 
     it("writes gathered failures to the shared outbox without identity attributes", async () => {
-        append("task.provider_api_error")
+        append("api.request.failed")
         append("task.started", "usage")
         await registration?.base.forceFlush()
 
         const { records } = await outbox().read()
         expect(records.map((record) => [record.name, record.occurrences, record.attributes])).toEqual([
-            ["task.provider_api_error", 1, { "http.status": 500, "error.code": "E_UPSTREAM" }],
+            ["api.request.failed", 1, { "http.status": 500, "error.code": "E_UPSTREAM" }],
         ])
     })
 
     it("merges repeats of one failure into a single counted record", async () => {
-        append("task.provider_api_error")
-        append("task.provider_api_error")
-        append("task.provider_api_error")
+        append("api.request.failed")
+        append("api.request.failed")
+        append("api.request.failed")
         await registration?.base.forceFlush()
 
         const { records } = await outbox().read()
-        expect(records.map((record) => [record.name, record.occurrences])).toEqual([["task.provider_api_error", 3]])
+        expect(records.map((record) => [record.name, record.occurrences])).toEqual([["api.request.failed", 3]])
     })
 
     it("deletes what is waiting once error reporting is withdrawn, and gathers nothing afterwards", async () => {
-        append("task.provider_api_error")
+        append("api.request.failed")
         await registration?.base.forceFlush()
         expect((await outbox().read()).records).toHaveLength(1)
 
@@ -118,19 +119,37 @@ describe("remote diagnostics runtime", () => {
         expect((await outbox().read()).records).toEqual([])
     })
 
-    it("removes the queue the previous build left, whose records the service no longer keeps", async () => {
+    it("moves what an earlier build queued under its own file name into the outbox, then removes that file", async () => {
         await stopRemoteDiagnostics()
-        const legacy = path.join(path.dirname(diagnosticOutboxPath(path.join(root, "data"))), "outbox.json")
-        await fs.mkdir(path.dirname(legacy), { recursive: true })
-        await fs.writeFile(legacy, JSON.stringify({ schema_version: 1, records: [], dropped: 0 }))
+        const legacyPath = legacyDiagnosticOutboxPath(path.join(root, "data"))
+        expect(legacyPath).not.toBe(diagnosticOutboxPath(path.join(root, "data")))
+        const earlier = new DiagnosticOutboxRepository(legacyPath, {
+            encode: (records, dropped) => encodeDiagnosticLogs(records, { clientVersion: "0.11.0", platform: "linux" }, dropped),
+        })
+        await earlier.append(
+            [
+                {
+                    name: "task.browser_error",
+                    channel: "error",
+                    severity: "error",
+                    firstSeenMs: Date.now(),
+                    lastSeenMs: Date.now(),
+                    occurrences: 2,
+                    attributes: {},
+                },
+            ],
+            Date.now(),
+        )
 
         start()
 
         const deadline = Date.now() + 2_000
-        while (await fileExists(legacy)) {
-            if (Date.now() > deadline) throw new Error("the v1 queue was not removed")
+        while (await fileExists(legacyPath)) {
+            if (Date.now() > deadline) throw new Error("the earlier queue was not absorbed")
             await new Promise((resolve) => setTimeout(resolve, 10))
         }
+        const { records } = await outbox().read()
+        expect(records.map((record) => [record.name, record.occurrences])).toEqual([["task.browser_error", 2]])
     })
 })
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { mkdir, rm } from "node:fs/promises"
+import { access, mkdir, rm } from "node:fs/promises"
 import path from "node:path"
 import { backupPathOf, readJsonWithBackup, writeJsonAtomic } from "@shared/storage/atomic-file"
 import {
@@ -255,6 +255,33 @@ export class DiagnosticOutboxRepository {
         })
     }
 
+    /**
+     * Move what a queue under another file name holds into this outbox, then
+     * delete that file. Builds before the stable name queued there. While a
+     * window of such a build sends a batch from it, the file is left whole: that
+     * window settles the batch and keeps using its file, and a later start moves
+     * what remains. The later server gate and stop of both queues are kept, so
+     * the move cannot send early.
+     */
+    async absorb(retiredPath: string, now: number): Promise<void> {
+        // The usual start finds nothing to move; it then takes no lock and creates nothing.
+        if (!(await exists(retiredPath)) && !(await exists(backupPathOf(retiredPath)))) return
+        await mkdir(path.dirname(retiredPath), { recursive: true })
+        await this.lock.withLock(retiredPath, async () => {
+            const stored = await readJsonWithBackup(retiredPath, parseOutbox)
+            if (stored.status === "missing") return
+            if (stored.status === "invalid") return removeDocument(retiredPath)
+            if (stored.value.kind === "newer") return
+            const retired = stored.value.document
+            if (retired.claim && retired.claim.until > now) return
+            const records = [...(retired.inflight?.records ?? []), ...retired.records]
+            const dropped = retired.dropped + (retired.inflight?.dropped ?? 0)
+            const moved = await this.mutate((current) => this.restore(withLaterGates(current, retired), records, dropped))
+            // Removed only after the records were written here, so a crash in between duplicates rather than loses them.
+            if (moved) await removeDocument(retiredPath)
+        })
+    }
+
     /** The current document; empty when there is none, it is unreadable, or a newer build owns it. */
     async read(): Promise<OutboxDocument> {
         const stored = await this.load()
@@ -296,17 +323,40 @@ export class DiagnosticOutboxRepository {
         }
     }
 
-    /** Apply a change under the lock; a document written by a newer build is left alone. */
-    private async mutate(change: (current: OutboxDocument) => OutboxDocument): Promise<void> {
+    /** Apply a change under the lock; a document written by a newer build is left alone, and `false` says so. */
+    private async mutate(change: (current: OutboxDocument) => OutboxDocument): Promise<boolean> {
         await mkdir(path.dirname(this.filePath), { recursive: true })
-        await this.lock.withLock(this.filePath, async () => {
+        return this.lock.withLock(this.filePath, async () => {
             const stored = await this.load()
-            if (stored?.kind === "newer") return
+            if (stored?.kind === "newer") return false
             const current = stored?.document ?? EMPTY
             const next = change(current)
             if (next !== current) await writeJsonAtomic(this.filePath, next, { fsync: true })
+            return true
         })
     }
+}
+
+function exists(filePath: string): Promise<boolean> {
+    return access(filePath).then(
+        () => true,
+        () => false,
+    )
+}
+
+async function removeDocument(filePath: string): Promise<void> {
+    await Promise.all([rm(filePath, { force: true }), rm(backupPathOf(filePath), { force: true })])
+}
+
+/** The later server gate, 429 wait and stop of two queues of the same device. */
+function withLaterGates(current: OutboxDocument, other: OutboxDocument): OutboxDocument {
+    const pacing = {
+        next_eligible_at: Math.max(current.pacing.next_eligible_at, other.pacing.next_eligible_at),
+        wait_until: Math.max(current.pacing.wait_until, other.pacing.wait_until),
+        consecutive_waits: Math.max(current.pacing.consecutive_waits, other.pacing.consecutive_waits),
+    }
+    const stop = !other.stop || (current.stop && current.stop.stopped_at >= other.stop.stopped_at) ? current.stop : other.stop
+    return { ...withoutStop(current), pacing, ...(stop ? { stop } : {}) }
 }
 
 /** Start a new hour or day count once the UTC hour or day changed. */
@@ -348,7 +398,8 @@ type StoredOutbox = { readonly kind: "current"; readonly document: OutboxDocumen
 /**
  * Throws for anything that is not a complete outbox document, as
  * `readJsonWithBackup` requires, so a damaged batch cannot wedge every later
- * settle. The v1 queue lived in another file and is never read here.
+ * settle. A document of an older schema is unreadable here and is replaced by
+ * the next write.
  */
 function parseOutbox(value: unknown): StoredOutbox {
     if (!isRecord(value) || !isCount(value.schema_version)) throw new Error("Not a diagnostic outbox document")

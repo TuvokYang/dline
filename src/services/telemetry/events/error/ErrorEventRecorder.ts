@@ -33,6 +33,25 @@ export class ErrorEventRecorder {
         })
     }
 
+    /**
+     * An Error that was logged without failing anything: a warn-level log or an
+     * expected cancellation. It stays a local `info` record, below the warn
+     * floor of remote diagnostics, so retries and cancellations never reach the
+     * error channel.
+     */
+    warning(error: unknown, properties?: Readonly<Record<string, unknown>>): void {
+        this.runtime.record({
+            name: "extension.warning",
+            level: "info",
+            error,
+            attributes: {
+                ...properties,
+                exception_message: TELEMETRY_MASK_VALUE,
+                ...(this.developmentMode ? { diagnostic_exception_message: this.safeExceptionMessage(error) } : undefined),
+            },
+        })
+    }
+
     message(message: string, level: ErrorMessageLevel = "log", properties?: Readonly<Record<string, unknown>>): void {
         this.runtime.record({
             name: "extension.message",

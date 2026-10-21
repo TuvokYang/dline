@@ -4,6 +4,7 @@ import getFolderSize from "get-folder-size"
 import { findLastIndex } from "@/shared/array"
 import type { ContextWindowIndicatorSnapshot } from "@/shared/context-window-indicator"
 import { UiMessage } from "@/shared/ExtensionMessage"
+import { withDiagnosticSite } from "@/shared/errors/diagnostic-site"
 import type { ApiMetrics } from "@/shared/getApiMetrics"
 import { HistoryItem, summarizeHistoryTaskText } from "@/shared/HistoryItem"
 import { orderMessagesByTs } from "@/shared/message-order"
@@ -355,7 +356,7 @@ export class MessageStateHandler extends EventEmitter<MessageStateHandlerEvents>
                 mode: lastModelInfo?.modelInfo?.mode,
             })
         } catch (error) {
-            Logger.error("Failed to update task history:", error)
+            Logger.error("Failed to update task history:", withDiagnosticSite(error, "task_history.update"))
         }
     }
 

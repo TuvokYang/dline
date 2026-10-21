@@ -210,6 +210,26 @@ export function runWithSignalSpan<T>(span: SignalSpanHandle, action: () => T): T
 }
 
 /**
+ * Error objects some signal has already carried.
+ *
+ * A failure is usually caught where it can be named — a tool, an API request —
+ * and then logged again further up. The first signal already holds the
+ * error's identity and context, so a later generic log of the same object
+ * would only add a second, poorer record of one failure. Weak, so reporting
+ * never extends an error's lifetime.
+ */
+const reportedErrors = new WeakSet<object>()
+
+/** Whether a signal has already carried this error object. */
+export function wasErrorReported(error: unknown): boolean {
+    return isErrorObject(error) && reportedErrors.has(error)
+}
+
+function isErrorObject(value: unknown): value is object {
+    return typeof value === "object" && value !== null
+}
+
+/**
  * Hand one signal to the pipeline, or buffer it until one is installed.
  *
  * Buffered signals are not auto-flushed on install. Whether early startup
@@ -217,6 +237,7 @@ export function runWithSignalSpan<T>(span: SignalSpanHandle, action: () => T): T
  * pipeline lifecycle, not by whichever call site happened to record first.
  */
 export function emitSignal(signal: TelemetrySignal): void {
+    if (isErrorObject(signal.error)) reportedErrors.add(signal.error)
     signal = { timestamp: Date.now(), monotonicMs: performance.now(), ...signal }
     const target = pipeline
     if (target) {

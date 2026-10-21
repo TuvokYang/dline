@@ -42,8 +42,17 @@ export function forwardRuntimeEvent(event: RuntimeTelemetryEvent, sink: RuntimeE
         if (event.error.status !== undefined) properties.error_status = event.error.status
         if (event.error.sourceFrame) properties.error_source_frame = event.error.sourceFrame
     }
-    const loggerWarning = event.attributes.logger_level === "warn" || event.attributes.message_level === "warning"
-    sink.captureRuntimeEvent(event.name, properties, loggerWarning ? "warn" : severityFor(event.priority))
+    sink.captureRuntimeEvent(event.name, properties, severityOf(event))
+}
+
+/**
+ * A logged warning lowers an error-priority record to `warn`. It never raises
+ * a lower record: `extension.warning` keeps its local `info` severity, below
+ * the floor of remote diagnostics.
+ */
+function severityOf(event: RuntimeTelemetryEvent): TelemetrySeverity {
+    const loggedAsWarning = event.attributes.logger_level === "warn" || event.attributes.message_level === "warning"
+    return loggedAsWarning && event.priority === RuntimeEventPriority.Error ? "warn" : severityFor(event.priority)
 }
 
 function severityFor(priority: RuntimeEventPriority): TelemetrySeverity {

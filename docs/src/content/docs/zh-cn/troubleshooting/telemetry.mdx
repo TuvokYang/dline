@@ -38,7 +38,7 @@ Dline 分别征求产品使用统计和错误/运行时诊断的同意。两个�
 
 - canonical Event、Metric 和 Trace 可以写入本地 OTLP 形态 JSONL。
 - 默认网络 sink 是本机 OTLP/HTTP 端点 `http://127.0.0.1:4318`。
-- 默认 loopback sink 接受 `usage`、`account` 和 `runtime`；account record 与普通 record 分离。
+- 默认 loopback sink 接受 `usage`、`account`、`error` 和 `runtime`；account record 与普通 record 分离。
 - 组织配置的 OTLP 端点当前只接收已获准的 `usage` Event 和 Metric，不是 account、error/runtime 或 Trace sink。
 - 使用情况报告开启期间（默认开启），聚合后的使用计数会发送到 `https://otel.dline.cc`，详见下文使用统计投递一节；错误报告开启期间，聚合后的错误和运行时诊断也会发送到该地址，详见错误诊断投递一节。不会向该地址发送其他通道，也没有其他目的地回退到它。
 
@@ -117,10 +117,10 @@ development 模式可以保留额外本地关联字段，但不等于远端授�
 | `window` | 所覆盖分钟的起止时间、有活动的分钟数，以及在本批之前于本地丢弃的分钟数 |
 | `sessions_started` | 扩展启动次数 |
 | `purposes` | 按用途（`task`、`subagent`、`compaction` 或 `other`）统计：完成、取消和失败的请求数；新输入、输出、缓存读取和缓存写入 token；请求时长的次数、总和、最小值和最大值 |
-| `models` | 按 provider 和模型统计：请求数（总数、失败、取消）；包含推理 token 在内的 token 总量；请求时长、首个输出耗时和输出耗时的直方图，边界从 250 ms 到 120 s（后两项只统计流式请求）；以及本批中按请求数和按输出 token 分别计算的最繁忙一分钟 |
+| `models` | 按 provider 和模型统计：自定义模型另带 `custom: true`；请求数（总数、失败、取消）；包含推理 token 在内的 token 总量；请求时长、首个输出耗时和输出耗时的直方图，边界从 250 ms 到 120 s（后两项只统计流式请求）；以及本批中按请求数和按输出 token 分别计算的最繁忙一分钟 |
 | `providers` | 只列出有失败或重试请求的 provider：按类别（`rate_limited`、`overloaded`、`timeout`、`auth`、`network`、`invalid_request` 或 `other`）统计的失败数、自动重试次数及重试前的等待时间 |
 
-provider 用 Profile 的 provider ID 表示，模型用模型 ID 表示，均转为小写，字母、数字、`_`、`.`、`-` 以外的字符替换为 `_`。自定义模型统一报告为 `_custom`，其 ID 永不发送：服务商运行在你自己的机器或网络上（Ollama、LM Studio、LiteLLM）、Profile 使用了服务商默认地址以外的端点，或模型不在 Dline 内置模型目录中（你自行添加的模型视为不在目录中）时，该模型即为自定义模型。时长指标描述请求在重试之后的最后一次尝试。每批最多列出 8 个模型和 8 个 provider：超出时保留请求数最多的 7 个模型、失败与重试最多的 7 个 provider，其余合并计入 `_other`，总量保持不变。
+provider 用 Profile 的 provider ID 表示，模型用模型 ID 表示，均转为小写，字母、数字、`_`、`.`、`-` 以外的字符替换为 `_`，provider 最长 32 个字符，模型最长 64 个字符。只有在 Profile 中勾选 **Use custom model ID** 并手动输入模型 ID，或在 Bedrock 的模型列表中选择 **Custom** 时，该模型才是自定义模型；它同样按模型 ID 报告，只是另外标记为自定义，因此手动输入的 ID 也会发送，例如 Bedrock 推理配置文件 ARN 中的区域和 AWS 账号 ID。从模型列表中选择的模型都不是自定义模型，与服务商、所用端点以及模型是否在 Dline 内置目录中无关。时长指标描述请求在重试之后的最后一次尝试。每批最多列出 8 个模型和 8 个 provider：超出时保留请求数最多的 7 个模型、失败与重试最多的 7 个 provider，其余合并计入 `_other`（`_other` 不标记为自定义），总量保持不变。
 
 不会发送 API 格式、Task 或 workspace 身份、`distinct_id`、account ID、提示词、响应、文件内容、路径、命令和错误文本。当前构建中该投递是只能承载这一目录的专用路径；把它纳入上文的 canonical admission boundary 仍属于目标的一部分。
 
@@ -149,7 +149,7 @@ provider 用 Profile 的 provider ID 表示，模型用模型 ID 表示，均转
 | `outbox.json` | 发送租约、发送时机与等待状态、待发分钟和等待应答的请求 |
 | `inflight/` | 结果未知的请求的原始字节 |
 
-同一时间只有一个 Dline 窗口发送。每个批次在保存前都会按服务端相同的规则在本地校验，校验失败的批次直接丢弃。最多保留 60 个待发分钟，更早的分钟会被丢弃。丢弃的分钟数会在下一批中报告。
+同一时间只有一个 Dline 窗口发送，各窗口轮流发送：一个窗口最多连续发送 10 分钟，然后把发送租约交给等待最久的窗口，包括其他 Dline 版本的窗口。超过轮次 90 秒仍不交出租约的窗口会被接管，它未得到应答的请求会以相同字节重发。每个批次在保存前都会按服务端相同的规则在本地校验，校验失败的批次直接丢弃。最多保留 60 个待发分钟，更早的分钟会被丢弃。丢弃的分钟数会在下一批中报告。
 
 ### 关闭使用统计投递
 
@@ -169,24 +169,37 @@ provider 用 Profile 的 provider ID 表示，模型用模型 ID 表示，均转
 
 ### 发送内容
 
-只发送 log 记录，不发送 metrics 或 traces。只有以下失败事件，或运行时诊断管线评为 warning 及以上的运行时生命周期事件，才会生成记录：
+只发送 log 记录，不发送 metrics 或 traces。只有下表列出的事件，且严重度为 warning 及以上时，才会生成记录：
 
-| 事件 | 严重度 |
-|---|---|
-| `task.provider_api_error`、`task.browser_error`、`user.extension_storage_error`、`workspace.init_error` | error |
-| `user.auth_failed`、`task.diff_edit_failed`、`task.terminal_output_failure`、`task.terminal_hang`、`task.mention_failed` | warning |
+| 事件 | 通道 | 严重度 |
+|---|---|---|
+| `task.browser_error`、`user.extension_storage_error`、`workspace.init_error` | `error` | error |
+| `user.auth_failed`、`task.diff_edit_failed`、`task.terminal_output_failure`、`task.terminal_hang`、`task.mention_failed` | `error` | warning |
+| `api.request.failed`、`tool.execution.failed`、`subagent.run.failed`、`mcp.tools.call.failed`、`extension.error` | `error` | 由运行时诊断管线评定 |
+| `runtime.cpu_utilization_ratio.breach`、`runtime.event_loop_delay_ms.breach`、`runtime.heap_growth_bytes.breach`、`runtime.previous_session_reconciled`、`task.tool.interrupted_inferred` | `runtime` | 由运行时诊断管线评定 |
 
-事件名、严重度、错误指纹、错误类别、provider 和模型都相同的事件，在等待发送期间合并为一条记录。每条记录包含事件名、通道（`error` 或 `runtime`）、严重度、首次发生时间、发生次数（`dline.occurrences`）和最后一次发生时间（`dline.last_seen_ms`）。
+其他事件都只留在本机，包括重复上表已报告失败的 `task.error`。服务商请求失败只以 `api.request.failed` 报告一次；早期构建还会以 `task.provider_api_error` 再发送一次。Dline 记为 warning 的日志消息，以及预期内的取消（例如停止请求或撤回审查），都只在本地记为 `extension.warning`，不会发送。Dline 只以 warning 记录的失败按 warning 严重度报告，而不是 error。
 
-其他属性只取自服务端的属性目录：`error.class`、`error.code`、`error.type`、`error.fingerprint`（16 位十六进制）、`http.status`、`provider`、`model`、`model.custom`、`api.format`、`phase`（`connect`、`stream`、`parse`、`tool` 或 `other`）、`retry.attempt`、`retryable` 和 `duration_ms`。文本值只有是由字母、数字、`_`、`.`、`+`、`-` 组成的短 token（最多 64 个字符）时才保留，数值只保留非负整数。Dline 内部仍在使用的旧属性名会映射到这些键；其他属性一律不发送。服务商错误按与使用统计相同的方式命名模型，因此自定义模型只显示为 `_custom`。
+事件名、严重度、错误指纹及其版本、错误类别、provider、模型和工具都相同的事件，在等待发送期间合并为一条记录。每条记录包含事件名、通道（`error` 或 `runtime`）、严重度、首次发生时间、发生次数（`dline.occurrences`）和最后一次发生时间（`dline.last_seen_ms`）。
 
-请求 resource 只包含客户端版本、操作系统类型、发布通道（`stable` 或 `insiders`）、编辑器类别（`vscode`、`cursor`、`vscodium`、`windsurf` 或 `other`），以及自上一个请求以来在本地丢弃的记录数（`dline.dropped_records`）。
+其他属性只取自服务端的属性目录：
+
+- `error.class`、`error.code`、`error.type`、`http.status`、`provider`、`model`、`model.custom`、`api.format`、`phase`（`connect`、`stream`、`parse`、`tool` 或 `other`）、`retry.attempt`、`retryable` 和 `duration_ms`。
+- `error.fingerprint`（16 位十六进制）和 `error.fingerprint_version`（`2` 或 `3`）。版本 3 在记录了失败的捕获位置时按该位置分组，否则按源码位置分组。
+- `error.site`，即失败被捕获的位置，取自固定列表：`ripgrep.search`、`task_history.update` 或 `mcp.connect`。
+- `tool.name`，只用于 Dline 内置工具。MCP 工具的名称从不发送。
+- `failure.stage`：`validation`、`authorization`、`routing`、`execution` 或 `remote`。
+- 性能预算超限时，发送 `perf.metric`、`perf.kind`（`fixed_budget` 或 `dynamic_baseline`）、`perf.value` 和 `perf.limit`。CPU 利用率按千分之一发送，例如 `0.92` 记为 `920`。
+
+文本值只有是由字母、数字、`_`、`.`、`+`、`-` 组成的短 token（最多 64 个字符）时才保留，数值只保留非负整数。不在属性取值列表内的值不发送。Dline 内部仍在使用的旧属性名会映射到这些键；其他属性一律不发送。失败事件按与使用统计相同的方式命名模型；只有上文定义的自定义模型，`model.custom` 才为 `true`。
+
+请求 resource 只包含客户端版本、操作系统类型、发布通道（`stable` 或 `insiders`）、编辑器类别（`vscode`、`cursor`、`vscodium`、`windsurf` 或 `other`），以及自上一个请求以来在本地丢弃的记录数（`dline.dropped_records`）。开发构建还会发送 `dline.is_dev=true`，以便服务端区分其记录；其他构建不发送该属性。
 
 不会发送错误消息、堆栈、提示词、响应、文件内容、路径、URL、命令、Task 或 workspace 身份、`distinct_id` 和 account ID。
 
 ### 设备身份、队列与上限
 
-诊断与使用统计共用同一个假名化设备密钥，但交换各自的 `production` 访问令牌，因此每项同意只控制自己的令牌。队列位于 Dline data root 下的 `telemetry/remote/diagnostics/outbox-v2.json`，由所有 Dline 窗口共享；早期构建的 `outbox.json` 队列会被删除，因为服务端已不再保留其中的属性：
+诊断与使用统计共用同一个假名化设备密钥，但交换各自的 `production` 访问令牌，因此每项同意只控制自己的令牌。队列位于 Dline data root 下的 `telemetry/remote/diagnostics/outbox.json`，由所有 Dline 窗口共享。启动时，早期 0.11 构建写在 `outbox-v2.json` 中的记录会移入该队列并删除该文件；如果此时有这类构建的窗口正在从中发送批次，则暂不移动：
 
 - 各窗口每 5 秒把收集到的记录写入队列。同一时间只有一个窗口约每 20 秒检查一次队列，并按上文“发送时机与等待”最多每 5 分钟开始一个新批次。
 - 每台设备每个 UTC 小时最多新增 50 条、每个 UTC 日最多新增 200 条记录；已保留记录的重复事件仍会合并进去。最多保留 1,000 条待发记录。超出这些上限的记录会被丢弃，并计入 `dline.dropped_records`。

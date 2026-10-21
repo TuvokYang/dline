@@ -28,8 +28,6 @@ export const USAGE_HISTOGRAM_BOUNDS_MS: readonly number[] = [250, 500, 1000, 200
 export const USAGE_HISTOGRAM_BUCKETS = USAGE_HISTOGRAM_BOUNDS_MS.length + 1
 /** Stands in for every model or provider folded away by the eight-entry limit. */
 export const USAGE_OVERFLOW_ID = "_other"
-/** Stands in for every custom model, whose own ID never leaves the machine. */
-export const USAGE_CUSTOM_MODEL_ID = "_custom"
 
 export const USAGE_HOST_EDITORS = ["vscode", "cursor", "vscodium", "windsurf", "other"] as const
 export type UsageHostEditor = (typeof USAGE_HOST_EDITORS)[number]
@@ -77,6 +75,11 @@ export interface UsageModelTokensWire {
 export interface UsageModelWire {
     readonly provider: string
     readonly model: string
+    /**
+     * Present and true only for a custom model: the Profile ran a free-form model ID.
+     * The model is still named by that ID; the overflow entry never carries it.
+     */
+    readonly custom?: boolean
     /** `total` includes failed and cancelled requests. */
     readonly requests: { readonly total: number; readonly failed: number; readonly cancelled: number }
     readonly tokens: UsageModelTokensWire
@@ -200,6 +203,7 @@ export function isValidModelEntry(value: unknown, withPeak: boolean): value is U
     if (!isRecord(value)) return false
     if (typeof value.provider !== "string" || !USAGE_PROVIDER_PATTERN.test(value.provider)) return false
     if (typeof value.model !== "string" || !USAGE_MODEL_PATTERN.test(value.model)) return false
+    if (value.custom !== undefined && typeof value.custom !== "boolean") return false
     const { requests, tokens } = value
     if (!isRecord(requests) || !hasCounts(requests, ["total", "failed", "cancelled"])) return false
     const total = requests.total as number

@@ -140,13 +140,18 @@ describe("usage tally projection (contract v2 §2.2)", () => {
         expect(model.model.startsWith("qwen_qwen3-coder_480b_2025_x")).toBe(true)
     })
 
-    it("never lets a custom model's own ID into the request body", () => {
-        const secret = "acme-internal-llm-v7"
-        const tally = projectUsageSettlement(settlement({ servedBy: { provider: "openai", model: secret, custom: true } }))
-        const sent = body(minutesOf([tally]))
+    it("names a custom model by its own ID and marks it custom", () => {
+        const custom = projectUsageSettlement(
+            settlement({ servedBy: { provider: "openai", model: "Acme/LLM-v7", custom: true } }),
+        )
+        const listed = projectUsageSettlement(settlement({ servedBy: { provider: "openai", model: "gpt-5" } }))
+        const sent = body(minutesOf([custom, listed]))
 
-        expect(sent.models.map((model) => model.model)).toEqual(["_custom"])
-        expect(JSON.stringify(sent).includes(secret)).toBe(false)
+        expect(validateUsageBody(sent)).toEqual([])
+        expect(sent.models.map(({ model, custom }) => ({ model, custom }))).toEqual([
+            { model: "acme_llm-v7", custom: true },
+            { model: "gpt-5", custom: undefined },
+        ])
     })
 })
 
@@ -173,6 +178,7 @@ describe("buildUsageBody (contract v2 §2.1-§2.3)", () => {
             [10, 9, 8, 7, 6, 5, 4].map((index) => `model-${index}`),
         )
         expect(sent.models[7]).toMatchObject({ provider: "_other", model: "_other", requests: { total: 1 + 2 + 3 + 4 } })
+        expect(sent.models[7]).not.toHaveProperty("custom")
         expect(total((model) => model.requests.total)).toBe(66)
         expect(total((model) => model.tokens.input)).toBe(66 * 1_200)
         expect(total((model) => model.duration_ms?.count ?? 0)).toBe(66)

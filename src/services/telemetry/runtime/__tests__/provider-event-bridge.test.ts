@@ -46,6 +46,24 @@ describe("runtime provider event bridge", () => {
         expect(JSON.stringify(sink.captureRuntimeEvent.mock.calls)).not.toContain("must-not-forward")
     })
 
+    it("lowers a logged warning to warn but never raises a local warning into the remote floor", () => {
+        const sink = { captureRuntimeEvent: vi.fn() }
+        const logged = (name: string, priority: RuntimeEventPriority, attributes: Record<string, string>) =>
+            forwardRuntimeEvent({ ...event, name, priority, attributes }, sink)
+
+        logged("extension.message", RuntimeEventPriority.Error, { message_level: "warning" })
+        logged("extension.warning", RuntimeEventPriority.Info, { logger_level: "warn" })
+        logged("extension.warning", RuntimeEventPriority.Info, { logger_level: "error" })
+        logged("extension.error", RuntimeEventPriority.Error, { logger_level: "error" })
+
+        expect(sink.captureRuntimeEvent.mock.calls.map(([name, , severity]) => [name, severity])).toEqual([
+            ["extension.message", "warn"],
+            ["extension.warning", "info"],
+            ["extension.warning", "info"],
+            ["extension.error", "error"],
+        ])
+    })
+
     it("uses the canonical sink in production mode without constructing the legacy OTLP transport", async () => {
         dataDir = mkdtempSync(join(tmpdir(), "dline-runtime-bridge-"))
         const onEvent = vi.fn()

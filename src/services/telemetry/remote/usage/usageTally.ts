@@ -10,7 +10,6 @@ import {
     isValidModelEntry,
     isValidProviderEntry,
     isValidPurpose,
-    USAGE_CUSTOM_MODEL_ID,
     USAGE_HISTOGRAM_BOUNDS_MS,
     USAGE_HISTOGRAM_BUCKETS,
     type UsageHistogramWire,
@@ -46,17 +45,19 @@ const MAX_MODEL_LENGTH = 64
 export interface UsageModelKey {
     readonly provider: string
     readonly model: string
+    /** Present only for a custom model; the provider and model alone identify the entry. */
+    readonly custom?: boolean
 }
 
 /**
  * The provider and model a request is reported under. Diagnostics use the same
- * key so an error names its model exactly as usage does; a custom model is
- * always `_custom`, so its own ID never leaves the machine.
+ * key so an error names its model exactly as usage does. A custom model keeps
+ * its own normalized ID and is marked `custom` beside it.
  */
 export function usageModelKey(servedBy: UsageServedModel): UsageModelKey {
     const provider = usageProviderId(servedBy.provider)
-    if (servedBy.custom) return { provider, model: USAGE_CUSTOM_MODEL_ID }
-    return { provider, model: normalizeId(servedBy.model, /[^a-z0-9_.-]+/g, MAX_MODEL_LENGTH) }
+    const model = normalizeId(servedBy.model, /[^a-z0-9_.-]+/g, MAX_MODEL_LENGTH)
+    return servedBy.custom ? { provider, model, custom: true } : { provider, model }
 }
 
 export function usageProviderId(provider: string): string {
@@ -184,7 +185,10 @@ function mergePurpose(left: UsagePurposeWire, right: UsagePurposeWire): UsagePur
     }
 }
 
-/** Merge two entries of the same model, or fold one model into another such as the overflow entry. */
+/**
+ * Merge two entries of the same model, or fold one model into another such as the overflow entry.
+ * The entry is custom when either side is; the batch strips the mark from the overflow entry.
+ */
 export function mergeModel<T extends UsageModelTally>(left: T, right: UsageModelTally): T {
     const reasoning = mergeOptional(left.tokens.reasoning, right.tokens.reasoning, add)
     const { reasoning: _left, ...leftTokens } = left.tokens
@@ -192,9 +196,11 @@ export function mergeModel<T extends UsageModelTally>(left: T, right: UsageModel
     const duration = mergeOptional(left.duration_ms, right.duration_ms, mergeHistogram)
     const ttft = mergeOptional(left.ttft_ms, right.ttft_ms, mergeHistogram)
     const generation = mergeOptional(left.generation_ms, right.generation_ms, mergeHistogram)
-    const { duration_ms: _d, ttft_ms: _t, generation_ms: _g, ...rest } = left
+    const custom = left.custom === true || right.custom === true
+    const { duration_ms: _d, ttft_ms: _t, generation_ms: _g, custom: _c, ...rest } = left
     return {
         ...rest,
+        ...(custom ? { custom: true } : {}),
         requests: addCounts(left.requests, right.requests),
         tokens: { ...addCounts(leftTokens, rightTokens), ...(reasoning === undefined ? {} : { reasoning }) },
         ...(duration ? { duration_ms: duration } : {}),

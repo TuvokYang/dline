@@ -1,9 +1,14 @@
+import { markExpectedCancellation } from "@shared/errors/expected-cancellation"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { Logger } from "@/shared/services/Logger"
 import { RuntimeContentPolicy, TELEMETRY_MASK_VALUE } from "../../runtime/content-policy"
+import { discardBootstrapSignals, emitSignal } from "../../service/pipeline-port"
 import type { RuntimeEventRecorderPort } from "../runtime"
 import { ErrorEventRecorder } from "./ErrorEventRecorder"
 import { installLoggerTelemetryBridge } from "./LoggerTelemetryBridge"
+
+class WithdrawnError extends Error {}
+markExpectedCancellation(WithdrawnError)
 
 function harness(developmentMode = false) {
     const record = vi.fn<RuntimeEventRecorderPort["record"]>()
@@ -11,7 +16,57 @@ function harness(developmentMode = false) {
 }
 
 describe("ErrorEventRecorder", () => {
-    afterEach(() => vi.restoreAllMocks())
+    afterEach(() => {
+        vi.restoreAllMocks()
+        discardBootstrapSignals()
+    })
+
+    function bridged() {
+        const { record, recorder } = harness()
+        const dispose = installLoggerTelemetryBridge(recorder)
+        vi.spyOn(Logger as unknown as { output: (message: string) => void }, "output").mockImplementation(() => undefined)
+        return { record, dispose }
+    }
+
+    it("records a logged warning with an Error as a local warning, never as an extension error", () => {
+        const { record, dispose } = bridged()
+        const error = new Error("retrying after 503")
+
+        Logger.warn("request retry", error)
+        dispose()
+
+        expect(record).toHaveBeenCalledTimes(1)
+        expect(record).toHaveBeenCalledWith(expect.objectContaining({ name: "extension.warning", level: "info", error }))
+    })
+
+    it("records an expected cancellation logged as an error as a local warning", () => {
+        const { record, dispose } = bridged()
+        const aborted = Object.assign(new Error("The operation was aborted"), { name: "AbortError" })
+        const withdrawn = new WithdrawnError("interaction withdrawn")
+
+        Logger.error("request aborted", aborted)
+        Logger.error("interaction ended", withdrawn)
+        dispose()
+
+        expect(record.mock.calls.map(([input]) => [input.name, input.level, input.error])).toEqual([
+            ["extension.warning", "info", aborted],
+            ["extension.warning", "info", withdrawn],
+        ])
+    })
+
+    it("does not report an error again once a semantic signal has carried it", () => {
+        const { record, dispose } = bridged()
+        const reported = new Error("tool failed")
+        const unreported = new Error("unrelated failure")
+
+        emitSignal({ name: "tool.execution.failed", level: "error", error: reported })
+        Logger.error("tool failed", reported)
+        Logger.error("unrelated failure", unreported)
+        dispose()
+
+        expect(record).toHaveBeenCalledTimes(1)
+        expect(record).toHaveBeenCalledWith(expect.objectContaining({ name: "extension.error", error: unreported }))
+    })
 
     it("uses one normalized runtime event contract for exceptions and messages", () => {
         const { record, recorder } = harness()

@@ -95,8 +95,6 @@ export const TELEMETRY_EVENTS = {
         BROWSER_ERROR: "task.browser_error",
         // Tracks Gemini API specific performance metrics
         GEMINI_API_PERFORMANCE: "task.gemini_api_performance",
-        // Tracks when API providers return errors
-        PROVIDER_API_ERROR: "task.provider_api_error",
         // Focus chain feature events
         FOCUS_CHAIN_ENABLED: "task.focus_chain_enabled",
         FOCUS_CHAIN_DISABLED: "task.focus_chain_disabled",
@@ -217,10 +215,6 @@ export const TELEMETRY_METRICS = {
     SUBAGENT_FANOUT: {
         BATCH_ITEMS: "dline.subagent.fanout.items",
         EXPLICIT_PROFILE_ITEMS: "dline.subagent.fanout.explicit_profile_items",
-    },
-    ERRORS: {
-        TOTAL: "dline.errors.total",
-        PER_TASK: "dline.errors.per_task",
     },
     API: {
         REQUESTS_TOTAL: "dline.api.requests.total",

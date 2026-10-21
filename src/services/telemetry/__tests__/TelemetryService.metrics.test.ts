@@ -345,36 +345,6 @@ describe("TelemetryService metrics", () => {
         assert.strictEqual(updatedEntry.attributes.is_multi_root, false)
     })
 
-    it("captureProviderApiError increments error counter", () => {
-        const provider = new FakeProvider()
-        const service = createTelemetryService(provider)
-
-        service.captureProviderApiError({
-            ulid: "task-3",
-            model: "claude",
-            errorMessage: "boom",
-            provider: "anthropic",
-            errorStatus: 500,
-        })
-
-        assert.strictEqual(provider.counters.length, 1)
-        const entry = provider.counters[0]
-        assert.strictEqual(entry.name, TelemetryService.METRICS.ERRORS.TOTAL)
-        assert.strictEqual(entry.value, 1)
-        assert.strictEqual(entry.attributes.ulid, "task-3")
-        assert.strictEqual(entry.attributes.provider, "anthropic")
-        assert.strictEqual(entry.attributes.model, "claude")
-        assert.strictEqual(entry.attributes.error_status, 500)
-        assert.strictEqual(provider.histograms.length, 1)
-        const errorHistogram = provider.histograms[0]
-        assert.strictEqual(errorHistogram.name, TelemetryService.METRICS.ERRORS.PER_TASK)
-        assert.strictEqual(errorHistogram.value, 1)
-        assert.strictEqual(errorHistogram.attributes.ulid, "task-3")
-        assert.strictEqual(errorHistogram.attributes.provider, "anthropic")
-        assert.strictEqual(errorHistogram.attributes.model, "claude")
-        assert.strictEqual(errorHistogram.attributes.error_status, 500)
-    })
-
     it("captureTaskCompleted records completion payload with TTFT and duration histograms", () => {
         const provider = new FakeProvider()
         const service = createTelemetryService(provider)

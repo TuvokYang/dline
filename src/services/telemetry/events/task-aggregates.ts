@@ -1,8 +1,8 @@
 /**
  * Per-task running counts used to emit "so far in this task" histograms.
  *
- * These counts are shared: turns and errors are observed by the task recorder
- * while tool calls are observed by the tool recorder, yet all three reset
+ * These counts are shared: turns are observed by the task recorder while tool
+ * calls are observed by the tool recorder, yet both reset
  * together when a task starts, restarts, or ends. Giving them one owner is what
  * keeps a reset from being applied by one recorder and missed by another.
  *
@@ -24,7 +24,6 @@ const MAX_TRACKED_TASKS = 128
 export class TaskAggregates {
     private readonly turns = new Map<string, number>()
     private readonly toolCalls = new Map<string, number>()
-    private readonly errors = new Map<string, number>()
 
     nextTurn(ulid: string): number {
         return this.increment(this.turns, ulid)
@@ -34,27 +33,21 @@ export class TaskAggregates {
         return this.increment(this.toolCalls, ulid)
     }
 
-    nextError(ulid: string): number {
-        return this.increment(this.errors, ulid)
-    }
-
     /** Forget every count for one task. Called at task boundaries. */
     reset(ulid: string): void {
         this.turns.delete(ulid)
         this.toolCalls.delete(ulid)
-        this.errors.delete(ulid)
     }
 
     /** Forget every task. Called when the session ends. */
     clear(): void {
         this.turns.clear()
         this.toolCalls.clear()
-        this.errors.clear()
     }
 
-    /** How many tasks currently hold counts, across all three dimensions. */
+    /** How many tasks currently hold counts, across both dimensions. */
     get trackedTasks(): number {
-        return new Set([...this.turns.keys(), ...this.toolCalls.keys(), ...this.errors.keys()]).size
+        return new Set([...this.turns.keys(), ...this.toolCalls.keys()]).size
     }
 
     private increment(store: Map<string, number>, ulid: string): number {

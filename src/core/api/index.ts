@@ -1,11 +1,9 @@
 import { findEnabledProfileByName } from "@core/controller/file/getApiProfiles"
-import { findCatalogModel } from "@core/model-registry/provider-model-lookup"
 import { ApiConfiguration, ModelInfo } from "@shared/api"
 import type { AccountUsageData, AccountUsageQuotaData } from "@shared/ExtensionMessage"
 import type { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
 import type { ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import type { WebToolsMode } from "@shared/proto/dline/provider/common"
-import { getProviderSeedConfig } from "@shared/providers/model-infos"
 import { resolveProfileDisabledServerTools } from "@shared/providers/profile-model-info"
 import { Mode } from "@shared/storage/types"
 import { ClineError } from "@/services/error"
@@ -173,8 +171,8 @@ export interface ApiHandler {
     /** Return the provider ID this handler was built for (from profile.provider). */
     getProviderId?(): string
     /**
-     * Whether the served model is the user's own: outside the built-in catalog, behind a
-     * custom endpoint, or on a user-hosted provider. Its ID must then stay on the machine.
+     * Whether the Profile runs a free-form model ID ("Use custom model ID", or
+     * Bedrock's "Custom" model). Telemetry marks such a model as custom.
      */
     isCustomModel?(): boolean
     /** Return the web-tools routing mode captured by this handler's profile. */
@@ -348,17 +346,7 @@ function createHandlerForProvider(ctx: ApiHandlerContext): ApiHandler {
     // Inject provider ID so callers can get it without going through global StateManager
     Object.assign(handler, {
         getProviderId: () => providerId,
-        // Read per request: the catalog of a provider discovered at runtime may arrive after the handler.
-        isCustomModel: () => {
-            const modelId = handler.getModel().id
-            return isCustomModel({
-                providerId,
-                modelId,
-                baseUrl: profile.baseUrl,
-                defaultBaseUrl: getProviderSeedConfig(providerId)?.baseUrl,
-                catalogModel: findCatalogModel(providerId, modelId),
-            })
-        },
+        isCustomModel: () => isCustomModel(profile),
         getWebToolsMode: () => profile.webToolsMode,
         getDisabledServerTools: () => resolveProfileDisabledServerTools(profile),
     })

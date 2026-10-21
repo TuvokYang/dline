@@ -19,7 +19,7 @@ function event(overrides: Partial<EventSignal> = {}): JournalTelemetrySignal {
         kind: "event",
         channel: "error",
         severity: "error",
-        name: "task.provider_api_error",
+        name: "api.request.failed",
         properties: {},
         required: false,
         ...overrides,
@@ -58,11 +58,62 @@ function decode(body: string) {
 
 describe("toDiagnosticRecord (contract v2 §3.1-§3.2)", () => {
     it("sends only error and runtime events at warn or above with a name the service accepts", () => {
-        expect(toDiagnosticRecord(event(), NOW)?.name).toBe("task.provider_api_error")
+        expect(toDiagnosticRecord(event(), NOW)?.name).toBe("api.request.failed")
         expect(toDiagnosticRecord(event({ channel: "runtime", severity: "warn" }), NOW)?.channel).toBe("runtime")
         expect(toDiagnosticRecord(event({ channel: "usage" }), NOW)).toBeUndefined()
         expect(toDiagnosticRecord(event({ severity: "info" }), NOW)).toBeUndefined()
         expect(toDiagnosticRecord(event({ name: "task failed at C:\\work" }), NOW)).toBeUndefined()
+    })
+
+    it("sends only events the route table declares remote, so a projection of a failure stays local (WS-109 SC-1)", () => {
+        const remote = (name: string, channel: "error" | "runtime" = "runtime", severity: "warn" | "error" = "error") =>
+            toDiagnosticRecord(event({ name, channel, severity }), NOW)?.name
+
+        expect(remote("api.request.failed", "error")).toBe("api.request.failed")
+        expect(remote("tool.execution.failed", "error")).toBe("tool.execution.failed")
+        expect(remote("task.terminal_hang", "error", "warn")).toBe("task.terminal_hang")
+        expect(remote("runtime.event_loop_delay_ms.breach", "runtime", "warn")).toBe("runtime.event_loop_delay_ms.breach")
+        expect(remote("task.error")).toBeUndefined()
+        expect(remote("extension.message")).toBeUndefined()
+        expect(remote("tool.execution.cancelled", "runtime", "warn")).toBeUndefined()
+        expect(remote("state.build_duration_ms.breach", "runtime", "warn")).toBeUndefined()
+        expect(remote("feature.never_listed", "error")).toBeUndefined()
+    })
+
+    it("reads a catalog failure's reason, type and model under the contract keys", () => {
+        const hang = toDiagnosticRecord(
+            event({
+                name: "task.terminal_hang",
+                severity: "warn",
+                properties: { stage: "waiting_for_completion", terminalType: "vscode" },
+            }),
+            NOW,
+        )
+        const diff = toDiagnosticRecord(
+            event({
+                name: "task.diff_edit_failed",
+                severity: "warn",
+                properties: { errorType: "search_not_found", modelId: "anthropic/claude-sonnet-4.5", provider: "OpenRouter" },
+            }),
+            NOW,
+        )
+        const mention = toDiagnosticRecord(
+            event({
+                name: "task.mention_failed",
+                severity: "warn",
+                properties: { mentionType: "folder", errorType: "not_found" },
+            }),
+            NOW,
+        )
+
+        expect(hang?.attributes).toEqual({ "error.code": "waiting_for_completion" })
+        expect(diff?.attributes).toEqual({
+            "error.type": "search_not_found",
+            provider: "openrouter",
+            model: "anthropic_claude-sonnet-4.5",
+            "model.custom": false,
+        })
+        expect(mention?.attributes).toEqual({ "error.code": "folder", "error.type": "not_found" })
     })
 
     it("keeps only catalog keys, reading the old aliases into them and never sending an alias itself", () => {
@@ -123,17 +174,84 @@ describe("toDiagnosticRecord (contract v2 §3.1-§3.2)", () => {
         expect(record({ api_format: "OPENAI_CHAT" }).attributes).toEqual({ "api.format": "openai-chat" })
     })
 
-    it("names a model the way usage does, and never sends a custom model's own ID", () => {
+    it("names a model the way usage does, and marks it custom only when the event says so", () => {
         const catalog = record({ provider: "OpenRouter", model: "anthropic/claude-sonnet-4.5", "model.custom": false })
-        const custom = record({ provider: "ollama", model: "my-private-finetune" })
+        const custom = record({ provider: "openai", model: "Acme/Private-Finetune", "model.custom": true })
+        const unmarked = record({ provider: "ollama", model: "qwen3:8b" })
 
         expect(catalog.attributes).toMatchObject({
             provider: "openrouter",
             model: "anthropic_claude-sonnet-4.5",
             "model.custom": false,
         })
-        expect(custom.attributes).toMatchObject({ provider: "ollama", model: "_custom", "model.custom": true })
-        expect(JSON.stringify(custom).includes("my-private-finetune")).toBe(false)
+        expect(custom.attributes).toMatchObject({ provider: "openai", model: "acme_private-finetune", "model.custom": true })
+        expect(unmarked.attributes).toMatchObject({ provider: "ollama", model: "qwen3_8b", "model.custom": false })
+    })
+})
+
+describe("v2 §3.5 diagnostic extension", () => {
+    it("sends each §3.5 key only with a value its rule accepts", () => {
+        const valid = record({
+            "error.site": "ripgrep.search",
+            "dline.exception.fingerprint_version": 3,
+            tool_name: "read_file",
+            failure_stage: "execution",
+        }).attributes
+        const invalid = record({
+            "error.site": "Ripgrep/Search",
+            "dline.exception.fingerprint_version": 4,
+            tool_name: "my_mcp_server_tool",
+            failure_stage: "unknown",
+        }).attributes
+
+        expect(valid).toEqual({
+            "error.site": "ripgrep.search",
+            "error.fingerprint_version": 3,
+            "tool.name": "read_file",
+            "failure.stage": "execution",
+        })
+        expect(invalid).toEqual({})
+    })
+
+    it("reports a breach under perf.* with ratios per mille, and nothing for other metrics", () => {
+        const breach = (properties: NonNullable<EventSignal["properties"]>) =>
+            toDiagnosticRecord(
+                event({ name: "runtime.cpu_utilization_ratio.breach", channel: "runtime", severity: "warn", properties }),
+                NOW,
+            )?.attributes
+
+        expect(breach({ metric: "runtime.cpu_utilization_ratio", kind: "fixed_budget", value: 0.9234, limit: 0.85 })).toEqual({
+            "perf.metric": "runtime.cpu_utilization_ratio",
+            "perf.kind": "fixed_budget",
+            "perf.value": 923,
+            "perf.limit": 850,
+        })
+        expect(breach({ metric: "state.build_duration_ms", kind: "fixed_budget", value: 120 })).toEqual({})
+    })
+
+    it("keeps records of different fingerprint versions or tools apart", () => {
+        const base = { "error.fingerprint": FINGERPRINT }
+        const records = aggregateDiagnostics(
+            [],
+            [
+                record({ ...base, "dline.exception.fingerprint_version": 2 }),
+                record({ ...base, "dline.exception.fingerprint_version": 3 }),
+                record({ ...base, "dline.exception.fingerprint_version": 3, tool_name: "read_file" }),
+                record({ ...base, "dline.exception.fingerprint_version": 3, tool_name: "read_file" }),
+            ],
+        ).records
+
+        expect(records.map((entry) => entry.occurrences)).toEqual([1, 1, 2])
+    })
+
+    it("marks a development build in the resource only when it is one", () => {
+        const keys = (isDev?: boolean) =>
+            decode(encodeDiagnosticLogs([], { clientVersion: "0.11.1", platform: "linux", isDev }, 0)).resource.map(
+                (attribute) => [attribute.key, attribute.value.boolValue],
+            )
+
+        expect(keys(true)).toContainEqual(["dline.is_dev", true])
+        expect(keys(false).map(([key]) => key)).not.toContain("dline.is_dev")
     })
 })
 
@@ -198,7 +316,7 @@ describe("encodeDiagnosticLogs", () => {
         expect(logRecord).toMatchObject({
             timeUnixNano: `${NOW}000000`,
             severityNumber: 17,
-            body: { stringValue: "task.provider_api_error" },
+            body: { stringValue: "api.request.failed" },
         })
         expect(logRecord.attributes.every((attribute) => DIAGNOSTIC_ATTRIBUTE_KEYS.includes(attribute.key))).toBe(true)
         expect(Object.fromEntries(logRecord.attributes.map(({ key, value }) => [key, value]))).toEqual({

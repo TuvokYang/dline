@@ -38,6 +38,7 @@ import { z } from "zod"
 import { getMcpVariableStore } from "@/core/storage/secrets/McpVariableStore"
 import { dlineUiPresence } from "@/core/webview/DlineUiPresence"
 import { HostProvider } from "@/hosts/host-provider"
+import { withDiagnosticSite } from "@/shared/errors/diagnostic-site"
 import { fetch } from "@/shared/net"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
@@ -1125,7 +1126,7 @@ export class McpHub {
                         await this.connectToServer(name, config, source, metadata)
                         connectionChangesOccurred = true
                     } catch (error) {
-                        Logger.error(`Failed to connect to new MCP server ${name}:`, error)
+                        Logger.error(`Failed to connect to new MCP server ${name}:`, withDiagnosticSite(error, "mcp.connect"))
                     }
                 } else if (this.configsRequireRestart(JSON.parse(currentConnection.server.config), config)) {
                     try {
@@ -1137,7 +1138,7 @@ export class McpHub {
                         Logger.log(`Reconnected MCP server with updated config: ${name}`)
                         connectionChangesOccurred = true
                     } catch (error) {
-                        Logger.error(`Failed to reconnect MCP server ${name}:`, error)
+                        Logger.error(`Failed to reconnect MCP server ${name}:`, withDiagnosticSite(error, "mcp.connect"))
                     }
                 } else if (currentConnection.missingVariable !== undefined) {
                     // The user declined a variable for this unchanged config: stay closed instead of
@@ -1156,7 +1157,7 @@ export class McpHub {
                         Logger.log(`Reconnected MCP server after disconnect: ${name}`)
                         connectionChangesOccurred = true
                     } catch (error) {
-                        Logger.error(`Failed to reconnect MCP server ${name}:`, error)
+                        Logger.error(`Failed to reconnect MCP server ${name}:`, withDiagnosticSite(error, "mcp.connect"))
                     }
                 } else {
                     if (currentConnection.server.tools) {
@@ -1272,7 +1273,7 @@ export class McpHub {
                     this.getConnectionMetadata(name),
                 )
             } catch (error) {
-                Logger.error(`Failed to connect MCP server ${name} after Dline opened:`, error)
+                Logger.error(`Failed to connect MCP server ${name} after Dline opened:`, withDiagnosticSite(error, "mcp.connect"))
             }
         }
         await this.notifyWebviewOfServerChanges()

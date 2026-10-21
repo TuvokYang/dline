@@ -1,4 +1,6 @@
 import { USAGE_ERROR_CLASSES } from "@/core/task/telemetry/UsageSettlement"
+import { DlineDefaultTool } from "@/shared/tools"
+import { isRemoteDiagnosticEvent } from "../../events/event-routes"
 import type { JournalTelemetrySignal } from "../../providers/capabilities"
 import type { UsageHostEditor, UsageReleaseChannel } from "../contracts/usageBody"
 import { usageModelKey, usageProviderId } from "../usage/usageTally"
@@ -35,8 +37,14 @@ const EVENT_NAME = /^[A-Za-z0-9_.:/-]{1,160}$/
 const TOKEN_VALUE = /^[A-Za-z0-9_.+-]{1,64}$/
 const FINGERPRINT = /^[0-9a-f]{16}$/
 const PHASES = ["connect", "stream", "parse", "tool", "other"] as const
+/** v2 §3.5: an `area.operation` call site of at most 64 characters. */
+const SITE = /^(?=.{1,64}$)[a-z0-9_]+(\.[a-z0-9_]+){1,3}$/
+const FAILURE_STAGES = ["validation", "authorization", "routing", "execution", "remote"] as const
+/** Only Dline's own tool ids qualify; an MCP tool's name is user content and never leaves. */
+const BUILT_IN_TOOLS: readonly string[] = Object.values(DlineDefaultTool).filter((id) => /^[a-z0-9_]{1,64}$/.test(id))
+const FINGERPRINT_VERSIONS: readonly number[] = [2, 3]
 
-type AttributeKind = "token" | "int" | "attempt" | "bool" | "apiFormat" | readonly string[] | RegExp
+type AttributeKind = "token" | "int" | "attempt" | "bool" | "apiFormat" | "fingerprintVersion" | readonly string[] | RegExp
 
 /**
  * `ApiFormat` enum names, which the request observation carries, in the
@@ -63,13 +71,35 @@ const API_FORMAT_VALUE = /^[a-z0-9-]{1,64}$/
  */
 const CATALOG: readonly { readonly key: string; readonly kind: AttributeKind; readonly sources: readonly string[] }[] = [
     { key: "error.class", kind: USAGE_ERROR_CLASSES, sources: ["error.class"] },
-    { key: "error.code", kind: "token", sources: ["error.code", "dline.exception.code", "error_code"] },
-    { key: "error.type", kind: "token", sources: ["error.type", "exception.type", "error_type"] },
+    // Catalog failure events carry their reason code under their own field names.
+    {
+        key: "error.code",
+        kind: "token",
+        sources: [
+            "error.code",
+            "dline.exception.code",
+            "error_code",
+            "failure_code",
+            "stage",
+            "reason",
+            "mentionType",
+            "cancel_reason",
+        ],
+    },
+    { key: "error.type", kind: "token", sources: ["error.type", "exception.type", "error_type", "errorType"] },
     {
         key: "error.fingerprint",
         kind: FINGERPRINT,
         sources: ["error.fingerprint", "dline.exception.fingerprint", "error_fingerprint"],
     },
+    {
+        key: "error.fingerprint_version",
+        kind: "fingerprintVersion",
+        sources: ["error.fingerprint_version", "dline.exception.fingerprint_version"],
+    },
+    { key: "error.site", kind: SITE, sources: ["error.site"] },
+    { key: "tool.name", kind: BUILT_IN_TOOLS, sources: ["tool.name", "tool_name"] },
+    { key: "failure.stage", kind: FAILURE_STAGES, sources: ["failure.stage", "failure_stage"] },
     {
         key: "http.status",
         kind: "int",
@@ -85,23 +115,37 @@ const CATALOG: readonly { readonly key: string; readonly kind: AttributeKind; re
     { key: "duration_ms", kind: "int", sources: ["duration_ms"] },
 ]
 
+/**
+ * Metrics whose breach carries `perf.*` (v2 §3.5). A ratio is sent as an
+ * integer per mille, since the catalog only takes integers.
+ */
+const PERF_METRIC_SCALE: Readonly<Record<string, number>> = {
+    "runtime.cpu_utilization_ratio": 1000,
+    "runtime.event_loop_delay_ms": 1,
+    "runtime.heap_growth_bytes": 1,
+}
+const PERF_KINDS = ["fixed_budget", "dynamic_baseline"] as const
+const PERF_KEYS = ["perf.metric", "perf.kind", "perf.value", "perf.limit"] as const
+
 /** Every attribute key a record may carry on the wire. */
 export const DIAGNOSTIC_ATTRIBUTE_KEYS: readonly string[] = [
     "dline.channel",
     "dline.occurrences",
     "dline.last_seen_ms",
     ...CATALOG.map((entry) => entry.key),
+    ...PERF_KEYS,
 ]
 
 /**
  * Turn one canonical signal into a remote record, or undefined when it must not
- * leave: only error and runtime events at warn or above are sent.
+ * leave: only error and runtime events at warn or above that the route table
+ * declares remote are sent.
  */
 export function toDiagnosticRecord(signal: JournalTelemetrySignal, now: number): DiagnosticRecord | undefined {
     if (signal.kind !== "event") return undefined
     if (signal.channel !== "error" && signal.channel !== "runtime") return undefined
     if (signal.severity !== "warn" && signal.severity !== "error" && signal.severity !== "fatal") return undefined
-    if (!EVENT_NAME.test(signal.name)) return undefined
+    if (!EVENT_NAME.test(signal.name) || !isRemoteDiagnosticEvent(signal.name)) return undefined
     return {
         name: signal.name,
         channel: signal.channel,
@@ -109,26 +153,52 @@ export function toDiagnosticRecord(signal: JournalTelemetrySignal, now: number):
         firstSeenMs: now,
         lastSeenMs: now,
         occurrences: 1,
-        attributes: catalogAttributes(withNormalizedModel(signal.properties)),
+        attributes: { ...catalogAttributes(withNormalizedModel(signal.properties)), ...perfAttributes(signal.properties) },
     }
+}
+
+/** The breached metric, its budget kind and the scaled value and limit, only for a catalog metric. */
+function perfAttributes(properties: Readonly<Record<string, unknown>> | undefined): Record<string, DiagnosticAttributeValue> {
+    const metric = properties?.metric
+    if (typeof metric !== "string") return {}
+    const scale = PERF_METRIC_SCALE[metric]
+    if (scale === undefined) return {}
+    const attributes: Record<string, DiagnosticAttributeValue> = { "perf.metric": metric }
+    if (PERF_KINDS.includes(properties?.kind as (typeof PERF_KINDS)[number])) attributes["perf.kind"] = properties?.kind as string
+    const value = scaledNonNegative(properties?.value, scale)
+    if (value !== undefined) attributes["perf.value"] = value
+    const limit = scaledNonNegative(properties?.limit, scale)
+    if (limit !== undefined) attributes["perf.limit"] = limit
+    return attributes
+}
+
+function scaledNonNegative(value: unknown, scale: number): number | undefined {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined
+    const scaled = Math.round(value * scale)
+    return Number.isSafeInteger(scaled) ? scaled : undefined
 }
 
 /**
  * Report a provider event's provider and model the way usage does: the raw ID
- * may hold `/` or `:`, which the value filter would drop, and a custom model's
- * ID must not leave at all. A model not marked as catalog is custom.
+ * may hold `/` or `:`, which the value filter would drop. A custom model keeps
+ * its normalized ID, and only a model marked custom is reported as one. Catalog
+ * events name the model `modelId`.
  */
 function withNormalizedModel(
     properties: Readonly<Record<string, unknown>> | undefined,
 ): Readonly<Record<string, unknown>> | undefined {
     if (!properties) return properties
     const provider = typeof properties.provider === "string" && properties.provider.length > 0 ? properties.provider : undefined
-    const model = typeof properties.model === "string" && properties.model.length > 0 ? properties.model : undefined
+    const model = firstNonEmptyString(properties.model, properties.modelId)
     if (model) {
-        const custom = properties["model.custom"] !== false
+        const custom = properties["model.custom"] === true
         return { ...properties, ...usageModelKey({ provider: provider ?? "", model, custom }), "model.custom": custom }
     }
     return provider ? { ...properties, provider: usageProviderId(provider) } : properties
+}
+
+function firstNonEmptyString(...values: readonly unknown[]): string | undefined {
+    return values.find((value): value is string => typeof value === "string" && value.length > 0)
 }
 
 /** Keep only catalog keys, each read from its first source holding a value of the right kind. */
@@ -148,6 +218,8 @@ function catalogAttributes(properties: Readonly<Record<string, unknown>> | undef
 
 function acceptValue(kind: AttributeKind, value: unknown): DiagnosticAttributeValue | undefined {
     if (kind === "bool") return typeof value === "boolean" ? value : undefined
+    if (kind === "fingerprintVersion")
+        return typeof value === "number" && FINGERPRINT_VERSIONS.includes(value) ? value : undefined
     if (kind === "int" || kind === "attempt") {
         if (typeof value !== "number" || !Number.isFinite(value)) return undefined
         const rounded = Math.round(value)
@@ -170,9 +242,11 @@ export function diagnosticKey(record: DiagnosticRecord): string {
         record.name,
         record.severity,
         attributes["error.fingerprint"] ?? null,
+        attributes["error.fingerprint_version"] ?? null,
         attributes["error.class"] ?? null,
         attributes.provider ?? null,
         attributes.model ?? null,
+        attributes["tool.name"] ?? null,
     ])
 }
 
@@ -214,6 +288,8 @@ export interface DiagnosticResource {
     /** Never under `dline.channel`, which separates error from runtime events. */
     readonly releaseChannel?: UsageReleaseChannel
     readonly hostEditor?: UsageHostEditor
+    /** A development build; sent only when true, since the service reads a missing value as false. */
+    readonly isDev?: boolean
 }
 
 const SEVERITY_NUMBER: Record<DiagnosticSeverity, number> = { warn: 13, error: 17, fatal: 21 }
@@ -238,6 +314,7 @@ export function encodeDiagnosticLogs(
                         stringAttribute("os.type", resource.platform),
                         ...(resource.releaseChannel ? [stringAttribute("dline.release_channel", resource.releaseChannel)] : []),
                         ...(resource.hostEditor ? [stringAttribute("dline.host_editor", resource.hostEditor)] : []),
+                        ...(resource.isDev ? [{ key: "dline.is_dev", value: { boolValue: true } }] : []),
                         intAttribute("dline.dropped_records", droppedRecords),
                     ],
                 },

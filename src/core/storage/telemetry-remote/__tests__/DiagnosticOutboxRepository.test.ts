@@ -98,4 +98,42 @@ describe("DiagnosticOutboxRepository", () => {
         expect(await outbox.claim("window-a", START)).toBeUndefined()
         expect(await fs.readFile(filePath, "utf8")).toBe(newer)
     })
+
+    describe("absorbing a queue an earlier build kept under another file name", () => {
+        const fingerprints = (records: readonly DiagnosticRecord[]) =>
+            records.map((entry) => entry.attributes["error.fingerprint"])
+
+        it("leaves a batch another window is sending, then moves every record and the later gate over and deletes the file", async () => {
+            const retiredPath = path.join(root, "diagnostics", "retired.json")
+            const retired = new DiagnosticOutboxRepository(retiredPath, { encode: heavyEncoder })
+            await retired.append([record(1), record(2)], START)
+            expect(await retired.claim("older-window", START)).toBeDefined()
+            const retiredGate = (await retired.read()).pacing.next_eligible_at
+            const outbox = new DiagnosticOutboxRepository(filePath, { encode: heavyEncoder })
+            await outbox.append([record(3)], START)
+
+            await outbox.absorb(retiredPath, START + 30_000)
+            expect(fingerprints((await outbox.read()).records)).toEqual([record(3).attributes["error.fingerprint"]])
+            expect((await retired.read()).inflight?.records).toHaveLength(2)
+
+            await outbox.absorb(retiredPath, START + 61_000)
+            const absorbed = await outbox.read()
+            expect(fingerprints(absorbed.records)).toEqual(
+                [1, 2, 3].map((index) => record(index).attributes["error.fingerprint"]),
+            )
+            expect(absorbed.pacing.next_eligible_at).toBe(retiredGate)
+            await expect(fs.access(retiredPath)).rejects.toThrow()
+        })
+
+        it("keeps the earlier queue when this outbox belongs to a newer build, so no record is lost", async () => {
+            const retiredPath = path.join(root, "diagnostics", "retired.json")
+            await new DiagnosticOutboxRepository(retiredPath, { encode: heavyEncoder }).append([record(1)], START)
+            await fs.writeFile(filePath, JSON.stringify({ schema_version: 3 }))
+
+            await new DiagnosticOutboxRepository(filePath, { encode: heavyEncoder }).absorb(retiredPath, START)
+
+            const kept = await new DiagnosticOutboxRepository(retiredPath, { encode: heavyEncoder }).read()
+            expect(kept.records).toHaveLength(1)
+        })
+    })
 })

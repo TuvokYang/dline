@@ -34,6 +34,8 @@ export interface RemoteDiagnosticsRuntimeOptions {
     /** Which build this is and which editor hosts it, for the logs resource. */
     readonly releaseChannel?: DiagnosticResource["releaseChannel"]
     readonly hostEditor?: DiagnosticResource["hostEditor"]
+    /** A development build, so the service can keep its records out of the statistics. */
+    readonly isDev?: boolean
     /** Whether error reporting may leave the machine now: consent, organization and host level. */
     readonly allowed: () => boolean
     /** The host telemetry settings, used by the shared policy for severity filtering. */
@@ -51,8 +53,10 @@ interface RunningDiagnostics {
     readonly allowed: () => boolean
     readonly timers: ReturnType<typeof setInterval>[]
     readonly abort: AbortController
-    /** Where the v1 build queued its records; removed so nothing of it lingers after the upgrade. */
+    /** Where builds before the stable name queued their records; absorbed into the outbox and removed. */
     readonly legacyOutboxPath: string
+    /** The running retirement of that queue; shutdown waits for it so no lock outlives the window. */
+    retiring?: Promise<void>
     buffer: DiagnosticRecord[]
     /** Records the full buffer could not take since the last flush, reported as dropped. */
     bufferDropped: number
@@ -79,6 +83,7 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
         platform: options.platform,
         ...(options.releaseChannel ? { releaseChannel: options.releaseChannel } : {}),
         ...(options.hostEditor ? { hostEditor: options.hostEditor } : {}),
+        ...(options.isDev ? { isDev: true } : {}),
     }
     const outbox = new DiagnosticOutboxRepository(diagnosticOutboxPath(options.dataDir), {
         encode: (records, dropped) => encodeDiagnosticLogs(records, resource, dropped),
@@ -158,6 +163,7 @@ export async function stopRemoteDiagnostics(): Promise<void> {
     running = undefined
     for (const timer of state.timers) clearInterval(timer)
     state.abort.abort()
+    await state.retiring?.catch(() => undefined)
     await flush(state).catch(() => undefined)
 }
 
@@ -171,26 +177,35 @@ async function flush(state: RunningDiagnostics): Promise<void> {
     await state.outbox.append(records, Date.now(), dropped)
 }
 
-/**
- * The shared outbox of this data root; tests read it through the same path.
- * It is a different file from the v1 queue, so a window still running the
- * previous build and a window on this one never rewrite each other's queue.
- */
+/** The shared outbox of this data root; tests read it through the same path. */
 export function diagnosticOutboxPath(dataDir: string): string {
-    return path.join(diagnosticsDir(dataDir), "outbox-v2.json")
+    return path.join(diagnosticsDir(dataDir), "outbox.json")
 }
 
-function legacyDiagnosticOutboxPath(dataDir: string): string {
-    return path.join(diagnosticsDir(dataDir), "outbox.json")
+/** The name 0.11 builds before the stable name used; it is only ever read to move its records over. */
+export function legacyDiagnosticOutboxPath(dataDir: string): string {
+    return path.join(diagnosticsDir(dataDir), "outbox-v2.json")
 }
 
 function diagnosticsDir(dataDir: string): string {
     return path.join(resolveOtelStorageLayout(dataDir).remoteDir, "diagnostics")
 }
 
-/** Its records use the v1 attribute set, which the service no longer keeps, so they are not carried over. */
-async function removeLegacyOutbox(state: RunningDiagnostics): Promise<void> {
-    await Promise.all([rm(state.legacyOutboxPath, { force: true }), rm(backupPathOf(state.legacyOutboxPath), { force: true })])
+/**
+ * Retire the earlier queue: its records move into the outbox while reporting is
+ * allowed, and are deleted with it once reporting is withdrawn. A window of an
+ * earlier build that still runs keeps sending from it; the next start moves
+ * what it leaves.
+ */
+function removeLegacyOutbox(state: RunningDiagnostics): Promise<void> {
+    const retiring = state.allowed()
+        ? state.outbox.absorb(state.legacyOutboxPath, Date.now())
+        : Promise.all([
+              rm(state.legacyOutboxPath, { force: true }),
+              rm(backupPathOf(state.legacyOutboxPath), { force: true }),
+          ]).then(() => undefined)
+    state.retiring = retiring
+    return retiring
 }
 
 /**
@@ -215,6 +230,8 @@ async function reconcileConsent(state: RunningDiagnostics): Promise<boolean> {
     if (state.withdrawn) return false
     state.buffer = []
     state.bufferDropped = 0
+    // An absorb started while reporting was allowed would write the earlier queue's records back after the clear.
+    await state.retiring?.catch(() => undefined)
     await Promise.all([state.outbox.clear(), removeLegacyOutbox(state)])
     await state.credentials.clearTokens(["production"])
     state.withdrawn = true

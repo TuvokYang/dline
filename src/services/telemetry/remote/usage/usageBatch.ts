@@ -92,6 +92,12 @@ export function buildUsageBody(
 
 const OVERFLOW_KEY = modelId({ provider: USAGE_OVERFLOW_ID, model: USAGE_OVERFLOW_ID })
 
+/** The overflow entry stands for many models, so it names none and is never marked custom. */
+function asOverflow(model: UsageModelTally): UsageModelTally {
+    const { custom: _custom, ...rest } = model
+    return { ...rest, provider: USAGE_OVERFLOW_ID, model: USAGE_OVERFLOW_ID }
+}
+
 function foldModels(minutes: readonly UsageMinute[], models: readonly UsageModelTally[]): UsageModelWire[] {
     const ranked = [...models].sort(
         (left, right) => right.requests.total - left.requests.total || modelId(left).localeCompare(modelId(right)),
@@ -105,8 +111,8 @@ function foldModels(minutes: readonly UsageMinute[], models: readonly UsageModel
     for (const model of ranked) {
         const key = keyOf(model)
         const existing = folded.get(key)
-        const base = key === OVERFLOW_KEY ? { ...model, provider: USAGE_OVERFLOW_ID, model: USAGE_OVERFLOW_ID } : model
-        folded.set(key, existing ? mergeModel(existing, model) : base)
+        const merged = existing ? mergeModel(existing, model) : model
+        folded.set(key, key === OVERFLOW_KEY ? asOverflow(merged) : merged)
     }
 
     const peaks = new Map<string, { requests: number; tokens_output: number }>()

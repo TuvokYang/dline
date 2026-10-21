@@ -12,6 +12,7 @@ import { resolveWorkspacePath } from "@/core/workspace/WorkspaceResolver"
 import { telemetryService } from "@/services/telemetry"
 import { boundToolText } from "@/shared/content-limits"
 import { UiSayTool } from "@/shared/ExtensionMessage"
+import { withDiagnosticSite } from "@/shared/errors/diagnostic-site"
 import { Logger } from "@/shared/services/Logger"
 import { DlineDefaultTool } from "@/shared/tools"
 import type { IFullyManagedTool } from "../ToolExecutorCoordinator"
@@ -215,7 +216,7 @@ export class SearchFilesToolHandler implements IFullyManagedTool {
             }
         } catch (error) {
             // If search fails in one workspace, return error info
-            Logger.error(`Search failed in ${absolutePath}:`, error)
+            Logger.error(`Search failed in ${absolutePath}:`, withDiagnosticSite(error, "ripgrep.search"))
             return {
                 workspaceName,
                 workspaceResults: "",

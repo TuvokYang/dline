@@ -1,4 +1,5 @@
 import { formatResponse } from "@core/prompts/responses"
+import { markExpectedCancellation } from "@shared/errors/expected-cancellation"
 import {
     type CompactionLandingInput,
     type CompactionLandingPort,
@@ -72,6 +73,7 @@ export class CompactionReviewWithdrawnError extends Error {
         this.name = "CompactionReviewWithdrawnError"
     }
 }
+markExpectedCancellation(CompactionReviewWithdrawnError)
 
 /** The user's verdict on one generated summary. */
 export type CompactionReviewDecision =

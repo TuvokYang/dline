@@ -1,6 +1,12 @@
 import { TELEMETRY_MASK_VALUE } from "../service/pipeline-port"
 import type { NormalizedRuntimeError } from "./types"
 
+/**
+ * Version of the fingerprint grouping material. Sent with every fingerprint so
+ * a backend never compares fingerprints computed from different material.
+ */
+export const FINGERPRINT_VERSION = 3
+
 /** Canonical exception fields shared by logs and spans. */
 export const EXCEPTION_ATTRIBUTE_KEYS = {
     type: "exception.type",
@@ -23,7 +29,8 @@ export function exceptionAttributes(error: NormalizedRuntimeError): Record<strin
         [EXCEPTION_ATTRIBUTE_KEYS.type]: error.name,
         [EXCEPTION_ATTRIBUTE_KEYS.message]: TELEMETRY_MASK_VALUE,
         [EXCEPTION_ATTRIBUTE_KEYS.fingerprint]: error.fingerprint,
-        "dline.exception.fingerprint_version": 2,
+        "dline.exception.fingerprint_version": FINGERPRINT_VERSION,
+        ...(error.site === undefined ? {} : { "error.site": error.site }),
         ...(error.code === undefined ? {} : { [EXCEPTION_ATTRIBUTE_KEYS.code]: error.code }),
         ...(error.status === undefined
             ? {}

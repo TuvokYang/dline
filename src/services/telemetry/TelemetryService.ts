@@ -11,6 +11,7 @@ import { version as extensionVersion } from "../../../package.json"
 import { TelemetryContext, type TelemetryMetadata } from "./context/telemetry-context"
 import { telemetryDevelopmentModeMetadata } from "./development-mode"
 import { TELEMETRY_EVENTS, TELEMETRY_METRICS, type TelemetryCategory } from "./events/catalog"
+import { channelOfRuntimeEvent } from "./events/event-routes"
 import { HookEventRecorder, type HookExecutionMetadata, type HookExecutionStatus } from "./events/hook-recorder"
 import { TaskAggregates } from "./events/task-aggregates"
 import {
@@ -276,9 +277,15 @@ export class TelemetryService {
         this.dispatcher.captureEvent(event.event, event.properties)
     }
 
-    /** Route one content-safe runtime event through the error-consent channel. */
+    /** Route one content-safe runtime event on the error-consent channel its route declares. */
     public captureRuntimeEvent(event: string, properties: TelemetryProperties, severity: TelemetrySeverity): void {
-        this.registry.logEvent(event, () => this.context.eventProperties(properties), false, "runtime", severity)
+        this.registry.logEvent(
+            event,
+            () => this.context.eventProperties(properties),
+            false,
+            channelOfRuntimeEvent(event),
+            severity,
+        )
     }
 
     /**
@@ -434,18 +441,6 @@ export class TelemetryService {
         },
     ) {
         this.task.captureGeminiApiPerformance(ulid, modelId, data)
-    }
-
-    public captureProviderApiError(args: {
-        ulid: string
-        model: string
-        errorMessage: string
-        provider?: string
-        errorStatus?: number | undefined
-        requestId?: string | undefined
-        isNativeToolCall?: boolean
-    }) {
-        this.task.captureProviderApiError(args)
     }
 
     public captureDiffEditFailure(ulid: string, modelId: string, provider: string, errorType?: string, isNativeToolCall = false) {

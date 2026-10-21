@@ -477,6 +477,7 @@ async function startRemoteDiagnosticsReporting(dataDir: string): Promise<void> {
         platform: process.platform,
         releaseChannel: releaseChannelOf(ExtensionRegistryInfo.name),
         hostEditor: hostEditorOf(host?.platform),
+        isDev: isTelemetryDevelopmentMode(),
         allowed: policy.allowed,
         hostSettings: policy.hostSettings,
         addProvider: (provider) => telemetryService.addProvider(provider),

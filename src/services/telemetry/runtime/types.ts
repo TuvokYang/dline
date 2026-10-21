@@ -72,6 +72,8 @@ export interface NormalizedRuntimeError {
     readonly status?: number
     /** First stack frame that belongs to this project, without absolute paths. */
     readonly sourceFrame?: string
+    /** Catalog call site the error was caught at, when the catching code named one. */
+    readonly site?: string
     /** Stable identity for grouping. Excludes ids, ports, and user content. */
     readonly fingerprint: string
     /** Normalized cause chain, bounded in depth. */

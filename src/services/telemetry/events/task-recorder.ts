@@ -4,7 +4,7 @@ import { calculateApiUsageStatistics } from "@/shared/api-usage"
 import { Logger } from "@/shared/services/Logger"
 import type { Mode } from "@/shared/storage/types"
 import type { TelemetrySignalSink } from "../service/signal-sink"
-import { MAX_ERROR_MESSAGE_LENGTH, TELEMETRY_EVENTS, TELEMETRY_METRICS } from "./catalog"
+import { TELEMETRY_EVENTS, TELEMETRY_METRICS } from "./catalog"
 import { DomainRecorder } from "./domain-recorder"
 import type { TaskAggregates } from "./task-aggregates"
 
@@ -452,36 +452,6 @@ export class TaskEventRecorder extends DomainRecorder {
         if (data.cacheHit) {
             this.sink.recordCounter(TELEMETRY_METRICS.CACHE.HITS_TOTAL, 1, attributes)
         }
-    }
-
-    /**
-     * Records telemetry when an API provider returns an error
-     * @param args Error identity, model, and the provider's message
-     */
-    captureProviderApiError(args: {
-        ulid: string
-        model: string
-        errorMessage: string
-        provider?: string
-        errorStatus?: number | undefined
-        requestId?: string | undefined
-        isNativeToolCall?: boolean
-    }): void {
-        this.sink.captureEvent(TELEMETRY_EVENTS.TASK.PROVIDER_API_ERROR, {
-            ...args,
-            errorMessage: args.errorMessage.substring(0, MAX_ERROR_MESSAGE_LENGTH), // Truncate long error messages
-            timestamp: new Date().toISOString(),
-        })
-
-        const errorAttributes = {
-            ulid: args.ulid,
-            model: args.model,
-            provider: args.provider,
-            error_status: args.errorStatus,
-        }
-        this.sink.recordCounter(TELEMETRY_METRICS.ERRORS.TOTAL, 1, errorAttributes)
-        const errorCount = this.aggregates.nextError(args.ulid)
-        this.sink.recordHistogram(TELEMETRY_METRICS.ERRORS.PER_TASK, errorCount, errorAttributes)
     }
 
     /**

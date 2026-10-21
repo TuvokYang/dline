@@ -1,3 +1,4 @@
+import { isAbortNamedError, isExpectedCancellation } from "@shared/errors/expected-cancellation"
 import { type RuntimeOperationHandle, runtimeOperationRegistry } from "@/services/telemetry/runtime/operation-registry"
 import {
     emitSignal,
@@ -170,10 +171,16 @@ function observedToolResult(value: unknown): ObservedToolResult {
     }
 }
 
-function cancellationReasonFor(error: unknown): ToolCancellationReason | undefined {
+/**
+ * Why a tool stopped without failing. Abort-named and branded errors are
+ * classified by type; the message test remains only for unbranded legacy
+ * aborts such as "Dline instance aborted".
+ */
+export function cancellationReasonFor(error: unknown): ToolCancellationReason | undefined {
     if (typeof error === "string" && /(?:abort|cancel|terminate)/i.test(error)) return "task_interrupted"
+    if (isAbortNamedError(error)) return "abort_error"
+    if (isExpectedCancellation(error)) return "task_interrupted"
     if (!(error instanceof Error)) return undefined
-    if (error.name === "AbortError" || error.name === "APIUserAbortError" || error.name === "CanceledError") return "abort_error"
     return /(?:aborted|cancelled|terminated)/i.test(error.message) ? "task_interrupted" : undefined
 }
 

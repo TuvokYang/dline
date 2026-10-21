@@ -26,8 +26,8 @@ export interface UsageServedModel {
     /** The model ID the request was sent with. */
     readonly model: string
     /**
-     * A model outside the built-in catalog, or one reached through a custom endpoint or a
-     * user-hosted provider. Its ID never leaves the machine: it is reported as `_custom`.
+     * The Profile runs a free-form model ID ("Use custom model ID", or Bedrock's "Custom"
+     * model). The model is still reported under its ID, marked custom beside it.
      */
     readonly custom?: boolean
 }
