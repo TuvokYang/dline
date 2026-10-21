@@ -70,6 +70,25 @@ describe("DlineOtelHttpClient", () => {
         expect(response.retryAfter).toBe("3")
     })
 
+    it("keeps the OTLP specification path for logs and leaves Dline's own paths unprefixed", async () => {
+        const captured: Captured[] = []
+        const client = new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "https://otel.example.test" })
+        const delivery = { accessToken: TOKEN, requestId: REQUEST_ID, body: new Uint8Array() }
+
+        await mockFetchForTesting(
+            respondWith(() => new Response("{}", { status: 503 }), captured),
+            async () => {
+                await client.sendLogs(delivery)
+                await client.sendUsage(delivery)
+            },
+        )
+
+        // `/v1` belongs to the OTLP wire convention; the service does not implement
+        // the unprefixed spelling. `/usage` is Dline's own protocol and takes none.
+        expect(captured[0].url).toBe("https://otel.example.test/v1/logs")
+        expect(captured[1].url).toBe("https://otel.example.test/usage")
+    })
+
     it("posts the device exchange as JSON to its own path", async () => {
         const captured: Captured[] = []
         const request = {

@@ -9,8 +9,17 @@ export const DLINE_OTEL_REQUEST_TIMEOUT_MS = 15_000
 /** Responses of the service are a few hundred bytes; anything larger is not the service and is not parsed. */
 const MAX_RESPONSE_BYTES = 16 * 1024
 const DEVICE_EXCHANGE_PATH = "/auth/device/exchange"
+/** Dline's own protocol paths carry no `/v1`: that segment belongs to OTLP alone. */
 const USAGE_PATH = "/usage"
-const LOGS_PATH = "/logs"
+/**
+ * OTLP/HTTP keeps its specification path.
+ *
+ * `/v1` here is part of the OTLP wire convention, not a Dline protocol version:
+ * the service accepts standard OTLP only at `/v1/logs|metrics|traces` and does
+ * not implement the unprefixed spelling, while Dline's own `/usage` and
+ * `/auth/*` take no prefix at all.
+ */
+const LOGS_PATH = "/v1/logs"
 /**
  * The telemetry contract version every telemetry request names in
  * `X-Dline-Contract`.
