@@ -160,7 +160,7 @@ describe("RemoteUsageCoordinator", () => {
         await usage.dispose()
     })
 
-    it("projects a settlement onto a v2 tally before it reaches the shard", async () => {
+    it("projects a settlement onto one fact before it reaches the shard", async () => {
         const usage = coordinator()
         await usage.start()
 
@@ -169,7 +169,9 @@ describe("RemoteUsageCoordinator", () => {
 
         const [entry] = await spooled()
         expect(entry).toMatchObject({ id: "obs-1", policyEpoch: now })
-        expect(entry.tally.purposes.task).toMatchObject({
+        expect(entry.tally.facts).toHaveLength(1)
+        expect(entry.tally.facts[0]).toMatchObject({
+            role: "task",
             requests: { completed: 1, cancelled: 0, failed: 0 },
             tokens: { input: 120 },
         })
@@ -184,7 +186,7 @@ describe("RemoteUsageCoordinator", () => {
         expect(await spooled()).toEqual([
             expect.objectContaining({
                 policyEpoch: now,
-                tally: { sessions_started: 1, purposes: {}, models: [], providers: [] },
+                tally: { sessions_started: 1, facts: [] },
             }),
         ])
 

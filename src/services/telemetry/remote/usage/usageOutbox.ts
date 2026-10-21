@@ -13,19 +13,19 @@ import {
 } from "../contracts/pacing"
 import {
     USAGE_BODY_LIMIT_BYTES,
-    USAGE_MAX_ACTIVE_MINUTES,
-    USAGE_MINUTE_MS,
+    USAGE_MAX_ACTIVE_SECONDS,
+    USAGE_SECOND_MS,
     type UsageBodyWire,
     type UsageClientWire,
     validateUsageBody,
 } from "../contracts/usageBody"
-import { buildUsageBody, mergeMinutes, minuteStartOf, selectBatchMinutes, type UsageMinute } from "./usageBatch"
+import { buildUsageBody, mergeSeconds, secondStartOf, selectBatchSeconds, type UsageSecond } from "./usageBatch"
 import type { UsageTally } from "./usageTally"
 
 /** One settled request or activation as it waits in a process shard. */
 export interface PendingUsageObservation {
     readonly id: string
-    /** Local receipt time, epoch milliseconds; the sender assigns the UTC minute. */
+    /** Local receipt time, epoch milliseconds; the sender assigns the UTC second. */
     readonly receivedAt: number
     /** Policy epoch the observation was admitted under; any other epoch is dropped unsent. */
     readonly policyEpoch: number
@@ -42,10 +42,10 @@ export interface SettledUsageShard {
 export interface UsageInflight {
     readonly requestId: string
     readonly bodySha256: string
-    /** The minutes inside the body, counted as lost when the batch is abandoned. */
-    readonly minutes: readonly UsageMinute[]
-    /** Minutes lost before this body and reported by it. */
-    readonly droppedMinutes: number
+    /** The seconds inside the body, counted as lost when the batch is abandoned. */
+    readonly seconds: readonly UsageSecond[]
+    /** Active seconds lost before this body and reported by it. */
+    readonly droppedSeconds: number
     /** Start of the replay window, moved later by every 429 wait so a wait never ages the batch. */
     readonly createdAt: number
     /** Replays after a timeout or a retryable failure; a 429 is not one. */
@@ -55,15 +55,15 @@ export interface UsageInflight {
 
 /** Machine-wide usage delivery state; one sender at a time changes it under a fenced lease. */
 export interface UsageOutboxState {
-    /** Policy epoch every pending minute was gathered under. */
+    /** Policy epoch every pending second was gathered under. */
     readonly policyEpoch: number
     /** Server gate and 429 wait of the usage channel; they survive a restart and a consent change. */
     readonly pacing: ChannelPacing
-    /** End of the newest minute already placed in a body; later arrivals for older minutes move here. */
+    /** End of the newest second already placed in a body; later arrivals for older seconds move here. */
     readonly sealedThrough: number
-    /** Minutes lost before reaching a body, reported with the next one. */
-    readonly droppedMinutes: number
-    readonly minutes: readonly UsageMinute[]
+    /** Active seconds lost before reaching a body, reported with the next one. */
+    readonly droppedSeconds: number
+    readonly seconds: readonly UsageSecond[]
     /** Sealed shards already folded, so a crash before their removal does not count them twice. */
     readonly foldedShards: readonly string[]
     readonly inflight?: UsageInflight
@@ -77,8 +77,8 @@ export function emptyUsageOutbox(
         policyEpoch,
         pacing: carried.pacing ?? INITIAL_PACING,
         sealedThrough: 0,
-        droppedMinutes: 0,
-        minutes: [],
+        droppedSeconds: 0,
+        seconds: [],
         foldedShards: carried.foldedShards ?? [],
     }
 }
@@ -94,31 +94,32 @@ export function alignUsagePolicyEpoch(state: UsageOutboxState, policyEpoch: numb
 }
 
 /**
- * Fold settled shards into pending minutes.
+ * Fold settled shards into pending seconds.
  *
  * `shards` must list every settled shard still on disk: a name folded earlier
  * and absent now was removed, so it is forgotten. An observation lands in the
- * minute it was received, never earlier than a minute already sent and never
- * later than the current one. At most 60 active minutes wait; the oldest beyond
- * that are dropped and counted.
+ * second it was received, never earlier than a second already sent and never
+ * later than the current one. At most 3600 pending seconds wait, one hour of
+ * contiguous activity inside the contract's window; the oldest beyond that are
+ * dropped and counted.
  */
 export function foldUsageShards(state: UsageOutboxState, shards: readonly SettledUsageShard[], now: number): UsageOutboxState {
     const folded = new Set(state.foldedShards)
-    const currentMinute = minuteStartOf(now)
-    const arrivals: UsageMinute[] = []
+    const currentSecond = secondStartOf(now)
+    const arrivals: UsageSecond[] = []
     for (const shard of shards) {
         if (folded.has(shard.name)) continue
         for (const observation of shard.observations) {
             if (observation.policyEpoch !== state.policyEpoch) continue
-            const startedAt = Math.max(Math.min(minuteStartOf(observation.receivedAt), currentMinute), state.sealedThrough)
+            const startedAt = Math.max(Math.min(secondStartOf(observation.receivedAt), currentSecond), state.sealedThrough)
             arrivals.push({ startedAt, tally: observation.tally })
         }
     }
-    const capped = capPendingMinutes(mergeMinutes(state.minutes, arrivals))
+    const capped = capPendingSeconds(mergeSeconds(state.seconds, arrivals))
     return {
         ...state,
-        minutes: capped.minutes,
-        droppedMinutes: state.droppedMinutes + capped.dropped,
+        seconds: capped.seconds,
+        droppedSeconds: state.droppedSeconds + capped.dropped,
         foldedShards: shards.map((shard) => shard.name),
     }
 }
@@ -139,12 +140,12 @@ export interface UsageBatchInput {
     readonly now: number
     readonly requestId: string
     readonly client: UsageClientWire
-    /** How long after a minute ends its observations may still be arriving from other shards. */
+    /** How long after a second ends its observations may still be arriving from other shards. */
     readonly settleMs: number
 }
 
 /**
- * Take the oldest complete minutes, up to a 60-minute span, into a new batch
+ * Take the oldest complete seconds, up to a 60-minute span, into a new batch
  * once the gate opened and no wait is running.
  *
  * The gate moves a default interval ahead as soon as the batch exists, so a
@@ -154,15 +155,17 @@ export interface UsageBatchInput {
 export function takeUsageBatch(state: UsageOutboxState, input: UsageBatchInput): UsageBatchDecision {
     const { now } = input
     if (state.inflight || !mayStartBatch(state.pacing, now)) return { kind: "none" }
-    const complete = state.minutes.filter((minute) => minute.startedAt + USAGE_MINUTE_MS + input.settleMs <= now)
-    const selected = selectBatchMinutes(complete)
+    const complete = state.seconds.filter((second) => second.startedAt + USAGE_SECOND_MS + input.settleMs <= now)
+    const selected = selectBatchSeconds(complete)
     if (selected.length === 0) return { kind: "none" }
-    const taken = new Set(selected.map((minute) => minute.startedAt))
-    const remaining = state.minutes.filter((minute) => !taken.has(minute.startedAt))
-    const sealedThrough = Math.max(state.sealedThrough, (selected.at(-1) as UsageMinute).startedAt + USAGE_MINUTE_MS)
-    const body = buildUsageBody(selected, input.client, state.droppedMinutes)
-    // Minutes without any activity hold nothing to report, so they leave without being counted as lost.
-    if (!body) return { kind: "rejected", violations: ["no_activity"], state: { ...state, minutes: remaining, sealedThrough } }
+    const taken = new Set(selected.map((second) => second.startedAt))
+    const remaining = state.seconds.filter((second) => !taken.has(second.startedAt))
+    const sealedThrough = Math.max(state.sealedThrough, (selected.at(-1) as UsageSecond).startedAt + USAGE_SECOND_MS)
+    const body = buildUsageBody(selected, input.client, state.droppedSeconds)
+    // Seconds without any activity hold nothing to report, so they leave without being counted as lost.
+    if (!body) {
+        return { kind: "rejected", violations: ["no_activity"], state: { ...state, seconds: remaining, sealedThrough } }
+    }
     const bytes = new TextEncoder().encode(JSON.stringify(body))
     const violations: string[] = validateUsageBody(body)
     if (bytes.byteLength > USAGE_BODY_LIMIT_BYTES) violations.push("body_size")
@@ -170,14 +173,14 @@ export function takeUsageBatch(state: UsageOutboxState, input: UsageBatchInput):
         return {
             kind: "rejected",
             violations,
-            state: { ...state, minutes: remaining, sealedThrough, droppedMinutes: state.droppedMinutes + selected.length },
+            state: { ...state, seconds: remaining, sealedThrough, droppedSeconds: state.droppedSeconds + selected.length },
         }
     }
     const inflight: UsageInflight = {
         requestId: input.requestId,
         bodySha256: sha256Hex(bytes),
-        minutes: selected,
-        droppedMinutes: state.droppedMinutes,
+        seconds: selected,
+        droppedSeconds: state.droppedSeconds,
         createdAt: now,
         attempts: 0,
         notBefore: now,
@@ -189,9 +192,9 @@ export function takeUsageBatch(state: UsageOutboxState, input: UsageBatchInput):
         bytes,
         state: {
             ...state,
-            minutes: remaining,
+            seconds: remaining,
             sealedThrough,
-            droppedMinutes: 0,
+            droppedSeconds: 0,
             inflight,
             pacing: reserveInterval(state.pacing, "usage", now),
         },
@@ -250,14 +253,14 @@ export function settleUsageInflight(
 }
 
 function abandon(state: Omit<UsageOutboxState, "inflight">, inflight: UsageInflight): UsageOutboxState {
-    return { ...state, droppedMinutes: state.droppedMinutes + inflight.droppedMinutes + inflight.minutes.length }
+    return { ...state, droppedSeconds: state.droppedSeconds + inflight.droppedSeconds + inflight.seconds.length }
 }
 
-/** Keep the newest 60 pending minutes in order; older ones are dropped and counted. */
-function capPendingMinutes(minutes: readonly UsageMinute[]): { minutes: UsageMinute[]; dropped: number } {
-    const sorted = [...minutes].sort((left, right) => left.startedAt - right.startedAt)
-    const kept = sorted.slice(-USAGE_MAX_ACTIVE_MINUTES)
-    return { minutes: kept, dropped: sorted.length - kept.length }
+/** Keep the newest 3600 pending seconds in order; older ones are dropped and counted. */
+function capPendingSeconds(seconds: readonly UsageSecond[]): { seconds: UsageSecond[]; dropped: number } {
+    const sorted = [...seconds].sort((left, right) => left.startedAt - right.startedAt)
+    const kept = sorted.slice(-USAGE_MAX_ACTIVE_SECONDS)
+    return { seconds: kept, dropped: sorted.length - kept.length }
 }
 
 export function sha256Hex(bytes: Uint8Array): string {

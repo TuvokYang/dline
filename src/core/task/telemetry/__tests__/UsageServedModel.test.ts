@@ -30,14 +30,14 @@ function sentBody(profile: ApiProfile): UsageBodyWire {
         streamTiming: { ttftMs: 200, generationMs: 500 },
         servedBy: servedModelOf(handlerFor(profile)),
     }
-    const minute = { startedAt: 1_900_000_020_000, tally: projectUsageSettlement(settlement) }
-    const body = buildUsageBody([minute], { version: "0.11.1" }, 0)
+    const second = { startedAt: 1_900_000_020_000, tally: projectUsageSettlement(settlement) }
+    const body = buildUsageBody([second], { version: "0.11.1" }, 0)
     if (!body) throw new Error("expected a usage body")
     return body
 }
 
 function reportedModels(body: UsageBodyWire) {
-    return body.models.map(({ provider, model, custom }) => ({ provider, model, ...(custom === undefined ? {} : { custom }) }))
+    return body.facts.map(({ provider, model, custom }) => ({ provider, model, ...(custom === undefined ? {} : { custom }) }))
 }
 
 describe("servedModelOf", () => {
@@ -98,7 +98,7 @@ describe("servedModelOf", () => {
             "anthropic.claude-sonnet-4-6",
         ],
     ])("reports %s by its ID when the custom switch is off", (_case, profile, reported) => {
-        expect(reportedModels(sentBody(profile))).toEqual([{ provider: profile.provider, model: reported }])
+        expect(reportedModels(sentBody(profile))).toEqual([{ provider: profile.provider, model: reported, custom: false }])
     })
 
     it("counts a handler that cannot say under its model ID", () => {

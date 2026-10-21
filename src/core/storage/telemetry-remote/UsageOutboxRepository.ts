@@ -1,8 +1,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { writeFileAtomic, writeJsonAtomic } from "@shared/storage/atomic-file"
-import { type ChannelPacing, INITIAL_PACING } from "@/services/telemetry/remote/contracts/pacing"
-import type { UsageMinute } from "@/services/telemetry/remote/usage/usageBatch"
+import { type ChannelPacing } from "@/services/telemetry/remote/contracts/pacing"
+import type { UsageSecond } from "@/services/telemetry/remote/usage/usageBatch"
 import {
     emptyUsageOutbox,
     sha256Hex,
@@ -26,12 +26,15 @@ import {
 export type { UsageSenderGrant, UsageSenderTurnEvent } from "./usageSenderTurn"
 
 /**
- * Version 2 holds v2 tallies and the channel pacing; version 1 held the dotted v1 catalog.
- * `lease.granted_at` and `waiting` are optional additions inside version 2: a build
- * that predates turns ignores them and drops them when it rewrites the document.
+ * Version 3 holds fact tallies gathered per second, and is the only version this
+ * client writes or reads.
+ *
+ * There is no migration from an earlier document: its tallies were per purpose
+ * and per model, which a fact-keyed body cannot hold, and an outbox is a queue of
+ * not-yet-sent claims rather than durable history. An unreadable document is
+ * quarantined and delivery starts from an empty queue.
  */
-export const USAGE_OUTBOX_SCHEMA_VERSION = 2
-const LEGACY_SCHEMA_VERSION = 1
+export const USAGE_OUTBOX_SCHEMA_VERSION = 3
 /** How long a sender owns delivery without renewing; longer than one HTTP attempt, short enough to take over a dead window. */
 export const USAGE_SENDER_LEASE_MS = 90_000
 const LOCK_ACQUIRE_ATTEMPTS = 50
@@ -294,16 +297,16 @@ function serialize(document: OutboxDocument): Record<string, unknown> {
                 consecutive_waits: state.pacing.consecutiveWaits,
             },
             sealed_through: state.sealedThrough,
-            dropped_minutes: state.droppedMinutes,
-            minutes: state.minutes.map(serializeMinute),
+            dropped_seconds: state.droppedSeconds,
+            seconds: state.seconds.map(serializeSecond),
             folded_shards: state.foldedShards,
             ...(state.inflight
                 ? {
                       inflight: {
                           request_id: state.inflight.requestId,
                           body_sha256: state.inflight.bodySha256,
-                          minutes: state.inflight.minutes.map(serializeMinute),
-                          dropped_minutes: state.inflight.droppedMinutes,
+                          seconds: state.inflight.seconds.map(serializeSecond),
+                          dropped_seconds: state.inflight.droppedSeconds,
                           created_at: state.inflight.createdAt,
                           attempts: state.inflight.attempts,
                           not_before: state.inflight.notBefore,
@@ -314,22 +317,24 @@ function serialize(document: OutboxDocument): Record<string, unknown> {
     }
 }
 
-function serializeMinute(minute: UsageMinute): Record<string, unknown> {
-    return { started_at: minute.startedAt, tally: minute.tally }
+function serializeSecond(second: UsageSecond): Record<string, unknown> {
+    return { started_at: second.startedAt, tally: second.tally }
 }
 
 function parseDocument(value: unknown): LatestOutbox | { readonly status: "malformed" } {
     if (!isRecord(value)) return { status: "malformed" }
     const schemaVersion = value.schema_version
-    if (!isCount(schemaVersion) || schemaVersion < LEGACY_SCHEMA_VERSION) return { status: "malformed" }
-    if (schemaVersion > USAGE_OUTBOX_SCHEMA_VERSION) return { status: "unsupported" }
+    // A newer Dline owns a document this build does not understand: it is neither
+    // rewritten nor sent from, because guessing at its queue would corrupt it.
+    if (isCount(schemaVersion) && schemaVersion > USAGE_OUTBOX_SCHEMA_VERSION) return { status: "unsupported" }
+    if (schemaVersion !== USAGE_OUTBOX_SCHEMA_VERSION) return { status: "malformed" }
     if (!isCount(value.generation)) return { status: "malformed" }
     let lease: SenderLease | undefined
     if (value.lease !== undefined) {
         lease = parseLease(value.lease)
         if (!lease || lease.generation > value.generation) return { status: "malformed" }
     }
-    const state = schemaVersion === LEGACY_SCHEMA_VERSION ? parseLegacyState(value.state) : parseState(value.state)
+    const state = parseState(value.state)
     if (!state) return { status: "malformed" }
     const waiting = parseWaiting(value.waiting)
     return { status: "valid", document: { generation: value.generation, ...(lease ? { lease } : {}), waiting, state } }
@@ -349,30 +354,6 @@ function parseWaiting(value: unknown): Record<string, SenderWaiter> {
     return waiting
 }
 
-/**
- * Carry a v1 outbox forward. Its minutes use the dotted v1 catalog, which a v2
- * body cannot hold, so they are dropped and counted; the lease, the server gate
- * and the folded shard names survive, so the upgrade neither resends nor
- * double-counts. The inflight body left beside it is removed by the next cycle.
- */
-function parseLegacyState(value: unknown): UsageOutboxState | undefined {
-    if (!isRecord(value)) return undefined
-    const { policy_epoch: policyEpoch, next_eligible_at: nextEligibleAt, sealed_through: sealedThrough } = value
-    if (!isCount(policyEpoch) || !isCount(nextEligibleAt) || !isCount(sealedThrough)) return undefined
-    const foldedShards = Array.isArray(value.folded_shards) ? value.folded_shards.filter(isString) : []
-    const inflight = isRecord(value.inflight) ? value.inflight : undefined
-    const lost =
-        (isCount(value.dropped_windows) ? value.dropped_windows : 0) +
-        (Array.isArray(value.windows) ? value.windows.length : 0) +
-        (inflight && Array.isArray(inflight.windows) ? inflight.windows.length : 0) +
-        (inflight && isCount(inflight.dropped_windows) ? inflight.dropped_windows : 0)
-    return {
-        ...emptyUsageOutbox(policyEpoch, { pacing: { ...INITIAL_PACING, nextEligibleAt }, foldedShards }),
-        sealedThrough,
-        droppedMinutes: lost,
-    }
-}
-
 function parseLease(value: unknown): SenderLease | undefined {
     if (!isRecord(value) || typeof value.owner_id !== "string" || value.owner_id.length === 0) return undefined
     if (!isCount(value.generation) || value.generation < 1 || !isCount(value.expires_at)) return undefined
@@ -383,12 +364,12 @@ function parseLease(value: unknown): SenderLease | undefined {
 
 function parseState(value: unknown): UsageOutboxState | undefined {
     if (!isRecord(value)) return undefined
-    const { policy_epoch: policyEpoch, sealed_through: sealedThrough, dropped_minutes: droppedMinutes } = value
-    if (!isCount(policyEpoch) || !isCount(sealedThrough) || !isCount(droppedMinutes)) return undefined
+    const { policy_epoch: policyEpoch, sealed_through: sealedThrough, dropped_seconds: droppedSeconds } = value
+    if (!isCount(policyEpoch) || !isCount(sealedThrough) || !isCount(droppedSeconds)) return undefined
     const pacing = parsePacing(value.pacing)
-    const minutes = parseMinutes(value.minutes)
+    const seconds = parseSeconds(value.seconds)
     const foldedShards = value.folded_shards
-    if (!pacing || !minutes || !Array.isArray(foldedShards) || !foldedShards.every(isString)) return undefined
+    if (!pacing || !seconds || !Array.isArray(foldedShards) || !foldedShards.every(isString)) return undefined
     let inflight: UsageInflight | undefined
     if (value.inflight !== undefined) {
         inflight = parseInflight(value.inflight)
@@ -398,8 +379,8 @@ function parseState(value: unknown): UsageOutboxState | undefined {
         policyEpoch,
         pacing,
         sealedThrough,
-        droppedMinutes,
-        minutes,
+        droppedSeconds,
+        seconds,
         foldedShards,
         ...(inflight ? { inflight } : {}),
     }
@@ -417,31 +398,31 @@ function parseInflight(value: unknown): UsageInflight | undefined {
     const { request_id: requestId, body_sha256: bodySha256, created_at: createdAt, not_before: notBefore } = value
     if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) return undefined
     if (typeof bodySha256 !== "string" || !/^[0-9a-f]{64}$/.test(bodySha256)) return undefined
-    const minutes = parseMinutes(value.minutes)
-    if (!minutes || !isCount(value.dropped_minutes) || !isCount(createdAt) || !isCount(value.attempts) || !isCount(notBefore)) {
+    const seconds = parseSeconds(value.seconds)
+    if (!seconds || !isCount(value.dropped_seconds) || !isCount(createdAt) || !isCount(value.attempts) || !isCount(notBefore)) {
         return undefined
     }
     return {
         requestId,
         bodySha256,
-        minutes,
-        droppedMinutes: value.dropped_minutes,
+        seconds,
+        droppedSeconds: value.dropped_seconds,
         createdAt,
         attempts: value.attempts,
         notBefore,
     }
 }
 
-function parseMinutes(value: unknown): UsageMinute[] | undefined {
+function parseSeconds(value: unknown): UsageSecond[] | undefined {
     if (!Array.isArray(value)) return undefined
-    const minutes: UsageMinute[] = []
+    const seconds: UsageSecond[] = []
     for (const entry of value) {
         if (!isRecord(entry) || !isCount(entry.started_at)) return undefined
         const tally = parseUsageTally(entry.tally)
         if (!tally) return undefined
-        minutes.push({ startedAt: entry.started_at, tally })
+        seconds.push({ startedAt: entry.started_at, tally })
     }
-    return minutes
+    return seconds
 }
 
 function isCount(value: unknown): value is number {

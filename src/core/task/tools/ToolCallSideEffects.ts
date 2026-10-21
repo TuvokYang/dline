@@ -1,5 +1,6 @@
 import type { ToolUse } from "@core/assistant-message"
 import { Logger } from "@/shared/services/Logger"
+import { type ChecklistChange, type ChecklistReport, diffChecklist, parseChecklist } from "../telemetry/ChecklistDiff"
 import type { TaskConfig } from "./types/TaskConfig"
 
 /**
@@ -18,6 +19,14 @@ import type { TaskConfig } from "./types/TaskConfig"
 export interface ToolCallSideEffectPort {
     /** Publish the checklist a call carried, for a surface that presents one. */
     readonly reportProgress?: (progress: string) => Promise<void>
+    /**
+     * Report what changed in the checklist, for the usage fact of the turn.
+     *
+     * The change is computed here because this is the only place that sees both
+     * reports. A surface without a checklist never supplies the callback, so an
+     * absent callback means "this task has no checklist", not "nothing changed".
+     */
+    readonly observeChecklist?: (changes: readonly ChecklistChange[]) => void
 }
 
 /**
@@ -33,6 +42,9 @@ export function resolveToolCallSideEffects(config: TaskConfig): ToolCallSideEffe
         ...(callbacks?.updateFCListFromToolResponse === undefined
             ? {}
             : { reportProgress: (progress: string) => callbacks.updateFCListFromToolResponse!(progress) }),
+        ...(callbacks?.observeChecklist === undefined
+            ? {}
+            : { observeChecklist: (changes: readonly ChecklistChange[]) => callbacks.observeChecklist!(changes) }),
     }
 }
 
@@ -49,11 +61,30 @@ export function resolveToolCallSideEffects(config: TaskConfig): ToolCallSideEffe
  */
 export async function applyToolCallSideEffects(port: ToolCallSideEffectPort, block: ToolUse): Promise<void> {
     const progress = block.params.task_progress
-    if (port.reportProgress && progress?.trim()) {
+    if (!progress?.trim()) return
+    observeChecklist(port, progress)
+    if (port.reportProgress) {
         try {
             await port.reportProgress(progress)
         } catch (error) {
             Logger.error(`Failed to apply task_progress from ${block.name}`, error instanceof Error ? error : undefined)
         }
+    }
+}
+
+/** The last checklist this task saw, so the next report can be compared against it. */
+const lastChecklist = new WeakMap<ToolCallSideEffectPort, ChecklistReport>()
+
+/** Bookkeeping beside the call: a checklist usage cannot read is not a failed call. */
+function observeChecklist(port: ToolCallSideEffectPort, markdown: string): void {
+    if (!port.observeChecklist) return
+    try {
+        const previous = lastChecklist.get(port)
+        const report = parseChecklist(markdown)
+        const changes = diffChecklist(previous, report)
+        lastChecklist.set(port, report)
+        if (changes.length > 0) port.observeChecklist(changes)
+    } catch (error) {
+        Logger.error("Failed to observe task_progress checklist", error instanceof Error ? error : undefined)
     }
 }

@@ -3,7 +3,6 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { INITIAL_PACING } from "@/services/telemetry/remote/contracts/pacing"
 import { emptyUsageOutbox, sha256Hex, type UsageOutboxState } from "@/services/telemetry/remote/usage/usageOutbox"
 import { projectUsageSettlement, sessionStartedTally } from "@/services/telemetry/remote/usage/usageTally"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
@@ -34,7 +33,7 @@ function pendingState(policyEpoch = 1): UsageOutboxState {
     return {
         ...emptyUsageOutbox(policyEpoch),
         pacing: { nextEligibleAt: 1_900_000_120_000, waitUntil: 1_900_007_200_000, consecutiveWaits: 2 },
-        minutes: [
+        seconds: [
             { startedAt: 1_899_999_960_000, tally },
             { startedAt: 1_900_000_020_000, tally: sessionStartedTally() },
         ],
@@ -146,8 +145,8 @@ describe("UsageOutboxRepository", () => {
             inflight: {
                 requestId: REQUEST_ID,
                 bodySha256: sha256Hex(body),
-                minutes: pendingState().minutes,
-                droppedMinutes: 2,
+                seconds: pendingState().seconds,
+                droppedSeconds: 2,
                 createdAt: now,
                 attempts: 1,
                 notBefore: now + 30_000,
@@ -191,43 +190,27 @@ describe("UsageOutboxRepository", () => {
         expect(await repository().claim("window-b")).toBeUndefined()
     })
 
-    it("carries a v1 outbox forward: its minutes are dropped and counted, its gate, lease and folded shards survive", async () => {
+    it("quarantines an outbox from an earlier schema instead of migrating facts it cannot hold", async () => {
         await fs.mkdir(layout.usageDir, { recursive: true })
-        const legacyWindow = {
-            started_at: 1_899_999_960_000,
-            counters: { "dline.usage.requests.task.completed": 1 },
-            measurements: {},
-        }
+        // A purpose-and-model outbox cannot be expressed as fact-keyed seconds, and a
+        // queue of unsent claims is not history worth a migration, so it is set aside.
         await fs.writeFile(
             layout.usageOutboxPath,
             JSON.stringify({
-                schema_version: 1,
+                schema_version: 2,
                 generation: 3,
                 lease: { owner_id: "window-a", generation: 3, expires_at: now + 60_000 },
-                state: {
-                    policy_epoch: 4,
-                    next_eligible_at: now + 30_000,
-                    sealed_through: 1_900_000_020_000,
-                    dropped_windows: 1,
-                    windows: [legacyWindow, legacyWindow],
-                    folded_shards: ["a.1.sealed.jsonl"],
-                    inflight: { request_id: REQUEST_ID, windows: [legacyWindow], dropped_windows: 2 },
-                },
+                state: { policy_epoch: 4, next_eligible_at: now + 30_000, sealed_through: 0, minutes: [] },
             }),
         )
 
-        const migrated = await repository().read()
-        const contender = await repository().claim("window-b")
+        const grant = await repository().claim("window-a")
 
-        expect(migrated).toEqual({
-            ...emptyUsageOutbox(4, {
-                pacing: { ...INITIAL_PACING, nextEligibleAt: now + 30_000 },
-                foldedShards: ["a.1.sealed.jsonl"],
-            }),
-            sealedThrough: 1_900_000_020_000,
-            droppedMinutes: 1 + 2 + 1 + 2,
-        })
-        expect(contender).toBeUndefined()
+        expect(grant).toEqual({ ownerId: "window-a", generation: 1 })
+        expect(await fs.readdir(layout.remoteQuarantineDir)).toHaveLength(1)
+        const rebuilt = await repository().read()
+        expect(rebuilt?.seconds).toEqual([])
+        expect(rebuilt?.inflight).toBeUndefined()
     })
 
     it("quarantines an unreadable outbox and starts over instead of guessing its contents", async () => {
@@ -316,31 +299,31 @@ describe("UsageOutboxRepository", () => {
 
         it("takes over an older build that keeps renewing past its turn, fences it and keeps its inflight bytes", async () => {
             await fs.mkdir(layout.usageInflightDir, { recursive: true })
-            const body = new TextEncoder().encode('{"schema_version":2}')
+            const body = new TextEncoder().encode('{"schema_version":3}')
             await fs.writeFile(path.join(layout.usageInflightDir, `${REQUEST_ID}.bin`), body)
             const inflight = {
                 request_id: REQUEST_ID,
                 body_sha256: sha256Hex(body),
-                minutes: [],
-                dropped_minutes: 0,
+                seconds: [],
+                dropped_seconds: 0,
                 created_at: now,
                 attempts: 0,
                 not_before: now,
             }
-            // What 0.11.1 writes on every renewal: its known fields only, so any waiter entry is dropped.
+            // A holder that only writes its known fields: any waiter entry is dropped on renewal.
             const renewByOlderBuild = () =>
                 fs.writeFile(
                     layout.usageOutboxPath,
                     JSON.stringify({
-                        schema_version: 2,
+                        schema_version: 3,
                         generation: 5,
                         lease: { owner_id: "older-build", generation: 5, expires_at: now + USAGE_SENDER_LEASE_MS },
                         state: {
                             policy_epoch: 1,
                             pacing: { next_eligible_at: 0, wait_until: 0, consecutive_waits: 0 },
                             sealed_through: 0,
-                            dropped_minutes: 0,
-                            minutes: [],
+                            dropped_seconds: 0,
+                            seconds: [],
                             folded_shards: [],
                             inflight,
                         },
@@ -369,7 +352,7 @@ describe("UsageOutboxRepository", () => {
             const state = await b.read()
             expect(state?.inflight?.requestId).toBe(REQUEST_ID)
             const kept = await b.readBody({ requestId: REQUEST_ID, bodySha256: sha256Hex(body) })
-            expect(kept && new TextDecoder().decode(kept)).toBe('{"schema_version":2}')
+            expect(kept && new TextDecoder().decode(kept)).toBe('{"schema_version":3}')
         })
     })
 })

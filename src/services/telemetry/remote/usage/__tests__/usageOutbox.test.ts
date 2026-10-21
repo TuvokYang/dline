@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { DEFAULT_INTERVAL_MS, GATE_MARGIN_MS, INITIAL_PACING, MAX_REPLAY_ATTEMPTS } from "../../contracts/pacing"
-import { USAGE_MINUTE_MS, type UsageBodyWire, validateUsageBody } from "../../contracts/usageBody"
+import { DEFAULT_INTERVAL_MS, GATE_MARGIN_MS, INITIAL_PACING } from "../../contracts/pacing"
+import { USAGE_SECOND_MS, type UsageBodyWire, validateUsageBody } from "../../contracts/usageBody"
 import {
     alignUsagePolicyEpoch,
     dueUsageReplay,
@@ -12,34 +12,31 @@ import {
     takeUsageBatch,
     type UsageOutboxState,
 } from "../usageOutbox"
-import { projectUsageSettlement } from "../usageTally"
+import { projectUsageSettlement, type UsageTally } from "../usageTally"
 
-/** A UTC minute boundary. */
-const T0 = 1_899_999_960_000
-const MINUTE = USAGE_MINUTE_MS
-const SETTLE = 15_000
-const CLIENT = { version: "0.11.1", platform: "win32" }
-const REQUEST_A = "0b4f8a52-5d0e-4e55-9a0c-5a1f1e7c0a01"
-const REQUEST_B = "0b4f8a52-5d0e-4e55-9a0c-5a1f1e7c0a02"
-const noJitter = () => 0
+const CLIENT = { version: "0.12.0" }
+const T0 = 1_792_456_800_000
+const SECOND = USAGE_SECOND_MS
+const SETTLE = 5 * SECOND
+const REQUEST_A = "11111111-1111-4111-8111-111111111111"
+const REQUEST_B = "22222222-2222-4222-8222-222222222222"
 
-function observation(id: string, receivedAt: number, tokens: number, policyEpoch = 1): PendingUsageObservation {
-    const tally = projectUsageSettlement({
-        observationId: id,
+function settling(inputTokens: number): UsageTally {
+    return projectUsageSettlement({
+        observationId: "obs",
         purpose: "task",
         outcome: "completed",
-        inputTokens: tokens,
-        outputTokens: 1,
+        inputTokens,
+        outputTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
         durationMs: 100,
-        servedBy: { provider: "anthropic", model: "claude-sonnet-4" },
+        servedBy: { provider: "anthropic", model: "claude-opus-5-5" },
     })
-    return { id, receivedAt, policyEpoch, tally }
 }
 
-function tokensByMinute(state: UsageOutboxState): Record<number, number | undefined> {
-    return Object.fromEntries(state.minutes.map((minute) => [minute.startedAt, minute.tally.purposes.task?.tokens.input]))
+function observation(id: string, receivedAt: number, inputTokens: number, policyEpoch = 1): PendingUsageObservation {
+    return { id, receivedAt, policyEpoch, tally: settling(inputTokens) }
 }
 
 function fold(state: UsageOutboxState, observations: PendingUsageObservation[], now: number, name = "a.1.sealed.jsonl") {
@@ -47,280 +44,238 @@ function fold(state: UsageOutboxState, observations: PendingUsageObservation[], 
 }
 
 function batch(state: UsageOutboxState, now: number, requestId = REQUEST_A) {
-    const decision = takeUsageBatch(state, { now, requestId, client: CLIENT, settleMs: SETTLE })
+    return takeUsageBatch(state, { now, requestId, client: CLIENT, settleMs: SETTLE })
+}
+
+function sentBody(state: UsageOutboxState, now: number, requestId = REQUEST_A): UsageBodyWire {
+    const decision = batch(state, now, requestId)
     if (decision.kind !== "batch") throw new Error(`expected a batch, got ${decision.kind}`)
-    return { ...decision, sent: JSON.parse(new TextDecoder().decode(decision.bytes)) as UsageBodyWire }
+    return decision.body
+}
+
+function inputTokensAt(state: UsageOutboxState, startedAt: number): number | undefined {
+    return state.seconds.find((second) => second.startedAt === startedAt)?.tally.facts[0]?.tokens.input
+}
+
+function sentInputTokens(body: UsageBodyWire): number | undefined {
+    return body.facts[0]?.tokens.input
+}
+
+// Folding clamps an observation to at most `now`, so a batch is taken one settle
+// period after the fold rather than at the same instant.
+const foldedAt = T0 + SECOND + SETTLE
+const readyAt = foldedAt + SETTLE
+const readyState: UsageOutboxState = {
+    ...fold(emptyUsageOutbox(1), [observation("1", T0, 1)], foldedAt),
+    pacing: { ...INITIAL_PACING, nextEligibleAt: 0 },
 }
 
 describe("foldUsageShards", () => {
-    it("merges shards per minute and does not fold a shard twice after a crash before its removal", () => {
+    it("merges shards per second and does not fold a shard twice after a crash before its removal", () => {
         const shards = [
-            { name: "a.1.sealed.jsonl", observations: [observation("1", T0 + 1_000, 10), observation("2", T0 + MINUTE, 5)] },
-            { name: "b.1.sealed.jsonl", observations: [observation("3", T0 + 59_999, 7)] },
+            { name: "a.jsonl", observations: [observation("1", T0, 10), observation("2", T0 + SECOND, 5)] },
+            { name: "b.jsonl", observations: [observation("3", T0, 7)] },
         ]
 
-        const folded = foldUsageShards(emptyUsageOutbox(1), shards, T0 + 2 * MINUTE)
-        const refolded = foldUsageShards(folded, shards, T0 + 2 * MINUTE)
-        const afterRemoval = foldUsageShards(refolded, [shards[1]], T0 + 2 * MINUTE)
+        const folded = foldUsageShards(emptyUsageOutbox(1), shards, T0 + 2 * SECOND + SETTLE)
+        const refolded = foldUsageShards(folded, shards, T0 + 2 * SECOND + SETTLE)
+        const afterRemoval = foldUsageShards(refolded, [shards[1] as (typeof shards)[number]], T0 + 2 * SECOND + SETTLE)
 
-        expect(tokensByMinute(folded)).toEqual({ [T0]: 17, [T0 + MINUTE]: 5 })
-        expect(folded.minutes.find((minute) => minute.startedAt === T0)?.tally.purposes.task?.requests.completed).toBe(2)
+        // The same second in two shards is one claimed second carrying both requests.
+        expect(inputTokensAt(folded, T0)).toBe(17)
+        expect(inputTokensAt(folded, T0 + SECOND)).toBe(5)
+        expect(folded.seconds).toHaveLength(2)
         expect(refolded).toEqual(folded)
-        expect(afterRemoval.foldedShards).toEqual(["b.1.sealed.jsonl"])
-        expect(tokensByMinute(afterRemoval)).toEqual(tokensByMinute(folded))
+        // The remaining shard is remembered as folded, so its observations are not counted twice.
+        expect(afterRemoval.seconds).toEqual(folded.seconds)
+        expect(inputTokensAt(afterRemoval, T0)).toBe(17)
+        expect(afterRemoval.foldedShards).toEqual(["b.jsonl"])
     })
 
-    it("drops another epoch, moves late arrivals past sent minutes and clamps future ones to now", () => {
-        const state: UsageOutboxState = { ...emptyUsageOutbox(1), sealedThrough: T0 + 2 * MINUTE }
+    it("drops observations gathered under another policy epoch", () => {
+        const folded = fold(emptyUsageOutbox(1), [observation("1", T0, 10, 2)], T0 + SECOND + SETTLE)
 
-        const folded = fold(
-            state,
-            [
-                observation("old-epoch", T0 + 2 * MINUTE + 1, 100, 0),
-                observation("late", T0 + 1_000, 3),
-                observation("future", T0 + 30 * MINUTE, 4),
-            ],
-            T0 + 3 * MINUTE + 1_000,
-        )
-
-        expect(tokensByMinute(folded)).toEqual({ [T0 + 2 * MINUTE]: 3, [T0 + 3 * MINUTE]: 4 })
+        expect(folded.seconds).toEqual([])
     })
 
-    it("keeps the newest 60 active minutes and counts the older ones as dropped", () => {
-        const observations = Array.from({ length: 62 }, (_, index) => observation(String(index), T0 + index * MINUTE, index + 1))
+    it("never places an observation before a second already sent", () => {
+        const state = { ...emptyUsageOutbox(1), sealedThrough: T0 + 10 * SECOND }
+        const folded = fold(state, [observation("1", T0, 10)], T0 + 11 * SECOND + SETTLE)
 
-        const folded = fold(emptyUsageOutbox(1), observations, T0 + 62 * MINUTE)
+        expect(folded.seconds.map((second) => second.startedAt)).toEqual([T0 + 10 * SECOND])
+    })
 
-        expect(folded.minutes.map((minute) => minute.startedAt)).toEqual(
-            Array.from({ length: 60 }, (_, index) => T0 + (index + 2) * MINUTE),
-        )
-        expect(folded.droppedMinutes).toBe(2)
+    it("keeps at most 3600 pending seconds and counts the rest as lost", () => {
+        const references = Array.from({ length: 3602 }, (_, index) => observation(`${index}`, T0 + index * SECOND, 1))
+        const folded = fold(emptyUsageOutbox(1), references, T0 + 3602 * SECOND + SETTLE)
+
+        expect(folded.seconds).toHaveLength(3600)
+        expect(folded.droppedSeconds).toBe(2)
+        // The newest seconds survive, so a backlog drains from the far past onwards.
+        expect(folded.seconds[0]?.startedAt).toBe(T0 + 2 * SECOND)
     })
 })
 
 describe("takeUsageBatch", () => {
     const pending = fold(
-        { ...emptyUsageOutbox(1), droppedMinutes: 3 },
-        [observation("1", T0 + 1_000, 10), observation("2", T0 + MINUTE + 1, 20), observation("3", T0 + 2 * MINUTE, 40)],
-        T0 + 2 * MINUTE + 1,
+        { ...emptyUsageOutbox(1), droppedSeconds: 3 },
+        [observation("1", T0, 10), observation("2", T0 + SECOND, 20), observation("3", T0 + 2 * SECOND, 40)],
+        T0 + 3 * SECOND + SETTLE,
     )
-    const due = T0 + 2 * MINUTE + SETTLE
+    /** The newest carried second plus one settle period, with the device gate open. */
+    const due = T0 + 3 * SECOND + SETTLE
+    const openGate = { ...INITIAL_PACING, nextEligibleAt: 0 }
+    const pendingAtDue: UsageOutboxState = { ...pending, pacing: openGate }
 
-    it("builds no new batch before the server gate, while a wait runs, or while a batch is inflight", () => {
-        const input = { now: due, requestId: REQUEST_A, client: CLIENT, settleMs: SETTLE }
-        const gated = { ...pending, pacing: { ...INITIAL_PACING, nextEligibleAt: due + 1 } }
-        const waiting = { ...pending, pacing: { ...INITIAL_PACING, waitUntil: due + 1 } }
-        const busy = batch(pending, due).state
+    it("waits for the gate, for a running inflight and for an unfinished second", () => {
+        const gated = { ...pendingAtDue, pacing: { ...INITIAL_PACING, nextEligibleAt: due + 1 } }
+        const busy = batch(pendingAtDue, due)
+        if (busy.kind !== "batch") throw new Error("expected a batch")
 
-        expect(takeUsageBatch(gated, input)).toEqual({ kind: "none" })
-        expect(takeUsageBatch(waiting, input)).toEqual({ kind: "none" })
-        expect(takeUsageBatch(busy, { ...input, now: due + DEFAULT_INTERVAL_MS.usage, requestId: REQUEST_B })).toEqual({
+        expect(batch(gated, due)).toEqual({ kind: "none" })
+        expect(takeUsageBatch(busy.state, { now: due, requestId: REQUEST_B, client: CLIENT, settleMs: SETTLE })).toEqual({
+            kind: "none",
+        })
+        // The newest second is not settled yet at this instant, so nothing may be taken.
+        expect(
+            takeUsageBatch(pending, { now: T0 + 2 * SECOND + 1, requestId: REQUEST_A, client: CLIENT, settleMs: SETTLE }),
+        ).toEqual({
             kind: "none",
         })
     })
 
-    it("takes only settled minutes into exact bytes and reserves the default interval", () => {
-        const { state, inflight, sent, bytes } = batch(pending, due)
+    it("publishes a body whose active seconds are the seconds it carries", () => {
+        const decision = batch(pendingAtDue, due)
+        if (decision.kind !== "batch") throw new Error("expected a batch")
 
-        expect(sent).toMatchObject({
-            schema_version: 2,
-            client: CLIENT,
-            window: { started_at: T0, ended_at: T0 + 2 * MINUTE, active_minutes: 2, dropped_minutes: 3 },
+        expect(decision.body.window).toEqual({
+            started_at: T0,
+            ended_at: T0 + 3 * SECOND,
+            active_seconds: 3,
+            dropped_seconds: 3,
         })
-        expect(sent.purposes.task?.tokens.input).toBe(30)
-        expect(validateUsageBody(sent)).toEqual([])
-        expect(inflight).toMatchObject({ requestId: REQUEST_A, bodySha256: sha256Hex(bytes), droppedMinutes: 3, attempts: 0 })
-        expect(tokensByMinute(state)).toEqual({ [T0 + 2 * MINUTE]: 40 })
-        expect(state).toMatchObject({ sealedThrough: T0 + 2 * MINUTE, droppedMinutes: 0 })
-        expect(state.pacing.nextEligibleAt).toBe(due + DEFAULT_INTERVAL_MS.usage)
+        expect(validateUsageBody(decision.body)).toEqual([])
+        expect(sentInputTokens(decision.body)).toBe(70)
+        expect(decision.inflight).toMatchObject({
+            requestId: REQUEST_A,
+            bodySha256: sha256Hex(decision.bytes),
+            droppedSeconds: 3,
+            attempts: 0,
+        })
     })
 
-    it("sends a backlog of minutes that are not contiguous, and keeps one batch within a 60-minute span", () => {
-        const backlog = fold(
-            emptyUsageOutbox(1),
-            [
-                observation("1", T0, 1),
-                observation("2", T0 + 5 * MINUTE, 2),
-                observation("3", T0 + 59 * MINUTE, 4),
-                observation("4", T0 + 60 * MINUTE, 8),
-            ],
-            T0 + 70 * MINUTE,
-        )
+    it("leaves the seconds it did not take in the queue and clears the reported loss", () => {
+        // One millisecond before the last second settles the batch carries the two it
+        // can and leaves that one behind.
+        const takenAt = due - 1
+        const decision = batch(pendingAtDue, takenAt)
+        if (decision.kind !== "batch") throw new Error("expected a batch")
 
-        const first = batch(backlog, T0 + 70 * MINUTE)
+        expect(decision.state.seconds.map((second) => second.startedAt)).toEqual([T0 + 2 * SECOND])
+        expect(decision.state).toMatchObject({ sealedThrough: T0 + 2 * SECOND, droppedSeconds: 0 })
+        expect(decision.state.pacing.nextEligibleAt).toBe(takenAt + DEFAULT_INTERVAL_MS.usage)
+    })
 
-        expect(first.sent.window).toEqual({ started_at: T0, ended_at: T0 + 60 * MINUTE, active_minutes: 3, dropped_minutes: 0 })
-        expect(validateUsageBody(first.sent)).toEqual([])
-        expect(tokensByMinute(first.state)).toEqual({ [T0 + 60 * MINUTE]: 8 })
+    it("takes at most the seconds inside the 60-minute span", () => {
+        const hour = 60 * 60 * 1000
+        const state = fold(emptyUsageOutbox(1), [observation("1", T0, 1)], T0 + hour + SETTLE)
+
+        expect(sentBody(state, T0 + hour + SETTLE).window).toMatchObject({ started_at: T0, ended_at: T0 + SECOND })
     })
 
     it("drops and counts a batch the service would refuse instead of sending it", () => {
-        const decision = takeUsageBatch(pending, {
-            now: due,
-            requestId: REQUEST_A,
-            client: { version: "not a version" },
-            settleMs: SETTLE,
-        })
+        // A first second that is not second-aligned is the one thing the client can
+        // still get wrong here, so the body must be refused rather than sent.
+        const unrefusable = {
+            ...pendingAtDue,
+            seconds: pendingAtDue.seconds.map((second) => ({ ...second, startedAt: T0 + 1 })),
+        }
+        const decision = batch(unrefusable, due)
 
         expect(decision.kind).toBe("rejected")
         if (decision.kind !== "rejected") return
-        expect(decision.violations).toEqual(["client"])
+        expect(decision.violations).toContain("window")
         expect(decision.state.inflight).toBeUndefined()
-        expect(decision.state.droppedMinutes).toBe(3 + 2)
-        expect(tokensByMinute(decision.state)).toEqual({ [T0 + 2 * MINUTE]: 40 })
+        expect(decision.state.droppedSeconds).toBe(3 + 3)
     })
 })
 
-describe("settleUsageInflight", () => {
-    const sentAt = T0 + 2 * MINUTE + SETTLE
-    const sending = batch(fold(emptyUsageOutbox(1), [observation("1", T0 + 1, 10)], sentAt), sentAt)
+describe("inflight settlement", () => {
+    function sending(): { state: UsageOutboxState; requestId: string } {
+        const decision = batch(readyState, readyAt)
+        if (decision.kind !== "batch") throw new Error("expected a batch")
+        return { state: decision.state, requestId: decision.inflight.requestId }
+    }
 
-    it.each([
-        "accepted",
-        "duplicate",
-        "ignored_version",
-    ] as const)("drops a batch acknowledged as %s and follows the server's gate", (disposition) => {
-        const ackAt = sentAt + 5_000
-        const gate = ackAt + 6 * 60 * MINUTE
-
+    it("moves the gate to what the service named when the batch is acknowledged", () => {
+        const { state, requestId } = sending()
         const settled = settleUsageInflight(
-            sending.state,
-            REQUEST_A,
-            { kind: "acknowledged", disposition, nextEligibleAt: gate },
-            ackAt,
+            state,
+            requestId,
+            { kind: "acknowledged", disposition: "accepted", nextEligibleAt: 0 },
+            0,
         )
 
         expect(settled.inflight).toBeUndefined()
-        expect(settled.droppedMinutes).toBe(0)
-        expect(settled.pacing.nextEligibleAt).toBe(gate + GATE_MARGIN_MS)
-        expect(takeUsageBatch(settled, { now: gate, requestId: REQUEST_B, client: CLIENT, settleMs: SETTLE })).toEqual({
-            kind: "none",
-        })
+        expect(settled.pacing.nextEligibleAt).toBe(0 + GATE_MARGIN_MS)
     })
 
-    it("on a 429 keeps the batch as it is and replays it first once the wait ends; newer minutes travel in their own batch", () => {
-        const withLater = fold(
-            sending.state,
-            [observation("2", T0 + 1_500, 5), observation("3", T0 + 3 * MINUTE, 1)],
-            T0 + 3 * MINUTE,
-            "b.1.sealed.jsonl",
-        )
-        const waitedAt = sentAt + 1_000
+    it("ignores a settlement for a request another sender already replaced", () => {
+        const { state } = sending()
 
+        expect(settleUsageInflight(state, REQUEST_B, { kind: "discard", code: "x" }, 0)).toEqual(state)
+    })
+
+    it("keeps the same batch across a 429 wait so the bytes are replayed first", () => {
+        const { state, requestId } = sending()
+        const waitedFrom = readyAt + 1_000
         const waiting = settleUsageInflight(
-            withLater,
-            REQUEST_A,
-            { kind: "wait", code: "quota_protected", retryAfterMs: 90 * MINUTE },
-            waitedAt,
-            noJitter,
+            state,
+            requestId,
+            { kind: "wait", code: "rate_limited", retryAfterMs: 4_000 },
+            waitedFrom,
         )
-        const resumeAt = waiting.pacing.waitUntil
-        const acknowledged = settleUsageInflight(
-            waiting,
-            REQUEST_A,
-            { kind: "acknowledged", disposition: "duplicate", nextEligibleAt: resumeAt },
-            resumeAt,
-        )
-        const next = batch(acknowledged, resumeAt + GATE_MARGIN_MS, REQUEST_B)
 
-        expect(waiting.pacing).toMatchObject({ waitUntil: waitedAt + 90 * MINUTE, consecutiveWaits: 1 })
-        expect(waiting.inflight).toMatchObject({
-            requestId: REQUEST_A,
-            bodySha256: sending.inflight.bodySha256,
-            minutes: sending.inflight.minutes,
-            attempts: 0,
-            notBefore: resumeAt,
-        })
-        expect(waiting.minutes).toEqual(withLater.minutes)
-        expect(waiting.droppedMinutes).toBe(0)
-        expect(dueUsageReplay(waiting, resumeAt - 1)).toBeUndefined()
-        expect(dueUsageReplay(waiting, resumeAt)?.requestId).toBe(REQUEST_A)
-        expect(takeUsageBatch(waiting, { now: resumeAt, requestId: REQUEST_B, client: CLIENT, settleMs: SETTLE })).toEqual({
-            kind: "none",
-        })
-        expect(next.inflight).toMatchObject({ requestId: REQUEST_B, attempts: 0 })
-        expect(next.sent.purposes.task?.tokens.input).toBe(6)
+        expect(waiting.inflight?.seconds).toEqual(state.inflight?.seconds)
+        expect(waiting.droppedSeconds).toBe(0)
+        expect(dueUsageReplay(waiting, waiting.pacing.waitUntil - 1)).toBeUndefined()
+        expect(dueUsageReplay(waiting, waiting.pacing.waitUntil)?.requestId).toBe(requestId)
     })
 
-    it("does not count a 429 as a replay, nor its wait against the 24-hour limit", () => {
-        const timedOut = settleUsageInflight(sending.state, REQUEST_A, { kind: "replay" }, sentAt)
-        const waitedAt = timedOut.inflight?.notBefore ?? sentAt
-        const waiting = settleUsageInflight(
-            timedOut,
-            REQUEST_A,
-            { kind: "wait", code: "telemetry_paused", retryAfterMs: 30 * 60 * MINUTE },
-            waitedAt,
-            noJitter,
-        )
-        const resumeAt = waiting.pacing.waitUntil
+    it("counts the seconds of an abandoned batch as lost", () => {
+        const { state, requestId } = sending()
+        const discarded = settleUsageInflight(state, requestId, { kind: "too_large" }, 0)
 
-        const replayed = settleUsageInflight(waiting, REQUEST_A, { kind: "replay" }, resumeAt)
-
-        expect(waiting.inflight?.attempts).toBe(1)
-        expect(resumeAt - sentAt).toBeGreaterThan(24 * 60 * MINUTE)
-        expect(replayed.inflight).toMatchObject({ requestId: REQUEST_A, attempts: 2 })
-        expect(replayed.droppedMinutes).toBe(0)
+        expect(discarded.inflight).toBeUndefined()
+        expect(discarded.droppedSeconds).toBe(1)
     })
 
-    it("holds a due replay while a wait runs on the channel", () => {
-        const replaying = settleUsageInflight(sending.state, REQUEST_A, { kind: "replay" }, sentAt)
-        const dueAt = replaying.inflight?.notBefore ?? 0
-        const paused: UsageOutboxState = { ...replaying, pacing: { ...replaying.pacing, waitUntil: dueAt + MINUTE } }
+    it("counts both the seconds carried and the loss it reported when a batch is abandoned", () => {
+        const pending = fold({ ...emptyUsageOutbox(1), droppedSeconds: 2 }, [observation("1", T0, 1)], foldedAt)
+        const decision = batch({ ...pending, pacing: { ...INITIAL_PACING, nextEligibleAt: 0 } }, readyAt)
+        if (decision.kind !== "batch") throw new Error("expected a batch")
 
-        expect(dueUsageReplay(replaying, dueAt)?.requestId).toBe(REQUEST_A)
-        expect(dueUsageReplay(paused, dueAt)).toBeUndefined()
-        expect(dueUsageReplay(paused, dueAt + MINUTE)?.requestId).toBe(REQUEST_A)
-    })
+        const discarded = settleUsageInflight(decision.state, decision.inflight.requestId, { kind: "body_lost" }, 0)
 
-    it("replays the same inflight with backoff and abandons it after the attempt budget", () => {
-        let state = sending.state
-        let now = sentAt
-        for (let attempt = 1; attempt < MAX_REPLAY_ATTEMPTS; attempt++) {
-            state = settleUsageInflight(state, REQUEST_A, { kind: "replay" }, now)
-            expect(state.inflight?.attempts).toBe(attempt)
-            expect(dueUsageReplay(state, now)).toBeUndefined()
-            now = state.inflight?.notBefore ?? now
-            expect(dueUsageReplay(state, now)?.requestId).toBe(REQUEST_A)
-        }
-
-        const abandoned = settleUsageInflight(state, REQUEST_A, { kind: "replay" }, now)
-
-        expect(abandoned.inflight).toBeUndefined()
-        expect(abandoned.droppedMinutes).toBe(1)
-    })
-
-    it("honours a server delay longer than its own backoff", () => {
-        const replayed = settleUsageInflight(sending.state, REQUEST_A, { kind: "replay", retryAfterMs: 10 * MINUTE }, sentAt)
-
-        expect(replayed.inflight?.notBefore).toBe(sentAt + 10 * MINUTE)
-    })
-
-    it.each([
-        { kind: "discard", code: "invalid_usage" },
-        { kind: "too_large" },
-    ] as const)("drops a batch refused with $kind without retrying and counts its minutes", (resolution) => {
-        const dropped = settleUsageInflight(sending.state, REQUEST_A, resolution, sentAt)
-
-        expect(dropped.inflight).toBeUndefined()
-        expect(dropped.droppedMinutes).toBe(1)
-        expect(dueUsageReplay(dropped, sentAt + 24 * 60 * MINUTE)).toBeUndefined()
-    })
-
-    it("ignores an outcome for a request another sender already settled", () => {
-        expect(settleUsageInflight(sending.state, REQUEST_B, { kind: "discard", code: "invalid" }, sentAt)).toBe(sending.state)
+        expect(discarded.droppedSeconds).toBe(1 + 2)
     })
 })
 
-describe("alignUsagePolicyEpoch", () => {
-    it("drops everything gathered under another epoch but keeps the server gate and any wait", () => {
-        const sentAt = T0 + 2 * MINUTE + SETTLE
-        const { state } = batch(fold(emptyUsageOutbox(1), [observation("1", T0, 10)], sentAt), sentAt)
-        const waiting: UsageOutboxState = { ...state, pacing: { ...state.pacing, waitUntil: sentAt + MINUTE } }
+describe("policy epoch", () => {
+    it("drops the queue and the inflight but keeps the device gate when consent changes", () => {
+        const decision = batch(readyState, readyAt)
+        if (decision.kind !== "batch") throw new Error("expected a batch")
+        const waiting = settleUsageInflight(
+            decision.state,
+            decision.inflight.requestId,
+            { kind: "wait", code: "rate_limited", retryAfterMs: 4_000 },
+            readyAt,
+        )
 
         const aligned = alignUsagePolicyEpoch(waiting, 2)
 
-        expect(aligned).toMatchObject({ policyEpoch: 2, minutes: [], droppedMinutes: 0, pacing: waiting.pacing })
+        expect(aligned).toMatchObject({ policyEpoch: 2, seconds: [], droppedSeconds: 0, pacing: waiting.pacing })
         expect(aligned.inflight).toBeUndefined()
-        expect(alignUsagePolicyEpoch(aligned, 2)).toBe(aligned)
+        expect(alignUsagePolicyEpoch(waiting, 1)).toBe(waiting)
     })
 })

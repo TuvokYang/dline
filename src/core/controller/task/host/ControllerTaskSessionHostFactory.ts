@@ -74,6 +74,7 @@ export class ControllerTaskSessionHostFactory implements TaskSessionHostFactory 
             api: context.api,
             toolState: context.toolState,
             createBrowser: browserFactory,
+            ...(context.observeChecklist === undefined ? {} : { observeChecklist: context.observeChecklist }),
         })
         rollback.add({ release: () => callbackOwner.dispose() })
         const diffViewProvider = host.createDiffViewProvider()

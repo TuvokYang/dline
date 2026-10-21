@@ -6,6 +6,7 @@ import type { IgnoreController } from "@core/ignore/IgnoreController"
 import type { ImageGenerationService } from "@core/image-generation/ImageGenerationService"
 import type { CommandPermissionController } from "@core/permissions"
 import type { ExplicitInstructionAuthorization, ExplicitInstructionConsumePort } from "@core/task/explicit-instructions/types"
+import type { ChecklistChange } from "@core/task/telemetry/ChecklistDiff"
 import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import type { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
 import type { CommandCancellationResult, CommandExecutionOptions, CommandExecutionOutcome } from "@integrations/terminal"
@@ -257,6 +258,14 @@ export interface TaskCallbacks {
      * decide an approval presents none, and must not have to supply a stub.
      */
     updateFCListFromToolResponse?: (taskProgress: string | undefined) => Promise<void>
+
+    /**
+     * Report what changed in the checklist a call carried.
+     *
+     * Optional for the same reason: a surface without a checklist has nothing to
+     * observe, and an absent callback must stay distinguishable from an empty one.
+     */
+    observeChecklist?: (changes: readonly ChecklistChange[]) => void
 
     // Additional callbacks for task management
     postStateToWebview: () => Promise<void>

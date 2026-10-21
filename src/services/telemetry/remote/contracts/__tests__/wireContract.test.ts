@@ -20,11 +20,23 @@ describe("usage and logs response classification (contract v2.1 §1.5)", () => {
     it.each([
         "accepted",
         "duplicate",
-        "ignored_version",
     ] as const)("acknowledges a 200 ok:true %s and carries the gate the service named", (disposition) => {
         const response = json(200, { ok: true, disposition, next_eligible_at: NOW + 600_000, dropped_fields: 2 })
 
-        expect(classifyDeliveryResponse(response)).toEqual({ kind: "acknowledged", disposition, nextEligibleAt: NOW + 600_000 })
+        expect(classifyDeliveryResponse(response)).toEqual({
+            kind: "acknowledged",
+            disposition,
+            nextEligibleAt: NOW + 600_000,
+        })
+    })
+
+    it("does not treat a disposition outside the confirmation set as a stored batch", () => {
+        // `accepted` and `duplicate` are the whole confirmation set. A version the
+        // service chose not to store must not be dropped as if it had been: the batch
+        // is replayed under the same request ID instead.
+        const ignored = json(200, { ok: true, disposition: "ignored_version", next_eligible_at: NOW + 600_000 })
+
+        expect(classifyDeliveryResponse(ignored).kind).toBe("replay")
     })
 
     it("acknowledges the logs answer that counted records over the service's daily limit", () => {

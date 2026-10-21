@@ -9,6 +9,7 @@ import { Mode } from "../../../shared/storage/types"
 import { writeFile } from "../../../utils/fs"
 import { ensureTaskDirectoryExists } from "../../storage/disk"
 import { StateManager } from "../../storage/StateManager"
+import { type ChecklistChange, type ChecklistReport, diffChecklist, parseChecklist } from "../telemetry/ChecklistDiff"
 import type { ToolConversationState } from "../tools/state/ToolHandlerState"
 import {
     appendToFocusChainHistory,
@@ -69,6 +70,13 @@ export interface FocusChainDependencies {
     postStateToWebview: () => Promise<void>
     say: (type: UiSay, text?: string, images?: string[], files?: string[], partial?: boolean) => Promise<number | undefined>
     focusChainSettings: FocusChainSettings
+    /**
+     * Receive item-level checklist changes for usage.
+     *
+     * Optional: a task that reports no usage needs no observer, and an absent
+     * observer must stay distinguishable from one that saw no changes.
+     */
+    observeChecklist?: (changes: readonly ChecklistChange[]) => void
 }
 
 export class FocusChainManager {
@@ -86,6 +94,9 @@ export class FocusChainManager {
     ) => Promise<number | undefined>
     private focusChainFileWatcher?: chokidar.FSWatcher
     private hasTrackedFirstProgress = false
+    /** The last accepted checklist, so the next accepted one can be compared. */
+    private lastObservedChecklist: ChecklistReport | undefined
+    private readonly observeUsageChecklist?: (changes: readonly ChecklistChange[]) => void
     private focusChainSettings: FocusChainSettings
     private fileUpdateDebounceTimer?: NodeJS.Timeout
     private disposed = false
@@ -98,6 +109,7 @@ export class FocusChainManager {
         this.postStateToWebview = dependencies.postStateToWebview
         this.say = dependencies.say
         this.focusChainSettings = dependencies.focusChainSettings
+        this.observeUsageChecklist = dependencies.observeChecklist
     }
 
     /**
@@ -628,6 +640,30 @@ export class FocusChainManager {
             this.hasTrackedFirstProgress = true
         } else if (this.hasTrackedFirstProgress && totalItems > 0) {
             telemetryService.captureFocusChainProgressUpdate(this.taskId, totalItems, completedItems)
+        }
+        // Reached only after a checklist was accepted, so the counted changes are
+        // the ones the user actually sees rather than every report the model sent.
+        this.observeChecklist(checklist)
+    }
+
+    /**
+     * Report item-level changes to the usage collector.
+     *
+     * Focus-chain telemetry counts items; usage needs to know which items moved,
+     * because "how many rounds did a completion take" is a per-item question. The
+     * diff is computed from the last accepted report, so a rejected update
+     * contributes nothing.
+     */
+    private observeChecklist(checklist: string) {
+        try {
+            const previous = this.lastObservedChecklist
+            const report = parseChecklist(checklist)
+            const changes = diffChecklist(previous, report)
+            this.lastObservedChecklist = report
+            if (changes.length > 0) this.observeUsageChecklist?.(changes)
+        } catch (error) {
+            // Usage bookkeeping must never fail a checklist update.
+            Logger.error(`[Task ${this.taskId}] focus chain: Failed to observe checklist for usage:`, error)
         }
     }
 

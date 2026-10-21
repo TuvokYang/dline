@@ -40,6 +40,9 @@ export interface UsageStreamTiming {
     readonly generationMs: number
 }
 
+import type { ChecklistChange } from "./ChecklistDiff"
+import type { UsageToolCall } from "./UsageToolCalls"
+
 /** Attempts that failed before the request settled, all served by the same provider. */
 export interface UsageRetries {
     /** The backoff waited before each retry, in order. */
@@ -67,6 +70,20 @@ export interface UsageSettlement {
     readonly failureClass?: UsageErrorClass
     /** Read when the request opens; absent when the serving handler could not say. */
     readonly servedBy?: UsageServedModel
+    /**
+     * The tool calls this request's turn settled, for the per-tool breakdown.
+     *
+     * Absent when the reading surface cannot resolve them; the request still
+     * reports its own outcome totals, so only the breakdown is lost.
+     */
+    readonly toolCalls?: readonly UsageToolCall[]
+    /**
+     * Checklist changes this request's turn reported, in the order they happened.
+     *
+     * Absent when the surface has no checklist; an empty list also stays absent so
+     * "not reported" and "nothing changed" are never confused at the wire.
+     */
+    readonly checklistChanges?: readonly ChecklistChange[]
 }
 
 /**

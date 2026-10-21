@@ -19,6 +19,7 @@ import type { TaskApiHandlerOwner } from "../session/TaskApiHandlerOwner"
 import type { TaskInteractionOwner } from "../session/TaskInteractionOwner"
 import type { CheckpointRestoreMode, CheckpointRestoreResult, WorkspaceRestoreResult } from "../shell/checkpoint-restore"
 import type { TaskStateManager } from "../TaskStateManager"
+import type { ChecklistChange } from "../telemetry/ChecklistDiff"
 import type { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import type { TaskCallbacks, TaskServices } from "../tools/types/TaskConfig"
 
@@ -59,6 +60,13 @@ export interface TaskSessionHostContext {
     /** The session's chat-row id sequence; a row the host adds draws from it so it cannot land on another row's id. */
     readonly nextPresentationId: PresentationIdSequence
     readonly readState: () => Readonly<TaskState>
+    /**
+     * Receive accepted checklist changes for usage.
+     *
+     * Optional so a host can build a task without usage; an absent observer must
+     * stay distinguishable from an observer that saw no changes.
+     */
+    readonly observeChecklist?: (changes: readonly ChecklistChange[]) => void
     readonly checkpoints: TaskSessionCheckpointPort
     /** Rewinds this task's journal conversation, for a restore from a summary card. */
     readonly conversationRewind?: ConversationRewindPort

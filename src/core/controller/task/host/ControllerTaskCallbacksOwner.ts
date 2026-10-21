@@ -11,6 +11,7 @@ import type { MessageStateHandler } from "@core/task/message-state"
 import type { PresentationIdSequence } from "@core/task/session/PresentationIdSequence"
 import type { TaskApiHandlerOwner } from "@core/task/session/TaskApiHandlerOwner"
 import type { TaskInteractionOwner } from "@core/task/session/TaskInteractionOwner"
+import type { ChecklistChange } from "@core/task/telemetry/ChecklistDiff"
 import type { DefaultToolHandlerState } from "@core/task/tools/state/ToolHandlerState"
 import type { TaskCallbacks } from "@core/task/tools/types/TaskConfig"
 import type { BegunCheckpointRow, CheckpointRowFields, HeldCheckpointRow } from "@integrations/checkpoints"
@@ -39,6 +40,13 @@ export interface ControllerTaskCallbacksOwnerOptions {
     readonly api: TaskApiHandlerOwner
     readonly toolState: DefaultToolHandlerState
     readonly createBrowser: () => BrowserSession
+    /**
+     * Receive accepted checklist changes, so usage can count item-level TODO work.
+     *
+     * Optional: an execution surface that records no usage supplies none, and an
+     * absent observer must remain distinguishable from one that saw no changes.
+     */
+    readonly observeChecklist?: (changes: readonly ChecklistChange[]) => void
 }
 
 function interactionKind(type: UiAsk | string): InteractionKind {
@@ -113,6 +121,9 @@ export class ControllerTaskCallbacksOwner {
             postStateToWebview: () => options.controller.postStateToWebview(),
             say: (...args) => this.say(...args),
             focusChainSettings: options.stateManager.getGlobalSettingsKey("focusChainSettings"),
+            // The checklist is the only place item-level TODO work is visible, so
+            // usage observes it here rather than re-parsing tool arguments.
+            ...(options.observeChecklist === undefined ? {} : { observeChecklist: options.observeChecklist }),
         })
         this.focusChainInstructions = {
             beginRequest: () => this.focusChain.beginRequest(),
@@ -137,6 +148,7 @@ export class ControllerTaskCallbacksOwner {
                 // The tab title carries checklist progress, as on dev.
                 void options.controller.syncPanelTitle()
             },
+            ...(options.observeChecklist === undefined ? {} : { observeChecklist: options.observeChecklist }),
             postStateToWebview: () => options.controller.postStateToWebview(),
             reinitExistingTaskFromId: (taskId) => options.controller.reinitExistingTaskFromId(taskId),
             cancelTask: () => this.requestCancellation(),

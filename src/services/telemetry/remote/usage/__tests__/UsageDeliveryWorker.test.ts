@@ -8,13 +8,14 @@ import { USAGE_SENDER_LEASE_MS, UsageOutboxRepository } from "@/core/storage/tel
 import type { AcquireOptions, TokenAcquisition } from "../../auth/DeviceTokenBroker"
 import type { WireResponse } from "../../contracts/classification"
 import { DEFAULT_INTERVAL_MS, GATE_MARGIN_MS } from "../../contracts/pacing"
-import { USAGE_MINUTE_MS, type UsageBodyWire } from "../../contracts/usageBody"
+import { USAGE_MINUTE_MS, USAGE_SECOND_MS, type UsageBodyWire } from "../../contracts/usageBody"
 import { DlineOtelTransportError, type UsageDelivery, type UsageTransport } from "../../transport/DlineOtelHttpClient"
 import { USAGE_TOKEN_REJECTED, UsageDeliveryWorker } from "../UsageDeliveryWorker"
-import { minuteStartOf } from "../usageBatch"
+import { secondStartOf } from "../usageBatch"
 import { projectUsageSettlement } from "../usageTally"
 
 const MINUTE = USAGE_MINUTE_MS
+const SECOND = USAGE_SECOND_MS
 const SETTLE = 20_000
 const HOUR = 60 * MINUTE
 
@@ -60,7 +61,8 @@ function accepted(disposition = "accepted", nextEligibleAt?: number): WireRespon
 }
 
 function inputTokens(body: UsageBodyWire): number | undefined {
-    return body.purposes.task?.tokens.input
+    // One fact per identity, so the batch's input is the sum of its facts.
+    return body.facts.reduce((sum, fact) => sum + fact.tokens.input, 0)
 }
 
 describe("UsageDeliveryWorker", () => {
@@ -74,7 +76,7 @@ describe("UsageDeliveryWorker", () => {
         root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-otel-worker-"))
         layout = resolveOtelStorageLayout(path.join(root, "data"))
         // A minute boundary ahead of the wall clock, so shard settling follows the fake clock rather than file times.
-        start = minuteStartOf(Date.now()) + 2 * MINUTE
+        start = secondStartOf(Date.now()) + 2 * MINUTE
         now = start
         requestCounter = 0
     })
@@ -139,11 +141,13 @@ describe("UsageDeliveryWorker", () => {
         expect(repeat).toEqual({ kind: "idle" })
         expect(transport.deliveries).toHaveLength(1)
         expect(transport.deliveries[0].accessToken).toBe("token-1")
-        expect(transport.sent(0).window).toEqual({
-            started_at: start,
-            ended_at: start + MINUTE,
-            active_minutes: 1,
-            dropped_minutes: 0,
+        // The two observations land in their own seconds, so the window names those
+        // seconds rather than the minute they started in.
+        expect(transport.sent(0).window).toMatchObject({
+            started_at: start + 1_000,
+            ended_at: start + 50_000 + SECOND,
+            active_seconds: 2,
+            dropped_seconds: 0,
         })
         expect(inputTokens(transport.sent(0))).toBe(12)
         expect((await pacing())?.nextEligibleAt).toBe(start + 20 * MINUTE + GATE_MARGIN_MS)
@@ -153,23 +157,39 @@ describe("UsageDeliveryWorker", () => {
 
     it("builds no new batch before the gate the service named, and sends everything gathered once it opens", async () => {
         const transport = new FakeTransport()
-        transport.replies.push(accepted("ignored_version", start + 6 * HOUR))
+        transport.replies.push(accepted("accepted", start + 6 * HOUR))
         const sender = worker("window-a", new FakeTokens(), transport)
         await observe("1", start + 1_000, 7)
 
-        const ignored = await sendMinute(sender, start)
+        const delivered = await sendMinute(sender, start)
         await observe("2", start + 2 * MINUTE, 3)
         await observe("3", start + 30 * MINUTE, 4)
         now = start + 6 * HOUR - MINUTE
-        await sender.runCycle(1)
+        const held = await sender.runCycle(1)
         now = start + 6 * HOUR + GATE_MARGIN_MS
         const next = await sender.runCycle(1)
 
-        expect(ignored).toMatchObject({ kind: "delivered", disposition: "ignored_version" })
+        expect(delivered).toMatchObject({ kind: "delivered", disposition: "accepted" })
+        // The gate the acknowledgement named holds the next batch back.
+        expect(held).toEqual({ kind: "idle" })
         expect(transport.deliveries).toHaveLength(2)
         expect(next.kind).toBe("delivered")
-        expect(transport.sent(1).window).toMatchObject({ started_at: start + 2 * MINUTE, active_minutes: 2 })
+        expect(transport.sent(1).window).toMatchObject({ started_at: start + 2 * MINUTE, active_seconds: 2 })
         expect(inputTokens(transport.sent(1))).toBe(7)
+    })
+
+    it("replays a batch whose answer names no confirmation instead of dropping it", async () => {
+        const transport = new FakeTransport()
+        transport.replies.push(accepted("version_not_stored", start + 6 * HOUR))
+        const sender = worker("window-a", new FakeTokens(), transport)
+        await observe("1", start + 1_000, 7)
+
+        const first = await sendMinute(sender, start)
+
+        // An unrecognised disposition is not a confirmation: nothing was stored as
+        // far as the client knows, so the same bytes are retried rather than lost.
+        expect(first).toEqual({ kind: "retrying", requestId: transport.deliveries[0].requestId })
+        expect(transport.deliveries).toHaveLength(1)
     })
 
     it("replays an unknown outcome with the same request ID and bytes only once it is due", async () => {
@@ -286,7 +306,7 @@ describe("UsageDeliveryWorker", () => {
         expect(transport.deliveries).toHaveLength(3)
         expect(new Set(transport.deliveries.map((delivery) => delivery.requestId)).size).toBe(1)
         expect(new Set(transport.deliveries.map((delivery) => delivery.body)).size).toBe(1)
-        expect((await new UsageOutboxRepository(layout).read())?.droppedMinutes).toBe(0)
+        expect((await new UsageOutboxRepository(layout).read())?.droppedSeconds).toBe(0)
         expect(await fs.readdir(layout.usageInflightDir)).toEqual([])
     })
 
@@ -305,7 +325,7 @@ describe("UsageDeliveryWorker", () => {
 
         expect(discarded).toMatchObject({ kind: "discarded", code: "invalid_usage" })
         expect(transport.deliveries).toHaveLength(2)
-        expect(transport.sent(1).window.dropped_minutes).toBe(1)
+        expect(transport.sent(1).window.dropped_seconds).toBe(1)
         expect(inputTokens(transport.sent(1))).toBe(3)
     })
 

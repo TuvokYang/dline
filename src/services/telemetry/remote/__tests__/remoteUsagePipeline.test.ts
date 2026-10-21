@@ -9,11 +9,11 @@ import { USAGE_SENDER_LEASE_MS, UsageOutboxRepository } from "@/core/storage/tel
 import type { UsageSettlement } from "@/core/task/telemetry/UsageSettlement"
 import type { AcquireOptions, TokenAcquisition } from "../auth/DeviceTokenBroker"
 import type { WireResponse } from "../contracts/classification"
-import { USAGE_MINUTE_MS, type UsageBodyWire, validateUsageBody } from "../contracts/usageBody"
+import { USAGE_MINUTE_MS, USAGE_SECOND_MS, type UsageBodyWire, validateUsageBody } from "../contracts/usageBody"
 import { DlineOtelTransportError, type UsageDelivery, type UsageTransport } from "../transport/DlineOtelHttpClient"
 import { RemoteUsageCoordinator, type UsageScheduler } from "../usage/RemoteUsageCoordinator"
 import { UsageDeliveryWorker } from "../usage/UsageDeliveryWorker"
-import { minuteStartOf } from "../usage/usageBatch"
+import { secondStartOf } from "../usage/usageBatch"
 
 /**
  * The remote usage path assembled from its real parts: coordinator, observation
@@ -22,6 +22,7 @@ import { minuteStartOf } from "../usage/usageBatch"
  */
 
 const MINUTE = USAGE_MINUTE_MS
+const SECOND = USAGE_SECOND_MS
 const SETTLE = 20_000
 const CLIENT = { version: "0.11.1", platform: "win32", architecture: "x64", host_editor: "vscode", is_dev: false } as const
 const ALLOWED: LocalUsagePolicyInputs = {
@@ -29,7 +30,7 @@ const ALLOWED: LocalUsagePolicyInputs = {
     organizationDisabled: false,
     hostTelemetryLevel: "all",
 }
-const WIRE_KEYS = new Set(["schema_version", "client", "window", "sessions_started", "purposes", "models", "providers"])
+const WIRE_KEYS = new Set(["schema_version", "client", "window", "sessions_started", "facts"])
 
 class FakeTokens {
     async acquire(_profile: "usage", _options: AcquireOptions = {}): Promise<TokenAcquisition> {
@@ -79,7 +80,7 @@ describe("remote usage pipeline", () => {
         root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-otel-pipeline-"))
         layout = resolveOtelStorageLayout(path.join(root, "data"))
         // A minute boundary ahead of the wall clock, so shard settling follows the fake clock rather than file times.
-        start = minuteStartOf(Date.now()) + 2 * MINUTE
+        start = secondStartOf(Date.now()) + 2 * MINUTE
         now = start + 1_000
     })
 
@@ -138,7 +139,7 @@ describe("remote usage pipeline", () => {
         return lines
     }
 
-    it("sends only the v2 sections, and keeps no trace of the request identities", async () => {
+    it("sends only the canonical sections, and keeps no trace of the request identities", async () => {
         // Canaries stand in for the identities a caller could put into an observation ID.
         const canaries = ["C:/Users/alice/secret-project/billing.ts", "task-1792149608241"]
         const transport = new FakeTransport()
@@ -159,26 +160,52 @@ describe("remote usage pipeline", () => {
         expect(Object.keys(sent).filter((key) => !WIRE_KEYS.has(key))).toEqual([])
         expect(validateUsageBody(sent)).toEqual([])
         expect(sent).toMatchObject({
-            schema_version: 2,
+            schema_version: 3,
             client: CLIENT,
-            window: { started_at: start, ended_at: start + MINUTE, active_minutes: 1, dropped_minutes: 0 },
+            // Both settlements arrive inside one second, so the window claims one second
+            // rather than counting requests. Which second that is depends on the fake
+            // clock, so only the claim itself is asserted here.
+            window: {
+                started_at: expect.any(Number),
+                ended_at: expect.any(Number),
+                active_seconds: 1,
+                dropped_seconds: 0,
+            },
             sessions_started: 0,
         })
-        expect(sent.purposes).toEqual({
-            task: { requests: { completed: 1, cancelled: 0, failed: 0 }, tokens, duration_ms: duration },
-            subagent: { requests: { completed: 0, cancelled: 0, failed: 1 }, tokens, duration_ms: duration },
+        // The two facts are independent, so the batch names each of them exactly once
+        // regardless of the order their seconds were folded in.
+        expect(sent.facts).toHaveLength(2)
+        expect(sent.facts.find((fact) => fact.role === "task")).toEqual({
+            role: "task",
+            provider: "anthropic",
+            model: "claude-sonnet-4.5",
+            custom: false,
+            requests: { completed: 1, cancelled: 0, failed: 0 },
+            tokens,
+            duration_ms: { ...duration, buckets: [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
+            errors: {},
+            retries: 0,
+            // One logical request, sent once.
+            task_attempts: { count: 1, sum: 1, min: 1, max: 1 },
         })
-        expect(sent.models).toEqual([
-            {
-                provider: "anthropic",
-                model: "claude-sonnet-4.5",
-                requests: { total: 1, failed: 0, cancelled: 0 },
-                tokens,
-                duration_ms: { ...duration, buckets: [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
-                peak_minute: { requests: 1, tokens_output: 30 },
-            },
-        ])
-        expect(sent.providers).toEqual([{ provider: "unknown", errors: { other: 1 }, retries: 0 }])
+        expect(sent.facts.find((fact) => fact.role === "subagent")).toEqual({
+            role: "subagent",
+            // A handler that reported no provider is the explicit unnamed identity,
+            // exactly as an unnamed model is.
+            provider: "_unknown",
+            model: "_unknown",
+            custom: false,
+            requests: { completed: 0, cancelled: 0, failed: 1 },
+            tokens,
+            duration_ms: { ...duration, buckets: [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
+            errors: { other: 1 },
+            retries: 0,
+            task_attempts: { count: 1, sum: 1, min: 1, max: 1 },
+        })
+        // A one-second claim must fit the span it names.
+        expect(sent.window.ended_at - sent.window.started_at).toBe(SECOND)
+        expect(sent.window.started_at % SECOND).toBe(0)
         expect(await fs.readdir(layout.usageObservationsDir)).toEqual([])
         expect(await fs.readdir(layout.usageInflightDir)).toEqual([])
         const outbox = await fs.readFile(layout.usageOutboxPath, "utf8")

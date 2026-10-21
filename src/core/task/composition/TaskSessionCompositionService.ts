@@ -89,6 +89,8 @@ import { restoreCheckpoint as restoreCanonicalCheckpoint } from "../shell/checkp
 import { openTaskPersistence, type TaskPersistenceAssembly } from "../shell/TaskPersistenceAssembly"
 import { InMemoryBackgroundDeliveryLedger, type TaskViewPort } from "../stores"
 import { JournalConversationRewind } from "../stores/JournalConversationRewind"
+import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
+import type { ToolInvocationEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import { TaskStateManager } from "../TaskStateManager"
 import { withTerminateTimeout } from "../TaskTerminateTimeout"
 import { settleSubagentRoundUsage } from "../telemetry/NestedUsageSettlement"
@@ -395,6 +397,12 @@ export class TaskSessionCompositionService {
             readState,
             legacyMessages: () => messages.clineMessages,
             onChanged: () => void options.publishState().catch(() => undefined),
+            // Usage reports which tool each settled call ran. The kernel keeps the
+            // call, not its tool, so the name comes from the stored invocation.
+            resolveInvocationToolName: async (invocationRef) => {
+                const envelope = decodeTaskPayload<ToolInvocationEnvelope>(await persistence.payloads.read(invocationRef))
+                return envelope.kind === "tool_invocation" ? envelope.toolName : undefined
+            },
         })
         resources.add({ release: () => performance.release() })
         const taskTelemetry = new TaskTurnTelemetry(options.taskId, readState, () => performance.getSnapshot())
@@ -487,6 +495,9 @@ export class TaskSessionCompositionService {
             interactions,
             nextPresentationId,
             readState,
+            // The checklist a task accepts here is the authoritative TODO history,
+            // so usage observes it at the source instead of re-reading tool args.
+            observeChecklist: (changes) => performance.observeChecklist(changes),
             checkpoints: {
                 capture: async (input) => {
                     // A pre-edit row restores the conversation of its round row: that
@@ -944,6 +955,10 @@ export class TaskSessionCompositionService {
                     settlement: options.prompt.ports.usageSettlement,
                     purpose: "task",
                     servedBy: () => servedModelOf(api.current()),
+                    // The request is charged for the calls its own turn settled, so
+                    // the per-tool breakdown belongs to the same fact as its totals.
+                    toolCalls: (turnId) => performance.settledToolCalls(turnId),
+                    checklistChanges: () => performance.takeChecklistChanges(),
                 },
             ),
             services: {

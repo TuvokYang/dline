@@ -8,13 +8,29 @@ import type {
     ProviderRetryNotice,
 } from "../executors/provider/service/ProviderRequestReport"
 import { nonNegative, readSettledUsageTokens, usageWasReported } from "../executors/provider/service/ProviderUsageTokens"
+import type { ChecklistChange } from "./ChecklistDiff"
 import type { UsagePurpose, UsageServedModel, UsageSettlement, UsageSettlementPort } from "./UsageSettlement"
+import type { UsageToolCall } from "./UsageToolCalls"
 
 export interface UsageSettlementRequestReporterOptions {
     readonly settlement: UsageSettlementPort
     readonly purpose: UsagePurpose
     /** The provider and model of the handler about to serve the request, read when the request opens. */
     readonly servedBy?: () => UsageServedModel | undefined
+    /**
+     * The tool calls the turn settled, read when the request settles.
+     *
+     * Read late because tools run after the stream already ended: the request is
+     * charged for what it consumed, and the calls belong to the same turn.
+     */
+    readonly toolCalls?: (turnId: string) => Promise<readonly UsageToolCall[] | undefined>
+    /**
+     * The checklist changes this settlement owns, taken once.
+     *
+     * Read alongside the settlement so a change cannot be counted twice, and
+     * consumed even when no usage is recorded for the request it lands on.
+     */
+    readonly checklistChanges?: () => readonly ChecklistChange[] | undefined
     readonly clock?: () => number
     readonly newObservationId?: () => string
 }
@@ -50,9 +66,16 @@ export class UsageSettlementRequestReporter implements ProviderRequestReportPort
 
     async begin(input: { readonly turnId: string }): Promise<ProviderRequestRecord> {
         const observed = new ObservedRequest(this.newObservationId(), this.options.purpose, this.options.servedBy?.(), this.clock)
-        const settleUsage = (settlement: ProviderRequestSettlement): void => {
+        const settleUsage = async (settlement: ProviderRequestSettlement): Promise<void> => {
             const usage = observed.settle(settlement)
-            if (usage) this.record(usage)
+            if (!usage) return
+            const toolCalls = await this.toolCallsOf(input.turnId)
+            const checklistChanges = this.checklistChangesOf()
+            this.record({
+                ...usage,
+                ...(toolCalls === undefined ? {} : { toolCalls }),
+                ...(checklistChanges === undefined ? {} : { checklistChanges }),
+            })
         }
         let record: ProviderRequestRecord
         try {
@@ -62,7 +85,7 @@ export class UsageSettlementRequestReporter implements ProviderRequestReportPort
             Logger.debug(`[usage] request record unavailable, settling usage only: ${String(error)}`)
             return {
                 retrying: async (notice) => observed.retrying(notice),
-                settle: async (settlement) => settleUsage(settlement),
+                settle: async (settlement) => await settleUsage(settlement),
             }
         }
         return {
@@ -72,9 +95,32 @@ export class UsageSettlementRequestReporter implements ProviderRequestReportPort
                 await record.retrying?.(notice)
             },
             settle: async (settlement) => {
-                settleUsage(settlement)
+                await settleUsage(settlement)
                 await record.settle(settlement)
             },
+        }
+    }
+
+    /** Checklist changes belong to the request that settles next; reading them consumes them. */
+    private checklistChangesOf(): readonly ChecklistChange[] | undefined {
+        if (!this.options.checklistChanges) return undefined
+        try {
+            const changes = this.options.checklistChanges()
+            return changes === undefined || changes.length === 0 ? undefined : changes
+        } catch (error) {
+            Logger.debug(`[usage] checklist changes could not be read: ${String(error)}`)
+            return undefined
+        }
+    }
+
+    /** Tool calls never fail the settlement they decorate; an unreadable read reports none. */
+    private async toolCallsOf(turnId: string): Promise<readonly UsageToolCall[] | undefined> {
+        if (!this.options.toolCalls) return undefined
+        try {
+            return await this.options.toolCalls(turnId)
+        } catch (error) {
+            Logger.debug(`[usage] tool calls could not be read: ${String(error)}`)
+            return undefined
         }
     }
 

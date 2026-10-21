@@ -1,6 +1,8 @@
 import { findExistingTaskMetricsDatabase } from "@core/storage/task-metrics-database"
 import type { UiMessage } from "@shared/ExtensionMessage"
 import type { TaskState } from "../kernel"
+import type { ChecklistChange } from "../telemetry/ChecklistDiff"
+import { toolCallOutcome, type UsageToolCall } from "../telemetry/UsageToolCalls"
 import type { ApiRateSnapshot } from "./api-rate-tracker"
 import { ApiRequestRoundLifecycle } from "./api-request-round-lifecycle"
 import { TaskApiRequestRoundRepository } from "./api-request-round-repository"
@@ -26,6 +28,14 @@ export interface TaskPerformanceOwnerOptions {
      * migration, no compaction, and a read-only database connection.
      */
     readonly readOnly?: boolean
+    /**
+     * Resolve the tool identity of one invocation reference.
+     *
+     * The kernel records the call, not its tool, so usage resolves the name from
+     * the stored invocation. A missing resolver only costs the per-tool breakdown;
+     * the outcome totals stay exact because the block itself is still counted.
+     */
+    readonly resolveInvocationToolName?: (invocationRef: string) => Promise<string | undefined>
 }
 
 /** Owns every task-local rate metric lifecycle and its durable repositories. */
@@ -39,11 +49,18 @@ export class TaskPerformanceOwner {
     /** The logical round of each turn whose provider request is still open, keyed by turn. */
     private readonly ordinaryRounds = new Map<string, number>()
     /** The turn whose request was bound last; its round is open until the run rests. */
+    /** Tool identities of settled calls, resolved once per invocation for usage. */
+    private readonly callToolNames = new Map<string, string | undefined>()
+    /** Checklist changes observed since the last settlement, in the order they happened. */
+    private checklistChanges: ChecklistChange[] = []
     private latestOrdinaryTurnId: string | undefined
     private nextOrdinaryApiIndex = 0
     private closed = false
 
+    private readonly options: TaskPerformanceOwnerOptions
+
     private constructor(options: TaskPerformanceOwnerOptions) {
+        this.options = options
         const { taskId, location } = options
         const readOnly = options.readOnly === true
         const activeRepository = new TaskApiRateMetricsRepository({ taskId, location, readOnly })
@@ -143,6 +160,63 @@ export class TaskPerformanceOwner {
             this.ordinaryRounds.set(turnId, apiIndex)
         }
         return this.rounds.admitOrdinary(apiIndex, attempt).bindAttempt(stream, attempt)
+    }
+
+    /**
+     * The tool calls of one settled turn, as usage reports them.
+     *
+     * The classification comes from the same rule the execution record uses, so
+     * the per-tool counters can never contradict the outcomes the fact totals
+     * already carry. A name that cannot be resolved keeps its settlement and is
+     * reported as unlisted by the caller rather than being dropped.
+     */
+    /**
+     * Record one observed checklist change for the next settlement.
+     *
+     * The turn that reported it is the turn it belongs to; a change that no
+     * request settles is dropped with the counter reset rather than attributed to
+     * an unrelated later request.
+     */
+    observeChecklist(changes: readonly ChecklistChange[]): void {
+        if (changes.length === 0) return
+        this.checklistChanges.push(...changes)
+    }
+
+    /** Take the changes this settlement owns, leaving the next one a clean start. */
+    takeChecklistChanges(): readonly ChecklistChange[] | undefined {
+        if (this.checklistChanges.length === 0) return undefined
+        const changes = this.checklistChanges
+        this.checklistChanges = []
+        return changes
+    }
+
+    async settledToolCalls(turnId: string): Promise<readonly UsageToolCall[]> {
+        const turn = this.options.readState().turn
+        if (turn.turnId !== turnId) return []
+        const calls: UsageToolCall[] = []
+        for (const block of turn.blocks) {
+            const toolName = await this.toolNameOf(block.invocationRef)
+            const outcome = toolCallOutcome(block.phase, false)
+            calls.push(toolName === undefined ? { outcome } : { outcome, toolName })
+        }
+        return calls
+    }
+
+    private async toolNameOf(invocationRef: string): Promise<string | undefined> {
+        if (this.callToolNames.has(invocationRef)) return this.callToolNames.get(invocationRef)
+        const resolver = this.options.resolveInvocationToolName
+        if (!resolver) {
+            this.callToolNames.set(invocationRef, undefined)
+            return undefined
+        }
+        try {
+            const toolName = await resolver(invocationRef)
+            this.callToolNames.set(invocationRef, toolName)
+            return toolName
+        } catch {
+            // A call that cannot be read is reported unlisted instead of failing the usage record.
+            return undefined
+        }
     }
 
     requestStarted(): void {

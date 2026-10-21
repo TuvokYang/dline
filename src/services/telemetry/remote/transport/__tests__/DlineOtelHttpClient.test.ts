@@ -64,7 +64,7 @@ describe("DlineOtelHttpClient", () => {
             authorization: `Bearer ${TOKEN}`,
             "content-type": "application/json",
             "x-dline-request-id": REQUEST_ID,
-            "x-dline-contract": "2",
+            "x-dline-contract": "3",
         })
         expect(classifyDeliveryResponse(response)).toEqual({ kind: "acknowledged", disposition: "duplicate", nextEligibleAt: 5 })
         expect(response.retryAfter).toBe("3")

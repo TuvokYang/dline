@@ -83,11 +83,13 @@ export class OtelServiceMock {
     }
 
     private usage(request: http.IncomingMessage, body: Buffer | undefined): MockReply {
-        // The version list is checked before the token and the body, so an ignored version costs nothing.
+        // The version list is checked before the token and the body, so a refused
+        // version costs nothing. The answer names no disposition the client would
+        // read as a confirmation, so the batch stays unknown rather than being lost.
         if (!this.acceptsVersionOf(request)) {
             return {
                 status: 200,
-                body: { ok: true, disposition: "ignored_version", next_eligible_at: Date.now() + IGNORED_VERSION_INTERVAL_MS },
+                body: { ok: true, disposition: "version_not_stored", next_eligible_at: Date.now() + IGNORED_VERSION_INTERVAL_MS },
             }
         }
         const bearer = /^Bearer (.+)$/.exec(request.headers.authorization ?? "")?.[1]
@@ -95,7 +97,7 @@ export class OtelServiceMock {
         if (!token || token.profile !== "usage" || token.expiresAt <= Date.now()) return failure(401, "token_invalid")
         const requestId = request.headers["x-dline-request-id"]
         if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) return failure(400, "invalid_request_id")
-        if (request.headers["x-dline-contract"] !== "2") return failure(400, "contract_required")
+        if (request.headers["x-dline-contract"] !== "3") return failure(400, "contract_required")
         if (!body) return failure(413, "payload_too_large")
 
         // Idempotency is decided before anything else, so a replay is never held back by the interval.
@@ -117,7 +119,7 @@ export class OtelServiceMock {
         const parsed = parseJson(body)
         const client = parsed?.client as Record<string, unknown> | undefined
         const window = parsed?.window as Record<string, unknown> | undefined
-        if (parsed?.schema_version !== 2 || typeof client?.version !== "string" || typeof window?.started_at !== "number") {
+        if (parsed?.schema_version !== 3 || typeof client?.version !== "string" || typeof window?.started_at !== "number") {
             return failure(422, "invalid_usage")
         }
         this.requests.set(requestId, { deviceId: token.deviceId, digest })

@@ -1,300 +1,416 @@
 import { describe, expect, it } from "vitest"
 import type { UsageSettlement } from "@/core/task/telemetry/UsageSettlement"
 import {
-    sanitizeUsageClient,
-    USAGE_MODEL_PATTERN,
-    USAGE_PROVIDER_PATTERN,
+    USAGE_BODY_LIMIT_BYTES,
+    USAGE_SECOND_MS,
     type UsageBodyWire,
-    type UsageHistogramWire,
+    type UsageFactWire,
     validateUsageBody,
 } from "../../contracts/usageBody"
-import { buildUsageBody, type UsageMinute } from "../usageBatch"
+import { MAX_TOOL_NAMES_PER_FACT } from "../../contracts/usageExecution"
 import {
-    EMPTY_USAGE_TALLY,
-    mergeUsageTallies,
-    parseUsageTally,
-    projectUsageSettlement,
-    sessionStartedTally,
-    type UsageTally,
-} from "../usageTally"
+    buildUsageBody,
+    countFactIdentities,
+    mergeSeconds,
+    secondStartOf,
+    selectBatchSeconds,
+    type UsageSecond,
+} from "../usageBatch"
+import { mergeUsageTallies, parseUsageTally, projectUsageSettlement, type UsageFactTally, type UsageTally } from "../usageTally"
 
-const T0 = 1_899_999_960_000
-const MINUTE = 60_000
-const CLIENT = { version: "0.11.1", platform: "win32", host_editor: "vscode", channel: "stable", is_dev: false } as const
+const CLIENT = { version: "0.12.0" }
+const T0 = 1_792_456_800_000
 
-function settlement(overrides: Partial<UsageSettlement> = {}): UsageSettlement {
+function factTally(overrides: Partial<UsageFactTally> = {}): UsageFactTally {
     return {
-        observationId: "o",
-        purpose: "task",
-        outcome: "completed",
-        inputTokens: 1_200,
-        outputTokens: 300,
-        cacheReadTokens: 54_000,
-        cacheWriteTokens: 2_100,
-        durationMs: 2_500,
+        role: "task",
+        provider: "anthropic",
+        model: "claude-opus-5-5",
+        custom: false,
+        requests: { completed: 1, cancelled: 0, failed: 0 },
+        tokens: { input: 10, output: 5, cache_read: 0, cache_write: 0 },
+        duration_ms: { count: 1, sum: 900, min: 900, max: 900, buckets: [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
+        errors: {},
+        retries: 0,
         ...overrides,
     }
 }
 
-function minutesOf(...tallies: UsageTally[][]): UsageMinute[] {
-    return tallies.map((list, index) => ({
-        startedAt: T0 + index * MINUTE,
-        tally: list.reduce(mergeUsageTallies, EMPTY_USAGE_TALLY),
-    }))
+function factWire(overrides: Partial<UsageFactWire> = {}): UsageFactWire {
+    return {
+        role: "task",
+        provider: "anthropic",
+        model: "claude-opus-5-5",
+        custom: false,
+        requests: { completed: 1, cancelled: 0, failed: 0 },
+        tokens: { input: 10, output: 5, cache_read: 0, cache_write: 0 },
+        duration_ms: { count: 1, sum: 900, min: 900, max: 900, buckets: [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0] },
+        errors: {},
+        retries: 0,
+        ...overrides,
+    }
 }
 
-function body(minutes: UsageMinute[], dropped = 0): UsageBodyWire {
-    const built = buildUsageBody(minutes, CLIENT, dropped)
+function tallyOf(...facts: UsageFactTally[]): UsageTally {
+    return { sessions_started: 0, facts }
+}
+
+function secondsOf(...tallies: UsageTally[]): UsageSecond[] {
+    return tallies.map((tally, index) => ({ startedAt: T0 + index * USAGE_SECOND_MS, tally }))
+}
+
+function body(seconds: UsageSecond[], dropped = 0): UsageBodyWire {
+    const built = buildUsageBody(seconds, CLIENT, dropped)
     if (!built) throw new Error("expected a body")
     return built
 }
 
-function bucketsSum(histogram: UsageHistogramWire | undefined): number {
-    return histogram?.buckets.reduce((sum, count) => sum + count, 0) ?? 0
+function factOf(sent: UsageBodyWire, model: string): UsageFactWire | undefined {
+    return sent.facts.find((fact) => fact.model === model)
 }
 
-describe("usage tally projection (contract v2.1 §2.2)", () => {
-    it("counts a request by purpose and outcome with fresh input apart from cache reads and writes", () => {
-        const tally = projectUsageSettlement(settlement({ purpose: "compaction", outcome: "cancelled" }))
+describe("second buckets", () => {
+    it("merges the same second and keeps them ordered", () => {
+        const merged = mergeSeconds(
+            [
+                {
+                    startedAt: T0 + USAGE_SECOND_MS,
+                    tally: tallyOf(factTally({ tokens: { input: 5, output: 0, cache_read: 0, cache_write: 0 } })),
+                },
+            ],
+            [
+                { startedAt: T0, tally: tallyOf(factTally()) },
+                {
+                    startedAt: T0 + USAGE_SECOND_MS,
+                    tally: tallyOf(factTally({ tokens: { input: 7, output: 0, cache_read: 0, cache_write: 0 } })),
+                },
+            ],
+        )
 
-        expect(tally.purposes).toEqual({
-            compaction: {
-                requests: { completed: 0, cancelled: 1, failed: 0 },
-                tokens: { input: 1_200, output: 300, cache_read: 54_000, cache_write: 2_100 },
-                duration_ms: { count: 1, sum: 2_500, min: 2_500, max: 2_500 },
-            },
-        })
-        expect(tally.models).toEqual([])
-        expect(tally.providers).toEqual([])
+        expect(merged.map((second) => second.startedAt)).toEqual([T0, T0 + USAGE_SECOND_MS])
+        expect(merged[1]?.tally.facts[0]?.tokens.input).toBe(12)
     })
 
-    it("reports a purpose this build does not know as other", () => {
-        const tally = projectUsageSettlement(settlement({ purpose: "planning" as UsageSettlement["purpose"] }))
-
-        expect(Object.keys(tally.purposes)).toEqual(["other"])
+    it("floors a timestamp to its second", () => {
+        expect(secondStartOf(T0 + 999)).toBe(T0)
+        expect(secondStartOf(T0 + USAGE_SECOND_MS)).toBe(T0 + USAGE_SECOND_MS)
     })
 
-    it("describes the serving model with its tokens, reasoning inside output, and a duration histogram", () => {
-        const [model] = projectUsageSettlement(
-            settlement({ servedBy: { provider: "anthropic", model: "claude-opus-5-5" }, reasoningTokens: 40, durationMs: 4_100 }),
-        ).models
+    it("takes only the seconds that end inside the contract span", () => {
+        const hour = 60 * 60 * 1000
+        const selected = selectBatchSeconds([
+            { startedAt: T0, tally: tallyOf(factTally()) },
+            { startedAt: T0 + hour - USAGE_SECOND_MS, tally: tallyOf(factTally()) },
+            { startedAt: T0 + hour, tally: tallyOf(factTally()) },
+        ])
 
-        expect(model).toEqual({
+        // The last second starts at the end of the span, so it belongs to the next batch.
+        expect(selected.map((second) => second.startedAt)).toEqual([T0, T0 + hour - USAGE_SECOND_MS])
+    })
+})
+
+describe("building a batch", () => {
+    it("reports the second count as active seconds, not as minutes", () => {
+        const sent = body(secondsOf(tallyOf(factTally()), tallyOf(factTally())))
+
+        expect(sent.window.active_seconds).toBe(2)
+        expect(sent.window.started_at).toBe(T0)
+        expect(sent.window.ended_at).toBe(T0 + 2 * USAGE_SECOND_MS)
+        expect(validateUsageBody(sent)).toEqual([])
+    })
+
+    it("carries the reported loss beside the active seconds", () => {
+        expect(body(secondsOf(tallyOf(factTally())), 9).window.dropped_seconds).toBe(9)
+    })
+
+    it("keeps one fact per identity and adds the same identity up", () => {
+        const sent = body(
+            secondsOf(tallyOf(factTally()), tallyOf(factTally({ requests: { completed: 2, cancelled: 0, failed: 0 } }))),
+        )
+
+        expect(sent.facts).toHaveLength(1)
+        expect(sent.facts[0]).toMatchObject({ role: "task", provider: "anthropic", model: "claude-opus-5-5", custom: false })
+        expect(sent.facts[0]?.requests.completed).toBe(3)
+    })
+
+    it("keeps the custom and non-custom selection of one model apart", () => {
+        const sent = body(secondsOf(tallyOf(factTally()), tallyOf(factTally({ custom: true }))))
+
+        expect(sent.facts).toHaveLength(2)
+        expect(sent.facts.map((fact) => fact.custom).sort()).toEqual([false, true])
+    })
+
+    it("refuses a batch of seconds that hold no activity", () => {
+        expect(buildUsageBody(secondsOf({ sessions_started: 0, facts: [] }), CLIENT, 0)).toBeUndefined()
+        expect(buildUsageBody([], CLIENT, 0)).toBeUndefined()
+    })
+
+    it("counts the distinct fact identities so the caller can seal before the bound", () => {
+        const seconds = secondsOf(
+            tallyOf(factTally()),
+            tallyOf(factTally({ model: "other-model" })),
+            tallyOf(factTally({ custom: true })),
+        )
+
+        expect(countFactIdentities(seconds)).toBe(3)
+        expect(countFactIdentities(secondsOf(tallyOf(factTally()), tallyOf(factTally())))).toBe(1)
+    })
+
+    it("fits the byte bound for the largest batch the identity bounds allow", () => {
+        // Role, provider and model-identity bounds are tighter than the fact bound,
+        // so the largest legal batch is their product rather than USAGE_MAX_FACTS.
+        const roles = ["task", "subagent", "compaction", "other"] as const
+        const facts = roles.flatMap((role) =>
+            Array.from({ length: 8 }, (_, index) => factTally({ role, provider: `p${index}`, model: `m${index}` })),
+        )
+        const sent = body(secondsOf(tallyOf(...facts)))
+
+        expect(facts).toHaveLength(32)
+        expect(validateUsageBody(sent)).toEqual([])
+        const bytes = new TextEncoder().encode(JSON.stringify(sent)).byteLength
+        // The §18 deliverable reports this measured figure, so record it rather
+        // than only asserting the bound: a body that barely fits would leave no
+        // room for a future field without a contract change.
+        console.info(`[usage] largest batch: ${facts.length} facts, ${bytes} of ${USAGE_BODY_LIMIT_BYTES} bytes`)
+        expect(bytes).toBeLessThan(USAGE_BODY_LIMIT_BYTES)
+        expect(bytes).toBeLessThan(USAGE_BODY_LIMIT_BYTES * 0.75)
+    })
+
+    it("refuses a body that would exceed the fact bound", () => {
+        // Building a batch merges by identity, so the fact bounds are only reachable
+        // on the wire. With four registered roles, eight model identities each is the
+        // largest set every other bound still allows; one more fact than the bound is
+        // what the reader must reject.
+        const roles = ["task", "subagent", "compaction", "other"] as const
+        // Four roles over eight providers already fills 32 facts; a ninth provider is
+        // the first identity the fact bound cannot hold.
+        const tooMany = roles.flatMap((role) =>
+            Array.from({ length: 9 }, (_, index) => factWire({ role, provider: `p${index}`, model: `m${index}` })),
+        )
+        const wire: UsageBodyWire = {
+            schema_version: 3,
+            client: { version: "0.12.0" },
+            window: { started_at: T0, ended_at: T0 + USAGE_SECOND_MS, active_seconds: 1, dropped_seconds: 0 },
+            sessions_started: 0,
+            facts: tooMany,
+        }
+
+        const violations = validateUsageBody(wire)
+
+        expect(tooMany).toHaveLength(36)
+        expect(violations).toContain("facts")
+        // The identity bounds are what let the fact bound be reachable at all.
+        expect(violations).toContain("model_cardinality")
+        expect(violations).not.toContain("role_cardinality")
+    })
+})
+
+describe("settlement projection", () => {
+    function settlement(overrides: Partial<UsageSettlement> = {}): UsageSettlement {
+        return {
+            observationId: "obs-1",
+            purpose: "task",
+            outcome: "completed",
+            inputTokens: 10,
+            outputTokens: 5,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            durationMs: 900,
+            servedBy: { provider: "anthropic", model: "claude-opus-5-5" },
+            ...overrides,
+        }
+    }
+
+    it("projects one request into exactly one fact", () => {
+        const tally = projectUsageSettlement(settlement())
+
+        expect(tally.sessions_started).toBe(0)
+        expect(tally.facts).toHaveLength(1)
+        expect(tally.facts[0]).toMatchObject({
+            role: "task",
             provider: "anthropic",
             model: "claude-opus-5-5",
-            requests: { total: 1, failed: 0, cancelled: 0 },
-            tokens: { input: 1_200, output: 300, cache_read: 54_000, cache_write: 2_100, reasoning: 40 },
-            duration_ms: { count: 1, sum: 4_100, min: 4_100, max: 4_100, buckets: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0] },
+            requests: { completed: 1, cancelled: 0, failed: 0 },
         })
     })
 
-    it("omits reasoning the provider did not report and holds a reported share within output", () => {
-        const servedBy = { provider: "p", model: "m" }
+    it("reports an unknown purpose under other instead of inventing a role", () => {
+        const tally = projectUsageSettlement(settlement({ purpose: "planning" as never }))
 
-        expect(projectUsageSettlement(settlement({ servedBy })).models[0].tokens).not.toHaveProperty("reasoning")
-        expect(projectUsageSettlement(settlement({ servedBy, reasoningTokens: 900 })).models[0].tokens.reasoning).toBe(300)
+        expect(tally.facts[0]?.role).toBe("other")
     })
 
-    it("times first token and generation only for a streamed request, and puts a sample past every bound in the last bucket", () => {
-        const servedBy = { provider: "p", model: "m" }
-        const streamed = projectUsageSettlement(
-            settlement({ servedBy, durationMs: 500_000, streamTiming: { ttftMs: 600, generationMs: 900 } }),
-        ).models[0]
-        const plain = projectUsageSettlement(settlement({ servedBy })).models[0]
+    it("names a model the wire pattern cannot carry, keeping its totals", () => {
+        const tally = projectUsageSettlement(settlement({ servedBy: { provider: "anthropic", model: "openai/gpt-4o" } }))
 
-        expect(streamed.duration_ms?.buckets.at(-1)).toBe(1)
-        expect(streamed.ttft_ms?.buckets).toEqual([0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
-        expect(streamed.generation_ms?.buckets).toEqual([0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
-        expect(plain).not.toHaveProperty("ttft_ms")
-        expect(plain).not.toHaveProperty("generation_ms")
+        // The provider reported this exact model; keeping its normalized name is what
+        // makes a per-model analysis possible. `_unknown` is reserved for a model the
+        // producer could not state at all.
+        expect(tally.facts[0]?.model).toBe("openai_gpt-4o")
+        expect(tally.facts[0]?.tokens.input).toBe(10)
     })
 
-    it("counts a failure once under its provider and class, and every retry with its wait", () => {
+    it("falls back to the explicit unknown bucket when no model was reported", () => {
+        const tally = projectUsageSettlement(settlement({ servedBy: undefined }))
+
+        expect(tally.facts[0]?.model).toBe("_unknown")
+        expect(tally.facts[0]?.provider).toBe("_unknown")
+        expect(tally.facts[0]?.tokens.input).toBe(10)
+    })
+
+    it("counts a failure under the provider's error class", () => {
+        const tally = projectUsageSettlement(settlement({ outcome: "failed", failureClass: "timeout" }))
+
+        expect(tally.facts[0]?.errors).toEqual({ timeout: 1 })
+        expect(tally.facts[0]?.requests.failed).toBe(1)
+    })
+
+    it("counts every retry that was followed by another attempt", () => {
+        const tally = projectUsageSettlement(settlement({ retries: { waitsMs: [100, 200] } }))
+
+        expect(tally.facts[0]?.retries).toBe(2)
+        expect(tally.facts[0]?.retry_wait_ms).toEqual({ count: 2, sum: 300, min: 100, max: 200 })
+    })
+
+    it("never reports reasoning above the output it belongs to", () => {
+        const tally = projectUsageSettlement(settlement({ outputTokens: 5, reasoningTokens: 50 }))
+
+        expect(tally.facts[0]?.tokens.reasoning).toBe(5)
+    })
+
+    it("groups the tool calls a request reported and conserves their outcomes", () => {
         const tally = projectUsageSettlement(
             settlement({
-                outcome: "failed",
-                failureClass: "rate_limited",
-                servedBy: { provider: "Anthropic", model: "claude" },
-                retries: { waitsMs: [1_000, 2_000] },
+                toolCalls: [
+                    { outcome: "completed", toolName: "read_file" },
+                    { outcome: "completed", toolName: "read_file" },
+                    { outcome: "failed", toolName: "execute_command" },
+                ],
             }),
         )
+        const tools = tally.facts[0]?.tools
 
-        expect(tally.providers).toEqual([
-            {
-                provider: "anthropic",
-                errors: { rate_limited: 1 },
-                retries: 2,
-                retry_wait_ms: { count: 2, sum: 3_000, min: 1_000, max: 2_000 },
-            },
-        ])
-        expect(tally.models[0].requests).toEqual({ total: 1, failed: 1, cancelled: 0 })
-    })
-
-    it("turns any model ID into one the service accepts", () => {
-        const [model] = projectUsageSettlement(
-            settlement({ servedBy: { provider: "Open Router!", model: `Qwen/Qwen3-Coder:480B@2025 ${"x".repeat(200)}` } }),
-        ).models
-
-        expect(model.provider).toMatch(USAGE_PROVIDER_PATTERN)
-        expect(model.model).toMatch(USAGE_MODEL_PATTERN)
-        expect(model.model.startsWith("qwen_qwen3-coder_480b_2025_x")).toBe(true)
-    })
-
-    it("names a custom model by its own ID and marks it custom", () => {
-        const custom = projectUsageSettlement(
-            settlement({ servedBy: { provider: "openai", model: "Acme/LLM-v7", custom: true } }),
-        )
-        const listed = projectUsageSettlement(settlement({ servedBy: { provider: "openai", model: "gpt-5" } }))
-        const sent = body(minutesOf([custom, listed]))
-
-        expect(validateUsageBody(sent)).toEqual([])
-        expect(sent.models.map(({ model, custom }) => ({ model, custom }))).toEqual([
-            { model: "acme_llm-v7", custom: true },
-            { model: "gpt-5", custom: undefined },
-        ])
-    })
-})
-
-describe("buildUsageBody (contract v2.1 §2.1-§2.3)", () => {
-    it("folds models beyond eight into _other without changing any total", () => {
-        const tallies = Array.from({ length: 11 }, (_, index) =>
-            Array.from({ length: index + 1 }, () =>
-                projectUsageSettlement(
-                    settlement({
-                        servedBy: { provider: "p", model: `model-${index}` },
-                        durationMs: 100 * (index + 1),
-                        streamTiming: { ttftMs: 300, generationMs: 400 },
-                    }),
-                ),
-            ),
-        ).flat()
-        const sent = body(minutesOf(tallies))
-        const total = (pick: (model: UsageBodyWire["models"][number]) => number) =>
-            sent.models.reduce((sum, model) => sum + pick(model), 0)
-
-        expect(validateUsageBody(sent)).toEqual([])
-        expect(sent.models).toHaveLength(8)
-        expect(sent.models.map((model) => model.model).slice(0, 7)).toEqual(
-            [10, 9, 8, 7, 6, 5, 4].map((index) => `model-${index}`),
-        )
-        expect(sent.models[7]).toMatchObject({ provider: "_other", model: "_other", requests: { total: 1 + 2 + 3 + 4 } })
-        expect(sent.models[7]).not.toHaveProperty("custom")
-        expect(total((model) => model.requests.total)).toBe(66)
-        expect(total((model) => model.tokens.input)).toBe(66 * 1_200)
-        expect(total((model) => model.duration_ms?.count ?? 0)).toBe(66)
-        expect(sent.models.every((model) => bucketsSum(model.duration_ms) === model.duration_ms?.count)).toBe(true)
-        expect(sent.models.every((model) => bucketsSum(model.ttft_ms) === model.ttft_ms?.count)).toBe(true)
-    })
-
-    it("keeps each model's busiest minute by requests and by output tokens, never above its totals", () => {
-        const call = (outputTokens: number) =>
-            projectUsageSettlement(settlement({ servedBy: { provider: "p", model: "m" }, outputTokens }))
-        const sent = body(minutesOf([call(10), call(20)], [call(100)], [call(1)]))
-
-        expect(sent.models[0].peak_minute).toEqual({ requests: 2, tokens_output: 100 })
-        expect(sent.models[0].requests.total).toBe(4)
-        expect(sent.models[0].tokens.output).toBe(131)
-        expect(validateUsageBody(sent)).toEqual([])
-    })
-
-    it("lists only providers with failures or retries, and folds providers beyond eight into _other", () => {
-        const failures = Array.from({ length: 10 }, (_, index) =>
-            projectUsageSettlement(
-                settlement({ outcome: "failed", failureClass: "timeout", servedBy: { provider: `p${index}`, model: "m" } }),
-            ),
-        )
-        const quiet = projectUsageSettlement(settlement({ servedBy: { provider: "calm", model: "m" } }))
-        const sent = body(minutesOf([...failures, quiet]))
-
-        expect(sent.providers).toHaveLength(8)
-        expect(sent.providers.some((provider) => provider.provider === "calm")).toBe(false)
-        expect(sent.providers[7]).toEqual({ provider: "_other", errors: { timeout: 3 }, retries: 0 })
-        expect(validateUsageBody(sent)).toEqual([])
-    })
-
-    it("sends a batch for activations alone, and nothing for minutes without activity", () => {
-        const sent = body(minutesOf([sessionStartedTally(), sessionStartedTally()]))
-
-        expect(sent).toMatchObject({ sessions_started: 2, purposes: {}, models: [], providers: [] })
-        expect(validateUsageBody(sent)).toEqual([])
-        expect(buildUsageBody([], CLIENT, 0)).toBeUndefined()
-        expect(buildUsageBody(minutesOf([EMPTY_USAGE_TALLY]), CLIENT, 0)).toBeUndefined()
-    })
-})
-
-describe("validateUsageBody (contract v2.1 §1.4, §2.2)", () => {
-    const valid = body(
-        minutesOf([
-            projectUsageSettlement(
-                settlement({ servedBy: { provider: "p", model: "m" }, streamTiming: { ttftMs: 1, generationMs: 1 } }),
-            ),
-        ]),
-    )
-
-    it("accepts a body built from real requests", () => {
-        expect(validateUsageBody(valid)).toEqual([])
-    })
-
-    it.each([
-        ["client", { ...valid, client: { ...valid.client, version: "0.11 beta" } }],
-        ["client", { ...valid, client: { ...valid.client, host_editor: "zed" } }],
-        ["window", { ...valid, window: { ...valid.window, ended_at: valid.window.started_at + 61 * MINUTE } }],
-        ["window", { ...valid, window: { ...valid.window, active_minutes: 0 } }],
-        ["window", { ...valid, window: { ...valid.window, started_at: valid.window.started_at + 1 } }],
-        ["purposes", { ...valid, purposes: { planning: valid.purposes.task } }],
-        ["models", { ...valid, models: Array.from({ length: 9 }, (_, index) => ({ ...valid.models[0], model: `m${index}` })) }],
-        ["models", { ...valid, models: [{ ...valid.models[0], peak_minute: { requests: 5, tokens_output: 0 } }] }],
-        [
-            "models",
-            {
-                ...valid,
-                models: [
-                    { ...valid.models[0], ttft_ms: { ...valid.models[0].ttft_ms, buckets: [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] } },
-                ],
-            },
-        ],
-        ["models", { ...valid, models: [{ ...valid.models[0], model: "Claude/Opus" }] }],
-        ["providers", { ...valid, providers: [{ provider: "p", errors: { teapot: 1 }, retries: 0 }] }],
-        ["sessions_started", { ...valid, sessions_started: -1 }],
-    ])("names the %s section when it breaks a service rule", (section, broken) => {
-        expect(validateUsageBody(broken as UsageBodyWire)).toEqual([section])
-    })
-
-    it("leaves a client value the service would refuse out instead of sending it empty", () => {
-        expect(sanitizeUsageClient({ version: "0.11.1", platform: "", architecture: "x64", host_version: "1.105/0" })).toEqual({
-            version: "0.11.1",
-            architecture: "x64",
+        expect(tools?.completed).toBe(2)
+        expect(tools?.failed).toBe(1)
+        expect(tools?.cancelled).toBe(0)
+        expect(tools?.by_name).toEqual({
+            read_file: { completed: 2, failed: 0, cancelled: 0 },
+            execute_command: { completed: 0, failed: 1, cancelled: 0 },
         })
-        expect(sanitizeUsageClient({ version: "" })).toBeUndefined()
+        expect(validateUsageBody(body(secondsOf(tally)))).toEqual([])
     })
 
-    it("keeps a client value with spaces, which the service accepts everywhere but in the version (§2.2)", () => {
-        expect(sanitizeUsageClient({ version: "0.11.1", host_version: "1.105.0 Insider", architecture: "x".repeat(65) })).toEqual(
-            {
-                version: "0.11.1",
-                host_version: "1.105.0 Insider",
-            },
+    it("counts a call with no identity as unlisted instead of losing it", () => {
+        const tally = projectUsageSettlement(
+            settlement({
+                toolCalls: [{ outcome: "completed", toolName: "read_file" }, { outcome: "cancelled" }],
+            }),
         )
-        expect(sanitizeUsageClient({ version: "0.11.1 beta" })).toBeUndefined()
+        const tools = tally.facts[0]?.tools
+
+        expect(tools?.completed).toBe(1)
+        expect(tools?.cancelled).toBe(1)
+        expect(tools?.by_name).toEqual({ read_file: { completed: 1, failed: 0, cancelled: 0 } })
+        expect(tools?.unlisted).toEqual({ completed: 0, failed: 0, cancelled: 1 })
+        expect(validateUsageBody(body(secondsOf(tally)))).toEqual([])
+    })
+
+    it("reports no tools for a request that ran none", () => {
+        const tally = projectUsageSettlement(settlement())
+
+        expect(tally.facts[0]?.tools).toBeUndefined()
+    })
+
+    it("counts a declared and completed item as one completion of one item", () => {
+        const tally = projectUsageSettlement(
+            settlement({
+                checklistChanges: [
+                    { itemId: "item-a", transition: "declared" },
+                    { itemId: "item-a", transition: "completed" },
+                ],
+            }),
+        )
+        const todos = tally.facts[0]?.todos
+
+        expect(todos?.declared).toBe(1)
+        expect(todos?.completed).toBe(1)
+        expect(todos?.reopened).toBe(0)
+        expect(todos?.abandoned).toBe(0)
+        // The declaration was seen in this batch, so the completion has an honest
+        // round sample rather than a fabricated or missing one.
+        expect(todos?.rounds_to_complete).toEqual({ count: 1, sum: 1, min: 1, max: 1, buckets: expect.any(Array) })
+        expect(validateUsageBody(body(secondsOf(tally)))).toEqual([])
+    })
+
+    it("counts a completion whose declaration was never seen without inventing a round count", () => {
+        const tally = projectUsageSettlement(settlement({ checklistChanges: [{ itemId: "unseen", transition: "completed" }] }))
+        const todos = tally.facts[0]?.todos
+
+        expect(todos?.completed).toBe(1)
+        expect(todos?.declared).toBe(1)
+        // No first sighting means no measurable interval: an empty distribution,
+        // never a fabricated sample that would claim a measured round count.
+        expect(todos?.rounds_to_complete).toMatchObject({ count: 0, sum: 0 })
+        expect(validateUsageBody(body(secondsOf(tally)))).toEqual([])
+    })
+
+    it("reports no todos for a request whose surface has no checklist", () => {
+        const tally = projectUsageSettlement(settlement())
+
+        expect(tally.facts[0]?.todos).toBeUndefined()
+    })
+
+    it("counts the attempts a request needed from the retries it recorded", () => {
+        const firstTry = projectUsageSettlement(settlement()).facts[0]
+        const thirdTry = projectUsageSettlement(settlement({ retries: { waitsMs: [100, 200] } })).facts[0]
+
+        // One sample per logical request, and the sample is the attempt count.
+        expect(firstTry?.task_attempts).toEqual({ count: 1, sum: 1, min: 1, max: 1 })
+        expect(thirdTry?.task_attempts).toEqual({ count: 1, sum: 3, min: 3, max: 3 })
+        // The attempt count and the retry count describe the same events.
+        expect(thirdTry?.retries).toBe(2)
     })
 })
 
 describe("persisted tallies", () => {
-    it("reads back a tally and refuses one whose histogram disagrees with its count", () => {
-        const tally = projectUsageSettlement(settlement({ servedBy: { provider: "p", model: "m" } }))
-        const damaged = {
-            ...tally,
-            models: [{ ...tally.models[0], duration_ms: { ...tally.models[0].duration_ms, count: 2 } }],
-        }
+    it("round-trips a tally through JSON", () => {
+        const tally = mergeUsageTallies(tallyOf(factTally({ retries: 2 })), { sessions_started: 2, facts: [] })
 
         expect(parseUsageTally(JSON.parse(JSON.stringify(tally)))).toEqual(tally)
-        expect(parseUsageTally(damaged)).toBeUndefined()
-        expect(parseUsageTally({ counters: { "dline.usage.requests.task.completed": 1 }, measurements: {} })).toBeUndefined()
     })
 
-    it("saturates a counter instead of losing integer precision", () => {
-        const huge = { ...sessionStartedTally(), sessions_started: Number.MAX_SAFE_INTEGER }
+    it("refuses a persisted tally the contract would not accept", () => {
+        expect(parseUsageTally({ counters: {}, measurements: {} })).toBeUndefined()
+        expect(parseUsageTally({ sessions_started: 1, facts: [{ role: "made_up" }] })).toBeUndefined()
+        expect(parseUsageTally({ sessions_started: -1, facts: [] })).toBeUndefined()
+    })
+})
 
-        expect(mergeUsageTallies(huge, sessionStartedTally()).sessions_started).toBe(Number.MAX_SAFE_INTEGER)
+describe("tool counters keep the per-name bound when merged", () => {
+    it("folds names beyond the bound into unlisted instead of dropping them", () => {
+        const many = Object.fromEntries(
+            Array.from({ length: MAX_TOOL_NAMES_PER_FACT + 2 }, (_, index) => [
+                `tool_name_${String.fromCharCode(97 + index)}_x`,
+                { completed: 1, failed: 0, cancelled: 0 },
+            ]),
+        )
+        const total = MAX_TOOL_NAMES_PER_FACT + 2
+        const merged = mergeUsageTallies(
+            tallyOf(factTally({ tools: { completed: total, failed: 0, cancelled: 0, by_name: many } })),
+            tallyOf(factTally()),
+        )
+
+        expect(merged.facts).toHaveLength(1)
+        expect(Object.keys(merged.facts[0]?.tools?.by_name ?? {}).length).toBeLessThanOrEqual(MAX_TOOL_NAMES_PER_FACT)
+        expect(merged.facts[0]?.tools?.completed).toBe(total)
+        expect(validateUsageBody(body(secondsOf(merged)))).toEqual([])
+    })
+
+    it("keeps a batch of one fact per model as separate facts", () => {
+        const merged = mergeUsageTallies(tallyOf(factTally()), tallyOf(factTally({ model: "second-model" })))
+        const sent = body(secondsOf(merged))
+
+        expect(factOf(sent, "claude-opus-5-5")).toBeDefined()
+        expect(factOf(sent, "second-model")).toBeDefined()
     })
 })

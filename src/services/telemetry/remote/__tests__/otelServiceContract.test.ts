@@ -12,7 +12,7 @@ import { classifyDeliveryResponse, type WireResponse } from "../contracts/classi
 import { USAGE_MINUTE_MS, type UsageBodyWire } from "../contracts/usageBody"
 import { DlineOtelHttpClient, type UsageDelivery, type UsageTransport } from "../transport/DlineOtelHttpClient"
 import { UsageDeliveryWorker } from "../usage/UsageDeliveryWorker"
-import { minuteStartOf } from "../usage/usageBatch"
+import { secondStartOf } from "../usage/usageBatch"
 import { projectUsageSettlement } from "../usage/usageTally"
 import { OtelServiceMock } from "./support/OtelServiceMock"
 
@@ -83,7 +83,7 @@ async function runContractScenario(endpoint: string): Promise<UsageBodyWire> {
         platform: process.platform,
     })
     // The next minute boundary keeps the fake clock ahead of file times yet close to the service's clock.
-    const start = minuteStartOf(Date.now()) + MINUTE
+    const start = secondStartOf(Date.now()) + MINUTE
     let now = start + 1_000
     await new UsageObservationSpool(layout, "contract-observer").append({
         id: randomUUID(),

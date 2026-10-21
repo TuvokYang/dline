@@ -11,8 +11,15 @@ const MAX_RESPONSE_BYTES = 16 * 1024
 const DEVICE_EXCHANGE_PATH = "/auth/device/exchange"
 const USAGE_PATH = "/usage"
 const LOGS_PATH = "/logs"
-/** The telemetry contract version every usage and logs request is written against. */
-export const DLINE_TELEMETRY_CONTRACT = "2"
+/**
+ * The telemetry contract version every telemetry request names in
+ * `X-Dline-Contract`.
+ *
+ * There is one value for the whole client surface. A per-endpoint version would
+ * mean two contracts shipped as one, and a reader could no longer answer "which
+ * contract did this device speak" from a single header.
+ */
+export const DLINE_TELEMETRY_CONTRACT = "3"
 
 export type DlineOtelTransportFailure = "timeout" | "aborted" | "network"
 

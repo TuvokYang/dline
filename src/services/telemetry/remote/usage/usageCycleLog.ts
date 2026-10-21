@@ -68,7 +68,6 @@ export function describeUsageCycle(result: UsageCycleResult): UsageCycleLogLine 
 const DISPOSITION_TEXT: Record<DeliveryDisposition, string> = {
     accepted: "delivered",
     duplicate: "had already been accepted (duplicate)",
-    ignored_version: "acknowledged; the service ignores this Dline version",
 }
 
 function batchName(requestId: string): string {

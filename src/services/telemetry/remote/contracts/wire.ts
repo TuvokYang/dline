@@ -72,11 +72,16 @@ export function parseDeviceGrant(body: unknown): DeviceGrant | undefined {
 }
 
 /**
- * How the service settled a batch it confirmed. `ignored_version` means the
- * batch was confirmed without being stored (§7.1): it must not be sent again.
+ * How the service settled a batch it actually stored.
+ *
+ * This is the complete confirmation set: `accepted` stored the batch and
+ * `duplicate` recognised the same request ID and bytes as an earlier attempt.
+ * Any other disposition — including a version the service chose to ignore — is
+ * *not* a confirmation, so the batch is treated as unknown and replayed under
+ * the same request ID instead of being dropped as if it had been stored.
  */
-export type DeliveryDisposition = "accepted" | "duplicate" | "ignored_version"
-const DELIVERY_DISPOSITIONS: readonly DeliveryDisposition[] = ["accepted", "duplicate", "ignored_version"]
+export type DeliveryDisposition = "accepted" | "duplicate"
+const DELIVERY_DISPOSITIONS: readonly DeliveryDisposition[] = ["accepted", "duplicate"]
 
 /** A confirmed batch and the earliest time, server epoch milliseconds, the next new batch may follow. */
 export interface DeliveryAcknowledgement {
