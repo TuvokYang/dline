@@ -37,6 +37,8 @@ export interface CanonicalDialogProjection {
     readonly journalWatermark?: JournalWatermark
     readonly actions: readonly CanonicalDialogActionProjection[]
     readonly failure?: { readonly stage: "prepare" | "reveal"; readonly message: string }
+    /** The compaction that completed while this dialog waited for the user. */
+    readonly outlivedCompactionId?: string
 }
 
 export type CanonicalHaltProjection =

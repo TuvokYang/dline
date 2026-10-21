@@ -100,7 +100,23 @@ export function withoutAbandonedReview(dialog: DialogSlice, compaction: Compacti
     return { ...dialog, primary: dialog.interrupted, interrupted: undefined }
 }
 
+/**
+ * Record on the dialogs waiting for the user that a compaction completed beside them.
+ *
+ * The review a manual compaction opens runs under that compaction's own id and
+ * ends with it, so it is left as it is; the dialog it interrupted, or restored
+ * once answered, is the one the user goes on with.
+ */
+function withOutlivedCompaction(state: DialogSlice, compactionId: string): DialogSlice {
+    const mark = (interaction: DialogInteraction | undefined): DialogInteraction | undefined =>
+        !interaction || interaction.turnId === compactionId ? interaction : { ...interaction, outlivedCompactionId: compactionId }
+    return { ...state, primary: mark(state.primary), interrupted: mark(state.interrupted) }
+}
+
 export function reduceDialog(state: DialogSlice, event: TaskEvent, nextRevision: number): DialogReduction {
+    if (event.type === "compaction.completed") {
+        return { state: withOutlivedCompaction(state, event.compactionId), commands: [] }
+    }
     if (
         (event.type === "tool.completed" || event.type === "tool.failed") &&
         state.primary?.interactionId === event.blockId &&

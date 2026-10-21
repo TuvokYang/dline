@@ -58,8 +58,17 @@ function interactionKind(kind: string): InteractionKind | undefined {
     return (INTERACTION_KINDS as readonly string[]).includes(kind) ? (kind as InteractionKind) : undefined
 }
 
+/**
+ * Footer choices of a dialog the user goes on with by typing a reply.
+ *
+ * A compaction that completed while such a dialog waited replaced the history
+ * its choices were offered against, and the conversation continues from the
+ * reply, so the dialog offers none of them any more. A dialog answered through
+ * an action (Retry, Approve) keeps its buttons: they are its only way on.
+ */
 function projectInteractionActions(dialog: CanonicalDialogProjection, kind: InteractionKind): TaskViewAction[] {
     const definition = getInteraction(kind)
+    if (dialog.outlivedCompactionId && definition.input.enterAction === "reply") return []
     const rules = new Map(dialog.actions.map((action) => [action.actionId, action]))
     return definition.actions.flatMap((action) => {
         const rule = rules.get(action.type)

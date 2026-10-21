@@ -358,6 +358,62 @@ describe("task kernel causal dialog", () => {
         expect(state.dialog.interrupted).toBeUndefined()
     })
 
+    it("records on the waiting dialog the compaction that completed beside it, never on that compaction's own review", () => {
+        let state = openQuestion(runningState(), "primary")
+        state = accepted(
+            transition(state, {
+                type: "compaction.requested",
+                generation: 0,
+                compactionId: "compact-1",
+                attempt: "attempt-1",
+                contextRef: "manual:ctx",
+            }),
+        ).state
+        state = accepted(
+            transition(state, { type: "compaction.started", generation: 0, compactionId: "compact-1", attempt: "attempt-1" }),
+        ).state
+        state = accepted(
+            transition(state, {
+                type: "dialog.interrupt_requested",
+                generation: 0,
+                interactionId: "review",
+                turnId: "compact-1",
+                kind: "condense",
+                presentationRef: "condense:1",
+                actionRules: [{ actionId: "confirm_utility", payloadPolicy: "none" }],
+            }),
+        ).state
+        const completed = (current: TaskState): TaskState =>
+            accepted(
+                transition(current, {
+                    type: "compaction.completed",
+                    generation: 0,
+                    compactionId: "compact-1",
+                    attempt: "attempt-1",
+                    resultRef: "summary:1",
+                }),
+            ).state
+
+        // Landing while the review is still open marks only the dialog it interrupted.
+        const whileReviewing = completed(state)
+        expect(whileReviewing.dialog.primary).toMatchObject({ interactionId: "review" })
+        expect(whileReviewing.dialog.primary).not.toHaveProperty("outlivedCompactionId")
+        expect(whileReviewing.dialog.interrupted).toMatchObject({ interactionId: "primary", outlivedCompactionId: "compact-1" })
+
+        // Landing after the review was answered marks the dialog the answer restored.
+        state = prepareAndPresent(state, "review", "journal:2")
+        state = accepted(
+            transition(state, {
+                ...response(state.revision, "review"),
+                turnId: "compact-1",
+                actionId: "confirm_utility",
+                draftRef: undefined,
+            }),
+        ).state
+        state = accepted(transition(state, { type: "dialog.resolved", generation: 0, interactionId: "review" })).state
+        expect(completed(state).dialog.primary).toMatchObject({ interactionId: "primary", outlivedCompactionId: "compact-1" })
+    })
+
     it("carries a planned approval's surface ask and row unchanged to prepare and reveal", () => {
         // The kernel never interprets the ask; it only has to deliver it, because
         // the anchor row is unreadable when written with another ask than the body.

@@ -74,6 +74,66 @@ describe("adaptCanonicalTaskView", () => {
         expect(view.footer.actions.map((action) => action.type)).toEqual(["start_new_task"])
     })
 
+    it("offers no footer choice on a completion a compaction completed beside, while Enter still replies", () => {
+        const projection = projectCanonicalTaskView({
+            ...createInitialTaskState("task-1"),
+            flow: { phase: "completed" },
+            dialog: {
+                approvalsByBlock: {},
+                primary: {
+                    interactionId: "completion-1",
+                    turnId: "turn-1",
+                    kind: "completion",
+                    status: "awaiting",
+                    createdRevision: 3,
+                    presentationRef: "completion:done",
+                    receiverGeneration: 0,
+                    actionRules: [
+                        { actionId: "reply", payloadPolicy: "draft" },
+                        { actionId: "start_new_task", payloadPolicy: "draft" },
+                    ],
+                    outlivedCompactionId: "compact-1",
+                },
+            },
+        })
+        const view = adaptCanonicalTaskView(projection, [
+            { type: "ask", ask: "completion_result", ts: 101, text: "done", interactionId: "completion-1" },
+        ])
+
+        expect(view.footer.actions).toEqual([])
+        expect(view.activeInteraction).toMatchObject({ interactionId: "completion-1", askMessageTs: 101 })
+        expect(view.input).toMatchObject({ enabled: true, enterAction: "reply" })
+    })
+
+    it("keeps Retry on a failure a compaction completed beside, since a button is its only way on", () => {
+        const projection = projectCanonicalTaskView({
+            ...createInitialTaskState("task-1"),
+            flow: { phase: "error", error: "provider failed" },
+            dialog: {
+                approvalsByBlock: {},
+                primary: {
+                    interactionId: "error:provider.failed:7",
+                    turnId: "turn-1",
+                    kind: "error_retry",
+                    status: "awaiting",
+                    createdRevision: 7,
+                    presentationRef: "provider failed",
+                    receiverGeneration: 0,
+                    actionRules: [
+                        { actionId: "retry", payloadPolicy: "draft" },
+                        { actionId: "start_new_task", payloadPolicy: "draft" },
+                    ],
+                    outlivedCompactionId: "compact-1",
+                },
+            },
+        })
+        const view = adaptCanonicalTaskView(projection, [
+            { type: "ask", ask: "api_req_failed", ts: 102, text: "provider failed", interactionId: "error:provider.failed:7" },
+        ])
+
+        expect(view.footer.actions.map((action) => action.type)).toEqual(["retry", "start_new_task"])
+    })
+
     it("offers no Retry for rejected credentials and lets Enter carry a typed reply", () => {
         const failure = '{"message":"401 Incorrect API key provided","status":401,"code":"invalid_api_key"}'
         const projection = projectCanonicalTaskView({

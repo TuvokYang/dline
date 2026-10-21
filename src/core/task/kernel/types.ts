@@ -251,6 +251,11 @@ export interface DialogInteraction {
     readonly prepare?: CommandFlowState
     readonly reveal?: CommandFlowState
     readonly failure?: { readonly stage: "prepare" | "reveal"; readonly message: string }
+    /**
+     * The compaction that completed while this dialog waited for the user. The
+     * choices it offered were made against the history that summary replaced.
+     */
+    readonly outlivedCompactionId?: string
 }
 
 export interface DialogSlice {

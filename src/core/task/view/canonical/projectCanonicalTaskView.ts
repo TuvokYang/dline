@@ -77,6 +77,7 @@ function projectDialog(
             enabled: responsive,
         })),
         failure: interaction.failure,
+        ...(interaction.outlivedCompactionId ? { outlivedCompactionId: interaction.outlivedCompactionId } : {}),
     }
 }
 
