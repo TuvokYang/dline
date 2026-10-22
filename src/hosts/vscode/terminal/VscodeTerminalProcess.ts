@@ -246,8 +246,9 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
                 }
 
                 if (this.isListening) {
-                    this.emitIfEol(data)
+                    const internalCompletionObserved = this.emitIfEol(data)
                     this.lastRetrievedIndex = this.fullOutput.length - this.buffer.length
+                    if (internalCompletionObserved) break
                 }
             }
 
@@ -310,7 +311,7 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
     }
 
     // Inspired by https://github.com/sindresorhus/execa/blob/main/lib/transform/split.js
-    private emitIfEol(chunk: string) {
+    private emitIfEol(chunk: string): boolean {
         this.buffer += chunk
         let lineEndIndex: number
         while ((lineEndIndex = this.buffer.indexOf("\n")) !== -1) {
@@ -318,8 +319,10 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
             const internalExitCode = parseInternalCommandExitMarker(line)
             if (internalExitCode !== undefined) {
                 this.exitCode = internalExitCode
-                this.buffer = this.buffer.slice(lineEndIndex + 1)
-                continue
+                // The marker is emitted after the user command and every post-command.
+                // Any remaining bytes belong to the returned shell prompt, not command output.
+                this.buffer = ""
+                return true
             }
             // Remove \r if present (for Windows-style line endings)
             // if (line.endsWith("\r")) {
@@ -328,6 +331,7 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
             this.emit("line", line, "combined")
             this.buffer = this.buffer.slice(lineEndIndex + 1)
         }
+        return false
     }
 
     private emitRemainingBufferIfListening() {

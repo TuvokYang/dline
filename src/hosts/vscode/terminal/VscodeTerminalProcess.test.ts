@@ -316,14 +316,21 @@ describe("TerminalProcess (Integration Tests)", () => {
             expect(completedDetails).toEqual({ exitCode: 7, signal: null })
         })
 
-        it("should consume an internal completion marker without exposing it as command output", async () => {
+        it("should complete on an internal marker without waiting for shell stream closure", async () => {
             const terminal = TerminalRegistry.createTerminal().terminal
             createdTerminals.push(terminal)
             const marker = "__DLINE_INTERNAL_COMMAND_EXIT__test-token:7"
             const decoratedMarker = `\x1b[?7l\x1b]0;PowerShell\\${marker}\x1b[?7h`
             vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
                 executeCommand: vi.fn().mockReturnValue({
-                    read: () => createMockStream(["echo test", "visible output", decoratedMarker]),
+                    read: () => ({
+                        async *[Symbol.asyncIterator]() {
+                            yield "echo test\n"
+                            yield "visible output\n"
+                            yield `${decoratedMarker}\n`
+                            throw new Error("shell stream was read after the internal completion marker")
+                        },
+                    }),
                 }),
             })
             const lines: string[] = []
@@ -335,7 +342,7 @@ describe("TerminalProcess (Integration Tests)", () => {
 
             const runPromise = process.run(terminal, "echo test")
             await vi.advanceTimersByTimeAsync(1000)
-            await runPromise
+            await expect(runPromise).resolves.toBeUndefined()
 
             expect(completedDetails).toEqual({ exitCode: 7, signal: null })
             expect(lines).toContain("visible output")
