@@ -192,6 +192,7 @@ describe("ServerRow workspace descriptor presentation", () => {
 describe("ServerRow connection errors", () => {
     beforeEach(() => {
         vi.clearAllMocks()
+        mocks.authenticateMcpServer.mockResolvedValue({})
         mocks.restartMcpServer.mockResolvedValue({ mcpServers: [] })
     })
 
@@ -216,10 +217,28 @@ describe("ServerRow connection errors", () => {
         expect(mocks.restartMcpServer).toHaveBeenCalledWith({ value: "show3d" })
     })
 
-    it("offers only retrying when the connection failed for another reason", () => {
+    it("offers Reauthorize when saved OAuth credentials are no longer valid", () => {
+        const server: McpServer = {
+            ...workspaceServer,
+            name: "show3d",
+            source: "settings",
+            status: "disconnected",
+            oauthRequired: true,
+            oauthAuthStatus: "reauthentication-required",
+            error: "Authorization for this server is no longer valid. Reauthorize to reconnect.",
+        }
+        render(<ServerRow server={server} />)
+
+        fireEvent.click(screen.getByRole("button", { name: "Reauthorize" }))
+        expect(mocks.authenticateMcpServer).toHaveBeenCalledWith({ value: "show3d" })
+        expect(screen.queryByRole("button", { name: "Authenticate" })).not.toBeInTheDocument()
+    })
+
+    it("offers only retrying when the server is unavailable", () => {
         render(<ServerRow server={{ ...workspaceServer, error: "fetch failed: connect ECONNREFUSED", status: "disconnected" }} />)
 
         expect(screen.queryByRole("button", { name: "Authenticate" })).not.toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Reauthorize" })).not.toBeInTheDocument()
         fireEvent.click(screen.getByRole("button", { name: "Retry Connection" }))
         expect(mocks.restartMcpServer).toHaveBeenCalledWith({ value: "docs@a1b2c3d4" })
     })

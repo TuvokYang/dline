@@ -337,17 +337,21 @@ const ServerRow = ({
             {server.error ? (
                 <div className="text-sm bg-text-block-background rounded-b-sm">
                     <div className="text-failed-icon mb-2 px-2.5 break-words">{server.error}</div>
-                    {server.oauthRequired && server.oauthAuthStatus === "unauthenticated" && (
-                        <Button
-                            className="m-2.5 mt-0 max-w-[calc(100%-20px)]"
-                            onClick={(e) => {
-                                e.stopPropagation()
-                                McpServiceClient.authenticateMcpServer(StringRequest.create({ value: server.name }))
-                            }}
-                            variant="default">
-                            Authenticate
-                        </Button>
-                    )}
+                    {server.oauthRequired &&
+                        (server.oauthAuthStatus === "unauthenticated" ||
+                            server.oauthAuthStatus === "reauthentication-required") && (
+                            <Button
+                                className="m-2.5 mt-0 max-w-[calc(100%-20px)]"
+                                onClick={(e) => {
+                                    e.stopPropagation()
+                                    void McpServiceClient.authenticateMcpServer(
+                                        StringRequest.create({ value: server.name }),
+                                    ).catch((error) => console.error("Error authorizing MCP server", error))
+                                }}
+                                variant="default">
+                                {server.oauthAuthStatus === "reauthentication-required" ? "Reauthorize" : "Authenticate"}
+                            </Button>
+                        )}
                     {/* Authentication state can outlive the server that asked for it, so retrying stays available. */}
                     <Button
                         className="m-2.5 mt-0 max-w-[calc(100%-20px)]"

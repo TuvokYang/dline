@@ -22,10 +22,26 @@ export interface McpOAuthFlow {
     result: Promise<void>
 }
 
+/** The SDK has not prepared an authorization URL yet; reconnecting after invalidation can create it. */
+export class McpOAuthAuthorizationNotPreparedError extends Error {
+    constructor(message: string) {
+        super(message)
+        this.name = "McpOAuthAuthorizationNotPreparedError"
+    }
+}
+
+export interface McpOAuthAuthorizationRequired {
+    readonly serverName: string
+    readonly serverUrl: string
+    readonly reauthorization: boolean
+}
+
 export interface McpOAuthManagerOptions {
     /** Lease that keeps one authorization per server across Dline windows. */
     leaseFor?: (serverHash: string) => OAuthFlowLease
     openExternal?: (url: string) => Promise<void>
+    /** Announces the SDK's prepared authorization URL even when a reconnect hides its error. */
+    onAuthorizationRequired?: (event: McpOAuthAuthorizationRequired) => void | Promise<void>
 }
 
 /** An authorization may take a while when the user has to sign in or create an account first. */
@@ -47,6 +63,12 @@ interface McpOAuthServerSecrets {
     oauth_state?: string
     oauth_state_timestamp?: number
     pending_auth_url?: string
+    reauthorization_required?: boolean
+}
+
+interface OAuthTokenIdentity {
+    readonly accessToken: string
+    readonly refreshToken?: string
 }
 
 /** The latest persisted data for a server, including what other windows wrote. */
@@ -94,8 +116,16 @@ class DlineOAuthClientProvider implements OAuthClientProvider {
     private readonly loopback: McpOAuthLoopback
     /** The registration an auth() call in this window is running, if any. */
     private registration: PendingRegistration | undefined
+    /** Credential identities last handed to the SDK, used to avoid deleting a newer cross-window rotation. */
+    private lastClientIdRead: string | undefined
+    private lastTokensRead: OAuthTokenIdentity | undefined
 
-    constructor(serverName: string, serverUrl: string, loopback: McpOAuthLoopback) {
+    constructor(
+        serverName: string,
+        serverUrl: string,
+        loopback: McpOAuthLoopback,
+        private readonly onAuthorizationRequired?: (event: McpOAuthAuthorizationRequired) => void | Promise<void>,
+    ) {
         this.serverName = serverName
         this.serverUrl = serverUrl
         this.serverHash = getServerAuthHash(serverName, serverUrl)
@@ -169,6 +199,7 @@ class DlineOAuthClientProvider implements OAuthClientProvider {
     }
 
     async saveClientInformation(clientInformation: OAuthClientInformationFull): Promise<void> {
+        this.lastClientIdRead = clientInformation.client_id
         updateServerSecrets(this.serverHash, (current) => {
             const next: McpOAuthServerSecrets = {
                 ...current,
@@ -191,7 +222,9 @@ class DlineOAuthClientProvider implements OAuthClientProvider {
         const secrets = readServerSecrets(this.serverHash)
         // A client registered for another redirect (an earlier port, another platform) is refused by
         // the server, and one saved without its redirect cannot be trusted either.
-        return secrets?.redirect_url_at_registration === this._redirectUrl ? secrets.client_info : undefined
+        const client = secrets?.redirect_url_at_registration === this._redirectUrl ? secrets.client_info : undefined
+        this.lastClientIdRead = client?.client_id
+        return client
     }
 
     async tokens(): Promise<OAuthTokens | undefined> {
@@ -208,8 +241,10 @@ class DlineOAuthClientProvider implements OAuthClientProvider {
         const serverData = readServerSecrets(this.serverHash)
 
         if (!serverData?.tokens) {
+            this.lastTokensRead = undefined
             return undefined
         }
+        this.lastTokensRead = tokenIdentity(serverData.tokens)
 
         // Check token expiration if timestamp exists
         if (serverData.tokens_saved_at && serverData.tokens.expires_in) {
@@ -235,8 +270,17 @@ class DlineOAuthClientProvider implements OAuthClientProvider {
         // Flow: finishAuth(code) → SDK's auth() → exchangeAuthorization() → THIS METHOD
         // Stores tokens in the single mcpOAuthSecrets JSON for persistence
         Logger.log(`[McpOAuth] Tokens saved for ${this.serverName}`)
+        this.lastTokensRead = tokenIdentity(tokens)
 
-        updateServerSecrets(this.serverHash, (current) => ({ ...current, tokens, tokens_saved_at: Date.now() }))
+        updateServerSecrets(this.serverHash, (current) => {
+            const next = { ...current, tokens, tokens_saved_at: Date.now() }
+            delete next.pending_auth_url
+            delete next.code_verifier
+            delete next.oauth_state
+            delete next.oauth_state_timestamp
+            delete next.reauthorization_required
+            return next
+        })
     }
 
     async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
@@ -261,20 +305,72 @@ class DlineOAuthClientProvider implements OAuthClientProvider {
         // This prevents automatic browser popups on every extension load!
         // ========================================================================
 
-        // Guard: Check if we already have valid tokens
-        // If tokens exist, this method shouldn't be called (SDK would use them)
-        // But if it is called, don't overwrite existing auth state
-        const existingTokens = await this.tokens()
-        if (existingTokens?.access_token) {
-            Logger.warn(`[McpOAuth] Preserving existing tokens for ${this.serverName}`)
-            return
-        }
-
         // Keep the SDK-built URL (endpoint, client_id, redirect_uri, scope, resource) for the
         // Authenticate click; state is created per click so a retry never reuses a consumed one.
-        updateServerSecrets(this.serverHash, (current) => ({ ...current, pending_auth_url: authorizationUrl.toString() }))
+        // The SDK reaches this method only after deciding that existing credentials cannot complete
+        // the request, so retaining tokens must not suppress the recovery URL.
+        let reauthorization = false
+        updateServerSecrets(this.serverHash, (current) => {
+            reauthorization = Boolean(current.tokens || current.reauthorization_required)
+            return {
+                ...current,
+                pending_auth_url: authorizationUrl.toString(),
+                ...(reauthorization ? { reauthorization_required: true } : {}),
+            }
+        })
+        await this.onAuthorizationRequired?.({
+            serverName: this.serverName,
+            serverUrl: this.serverUrl,
+            reauthorization,
+        })
 
         Logger.log(`[McpOAuth] OAuth required for ${this.serverName} - user must click Authenticate button`)
+    }
+
+    async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
+        if (scope === "discovery") return
+
+        let invalidated = false
+        updateServerSecrets(this.serverHash, (current) => {
+            if (
+                (scope === "all" || scope === "client") &&
+                this.lastClientIdRead !== undefined &&
+                current.client_info?.client_id !== this.lastClientIdRead
+            ) {
+                return current
+            }
+            if (scope === "tokens" && this.lastTokensRead !== undefined && !sameTokens(current.tokens, this.lastTokensRead)) {
+                return current
+            }
+
+            const next = { ...current }
+            if (scope === "all" || scope === "client") {
+                delete next.client_info
+                delete next.redirect_url_at_registration
+                delete next.tokens
+                delete next.tokens_saved_at
+                delete next.pending_auth_url
+                next.reauthorization_required = true
+            } else if (scope === "tokens") {
+                delete next.tokens
+                delete next.tokens_saved_at
+                delete next.pending_auth_url
+                next.reauthorization_required = true
+            }
+            if (scope === "all" || scope === "verifier") {
+                delete next.code_verifier
+            }
+            if (scope === "all") {
+                delete next.oauth_state
+                delete next.oauth_state_timestamp
+            }
+            invalidated = true
+            return next
+        })
+
+        if (!invalidated) return
+        if (scope === "all" || scope === "client") this.lastClientIdRead = undefined
+        if (scope === "all" || scope === "client" || scope === "tokens") this.lastTokensRead = undefined
     }
 
     async saveCodeVerifier(codeVerifier: string): Promise<void> {
@@ -323,6 +419,7 @@ export class McpOAuthManager {
     private readonly activeFlows = new Map<string, { coordinator: LocalOAuthFlowCoordinator<OAuthTokens>; flowId: string }>()
     private readonly leaseFor: (serverHash: string) => OAuthFlowLease
     private readonly openBrowser: (url: string) => Promise<void>
+    private readonly onAuthorizationRequired: McpOAuthManagerOptions["onAuthorizationRequired"]
 
     /**
      * @param exchangeCode - Redeems a code on the server's transport once the shared coordinator received it.
@@ -335,6 +432,7 @@ export class McpOAuthManager {
             options.leaseFor ??
             ((serverHash) => new FileOAuthFlowLease(path.join(getDlineDataDir(), "oauth", "mcp", `${serverHash}.json`)))
         this.openBrowser = options.openExternal ?? openExternal
+        this.onAuthorizationRequired = options.onAuthorizationRequired
     }
 
     /**
@@ -405,7 +503,7 @@ export class McpOAuthManager {
         const sdkAuthorizationUrl = readServerSecrets(serverHash)?.pending_auth_url
         if (!sdkAuthorizationUrl) {
             // The SDK has not been triggered yet, e.g. the server was just added and has not connected.
-            throw new Error(
+            throw new McpOAuthAuthorizationNotPreparedError(
                 `No pending authorization URL found for ${serverDisplayName}. Please try restarting the server first.`,
             )
         }
@@ -416,6 +514,27 @@ export class McpOAuthManager {
             return undefined
         }
         return this.startLoopbackFlow({ serverName, serverUrl, serverDisplayName, serverHash, provider, sdkAuthorizationUrl })
+    }
+
+    /**
+     * Prepare a user-requested recovery when an HTTP 401 arrived after the SDK believed authentication succeeded.
+     * Invalidation uses the credential identity observed by the failed request; it must not adopt and delete a newer
+     * cross-window rotation that arrived after that 401.
+     */
+    async prepareReauthorization(serverName: string, serverUrl: string): Promise<void> {
+        if (!this.hasSavedTokens(serverName, serverUrl)) return
+        const provider = await this.getOrCreateProvider(serverName, serverUrl)
+        await provider.invalidateCredentials?.("tokens")
+    }
+
+    /** Whether an invalid saved credential explicitly requires the user to authorize again. */
+    isReauthorizationRequired(serverName: string, serverUrl: string): boolean {
+        return readServerSecrets(getServerAuthHash(serverName, serverUrl))?.reauthorization_required === true
+    }
+
+    /** Whether the shared store still contains a token for this server, including an expired one. */
+    hasSavedTokens(serverName: string, serverUrl: string): boolean {
+        return readServerSecrets(getServerAuthHash(serverName, serverUrl))?.tokens !== undefined
     }
 
     /**
@@ -437,7 +556,7 @@ export class McpOAuthManager {
     }
 
     private async createProvider(serverName: string, serverUrl: string, key: string): Promise<OAuthClientProvider> {
-        const provider = new DlineOAuthClientProvider(serverName, serverUrl, this.loopback)
+        const provider = new DlineOAuthClientProvider(serverName, serverUrl, this.loopback, this.onAuthorizationRequired)
         await provider.initialize() // Sets the redirect URL
         this.providers.set(key, provider)
         return provider
@@ -540,4 +659,13 @@ export class McpOAuthManager {
 
 function providerKey(serverName: string, serverUrl: string): string {
     return `${serverName}:${serverUrl}`
+}
+
+function tokenIdentity(tokens: OAuthTokens): OAuthTokenIdentity {
+    return { accessToken: tokens.access_token, ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}) }
+}
+
+function sameTokens(current: OAuthTokens | undefined, lastRead: OAuthTokenIdentity | undefined): boolean {
+    if (!current || !lastRead) return current === undefined && lastRead === undefined
+    return current.access_token === lastRead.accessToken && current.refresh_token === lastRead.refreshToken
 }

@@ -2,7 +2,6 @@ import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { sendMcpServersUpdate } from "@core/controller/mcp/subscribeToMcpServers"
 import { getMcpSettingsFilePath as getMcpSettingsFilePathHelper } from "@core/storage/disk"
 import { StateManager } from "@core/storage/StateManager"
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
@@ -45,7 +44,7 @@ import { Logger } from "@/shared/services/Logger"
 import { hashStableJson } from "@/shared/stable-json"
 import { expandEnvironmentVariables } from "@/utils/envExpansion"
 import { TelemetryService } from "../telemetry/TelemetryService"
-import { describeMcpConnectionError } from "./connection-error"
+import { classifyMcpConnectionError, describeMcpConnectionError, projectMcpAuthorizationFailure } from "./connection-error"
 import { DEFAULT_REQUEST_TIMEOUT_MS, MCP_CONNECT_TIMEOUT_MS } from "./constants"
 import { McpAuthentication } from "./McpAuthentication"
 import { type McpToolApprovalConfig, resolveMcpToolAutoApprove, updateMcpToolAutoApproveConfig } from "./mcp-auto-approval"
@@ -174,6 +173,8 @@ export class McpHub {
         this.authentication = new McpAuthentication({
             connections: () => this.connections,
             restartConnection: (serverName) => this.restartConnection(serverName),
+            authorizationRequired: (serverName, serverUrl, reauthorization) =>
+                this.authorizationRequired(serverName, serverUrl, reauthorization),
         })
         this.workspaceMcpRegistry = new WorkspaceMcpRegistry(() => this.refreshWorkspaceConnections())
         void this.watchMcpSettingsFile().catch((error) => Logger.error("[McpHub] Failed to watch MCP settings:", error))
@@ -588,11 +589,12 @@ export class McpHub {
 
             let transport: StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport
 
-            // Create OAuth provider for remote transports (SSE and HTTP)
-            const authProvider =
-                expandedConfig.type === "sse" || expandedConfig.type === "streamableHttp"
-                    ? await this.authentication.oauth.getOrCreateProvider(name, expandedConfig.url)
-                    : undefined
+            // Create OAuth provider for remote transports (SSE and HTTP).
+            const remoteServerUrl =
+                expandedConfig.type === "sse" || expandedConfig.type === "streamableHttp" ? expandedConfig.url : undefined
+            const authProvider = remoteServerUrl
+                ? await this.authentication.oauth.getOrCreateProvider(name, remoteServerUrl)
+                : undefined
 
             switch (expandedConfig.type) {
                 case "stdio": {
@@ -708,18 +710,23 @@ export class McpHub {
                     })
 
                     transport.onerror = async (error) => {
+                        const failure = classifyMcpConnectionError(error)
                         mcpTransportObserver.record({
                             transport: "sse",
                             classification: "transient",
                             outcome: "scheduled",
                             error,
                         })
-                        Logger.warn(`MCP SSE transport interrupted; the EventSource will attempt recovery.`)
                         const connection = this.findConnection(name, source)
                         if (connection) {
-                            connection.server.status = "disconnected"
                             McpHub.mcpServerKeys.delete(connection.server.uid || name)
-                            this.appendErrorMessage(connection, describeMcpConnectionError(error))
+                            if (failure.kind === "authorization_required") {
+                                await this.transitionToAuthorizationRequired(connection, name, expandedConfig.url)
+                            } else {
+                                Logger.warn(`MCP SSE transport interrupted; the EventSource will attempt recovery.`)
+                                connection.server.status = "disconnected"
+                                this.appendErrorMessage(connection, failure.message)
+                            }
                         }
                         await this.notifyWebviewOfServerChanges()
                     }
@@ -765,7 +772,17 @@ export class McpHub {
                         delay: (ms) => setTimeoutPromise(ms),
                     })
 
-                    transport.onerror = (error) => reconnectHandler.handleError(error)
+                    transport.onerror = async (error) => {
+                        if (classifyMcpConnectionError(error).kind !== "authorization_required") {
+                            void reconnectHandler.handleError(error)
+                            return
+                        }
+                        const connection = this.findConnection(name, source)
+                        if (connection) {
+                            McpHub.mcpServerKeys.delete(connection.server.uid || name)
+                            await this.transitionToAuthorizationRequired(connection, name, expandedConfig.url)
+                        }
+                    }
                     break
                 }
                 default:
@@ -781,7 +798,6 @@ export class McpHub {
                     disabled: config.disabled,
                     uid: this.getMcpServerKey(name),
                     oauthRequired: false,
-                    oauthAuthStatus: "authenticated",
                 },
                 client,
                 transport,
@@ -806,30 +822,17 @@ export class McpHub {
                     if (timeoutHandle) clearTimeout(timeoutHandle)
                 }
             } catch (error) {
-                if (error instanceof UnauthorizedError) {
-                    // Only an HTTP 401 from the server reaches here; a server that is down fails the fetch instead.
+                if (
+                    connection.server.oauthAuthStatus === "unauthenticated" ||
+                    connection.server.oauthAuthStatus === "reauthentication-required"
+                ) {
+                    return
+                }
+                const failure = classifyMcpConnectionError(error)
+                if (failure.kind === "authorization_required" && remoteServerUrl) {
                     Logger.log(`Server "${name}" requires OAuth authentication`)
-                    const unauthConnection: McpConnection = {
-                        server: {
-                            name,
-                            ...metadata,
-                            config: JSON.stringify(config),
-                            status: "disconnected",
-                            disabled: false,
-                            oauthRequired: true,
-                            oauthAuthStatus: "unauthenticated",
-                            error: "The server answered 401 Unauthorized: authenticate to connect, or retry if it was restarted.",
-                            uid: this.getMcpServerKey(name),
-                        },
-                        client,
-                        transport,
-                        authProvider, // CRITICAL: Keep authProvider so it's available when user authenticates!
-                    }
-                    // Replace the connection with unauthenticated version
-                    this.connections = this.connections.filter((conn) => conn.server.name !== name)
-                    this.connections.push(unauthConnection)
-                    await this.notifyWebviewOfServerChanges()
-                    return // Don't throw, just mark as needs auth
+                    await this.transitionToAuthorizationRequired(connection, name, remoteServerUrl)
+                    return // Keep the transport and provider so Authenticate/Reauthorize can finish the flow.
                 }
                 // Stop a transport whose handshake failed or exceeded the optional dependency budget.
                 await transport.close().catch(() => undefined)
@@ -840,6 +843,10 @@ export class McpHub {
 
             connection.server.status = "connected"
             connection.server.error = ""
+            if (authProvider && remoteServerUrl && this.authentication.oauth.hasSavedTokens(name, remoteServerUrl)) {
+                connection.server.oauthRequired = true
+                connection.server.oauthAuthStatus = "authenticated"
+            }
 
             // Register notification handler for real-time messages
             //Logger.log(`[MCP Debug] Setting up notification handlers for server: ${name}`)
@@ -930,6 +937,29 @@ export class McpHub {
             }
             throw error
         }
+    }
+
+    private async authorizationRequired(serverName: string, serverUrl: string, reauthorization: boolean): Promise<void> {
+        const connection = this.connections.find((candidate) => candidate.server.name === serverName)
+        if (!connection) return
+        await this.transitionToAuthorizationRequired(connection, serverName, serverUrl, reauthorization)
+    }
+
+    private async transitionToAuthorizationRequired(
+        connection: McpConnection,
+        serverName: string,
+        serverUrl: string,
+        explicitReauthorization?: boolean,
+    ): Promise<void> {
+        const reauthorization =
+            explicitReauthorization ??
+            (this.authentication.oauth.isReauthorizationRequired(serverName, serverUrl) ||
+                this.authentication.oauth.hasSavedTokens(serverName, serverUrl))
+        const changed = projectMcpAuthorizationFailure(connection.server, reauthorization)
+        connection.transport.onerror = undefined
+        connection.transport.onclose = undefined
+        await connection.transport.close().catch(() => undefined)
+        if (changed) await this.notifyWebviewOfServerChanges()
     }
 
     private appendErrorMessage(connection: McpConnection, error: string) {

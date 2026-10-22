@@ -5,13 +5,14 @@ import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
 import { getServerAuthHash } from "@/utils/mcpAuth"
 import { isOAuthFlowCancelled, McpOAuthReregistrationRequiredError } from "./McpOAuthLoopback"
-import { type McpOAuthFlow, McpOAuthManager } from "./McpOAuthManager"
+import { McpOAuthAuthorizationNotPreparedError, type McpOAuthFlow, McpOAuthManager } from "./McpOAuthManager"
 import type { McpConnection } from "./types"
 
 /** What the Authenticate flow needs from the hub that owns the server connections. */
 export interface McpAuthenticationHost {
     connections(): readonly McpConnection[]
     restartConnection(serverName: string): Promise<void>
+    authorizationRequired(serverName: string, serverUrl: string, reauthorization: boolean): Promise<void>
 }
 
 /**
@@ -25,7 +26,10 @@ export class McpAuthentication {
     readonly oauth: McpOAuthManager
 
     constructor(private readonly host: McpAuthenticationHost) {
-        this.oauth = new McpOAuthManager((serverHash, code) => this.finishOAuth(serverHash, code))
+        this.oauth = new McpOAuthManager((serverHash, code) => this.finishOAuth(serverHash, code), {
+            onAuthorizationRequired: ({ serverName, serverUrl, reauthorization }) =>
+                this.host.authorizationRequired(serverName, serverUrl, reauthorization),
+        })
     }
 
     /** Opens the server's authorization in the browser; the outcome is reported when it settles. */
@@ -45,11 +49,21 @@ export class McpAuthentication {
         try {
             flow = await this.oauth.startOAuthFlow(serverName, serverUrl, displayName)
         } catch (error) {
-            if (error instanceof McpOAuthReregistrationRequiredError) {
-                // Reconnecting registers a redirect Dline can serve and stores a new authorization URL.
+            if (error instanceof McpOAuthAuthorizationNotPreparedError) {
+                // A post-auth 401 can arrive without a pending redirect. Invalidate the exact saved
+                // token, reconnect once so the SDK prepares a URL, then continue this same click.
+                await this.oauth.prepareReauthorization(serverName, serverUrl)
                 await this.host.restartConnection(serverName)
+                const restarted = this.host.connections().find((candidate) => candidate.server.name === serverName)
+                if (restarted?.server.status === "connected") return
+                flow = await this.oauth.startOAuthFlow(serverName, serverUrl, displayName)
+            } else {
+                if (error instanceof McpOAuthReregistrationRequiredError) {
+                    // Reconnecting registers a redirect Dline can serve and stores a new authorization URL.
+                    await this.host.restartConnection(serverName)
+                }
+                throw error
             }
-            throw error
         }
         if (flow) {
             void this.settle(getServerAuthHash(serverName, serverUrl), flow, displayName)

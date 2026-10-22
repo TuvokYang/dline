@@ -28,7 +28,7 @@ export type McpServer = {
     oauthAuthStatus?: McpOAuthAuthStatus
 }
 
-export type McpOAuthAuthStatus = "authenticated" | "unauthenticated" | "pending"
+export type McpOAuthAuthStatus = "authenticated" | "unauthenticated" | "reauthentication-required" | "pending"
 
 export type McpTool = {
     name: string

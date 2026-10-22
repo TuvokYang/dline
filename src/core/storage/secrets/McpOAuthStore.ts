@@ -19,6 +19,7 @@ export interface McpOAuthServerData {
     oauth_state_timestamp?: number
     pending_auth_url?: string
     code_verifier?: string
+    reauthorization_required?: boolean
 }
 
 let _store: ClineFileStorage<McpOAuthServerData> | null = null
