@@ -358,6 +358,9 @@ function buildPosixCommand(options: ShellEnvironmentCommandOptions): string {
     const completionMarker = options.completionMarkerToken
         ? `printf '${INTERNAL_COMMAND_EXIT_MARKER_PREFIX}${options.completionMarkerToken}:%s\\n' "$__dline_exit"`
         : undefined
+    if (prefix.length === 0 && !post && completionMarker && !options.terminateShell) {
+        return `${options.command}; __dline_exit=$?; ${completionMarker}; (exit "$__dline_exit")`
+    }
     return `( ${prefix.join("; ")}${prefix.length > 0 ? "; " : ""}${options.command}; __dline_exit=$?; ${post ? `${post}; ` : ""}${completionMarker ? `${completionMarker}; ` : ""}exit $__dline_exit )`
 }
 

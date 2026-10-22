@@ -198,6 +198,8 @@ describe("shell environment command builders", () => {
 
         assert.match(powershell, /__DLINE_INTERNAL_COMMAND_EXIT__powershell-token:\$__dline_exit_code/)
         assert.match(posix, /__DLINE_INTERNAL_COMMAND_EXIT__posix-token:%s/)
+        assert.doesNotMatch(posix, /^\s*\(/)
+        assert.match(posix, /; \(exit "\$__dline_exit"\)$/)
     })
 
     it("emits a foreground completion marker after postCommand", () => {
