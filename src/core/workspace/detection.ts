@@ -2,7 +2,7 @@ import { VcsType, WorkspaceRoot } from "@shared/multi-root/types"
 import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
 import { getLatestGitCommitHash, isGitRepository } from "@/utils/git"
-import { getCwd, getDesktopDir } from "@/utils/path"
+import { getCwd, getDefaultWorkspaceDir } from "@/utils/path"
 
 /**
  * Detect the VCS type for a given directory path.
@@ -26,7 +26,7 @@ export async function detectWorkspaceRoots(): Promise<WorkspaceRoot[]> {
 
     if (!workspacePaths.paths || workspacePaths.paths.length === 0) {
         // No workspace folders, use cwd
-        const cwd = await getCwd(getDesktopDir())
+        const cwd = await getCwd(await getDefaultWorkspaceDir())
         return [
             {
                 path: cwd,

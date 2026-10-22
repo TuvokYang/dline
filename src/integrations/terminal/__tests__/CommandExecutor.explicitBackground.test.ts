@@ -263,7 +263,9 @@ describe("CommandExecutor explicit background execution", () => {
             await execution
 
             assert.equal(vi.mocked(terminalManager.getOrCreateTerminal).mock.calls[0]?.[1], undefined)
-            assert.equal(vi.mocked(terminalManager.runCommand).mock.calls[0]?.[1], "Run-Original-Command")
+            const executedCommand = vi.mocked(terminalManager.runCommand).mock.calls[0]?.[1] ?? ""
+            assert.match(executedCommand, /Run-Original-Command/)
+            assert.match(executedCommand, /__DLINE_INTERNAL_COMMAND_EXIT__/)
             assert.ok(
                 logger.mock.calls.some(([message]) => String(message).includes("continuing without it")),
                 "invalid configuration should be reported only through the extension logger",
@@ -274,7 +276,7 @@ describe("CommandExecutor explicit background execution", () => {
         }
     })
 
-    it("defers prewarming until terminal configuration changes after construction", async () => {
+    it("prewarms every workspace root during initial construction and later configuration", async () => {
         const firstRoot = path.resolve("C:\\workspace-a")
         const secondRoot = path.resolve("C:\\workspace-b")
         const primaryManager = createTerminalManager()
@@ -291,11 +293,10 @@ describe("CommandExecutor explicit background execution", () => {
             createCallbacks(),
         )
 
-        await new Promise((resolve) => setTimeout(resolve, 50))
-        assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls.length, 0)
+        await vi.waitFor(() => assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls.length, 2))
 
         executor.configure(terminalConfiguration)
-        await vi.waitFor(() => assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls.length, 2))
+        await vi.waitFor(() => assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls.length, 4))
         for (const [cwd, launchConfiguration] of vi.mocked(primaryManager.ensureWarm!).mock.calls) {
             assert.equal(launchConfiguration?.workspaceRoot, cwd)
             assert.equal(launchConfiguration?.profileId, "default")
@@ -342,14 +343,14 @@ describe("CommandExecutor explicit background execution", () => {
             },
             createCallbacks(),
         )
-        assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls.length, 0)
+        await vi.waitFor(() => assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls.length, 1))
 
         executor.configure({ ...terminalConfiguration, defaultTerminalProfile: "powershell" })
-        await vi.waitFor(() => assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls.length, 1))
-        assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls[0]?.[1]?.profileId, "powershell")
+        await vi.waitFor(() => assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls.length, 2))
+        assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls[1]?.[1]?.profileId, "powershell")
 
         executor.reinitializeTerminals()
-        await vi.waitFor(() => assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls.length, 2))
+        await vi.waitFor(() => assert.equal(vi.mocked(primaryManager.ensureWarm!).mock.calls.length, 3))
     })
 
     it("reinitializes every owned terminal manager without forcing busy terminals closed", () => {

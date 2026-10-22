@@ -390,7 +390,7 @@ function buildCmdCommand(options: ShellEnvironmentCommandOptions): string {
 export function buildShellEnvironmentCommand(options: ShellEnvironmentCommandOptions): string {
     const hasConfiguration =
         (options.startupScripts?.length ?? 0) > 0 || (options.preCommands?.length ?? 0) > 0 || options.postCommand !== undefined
-    if (!hasConfiguration) return options.command
+    if (!hasConfiguration && !options.completionMarkerToken) return options.command
     const platform = options.platform ?? process.platform
     const kind = shellKind(options.profile, platform)
     if (kind === "powershell") return buildPowerShellCommand(options)

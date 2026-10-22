@@ -168,7 +168,7 @@ describe("shell environment command builders", () => {
         assert.match(posix ?? "", /startupScripts\[1\] failed/)
     })
 
-    it("keeps the original command unchanged when no startup, pre, or post behavior is configured", () => {
+    it("keeps the original command unchanged when no setup or completion behavior is configured", () => {
         assert.equal(
             buildShellEnvironmentCommand({
                 command: "npm test",
@@ -178,6 +178,26 @@ describe("shell environment command builders", () => {
             }),
             "npm test",
         )
+    })
+
+    it("wraps an otherwise unconfigured foreground command with a completion marker", () => {
+        const powershell = buildShellEnvironmentCommand({
+            command: "npm test",
+            diagnosticsPath: "C:\\Temp\\unused.log",
+            platform: "win32",
+            profile: "powershell-legacy",
+            completionMarkerToken: "powershell-token",
+        })
+        const posix = buildShellEnvironmentCommand({
+            command: "npm test",
+            diagnosticsPath: "/tmp/unused.log",
+            platform: "linux",
+            profile: "bash",
+            completionMarkerToken: "posix-token",
+        })
+
+        assert.match(powershell, /__DLINE_INTERNAL_COMMAND_EXIT__powershell-token:\$__dline_exit_code/)
+        assert.match(posix, /__DLINE_INTERNAL_COMMAND_EXIT__posix-token:%s/)
     })
 
     it("emits a foreground completion marker after postCommand", () => {

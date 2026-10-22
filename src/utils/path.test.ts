@@ -2,7 +2,7 @@ import * as os from "os"
 import * as path from "path"
 import { describe, it } from "vitest"
 import "should"
-import { arePathsEqual, getReadablePath, isLocatedInPath } from "./path"
+import { arePathsEqual, getReadablePath, isLocatedInPath, resolveDefaultWorkspaceDir } from "./path"
 
 describe("Path Utilities", () => {
     describe("isLocatedInPath", () => {
@@ -55,6 +55,35 @@ describe("Path Utilities", () => {
         it("should handle normalized paths", () => {
             arePathsEqual("/tmp/./dir", "/tmp/../tmp/dir").should.be.true()
             arePathsEqual("/tmp/./dir", "/tmp/../dir").should.be.false()
+        })
+    })
+
+    describe("resolveDefaultWorkspaceDir", () => {
+        it("uses home for a remote Linux extension host", () => {
+            resolveDefaultWorkspaceDir({
+                platform: "linux",
+                remoteName: "wsl",
+                homeDir: "/home/dev",
+                desktopDir: "/home/dev/Desktop",
+            }).should.equal("/home/dev")
+        })
+
+        it("uses Desktop for a local Linux desktop host", () => {
+            resolveDefaultWorkspaceDir({
+                platform: "linux",
+                remoteName: undefined,
+                homeDir: "/home/dev",
+                desktopDir: "/home/dev/Desktop",
+            }).should.equal("/home/dev/Desktop")
+        })
+
+        it("keeps Desktop as the local default on non-Linux hosts", () => {
+            resolveDefaultWorkspaceDir({
+                platform: "win32",
+                remoteName: "ssh-remote",
+                homeDir: "C:\\Users\\dev",
+                desktopDir: "C:\\Users\\dev\\Desktop",
+            }).should.equal("C:\\Users\\dev\\Desktop")
         })
     })
 

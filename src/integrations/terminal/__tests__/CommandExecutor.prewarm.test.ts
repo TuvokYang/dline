@@ -85,9 +85,9 @@ function createCallbacks(): CommandExecutorCallbacks {
     }
 }
 
-/** Build an executor and trigger the deferred prewarm. */
+/** Build an executor; its initial VS Code terminal configuration starts prewarming. */
 function prewarm(manager: ITerminalManager, workspaceRoots: readonly string[]) {
-    const executor = new CommandExecutor(
+    return new CommandExecutor(
         {
             cwd: workspaceRoots[0],
             workspaceRoots: [...workspaceRoots],
@@ -99,9 +99,6 @@ function prewarm(manager: ITerminalManager, workspaceRoots: readonly string[]) {
         },
         createCallbacks(),
     )
-    // Prewarming is deferred until configuration is applied after construction.
-    executor.configure(terminalConfiguration)
-    return executor
 }
 
 function failures() {

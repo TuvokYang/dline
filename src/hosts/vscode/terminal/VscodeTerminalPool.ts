@@ -174,7 +174,7 @@ interface TerminalPartition {
     retryAttempt: number
     retryTimer?: NodeJS.Timeout
     ensurePromise?: Promise<void>
-    warmDeadlineAt?: number
+    pendingAcquires: number
 }
 
 export interface VscodeTerminalPoolOptions {
@@ -279,7 +279,8 @@ export class VscodeTerminalPool {
         const partition = this.getOrCreatePartition(preparation)
         partition.lastActiveAt = Date.now()
         if (partition.retryTimer || partition.draining) return partition.ensurePromise ?? Promise.resolve()
-        const desiredDeficit = Math.max(0, this.targetStandby - this.countStandby(partition))
+        const desiredCapacity = Math.max(this.targetStandby, partition.pendingAcquires)
+        const desiredDeficit = Math.max(0, desiredCapacity - this.countStandby(partition))
         const deficit = Math.min(desiredDeficit, Math.max(0, this.maxGlobalTerminals - this.countGlobalTerminals()))
         if (deficit === 0) {
             if (desiredDeficit > 0) this.scheduleWarmRetry(partition)
@@ -287,16 +288,15 @@ export class VscodeTerminalPool {
         }
 
         const startedAt = performance.now()
-        partition.warmDeadlineAt = Date.now() + this.acquireWaitTimeoutMs
         const warming = Array.from({ length: deficit }, () => this.warmOne(partition))
-        const pending = Promise.allSettled(warming).then(() => {
+        const pending = Promise.allSettled(warming).then((results) => {
             if (partition.ensurePromise === pending) {
                 partition.ensurePromise = undefined
-                partition.warmDeadlineAt = undefined
             }
             const snapshot = this.snapshot(partition)
-            if (snapshot.ready === this.targetStandby) partition.retryAttempt = 0
-            else this.scheduleWarmRetry(partition)
+            const hadFailure = results.some((result) => result.status === "rejected")
+            if (hadFailure) this.scheduleWarmRetry(partition)
+            else partition.retryAttempt = 0
             this.notifyPartitionStateChanged(partition)
             Logger.debug(
                 `[TerminalPool] operation=ensureWarm partition=${partition.key} target=${this.targetStandby} durationMs=${Math.round(performance.now() - startedAt)} ready=${snapshot.ready} warming=${snapshot.warming}`,
@@ -319,12 +319,17 @@ export class VscodeTerminalPool {
         }
         let entry = this.selectReadyTerminal(partition, cwd, reusePolicy)
         if (!entry) {
-            if (partition.retryTimer && !partition.ensurePromise) {
-                throw new WarmAcquireFailure("retry_pending", `Terminal warming retry pending: ${partition.key}`)
+            partition.pendingAcquires++
+            try {
+                if (partition.retryTimer && !partition.ensurePromise) {
+                    throw new WarmAcquireFailure("retry_pending", `Terminal warming retry pending: ${partition.key}`)
+                }
+                void this.ensureWarm(preparation)
+                const deadlineAt = Date.now() + this.acquireWaitTimeoutMs
+                entry = await this.waitForReadyTerminal(partition, cwd, reusePolicy, deadlineAt)
+            } finally {
+                partition.pendingAcquires--
             }
-            if (!partition.ensurePromise) void this.ensureWarm(preparation)
-            const deadlineAt = partition.warmDeadlineAt ?? Date.now() + this.acquireWaitTimeoutMs
-            entry = await this.waitForReadyTerminal(partition, cwd, reusePolicy, deadlineAt)
         }
         if (!entry) throw new WarmAcquireFailure("none_ready", `No ready terminal available for partition ${partition.key}`)
         const sameCwd = arePathsEqual(entry.currentCwd, cwd)
@@ -346,7 +351,6 @@ export class VscodeTerminalPool {
             }
         }
 
-        void this.ensureWarm(preparation)
         Logger.debug(
             `[TerminalPool] operation=acquire partition=${partition.key} terminalId=${entry.terminalInfo.id} policy=${reusePolicy} sameCwd=${sameCwd} durationMs=${Math.round(performance.now() - startedAt)} readyAfter=${this.snapshot(partition).ready}`,
         )
@@ -443,6 +447,7 @@ export class VscodeTerminalPool {
                 draining: false,
                 lastActiveAt: Date.now(),
                 retryAttempt: 0,
+                pendingAcquires: 0,
             }
             this.partitions.set(key, partition)
         } else {
@@ -521,7 +526,8 @@ export class VscodeTerminalPool {
     }
 
     private trimExcessStandby(partition: TerminalPartition): void {
-        let excess = this.countStandby(partition) - this.targetStandby
+        const requiredCapacity = Math.max(this.targetStandby, partition.pendingAcquires)
+        let excess = this.countStandby(partition) - requiredCapacity
         if (excess <= 0) return
         const candidates = [...partition.entries.values()]
             .filter((entry) => entry.state === "ready" && entry.userCommandCount === 0)

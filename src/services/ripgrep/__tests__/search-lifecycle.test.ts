@@ -109,6 +109,62 @@ describe("ripgrep search lifecycle", () => {
         expect(args[globIndex + 1]).toBe("*.ts")
     })
 
+    it.each([0, 1])("accepts exit code %s even when ripgrep writes a non-fatal warning", async (exitCode) => {
+        const stub = createRipgrepStub()
+        spawnMock.mockImplementation(() => {
+            queueMicrotask(() => {
+                stub.stderr.emit("data", Buffer.from("warning: one entry could not be read\n"))
+                stub.close(exitCode)
+            })
+            return stub.process
+        })
+
+        await expect(regexSearchFiles("/workspace", "/workspace", "needle", "*.ts", scanController())).resolves.toBe(
+            "Found 0 results.",
+        )
+    })
+
+    it.each([
+        ["regex parse error: look-around is not supported", "rg_regex_parse"],
+        ["The system cannot find the path specified. (os error 3)", "rg_path_not_found"],
+        ["Permission denied (os error 13)", "rg_permission_denied"],
+        ["unexpected ripgrep failure", "rg_process_failed"],
+    ])("classifies an unsuccessful ripgrep exit without exposing stderr: %s", async (stderr, expectedCode) => {
+        const stub = createRipgrepStub()
+        spawnMock.mockImplementation(() => {
+            queueMicrotask(() => {
+                stub.stderr.emit("data", Buffer.from(`${stderr}\n`))
+                stub.close(2)
+            })
+            return stub.process
+        })
+
+        const outcome = await regexSearchFiles("/workspace", "/workspace", "needle", "*.ts", scanController()).catch(
+            (error: unknown) => error,
+        )
+
+        expect(outcome).toBeInstanceOf(Error)
+        expect((outcome as NodeJS.ErrnoException).code).toBe(expectedCode)
+        expect((outcome as Error).message).not.toContain(stderr)
+    })
+
+    it("preserves the original spawn failure as the typed error cause", async () => {
+        const stub = createRipgrepStub()
+        const spawnFailure = Object.assign(new Error("spawn rg ENOENT"), { code: "ENOENT" })
+        spawnMock.mockImplementation(() => {
+            queueMicrotask(() => stub.process.emit("error", spawnFailure))
+            return stub.process
+        })
+
+        const outcome = await regexSearchFiles("/workspace", "/workspace", "needle", "*.ts", scanController()).catch(
+            (error: unknown) => error,
+        )
+
+        expect(outcome).toBeInstanceOf(Error)
+        expect((outcome as NodeJS.ErrnoException).code).toBe("rg_spawn_failed")
+        expect((outcome as Error).cause).toBe(spawnFailure)
+    })
+
     it("aborts and kills a search after the ten-minute deadline", async () => {
         vi.useFakeTimers()
         const stub = createRipgrepStub()

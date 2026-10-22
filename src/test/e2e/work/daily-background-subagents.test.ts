@@ -16,6 +16,8 @@ const PARENT_TARGET = "openai-compatible-chat" as const
 const CHILD_TARGET = "openai-compatible-responses" as const
 const AGENT_NAME = "work-daily-observer"
 const TASK_TEXT = "WORK_DAILY_BACKGROUND_SUBAGENTS_TASK"
+const TERMINAL_CAPTURE_REQUEST = "WORK_VSCODE_TERMINAL_CAPTURE_REQUEST"
+const TERMINAL_REUSE_REQUEST = "WORK_VSCODE_TERMINAL_REUSE_REQUEST"
 const FOREGROUND_COMMAND_REQUEST = "WORK_FOREGROUND_COMMAND_REQUEST"
 const HANDOFF_COMMAND_REQUEST = "WORK_HANDOFF_COMMAND_REQUEST"
 const DURING_COMMAND_INPUT = "WORK_DURING_BACKGROUND_COMMAND_INPUT"
@@ -32,8 +34,31 @@ const BACKGROUND_CHILD_CONTEXT = "Read README.md, remain active briefly, and ret
 const BACKGROUND_CHILD_RESULT = "WORK_BACKGROUND_SUBAGENT_CHILD_OK"
 const BACKGROUND_CHILD_GATE = "work-background-child-complete"
 const COMPLETE = "WORK_DAILY_BACKGROUND_SUBAGENTS_COMPLETE"
+const TERMINAL_CAPTURE_MARKER = "WORK_VSCODE_TERMINAL_CAPTURE"
+const TERMINAL_REUSE_MARKER = "WORK_VSCODE_TERMINAL_REUSE"
 const FOREGROUND_COMMAND = `node -e "console.log('WORK_FOREGROUND_COMMAND_START'); console.log('WORK_FOREGROUND_COMMAND_END')"`
 const BACKGROUND_COMMAND = `node -e "console.log('WORK_BACKGROUND_COMMAND_START'); setTimeout(()=>console.log('WORK_BACKGROUND_COMMAND_END'),30000)"`
+
+interface TerminalPoolEvent {
+    readonly index: number
+    readonly terminalId: number
+}
+
+function terminalCommand(marker: string, exitCode: number): string {
+    if (process.platform === "win32") {
+        return `Write-Output "${marker}"; & $env:ComSpec /d /c "exit ${exitCode}"`
+    }
+    return `printf '${marker}\\n'; (exit ${exitCode})`
+}
+
+function parseTerminalEvents(output: string, operation: "acquire" | "warm"): TerminalPoolEvent[] {
+    const suffix = operation === "acquire" ? "policy=reusable" : "state=ready"
+    return [
+        ...output.matchAll(
+            new RegExp(`\\[TerminalPool\\] operation=${operation} partition=[a-f0-9]+ terminalId=(\\d+) ${suffix}`, "g"),
+        ),
+    ].map((match) => ({ index: match.index, terminalId: Number(match[1]) }))
+}
 
 async function writeWorkSubagent(workspaceDir: string): Promise<void> {
     const directory = path.join(workspaceDir, ".agents", "subagents")
@@ -54,18 +79,38 @@ Read the requested workspace file, then finish through attempt_completion.`,
     )
 }
 
-async function configureTerminalHandoff(page: Page, sidebar: Frame): Promise<void> {
+async function openTerminalSettings(page: Page, sidebar: Frame): Promise<Locator> {
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     await expect(sidebar.getByRole("heading", { name: "API Configuration" })).toBeVisible({ timeout: 60_000 })
     await sidebar.getByTestId("tab-terminal").click()
-    const executionMode = sidebar.locator("#terminal-execution-mode")
+    return sidebar.locator("#terminal-execution-mode")
+}
+
+async function configureTerminalHandoff(page: Page, sidebar: Frame): Promise<void> {
+    const executionMode = await openTerminalSettings(page, sidebar)
     await executionMode.click()
-    await sidebar.getByRole("option", { name: "Background Exec", exact: true }).click()
-    await expect.poll(() => executionMode.evaluate((element) => (element as HTMLSelectElement).value)).toBe("backgroundExec")
+    await sidebar.getByRole("option", { name: "VS Code Terminal", exact: true }).click()
+    await expect.poll(() => executionMode.evaluate((element) => (element as HTMLSelectElement).value)).toBe("vscodeTerminal")
+    const shellIntegrationTimeout = sidebar
+        .getByText("Shell integration timeout (seconds)", { exact: true })
+        .locator("..")
+        .locator("vscode-text-field input")
+    await shellIntegrationTimeout.fill("4")
+    await shellIntegrationTimeout.blur()
+    await expect(shellIntegrationTimeout).toHaveValue("4")
     const handoffSeconds = sidebar.locator("#terminal-command-handoff input")
     await handoffSeconds.fill("1")
     await handoffSeconds.blur()
     await expect(handoffSeconds).toHaveValue("1")
+    await sidebar.getByRole("button", { name: "Done", exact: true }).click()
+    await expect(sidebar.getByTestId("chat-input")).toBeVisible()
+}
+
+async function switchToBackgroundExec(page: Page, sidebar: Frame): Promise<void> {
+    const executionMode = await openTerminalSettings(page, sidebar)
+    await executionMode.click()
+    await sidebar.getByRole("option", { name: "Background Exec", exact: true }).click()
+    await expect.poll(() => executionMode.evaluate((element) => (element as HTMLSelectElement).value)).toBe("backgroundExec")
     await sidebar.getByRole("button", { name: "Done", exact: true }).click()
     await expect(sidebar.getByTestId("chat-input")).toBeVisible()
 }
@@ -216,6 +261,56 @@ e2e(
                 name: "qna_respond",
                 arguments: { response: "WORK_DAILY_BACKGROUND_READY" },
                 expectedRequestIncludes: [TASK_TEXT],
+            },
+            {
+                type: "tool",
+                id: "call_work_terminal_capture",
+                name: "execute_command",
+                arguments: {
+                    command: terminalCommand(TERMINAL_CAPTURE_MARKER, 7),
+                    workdirectory: ".",
+                    requires_approval: false,
+                    synchronous: true,
+                    timeout: 60,
+                },
+                expectedRequestIncludes: [TERMINAL_CAPTURE_REQUEST],
+            },
+            {
+                type: "tool",
+                id: "call_work_terminal_capture_done",
+                name: "qna_respond",
+                arguments: { response: "WORK_VSCODE_TERMINAL_CAPTURE_OK" },
+                expectedToolResults: [
+                    {
+                        callId: "call_work_terminal_capture",
+                        contentIncludes: [TERMINAL_CAPTURE_MARKER, "Command failed with exit code 7."],
+                    },
+                ],
+            },
+            {
+                type: "tool",
+                id: "call_work_terminal_reuse",
+                name: "execute_command",
+                arguments: {
+                    command: terminalCommand(TERMINAL_REUSE_MARKER, 0),
+                    workdirectory: ".",
+                    requires_approval: false,
+                    synchronous: true,
+                    timeout: 60,
+                },
+                expectedRequestIncludes: [TERMINAL_REUSE_REQUEST],
+            },
+            {
+                type: "tool",
+                id: "call_work_terminal_reuse_done",
+                name: "qna_respond",
+                arguments: { response: "WORK_VSCODE_TERMINAL_REUSE_OK" },
+                expectedToolResults: [
+                    {
+                        callId: "call_work_terminal_reuse",
+                        contentIncludes: [TERMINAL_REUSE_MARKER, "Command executed successfully (exit code 0)."],
+                    },
+                ],
             },
             {
                 type: "tool",
@@ -404,6 +499,22 @@ e2e(
             taskStarted = true
             await expect(sidebar.getByText("WORK_DAILY_BACKGROUND_READY", { exact: true })).toBeVisible({ timeout: 60_000 })
 
+            await sendWorkMessage(sidebar, TERMINAL_CAPTURE_REQUEST)
+            await expectWorkMessageVisible(sidebar, "WORK_VSCODE_TERMINAL_CAPTURE_OK", { timeout: 60_000 })
+            await sendWorkMessage(sidebar, TERMINAL_REUSE_REQUEST)
+            await expectWorkMessageVisible(sidebar, "WORK_VSCODE_TERMINAL_REUSE_OK", { timeout: 60_000 })
+            const terminalOutput = await E2ETestHelper.readDlineOutput(userDataDir)
+            const terminalAcquires = parseTerminalEvents(terminalOutput, "acquire").slice(-2)
+            expect(terminalAcquires).toHaveLength(2)
+            expect(new Set(terminalAcquires.map((event) => event.terminalId)).size).toBe(1)
+            expect(
+                parseTerminalEvents(terminalOutput, "warm").filter((event) => event.index > terminalAcquires[0].index),
+                "sequential reusable Daily commands must not create replacement terminals",
+            ).toEqual([])
+            expect(terminalOutput).not.toContain("[TerminalPool] operation=fallback")
+            expect(terminalOutput).not.toContain("[TerminalPerf] phase=capability_failure")
+            await switchToBackgroundExec(page, sidebar)
+
             await sendWorkMessage(sidebar, FOREGROUND_COMMAND_REQUEST)
             await expect(sidebar.getByText("WORK_FOREGROUND_COMMAND_OK", { exact: true })).toBeVisible({ timeout: 60_000 })
             const foregroundCard = sidebar.getByTestId("command-card").last()
@@ -486,10 +597,14 @@ e2e(
             activities = await openWorkActivities(sidebar)
             await expect(activities.locator('[data-activity-status="running"]')).toHaveCount(0)
             await openWorkTab(sidebar)
-            await expect.poll(() => server.getRequestCount(PARENT_TARGET)).toBe(13)
+            await expect.poll(() => server.getRequestCount(PARENT_TARGET)).toBe(17)
             await expect.poll(() => server.getRequestCount(CHILD_TARGET)).toBe(4)
             const parentConsumptions = server.getMockConsumptions(PARENT_TARGET)
             expect(parentConsumptions.map((entry) => entry.toolName)).toEqual([
+                "qna_respond",
+                "execute_command",
+                "qna_respond",
+                "execute_command",
                 "qna_respond",
                 "execute_command",
                 "qna_respond",

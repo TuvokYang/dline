@@ -13,6 +13,8 @@
 - 发往 `otel.dline.cc` 的遥测请求改用不带 `/v1` 前缀的路径：`/auth/device/exchange`、`/usage` 和 `/logs`；功能开关请求同样改用 `/features`
 
 ### Fixed
+- VS Code Terminal 在 WSL/Linux bash 与 Windows PowerShell 中会为每条前台命令记录内部退出标记，即使没有项目终端配置也能稳定返回 stdout 与退出码；新任务会立即预热终端，慢启动的冷终端会等待 Shell Integration 真正可执行，aggressive terminal reuse 的顺序命令不再为每次执行额外创建并丢弃替代终端
+- Linux 无工作区时，Remote-WSL、SSH、dev container 等 server/remote 扩展主机默认使用用户主目录 `~`，本地 Linux 桌面版仍默认使用 `~/Desktop`
 - 服务端不提供 token 计数接口（返回 404 或 405）时，Dline 不再在每次估算上下文前反复请求计数，直接改用估算
 - 同时安装正式版与 Insiders 时，两者现在使用独立的侧边栏、标题栏按钮、命令、任务面板、Diff 与代码审查注册，不再在同一个 Dline 视图显示两套按钮或因重复 ID 导致其中一个扩展激活失败；Insiders 保留代码审查回复框的 Enter 提交，但不再声明与正式版冲突的默认扩展快捷键
 - 多个 Dline 版本或窗口同时运行时，远程用量遥测改为轮流发送，不再由某一个窗口长期独占而让其它版本始终无法上报；遥测文件名不变

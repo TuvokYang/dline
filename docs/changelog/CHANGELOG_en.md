@@ -13,6 +13,8 @@ English | [中文版](https://github.com/TuvokYang/Dline/blob/dev/CHANGELOG.md)
 - Telemetry requests to `otel.dline.cc` use paths without the `/v1` prefix: `/auth/device/exchange`, `/usage`, and `/logs`; feature flag requests likewise use `/features`
 
 ### Fixed
+- VS Code Terminal records an internal exit marker for every foreground command on WSL/Linux bash and Windows PowerShell, so stdout and exit codes remain reliable even without a project terminal configuration; new tasks prewarm immediately, slow cold terminals wait until Shell Integration is executable, and sequential commands with aggressive terminal reuse no longer create and discard a replacement terminal for every run
+- With no workspace open on Linux, server/remote extension hosts such as Remote-WSL, SSH, and dev containers now default to the user's home directory (`~`), while local Linux desktop hosts continue to default to `~/Desktop`
 - When an endpoint has no token-counting route (HTTP 404 or 405), Dline no longer requests a count again before every context estimate and uses its estimate instead
 - Stable and Insiders now use independent sidebar, title action, command, task panel, diff, and code-review registrations when both are installed, so one Dline view no longer shows two action sets and neither extension fails on duplicate IDs; Insiders keeps Enter-to-submit in code-review replies but no longer declares extension shortcuts that compete with Stable defaults
 - When several Dline builds or windows run at once, remote usage telemetry now takes turns sending instead of one window holding the sender indefinitely and leaving other builds unable to report; telemetry file names are unchanged

@@ -81,7 +81,6 @@ export class CommandExecutor {
     private standaloneManager: StandaloneTerminalManager
     private callbacks: CommandExecutorCallbacks
     private terminalConfiguration: TerminalManagerConfiguration
-    private hasAppliedInitialConfiguration = false
     private readonly shellEnvironmentLoader: ShellEnvironmentConfigLoader
     private readonly workspaceRoots: readonly string[]
 
@@ -159,9 +158,7 @@ export class CommandExecutor {
             closedCount += result.closedCount
             busyTerminals.push(...result.busyTerminals)
         }
-        const shouldPrewarm = this.hasAppliedInitialConfiguration
-        this.hasAppliedInitialConfiguration = true
-        if (shouldPrewarm && this.terminalExecutionMode === "vscodeTerminal") void this.prewarmWorkspaceRoots()
+        if (this.terminalExecutionMode === "vscodeTerminal") void this.prewarmWorkspaceRoots()
         return { closedCount, busyTerminals }
     }
 
@@ -257,17 +254,18 @@ export class CommandExecutor {
               )
             : undefined
         const profile = this.terminalConfiguration.defaultTerminalProfile
+        const completionMarkerToken = useStandalone ? undefined : randomUUID()
         const executionCommand =
-            shellEnvironment && diagnosticsPath
+            (shellEnvironment && diagnosticsPath) || completionMarkerToken
                 ? buildShellEnvironmentCommand({
                       command,
-                      startupScripts: useStandalone ? shellEnvironment.startupScripts : undefined,
-                      preCommands: shellEnvironment.preCommands,
-                      postCommand: shellEnvironment.postCommand,
+                      startupScripts: shellEnvironment && useStandalone ? shellEnvironment.startupScripts : undefined,
+                      preCommands: shellEnvironment?.preCommands,
+                      postCommand: shellEnvironment?.postCommand,
                       profile,
-                      diagnosticsPath,
+                      diagnosticsPath: diagnosticsPath ?? "",
                       terminateShell: useStandalone,
-                      completionMarkerToken: useStandalone ? undefined : randomUUID(),
+                      completionMarkerToken,
                   })
                 : command
         const launchConfiguration = useStandalone

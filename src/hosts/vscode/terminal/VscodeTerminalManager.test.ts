@@ -95,7 +95,7 @@ describe("VscodeTerminalManager Windows shell selection", () => {
         vi.useRealTimers()
     })
 
-    it("does not repeat the shell-integration wait for a cold fallback", async () => {
+    it("waits for executable shell integration on a cold fallback", async () => {
         vi.useFakeTimers({ shouldAdvanceTime: true })
         try {
             const pool = {
@@ -118,18 +118,27 @@ describe("VscodeTerminalManager Windows shell selection", () => {
                 profileId: "powershell-legacy",
                 environmentFingerprint: "default",
             })
+            let shellIntegration: vscode.Terminal["shellIntegration"]
             Object.defineProperty(terminal.terminal, "shellIntegration", {
                 configurable: true,
-                value: undefined,
+                get: () => shellIntegration,
             })
             const sendText = vi.spyOn(terminal.terminal, "sendText")
+            const executeCommand = vi.fn().mockReturnValue({
+                read: async function* () {
+                    yield "ready\\n"
+                },
+            })
 
-            const execution = manager.runCommand(terminal, "echo fallback")
-            await Promise.resolve()
-
-            expect(sendText).toHaveBeenCalledWith("echo fallback", true)
-            await vi.advanceTimersByTimeAsync(3_000)
+            const execution = manager.runCommand(terminal, "echo ready")
+            await vi.advanceTimersByTimeAsync(500)
+            expect(sendText).not.toHaveBeenCalled()
+            shellIntegration = { executeCommand }
+            await vi.advanceTimersByTimeAsync(500)
             await execution
+
+            expect(executeCommand).toHaveBeenCalledWith("echo ready")
+            expect(sendText).not.toHaveBeenCalled()
         } finally {
             vi.useRealTimers()
         }

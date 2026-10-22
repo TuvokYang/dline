@@ -113,6 +113,33 @@ export function getDesktopDir() {
     return typeof desktopResult === "string" ? desktopResult : desktopResult.absolutePath
 }
 
+export function resolveDefaultWorkspaceDir({
+    platform,
+    remoteName,
+    homeDir,
+    desktopDir,
+}: {
+    platform: NodeJS.Platform
+    remoteName?: string | null
+    homeDir: string
+    desktopDir: string
+}): string {
+    return platform === "linux" && remoteName ? homeDir : desktopDir
+}
+
+/** Default folder when the host has no workspace open. */
+export async function getDefaultWorkspaceDir(): Promise<string> {
+    const desktopDir = getDesktopDir()
+    if (process.platform !== "linux") return desktopDir
+    const host = await HostProvider.env.getHostVersion({}).catch(() => undefined)
+    return resolveDefaultWorkspaceDir({
+        platform: process.platform,
+        remoteName: host?.remoteName,
+        homeDir: os.homedir(),
+        desktopDir,
+    })
+}
+
 // Returns the workspace path of the file in the current editor.
 // If there is no open file, it returns the top level workspace directory.
 export async function getWorkspacePath(defaultCwd = ""): Promise<string> {

@@ -74,6 +74,71 @@ export class RipgrepSearchTimeoutError extends Error {
     }
 }
 
+export type RipgrepProcessErrorCode =
+    | "rg_regex_parse"
+    | "rg_path_not_found"
+    | "rg_permission_denied"
+    | "rg_spawn_failed"
+    | "rg_process_failed"
+
+interface RipgrepProcessErrorOptions {
+    readonly cause?: unknown
+    readonly exitCode?: number | null
+    readonly signal?: NodeJS.Signals | null
+}
+
+/** A bounded process failure whose code is safe to use for telemetry grouping. */
+export class RipgrepProcessError extends Error {
+    readonly exitCode?: number | null
+    readonly signal?: NodeJS.Signals | null
+
+    constructor(
+        readonly code: RipgrepProcessErrorCode,
+        message: string,
+        options: RipgrepProcessErrorOptions = {},
+    ) {
+        super(message, options.cause === undefined ? undefined : { cause: options.cause })
+        this.name = "RipgrepProcessError"
+        this.exitCode = options.exitCode
+        this.signal = options.signal
+    }
+}
+
+const RIPGREP_PROCESS_MESSAGES: Readonly<Record<RipgrepProcessErrorCode, string>> = {
+    rg_regex_parse: "Ripgrep rejected the search pattern",
+    rg_path_not_found: "Ripgrep could not access the search path",
+    rg_permission_denied: "Ripgrep was denied access to the search path",
+    rg_spawn_failed: "Ripgrep could not be started",
+    rg_process_failed: "Ripgrep process failed",
+}
+
+function classifyRipgrepStderr(stderr: string): RipgrepProcessErrorCode {
+    const normalized = stderr.toLowerCase()
+    if (/(?:regex parse error|error parsing regex|pcre2.*(?:compile|compilation|error))/.test(normalized)) {
+        return "rg_regex_parse"
+    }
+    if (/(?:no such file or directory|cannot find the (?:file|path)|path specified|os error (?:2|3)\b)/.test(normalized)) {
+        return "rg_path_not_found"
+    }
+    if (/(?:permission denied|access is denied|operation not permitted|os error (?:5|13)\b)/.test(normalized)) {
+        return "rg_permission_denied"
+    }
+    return "rg_process_failed"
+}
+
+function ripgrepExitError(exitCode: number | null, signal: NodeJS.Signals | null, stderr: string): RipgrepProcessError {
+    const code = classifyRipgrepStderr(stderr)
+    return new RipgrepProcessError(code, RIPGREP_PROCESS_MESSAGES[code], { exitCode, signal })
+}
+
+function normalizeRipgrepFailure(error: unknown): RipgrepProcessError {
+    if (error instanceof RipgrepProcessError) return error
+    const nativeCode = error !== null && typeof error === "object" ? (error as NodeJS.ErrnoException).code : undefined
+    const code =
+        nativeCode === "ENOENT" || nativeCode === "EACCES" || nativeCode === "EPERM" ? "rg_spawn_failed" : "rg_process_failed"
+    return new RipgrepProcessError(code, RIPGREP_PROCESS_MESSAGES[code], { cause: error })
+}
+
 function signalReason(signal: AbortSignal): Error {
     return signal.reason instanceof Error ? signal.reason : new Error("Ripgrep search aborted")
 }
@@ -135,11 +200,15 @@ function runRipgrep(binPath: string, args: string[], signal: AbortSignal): Promi
         const handleStderr = (data: Buffer) => {
             errorOutput += data.toString()
         }
-        const handleClose = () => {
-            settle(errorOutput ? new Error(`ripgrep process error: ${errorOutput}`) : undefined)
+        const handleClose = (exitCode: number | null, signal: NodeJS.Signals | null) => {
+            if (stoppingForOutputLimit || exitCode === 0 || exitCode === 1) {
+                settle()
+                return
+            }
+            settle(ripgrepExitError(exitCode, signal, errorOutput))
         }
         const handleError = (error: Error) => {
-            settle(new Error(`ripgrep process error: ${error.message}`))
+            settle(new RipgrepProcessError("rg_spawn_failed", RIPGREP_PROCESS_MESSAGES.rg_spawn_failed, { cause: error }))
         }
         const handleAbort = () => {
             if (settled) return
@@ -225,7 +294,7 @@ export async function regexSearchFiles(
         output = await execRipgrep(args, budgetScope, timeoutController.signal)
     } catch (error) {
         if (error instanceof RipgrepSearchTimeoutError) throw error
-        throw Error("Error calling ripgrep", { cause: error })
+        throw normalizeRipgrepFailure(error)
     } finally {
         clearTimeout(timeout)
         await ignoreFile?.dispose()
@@ -250,7 +319,9 @@ export async function regexSearchFiles(
                         afterContext: [],
                     }
                 } else if (parsed.type === "context" && currentResult) {
-                    if (parsed.data.line_number < currentResult.line!) {
+                    const matchLine = currentResult.line
+                    if (matchLine === undefined) return
+                    if (parsed.data.line_number < matchLine) {
                         currentResult.beforeContext?.push(parsed.data.lines.text)
                     } else {
                         currentResult.afterContext?.push(parsed.data.lines.text)

@@ -4,7 +4,7 @@ import { telemetryService } from "@/services/telemetry"
 import type { HistoryItem } from "@/shared/HistoryItem"
 import { ShowMessageType } from "@/shared/proto/dline/host/window"
 import { Logger } from "@/shared/services/Logger"
-import { getCwd, getDesktopDir } from "@/utils/path"
+import { getCwd, getDefaultWorkspaceDir } from "@/utils/path"
 import { StateManager } from "../storage/StateManager"
 import { isMultiRootEnabled } from "./multi-root-utils"
 import { WorkspaceRootManager } from "./WorkspaceRootManager"
@@ -25,7 +25,7 @@ export async function setupWorkspaceManager({
     historyItem?: HistoryItem
     detectRoots: DetectRoots
 }): Promise<WorkspaceRootManager> {
-    const cwd = await getCwd(getDesktopDir())
+    const cwd = await getCwd(await getDefaultWorkspaceDir())
     const startTime = performance.now()
     const multiRootEnabled = isMultiRootEnabled(stateManager)
     try {

@@ -139,7 +139,6 @@ export class VscodeTerminalManager implements ITerminalManager {
     private readonly shellPathsByProfile = new Map<string, string | undefined>()
     private readonly leases = new Map<number, VscodeTerminalLease>()
     private readonly coldFallbackTerminalIds = new Set<number>()
-    private readonly skipShellIntegrationWaitTerminalIds = new Set<number>()
 
     constructor(private readonly pool?: VscodeTerminalPool) {
         if (pool) return
@@ -293,13 +292,11 @@ export class VscodeTerminalManager implements ITerminalManager {
             })
         })
 
-        // A cold fallback is created only after the pool has already spent its bounded
-        // warm-acquire budget. Do not pay the same shell-integration wait again.
-        const skipShellIntegrationWait = this.skipShellIntegrationWaitTerminalIds.delete(vscodeTerminalInfo.id)
-        // if shell integration is already active, run the command immediately
-        if (vscodeTerminalInfo.terminal.shellIntegration?.executeCommand || skipShellIntegrationWait) {
+        // Run immediately only when the executable capability is ready. A cold terminal
+        // created after a warm miss still gets its own bounded activation window.
+        if (vscodeTerminalInfo.terminal.shellIntegration?.executeCommand) {
             process.waitForShellIntegration = false
-            startProcess(skipShellIntegrationWait ? "cold_fallback" : "shell_integration")
+            startProcess("shell_integration")
         } else {
             // A legacy non-pool terminal may still acquire shell integration shortly after creation.
             markPerfPhase(PerfDomain.Terminal, "shell_wait_start", {
@@ -311,7 +308,7 @@ export class VscodeTerminalManager implements ITerminalManager {
                     `[TerminalPerf] phase=shell_wait_start terminalId=${vscodeTerminalInfo.id} timeoutMs=${this.shellIntegrationTimeout}`,
                 )
             }
-            pWaitFor(() => vscodeTerminalInfo.terminal.shellIntegration !== undefined, {
+            pWaitFor(() => vscodeTerminalInfo.terminal.shellIntegration?.executeCommand !== undefined, {
                 timeout: this.shellIntegrationTimeout,
             })
                 .then(() => {
@@ -477,7 +474,6 @@ export class VscodeTerminalManager implements ITerminalManager {
         }
         if (forceColdCreate) {
             this.coldFallbackTerminalIds.add(newTerminalInfo.id)
-            this.skipShellIntegrationWaitTerminalIds.add(newTerminalInfo.id)
         }
         // Cast to ITerminalInfo for interface compatibility
         return newTerminalInfo as unknown as ITerminalInfo
@@ -636,7 +632,6 @@ export class VscodeTerminalManager implements ITerminalManager {
 
     private disposeColdFallback(terminalInfo: TerminalInfo): void {
         if (!this.coldFallbackTerminalIds.delete(terminalInfo.id)) return
-        this.skipShellIntegrationWaitTerminalIds.delete(terminalInfo.id)
         terminalInfo.terminal.dispose()
         TerminalRegistry.removeTerminal(terminalInfo.id)
         this.terminalIds.delete(terminalInfo.id)

@@ -15,7 +15,7 @@ const DEFAULT_MINIMUM_WARM_SHELL_INTEGRATION_TIMEOUT_MS = 60_000
  * VS Code starts the pty after a short container barrier even while the panel is hidden,
  * so the reveal is only a fallback for hosts that defer activation of unseen terminals.
  */
-const DEFAULT_BACKGROUND_ACTIVATION_GRACE_MS = 5_000
+const DEFAULT_BACKGROUND_ACTIVATION_GRACE_MS = 1_000
 
 export class DefaultVscodeTerminalPoolRuntime implements VscodeTerminalPoolRuntime {
     private warmShellIntegrationTimeout: number

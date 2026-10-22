@@ -170,7 +170,7 @@ describe("VscodeTerminalPool", () => {
         assert.equal(pool.getPartitionSnapshot(target).ready, 3)
     })
 
-    it("atomically leases distinct terminals and replenishes the three standby slots", async () => {
+    it("atomically leases distinct terminals without prewarming unused replacements", async () => {
         const runtime = new FakeTerminalPoolRuntime()
         const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
         pools.push(pool)
@@ -186,8 +186,8 @@ describe("VscodeTerminalPool", () => {
 
         assert.equal(new Set(leases.map((lease) => lease.terminalInfo.id)).size, 3)
         assert.equal(pool.getPartitionSnapshot(target).leased, 3)
-        assert.equal(pool.getPartitionSnapshot(target).ready, 3)
-        assert.equal(runtime.created.length, 6)
+        assert.equal(pool.getPartitionSnapshot(target).ready, 0)
+        assert.equal(runtime.created.length, 3)
     })
 
     it("acquires an available ready terminal without waiting for sibling warming terminals", async () => {
@@ -261,13 +261,11 @@ describe("VscodeTerminalPool", () => {
         await warming
     })
 
-    it("does not reset the wait deadline while the same warm batch remains pending", async () => {
+    it("gives each acquire a fresh wait window while the same warm batch remains pending", async () => {
         vi.useFakeTimers()
         const runtime = new FakeTerminalPoolRuntime()
         runtime.blockedPreparationIds.add(1)
-        runtime.blockedPreparationIds.add(2)
-        runtime.blockedPreparationIds.add(3)
-        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3, acquireWaitTimeoutMs: 10, maxGlobalTerminals: 3 })
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 1, acquireWaitTimeoutMs: 10, maxGlobalTerminals: 1 })
         pools.push(pool)
         const target = preparation()
         const warming = pool.ensureWarm(target)
@@ -275,10 +273,19 @@ describe("VscodeTerminalPool", () => {
 
         await vi.advanceTimersByTimeAsync(10)
         await firstFailure
-        await assert.rejects(pool.acquire(target, target.cwd, "reusable"), /warm wait timed out/)
-        assert.equal(runtime.created.length, 3)
+        const secondAcquire = pool.acquire(target, target.cwd, "reusable")
+        const secondOutcome = secondAcquire.then(
+            (lease) => ({ lease, error: undefined }),
+            (error: unknown) => ({ lease: undefined, error }),
+        )
+        await vi.advanceTimersByTimeAsync(9)
+        runtime.releaseBlockedPreparation(1)
 
-        runtime.releaseBlockedPreparations()
+        const { lease, error } = await secondOutcome
+        assert.equal(error, undefined)
+        assert.ok(lease)
+        assert.equal(lease.terminalInfo.id, 1)
+        assert.equal(runtime.created.length, 1)
         await warming
     })
 
@@ -300,32 +307,25 @@ describe("VscodeTerminalPool", () => {
         }
     })
 
-    it("keeps a repeatedly reused terminal ready while three replacements are still warming", async () => {
+    it("does not create replacement terminals for sequential reusable leases", async () => {
         const runtime = new FakeTerminalPoolRuntime()
-        const pool = new VscodeTerminalPool(runtime, { targetStandby: 3 })
+        const pool = new VscodeTerminalPool(runtime, { targetStandby: 1 })
         pools.push(pool)
         const target = preparation()
         await pool.ensureWarm(target)
-        runtime.blockedPreparationIds.add(4)
-        runtime.blockedPreparationIds.add(5)
-        runtime.blockedPreparationIds.add(6)
         let reusedTerminalId: number | undefined
 
         for (let commandNumber = 1; commandNumber <= 3; commandNumber++) {
             const lease = await pool.acquire(target, target.cwd, "reusable")
             reusedTerminalId ??= lease.terminalInfo.id
             assert.equal(lease.terminalInfo.id, reusedTerminalId)
-            await vi.waitFor(() => assert.equal(pool.getPartitionSnapshot(target).warming, commandNumber))
             await pool.release(lease, { healthy: true })
+            await settlePool()
         }
 
-        assert.equal(runtime.disposed.includes(reusedTerminalId!), false)
+        assert.equal(runtime.created.length, 1)
+        assert.deepEqual(runtime.disposed, [])
         assert.equal(pool.getPartitionSnapshot(target).ready, 1)
-        assert.equal(pool.getPartitionSnapshot(target).warming, 3)
-        runtime.releaseBlockedPreparations()
-        await vi.waitFor(() => assert.equal(pool.getPartitionSnapshot(target).warming, 0))
-        assert.equal(runtime.disposed.includes(reusedTerminalId!), false)
-        assert.equal(pool.getPartitionSnapshot(target).ready, 3)
     })
 
     it("returns a healthy reusable lease to the ready pool", async () => {
@@ -338,8 +338,7 @@ describe("VscodeTerminalPool", () => {
 
         await pool.release(lease, { healthy: true })
 
-        assert.equal(runtime.disposed.length, 1)
-        assert.equal(runtime.disposed.includes(lease.terminalInfo.id), false)
+        assert.deepEqual(runtime.disposed, [])
         assert.equal(pool.getPartitionSnapshot(target).ready, 3)
         assert.equal(pool.getPartitionSnapshot(target).leased, 0)
     })
@@ -480,7 +479,7 @@ describe("VscodeTerminalPool", () => {
 
         const result = pool.drainAll("configuration_changed")
         assert.equal(result.busyTerminals.length, 1)
-        assert.equal(result.closedCount, 3)
+        assert.equal(result.closedCount, 2)
 
         await pool.release(lease, { healthy: true })
         assert.ok(runtime.disposed.includes(lease.terminalInfo.id))

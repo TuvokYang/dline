@@ -65,6 +65,7 @@ describe("setupWorkspaceManager", () => {
     beforeEach(() => {
         // Stub out path utils for stable behavior
         vi.spyOn(pathUtils, "getDesktopDir").mockReturnValue("/Users/test/Desktop" as any)
+        vi.spyOn(pathUtils, "getDefaultWorkspaceDir").mockResolvedValue("/Users/test/Desktop" as any)
         vi.spyOn(pathUtils, "getCwd").mockResolvedValue(cwd as any)
 
         // Stub HostProvider window + workspace methods used by setup() error path
