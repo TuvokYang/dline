@@ -22,7 +22,9 @@ class ControlledVault implements StateVault {
         const gate = deferred<void>()
         this.gates.push(gate)
         await gate.promise
-        if (this.failNext) throw this.failNext
+        const failure = this.failNext
+        this.failNext = undefined
+        if (failure) throw failure
         this.saved.push(snapshot.state.revision)
     }
 
@@ -145,6 +147,32 @@ describe("CommitPipeline", () => {
 
         await expect(pipeline.flushThrough(1)).resolves.toBeUndefined()
         await expect(pipeline.flushThrough(2)).rejects.toThrow("disk full")
+    })
+
+    it("retries the exact failed snapshot before admitting later commits", async () => {
+        const vault = new ControlledVault()
+        const taskView = view()
+        const pipeline = new CommitPipeline(vault, taskView)
+        vault.failNext = new Error("disk full")
+        const first = pipeline.commit(state(1), [])
+        await settle()
+        vault.release()
+        await expect(first.durable).rejects.toThrow("disk full")
+
+        const recovery = pipeline.retryFailed()
+        await settle()
+        vault.release()
+        await expect(recovery).resolves.toMatchObject({ state: { revision: 1 }, outbox: [] })
+        expect(pipeline.failed).toBe(false)
+        expect(vault.saved).toEqual([1])
+        expect(taskView.seen).toEqual([1])
+
+        const second = pipeline.commit(state(2), [])
+        await settle()
+        vault.release()
+        await expect(second.durable).resolves.toBeUndefined()
+        expect(vault.saved).toEqual([1, 2])
+        expect(taskView.seen).toEqual([1, 2])
     })
 
     it("fails the batch and every later commit once a write fails", async () => {

@@ -255,6 +255,21 @@ describe("BufferedUnifyStore baseline commit", () => {
         }
     })
 
+    it("retries close after a transient ENOSPC flush failure", async () => {
+        const filePath = createFixturePath()
+        seed(filePath, ROWS.slice(0, 1))
+        const store = await openStore(filePath)
+        await store.append(ROWS[1])
+        const appendSpy = vi
+            .spyOn(fs, "appendFile")
+            .mockRejectedValueOnce(Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" }))
+
+        await expect(store.close()).rejects.toThrow(/ENOSPC/)
+        appendSpy.mockRestore()
+        await expect(store.close()).resolves.toBeUndefined()
+        expect(readRows(filePath)).toEqual(ROWS.slice(0, 2))
+    })
+
     it("rewrites the whole collection when the file holds lines the buffer does not", async () => {
         const filePath = createFixturePath()
         // The unreadable last line is skipped on load, so the file holds one line

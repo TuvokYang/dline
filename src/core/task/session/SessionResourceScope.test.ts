@@ -2,22 +2,24 @@ import { describe, expect, it, vi } from "vitest"
 import { SessionResourceScope } from "./SessionResourceScope"
 
 describe("SessionResourceScope", () => {
-    it("rolls back every acquisition once, in reverse order, despite synchronous or async failures", async () => {
+    it("retries only failed releases in reverse acquisition order", async () => {
         const scope = new SessionResourceScope()
         const order: string[] = []
         const firstFailure = new Error("first close failed")
         const lastFailure = new Error("last close failed")
+        let firstAttempts = 0
+        let lastAttempts = 0
         scope.add({
             release: async () => {
                 order.push("first")
-                throw firstFailure
+                if (firstAttempts++ === 0) throw firstFailure
             },
         })
         scope.add({ release: async () => void order.push("middle") })
         scope.add({
-            release: () => {
+            release: async () => {
                 order.push("last")
-                throw lastFailure
+                if (lastAttempts++ === 0) throw lastFailure
             },
         })
 
@@ -27,8 +29,11 @@ describe("SessionResourceScope", () => {
         expect(failure).toBeInstanceOf(AggregateError)
         expect((failure as AggregateError).errors).toEqual([lastFailure, firstFailure])
         expect(order).toEqual(["last", "middle", "first"])
-        await expect(scope.release()).rejects.toBe(failure)
-        expect(order).toHaveLength(3)
+
+        await expect(scope.release()).resolves.toBeUndefined()
+        expect(order).toEqual(["last", "middle", "first", "last", "first"])
+        await expect(scope.release()).resolves.toBeUndefined()
+        expect(order).toHaveLength(5)
     })
 
     it("refuses new acquisitions once rollback has started", async () => {

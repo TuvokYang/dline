@@ -104,10 +104,12 @@ describe("ActiveTaskSession", () => {
         expect(order).toEqual(["terminate", "second", "first"])
     })
 
-    it("attempts every release after termination, preserving all cleanup failures", async () => {
+    it("retries failed releases without repeating completed teardown phases", async () => {
         const order: string[] = []
         const failures = [new Error("last owner failed"), new Error("first owner failed")]
         const terminate = vi.fn(async () => void order.push("terminate"))
+        let firstAttempts = 0
+        let lastAttempts = 0
         const payloads = { put: vi.fn(), read: vi.fn() } as unknown as TaskPayloadStore
         const session = new ActiveTaskSession({
             task: { taskId: "task-1", terminate } as unknown as Task,
@@ -124,14 +126,14 @@ describe("ActiveTaskSession", () => {
                 {
                     release: async () => {
                         order.push("first")
-                        throw failures[1]
+                        if (firstAttempts++ === 0) throw failures[1]
                     },
                 },
                 { release: async () => void order.push("middle") },
                 {
                     release: async () => {
                         order.push("last")
-                        throw failures[0]
+                        if (lastAttempts++ === 0) throw failures[0]
                     },
                 },
             ],
@@ -141,9 +143,36 @@ describe("ActiveTaskSession", () => {
         expect(result).toBeInstanceOf(AggregateError)
         expect((result as AggregateError).errors).toEqual(failures)
         expect(order).toEqual(["terminate", "last", "middle", "first"])
-        await expect(session.dispose("halt-2")).rejects.toBe(result)
+
+        await expect(session.dispose("halt-2")).resolves.toBeUndefined()
         expect(terminate).toHaveBeenCalledOnce()
-        expect(order).toHaveLength(4)
+        expect(order).toEqual(["terminate", "last", "middle", "first", "last", "first"])
+    })
+
+    it("retries termination after a transient durability failure", async () => {
+        const failure = Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" })
+        const terminate = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(undefined)
+        const release = vi.fn(async () => undefined)
+        const payloads = { put: vi.fn(), read: vi.fn() } as unknown as TaskPayloadStore
+        const session = new ActiveTaskSession({
+            task: { taskId: "task-1", terminate } as unknown as Task,
+            checkpointRestore: {} as never,
+            readState: () => createInitialTaskState("task-1"),
+            assembly: {} as TaskExecutorAssembly,
+            payloads,
+            inputs: createInputs(payloads),
+            inputQueue: createInputQueue(),
+            owners: createOwners(),
+            approvalFeedback: new InMemoryToolApprovalFeedbackLedger(),
+            conversation: createConversation(),
+            releases: [{ release }],
+        })
+
+        await expect(session.dispose("halt-1")).rejects.toBe(failure)
+        expect(release).not.toHaveBeenCalled()
+        await expect(session.dispose("halt-2")).resolves.toBeUndefined()
+        expect(terminate).toHaveBeenCalledTimes(2)
+        expect(release).toHaveBeenCalledOnce()
     })
 
     it("releases a session that never owned the task without writing to it", async () => {

@@ -10,7 +10,7 @@ import type { TaskPayloadStore } from "../stores"
 import type { CanonicalTaskViewProjection } from "../view/canonical/CanonicalTaskViewProjection"
 import { projectCanonicalTaskView } from "../view/canonical/projectCanonicalTaskView"
 import type { InputQueueApplicationPort } from "./InputQueueApplicationPort"
-import { releaseSessionResources, type SessionResourceReleasePort } from "./SessionResourceScope"
+import { type SessionResourceReleasePort, SessionResourceScope } from "./SessionResourceScope"
 import type { TaskBackgroundIngressOwner } from "./TaskBackgroundIngressOwner"
 import type { TaskCollaborationSessionOwner } from "./TaskCollaborationSessionOwner"
 import type { TaskInputMaterializer } from "./TaskInputMaterializer"
@@ -80,6 +80,9 @@ export class ActiveTaskSession {
     readonly upgradeImportPending: boolean
     private disposePromise: Promise<void> | undefined
     private disposeMode: "ordinary" | "checkpoint_restore" | undefined
+    private readonly releaseScope: SessionResourceScope
+    private terminated = false
+    private completionAnchored = false
     private checkpointRestoreFencePromise: Promise<CheckpointRestoreFence> | undefined
     private checkpointRestoreFence: CheckpointRestoreFence | undefined
     private collaboration: TaskCollaborationSessionOwner | undefined
@@ -100,6 +103,7 @@ export class ActiveTaskSession {
         this.conversation = options.conversation
         this.contextTruncation = options.contextTruncation
         this.upgradeImportPending = options.upgradeImportPending === true
+        this.releaseScope = new SessionResourceScope(options.releases)
     }
 
     /**
@@ -163,8 +167,7 @@ export class ActiveTaskSession {
     dispose(haltId: string): Promise<void> {
         if (this.disposeMode === "checkpoint_restore") return Promise.reject(new Error("TaskSessionCheckpointRestoreDisposal"))
         this.disposeMode ??= "ordinary"
-        this.disposePromise ??= this.disposeOwnedResources(haltId)
-        return this.disposePromise
+        return this.runDisposeAttempt(() => this.disposeOwnedResources(haltId))
     }
 
     disposeAfterCheckpointRestore(fence: CheckpointRestoreFence): Promise<void> {
@@ -173,8 +176,7 @@ export class ActiveTaskSession {
         }
         if (this.disposeMode === "ordinary") return Promise.reject(new Error("TaskSessionAlreadyDisposing"))
         this.disposeMode ??= "checkpoint_restore"
-        this.disposePromise ??= releaseSessionResources(this.options.releases ?? [])
-        return this.disposePromise
+        return this.runDisposeAttempt(() => this.releaseScope.release())
     }
 
     private async stopAndFenceForCheckpointRestore(haltId: string): Promise<CheckpointRestoreFence> {
@@ -191,15 +193,29 @@ export class ActiveTaskSession {
         return fence
     }
 
+    private runDisposeAttempt(attemptFactory: () => Promise<void>): Promise<void> {
+        if (this.disposePromise) return this.disposePromise
+        const attempt = attemptFactory()
+        this.disposePromise = attempt
+        void attempt.catch(() => {
+            if (this.disposePromise === attempt) this.disposePromise = undefined
+        })
+        return attempt
+    }
+
     private async disposeOwnedResources(haltId: string): Promise<void> {
         this.beginClose()
         // A session that never owned the task has nothing of its own to stop or keep,
         // and writing here would land in the stores the owning window is writing.
-        if (this.writable) {
+        if (this.writable && !this.terminated) {
             await this.task.terminate(haltId)
+            this.terminated = true
+        }
+        if (this.writable && !this.completionAnchored) {
             // Written before the stores close, so the completion a terminate kept is answerable on reopen.
             await this.owners.interactions.anchorStagedCompletion()
+            this.completionAnchored = true
         }
-        await releaseSessionResources(this.options.releases ?? [])
+        await this.releaseScope.release()
     }
 }

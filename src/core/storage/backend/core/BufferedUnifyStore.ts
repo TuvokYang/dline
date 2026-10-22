@@ -521,18 +521,23 @@ export class BufferedUnifyStore<TEntity extends object, TItem extends { ts: numb
     }
 
     close(): Promise<void> {
+        if (this.closed) return Promise.resolve()
         if (this.closePromise) return this.closePromise
         this.closing = true
         if (this.flushTimer) clearInterval(this.flushTimer)
         this.flushTimer = undefined
-        this.closePromise = this.mutex.withLock(async () => {
+        const attempt = this.mutex.withLock(async () => {
             await this.flushLocked()
             for (const listener of this.ownedListeners) this.subscriptionState.listeners.delete(listener)
             this.ownedListeners.clear()
             await this.store.close()
             this.closed = true
         })
-        return this.closePromise
+        this.closePromise = attempt
+        void attempt.catch(() => {
+            if (this.closePromise === attempt) this.closePromise = undefined
+        })
+        return attempt
     }
 
     private async loadInitialState(): Promise<void> {

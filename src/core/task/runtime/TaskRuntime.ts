@@ -37,6 +37,7 @@ export class TaskRuntime implements RuntimeFacade {
     private readonly taskView: TaskViewPort
     private held?: HeldRestoredCommands
     private writable: boolean
+    private durabilityRecovery: Promise<void> | undefined
 
     constructor(options: TaskRuntimeOptions) {
         this.taskView = options.taskView
@@ -70,8 +71,9 @@ export class TaskRuntime implements RuntimeFacade {
         return this.events.getState()
     }
 
-    submit(event: TaskEvent): Promise<EventSubmissionResult> {
-        if (!this.writable) return Promise.resolve(readOnlyRejection(this.getState(), event))
+    async submit(event: TaskEvent): Promise<EventSubmissionResult> {
+        if (!this.writable) return readOnlyRejection(this.getState(), event)
+        await this.recoverDurability()
         return this.events.submit(event)
     }
 
@@ -93,6 +95,23 @@ export class TaskRuntime implements RuntimeFacade {
         await this.commits.flushAll()
         await this.outbox.whenIdle()
         await this.router.waitForQuiescence()
+    }
+
+    private recoverDurability(): Promise<void> {
+        if (this.durabilityRecovery) return this.durabilityRecovery
+        const attempt = this.retryFailedCommit()
+        this.durabilityRecovery = attempt
+        void attempt
+            .finally(() => {
+                if (this.durabilityRecovery === attempt) this.durabilityRecovery = undefined
+            })
+            .catch(() => undefined)
+        return attempt
+    }
+
+    private async retryFailedCommit(): Promise<void> {
+        const recovered = await this.commits.retryFailed()
+        if (recovered) this.outbox.restore(recovered.outbox, recovered.state.generation)
     }
 }
 

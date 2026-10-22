@@ -157,6 +157,7 @@ import { type TaskOpening } from "./task/opened-task"
 import { readOnlyTaskView } from "./task/readOnlyTaskView"
 import { controllerTransitionDraftCarrier, projectTransitionDraft } from "./task/replyWithTransitionDraft"
 import { selectTaskRateMetricsQuery, type TaskRateMetricsQueryFn } from "./task/TaskRateMetricsSource"
+import { TaskTeardownRecovery } from "./task/TaskTeardownRecovery"
 import { adaptCanonicalTaskView } from "./task/TaskViewMessageAdapter"
 import { startTaskAfterSurface } from "./task/task-start-lifecycle"
 import { sendChatButtonClickedEvent } from "./ui/subscribeToChatButtonClicked"
@@ -317,10 +318,10 @@ export class Controller {
      *
      * Closing a task only needs the surface released to return the user to Recent;
      * flushing stores, releasing the task lock and clearing registries can finish
-     * afterwards. Every lifecycle operation awaits this promise, so the deferred
-     * work still completes before another Task is created or resumed.
+     * afterwards. Every lifecycle operation recovers this drain first, so a
+     * transient write failure is retried before another Task is created or resumed.
      */
-    private pendingTaskTeardown?: Promise<void>
+    private readonly taskTeardownRecovery = new TaskTeardownRecovery()
     private readonly taskLifecycleMutex = new Mutex()
     private pendingCheckpointRestore:
         | { readonly taskId: string; readonly fence: CheckpointRestoreFence; readonly editedText?: string }
@@ -1050,7 +1051,7 @@ export class Controller {
         await this.clearTask({ closeReason: "controller_dispose" })
         // Window shutdown is the one path that must observe a fully closed task:
         // its stores and locks may not outlive this process.
-        await this.pendingTaskTeardown
+        await this.taskTeardownRecovery.recover()
         await this.workspaceHistoryManager
             ?.flush()
             .catch((error) => Logger.error("[WorkspaceHistoryManager] Shutdown durability flush failed:", error))
@@ -3707,7 +3708,7 @@ export class Controller {
         return this.taskLifecycleMutex.withLock(async () => {
             // Writers still drain the previous task before taking ownership. A user
             // close may skip only this admission wait so its visible surface can detach.
-            if (options.waitForPendingTeardown !== false) await this.pendingTaskTeardown
+            if (options.waitForPendingTeardown !== false) await this.taskTeardownRecovery.recover()
             return operation({
                 clearTask: (options) => this.clearTaskWithinLifecycle(options),
             })
@@ -3816,7 +3817,6 @@ export class Controller {
             logCloseStage("detached_state_publish")
         }
 
-        const previousTeardown = this.pendingTaskTeardown
         const releaseDetached = async () => {
             await Promise.all([
                 historyDisplay?.dispose(),
@@ -3831,22 +3831,9 @@ export class Controller {
                     : undefined,
             ])
         }
-        const teardown = previousTeardown
-            ? previousTeardown.then(releaseDetached, async (previousError) => {
-                  try {
-                      await releaseDetached()
-                  } catch (currentError) {
-                      throw new AggregateError([previousError, currentError], "Multiple task teardowns failed")
-                  }
-                  throw previousError
-              })
-            : releaseDetached()
-        const pending = teardown.then(() => {
-            if (this.pendingTaskTeardown === pending) this.pendingTaskTeardown = undefined
-        })
-        this.pendingTaskTeardown = pending
-        // Keep a rejected drain as the next lifecycle operation's admission barrier.
-        // The close surface may already have returned, but failure cannot authorize a new writer.
+        const pending = this.taskTeardownRecovery.schedule(releaseDetached)
+        // Keep a failed drain as the next lifecycle operation's admission barrier,
+        // but retain its operation so that request can perform a fresh write/close attempt.
         void pending.catch(() => undefined)
         if (options?.deferTeardown) {
             logCloseStage("teardown_deferred")

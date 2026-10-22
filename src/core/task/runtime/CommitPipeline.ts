@@ -1,5 +1,5 @@
 import type { Command, TaskState } from "../kernel"
-import type { StateVault, TaskViewPort } from "../stores/contracts"
+import type { DurableTaskSnapshot, StateVault, TaskViewPort } from "../stores/contracts"
 import type { CommitReceipt, RuntimeDiagnosticSink } from "./contracts"
 import { deferred } from "./deferred"
 
@@ -24,8 +24,8 @@ interface PendingBatch {
  * in flight collapse into one write of the newest snapshot, and every commit of
  * that batch becomes durable when it lands. Durability does not wait for the
  * view: the view is told afterwards, in revision order, and a failing view is a
- * diagnostic, not a lost commit. A failed write is fatal, because no later
- * snapshot can be trusted to follow one that never reached disk.
+ * diagnostic, not a lost commit. A failed write fences later commits until the
+ * exact newest rejected snapshot is retried; no later snapshot may skip it.
  */
 export class CommitPipeline {
     private pending: PendingBatch | undefined
@@ -36,6 +36,8 @@ export class CommitPipeline {
     private durableRevision = 0
     private failedFromRevision: number | undefined
     private fatalError: Error | undefined
+    private failedBatch: PendingBatch | undefined
+    private retrying: Promise<DurableTaskSnapshot | undefined> | undefined
 
     constructor(
         private readonly vault: StateVault,
@@ -60,6 +62,20 @@ export class CommitPipeline {
         }
         this.writing ??= this.drain()
         return { revision: state.revision, durable }
+    }
+
+    /** Retry the newest snapshot rejected by the vault; no later event is admitted until this succeeds. */
+    retryFailed(): Promise<DurableTaskSnapshot | undefined> {
+        if (!this.failedBatch) return Promise.resolve(undefined)
+        if (this.retrying) return this.retrying
+        const attempt = this.retryFailedBatch()
+        this.retrying = attempt
+        void attempt
+            .finally(() => {
+                if (this.retrying === attempt) this.retrying = undefined
+            })
+            .catch(() => undefined)
+        return attempt
     }
 
     /** Resolves once every commit through `revision` is on disk; the view may still be catching up. */
@@ -97,11 +113,42 @@ export class CommitPipeline {
         }
     }
 
+    private async retryFailedBatch(): Promise<DurableTaskSnapshot | undefined> {
+        const batch = this.failedBatch
+        if (!batch) return undefined
+        try {
+            await this.vault.save({ state: batch.state, outbox: batch.outbox })
+        } catch (error) {
+            const fatal = error instanceof Error ? error : new Error(String(error))
+            this.fatalError = fatal
+            this.recordDurabilityFailure(fatal, batch.state.revision)
+            throw fatal
+        }
+        this.durableRevision = Math.max(this.durableRevision, batch.state.revision)
+        for (const revision of this.receipts.keys()) {
+            if (revision <= batch.state.revision) this.receipts.delete(revision)
+        }
+        this.failedBatch = undefined
+        this.failedFromRevision = undefined
+        this.fatalError = undefined
+        this.publish(batch.committed)
+        return { state: batch.state, outbox: batch.outbox }
+    }
+
     private fail(error: unknown, batch: PendingBatch): void {
         const fatal = error instanceof Error ? error : new Error(String(error))
         this.fatalError ??= fatal
-        const rejected = [...batch.waiters, ...(this.pending?.waiters ?? [])]
+        const queued = this.pending
+        const rejected = [...batch.waiters, ...(queued?.waiters ?? [])]
         this.failedFromRevision ??= Math.min(...rejected.map(({ revision }) => revision))
+        this.failedBatch = queued
+            ? {
+                  state: queued.state,
+                  outbox: queued.outbox,
+                  committed: [...batch.committed, ...queued.committed],
+                  waiters: [],
+              }
+            : { ...batch, waiters: [] }
         this.pending = undefined
         for (const waiter of rejected) {
             this.recordDurabilityFailure(fatal, waiter.revision)
