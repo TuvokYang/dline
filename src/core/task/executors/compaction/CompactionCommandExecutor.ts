@@ -13,6 +13,8 @@ export interface CompactionExecutionInput {
 
 export interface CompactionExecutionResult {
     readonly resultRef: string
+    /** The durable completed presentation exists, so a later cancel cannot reclassify this run. */
+    readonly completionCommitted?: boolean
 }
 
 export interface CompactionPort {
@@ -138,7 +140,7 @@ export class CompactionCommandExecutor implements CommandExecutor, HaltParticipa
                 })
             return
         }
-        if (active.controller.signal.aborted) {
+        if (active.controller.signal.aborted && result.completionCommitted !== true) {
             await this.expire(command, "compaction_cancelled")
             return
         }
@@ -158,6 +160,7 @@ export class CompactionCommandExecutor implements CommandExecutor, HaltParticipa
             compactionId: command.compactionId,
             attempt: command.attempt,
             resultRef: result.resultRef,
+            ...(result.completionCommitted === true ? { completionCommitted: true } : {}),
         })
     }
 

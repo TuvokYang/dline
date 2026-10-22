@@ -39,6 +39,12 @@ function createManager(
         journalSeq?: number
         /** Whether rounds hold their row before the commit settles, as the chat view does. */
         holdRows?: boolean
+        /** Keep Chat Restore active while disabling optional workspace checkpoints. */
+        enableCheckpoints?: boolean
+        /** Simulate failure to establish a durable visible restore owner. */
+        rowWriteError?: Error
+        /** Durable-only rows, when the visible list also contains unsettled overlays. */
+        durableMessages?: UiMessage[]
     },
 ) {
     const messages = options?.messages ?? []
@@ -51,6 +57,7 @@ function createManager(
     const say = vi.fn(async () => undefined)
     let nextRowTs = 41
     const beginRow = vi.fn((fields: CheckpointRowFields) => {
+        if (options?.rowWriteError) throw options.rowWriteError
         const message: UiMessage = {
             ts: ++nextRowTs,
             type: "say",
@@ -74,6 +81,7 @@ function createManager(
         return {
             ts: held.ts,
             fill: (filled: CheckpointRowFields) => {
+                if (options?.rowWriteError) throw options.rowWriteError
                 Object.assign(held, filled, { partial: false })
                 return { ts: held.ts, persistence: Promise.resolve(held) }
             },
@@ -90,12 +98,13 @@ function createManager(
     const publishMessage = vi.fn(async (_message: UiMessage) => undefined)
     const manager = createTaskCheckpointManager(
         { taskId: "task-1", controller: {} } as never,
-        { enableCheckpoints: true, createCheckpointTracker },
+        { enableCheckpoints: options?.enableCheckpoints ?? true, createCheckpointTracker },
         {
             fileContextTracker: {},
             diffViewProvider: {},
             messageStateHandler: {
                 clineMessages: messages,
+                durableClineMessages: options?.durableMessages ?? messages,
                 setCheckpointTracker,
                 updateClineMessage,
                 flushMessageUpdate,
@@ -646,8 +655,120 @@ describe("TaskCheckpointManager checkpoint initialization", () => {
         expect(capture).toHaveBeenCalledOnce()
 
         await harness.manager.ensureRoundCheckpoint("round_start")
+        await expect(harness.manager.prepareCompactionRestore()).resolves.toBe("card_fallback")
         expect(messages).toHaveLength(1)
         expect(tracker.commit).toHaveBeenCalledOnce()
+    })
+
+    it("creates a chat-only compaction restore row when workspace checkpoints are disabled", async () => {
+        const messages: UiMessage[] = []
+        const create = vi.fn<CreateCheckpointTracker>()
+        const harness = createManager(create, undefined, {
+            messages,
+            enableCheckpoints: false,
+            journalSeq: 7,
+        })
+
+        await expect(harness.manager.prepareCompactionRestore()).resolves.toBe("checkpoint_row")
+
+        expect(create).not.toHaveBeenCalled()
+        expect(messages).toEqual([
+            expect.objectContaining({
+                say: "checkpoint_created",
+                conversationJournalSeq: 7,
+                checkpointSource: { kind: "pre_compaction" },
+            }),
+        ])
+        expect(messages[0]).not.toHaveProperty("lastCheckpointHash")
+    })
+
+    it("reuses a checkpoint row that already covers the compaction boundary", async () => {
+        const messages: UiMessage[] = []
+        const tracker = {
+            setTaskFileTracker: vi.fn(),
+            commit: vi.fn().mockResolvedValue("stable-hash"),
+        } as unknown as CheckpointTracker
+        const harness = createManager(vi.fn<CreateCheckpointTracker>(), undefined, {
+            messages,
+            tracker,
+            journalSeq: 7,
+            canonicalCheckpoint: {
+                capture: vi.fn(async () => undefined),
+                restore: vi.fn(),
+                advancedSince: vi.fn(async () => false),
+            },
+        })
+
+        await expect(harness.manager.prepareCompactionRestore()).resolves.toBe("checkpoint_row")
+        await expect(harness.manager.prepareCompactionRestore()).resolves.toBe("checkpoint_row")
+
+        expect(messages).toHaveLength(1)
+        expect(tracker.commit).toHaveBeenCalledTimes(2)
+        expect(harness.beginRow).toHaveBeenCalledOnce()
+    })
+
+    it("keeps the existing row owner when workspace capture fails at the same chat boundary", async () => {
+        const messages: UiMessage[] = []
+        const tracker = {
+            setTaskFileTracker: vi.fn(),
+            commit: vi.fn().mockResolvedValueOnce("stable-hash").mockRejectedValueOnce(new Error("disk full")),
+        } as unknown as CheckpointTracker
+        const harness = createManager(vi.fn<CreateCheckpointTracker>(), undefined, {
+            messages,
+            tracker,
+            journalSeq: 7,
+            canonicalCheckpoint: {
+                capture: vi.fn(async () => undefined),
+                restore: vi.fn(),
+                advancedSince: vi.fn(async () => false),
+            },
+        })
+
+        await expect(harness.manager.prepareCompactionRestore()).resolves.toBe("checkpoint_row")
+        await expect(harness.manager.prepareCompactionRestore()).resolves.toBe("checkpoint_row")
+
+        expect(messages).toHaveLength(1)
+        expect(messages[0]).toMatchObject({ say: "checkpoint_created", conversationJournalSeq: 7 })
+    })
+
+    it("does not treat a complete but unsettled overlay as an existing restore owner", async () => {
+        const overlay: UiMessage = {
+            ts: 40,
+            type: "say",
+            say: "checkpoint_created",
+            partial: false,
+            conversationJournalSeq: 7,
+        }
+        const messages = [overlay]
+        const harness = createManager(vi.fn<CreateCheckpointTracker>(), undefined, {
+            messages,
+            durableMessages: [],
+            enableCheckpoints: false,
+            holdRows: true,
+            rowWriteError: new Error("message store unavailable"),
+            journalSeq: 7,
+            canonicalCheckpoint: {
+                capture: vi.fn(async () => undefined),
+                restore: vi.fn(),
+                advancedSince: vi.fn(async () => false),
+            },
+        })
+
+        await expect(harness.manager.prepareCompactionRestore()).resolves.toBe("card_fallback")
+        expect(messages).toEqual([overlay])
+    })
+
+    it("delegates compaction Restore to the card when no durable held row can be established", async () => {
+        const messages: UiMessage[] = []
+        const harness = createManager(vi.fn<CreateCheckpointTracker>(), undefined, {
+            messages,
+            enableCheckpoints: false,
+            holdRows: true,
+            rowWriteError: new Error("message store unavailable"),
+        })
+
+        await expect(harness.manager.prepareCompactionRestore()).resolves.toBe("card_fallback")
+        expect(messages).toEqual([])
     })
 
     it("adds no checkpoint when checkpoints are disabled", async () => {

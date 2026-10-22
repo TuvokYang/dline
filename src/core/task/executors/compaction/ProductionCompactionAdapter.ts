@@ -3,6 +3,7 @@ import { markExpectedCancellation } from "@shared/errors/expected-cancellation"
 import {
     type CompactionLandingInput,
     type CompactionLandingPort,
+    type CompactionRestoreDisposition,
     type CompactionSummary,
     readCompactionSummary,
 } from "../../compaction/CompactionSummaryLanding"
@@ -14,7 +15,7 @@ import type {
     CompactionResultEnvelope,
     CompactionTrigger,
 } from "../../stores/payload/TaskPayloadEnvelopes"
-import type { CompactionExecutionInput, CompactionPort } from "./CompactionCommandExecutor"
+import type { CompactionExecutionInput, CompactionExecutionResult, CompactionPort } from "./CompactionCommandExecutor"
 
 export interface ProductionCompactionService {
     run(input: {
@@ -136,8 +137,8 @@ export interface CompactionProgressCardPort {
  * restorable from a point written before the rewrite starts.
  */
 export interface CompactionCheckpointPort {
-    /** Never rejects for a checkpoint failure; a missing restore point never costs the compaction. */
-    beforeCompaction(signal: AbortSignal): Promise<void>
+    /** Never rejects for a checkpoint failure; a missing row delegates Restore to the completed card. */
+    beforeCompaction(signal: AbortSignal): Promise<CompactionRestoreDisposition>
 }
 
 export interface ProductionCompactionAdapterOptions {
@@ -155,7 +156,7 @@ export interface ProductionCompactionAdapterOptions {
     readonly failure?: CompactionFailurePresentationPort
     /** The run's progress card; absent where no progress is shown. */
     readonly progress?: CompactionProgressCardPort
-    /** Writes the round's restore point before the rewrite; absent without workspace history. */
+    /** Allocates the Chat Restore owner before the rewrite; absent in headless assemblies. */
     readonly checkpoint?: CompactionCheckpointPort
 }
 
@@ -171,11 +172,11 @@ const MAX_REGENERATIONS = 20
 export class ProductionCompactionAdapter implements CompactionPort {
     constructor(private readonly options: ProductionCompactionAdapterOptions) {}
 
-    async run(input: CompactionExecutionInput): Promise<{ readonly resultRef: string }> {
+    async run(input: CompactionExecutionInput): Promise<CompactionExecutionResult> {
         if (input.signal.aborted) throw input.signal.reason
-        await this.settleCheckpoint(input.signal)
+        const restoreDisposition = await this.settleCheckpoint(input.signal)
         try {
-            return await this.condense(input)
+            return await this.condense(input, restoreDisposition)
         } catch (error) {
             // A stop is the user's own decision and needs no explanation; anything
             // else left the conversation unchanged without them knowing.
@@ -195,21 +196,29 @@ export class ProductionCompactionAdapter implements CompactionPort {
         }
     }
 
-    /** A restore point that cannot be written only costs that restore point, never the compaction. */
-    private async settleCheckpoint(signal: AbortSignal): Promise<void> {
-        if (!this.options.checkpoint) return
+    /** A restore row that cannot be written delegates presentation to the completed card. */
+    private async settleCheckpoint(signal: AbortSignal): Promise<CompactionRestoreDisposition> {
+        if (!this.options.checkpoint) return "card_fallback"
         try {
-            await this.options.checkpoint.beforeCompaction(signal)
+            return await this.options.checkpoint.beforeCompaction(signal)
         } catch {
-            // The port reports its own failures; the compaction proceeds either way.
+            // The port reports its own failures; the compaction proceeds with card-owned fallback Restore.
+            return "card_fallback"
         }
     }
 
-    private async condense(input: CompactionExecutionInput): Promise<{ readonly resultRef: string }> {
+    private async condense(
+        input: CompactionExecutionInput,
+        restoreDisposition: CompactionRestoreDisposition,
+    ): Promise<CompactionExecutionResult> {
         const context = decodeTaskPayload<CompactionContextEnvelope>(await this.options.payloads.read(input.contextRef))
         if (context.kind !== "compaction_context") throw new Error("InvalidCompactionContextPayload")
         if (context.mode === "force_truncate") return this.truncate(input)
         const { result, summary, canonicalCheckpointed } = await this.produce(input, context)
+        // Materialize the kernel result before landing. Once the completed card is
+        // durable there must be no later I/O that can turn the same run into failed.
+        const envelope: CompactionResultEnvelope = { kind: "compaction_result", result }
+        const resultRef = await this.options.payloads.put(encodeTaskPayload(envelope))
         // Landing happens before the result is reported complete: the kernel only
         // records the ref, so a summary that is not applied here is paid for and
         // then discarded, leaving the context as full as it was.
@@ -218,18 +227,21 @@ export class ProductionCompactionAdapter implements CompactionPort {
                 compactionId: input.compactionId,
                 attempt: input.attempt,
                 signal: input.signal,
+                restoreDisposition,
                 ...summary,
                 ...landedSpan(context, summary),
             }
             if (!canonicalCheckpointed) await this.options.canonicalLanding?.land(landing)
-            await this.options.landing?.land(landing)
             if (input.signal.aborted) throw input.signal.reason
+            await this.options.landing?.land(landing)
+            // Presentation landing is the final commit point. Cancellation that
+            // arrives after it must not reclassify its durable completed card.
+            return { resultRef, completionCommitted: true }
         }
-        const envelope: CompactionResultEnvelope = { kind: "compaction_result", result }
-        return { resultRef: await this.options.payloads.put(encodeTaskPayload(envelope)) }
+        return { resultRef }
     }
 
-    private async truncate(input: CompactionExecutionInput): Promise<{ readonly resultRef: string }> {
+    private async truncate(input: CompactionExecutionInput): Promise<CompactionExecutionResult> {
         const notice = formatResponse.contextTruncationNotice()
         const through = await this.options.truncation?.truncate({ notice, signal: input.signal })
         if (!through) throw new Error("NothingToTruncate")

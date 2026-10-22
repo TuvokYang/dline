@@ -14,6 +14,8 @@ export interface CompactionSpan {
 }
 
 /** The summary a completed compaction produced, and the prose that carried it. */
+export type CompactionRestoreDisposition = "checkpoint_row" | "card_fallback"
+
 export interface CompactionSummary {
     readonly summary: string
     readonly assistantText?: string
@@ -45,6 +47,8 @@ export interface CompactionLandingPort {
 export type CompactionLandingInput = {
     readonly compactionId: string
     readonly attempt: string
+    /** Which backend-owned restore presentation survives for this compaction. */
+    readonly restoreDisposition?: CompactionRestoreDisposition
     /**
      * The run's signal. The canonical landing checks it at its commit point, so
      * a run stopped while the landing was preparing never condenses anything.

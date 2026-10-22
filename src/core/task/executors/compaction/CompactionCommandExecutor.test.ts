@@ -125,6 +125,32 @@ describe("CompactionCommandExecutor", () => {
         await first
     })
 
+    it("records completion when the port committed its durable presentation before observing cancellation", async () => {
+        const recorded = recorder()
+        let started!: () => void
+        let release!: () => void
+        const ready = new Promise<void>((resolve) => (started = resolve))
+        const finish = new Promise<void>((resolve) => (release = resolve))
+        const executor = new CompactionCommandExecutor(
+            {
+                run: async () => {
+                    started()
+                    await finish
+                    return { resultRef: "summary:1", completionCommitted: true }
+                },
+            },
+            recorded.sink,
+        )
+
+        const execution = executor.execute(command())
+        await ready
+        expect(executor.cancel("compact-1")).toBe(true)
+        release()
+        await execution
+
+        expect(recorded.events.map((event) => event.type)).toEqual(["compaction.started", "compaction.completed"])
+    })
+
     it("emits expired feedback and fences late projection when the active attempt is cancelled", async () => {
         const recorded = recorder()
         const projection = vi.fn()

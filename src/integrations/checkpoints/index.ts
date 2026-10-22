@@ -12,6 +12,7 @@ import {
     type CheckpointRow,
     type CheckpointRowReservation,
 } from "@core/task/checkpoints/CheckpointGate"
+import type { CompactionRestoreDisposition } from "@core/task/compaction/CompactionSummaryLanding"
 import { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
 import CheckpointTracker, { type CheckpointChangedFile } from "@integrations/checkpoints/CheckpointTracker"
 import { DiffViewProvider } from "@integrations/editor/DiffViewProvider"
@@ -351,6 +352,33 @@ export class TaskCheckpointManager implements ICheckpointManager {
         }
     }
 
+    /**
+     * Allocate the one visible Chat Restore owner for a compaction.
+     *
+     * This chat boundary exists even when workspace checkpoints are disabled; file
+     * capture remains optional through commitWorkspace().
+     */
+    async prepareCompactionRestore(signal?: AbortSignal): Promise<CompactionRestoreDisposition> {
+        if (this.disposed) return "card_fallback"
+        // Preserve only an owner known durable before this attempt. A failed row may
+        // still be present in memory, but it must never suppress the card fallback.
+        const previousChat = this.latestCheckpointState().latestChat
+        const result = await this.gate.ensureRound("pre_compaction", { kind: "pre_compaction" }, signal)
+        if (result.outcome === "created" || result.outcome === "covered") return "checkpoint_row"
+        return (await this.rowStillCoversConversation(previousChat)) ? "checkpoint_row" : "card_fallback"
+    }
+
+    /** Whether a pre-existing durable row still owns the exact current chat boundary. */
+    private async rowStillCoversConversation(row: CheckpointRow | undefined): Promise<boolean> {
+        if (row?.position === undefined) return false
+        try {
+            const advanced = await this.services.canonicalCheckpoint?.advancedSince?.(row.position)
+            return advanced === false
+        } catch {
+            return false
+        }
+    }
+
     /** Order one workspace mutation after the prior baseline and before the next round. */
     async beginWorkspaceMutation(): Promise<() => void> {
         if (!this.config.enableCheckpoints || this.disposed) return () => undefined
@@ -498,7 +526,9 @@ export class TaskCheckpointManager implements ICheckpointManager {
 
     /** Where a reopened task continues from: its latest round row and non-stale file references. */
     private latestCheckpointState(): CheckpointGateState<CheckpointReferenceSet> {
-        const messages = this.services.messageStateHandler.clineMessages
+        // Restore ownership is a durable fact. A complete transient overlay may
+        // still have a persistence promise in flight and cannot suppress fallback.
+        const messages = this.services.messageStateHandler.durableClineMessages ?? this.services.messageStateHandler.clineMessages
         // A held row is still waiting for its round and restores nothing yet.
         const latestRoundIndex = findLastIndex(
             messages,

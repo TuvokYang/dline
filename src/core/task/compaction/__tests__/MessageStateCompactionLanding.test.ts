@@ -94,7 +94,42 @@ describe("MessageStateCompactionLanding", () => {
         expect(readHistory()).toBe(original)
     })
 
-    it("records the last replaced journal entry as the card's restore boundary", async () => {
+    it("records the last replaced journal entry when the card owns fallback Restore", async () => {
+        const { handler, rows } = createMessageStub([{ role: "user", content: "original task" }])
+        const landing = createLanding(handler)
+
+        await landing.land({
+            compactionId: "compaction-1",
+            attempt: "attempt-1",
+            summary: "the summary",
+            span: { from: { seq: 2 }, to: { seq: 7 } },
+            restoreDisposition: "card_fallback",
+        })
+
+        const payload = JSON.parse(rows[0].text ?? "{}") as UiSayTool
+        expect(payload.compactionJournalBoundary).toEqual({ seq: 7 })
+        // The card belongs to the journal conversation, not to API history rows.
+        expect(rows[0].compactionConversationRange).toBeUndefined()
+    })
+
+    it("omits the card restore boundary when a checkpoint row owns Chat Restore", async () => {
+        const { handler, rows } = createMessageStub([{ role: "user", content: "original task" }])
+        const landing = createLanding(handler)
+
+        await landing.land({
+            compactionId: "compaction-1",
+            attempt: "attempt-1",
+            summary: "the summary",
+            span: { from: { seq: 2 }, to: { seq: 7 } },
+            restoreDisposition: "checkpoint_row",
+        })
+
+        const payload = JSON.parse(rows[0].text ?? "{}") as UiSayTool
+        expect(payload.compactionJournalBoundary).toBeUndefined()
+        expect(rows[0].compactionConversationRange).toBeUndefined()
+    })
+
+    it("keeps the legacy card fallback when no disposition was supplied", async () => {
         const { handler, rows } = createMessageStub([{ role: "user", content: "original task" }])
         const landing = createLanding(handler)
 
@@ -107,8 +142,25 @@ describe("MessageStateCompactionLanding", () => {
 
         const payload = JSON.parse(rows[0].text ?? "{}") as UiSayTool
         expect(payload.compactionJournalBoundary).toEqual({ seq: 7 })
-        // The card belongs to the journal conversation, not to API history rows.
-        expect(rows[0].compactionConversationRange).toBeUndefined()
+    })
+
+    it("writes no completed card when cancellation wins before the presentation commit", async () => {
+        const { handler, rows } = createMessageStub([{ role: "user", content: "original task" }])
+        const landing = createLanding(handler)
+        const controller = new AbortController()
+        controller.abort("compaction_cancelled")
+
+        await expect(
+            landing.land({
+                compactionId: "compaction-1",
+                attempt: "attempt-1",
+                summary: "the summary",
+                span: { from: { seq: 2 }, to: { seq: 7 } },
+                restoreDisposition: "card_fallback",
+                signal: controller.signal,
+            }),
+        ).rejects.toBe("compaction_cancelled")
+        expect(rows).toEqual([])
     })
 
     it("offers no restore boundary for a summary that carried no span", async () => {

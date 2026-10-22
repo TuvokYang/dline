@@ -862,8 +862,21 @@ function installMistakeLimit(state: TaskState, event: TaskEvent, nextRevision: n
     }
 }
 
+/** A durable compaction commit wins a halt race only for the exact active run. */
+function isCommittedCompactionCompletionDuringHalt(state: TaskState, event: TaskEvent): boolean {
+    const compaction = state.flow.compaction
+    return (
+        state.halt.status === "stopping" &&
+        event.type === "compaction.completed" &&
+        event.completionCommitted === true &&
+        compaction?.status === "running" &&
+        compaction.compactionId === event.compactionId &&
+        compaction.attempt === event.attempt
+    )
+}
+
 export function transition(state: TaskState, event: TaskEvent): TransitionResult {
-    if (event.generation !== state.generation)
+    if (event.generation !== state.generation && !isCommittedCompactionCompletionDuringHalt(state, event))
         return reject(state, "generation_mismatch", `Event generation ${event.generation} does not match ${state.generation}`)
     if (state.flow.phase === "terminated" && event.type !== "lifecycle.open")
         return reject(state, "phase_invalid", "Terminated tasks reject new events")

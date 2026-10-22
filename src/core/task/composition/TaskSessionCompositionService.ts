@@ -859,7 +859,6 @@ export class TaskSessionCompositionService {
             // header then reads the condensed figure instead of waiting for the
             // next request to report it.
             compactionLanding: new CompositeCompactionLanding([
-                new MessageStateCompactionLanding(compactionCards),
                 new ContextUsageCompactionLanding({
                     frames: providerRequests,
                     conversation: providerConversation,
@@ -868,6 +867,9 @@ export class TaskSessionCompositionService {
                 new PromptStateCompactionLanding(prompt, promptCache),
                 // Results that waited for room are delivered once the summary freed it.
                 { land: () => backgroundIngress.releaseHeld() },
+                // The durable completed card is last: an earlier post-commit projection
+                // failure must not leave a card for a run the executor records as failed.
+                new MessageStateCompactionLanding(compactionCards),
             ]),
             // A summary the user asked for is theirs to accept or regenerate before
             // it replaces the conversation, through the same dialog every task uses.
@@ -908,8 +910,7 @@ export class TaskSessionCompositionService {
             },
             compactionCheckpoint: tool.checkpoints && {
                 beforeCompaction: (signal) =>
-                    tool.checkpoints?.ensureRoundCheckpoint?.("pre_compaction", { kind: "pre_compaction" }, signal) ??
-                    Promise.resolve(),
+                    tool.checkpoints?.prepareCompactionRestore?.(signal) ?? Promise.resolve("card_fallback"),
             },
             // Every request records what it consumed, which is the only fact the
             // task has about context pressure, cache health and cost.

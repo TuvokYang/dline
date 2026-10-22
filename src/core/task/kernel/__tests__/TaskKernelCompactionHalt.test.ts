@@ -62,6 +62,54 @@ describe("compaction abandoned by a halt", () => {
         expect(again.kind).toBe("accepted")
     })
 
+    it("keeps a durably committed compaction completed when its terminal event races a halt", () => {
+        let state = accepted(
+            transition(reviewingCompaction(), {
+                type: "user.cancel",
+                generation: 0,
+                haltId: "halt-1",
+            }),
+        ).state
+        const completed = transition(state, {
+            type: "compaction.completed",
+            generation: 0,
+            compactionId: COMPACTION_ID,
+            attempt: `${COMPACTION_ID}:1`,
+            resultRef: "summary:1",
+            completionCommitted: true,
+        })
+        state = accepted(completed).state
+        expect(state.flow.compaction).toMatchObject({ status: "completed", resultRef: "summary:1" })
+
+        if (state.halt.status !== "stopping") throw new Error("expected stopping")
+        for (const participantId of [...state.halt.pending]) {
+            state = apply(state, { type: "halt.halted", generation: state.generation, haltId: "halt-1", participantId })
+        }
+
+        expect(state.flow.phase).toBe("paused")
+        expect(state.flow.compaction).toMatchObject({ status: "completed", resultRef: "summary:1" })
+    })
+
+    it("still rejects an uncommitted stale compaction completion during a halt", () => {
+        const stopping = accepted(
+            transition(reviewingCompaction(), {
+                type: "user.cancel",
+                generation: 0,
+                haltId: "halt-1",
+            }),
+        ).state
+
+        expect(
+            transition(stopping, {
+                type: "compaction.completed",
+                generation: 0,
+                compactionId: COMPACTION_ID,
+                attempt: `${COMPACTION_ID}:1`,
+                resultRef: "summary:late",
+            }),
+        ).toMatchObject({ kind: "rejected", reason: "generation_mismatch" })
+    })
+
     it("withdraws the review that run opened, leaving room for the recovery offer", () => {
         const halted = cancel(reviewingCompaction())
 

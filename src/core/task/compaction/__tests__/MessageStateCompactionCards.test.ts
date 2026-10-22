@@ -36,7 +36,10 @@ function event(value: Record<string, unknown>): ContextCompactionSessionEvent {
  * like the real handler: a transient row is rewritten in place and a durable
  * commit replaces the row with its timestamp.
  */
-function createMessageStub(conversationSize = 4) {
+function createMessageStub(
+    conversationSize = 4,
+    persistence?: { readonly rejectBeforeCommit?: boolean; readonly rejectAfterCommit?: boolean },
+) {
     const rows = new Map<number, UiMessage>()
     const durable = new Set<number>()
     const handler = {
@@ -64,8 +67,12 @@ function createMessageStub(conversationSize = 4) {
         beginDurableClineMessage(message: UiMessage) {
             const prepared = { ...message, partial: false }
             rows.set(message.ts, prepared)
-            durable.add(message.ts)
-            return { message: prepared, persistence: Promise.resolve(prepared) }
+            if (!persistence?.rejectBeforeCommit) durable.add(message.ts)
+            const rejected = persistence?.rejectBeforeCommit || persistence?.rejectAfterCommit
+            return {
+                message: prepared,
+                persistence: rejected ? Promise.reject(new Error("messages.db unavailable")) : Promise.resolve(prepared),
+            }
         },
     }
     return { handler: handler as unknown as MessageStateHandler, rows, durable }
@@ -333,6 +340,64 @@ describe("MessageStateCompactionCards", () => {
         expect(published.map((row) => [row.ts, row.partial])).toEqual([[502, false]])
         // The record ends the run: nothing is left to withdraw.
         expect(cards.withdraw(OPERATION)).toBe(false)
+    })
+
+    it("removes a completed overlay when its durable write is rejected", async () => {
+        const { handler, rows, durable } = createMessageStub(4, { rejectBeforeCommit: true })
+        const cards = new MessageStateCompactionCards(handler, sequence())
+        await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+
+        await expect(
+            cards.record(OPERATION, {
+                tool: "summarizeTask",
+                content: "not durable",
+                compactionStatus: "completed",
+                compactionDurable: true,
+            }),
+        ).rejects.toThrow("messages.db unavailable")
+
+        expect(durable.size).toBe(0)
+        expect(rows.size).toBe(0)
+    })
+
+    it("keeps a durable completed card when only a post-commit side effect rejects", async () => {
+        const { handler, rows, durable } = createMessageStub(4, { rejectAfterCommit: true })
+        const cards = new MessageStateCompactionCards(handler, sequence())
+        await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+
+        await expect(
+            cards.record(OPERATION, {
+                tool: "summarizeTask",
+                content: "durable result",
+                compactionStatus: "completed",
+                compactionDurable: true,
+            }),
+        ).resolves.toBeUndefined()
+
+        expect([...durable]).toEqual([501])
+        expect(cardOf(rows.get(501))).toMatchObject({ content: "durable result", compactionStatus: "completed" })
+    })
+
+    it("keeps the durable card authoritative when realtime delivery throws", async () => {
+        const { handler, rows, durable } = createMessageStub()
+        const cards = new MessageStateCompactionCards(handler, sequence(), {
+            publish: (row) => {
+                if (row.partial === false) throw new Error("webview unavailable")
+            },
+        })
+        await cards.present(OPERATION, event({ kind: "pass_started", passIdentity: pass(0), attempt: attempt0 }))
+
+        await expect(
+            cards.record(OPERATION, {
+                tool: "summarizeTask",
+                content: "durable result",
+                compactionStatus: "completed",
+                compactionDurable: true,
+            }),
+        ).resolves.toBeUndefined()
+
+        expect([...durable]).toEqual([501])
+        expect(cardOf(rows.get(501)).compactionStatus).toBe("completed")
     })
 
     it("adds the record as a new row when the run showed no card", async () => {

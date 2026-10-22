@@ -216,8 +216,29 @@ export class MessageStateCompactionCards implements CompactionProgressPort, Comp
             conversationHistoryIndex: conversationSize - 1,
         })
         // A rewritten row keeps the message count, so it is delivered as a row.
-        this.realtime?.publish(message)
-        await persistence
+        // Delivery cannot revoke a write already registered with the durable store.
+        try {
+            this.realtime?.publish(message)
+        } catch {
+            // The next state projection will carry the durable row.
+        }
+        try {
+            await persistence
+        } catch (error) {
+            const committed = this.messages.durableClineMessages.some(
+                (candidate) => candidate.ts === message.ts && candidate.partial !== true && candidate.text === message.text,
+            )
+            if (committed) {
+                // Persistence reached the durable store and only a post-commit side
+                // effect failed. The completed card is authoritative from here.
+                this.messages.removeTransientClineMessage(message.ts)
+                return
+            }
+            // The complete overlay must not outlive a rejected durable write and
+            // make a failed run look completed in the merged chat projection.
+            this.messages.removeTransientClineMessage(message.ts)
+            throw error
+        }
     }
 
     /**

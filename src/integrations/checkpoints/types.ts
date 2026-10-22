@@ -1,4 +1,5 @@
 import type { CheckpointRoundReason } from "@core/task/checkpoints/CheckpointGate"
+import type { CompactionRestoreDisposition } from "@core/task/compaction/CompactionSummaryLanding"
 import type { CheckpointRestoreMode, CheckpointRestoreResult, WorkspaceRestoreResult } from "@core/task/shell/checkpoint-restore"
 import type { CheckpointReferenceSet } from "@shared/checkpoints"
 import type { CheckpointSource } from "@shared/ExtensionMessage"
@@ -99,6 +100,9 @@ export interface ICheckpointManager {
         sourceOrSignal?: CheckpointSource | AbortSignal,
         signal?: AbortSignal,
     ): Promise<void>
+
+    /** Allocate the single Chat Restore presentation owner for an upcoming compaction. */
+    prepareCompactionRestore?(signal?: AbortSignal): Promise<CompactionRestoreDisposition>
 
     /** Enter a bounded mutation ordered between the preceding and following round checkpoints. */
     beginWorkspaceMutation?(): Promise<() => void>

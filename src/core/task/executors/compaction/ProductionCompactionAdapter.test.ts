@@ -41,21 +41,23 @@ describe("ProductionCompactionAdapter", () => {
         })
     })
 
-    it("writes the round's restore point before the summary is requested, and still compacts when it fails", async () => {
+    it("settles the Chat Restore owner before summary generation and falls back to the card on failure", async () => {
         const payloads = new MemoryPayloads()
         const context: CompactionContextEnvelope = { kind: "compaction_context", context: { messages: 3 } }
         const contextRef = await payloads.put(encodeTaskPayload(context))
         const order: string[] = []
-        const run = (beforeCompaction: () => Promise<void>) =>
+        const landed: unknown[] = []
+        const run = (beforeCompaction: () => Promise<"checkpoint_row" | "card_fallback">) =>
             new ProductionCompactionAdapter({
                 payloads,
                 service: {
-                    run: async ({ context: decoded }) => {
+                    run: async () => {
                         order.push("summary")
-                        return { summary: decoded }
+                        return { summary: "condensed" }
                     },
                 },
                 checkpoint: { beforeCompaction },
+                landing: { land: async (input) => void landed.push(input) },
             }).run({
                 compactionId: "compact-1",
                 attempt: "attempt-1",
@@ -66,16 +68,20 @@ describe("ProductionCompactionAdapter", () => {
 
         await run(async () => {
             order.push("checkpoint")
+            return "checkpoint_row"
         })
         expect(order).toEqual(["checkpoint", "summary"])
+        expect(landed.at(-1)).toMatchObject({ restoreDisposition: "checkpoint_row" })
 
         order.length = 0
+        landed.length = 0
         await expect(
             run(async () => {
-                throw new Error("shadow git unavailable")
+                throw new Error("checkpoint row unavailable")
             }),
         ).resolves.toMatchObject({ resultRef: expect.any(String) })
         expect(order).toEqual(["summary"])
+        expect(landed.at(-1)).toMatchObject({ restoreDisposition: "card_fallback" })
     })
 
     it("truncates through the pairing-safe canonical truncation port without asking the provider or reviewer", async () => {
@@ -134,6 +140,72 @@ describe("ProductionCompactionAdapter", () => {
         ])
     })
 
+    it("does not write a completed card when cancellation wins during canonical landing", async () => {
+        const payloads = new MemoryPayloads()
+        const context: CompactionContextEnvelope = {
+            kind: "compaction_context",
+            span: { from: { seq: 2 }, to: { seq: 4 } },
+            context: { sourceHistory: [] },
+        }
+        const contextRef = await payloads.put(encodeTaskPayload(context))
+        const controller = new AbortController()
+        const presented: unknown[] = []
+        const adapter = new ProductionCompactionAdapter({
+            payloads,
+            service: { run: async () => ({ summary: "condensed" }) },
+            canonicalLanding: {
+                land: async () => {
+                    controller.abort("compaction_cancelled")
+                },
+            },
+            landing: { land: async (input) => void presented.push(input) },
+        })
+
+        await expect(
+            adapter.run({
+                compactionId: "compact-1",
+                attempt: "attempt-1",
+                contextRef,
+                signal: controller.signal,
+                publish: () => undefined,
+            }),
+        ).rejects.toBe("compaction_cancelled")
+        expect(presented).toEqual([])
+    })
+
+    it("commits completion when cancellation arrives during the final presentation write", async () => {
+        const payloads = new MemoryPayloads()
+        const context: CompactionContextEnvelope = {
+            kind: "compaction_context",
+            span: { from: { seq: 2 }, to: { seq: 4 } },
+            context: { sourceHistory: [] },
+        }
+        const contextRef = await payloads.put(encodeTaskPayload(context))
+        const controller = new AbortController()
+        const presented: unknown[] = []
+        const adapter = new ProductionCompactionAdapter({
+            payloads,
+            service: { run: async () => ({ summary: "condensed" }) },
+            landing: {
+                land: async (input) => {
+                    presented.push(input)
+                    controller.abort("compaction_cancelled")
+                },
+            },
+        })
+
+        await expect(
+            adapter.run({
+                compactionId: "compact-1",
+                attempt: "attempt-1",
+                contextRef,
+                signal: controller.signal,
+                publish: () => undefined,
+            }),
+        ).resolves.toMatchObject({ resultRef: expect.any(String), completionCommitted: true })
+        expect(presented).toHaveLength(1)
+    })
+
     it("lands the span the request fixed, not whatever the conversation holds when the summary returns", async () => {
         const payloads = new MemoryPayloads()
         const span = { from: { seq: 2 }, to: { seq: 4 } }
@@ -156,7 +228,14 @@ describe("ProductionCompactionAdapter", () => {
 
         // The run's signal travels with the landing so its commit point can refuse a stopped run.
         expect(landed).toEqual([
-            { compactionId: "compact-1", attempt: "attempt-1", summary: "condensed", span, signal: expect.any(AbortSignal) },
+            {
+                compactionId: "compact-1",
+                attempt: "attempt-1",
+                summary: "condensed",
+                span,
+                signal: expect.any(AbortSignal),
+                restoreDisposition: "card_fallback",
+            },
         ])
     })
 
@@ -204,6 +283,7 @@ describe("ProductionCompactionAdapter", () => {
                 coveredThrough: 5,
                 span: { from: { seq: 2 }, to: { seq: 5 } },
                 signal: expect.any(AbortSignal),
+                restoreDisposition: "card_fallback",
             },
         ])
     })

@@ -539,6 +539,8 @@ export type CompactionEvent =
           readonly compactionId: string
           readonly attempt: AttemptId
           readonly resultRef: string
+          /** The durable completed presentation won before a concurrent halt. */
+          readonly completionCommitted?: boolean
       })
     | (EventBase & {
           readonly type: "compaction.failed" | "compaction.expired"
