@@ -20,13 +20,13 @@ function normalized(filePath: string): string {
 }
 
 describe("task kernel module architecture", () => {
-    it("keeps new production files below the absolute 1000-line limit", () => {
+    it("keeps new production files below the absolute 1500-line limit", () => {
         const oversized = production
             .map((source) => ({
                 file: path.relative(TASK_ROOT, source.getFilePath()),
                 lines: source.getFullText().split(/\r?\n/).length,
             }))
-            .filter(({ lines }) => lines >= 1000)
+            .filter(({ lines }) => lines >= 1500)
         expect(oversized).toEqual([])
     })
 

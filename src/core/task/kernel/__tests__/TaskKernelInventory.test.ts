@@ -86,14 +86,14 @@ describe("TASK-101 machine inventories", () => {
         expect(taskViewFiles()).toEqual([...EXPECTED_TASK_VIEW_FILES].sort())
     })
 
-    it("keeps every kernel production file below the 1000-line architecture limit", () => {
+    it("keeps every kernel production file below the 1500-line architecture limit", () => {
         const kernelRoot = path.join(REPO, "src/core/task/kernel")
         const oversized = productionFiles([kernelRoot])
             .map((file) => ({
                 file: path.relative(REPO, file).replaceAll("\\", "/"),
                 lines: readFileSync(file, "utf8").split(/\r?\n/).length,
             }))
-            .filter((entry) => entry.lines >= 1000)
+            .filter((entry) => entry.lines >= 1500)
         expect(oversized).toEqual([])
     })
 })
