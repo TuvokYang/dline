@@ -33,10 +33,12 @@ describe("remote usage policy", () => {
         expect(resolveUsagePolicy({ ...allowedInputs, ...override })).toEqual({ allowed: false, reason })
     })
 
-    it("names the decision and, when blocked, its reason for the log", () => {
-        expect(describeUsagePolicyDecision(resolveUsagePolicy(allowedInputs))).toBe("allowed (profile usage)")
+    it("distinguishes policy permission from delivery and names a blocking reason", () => {
+        expect(describeUsagePolicyDecision(resolveUsagePolicy(allowedInputs))).toBe(
+            "policy permits local collection and remote delivery attempts",
+        )
         expect(describeUsagePolicyDecision(resolveUsagePolicy({ ...allowedInputs, hostTelemetryLevel: "off" }))).toBe(
-            "blocked (host_telemetry)",
+            "reporting blocked (host_telemetry)",
         )
     })
 

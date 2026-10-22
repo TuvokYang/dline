@@ -169,9 +169,9 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
     private async apply(next: UsagePolicyRecord | undefined): Promise<void> {
         const previous = this.current
         this.adopt(next)
-        // One line per change, so the log shows whether usage is sent and, if not, why.
+        // A permissive policy is routine debug context, not evidence that a batch was delivered.
         if (next && previous?.epoch !== next.epoch) {
-            this.log("info", `usage reporting ${describeUsagePolicyDecision(next.decision)}`)
+            this.log(next.decision.allowed ? "debug" : "info", `usage ${describeUsagePolicyDecision(next.decision)}`)
         }
         if (!next !== this.ownedByNewerBuild) {
             this.ownedByNewerBuild = !next

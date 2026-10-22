@@ -67,9 +67,11 @@ export function resolveUsagePolicy(inputs: UsagePolicyInputs): UsagePolicyDecisi
     return { allowed: true, profile: "usage" }
 }
 
-/** One line for the log: what the decision is and, when blocked, why. */
+/** One line for the log: distinguish policy permission from an actual delivery outcome. */
 export function describeUsagePolicyDecision(decision: UsagePolicyDecision): string {
-    return decision.allowed ? `allowed (profile ${decision.profile})` : `blocked (${decision.reason})`
+    return decision.allowed
+        ? "policy permits local collection and remote delivery attempts"
+        : `reporting blocked (${decision.reason})`
 }
 
 /** The machine-wide policy record every instance reads before it claims, sends or acknowledges a batch. */

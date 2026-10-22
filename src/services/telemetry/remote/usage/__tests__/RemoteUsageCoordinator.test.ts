@@ -310,9 +310,9 @@ describe("RemoteUsageCoordinator", () => {
         await usage.dispose()
     })
 
-    it("logs every delivery event but a steady state only when it is entered", async () => {
-        const levels: RemoteUsageLogLevel[] = []
-        const usage = coordinator((level) => levels.push(level))
+    it("logs policy permission as debug context and every delivery event, but a steady state only when entered", async () => {
+        const logs: { level: RemoteUsageLogLevel; message: string }[] = []
+        const usage = coordinator((level, message) => logs.push({ level, message }))
         await usage.start()
         const cycles: UsageCycleResult[] = [
             { kind: "idle" },
@@ -332,7 +332,11 @@ describe("RemoteUsageCoordinator", () => {
         await usage.dispose()
 
         // Policy line, first idle, delivery, first wait, discard: repeats of a held state stay silent.
-        expect(levels).toEqual(["info", "debug", "debug", "debug", "warn"])
+        expect(logs.map(({ level }) => level)).toEqual(["debug", "debug", "debug", "debug", "warn"])
+        expect(logs[0]).toEqual({
+            level: "debug",
+            message: "[RemoteUsage] usage policy permits local collection and remote delivery attempts",
+        })
     })
 
     it("closes intake without deleting anything when the policy inputs cannot be read", async () => {
