@@ -349,6 +349,48 @@ describe("TerminalProcess (Integration Tests)", () => {
             expect(lines).not.toContain(marker)
             expect(process.getUnretrievedOutput()).not.toContain(marker)
         })
+
+        it("should complete when terminal-end details arrive before the shell stream closes", async () => {
+            const terminal = TerminalRegistry.createTerminal().terminal
+            createdTerminals.push(terminal)
+            let resolvePendingRead: ((result: IteratorResult<string>) => void) | undefined
+            let readCount = 0
+            const streamIterator = {
+                next: vi.fn(() => {
+                    readCount++
+                    if (readCount === 1) return Promise.resolve({ done: false as const, value: "visible output\n" })
+                    return new Promise<IteratorResult<string>>((resolve) => {
+                        resolvePendingRead = resolve
+                    })
+                }),
+                return: vi.fn(async () => {
+                    resolvePendingRead?.({ done: true, value: undefined })
+                    return { done: true as const, value: undefined }
+                }),
+            }
+            vi.spyOn(terminal, "shellIntegration", "get").mockReturnValue({
+                executeCommand: vi.fn().mockReturnValue({
+                    read: () => ({
+                        [Symbol.asyncIterator]: () => streamIterator,
+                    }),
+                }),
+            })
+            const lines: string[] = []
+            let completedDetails: unknown
+            process.on("line", (line) => lines.push(line))
+            process.once("completed", (details) => {
+                completedDetails = details
+            })
+
+            const runPromise = process.run(terminal, "echo test")
+            await vi.waitFor(() => expect(streamIterator.next).toHaveBeenCalledTimes(2))
+            process.setCompletionDetails({ exitCode: 0 })
+            await expect(runPromise).resolves.toBeUndefined()
+
+            expect(streamIterator.return).toHaveBeenCalledTimes(1)
+            expect(completedDetails).toEqual({ exitCode: 0, signal: null })
+            expect(lines).toContain("visible output")
+        })
     })
 
     // Tests with controlled output

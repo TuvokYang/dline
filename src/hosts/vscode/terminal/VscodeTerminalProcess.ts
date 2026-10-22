@@ -48,6 +48,8 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
     private completionEmitted = false
     private completionDetailsReceived = false
     private completionDetailsWaiter: (() => void) | null = null
+    private readonly terminalEndSignal: Promise<void>
+    private resolveTerminalEndSignal: (() => void) | undefined
     private terminationPromise: Promise<void> | null = null
     private cancelledBeforeRun = false
     private terminalDisposed = false
@@ -58,6 +60,9 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
         super()
         this.started = new Promise<number>((resolve) => {
             this.resolveStarted = resolve
+        })
+        this.terminalEndSignal = new Promise<void>((resolve) => {
+            this.resolveTerminalEndSignal = resolve
         })
     }
 
@@ -93,13 +98,30 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
         if (terminal.shellIntegration?.executeCommand) {
             // Track that we're using shell integration
             const execution = terminal.shellIntegration.executeCommand(command)
-            const stream = execution.read()
+            const streamIterator = execution.read()[Symbol.asyncIterator]()
             // todo: need to handle errors
             let isFirstChunk = true
             let didOutputNonCommand = false
             let didEmitEmptyLine = false
 
-            for await (let data of stream) {
+            while (true) {
+                const next = await Promise.race([
+                    streamIterator.next().then((result) => ({ kind: "stream" as const, result })),
+                    this.terminalEndSignal.then(() => ({ kind: "terminal_end" as const })),
+                ])
+                if (next.kind === "terminal_end") {
+                    try {
+                        const closing = streamIterator.return?.()
+                        void closing?.catch((error) =>
+                            Logger.debug(`[TerminalProcess] Failed to close completed shell integration stream: ${error}`),
+                        )
+                    } catch (error) {
+                        Logger.debug(`[TerminalProcess] Failed to close completed shell integration stream: ${error}`)
+                    }
+                    break
+                }
+                if (next.result.done) break
+                let data = next.result.value
                 await this.waitForOutputCapacity()
                 // Parse shell integration completion markers when present.
                 // Sequence format: ]633;D;<exitCode>
@@ -358,6 +380,8 @@ export class VscodeTerminalProcess extends EventEmitter<TerminalProcessEvents> i
         if (details.exitCode !== undefined) this.exitCode = details.exitCode
         if (details.signal !== undefined) this.signal = details.signal
         this.completionDetailsReceived = true
+        this.resolveTerminalEndSignal?.()
+        this.resolveTerminalEndSignal = undefined
         this.completionDetailsWaiter?.()
     }
 
