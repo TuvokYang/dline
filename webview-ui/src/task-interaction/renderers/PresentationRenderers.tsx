@@ -5,6 +5,7 @@ import { useState } from "react"
 import { ApiFailureContent } from "@/components/chat/ApiFailureContent"
 import ImageGenerationRow from "@/components/chat/ImageGenerationRow"
 import NewTaskPreview from "@/components/chat/NewTaskPreview"
+import ReportBugPreview from "@/components/chat/ReportBugPreview"
 import { CopyButton } from "@/components/common/CopyButton"
 
 /** Props shared by pure interaction presentation renderers. */
@@ -224,9 +225,16 @@ export function NewTaskRenderer(props: PresentationProps) {
     return <NewTaskPreview context={newTask.context ? [newTask.context] : undefined} task={newTask.task} />
 }
 
-/** Render report interaction content. */
+/** Render the report draft owned by this interaction, including its consent choice. */
 export function ReportRenderer(props: PresentationProps) {
-    return shell(props.message)
+    return (
+        <ReportBugPreview
+            data={props.message.text ?? ""}
+            editable
+            onSelectionChange={props.onSelectionChange}
+            selection={props.selection}
+        />
+    )
 }
 
 /** Render completion interaction content. */

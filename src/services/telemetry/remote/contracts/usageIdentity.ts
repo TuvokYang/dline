@@ -1,5 +1,5 @@
 /**
- * Fact identity of the canonical Usage body (`schema_version: 3`).
+ * Fact identity shared by canonical Usage aggregation.
  *
  * A fact is identified by the tuple `(role, provider, model, custom)`. The tuple
  * is what makes a fact deletable and sliceable: dropping one model must remove

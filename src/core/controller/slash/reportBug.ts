@@ -1,10 +1,7 @@
+import { randomUUID } from "node:crypto"
 import { resolveProvider } from "@core/api"
-import {
-    collectReportBugEnvironment,
-    openReportBugIssue,
-    type ReportBugContent,
-    recentReportBugError,
-} from "@core/reporting/ReportBugIssue"
+import { collectReportBugEnvironment, type ReportBugContent, recentReportBugError } from "@core/reporting/ReportBugIssue"
+import { openReportBugPreview } from "@core/reporting/ReportBugWorkflow"
 import { Empty, StringRequest } from "@shared/proto/dline/common"
 import { Controller } from ".."
 
@@ -18,7 +15,7 @@ function recentTaskError(controller: Controller): string | undefined {
     return state?.flow.error
 }
 
-/** Open an editable local issue form when no usable Provider request can carry the command. */
+/** Open the same durable preview locally when no usable Provider request can carry the command. */
 export async function reportBug(controller: Controller, request: StringRequest): Promise<Empty> {
     const mode = controller.stateManager.getGlobalSettingsKey("mode") ?? "act"
     const provider = resolveProvider(controller.stateManager.getApiConfiguration(), mode) ?? "unavailable"
@@ -33,6 +30,21 @@ export async function reportBug(controller: Controller, request: StringRequest):
             "Opened by Dline's local report fallback because no usable Provider request was available. Images and files selected in Dline are not uploaded; add them manually in this GitHub form.",
     }
     const environment = await collectReportBugEnvironment(`${provider} / unavailable`)
-    await openReportBugIssue(content, environment)
+    if (!controller.task) {
+        // An empty task creates the canonical durable interaction owner without
+        // admitting user text or starting a Provider request.
+        await controller.initTask()
+    }
+    const task = controller.task
+    if (!task) throw new Error("ReportBug preview requires an active task interaction owner")
+    const operationId = randomUUID()
+    await openReportBugPreview({
+        interactions: task.owners.interactions,
+        turnId: `report-bug-local:${operationId}`,
+        interactionId: `report-bug-local:${operationId}`,
+        content,
+        environment,
+        placement: "interrupt",
+    })
     return Empty.create()
 }

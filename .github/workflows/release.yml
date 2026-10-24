@@ -86,7 +86,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        folder: [api, capabilities, chat, context, harness, performance, profiles, tasks]
+        folder: [api, capabilities, chat, context, harness, performance, profiles, tasks, telemetry]
     env:
       DLINE_E2E_INSTALL_VSIX: "1"
       DLINE_E2E_PROFILE: mock-openai

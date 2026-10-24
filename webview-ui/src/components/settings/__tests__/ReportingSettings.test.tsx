@@ -35,6 +35,7 @@ vi.mock("../utils/settingsHandlers", () => ({
 
 vi.mock("@/services/grpc-client", () => ({
     StateServiceClient: { exportRuntimeTelemetryBundle: vi.fn() },
+    SupportServiceClient: { getStatus: vi.fn(() => new Promise(() => undefined)) },
 }))
 
 const renderSectionHeader = (tabId: string) => <div>{tabId}</div>

@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package dline;
+
+import "dline/common.proto";
+
+option go_package = "github.com/dline/grpc-go/dline";
+option java_multiple_files = true;
+option java_package = "bot.dline.proto";
+
+service SupportService {
+  rpc getStatus(EmptyRequest) returns (SupportStatus);
+  rpc checkNow(EmptyRequest) returns (SupportStatus);
+  rpc openIssue(EmptyRequest) returns (Empty);
+  rpc deleteAndRevoke(EmptyRequest) returns (Empty);
+}
+
+message SupportIssue {
+  string owner = 1;
+  string repo = 2;
+  int32 number = 3;
+}
+
+// Safe projection only. Credentials, tickets and issue tokens are never projected.
+message SupportStatus {
+  bool present = 1;
+  string public_code = 2;
+  string state = 3;
+  int64 authorization_expires_at = 4;
+  optional int64 capture_expires_at = 5;
+  optional SupportIssue issue = 6;
+}

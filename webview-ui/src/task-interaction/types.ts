@@ -242,6 +242,7 @@ export function buildInteractionRequest(
     const carriesDraft = action
         ? action.payloadPolicy === "draft" || action.payloadPolicy === "draft_and_selection"
         : view.input.enterAction === actionId
+    const carriesSelection = action?.payloadPolicy === "selection" || action?.payloadPolicy === "draft_and_selection"
     return {
         taskId: interaction.taskId,
         taskInstanceId: view.taskInstanceId ?? "",
@@ -259,6 +260,6 @@ export function buildInteractionRequest(
                       : { semanticInput: toProtoSemanticInputDocument(draft.semanticInput) }),
               }
             : undefined,
-        selection: selection ? { values: [...selection.values] } : undefined,
+        selection: carriesSelection && selection ? { values: [...selection.values] } : undefined,
     }
 }

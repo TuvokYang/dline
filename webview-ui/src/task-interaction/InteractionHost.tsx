@@ -1,4 +1,5 @@
 import type { TaskViewAction, TaskViewState, UiMessage } from "@shared/ExtensionMessage"
+import { parseReportBugDraft, reportBugDraftSelection } from "@shared/report-bug"
 import { type ReactNode, useState } from "react"
 import { isCardHostedApproval } from "./approval-card"
 import { FooterActions } from "./FooterActions"
@@ -69,10 +70,17 @@ export function InteractionHost({
     onSuccessorAccepted,
     renderApprovalCard,
 }: InteractionHostProps) {
-    const [selection, setSelection] = useState<string[]>([])
     const interaction = view.activeInteraction
     const anchor = findActiveInteractionAnchor(messages, view)
     const presentationKind = interaction?.presentationKind
+    const initialSelection = (() => {
+        if (presentationKind !== "report_bug") return []
+        const report = parseReportBugDraft(anchor?.text ?? interaction?.presentationText)
+        return report ? reportBugDraftSelection(report) : []
+    })()
+    const [selectionState, setSelectionState] = useState<{ interactionId?: string; values: string[] }>({ values: [] })
+    const selection = selectionState.interactionId === interaction?.interactionId ? selectionState.values : initialSelection
+    const setSelection = (values: string[]) => setSelectionState({ interactionId: interaction?.interactionId, values })
     const supported = presentationKind ? isPresentationKind(presentationKind) : false
     const renderAnchorPresentation = (kind: PresentationKind, message: UiMessage) =>
         renderApprovalCard && isCardHostedApproval(kind) ? (

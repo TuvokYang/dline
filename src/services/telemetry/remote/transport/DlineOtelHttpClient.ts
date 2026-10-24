@@ -2,6 +2,12 @@ import { fetch } from "@shared/net"
 import type { BootstrapDeviceGrantRequest, DeviceGrantTransport } from "../auth/DeviceGrantPort"
 import type { DeviceExchangeTransport } from "../auth/DeviceTokenBroker"
 import type { WireResponse } from "../contracts/classification"
+import type {
+    ExchangeOperationRequest,
+    IssueExchangeRequest,
+    IssueExchangeTransport,
+    RecoverableExchangeTransport,
+} from "../contracts/exchangeOperation"
 import type { DeviceExchangeRequest } from "../contracts/wire"
 
 export const DLINE_OTEL_ENDPOINT = "https://otel.dline.cc"
@@ -11,6 +17,7 @@ export const DLINE_OTEL_REQUEST_TIMEOUT_MS = 15_000
 const MAX_RESPONSE_BYTES = 16 * 1024
 const DEVICE_EXCHANGE_PATH = "/auth/device/exchange"
 const BOOTSTRAP_DEVICE_GRANT_PATH = "/auth/device/grant"
+const ISSUE_EXCHANGE_PATH = "/auth/exchange"
 const BOOTSTRAP_DEVICE_GRANT_CONTRACT = "4"
 /** Dline's own protocol paths carry no `/v1`: that segment belongs to OTLP alone. */
 const USAGE_PATH = "/usage"
@@ -23,6 +30,11 @@ const USAGE_PATH = "/usage"
  * `/auth/*` take no prefix at all.
  */
 const LOGS_PATH = "/v1/logs"
+const ISSUE_DIAGNOSTIC_PATHS = {
+    logs: LOGS_PATH,
+    metrics: "/v1/metrics",
+    traces: "/v1/traces",
+} as const
 /**
  * The telemetry contract version every telemetry request names in
  * `X-Dline-Contract`.
@@ -31,7 +43,9 @@ const LOGS_PATH = "/v1/logs"
  * mean two contracts shipped as one, and a reader could no longer answer "which
  * contract did this device speak" from a single header.
  */
-export const DLINE_TELEMETRY_CONTRACT = "3"
+const DLINE_DIAGNOSTIC_CONTRACT = "3"
+const DLINE_USAGE_CONTRACT = "4"
+const DLINE_ISSUE_DIAGNOSTIC_CONTRACT = "4"
 
 export type DlineOtelTransportFailure = "timeout" | "aborted" | "network"
 
@@ -46,14 +60,16 @@ export class DlineOtelTransportError extends Error {
     }
 }
 
-export interface UsageDelivery {
+interface AuthenticatedTelemetryDelivery {
     readonly accessToken: string
     readonly requestId: string
     /** Exact bytes, sent unchanged on every attempt so a replay is answered as a duplicate (§1.7). */
     readonly body: Uint8Array
-    /** Usage schema contract; diagnostics and legacy callers default to the current contract 3. */
-    readonly contractVersion?: 3 | 4
 }
+
+export interface UsageDelivery extends AuthenticatedTelemetryDelivery {}
+
+export interface DiagnosticDelivery extends AuthenticatedTelemetryDelivery {}
 
 /** Sends one `/usage` request. */
 export interface UsageTransport {
@@ -62,7 +78,15 @@ export interface UsageTransport {
 
 /** Sends one `/logs` request; the body is an OTLP/HTTP JSON logs request. */
 export interface DiagnosticLogsTransport {
-    sendLogs(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse>
+    sendLogs(delivery: DiagnosticDelivery, signal?: AbortSignal): Promise<WireResponse>
+}
+
+export interface IssueDiagnosticDelivery extends DiagnosticDelivery {
+    readonly stream: keyof typeof ISSUE_DIAGNOSTIC_PATHS
+}
+
+export interface IssueDiagnosticTransport {
+    sendIssueDiagnostics(delivery: IssueDiagnosticDelivery, signal?: AbortSignal): Promise<WireResponse>
 }
 
 export interface DlineOtelHttpClientOptions {
@@ -87,7 +111,14 @@ export interface DlineOtelHttpClientOptions {
  * belongs to the delivery layer, which knows whether a replay is safe.
  */
 export class DlineOtelHttpClient
-    implements DeviceExchangeTransport, DeviceGrantTransport, UsageTransport, DiagnosticLogsTransport
+    implements
+        DeviceExchangeTransport,
+        DeviceGrantTransport,
+        RecoverableExchangeTransport,
+        IssueExchangeTransport,
+        UsageTransport,
+        DiagnosticLogsTransport,
+        IssueDiagnosticTransport
 {
     private readonly endpoint: URL
     private readonly timeoutMs: number
@@ -109,6 +140,16 @@ export class DlineOtelHttpClient
     }
 
     requestBootstrapDeviceGrant(request: BootstrapDeviceGrantRequest, signal?: AbortSignal): Promise<WireResponse> {
+        return this.requestRecoverableDeviceOrIssueExchange(request, signal)
+    }
+
+    requestRecoverableDeviceOrIssueExchange(
+        request: ExchangeOperationRequest & object,
+        signal?: AbortSignal,
+    ): Promise<WireResponse> {
+        if (request.operation !== "device.grant") {
+            throw new Error("Issue exchange requires the authenticated issue transport")
+        }
         return this.post(
             BOOTSTRAP_DEVICE_GRANT_PATH,
             {
@@ -121,12 +162,40 @@ export class DlineOtelHttpClient
         )
     }
 
-    sendUsage(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse> {
-        return this.post(USAGE_PATH, deliveryHeaders(delivery), delivery.body, signal)
+    requestRecoverableIssueExchange(
+        request: IssueExchangeRequest,
+        deviceAccessToken: string,
+        signal?: AbortSignal,
+    ): Promise<WireResponse> {
+        if (!/^[A-Za-z0-9_-]{43}$/.test(deviceAccessToken)) throw new Error("Issue exchange requires a valid device token")
+        return this.post(
+            ISSUE_EXCHANGE_PATH,
+            {
+                authorization: `Bearer ${deviceAccessToken}`,
+                "content-type": "application/json",
+                "x-dline-contract": BOOTSTRAP_DEVICE_GRANT_CONTRACT,
+                "x-dline-request-id": request.request_id,
+            },
+            JSON.stringify(request),
+            signal,
+        )
     }
 
-    sendLogs(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse> {
-        return this.post(LOGS_PATH, deliveryHeaders(delivery), delivery.body, signal)
+    sendUsage(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse> {
+        return this.post(USAGE_PATH, deliveryHeaders(delivery, DLINE_USAGE_CONTRACT), delivery.body, signal)
+    }
+
+    sendLogs(delivery: DiagnosticDelivery, signal?: AbortSignal): Promise<WireResponse> {
+        return this.post(LOGS_PATH, deliveryHeaders(delivery, DLINE_DIAGNOSTIC_CONTRACT), delivery.body, signal)
+    }
+
+    sendIssueDiagnostics(delivery: IssueDiagnosticDelivery, signal?: AbortSignal): Promise<WireResponse> {
+        return this.post(
+            ISSUE_DIAGNOSTIC_PATHS[delivery.stream],
+            deliveryHeaders(delivery, DLINE_ISSUE_DIAGNOSTIC_CONTRACT),
+            delivery.body,
+            signal,
+        )
     }
 
     private async post(
@@ -166,13 +235,13 @@ export class DlineOtelHttpClient
     }
 }
 
-/** Headers of a usage or logs request, besides the user agent every request carries. */
-function deliveryHeaders(delivery: UsageDelivery): Record<string, string> {
+/** Headers shared by authenticated telemetry requests; each endpoint supplies its one accepted contract. */
+function deliveryHeaders(delivery: AuthenticatedTelemetryDelivery, contract: string): Record<string, string> {
     return {
         authorization: `Bearer ${delivery.accessToken}`,
         "content-type": "application/json",
         "x-dline-request-id": delivery.requestId,
-        "x-dline-contract": String(delivery.contractVersion ?? DLINE_TELEMETRY_CONTRACT),
+        "x-dline-contract": contract,
     }
 }
 

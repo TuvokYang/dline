@@ -71,6 +71,7 @@ const RESTORED_TOOL_DIALOG_POLICIES: ReadonlyMap<string, RestoredToolDialogPolic
     ["make_plan", { replacesInterruption: never }],
     ["qna_response", { replacesInterruption: never }],
     ["generate_report", { replacesInterruption: never }],
+    ["report_bug", { replacesInterruption: always }],
     ["status_acknowledgment", { replacesInterruption: always }],
     // Only a completion the user had already been shown stays open.
     ["completion", { replacesInterruption: (block) => Boolean(block.presentedCompletion) }],
@@ -112,6 +113,8 @@ export interface RestoredToolDialogPorts {
      * such an answer cannot take effect, so the dialog stays answerable instead.
      */
     readonly publishPostCommit?: PostCommitPublisher
+    /** Replays the report's confirmed external effect before recording its restored tool result. */
+    readonly reportBug?: (outcome: InteractionOutcome) => Promise<boolean>
 }
 
 /** The option a follow-up answer picked, matched the way the live handler matches it. */
@@ -157,6 +160,13 @@ export class RestoredToolDialogContinuation implements UnownedDialogContinuation
             if (!target) return false
             // `continue` submits the answer as ordinary input, which writes its own row.
             if (target.recorded === "failed") return true
+            if (
+                target.kind === "report_bug" &&
+                target.recorded === "none" &&
+                !(await this.ports.reportBug?.(resolution.outcome))
+            ) {
+                return false
+            }
             await this.present(resolution, resolution.outcome.draft)
             if (target.recorded === "answered") return true
             // An answer that commits the source is recorded only once its directive is accepted; see `commit`.

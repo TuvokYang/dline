@@ -1,182 +1,77 @@
-import { createHash, randomBytes } from "node:crypto"
-import http from "node:http"
-import type { AddressInfo } from "node:net"
+const DEFAULT_MOCK_ENDPOINT = "http://127.0.0.1:43190"
+const PROBE_TIMEOUT_MS = 750
 
-/**
- * Loopback stand-in for the Dline telemetry service, written from the client's
- * view of the HTTP interface only (contract v2.1): device exchange, the version
- * list matched on `User-Agent` before anything else, bearer tokens on
- * `/usage`, request-ID idempotency, `next_eligible_at`, and a 429 for a new
- * batch sent before it. It deliberately keeps no knowledge of how the real
- * service is built.
- */
-export interface OtelServiceMockOptions {
-    readonly usageIntervalMs?: number
-    readonly tokenLifetimeMs?: number
-    /** Client versions the service accepts, matched exactly; every version when absent (§1.2). */
-    readonly acceptedVersions?: readonly string[]
-}
-
-export interface AcceptedUsage {
-    readonly deviceId: string
-    readonly requestId: string
-    readonly userAgent: string | undefined
+export interface ExternalOtelMockAccepted {
+    readonly path: string
+    readonly request_id: string
+    readonly device_id: string
     readonly body: unknown
 }
 
-interface IssuedToken {
-    readonly deviceId: string
-    readonly profile: string
-    readonly expiresAt: number
+export interface ExternalOtelMockState {
+    readonly ok: true
+    readonly claims: ReadonlyArray<{
+        readonly issue: { readonly owner: string; readonly repo: string; readonly number: number }
+        readonly state: string
+        readonly authorization_id: string
+        readonly authorization_revision: number
+    }>
+    readonly accepted: readonly ExternalOtelMockAccepted[]
 }
 
-const SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/
-const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const PROFILES = new Set(["usage", "production", "development"])
-const BODY_LIMIT_BYTES = 32 * 1024
-const USER_AGENT_PATTERN = /^Dline\/([0-9A-Za-z.+-]{1,32})$/
-/** How long a device whose version is not listed waits before it reports again. */
-const IGNORED_VERSION_INTERVAL_MS = 6 * 3_600_000
-
-export class OtelServiceMock {
-    readonly accepted: AcceptedUsage[] = []
-    private readonly tokens = new Map<string, IssuedToken>()
-    private readonly requests = new Map<string, { deviceId: string; digest: string }>()
-    private readonly nextEligibleAt = new Map<string, number>()
-    private readonly server = http.createServer((request, response) => {
-        void this.route(request)
-            .catch((): MockReply => failure(500, "internal"))
-            .then((result) => send(response, result))
-    })
-
-    constructor(private readonly options: OtelServiceMockOptions = {}) {}
-
-    /** Listen on an ephemeral loopback port and return the origin to pass to the client. */
-    async start(): Promise<string> {
-        await new Promise<void>((resolve) => this.server.listen(0, "127.0.0.1", resolve))
-        return `http://127.0.0.1:${(this.server.address() as AddressInfo).port}`
-    }
-
-    async stop(): Promise<void> {
-        await new Promise<void>((resolve) => this.server.close(() => resolve()))
-    }
-
-    private async route(request: http.IncomingMessage): Promise<MockReply> {
-        const body = await readBody(request)
-        if (request.method === "POST" && request.url === "/auth/device/exchange") return this.exchange(body)
-        if (request.method === "POST" && request.url === "/usage") return this.usage(request, body)
-        return failure(404, "not_found")
-    }
-
-    private exchange(body: Buffer | undefined): MockReply {
-        const input = parseJson(body)
-        const secret = input?.device_secret
-        const profile = input?.requested_profile
-        if (typeof secret !== "string" || !SECRET_PATTERN.test(secret) || typeof profile !== "string" || !PROFILES.has(profile)) {
-            return failure(400, "invalid_request")
-        }
-        const deviceId = createHash("sha256").update(secret).digest("hex").slice(0, 24)
-        const accessToken = randomBytes(32).toString("base64url")
-        const expiresAt = Date.now() + (this.options.tokenLifetimeMs ?? 3_600_000)
-        this.tokens.set(accessToken, { deviceId, profile, expiresAt })
-        return { status: 200, body: { ok: true, access_token: accessToken, device_id: deviceId, profile, expires_at: expiresAt } }
-    }
-
-    private usage(request: http.IncomingMessage, body: Buffer | undefined): MockReply {
-        // The version list is checked before the token and the body, so a refused
-        // version costs nothing. The answer names no disposition the client would
-        // read as a confirmation, so the batch stays unknown rather than being lost.
-        if (!this.acceptsVersionOf(request)) {
-            return {
-                status: 200,
-                body: { ok: true, disposition: "version_not_stored", next_eligible_at: Date.now() + IGNORED_VERSION_INTERVAL_MS },
-            }
-        }
-        const bearer = /^Bearer (.+)$/.exec(request.headers.authorization ?? "")?.[1]
-        const token = bearer ? this.tokens.get(bearer) : undefined
-        if (!token || token.profile !== "usage" || token.expiresAt <= Date.now()) return failure(401, "token_invalid")
-        const requestId = request.headers["x-dline-request-id"]
-        if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) return failure(400, "invalid_request_id")
-        if (request.headers["x-dline-contract"] !== "3") return failure(400, "contract_required")
-        if (!body) return failure(413, "payload_too_large")
-
-        // Idempotency is decided before anything else, so a replay is never held back by the interval.
-        const digest = createHash("sha256").update(body).digest("hex")
-        const previous = this.requests.get(requestId)
-        if (previous) {
-            return previous.deviceId === token.deviceId && previous.digest === digest
-                ? this.acknowledge(token.deviceId, "duplicate")
-                : failure(409, "request_id_conflict")
-        }
-        const waitMs = Math.ceil((this.nextEligibleAt.get(token.deviceId) ?? 0) - Date.now())
-        if (waitMs > 0) {
-            return {
-                status: 429,
-                body: { ok: false, retry_after_ms: waitMs, error: { code: "rate_limited" } },
-                retryAfterSeconds: Math.ceil(waitMs / 1_000),
-            }
-        }
-        const parsed = parseJson(body)
-        const client = parsed?.client as Record<string, unknown> | undefined
-        const window = parsed?.window as Record<string, unknown> | undefined
-        if (parsed?.schema_version !== 3 || typeof client?.version !== "string" || typeof window?.started_at !== "number") {
-            return failure(422, "invalid_usage")
-        }
-        this.requests.set(requestId, { deviceId: token.deviceId, digest })
-        this.accepted.push({ deviceId: token.deviceId, requestId, userAgent: request.headers["user-agent"], body: parsed })
-        this.nextEligibleAt.set(token.deviceId, Date.now() + (this.options.usageIntervalMs ?? 600_000))
-        return this.acknowledge(token.deviceId, "accepted")
-    }
-
-    /** With a version list, a missing or malformed user agent counts as a version not on it. */
-    private acceptsVersionOf(request: http.IncomingMessage): boolean {
-        const accepted = this.options.acceptedVersions
-        if (!accepted || accepted.length === 0) return true
-        const version = USER_AGENT_PATTERN.exec(request.headers["user-agent"] ?? "")?.[1]
-        return version !== undefined && accepted.includes(version)
-    }
-
-    private acknowledge(deviceId: string, disposition: "accepted" | "duplicate"): MockReply {
-        return { status: 200, body: { ok: true, disposition, next_eligible_at: this.nextEligibleAt.get(deviceId) ?? Date.now() } }
-    }
+export interface ExternalIssueFixture {
+    readonly owner: string
+    readonly repo: string
+    readonly number: number
+    readonly support_code: string
+    readonly state: "pending_approval" | "approved" | "revoked" | "closed"
+    readonly revision?: number
 }
 
-interface MockReply {
-    readonly status: number
-    readonly body: unknown
-    readonly retryAfterSeconds?: number
+/** URL-only adapter for the mock owned and implemented by dline-web. */
+export function otelServiceMockEndpoint(env: NodeJS.ProcessEnv = process.env): string {
+    const configured = env.DLINE_OTEL_MOCK_ENDPOINT?.trim()
+    return configured || DEFAULT_MOCK_ENDPOINT
 }
 
-function failure(status: number, code: string): MockReply {
-    return { status, body: { ok: false, error: { code } } }
-}
-
-/** Read the request body, or `undefined` once it exceeds the service's size limit. */
-async function readBody(request: http.IncomingMessage): Promise<Buffer | undefined> {
-    const chunks: Buffer[] = []
-    let total = 0
-    for await (const chunk of request) {
-        total += (chunk as Buffer).byteLength
-        if (total > BODY_LIMIT_BYTES) return undefined
-        chunks.push(chunk as Buffer)
-    }
-    return Buffer.concat(chunks)
-}
-
-function parseJson(body: Buffer | undefined): Record<string, unknown> | undefined {
+/** Probe the independent dline-web process. A closed port is a test skip, not a local fallback. */
+export async function isOtelServiceMockAvailable(endpoint = otelServiceMockEndpoint()): Promise<boolean> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
     try {
-        const value: unknown = body ? JSON.parse(body.toString("utf8")) : undefined
-        return typeof value === "object" && value !== null && !Array.isArray(value)
-            ? (value as Record<string, unknown>)
-            : undefined
+        const response = await fetch(new URL("/healthz", endpoint), { signal: controller.signal })
+        if (!response.ok) return false
+        const body = (await response.json()) as Record<string, unknown>
+        return body.service === "dline-otel-contract-mock" && body.contract_version === 4
     } catch {
-        return undefined
+        return false
+    } finally {
+        clearTimeout(timer)
     }
 }
 
-function send(response: http.ServerResponse, reply: MockReply): void {
-    response.statusCode = reply.status
-    response.setHeader("content-type", "application/json")
-    if (reply.retryAfterSeconds !== undefined) response.setHeader("retry-after", String(reply.retryAfterSeconds))
-    response.end(JSON.stringify(reply.body))
+export async function resetOtelServiceMock(endpoint = otelServiceMockEndpoint()): Promise<void> {
+    await post(endpoint, "/__mock/reset", {})
+}
+
+export async function installExternalIssueFixture(
+    fixture: ExternalIssueFixture,
+    endpoint = otelServiceMockEndpoint(),
+): Promise<void> {
+    await post(endpoint, "/__mock/issues", fixture)
+}
+
+export async function readOtelServiceMockState(endpoint = otelServiceMockEndpoint()): Promise<ExternalOtelMockState> {
+    const response = await fetch(new URL("/__mock/state", endpoint))
+    if (!response.ok) throw new Error(`dline-web telemetry mock state failed with ${response.status}`)
+    return (await response.json()) as ExternalOtelMockState
+}
+
+async function post(endpoint: string, pathname: string, body: object): Promise<void> {
+    const response = await fetch(new URL(pathname, endpoint), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+    })
+    if (!response.ok) throw new Error(`dline-web telemetry mock ${pathname} failed with ${response.status}`)
 }

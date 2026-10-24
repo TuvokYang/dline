@@ -1,3 +1,9 @@
+import {
+    createReportBugDraft,
+    type ReportBugContent,
+    type ReportBugEnvironment,
+    serializeReportBugDraft,
+} from "@shared/report-bug"
 import { createAndOpenGitHubIssue } from "@utils/github-url-utils"
 import * as os from "os"
 import { HostProvider } from "@/hosts/host-provider"
@@ -11,20 +17,7 @@ const REPORT_TEMPLATE = "bug_report.yml"
 const REPORT_BUG_E2E_CAPTURE_PATH = "/.test/external-url"
 const RECENT_ERROR_LIMIT = 4_000
 
-export interface ReportBugContent {
-    readonly title: string
-    readonly whatHappened: string
-    readonly stepsToReproduce: string
-    readonly apiRequestOutput: string
-    readonly additionalContext: string
-}
-
-export interface ReportBugEnvironment {
-    readonly providerAndModel: string
-    readonly operatingSystem: string
-    readonly systemInfo: string
-    readonly dlineVersion: string
-}
+export type { ReportBugContent, ReportBugDraft, ReportBugEnvironment } from "@shared/report-bug"
 
 /** Collect host facts shared by AI-authored and local fallback reports. */
 export async function collectReportBugEnvironment(providerAndModel: string): Promise<ReportBugEnvironment> {
@@ -53,19 +46,9 @@ export function recentReportBugError(error: string | undefined): string | undefi
     return redacted ? redacted.slice(0, RECENT_ERROR_LIMIT) : undefined
 }
 
-/** JSON rendered by the existing ReportBug preview. */
+/** Canonical safe payload rendered and edited by every ReportBug preview. */
 export function reportBugPresentation(content: ReportBugContent, environment: ReportBugEnvironment): string {
-    return JSON.stringify({
-        title: content.title,
-        what_happened: content.whatHappened,
-        steps_to_reproduce: content.stepsToReproduce,
-        api_request_output: content.apiRequestOutput,
-        additional_context: content.additionalContext,
-        provider_and_model: environment.providerAndModel,
-        operating_system: environment.operatingSystem,
-        system_info: environment.systemInfo,
-        cline_version: environment.dlineVersion,
-    })
+    return serializeReportBugDraft(createReportBugDraft(content, environment))
 }
 
 function reportBugE2ECaptureUrl(env: NodeJS.ProcessEnv): string | undefined {

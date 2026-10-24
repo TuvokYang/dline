@@ -64,6 +64,7 @@ function define(
 
 const REPLY_INPUT: InputPolicy = { ...DRAFT_INPUT, enterAction: "reply" }
 const RESUME_INPUT: InputPolicy = { ...DRAFT_INPUT, enterAction: "resume" }
+const NO_INPUT: InputPolicy = { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false }
 const APPROVAL_INPUT: InputPolicy = { ...DRAFT_INPUT, enterAction: "reject" }
 const RETRY_INPUT: InputPolicy = { ...DRAFT_INPUT, enterAction: "retry" }
 const ACKNOWLEDGE_INPUT: InputPolicy = { ...DRAFT_INPUT, enterAction: "acknowledge" }
@@ -90,7 +91,12 @@ const DEFINITIONS: Readonly<Record<InteractionKind, InteractionDefinition>> = {
         [action("approve", "Start New Task"), action("reject", "Regenerate Context", "draft", "secondary")],
         APPROVAL_INPUT,
     ),
-    report_bug: define("report_bug", "report_bug", [action("confirm_utility", "Report Bug", "draft")]),
+    report_bug: define(
+        "report_bug",
+        "report_bug",
+        [action("approve", "Open GitHub Issue", "selection"), action("reject", "Cancel", "none", "secondary")],
+        NO_INPUT,
+    ),
     condense: define(
         "condense",
         "condense",

@@ -1,28 +1,24 @@
 import { randomUUID } from "node:crypto"
 import { ModelRegistry } from "@/core/model-registry/ModelRegistry"
 import { DeviceCredentialRepository } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
+import { ExchangeOperationRepository } from "@/core/storage/telemetry-remote/ExchangeOperationRepository"
 import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
 import type { LocalUsagePolicyInputs } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
 import { RemotePolicyRepository } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
-import { SEALED_SHARD_SETTLE_MS, UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
+import { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import { installTaskUsageAccountingSink } from "@/core/task/observability/task-usage-accounting"
 import { projectProviderUsageModelId } from "@/core/task/performance/provider-request-round-port"
 import { deviceGrantPortFromRepository } from "./auth/DeviceGrantPort"
 import { DeviceGrantPortRegistry } from "./auth/DeviceGrantPortRegistry"
 import { DeviceTokenBroker } from "./auth/DeviceTokenBroker"
+import { installRecoverableExchange } from "./auth/exchangeRuntime"
 import { UsageGrantBootstrap } from "./auth/UsageGrantBootstrap"
 import { estimateUsageWriteRowsV4, sanitizeUsageClient, type UsageClientWire } from "./contracts/usageBody"
 import { DlineOtelHttpClient } from "./transport/DlineOtelHttpClient"
-import { RemoteUsageCoordinator, USAGE_CYCLE_INTERVAL_MS } from "./usage/RemoteUsageCoordinator"
+import { RemoteUsageCoordinator } from "./usage/RemoteUsageCoordinator"
 import { UsageDeliveryWorker } from "./usage/UsageDeliveryWorker"
 import type { RemoteUsageLog } from "./usage/usageCycleLog"
-
-/**
- * How long after a minute ends its observations may still arrive: an append is
- * sealed by the next cycle, settles, and is folded by the cycle after that.
- */
-export const USAGE_BATCH_SETTLE_MS = 2 * USAGE_CYCLE_INTERVAL_MS + SEALED_SHARD_SETTLE_MS + 5_000
 
 export interface RemoteUsageRuntimeOptions {
     /** `StorageContext.dataDir`; every remote telemetry file lives below it. */
@@ -84,6 +80,14 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
         platform: options.platform,
     })
     const grantRegistry = new DeviceGrantPortRegistry(grantPort, bootstrap)
+    installRecoverableExchange({
+        registry: grantRegistry,
+        expectedBootstrap: bootstrap,
+        repository: new ExchangeOperationRepository(layout, { onQuarantine }),
+        transport,
+        clientVersion: options.clientVersion,
+        platform: options.platform,
+    })
     const tokens = new DeviceTokenBroker({
         repository: credentials,
         transport,
@@ -99,7 +103,6 @@ export async function startRemoteUsage(options: RemoteUsageRuntimeOptions): Prom
         transport,
         client,
         ownerId,
-        batchSettleMs: USAGE_BATCH_SETTLE_MS,
         readAttemptValidation: async () => {
             const grant = await credentials.readActiveDeviceGrant(Date.now(), "usage")
             return grant ? { contract: grant.usageContract, estimateWriteRows: estimateUsageWriteRowsV4 } : undefined

@@ -76,7 +76,7 @@ describe("FooterActions", () => {
             actionId: "approve",
             stateRevision: 8,
             draft: { text: "use smaller steps", images: ["image"], files: ["file"] },
-            selection: { values: ["item-1"] },
+            selection: undefined,
         })
         await waitFor(() =>
             expect(onDraftAccepted).toHaveBeenCalledWith({

@@ -4,13 +4,7 @@ import path from "node:path"
 import { renameWithRetry, writeJsonAtomic } from "@shared/storage/atomic-file"
 import { validateUsageAttemptObservation } from "@/services/telemetry/remote/usage/attemptBucket"
 import type { UsageAttemptObservation } from "@/services/telemetry/remote/usage/attemptProjection"
-import type {
-    PendingUsageObservation,
-    SettledUsageShard,
-    UsageAttemptObservationRejection,
-    UsageObservationRejection,
-} from "@/services/telemetry/remote/usage/usageOutbox"
-import { parseUsageTally } from "@/services/telemetry/remote/usage/usageTally"
+import type { UsageAttemptObservationRejection } from "@/services/telemetry/remote/usage/usageOutbox"
 import type { OtelStorageLayout } from "./OtelStorageLayout"
 
 /**
@@ -26,7 +20,6 @@ const SEALED_SUFFIX = ".sealed.jsonl"
 const ATTEMPT_ACTIVE_SUFFIX = ".attempts.jsonl"
 const ATTEMPT_SEALED_SUFFIX = ".attempts.sealed.jsonl"
 const SHARD_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
-const SEALED_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}\.(\d{1,16})\.sealed\.jsonl$/
 const ATTEMPT_SEALED_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}\.(\d{1,16})\.attempts\.sealed\.jsonl$/
 
 export interface PendingUsageAttemptObservation {
@@ -52,7 +45,6 @@ export interface SettledUsageAttemptShard {
 export class UsageObservationSpool {
     private readonly directory: string
     private readonly quarantineDirectory: string
-    private readonly appended = new Set<string>()
     private readonly appendedAttempts = new Set<string>()
 
     constructor(
@@ -62,14 +54,6 @@ export class UsageObservationSpool {
         if (!SHARD_NAME_PATTERN.test(shardId)) throw new Error("Usage shard id must be a short file-safe token")
         this.directory = layout.usageObservationsDir
         this.quarantineDirectory = layout.remoteQuarantineDir
-    }
-
-    /** Append one observation; an ID this process already appended is ignored. */
-    async append(observation: PendingUsageObservation): Promise<void> {
-        if (this.appended.has(observation.id)) return
-        await fs.mkdir(this.directory, { recursive: true })
-        await fs.appendFile(path.join(this.directory, `${this.shardId}${ACTIVE_SUFFIX}`), `${JSON.stringify(observation)}\n`)
-        this.remember(observation.id)
     }
 
     /** Append one finalized schema 4 attempt revision to this process shard. */
@@ -88,22 +72,6 @@ export class UsageObservationSpool {
         this.rememberAttempt(key)
     }
 
-    /** Seal every active shard, from every process, so its contents become sendable after they settle. */
-    async sealActive(now: number): Promise<void> {
-        for (const name of await this.list()) {
-            if (!name.endsWith(ACTIVE_SUFFIX) || name.endsWith(SEALED_SUFFIX) || name.endsWith(ATTEMPT_ACTIVE_SUFFIX)) continue
-            const shard = name.slice(0, -ACTIVE_SUFFIX.length)
-            const sealed = path.join(this.directory, `${shard}.${now}${SEALED_SUFFIX}`)
-            // A rename onto an existing sealed shard would replace it on POSIX; the next cycle seals instead.
-            if (await exists(sealed)) continue
-            try {
-                await renameWithRetry(path.join(this.directory, name), sealed)
-            } catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-            }
-        }
-    }
-
     async sealActiveAttempts(now: number): Promise<void> {
         for (const name of await this.list()) {
             if (!name.endsWith(ATTEMPT_ACTIVE_SUFFIX)) continue
@@ -116,41 +84,6 @@ export class UsageObservationSpool {
                 if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
             }
         }
-    }
-
-    /**
-     * Read every sealed shard that has settled. Malformed lines are skipped and
-     * counted rather than failing the shard, so one torn write cannot block every
-     * later minute; so are lines of the v1 catalog an older build appended. An ID
-     * seen in an earlier shard of the same read is dropped.
-     */
-    async readSettled(now: number): Promise<{ readonly shards: SettledUsageShard[]; readonly skipped: number }> {
-        const shards: SettledUsageShard[] = []
-        const seen = new Set<string>()
-        let skipped = 0
-        for (const name of await this.list()) {
-            const sealedAt = SEALED_NAME_PATTERN.exec(name)?.[1]
-            if (sealedAt === undefined) continue
-            const filePath = path.join(this.directory, name)
-            const stat = await fs.stat(filePath).catch(() => undefined)
-            if (!stat || now - Math.max(Number(sealedAt), stat.mtimeMs) < SEALED_SHARD_SETTLE_MS) continue
-            const content = await readIfPresent(filePath)
-            if (content === undefined) continue
-            const observations: PendingUsageObservation[] = []
-            for (const [lineIndex, line] of content.split("\n").entries()) {
-                if (!line.trim()) continue
-                const observation = parseObservation(line)
-                if (!observation) {
-                    skipped++
-                    await this.quarantineLine(name, lineIndex + 1, line)
-                } else if (!seen.has(observation.id)) {
-                    seen.add(observation.id)
-                    observations.push(observation)
-                }
-            }
-            shards.push({ name, observations })
-        }
-        return { shards, skipped }
     }
 
     async readSettledAttempts(now: number): Promise<{ readonly shards: SettledUsageAttemptShard[]; readonly skipped: number }> {
@@ -194,24 +127,6 @@ export class UsageObservationSpool {
         }
     }
 
-    /** Persist reduction/capacity rejects before their source shards are acknowledged. */
-    async quarantineRejected(rejections: readonly UsageObservationRejection[]): Promise<void> {
-        for (const rejection of rejections) {
-            const identity = `${rejection.shardName}\u0000${rejection.observation.id}`
-            const digest = createHash("sha256").update(identity).digest("hex").slice(0, 24)
-            await writeJsonAtomic(
-                path.join(this.quarantineDirectory, `usage-observation-${digest}.json`),
-                {
-                    kind: "usage_observation_rejected",
-                    shard: rejection.shardName,
-                    violations: rejection.violations,
-                    observation: rejection.observation,
-                },
-                { fsync: true },
-            )
-        }
-    }
-
     /** Persist schema 4 reduction/checkpoint rejects before their source shards are acknowledged. */
     async quarantineRejectedAttempts(rejections: readonly UsageAttemptObservationRejection[]): Promise<void> {
         for (const rejection of rejections) {
@@ -231,14 +146,6 @@ export class UsageObservationSpool {
         }
     }
 
-    /** Remove sealed shards once the outbox durably holds what they contained. */
-    async discard(names: readonly string[]): Promise<void> {
-        for (const name of names) {
-            if (!SEALED_NAME_PATTERN.test(name)) continue
-            await fs.rm(path.join(this.directory, name), { force: true })
-        }
-    }
-
     async discardAttempts(names: readonly string[]): Promise<void> {
         for (const name of names) {
             if (!ATTEMPT_SEALED_NAME_PATTERN.test(name)) continue
@@ -253,13 +160,11 @@ export class UsageObservationSpool {
             if (!name.endsWith(ACTIVE_SUFFIX) && !name.endsWith(SEALED_SUFFIX)) continue
             await fs.rm(path.join(this.directory, name), { force: true })
         }
-        this.appended.clear()
     }
 
     /** Delete every unsent observation, for example when the user turns usage reporting off. */
     async purge(): Promise<void> {
         await fs.rm(this.directory, { recursive: true, force: true })
-        this.appended.clear()
         this.appendedAttempts.clear()
     }
 
@@ -276,13 +181,6 @@ export class UsageObservationSpool {
             },
             { fsync: true },
         )
-    }
-
-    private remember(id: string): void {
-        this.appended.add(id)
-        if (this.appended.size <= REMEMBERED_APPENDS) return
-        const oldest = this.appended.values().next().value
-        if (oldest !== undefined) this.appended.delete(oldest)
     }
 
     private rememberAttempt(key: string): void {
@@ -311,21 +209,6 @@ async function readIfPresent(filePath: string): Promise<string | undefined> {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
         throw error
     }
-}
-
-function parseObservation(line: string): PendingUsageObservation | undefined {
-    let value: Record<string, unknown>
-    try {
-        value = JSON.parse(line) as Record<string, unknown>
-    } catch {
-        return undefined
-    }
-    if (typeof value !== "object" || value === null) return undefined
-    const { id, receivedAt, policyEpoch } = value
-    if (typeof id !== "string" || id.length === 0) return undefined
-    if (!Number.isSafeInteger(receivedAt) || !Number.isSafeInteger(policyEpoch)) return undefined
-    const tally = parseUsageTally(value.tally)
-    return tally && { id, receivedAt: receivedAt as number, policyEpoch: policyEpoch as number, tally }
 }
 
 function parseAttemptObservation(line: string): PendingUsageAttemptObservation | undefined {

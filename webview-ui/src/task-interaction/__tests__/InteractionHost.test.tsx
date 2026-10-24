@@ -1,4 +1,10 @@
 import type { TaskViewActionType, TaskViewState, UiAsk, UiMessage } from "@shared/ExtensionMessage"
+import {
+    createReportBugDraft,
+    type ReportBugDraft,
+    reportBugDraftFromSelection,
+    serializeReportBugDraft,
+} from "@shared/report-bug"
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { TaskServiceClient } from "@/services/grpc-client"
@@ -60,6 +66,57 @@ function taskView(): TaskViewState {
                 },
             ],
         },
+    }
+}
+
+function reportBugInteraction(): { view: TaskViewState; message: UiMessage; draft: ReportBugDraft } {
+    const view = taskView()
+    if (!view.activeInteraction) throw new Error("Expected active interaction")
+    const draft = createReportBugDraft(
+        {
+            title: "Provider request failed",
+            whatHappened: "The request stopped.",
+            stepsToReproduce: "Send a task.",
+            apiRequestOutput: "safe failure",
+            additionalContext: "Review before opening.",
+        },
+        {
+            providerAndModel: "test / model",
+            operatingSystem: "test-os",
+            systemInfo: "test-system",
+            dlineVersion: "1.2.3",
+        },
+    )
+    view.phase = "paused"
+    view.activeInteraction = {
+        ...view.activeInteraction,
+        kind: "report_bug",
+        taskAsk: "report_bug",
+        presentationKind: "report_bug",
+    }
+    view.input = { enabled: false, acceptsText: false, acceptsImages: false, acceptsFiles: false }
+    view.footer.actions = [
+        {
+            type: "approve",
+            label: "Open GitHub Issue",
+            appearance: "primary",
+            enabled: true,
+            payloadPolicy: "selection",
+            dispatchTarget: "interaction",
+        },
+        {
+            type: "reject",
+            label: "Cancel",
+            appearance: "secondary",
+            enabled: true,
+            payloadPolicy: "none",
+            dispatchTarget: "interaction",
+        },
+    ]
+    return {
+        view,
+        draft,
+        message: { ...ASK, ask: "report_bug", text: serializeReportBugDraft(draft) },
     }
 }
 
@@ -143,7 +200,7 @@ describe("InteractionHost", () => {
             actionId: "approve",
             stateRevision: 8,
             draft: { text: "approval feedback", images: ["image"], files: ["file"] },
-            selection: { values: [] },
+            selection: undefined,
         })
     })
 
@@ -173,6 +230,16 @@ describe("InteractionHost", () => {
             presentationKind: "focus_chain_change",
             taskAsk: "change_todo_list",
         }
+        view.footer.actions = [
+            {
+                type: "approve",
+                label: "Approve",
+                appearance: "primary",
+                enabled: true,
+                payloadPolicy: "selection",
+                dispatchTarget: "interaction",
+            },
+        ]
         const message: UiMessage = {
             ...ASK,
             ask: "change_todo_list",
@@ -185,6 +252,39 @@ describe("InteractionHost", () => {
 
         await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
         expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ selection: { values: ["1"] } }))
+    })
+
+    it("dispatches the edited ReportBug draft and explicit consent only on Confirm", async () => {
+        const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
+        const report = reportBugInteraction()
+        render(<InteractionHost dispatch={dispatch} messages={[report.message]} view={report.view} />)
+
+        fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Edited provider failure" } })
+        fireEvent.click(screen.getByText("Temporarily share high-density diagnostics for this issue"))
+        expect(dispatch).not.toHaveBeenCalled()
+
+        fireEvent.click(screen.getByRole("button", { name: "Open GitHub Issue" }))
+
+        await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+        const selection = dispatch.mock.calls[0][0].selection?.values
+        const confirmed = reportBugDraftFromSelection(selection)
+        expect(confirmed?.content.title).toBe("Edited provider failure")
+        expect(confirmed?.temporaryTelemetryConsent).toBe(true)
+        expect(confirmed?.environment).toEqual(report.draft.environment)
+    })
+
+    it("cancels ReportBug without carrying a draft selection", async () => {
+        const dispatch = vi.fn(async () => ({ accepted: true, result: "accepted" }))
+        const report = reportBugInteraction()
+        render(<InteractionHost dispatch={dispatch} messages={[report.message]} view={report.view} />)
+
+        fireEvent.input(screen.getByLabelText("Additional context"), { target: { value: "unsent edit" } })
+        fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+
+        await waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+        expect(dispatch).toHaveBeenCalledWith(
+            expect.objectContaining({ actionId: "reject", draft: undefined, selection: undefined }),
+        )
     })
 
     it("moves the projected foreground command to the background from the footer", async () => {

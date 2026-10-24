@@ -209,12 +209,22 @@ describe("TaskCheckpointManager multi-root", () => {
         const harness = createHarness(async (_taskId, _enabled, workspacePath) =>
             workspacePath === path.resolve("C:/workspace-a") ? trackerA : trackerB,
         )
+        const fileA = path.join(harness.rootA, "changed-a.ts")
+        const fileB = path.join(harness.rootB, "changed-b.ts")
+        vi.mocked(trackerA.getDiffSet).mockResolvedValue([
+            { relativePath: "changed-a.ts", absolutePath: fileA, before: "before-a", after: "after-a" },
+        ])
+        vi.mocked(trackerB.getDiffSet).mockResolvedValue([
+            { relativePath: "changed-b.ts", absolutePath: fileB, before: "before-b", after: "after-b" },
+        ])
         await sealLatestTurn(harness)
 
         await harness.manager.restoreCheckpoint(42, "workspace")
 
-        expect(trackerA.resetHead).toHaveBeenCalledWith("hash-a")
-        expect(trackerB.resetHead).toHaveBeenCalledWith("hash-b")
+        expect(trackerA.restoreFiles).toHaveBeenCalledWith("hash-a", [fileA])
+        expect(trackerB.restoreFiles).toHaveBeenCalledWith("hash-b", [fileB])
+        expect(trackerA.resetHead).not.toHaveBeenCalled()
+        expect(trackerB.resetHead).not.toHaveBeenCalled()
     })
 
     it("restores chat but does not mark a partial file restore as fully checked out", async () => {
@@ -223,12 +233,20 @@ describe("TaskCheckpointManager multi-root", () => {
         const harness = createHarness(async (_taskId, _enabled, workspacePath) =>
             workspacePath === path.resolve("C:/workspace-a") ? trackerA : trackerB,
         )
+        const fileA = path.join(harness.rootA, "changed-a.ts")
+        const fileB = path.join(harness.rootB, "changed-b.ts")
+        vi.mocked(trackerA.getDiffSet).mockResolvedValue([
+            { relativePath: "changed-a.ts", absolutePath: fileA, before: "before-a", after: "after-a" },
+        ])
+        vi.mocked(trackerB.getDiffSet).mockResolvedValue([
+            { relativePath: "changed-b.ts", absolutePath: fileB, before: "before-b", after: "after-b" },
+        ])
         await sealLatestTurn(harness)
-        vi.mocked(trackerB.resetHead).mockRejectedValueOnce(new Error("secondary restore failed"))
+        vi.mocked(trackerB.restoreFiles).mockRejectedValueOnce(new Error("secondary restore failed"))
 
         await harness.manager.restoreCheckpoint(42, "taskAndWorkspace")
 
-        expect(trackerA.resetHead).toHaveBeenCalledWith("hash-a")
+        expect(trackerA.restoreFiles).toHaveBeenCalledWith("hash-a", [fileA])
         expect(harness.restoreChatRuntime).toHaveBeenCalledWith({ apiIndex: 0 })
         expect(harness.messages[0]?.isCheckpointCheckedOut).toBe(false)
     })

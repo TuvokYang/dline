@@ -1,15 +1,12 @@
-import { randomUUID } from "node:crypto"
 import type { DeviceCredentialRepository } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
 import type { LocalUsagePolicyInputs, RemotePolicyRepository } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
 import type { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import type { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
 import type { FinalizedProviderAttempt, FinalizedProviderAttemptPort } from "@/core/task/performance/provider-request-round-port"
-import type { UsageSettlement, UsageSettlementPort } from "@/core/task/telemetry/UsageSettlement"
 import { describeUsagePolicyDecision, type UsagePolicyRecord } from "../policy/usagePolicy"
 import { projectFinalizedAttempt } from "./attemptProjection"
 import type { UsageCycleResult, UsageDeliveryWorker } from "./UsageDeliveryWorker"
 import { describeUsageCycle, type RemoteUsageLog, type RemoteUsageLogLevel } from "./usageCycleLog"
-import { projectUsageSettlement, sessionStartedTally, type UsageTally, UsageTallyReductionError } from "./usageTally"
 
 /** How often the lease holder seals shards and checks whether a batch or replay is due. */
 export const USAGE_CYCLE_INTERVAL_MS = 30_000
@@ -24,9 +21,9 @@ export interface UsageScheduler {
 export interface RemoteUsageCoordinatorOptions {
     readonly policy: Pick<RemotePolicyRepository, "resolveUsage" | "recordServerStop">
     readonly credentials: Pick<DeviceCredentialRepository, "clearTokens">
-    readonly outbox: Pick<UsageOutboxRepository, "reset" | "resetAttempts">
-    readonly spool: Pick<UsageObservationSpool, "append" | "appendAttempt" | "purge">
-    readonly worker: Pick<UsageDeliveryWorker, "attemptAuthorityActive" | "refreshAttemptAuthority" | "runCycle" | "release">
+    readonly outbox: Pick<UsageOutboxRepository, "resetAttempts">
+    readonly spool: Pick<UsageObservationSpool, "appendAttempt" | "purge">
+    readonly worker: Pick<UsageDeliveryWorker, "refreshAttemptAuthority" | "runCycle" | "release">
     /** Current consent, organization, host and build inputs; read again before every decision. */
     readonly readPolicyInputs: () => Promise<LocalUsagePolicyInputs>
     readonly clock?: () => number
@@ -51,7 +48,7 @@ export interface RemoteUsageCoordinatorOptions {
  * allowed. Remote failures stay here: they never reach the Task or the local
  * telemetry pipeline.
  */
-export class RemoteUsageCoordinator implements UsageSettlementPort, FinalizedProviderAttemptPort {
+export class RemoteUsageCoordinator implements FinalizedProviderAttemptPort {
     private readonly clock: () => number
     private readonly scheduler: UsageScheduler
     private readonly cycleIntervalMs: number
@@ -100,15 +97,6 @@ export class RemoteUsageCoordinator implements UsageSettlementPort, FinalizedPro
         this.scheduleCycle(this.cycleIntervalMs)
     }
 
-    /**
-     * Admit one settled request. Synchronous and failure-free for the caller:
-     * the append runs in the background and a lost append is only logged.
-     */
-    record(settlement: UsageSettlement): void {
-        if (this.options.worker.attemptAuthorityActive) return
-        this.admit(settlement.observationId, () => projectUsageSettlement(settlement))
-    }
-
     /** Project and reduce one exact-handle terminal revision; malformed or incomplete identity fails closed. */
     recordFinalizedAttempt(attempt: FinalizedProviderAttempt): void {
         const current = this.current
@@ -144,42 +132,11 @@ export class RemoteUsageCoordinator implements UsageSettlementPort, FinalizedPro
         this.appends.add(append)
     }
 
-    /**
-     * Count this extension activation once (`sessions_started`, otel contract v2.1
-     * §2.2). Call after {@link start}; like a settlement, it is kept only while
-     * reporting is allowed.
-     */
+    /** Count this activation on the next final logical execution; schema 3 session batches no longer exist. */
     recordSessionStarted(): void {
         const current = this.current
         if (!this.accepting || !current?.decision.allowed) return
-        if (this.options.worker.attemptAuthorityActive) {
-            this.pendingSessionStarts = addSessionStarts(this.pendingSessionStarts, 1)
-            return
-        }
-        this.admit(`session-${randomUUID()}`, sessionStartedTally)
-    }
-
-    private admit(id: string, observe: () => UsageTally): void {
-        const current = this.current
-        if (!this.accepting || !current?.decision.allowed) return
-        let tally: UsageTally
-        try {
-            tally = observe()
-        } catch (error) {
-            const reason = error instanceof UsageTallyReductionError ? `${error.code} at ${error.path}` : describe(error)
-            this.log("warn", `usage observation was rejected before storage: ${reason}`)
-            return
-        }
-        const append = this.options.spool
-            .append({
-                id,
-                receivedAt: this.clock(),
-                policyEpoch: current.epoch,
-                tally,
-            })
-            .catch((error: unknown) => this.log("warn", `usage observation was not stored: ${describe(error)}`))
-            .finally(() => this.appends.delete(append))
-        this.appends.add(append)
+        this.pendingSessionStarts = addSessionStarts(this.pendingSessionStarts, 1)
     }
 
     /**
@@ -245,10 +202,7 @@ export class RemoteUsageCoordinator implements UsageSettlementPort, FinalizedPro
         if (!next || next.decision.allowed || previous?.epoch === next.epoch) return
         this.cycleAbort?.abort()
         this.pendingSessionStarts = 0
-        // Either schema may be persisted before the first sender cycle of this host.
-        // Each reset fails closed on the other schema, so both authorities are purged without guessing.
         await this.options.outbox.resetAttempts(next.epoch)
-        await this.options.outbox.reset(next.epoch)
         await this.options.spool.purge()
         // Only the usage token: error diagnostics follow their own consent and keep theirs.
         if (next.decision.reason === "consent_off") {

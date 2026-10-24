@@ -7,21 +7,14 @@ import type { UsageAttemptBodyValidation, UsageClientWire } from "../contracts/u
 import type { DeliveryDisposition } from "../contracts/wire"
 import { DlineOtelTransportError, type UsageTransport } from "../transport/DlineOtelHttpClient"
 import {
-    alignUsagePolicyEpoch,
     boundUsageAttemptBacklog,
     dueUsageAttemptReplay,
-    dueUsageReplay,
     foldUsageAttemptShards,
-    foldUsageShards,
     settleUsageAttemptInflight,
-    settleUsageInflight,
     takeUsageAttemptBatch,
-    takeUsageBatch,
     type UsageAttemptInflight,
     type UsageAttemptObservationRejection,
-    type UsageInflight,
     type UsageInflightResolution,
-    type UsageObservationRejection,
 } from "./usageOutbox"
 
 export type UsageCycleResult =
@@ -55,8 +48,6 @@ export interface UsageDeliveryWorkerOptions {
     readonly client: UsageClientWire
     /** Identity of this window in the sender lease. */
     readonly ownerId: string
-    /** How long after a minute ends observations from other shards may still arrive. */
-    readonly batchSettleMs: number
     readonly clock?: () => number
     readonly newRequestId?: () => string
     /** Source of the 429 wait jitter. */
@@ -64,15 +55,6 @@ export interface UsageDeliveryWorkerOptions {
     /** Static test seam; production reads the active atomic grant before every cycle. */
     readonly attemptValidation?: UsageAttemptBodyValidation
     readonly readAttemptValidation?: () => Promise<UsageAttemptBodyValidation | undefined>
-}
-
-type Prepared = (
-    | { readonly kind: "send"; readonly inflight: UsageInflight }
-    | { readonly kind: "idle" }
-    | { readonly kind: "rejected"; readonly violations: readonly string[] }
-) & {
-    /** The inflight the committed outbox still names; its body must survive orphan cleanup. */
-    readonly keepRequestId: string | undefined
 }
 
 type PreparedAttempts = (
@@ -102,7 +84,6 @@ export class UsageDeliveryWorker {
     private readonly clock: () => number
     private readonly newRequestId: () => string
     private grant: UsageSenderGrant | undefined
-    private grantMode: "legacy" | "attempts" | undefined
     private attemptsActive = false
 
     constructor(private readonly options: UsageDeliveryWorkerOptions) {
@@ -129,45 +110,39 @@ export class UsageDeliveryWorker {
 
     async runCycle(policyEpoch: number, signal?: AbortSignal): Promise<UsageCycleResult> {
         const { outbox, spool } = this.options
-        const attemptValidation = (await this.options.readAttemptValidation?.()) ?? this.options.attemptValidation
-        if (attemptValidation) await outbox.activateAttempts(policyEpoch)
-        if (await this.refreshAttemptAuthority()) {
+        let attemptValidation = (await this.options.readAttemptValidation?.()) ?? this.options.attemptValidation
+        let attemptAuthorityActive = await this.refreshAttemptAuthority()
+
+        // A dynamic grant reader means the current service contract owns schema selection. Bootstrap the
+        // grant before creating a legacy outbox; otherwise the token exchange can admit schema 4 only after
+        // a schema 3 body has already been built, and the authoritative service correctly stops the profile.
+        if (!attemptValidation && !attemptAuthorityActive && this.options.readAttemptValidation) {
+            let acquired
+            try {
+                acquired = await this.options.tokens.acquire("usage", { signal })
+            } catch (error) {
+                if (signal?.aborted) return { kind: "aborted" }
+                throw error
+            }
+            if (acquired.status === "stopped") return { kind: "stopped", scope: acquired.scope, code: acquired.code }
+            if (acquired.status === "deferred") {
+                return { kind: "waiting", reason: acquired.reason, retryAt: acquired.retryAt }
+            }
+            if (acquired.status === "unavailable") return { kind: "waiting", reason: "token_unavailable" }
+            attemptValidation = await this.options.readAttemptValidation()
+        }
+
+        if (attemptValidation) {
+            await outbox.activateAttempts(policyEpoch)
+            attemptAuthorityActive = await this.refreshAttemptAuthority()
+        }
+        if (attemptAuthorityActive) {
             await spool.purgeLegacy()
             return this.runAttemptFoldCycle(policyEpoch, attemptValidation, signal)
         }
-        const grant = await outbox.claim(this.options.ownerId)
-        this.grant = grant
-        this.grantMode = grant ? "legacy" : undefined
-        if (!grant) return { kind: "standby" }
-
-        await spool.sealActive(this.clock())
-        const { shards } = await spool.readSettled(this.clock())
-        const rejected: UsageObservationRejection[] = []
-        const folded = await outbox.transact(grant, async (state, now) => {
-            const next = foldUsageShards(alignUsagePolicyEpoch(state, policyEpoch), shards, now, {
-                client: this.options.client,
-                currentPolicyEpoch: policyEpoch,
-                onRejected: (rejection) => rejected.push(rejection),
-            })
-            await spool.quarantineRejected(rejected)
-            return { state: next, result: undefined }
-        })
-        if (folded.status === "fenced") return { kind: "fenced" }
-        if (shards.length > 0) await spool.discard(shards.map((shard) => shard.name))
-
-        const prepared = await this.prepare(grant)
-        if (prepared.status === "fenced") return { kind: "fenced" }
-        const next = prepared.result
-        await outbox.removeBodies(next.keepRequestId)
-        if (next.kind === "idle") return { kind: "idle" }
-        if (next.kind === "rejected") return { kind: "rejected", violations: next.violations }
-        try {
-            return await this.deliver(grant, next.inflight, signal)
-        } catch (error) {
-            // An abort during the token exchange surfaces as the exchange's own error; the inflight stays for later.
-            if (signal?.aborted) return { kind: "aborted" }
-            throw error
-        }
+        // Schema 3 has no sender path. Until the schema 4 grant contract is durably visible, keep attempt
+        // observations in their process shards and retry on the next cycle.
+        return { kind: "idle" }
     }
 
     /** Fold schema 4 shards under the same fenced machine lease; manifest delivery is the next stage. */
@@ -179,7 +154,6 @@ export class UsageDeliveryWorker {
         const { outbox, spool } = this.options
         const grant = await outbox.claimAttempts(this.options.ownerId)
         this.grant = grant
-        this.grantMode = grant ? "attempts" : undefined
         if (!grant) return { kind: "standby" }
 
         const now = this.clock()
@@ -263,7 +237,7 @@ export class UsageDeliveryWorker {
     ): Promise<UsageCycleResult> {
         const body = await this.options.outbox.readBody(inflight)
         if (!body) return this.settleAttempt(grant, inflight, { kind: "body_lost" })
-        const attempted = await this.attempt(inflight, body, 4, signal)
+        const attempted = await this.attempt(inflight, body, signal)
         if (attempted.kind === "result") return attempted.result
         const { outcome } = attempted
         if (outcome.kind === "stop") return { kind: "stopped", scope: outcome.scope, code: outcome.code }
@@ -314,61 +288,17 @@ export class UsageDeliveryWorker {
         }
     }
 
-    /** Give the lease up at shutdown so another window can send at once. */
+    /** Give the schema 4 lease up at shutdown so another window can send at once. */
     async release(): Promise<void> {
         const grant = this.grant
-        const mode = this.grantMode
         this.grant = undefined
-        this.grantMode = undefined
-        if (!grant) return
-        if (mode === "attempts") await this.options.outbox.releaseAttempts(grant)
-        else await this.options.outbox.release(grant)
+        if (grant) await this.options.outbox.releaseAttempts(grant)
     }
 
-    /** Pick the due replay, or publish a new batch: body first, then the manifest naming it. */
-    private prepare(grant: UsageSenderGrant) {
-        const { outbox } = this.options
-        return outbox.transact<Prepared>(grant, async (state, now) => {
-            if (state.inflight) {
-                const keepRequestId = state.inflight.requestId
-                const due = dueUsageReplay(state, now)
-                return { state, result: due ? { kind: "send", inflight: due, keepRequestId } : { kind: "idle", keepRequestId } }
-            }
-            const decision = takeUsageBatch(state, {
-                now,
-                requestId: this.newRequestId(),
-                client: this.options.client,
-                settleMs: this.options.batchSettleMs,
-            })
-            if (decision.kind === "none") return { state, result: { kind: "idle", keepRequestId: undefined } }
-            if (decision.kind === "rejected") {
-                return {
-                    state: decision.state,
-                    result: { kind: "rejected", violations: decision.violations, keepRequestId: undefined },
-                }
-            }
-            const { inflight } = decision
-            await outbox.writeBody(inflight.requestId, decision.bytes)
-            return { state: decision.state, result: { kind: "send", inflight, keepRequestId: inflight.requestId } }
-        })
-    }
-
-    private async deliver(grant: UsageSenderGrant, inflight: UsageInflight, signal?: AbortSignal): Promise<UsageCycleResult> {
-        const body = await this.options.outbox.readBody(inflight)
-        if (!body) return this.settle(grant, inflight, { kind: "body_lost" })
-        const attempt = await this.attempt(inflight, body, 3, signal)
-        if (attempt.kind === "result") return attempt.result
-        const { outcome } = attempt
-        if (outcome.kind === "stop") return { kind: "stopped", scope: outcome.scope, code: outcome.code }
-        if (outcome.kind === "refresh_token") return { kind: "stopped", scope: "profile", code: USAGE_TOKEN_REJECTED }
-        return this.settle(grant, inflight, outcome)
-    }
-
-    /** Send with the current token; a 401 earns exactly one fresh token and one more send of the same bytes. */
+    /** Send with the current schema 4 token; a 401 earns exactly one fresh token and one replay of the same bytes. */
     private async attempt(
-        inflight: Pick<UsageInflight, "requestId">,
+        inflight: Pick<UsageAttemptInflight, "requestId">,
         body: Uint8Array,
-        contractVersion: 3 | 4,
         signal?: AbortSignal,
     ): Promise<Attempt> {
         let rejectedAccessToken: string | undefined
@@ -380,58 +310,26 @@ export class UsageDeliveryWorker {
             if (acquired.status === "deferred") {
                 return { kind: "result", result: { kind: "waiting", reason: acquired.reason, retryAt: acquired.retryAt } }
             }
-            if (acquired.status === "unavailable")
+            if (acquired.status === "unavailable") {
                 return { kind: "result", result: { kind: "waiting", reason: "token_unavailable" } }
+            }
             const accessToken = acquired.token.accessToken
             let outcome: DeliveryOutcome
             try {
                 const response = await this.options.transport.sendUsage(
-                    { accessToken, requestId: inflight.requestId, body, contractVersion },
+                    { accessToken, requestId: inflight.requestId, body },
                     signal,
                 )
                 outcome = classifyDeliveryResponse(response)
             } catch (error) {
                 if (!(error instanceof DlineOtelTransportError)) throw error
                 if (error.failure === "aborted") return { kind: "result", result: { kind: "aborted" } }
-                // Timeout or a broken connection: the server may hold the batch, so only the same bytes may follow.
                 outcome = { kind: "replay" }
             }
             if (outcome.kind !== "refresh_token") return { kind: "outcome", outcome }
             rejectedAccessToken = accessToken
         }
         return { kind: "outcome", outcome: { kind: "refresh_token" } }
-    }
-
-    private async settle(
-        grant: UsageSenderGrant,
-        inflight: UsageInflight,
-        resolution: UsageInflightResolution,
-    ): Promise<UsageCycleResult> {
-        const { outbox } = this.options
-        const committed = await outbox.transact(grant, (state, now) => ({
-            state: settleUsageInflight(state, inflight.requestId, resolution, now, this.options.random),
-            result: undefined,
-        }))
-        if (committed.status === "fenced") return { kind: "fenced" }
-        const settled = await outbox.read()
-        if (settled?.inflight?.requestId !== inflight.requestId) await outbox.removeBodies(settled?.inflight?.requestId)
-        const { requestId } = inflight
-        switch (resolution.kind) {
-            case "acknowledged":
-                return { kind: "delivered", requestId, disposition: resolution.disposition }
-            case "replay":
-                return settled?.inflight?.requestId === requestId
-                    ? { kind: "retrying", requestId }
-                    : { kind: "discarded", requestId, code: "replay_budget_exhausted" }
-            case "wait":
-                return { kind: "paused", requestId, code: resolution.code, until: settled?.pacing.waitUntil ?? 0 }
-            case "too_large":
-                return { kind: "discarded", requestId, code: "payload_too_large" }
-            case "discard":
-                return { kind: "discarded", requestId, code: resolution.code }
-            case "body_lost":
-                return { kind: "discarded", requestId, code: "body_lost" }
-        }
     }
 }
 

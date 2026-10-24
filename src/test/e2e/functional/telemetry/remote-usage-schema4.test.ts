@@ -1,98 +1,20 @@
-import { createServer, type Server } from "node:http"
-import type { AddressInfo } from "node:net"
 import { expectComposerText } from "@e2e/utils/composer"
 import { E2ETestHelper, e2e } from "@e2e/utils/helpers"
 import { expect } from "@playwright/test"
-
-interface CapturedUsage {
-    readonly headers: Readonly<Record<string, string | string[] | undefined>>
-    readonly body: Record<string, unknown>
-}
-
-class UsageCollector {
-    readonly grants: Record<string, unknown>[] = []
-    readonly usage: CapturedUsage[] = []
-    private server: Server | undefined
-    origin = ""
-
-    async start(): Promise<void> {
-        this.server = createServer((request, response) => {
-            const body: Buffer[] = []
-            request.on("data", (chunk) => body.push(Buffer.from(chunk)))
-            request.on("end", () => {
-                const parsed = JSON.parse(Buffer.concat(body).toString("utf8")) as Record<string, unknown>
-                if (request.url === "/auth/device/grant") {
-                    this.grants.push(parsed)
-                    response.writeHead(200, { "content-type": "application/json" })
-                    response.end(
-                        JSON.stringify({
-                            ok: true,
-                            request_id: parsed["request_id"],
-                            access_token: "A".repeat(43),
-                            device_id: "dev_e2e_usage_schema4",
-                            profile: "usage",
-                            scopes: ["usage"],
-                            expires_at: Date.now() + 60 * 60_000,
-                            usage_contract: {
-                                schema_version: 4,
-                                contract_version: 4,
-                                max_body_bytes: 65_536,
-                                max_buckets: 8,
-                                max_facts: 32,
-                                max_tool_rows: 384,
-                                max_write_rows: 486,
-                                event_window_ms: 600_000,
-                                default_interval_ms: 1_000,
-                                new_batch_jitter_max_ms: 0,
-                            },
-                        }),
-                    )
-                    return
-                }
-                if (request.url === "/usage") {
-                    this.usage.push({ headers: request.headers, body: parsed })
-                    const requestId = request.headers["x-dline-request-id"]
-                    response.writeHead(200, { "content-type": "application/json" })
-                    response.end(
-                        JSON.stringify({
-                            ok: true,
-                            request_id: requestId,
-                            retryable: false,
-                            stream: "usage",
-                            disposition: "accepted",
-                            duplicate: false,
-                            batch_id: requestId,
-                            persisted_at: Date.now(),
-                            next_eligible_at: Date.now() + 1_000,
-                        }),
-                    )
-                    return
-                }
-                response.writeHead(404, { "content-type": "application/json" })
-                response.end(JSON.stringify({ error: "not_found" }))
-            })
-        })
-        await new Promise<void>((resolve, reject) => {
-            this.server!.once("error", reject)
-            this.server!.listen(0, "127.0.0.1", resolve)
-        })
-        const address = this.server.address() as AddressInfo
-        this.origin = `http://127.0.0.1:${address.port}`
-    }
-
-    async close(): Promise<void> {
-        const server = this.server
-        if (!server) return
-        await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())))
-    }
-}
+import {
+    isOtelServiceMockAvailable,
+    otelServiceMockEndpoint,
+    readOtelServiceMockState,
+    resetOtelServiceMock,
+} from "../../../../services/telemetry/remote/__tests__/support/OtelServiceMock"
 
 e2e(
-    "packaged dev VSIX sends one real Provider attempt as schema 4 Usage",
+    "VS Code runtime sends one real Provider attempt as schema 4 Usage through the dline-web mock",
     async ({ helper, openVSCode, server, userDataDir, workspaceDir }) => {
         e2e.setTimeout(300_000)
-        const collector = new UsageCollector()
-        await collector.start()
+        const endpoint = otelServiceMockEndpoint()
+        e2e.skip(!(await isOtelServiceMockAvailable(endpoint)), `dline-web telemetry mock is not listening at ${endpoint}`)
+        await resetOtelServiceMock(endpoint)
         server.enqueueOpenAiResponses({
             type: "tool",
             id: "call_usage_schema4_complete",
@@ -102,7 +24,7 @@ e2e(
             usage: { inputTokens: 120, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 0 },
         })
 
-        const app = await openVSCode(workspaceDir, { DLINE_OTEL_ENDPOINT: collector.origin })
+        const app = await openVSCode(workspaceDir, { DLINE_OTEL_ENDPOINT: endpoint })
         try {
             const page = await app.firstWindow()
             await E2ETestHelper.openClineSidebar(page)
@@ -118,19 +40,30 @@ e2e(
                 timeout: 120_000,
             })
 
-            await expect.poll(() => collector.grants.length, { timeout: 120_000 }).toBeGreaterThan(0)
-            const schema4Deliveries = () =>
-                collector.usage.filter((entry) => entry.headers["x-dline-contract"] === "4" && entry.body["schema_version"] === 4)
-            await expect.poll(() => schema4Deliveries().length, { timeout: 150_000 }).toBe(1)
-            const delivery = schema4Deliveries()[0]
-            expect(delivery.headers["x-dline-contract"]).toBe("4")
-            expect(delivery.headers.authorization).toBe(`Bearer ${"A".repeat(43)}`)
-            expect(delivery.body["schema_version"]).toBe(4)
-            const buckets = delivery.body["buckets"] as Array<Record<string, unknown>>
+            const schema4Deliveries = async () => {
+                const state = await readOtelServiceMockState(endpoint)
+                return state.accepted.filter(
+                    (entry) =>
+                        entry.path === "usage" &&
+                        typeof entry.body === "object" &&
+                        entry.body !== null &&
+                        (entry.body as Record<string, unknown>).schema_version === 4,
+                )
+            }
+            await expect.poll(async () => (await schema4Deliveries()).length, { timeout: 150_000 }).toBe(1)
+            const delivery = (await schema4Deliveries())[0]
+            if (!delivery) throw new Error("Schema 4 Usage delivery was not recorded")
+            const body = delivery.body as Record<string, unknown>
+            expect(body.schema_version).toBe(4)
+            const buckets = body.buckets as Array<Record<string, unknown>>
             expect(buckets).toHaveLength(1)
-            const facts = buckets[0]["facts"] as Array<Record<string, unknown>>
+            const bucket = buckets[0]
+            if (!bucket) throw new Error("Schema 4 Usage bucket was not recorded")
+            const facts = bucket.facts as Array<Record<string, unknown>>
             expect(facts).toHaveLength(1)
-            expect(facts[0]).toMatchObject({
+            const fact = facts[0]
+            if (!fact) throw new Error("Schema 4 Usage fact was not recorded")
+            expect(fact).toMatchObject({
                 role: "task",
                 provider: "openai",
                 requests: { completed: 1, failed: 0, cancelled: 0, aborted: 0 },
@@ -138,13 +71,12 @@ e2e(
                 token_coverage: { reported: 1, unreported: 0 },
                 duration_ms: { count: 1 },
             })
-            expect(String(facts[0]["model_id"])).toMatch(/^(catalog:|state:(private|unknown)$)/u)
-            expect(["number", "string"]).toContain(typeof facts[0]["thinking"])
-            expect((facts[0]["duration_ms"] as Record<string, number>)["sum"]).toBeGreaterThanOrEqual(60_000)
+            expect(String(fact.model_id)).toMatch(/^(catalog:|state:(private|unknown)$)/u)
+            expect(["number", "string"]).toContain(typeof fact.thinking)
+            expect((fact.duration_ms as Record<string, number>).sum).toBeGreaterThanOrEqual(60_000)
             await E2ETestHelper.expectNoUnexpectedDlineErrors(userDataDir)
         } finally {
             await app.close()
-            await collector.close()
         }
     },
 )

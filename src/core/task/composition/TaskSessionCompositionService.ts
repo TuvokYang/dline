@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { collectContextWindowRequestPressures } from "@core/context/context-management/context-pressure"
 import { getContextWindowInfo } from "@core/context/context-management/context-window-utils"
@@ -12,6 +13,8 @@ import { TaskCommandExpander, TaskMentionResolver } from "@core/input-semantics/
 import { openTaskInputResources } from "@core/input-semantics/TaskInputResourceStore"
 import { TaskSemanticInputAdmission } from "@core/input-semantics/TaskSemanticInputAdmission"
 import { formatResponse } from "@core/prompts/responses"
+import { collectReportBugEnvironment, type ReportBugContent } from "@core/reporting/ReportBugIssue"
+import { executeReportBugOutcome, openReportBugPreview } from "@core/reporting/ReportBugWorkflow"
 import type { StateManager } from "@core/storage/StateManager"
 import { isMultiRootEnabled } from "@core/workspace/multi-root-utils"
 import type { WorkspaceRootManager } from "@core/workspace/WorkspaceRootManager"
@@ -370,6 +373,7 @@ export class TaskSessionCompositionService {
                     nextPresentationId: () => nextPresentationId(),
                     publishRow: (row) => options.prompt.ports.presentation.publish(row),
                     publishPostCommit: postCommit,
+                    reportBug: async (outcome) => (await executeReportBugOutcome(outcome)) !== "invalid",
                 },
                 resumption,
                 new ResumeDialogContinuation(resumption, () => toolState.resetMistakeLimitState(), providerRetry),
@@ -906,6 +910,29 @@ export class TaskSessionCompositionService {
                 afterProviderStarted: () => {
                     tool.checkpoints?.startWorkspaceWatcher?.()
                     startActivityMaintenance()
+                },
+            },
+            providerFailureReport: {
+                present: async ({ turnId, commandId, presentation }) => {
+                    const configuration = options.stateManager.getApiConfigurationForTask(options.taskId)
+                    const provider = resolveProvider(configuration, settings.mode) ?? "unknown"
+                    const environment = await collectReportBugEnvironment(`${provider} / ${api.current().getModel().id}`)
+                    const content: ReportBugContent = {
+                        title: "Dline provider request failed",
+                        whatHappened: "The Provider request ended with a terminal failure.",
+                        stepsToReproduce: "Review and edit the steps that led to this Provider request.",
+                        apiRequestOutput: presentation,
+                        additionalContext:
+                            "Opened from the terminal Provider failure. Review every field before confirming the GitHub issue.",
+                    }
+                    await openReportBugPreview({
+                        interactions,
+                        turnId,
+                        interactionId: `report-bug-provider:${commandId}`,
+                        content,
+                        environment,
+                        placement: "interrupt",
+                    })
                 },
             },
             compactionCheckpoint: tool.checkpoints && {

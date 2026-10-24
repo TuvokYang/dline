@@ -117,6 +117,8 @@ export const formatResponse = {
     reportBugOpened: (hasAttachments: boolean): string =>
         generateToolResponse("toolHandlers", hasAttachments ? "reportBugOpenedWithAttachmentNotice" : "reportBugOpened"),
 
+    reportBugCancelled: (): string => generateToolResponse("toolHandlers", "reportBugCancelled"),
+
     toolResult: (
         text: string,
         images?: string[],
