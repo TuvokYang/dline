@@ -23,6 +23,7 @@ import { deriveNewTaskFeedbackContinuationFromConversation } from "../new-task/n
 import type { TaskPromptContextOwner } from "../prompt/TaskPromptContextOwner"
 import type { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import { createRequestApiScope, type NativeToolCallsPredicate } from "../RequestApiScope"
+import { deriveReportBugContinuationFromEntries } from "../report-bug/report-bug-continuation"
 import type { ProviderDraftEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import type { TaskStateManager } from "../TaskStateManager"
 import type { TaskApiHandlerOwner } from "./TaskApiHandlerOwner"
@@ -66,16 +67,19 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
         if (signal.aborted) throw signal.reason
         await this.options.api.rebuild({ validateCredentials: true })
         const frame = this.takeFrameCandidate() ?? (await this.buildFrame(signal, false))
-        const messages = await this.conversationOf(draft)
+        const [messages, entries] = await Promise.all([this.conversationOf(draft), this.conversationEntriesOf(draft)])
         const turnId = draft.turnId ?? randomUUID()
-        // Authority is derived from the durable admitted input, so a recovered or
-        // retried turn grants exactly what the user named and nothing more. A
-        // Regenerate Context reply is the user's word too: it re-authorizes the
-        // new_task the user asked to see again.
-        const continuation = deriveNewTaskFeedbackContinuationFromConversation(messages)
+        // Authority is derived from durable admitted input and trusted continuation
+        // evidence, so a recovered turn grants what the user still intends and no
+        // rendered prompt text can mint access. New Task feedback re-authorizes its
+        // paired handoff; an unfinished report intent re-authorizes report_bug until
+        // the durable conversation records that tool call.
+        const newTaskContinuation = deriveNewTaskFeedbackContinuationFromConversation(messages)
+        const reportBugContinuation = deriveReportBugContinuationFromEntries(entries)
         const authority = this.options.authority.grant(turnId, [
             ...(await this.options.messages.collectAuthority(draft.inputPayloadRefs)),
-            ...(continuation ? [continuation] : []),
+            ...(newTaskContinuation ? [newTaskContinuation] : []),
+            ...(reportBugContinuation ? [reportBugContinuation] : []),
         ])
         return {
             ...frame,
@@ -99,6 +103,11 @@ export class TaskProviderRequestFactory implements ProviderRequestFactory, Provi
     private conversationOf(draft: ProviderDraftEnvelope) {
         if (draft.journalThrough) return this.options.conversation.providerMessages(draft.journalThrough)
         return this.options.conversation.providerMessages()
+    }
+
+    private conversationEntriesOf(draft: ProviderDraftEnvelope) {
+        if (draft.journalThrough) return this.options.conversation.entries(draft.journalThrough)
+        return this.options.conversation.entries()
     }
 
     /**

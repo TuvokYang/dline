@@ -19,6 +19,7 @@ import * as cp from "child_process"
 import * as os from "os"
 import * as util from "util"
 import { Logger } from "@/shared/services/Logger"
+import { shouldVisitLoopbackUrlDirectly } from "@/utils/e2e-loopback-visit"
 import { openExternal, writeTextToClipboard } from "@/utils/env"
 
 /**
@@ -81,6 +82,11 @@ export function createGitHubIssueUrl(baseUrl: string, params: Map<string, string
 export async function openUrlInBrowser(url: string): Promise<void> {
     // For debugging
     Logger.log(`Opening URL: ${url}`)
+
+    if (shouldVisitLoopbackUrlDirectly(url, process.env)) {
+        await openExternal(url)
+        return
+    }
 
     // Always copy to clipboard as a fallback
     try {
@@ -193,14 +199,19 @@ export async function openUrlInBrowser(url: string): Promise<void> {
  * @param issueTemplate Template name to use (e.g., 'bug_report.yml')
  * @param params Map of parameter names to values for the issue form
  */
+export interface GitHubIssueOpenOptions {
+    readonly baseUrl?: string
+}
+
 export async function createAndOpenGitHubIssue(
     repoOwner: string,
     repoName: string,
     issueTemplate: string | null,
     params: Map<string, string>,
+    options?: GitHubIssueOpenOptions,
 ): Promise<void> {
     // Construct the base URL
-    const baseUrl = `https://github.com/${repoOwner}/${repoName}/issues/new`
+    const baseUrl = options?.baseUrl ?? `https://github.com/${repoOwner}/${repoName}/issues/new`
 
     // Add template parameter if provided
     if (issueTemplate) {

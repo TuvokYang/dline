@@ -1,5 +1,6 @@
 import { flushPendingTaskSettingsRequests } from "@components/settings/utils/settingsHandlers"
 import type { InputSemanticCatalog } from "@shared/input-semantics/catalog"
+import type { SemanticInputDocument } from "@shared/input-semantics/document"
 import React, { useEffect, useRef, useState } from "react"
 import ChatTextArea from "@/components/chat/ChatTextArea"
 import type { ComposerSubmitKind } from "@/components/chat/input/composer-action/composer-action"
@@ -24,6 +25,8 @@ interface InputSectionProps {
     semanticCatalog: InputSemanticCatalog
     enabled?: boolean
     onSubmit?: (draft: InteractionDraft) => Promise<AcceptedInteractionSettlement | undefined>
+    /** Handles a report command locally when no Provider request is usable. */
+    onReportBugFallback?: (draft: InteractionDraft, semanticDocument?: SemanticInputDocument) => Promise<boolean>
     onDraftAccepted: (settlement: AcceptedInteractionSettlement) => void
     submissionScope?: string
     /** Causal owner used to deduplicate only repeated dispatches of the same submission. */
@@ -81,6 +84,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
     semanticCatalog,
     enabled,
     onSubmit,
+    onReportBugFallback,
     onDraftAccepted,
     submissionScope,
     submissionIdentity,
@@ -132,6 +136,14 @@ export const InputSection: React.FC<InputSectionProps> = ({
                       ...(capturedDraft.semanticInput === undefined ? {} : { semanticInput: capturedDraft.semanticInput }),
                   }
                 : currentDraft
+            if (
+                onReportBugFallback &&
+                (await onReportBugFallback(draft, capturedDraft?.semanticDocument ?? draft.semanticInput))
+            ) {
+                composer.retire()
+                setActiveQuote(null)
+                return
+            }
             if (!onSubmit) {
                 // A new task adds the quote itself as a literal, so it composes from
                 // the frozen draft rather than from a document without the quote.

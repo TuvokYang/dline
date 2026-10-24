@@ -86,6 +86,8 @@ describe("command trigger grammar", () => {
     it("resolves a trigger or alias case-sensitively", () => {
         expect(resolveCommandTrigger(catalog(), "/smol")?.id).toBe("command.compact")
         expect(resolveCommandTrigger(catalog(), "/cmd:newtask")?.id).toBe("command.new_task")
+        expect(resolveCommandTrigger(catalog(), "/reportbug")?.id).toBe("command.report_bug")
+        expect(resolveCommandTrigger(catalog(), "/cmd:reportbug")?.id).toBe("command.report_bug")
         expect(resolveCommandTrigger(catalog(), "/Compact")).toBeUndefined()
         expect(resolveCommandTrigger(catalog(), "@problems")).toBeUndefined()
     })

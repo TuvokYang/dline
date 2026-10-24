@@ -1,14 +1,23 @@
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import { InMemoryConversationJournal, InMemoryTaskPayloadStore } from "../../stores/InMemoryRuntimeStores"
 import { decodeTaskPayload, encodeTaskPayload } from "../../stores/payload/TaskPayloadCodec"
 import type { UserInputEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
+import { ProviderJournalMessageMaterializer } from "../provider/service/ProviderJournalMessageMaterializer"
 import { RetainedInputJournalBatch } from "./RetainedInputJournalBatch"
 
 async function harness() {
     const payloads = new InMemoryTaskPayloadStore()
     const journal = new InMemoryConversationJournal()
     const originals: UserInputEnvelope[] = [
-        { kind: "user_input", text: "RAW_A", admittedText: "ADMITTED_A", images: ["image-a"], authorizedTools: ["read_file"] },
+        {
+            kind: "user_input",
+            text: "RAW_A",
+            admittedText: "ADMITTED_A",
+            images: ["image-a"],
+            authorizedTools: [DlineDefaultTool.REPORT_BUG],
+            explicitInstructions: [{ type: "report_bug", source: "slash_command", targetTool: DlineDefaultTool.REPORT_BUG }],
+        },
         { kind: "user_input", text: "RAW_B", admittedText: "ADMITTED_B", files: ["file-b"] },
     ]
     const refs = await Promise.all(originals.map((payload) => payloads.put(encodeTaskPayload(payload))))
@@ -39,7 +48,21 @@ describe("RetainedInputJournalBatch", () => {
         expect(payload.admittedText).toContain("ADMITTED_B")
         expect(payload.admittedText?.match(/sent by the user while work was in progress/g)).toHaveLength(1)
         expect(payload.admittedText?.match(/<user_message>/g)).toHaveLength(2)
-        expect(payload).toMatchObject({ images: ["image-a"], files: ["file-b"], retainedInputBatch: h.identity })
+        const reportBugDeclaration = {
+            type: "report_bug" as const,
+            source: "slash_command" as const,
+            targetTool: DlineDefaultTool.REPORT_BUG,
+        }
+        expect(payload).toMatchObject({
+            images: ["image-a"],
+            files: ["file-b"],
+            retainedInputBatch: h.identity,
+            authorizedTools: [DlineDefaultTool.REPORT_BUG],
+            explicitInstructions: [reportBugDeclaration],
+        })
+        await expect(new ProviderJournalMessageMaterializer(h.payloads).collectAuthority([receipt.payloadRef])).resolves.toEqual([
+            reportBugDeclaration,
+        ])
         for (const [index, entry] of h.identity.entries.entries()) {
             expect(decodeTaskPayload(await h.payloads.read(entry.payloadRef))).toEqual(h.originals[index])
         }

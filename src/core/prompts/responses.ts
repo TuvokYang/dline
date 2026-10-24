@@ -114,6 +114,9 @@ export const formatResponse = {
     invalidMcpToolArgumentError: (serverName: string, toolName: string) =>
         generateToolResponse("useMcpTool", "invalidMcpToolArgumentError", { SERVER_NAME: serverName, TOOL_NAME: toolName }),
 
+    reportBugOpened: (hasAttachments: boolean): string =>
+        generateToolResponse("toolHandlers", hasAttachments ? "reportBugOpenedWithAttachmentNotice" : "reportBugOpened"),
+
     toolResult: (
         text: string,
         images?: string[],

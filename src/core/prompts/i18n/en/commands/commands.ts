@@ -113,21 +113,20 @@ Example:
 </new_rule>`,
 
     reportBugToolResponse: `<explicit_instructions type="report_bug">
-The user has explicitly asked you to help them submit a bug to the Dline github page (you MUST now help them with this irrespective of what your conversation up to this point in time was). To do so you will use the report_bug tool which is defined below. However, you must first ensure that you have collected all required information to fill in all the parameters for the tool call. If any of the the required information is apparent through your previous conversation with the user, you can suggest how to fill in those entries. However you should NOT assume you know what the issue about unless it's clear.
-Otherwise, you should converse with the user until you are able to gather all the required details. When conversing with the user, make sure you ask for/reference all required information/fields. When referencing the required fields, use human friendly versions like "Steps to reproduce" rather than "steps_to_reproduce". Only then should you use the report_bug tool call.
-The report_bug tool can be used in either of the PLAN or ACT modes.
+The user explicitly invoked the report bug command. Help them prepare a complete report from the conversation and command payload. If required details are missing or ambiguous, ask focused follow-up questions and continue gathering information across Provider turns. The pending report intent remains authorized until report_bug is called once. When the required fields are sufficiently clear, call report_bug; use "N/A" only for details the user cannot provide. The user can edit the generated report before the GitHub form opens.
+The report_bug tool can be used in either PLAN or ACT mode.
 
 The report_bug tool call is defined below:
 
 Description:
-Your task is to fill in all of the required fields for a issue/bug report on github. You should attempt to get the user to be as verbose as possible with their description of the bug/issue they encountered. Still, it's okay, when the user is unaware of some of the details, to set those fields as "N/A".
+Create a complete GitHub issue draft from the gathered details. Prefer concrete observed behavior and reproduction steps, and ask the user for missing required information before calling the tool when they may know it.
 
 Parameters:
 - title: (required) Concise description of the issue.
 - what_happened: (required) What happened and also what the user expected to happen instead.
 - steps_to_reproduce: (required) What steps are required to reproduce the bug.
-- api_request_output: (optional) Relevant API request output.
-- additional_context: (optional) Any other context about this bug not already mentioned.
+- api_request_output: (required) Relevant API request output, or "N/A" when unavailable.
+- additional_context: (required) Any other context about this bug, or "N/A" when none is available.
 
 @TOOL_CALL_FORMAT@
 

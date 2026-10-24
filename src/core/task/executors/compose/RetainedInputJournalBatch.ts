@@ -117,6 +117,7 @@ export class RetainedInputJournalBatch {
             text: payloads.map((payload) => payload.text ?? "").join("\n\n"),
             admittedText: renderRetainedInputs(payloads.map(modelTextOf)),
             ...retainedParts(payloads),
+            ...retainedAuthority(payloads),
             images: payloads.flatMap((payload) => [...(payload.images ?? [])]),
             files: payloads.flatMap((payload) => [...(payload.files ?? [])]),
         }
@@ -147,6 +148,18 @@ export class RetainedInputJournalBatch {
 
 function modelTextOf(payload: UserInputEnvelope): string {
     return payload.admittedText ?? payload.text ?? ""
+}
+
+/** Preserve command grants on the durable batch that replaces its source payloads in the provider turn. */
+function retainedAuthority(
+    payloads: readonly UserInputEnvelope[],
+): Pick<UserInputEnvelope, "authorizedTools" | "explicitInstructions"> {
+    const authorizedTools = payloads.flatMap((payload) => [...(payload.authorizedTools ?? [])])
+    const explicitInstructions = payloads.flatMap((payload) => [...(payload.explicitInstructions ?? [])])
+    return {
+        ...(authorizedTools.length === 0 ? {} : { authorizedTools }),
+        ...(explicitInstructions.length === 0 ? {} : { explicitInstructions }),
+    }
 }
 
 /**

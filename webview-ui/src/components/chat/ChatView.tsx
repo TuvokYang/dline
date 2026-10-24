@@ -15,7 +15,7 @@ import { useApiProfiles } from "@/components/settings/providers/useApiProfiles"
 import { useProviderModels } from "@/components/settings/providers/useProviderModels"
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { useShowNavbar } from "@/context/PlatformContext"
-import { FileServiceClient, TaskServiceClient, UiServiceClient } from "@/services/grpc-client"
+import { FileServiceClient, SlashServiceClient, TaskServiceClient, UiServiceClient } from "@/services/grpc-client"
 import { useInputSemanticCatalog } from "@/services/input-semantics/useInputSemanticCatalog"
 import { getTaskViewKey } from "@/services/task-messages"
 import { createInteractionDispatchGate } from "@/task-interaction/dispatch-gate"
@@ -66,6 +66,8 @@ import { type ComposerSegment, isBlankDraft, trimSegments } from "./input/semant
 import { composeComposerSubmission } from "./input/semantic-composer/projection"
 import { composerSendBlock } from "./input/semantic-composer/send-draft"
 import { useInputQueue } from "./input/useInputQueue"
+import { isReportBugSemanticDocument, shouldUseLocalReportBugFallback } from "./report-bug-fallback"
+import { resolveProfileDisplayState } from "./task-header/profileDisplayState"
 
 interface ChatViewProps {
     isHidden: boolean
@@ -373,10 +375,34 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 
     // handleFocusChange is already provided by chatState
 
-    const { profiles } = useApiProfiles()
+    const { profiles, loaded: profilesLoaded, error: profilesError } = useApiProfiles()
+    const profileDisplay = useMemo(
+        () =>
+            resolveProfileDisplayState({
+                profiles,
+                loaded: profilesLoaded,
+                error: profilesError,
+                profileId: mode === "plan" ? apiConfiguration?.planModeProfileId : apiConfiguration?.actModeProfileId,
+                profileName: mode === "plan" ? apiConfiguration?.planModeProfile : apiConfiguration?.actModeProfile,
+            }),
+        [apiConfiguration, mode, profiles, profilesError, profilesLoaded],
+    )
     const activeProfile = useMemo(
         () => resolveActiveProfile(profiles, apiConfiguration, mode),
         [profiles, apiConfiguration, mode],
+    )
+    const submitLocalReportBug = useCallback(
+        async (draft: InteractionDraft, semanticDocument = draftSubmission.projection.document): Promise<boolean> => {
+            if (
+                !isReportBugSemanticDocument(semanticDocument) ||
+                !shouldUseLocalReportBugFallback(profileDisplay, taskViewState?.activeInteraction?.kind)
+            ) {
+                return false
+            }
+            await SlashServiceClient.reportBug(StringRequest.create({ value: draft.text }))
+            return true
+        },
+        [draftSubmission.projection.document, profileDisplay, taskViewState?.activeInteraction?.kind],
     )
     const { models, defaultModelId } = useProviderModels(activeProfile?.provider ?? "")
     const selectedModelInfo = useMemo(() => {
@@ -830,6 +856,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
                     onEnqueueInput={inputQueue.enqueue}
                     onRemoveQueuedInput={inputQueue.remove}
                     onReorderQueuedInput={inputQueue.reorder}
+                    onReportBugFallback={submitLocalReportBug}
                     onSubmit={
                         visibleTask
                             ? taskViewState?.activeInteraction
