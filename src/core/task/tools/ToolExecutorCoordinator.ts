@@ -65,6 +65,11 @@ export interface IApprovalPresentingToolHandler extends IToolHandler {
     getApprovalPresentation(block: ToolUse, notify: boolean): ToolApprovalPresentation
 }
 
+/** A handler whose own durable interaction is the only manual confirmation for its external effect. */
+export interface IInteractionOwningToolHandler extends IToolHandler {
+    readonly ownsInteractionConfirmation: true
+}
+
 /**
  * A handler that can explain what a user rejection left behind.
  *
@@ -269,6 +274,12 @@ export class ToolExecutorCoordinator {
      */
     has(toolName: string): boolean {
         return this.getHandler(toolName) !== undefined
+    }
+
+    /** Whether this tool opens its own durable confirmation before any external effect. */
+    ownsInteractionConfirmation(toolName: string): boolean {
+        const handler = this.getHandler(toolName)
+        return Boolean(handler && "ownsInteractionConfirmation" in handler && handler.ownsInteractionConfirmation === true)
     }
 
     /**

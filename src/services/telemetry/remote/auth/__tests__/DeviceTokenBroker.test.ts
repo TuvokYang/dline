@@ -7,7 +7,13 @@ import { type OtelStorageLayout, resolveOtelStorageLayout } from "@/core/storage
 import type { WireResponse } from "../../contracts/classification"
 import type { AtomicDeviceGrant } from "../../contracts/deviceGrant"
 import type { DeviceExchangeRequest } from "../../contracts/wire"
-import type { BootstrapDeviceGrantRequest, DeviceGrantClient, DeviceGrantPort, DeviceGrantTransport } from "../DeviceGrantPort"
+import {
+    type BootstrapDeviceGrantRequest,
+    type DeviceGrantClient,
+    type DeviceGrantPort,
+    DeviceGrantRefusalError,
+    type DeviceGrantTransport,
+} from "../DeviceGrantPort"
 import { DeviceGrantPortRegistry } from "../DeviceGrantPortRegistry"
 import { type DeviceExchangeTransport, DeviceTokenBroker, REFRESH_CLAIM_TTL_MS } from "../DeviceTokenBroker"
 import { USAGE_GRANT_BOOTSTRAP_BACKOFF_BASE_MS, UsageGrantBootstrap } from "../UsageGrantBootstrap"
@@ -99,6 +105,60 @@ describe("DeviceTokenBroker", () => {
         expect(transport.requests[0]).toMatchObject({ requested_profile: "usage", client_version: "0.11.0", platform: "win32" })
         expect(first).toEqual(second)
         expect(first.status === "ready" && first.token.accessToken).toBe(TOKEN_1)
+    })
+
+    it("never falls back to the legacy issuer after a recoverable grant owner takes authority", async () => {
+        const transport = new ScriptedTransport()
+        const repository = new DeviceCredentialRepository(layout, { clock: () => now })
+        const recoverable: DeviceGrantClient = {
+            allowsLegacyFallback: false,
+            ensureActiveGrant: async () => null,
+        }
+        const broker = new DeviceTokenBroker({
+            repository,
+            transport,
+            clientVersion: "0.11.0",
+            platform: "win32",
+            clock: () => now,
+            ownerId: "window-a",
+            grantClient: recoverable,
+        })
+
+        const result = await broker.acquire("usage")
+
+        expect(result).toMatchObject({ status: "deferred", reason: "enrollment_backoff" })
+        expect(transport.requests).toHaveLength(0)
+    })
+
+    it("clears recoverable grant state and stops the machine when the service revoked the device", async () => {
+        const transport = new ScriptedTransport()
+        const repository = new DeviceCredentialRepository(layout, { clock: () => now })
+        await repository.ensure()
+        await repository.publishDeviceGrantAtomically({ ...SCHEMA4_GRANT, expiresAt: now + DAY_MS })
+        const recoverable: DeviceGrantClient = {
+            allowsLegacyFallback: false,
+            readActiveGrant: async () => null,
+            ensureActiveGrant: async () => {
+                throw new DeviceGrantRefusalError({ kind: "reset_credential", code: "device_revoked" })
+            },
+        }
+        const broker = new DeviceTokenBroker({
+            repository,
+            transport,
+            clientVersion: "0.11.0",
+            platform: "win32",
+            clock: () => now,
+            ownerId: "window-a",
+            grantClient: recoverable,
+        })
+
+        const result = await broker.acquire("usage", { rejectedAccessToken: TOKEN_1 })
+        const stored = await repository.read()
+
+        expect(result).toEqual({ status: "stopped", scope: "all", code: "device_revoked" })
+        expect(stored.status === "valid" && stored.document.tokens).toEqual({})
+        expect(stored.status === "valid" && stored.document.grants).toEqual({})
+        expect(transport.requests).toHaveLength(0)
     })
 
     it("lets exactly one window exchange while another defers, then hands the second window the shared token", async () => {

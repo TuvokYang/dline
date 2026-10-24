@@ -11,6 +11,12 @@ export interface OtelStorageLayout {
     /** Owner-only directory holding the device secret and its bearer tokens. */
     readonly secretsDir: string
     readonly deviceCredentialPath: string
+    /** Owner-only issue diagnostic token plus revoke/expiry tombstone. */
+    readonly issueGrantPath: string
+    /** Owner-only support authorization, resume credential, exchange ticket and revoke tombstone. */
+    readonly issueCredentialPath: string
+    /** Owner-only durable create/status/revoke intent and encrypted response receipt. */
+    readonly supportOperationPath: string
     /** Malformed credential documents, kept for diagnosis instead of being overwritten. */
     readonly secretsQuarantineDir: string
     readonly remoteDir: string
@@ -23,6 +29,8 @@ export interface OtelStorageLayout {
     readonly usageOutboxPath: string
     /** Exact request bodies, named by request ID, so an unknown outcome replays the same bytes. */
     readonly usageInflightDir: string
+    /** Issue-only logs, metrics and traces; never shares production or Usage queue state. */
+    readonly issueDiagnosticsOutboxPath: string
 }
 
 export function resolveOtelStorageLayout(dataDir: string): OtelStorageLayout {
@@ -33,6 +41,9 @@ export function resolveOtelStorageLayout(dataDir: string): OtelStorageLayout {
     return {
         secretsDir,
         deviceCredentialPath: path.join(secretsDir, "device.json"),
+        issueGrantPath: path.join(secretsDir, "issue-grant.json"),
+        issueCredentialPath: path.join(secretsDir, "issue-credential.json"),
+        supportOperationPath: path.join(secretsDir, "support-operation.json"),
         secretsQuarantineDir: path.join(secretsDir, "quarantine"),
         remoteDir,
         policyPath: path.join(remoteDir, "policy.json"),
@@ -41,5 +52,6 @@ export function resolveOtelStorageLayout(dataDir: string): OtelStorageLayout {
         usageObservationsDir: path.join(usageDir, "observations"),
         usageOutboxPath: path.join(usageDir, "outbox.json"),
         usageInflightDir: path.join(usageDir, "inflight"),
+        issueDiagnosticsOutboxPath: path.join(remoteDir, "diagnostics", "issue-outbox.json"),
     }
 }

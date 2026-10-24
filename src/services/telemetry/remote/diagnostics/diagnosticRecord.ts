@@ -3,7 +3,7 @@ import { DlineDefaultTool } from "@/shared/tools"
 import { isRemoteDiagnosticEvent } from "../../events/event-routes"
 import type { JournalTelemetrySignal } from "../../providers/capabilities"
 import type { UsageHostEditor, UsageReleaseChannel } from "../contracts/usageBody"
-import { usageModelKey, usageProviderId } from "../usage/usageTally"
+import { diagnosticModelIdentity, diagnosticProviderId } from "./diagnosticModelIdentity"
 
 export type DiagnosticChannel = "error" | "runtime"
 export type DiagnosticSeverity = "warn" | "error" | "fatal"
@@ -201,9 +201,13 @@ function withNormalizedModel(
     const model = firstNonEmptyString(properties.model, properties.modelId)
     if (model) {
         const custom = properties["model.custom"] === true
-        return { ...properties, ...usageModelKey({ provider: provider ?? "", model, custom }), "model.custom": custom }
+        return {
+            ...properties,
+            ...diagnosticModelIdentity({ provider: provider ?? "", model, custom }),
+            "model.custom": custom,
+        }
     }
-    return provider ? { ...properties, provider: usageProviderId(provider) } : properties
+    return provider ? { ...properties, provider: diagnosticProviderId(provider) } : properties
 }
 
 function firstNonEmptyString(...values: readonly unknown[]): string | undefined {

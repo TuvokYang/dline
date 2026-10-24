@@ -127,6 +127,11 @@ export interface ProviderRequestLifecyclePort {
     afterProviderStarted?(): void
 }
 
+/** Admits the canonical ReportBug preview after a terminal provider failure is durable. */
+export interface ProviderFailureReportPort {
+    present(input: { readonly turnId: string; readonly commandId: string; readonly presentation: string }): Promise<void>
+}
+
 export interface ProviderExecutionInput {
     readonly draftRef: string
     readonly turnId?: string
@@ -189,6 +194,7 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
         private readonly report?: ProviderRequestReportPort,
         private readonly checkpoint?: ProviderRoundCheckpointPort,
         private readonly lifecycle?: ProviderRequestLifecyclePort,
+        private readonly failureReport?: ProviderFailureReportPort,
     ) {}
 
     execute(command: Command): Promise<void> {
@@ -236,17 +242,31 @@ export class ProviderCommandExecutor implements CommandExecutor, HaltParticipant
         } catch (error) {
             if (isExecutionAbort(error, controller.signal)) return
             const recovery = recoveryOf(error)
-            await this.events.submit({
+            const message = executorFailure("provider", error)
+            const presentation = presentationOf(error) ?? describeExecutorFailure("provider", error)
+            const submitted = await this.events.submit({
                 type: "provider.failed",
                 generation: command.generation,
                 commandId: command.commandId,
                 originRevision: command.originRevision,
                 turnId: command.turnId,
-                message: executorFailure("provider", error),
+                message,
                 // The provider's own explanation when it gave one, else the failure itself.
-                presentation: presentationOf(error) ?? describeExecutorFailure("provider", error),
+                presentation,
                 ...(recovery ? { recovery } : {}),
             })
+            if (submitted.kind === "accepted") {
+                await submitted.durable
+                try {
+                    await this.failureReport?.present({
+                        turnId: command.turnId ?? `provider-failure:${command.commandId}`,
+                        commandId: command.commandId,
+                        presentation,
+                    })
+                } catch {
+                    // ReportBug presentation must never replace the provider failure itself.
+                }
+            }
             return
         }
         if (!finalResult) return

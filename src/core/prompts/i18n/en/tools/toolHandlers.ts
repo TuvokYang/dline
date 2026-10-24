@@ -109,6 +109,7 @@ Always adhere to this format for all tool uses to ensure proper parsing and exec
     reportBugOpened: "The editable GitHub issue form was opened for the user to review and submit.",
     reportBugOpenedWithAttachmentNotice:
         "The editable GitHub issue form was opened. Attachments were not uploaded by Dline; the user must add them in the GitHub form before submitting.",
+    reportBugCancelled: "The user cancelled the bug report preview. No GitHub issue or support authorization was opened.",
 
     // ApprovedToolBoundary
     toolScopeWidened:

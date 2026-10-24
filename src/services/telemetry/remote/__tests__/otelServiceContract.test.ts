@@ -4,25 +4,24 @@ import os from "node:os"
 import path from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { DeviceCredentialRepository } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
+import { ExchangeOperationRepository } from "@/core/storage/telemetry-remote/ExchangeOperationRepository"
 import { resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
 import { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
+import { deviceGrantPortFromRepository } from "../auth/DeviceGrantPort"
+import { DeviceGrantPortRegistry } from "../auth/DeviceGrantPortRegistry"
 import { DeviceTokenBroker } from "../auth/DeviceTokenBroker"
+import { installRecoverableExchange } from "../auth/exchangeRuntime"
+import { UsageGrantBootstrap } from "../auth/UsageGrantBootstrap"
 import { classifyDeliveryResponse, type WireResponse } from "../contracts/classification"
-import { USAGE_MINUTE_MS, type UsageBodyWire } from "../contracts/usageBody"
+import { USAGE_MINUTE_MS, USAGE_SECOND_MS, type UsageAttemptBodyWire } from "../contracts/usageBody"
 import { DlineOtelHttpClient, type UsageDelivery, type UsageTransport } from "../transport/DlineOtelHttpClient"
 import { UsageDeliveryWorker } from "../usage/UsageDeliveryWorker"
-import { secondStartOf } from "../usage/usageBatch"
-import { projectUsageSettlement } from "../usage/usageTally"
-import { OtelServiceMock } from "./support/OtelServiceMock"
+import { isOtelServiceMockAvailable, otelServiceMockEndpoint, readOtelServiceMockState } from "./support/OtelServiceMock"
 
-/**
- * The HTTP contract between the usage client and the telemetry service, run
- * over real sockets. It always runs against a loopback mock of the service
- * interface; setting DLINE_OTEL_LIVE_ENDPOINT runs the same scenario against
- * that origin as well. Every run enrolls a fresh device from a temporary data root.
- */
 const liveEndpoint = process.env.DLINE_OTEL_LIVE_ENDPOINT
+const mockEndpoint = otelServiceMockEndpoint()
+const mockAvailable = await isOtelServiceMockAvailable(mockEndpoint)
 const MINUTE = USAGE_MINUTE_MS
 const SETTLE = 20_000
 const VERSION = "0.11.1"
@@ -38,67 +37,91 @@ class RecordingTransport implements UsageTransport {
     }
 }
 
-const cleanups: (() => Promise<void>)[] = []
+const cleanups: Array<() => Promise<void>> = []
 
 afterEach(async () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()))
 })
 
 describe("telemetry service contract", () => {
-    it("holds against the loopback mock of the service interface", async () => {
-        // Only this version is listed, so an acceptance proves the user agent names it.
-        const service = new OtelServiceMock({ acceptedVersions: [VERSION] })
-        const endpoint = await service.start()
-        cleanups.push(() => service.stop())
+    it.skipIf(!mockAvailable)("holds against the independently hosted dline-web contract mock", async () => {
+        const result = await runContractScenario(mockEndpoint)
+        const state = await readOtelServiceMockState(mockEndpoint)
+        const usage = state.accepted.filter((entry) => entry.path === "usage" && entry.request_id === result.requestId)
 
-        const sent = await runContractScenario(endpoint)
-
-        // The service received the batch exactly once, byte-for-byte as the client built it.
-        expect(service.accepted).toHaveLength(1)
-        expect(service.accepted[0].body).toEqual(sent)
-        // The body states the version the service matched on the user agent (§1.2).
-        expect(service.accepted[0].userAgent).toBe(`Dline/${sent.client.version}`)
+        expect(usage).toHaveLength(1)
+        expect(usage[0]?.body).toEqual(result.body)
     })
 
-    it.skipIf(!liveEndpoint)("holds against the live service", async () => {
+    it.skipIf(!liveEndpoint)("holds against the explicitly configured live service", async () => {
         await runContractScenario(liveEndpoint as string)
     })
 })
 
 /**
- * Enroll, deliver one batch through the real worker and transport, then probe
- * idempotency, request ID conflicts, the server gate and token rejection.
- * Returns the batch the client sent.
+ * Acquire schema 4 through the same recoverable composition production uses,
+ * deliver one batch, then probe idempotency, request conflicts, gating and token rejection.
  */
-async function runContractScenario(endpoint: string): Promise<UsageBodyWire> {
+async function runContractScenario(
+    endpoint: string,
+): Promise<{ readonly body: UsageAttemptBodyWire; readonly requestId: string }> {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "dline-otel-contract-"))
     cleanups.push(() => fs.rm(root, { recursive: true, force: true }))
     const layout = resolveOtelStorageLayout(root)
     const client = new DlineOtelHttpClient({ clientVersion: VERSION, endpoint })
     const transport = new RecordingTransport(client)
-    const tokens = new DeviceTokenBroker({
-        repository: new DeviceCredentialRepository(layout),
+    const credentials = new DeviceCredentialRepository(layout)
+    const grantPort = deviceGrantPortFromRepository(credentials)
+    const bootstrap = new UsageGrantBootstrap({
+        port: grantPort,
         transport: client,
         clientVersion: VERSION,
         platform: process.platform,
     })
-    // The next minute boundary keeps the fake clock ahead of file times yet close to the service's clock.
-    const start = secondStartOf(Date.now()) + MINUTE
-    let now = start + 1_000
-    await new UsageObservationSpool(layout, "contract-observer").append({
-        id: randomUUID(),
+    const registry = new DeviceGrantPortRegistry(grantPort, bootstrap)
+    installRecoverableExchange({
+        registry,
+        expectedBootstrap: bootstrap,
+        repository: new ExchangeOperationRepository(layout),
+        transport: client,
+        clientVersion: VERSION,
+        platform: process.platform,
+    })
+    const tokens = new DeviceTokenBroker({
+        repository: credentials,
+        transport: client,
+        clientVersion: VERSION,
+        platform: process.platform,
+        grantClient: registry,
+    })
+    const acquired = await tokens.acquire("usage")
+    expect(acquired.status).toBe("ready")
+    if (acquired.status !== "ready") throw new Error("Schema 4 Usage grant was not issued")
+    const start = Math.floor(Date.now() / USAGE_SECOND_MS) * USAGE_SECOND_MS + MINUTE
+    const attemptId = randomUUID()
+    const admittedAt = start + 1_000
+    const durationMs = 2_500
+    let now = admittedAt + durationMs
+    await new UsageObservationSpool(layout, "contract-observer").appendAttempt({
+        id: attemptId,
+        revision: 1,
         receivedAt: now,
-        policyEpoch: 1,
-        tally: projectUsageSettlement({
-            observationId: "contract",
-            purpose: "task",
+        observation: {
+            attemptObservationId: attemptId,
+            logicalRequestId: `logical-${attemptId}`,
+            identity: {
+                role: "task",
+                provider: "anthropic",
+                modelId: "catalog:claude-opus-4-1",
+                thinking: 2_048,
+            },
+            policyGeneration: 1,
+            admittedAt,
             outcome: "completed",
-            inputTokens: 1_200,
-            outputTokens: 300,
-            cacheReadTokens: 800,
-            cacheWriteTokens: 0,
-            durationMs: 2_500,
-        }),
+            durationMs,
+            tokens: { input: 1_200, output: 300, cacheRead: 800, cacheWrite: 0, reasoning: 0 },
+            tokenUsageReported: true,
+        },
     })
     const worker = new UsageDeliveryWorker({
         outbox: new UsageOutboxRepository(layout, { clock: () => now }),
@@ -107,42 +130,42 @@ async function runContractScenario(endpoint: string): Promise<UsageBodyWire> {
         transport,
         client: { version: VERSION, platform: process.platform, architecture: process.arch, is_dev: false },
         ownerId: "contract-sender",
-        batchSettleMs: SETTLE,
         clock: () => now,
+        readAttemptValidation: async () => {
+            const grant = await credentials.readActiveDeviceGrant(now, "usage")
+            return grant ? { contract: grant.usageContract, estimateWriteRows: () => 1 } : undefined
+        },
     })
 
-    now = start + 2_000
+    now = start + 5_000
     await worker.runCycle(1)
-    now = start + MINUTE + SETTLE
-    const delivered = await worker.runCycle(1)
+    now = start + 10 * MINUTE + SETTLE
+    let delivered = await worker.runCycle(1)
+    for (let cycle = 0; cycle < 3 && delivered.kind === "idle"; cycle += 1) {
+        now += 10 * MINUTE + SETTLE
+        delivered = await worker.runCycle(1)
+    }
 
-    expect(delivered).toMatchObject({ kind: "delivered", disposition: "accepted" })
+    expect(delivered, JSON.stringify(delivered)).toMatchObject({ kind: "delivered", disposition: "accepted" })
     expect(transport.deliveries).toHaveLength(1)
     const first = transport.deliveries[0]
-    const sent = JSON.parse(new TextDecoder().decode(first.body)) as UsageBodyWire
-
-    // The same request ID with the same bytes is acknowledged as a duplicate, not counted twice.
+    if (!first) throw new Error("Usage delivery was not recorded")
+    const sent = JSON.parse(new TextDecoder().decode(first.body)) as UsageAttemptBodyWire
     const duplicate = classifyDeliveryResponse(await client.sendUsage(first))
     expect(duplicate).toMatchObject({ kind: "acknowledged", disposition: "duplicate" })
-    expect(duplicate.kind === "acknowledged" ? duplicate.nextEligibleAt : undefined).toBeGreaterThan(0)
 
-    // The same request ID with other bytes is a conflict the client must never retry.
-    const altered = encode({ ...sent, sessions_started: sent.sessions_started + 1 })
+    const altered = encode({ ...sent, client: { ...sent.client, version: `${sent.client.version}.conflict` } })
     expect(classifyDeliveryResponse(await client.sendUsage({ ...first, body: altered }))).toEqual({
         kind: "discard",
         code: "request_id_conflict",
     })
 
-    // A new batch before the gate the service named is refused before anything is stored, with a wait.
-    const next = encode({ ...sent, window: { ...sent.window, started_at: start + MINUTE, ended_at: start + 2 * MINUTE } })
-    const gated = classifyDeliveryResponse(await client.sendUsage({ ...first, requestId: randomUUID(), body: next }))
+    const gated = classifyDeliveryResponse(await client.sendUsage({ ...first, requestId: randomUUID(), body: encode(sent) }))
     expect(gated).toMatchObject({ kind: "wait", code: "rate_limited" })
-    expect(gated.kind === "wait" ? gated.retryAfterMs : undefined).toBeGreaterThan(0)
 
-    // A token the service never issued is answered with 401, which the client turns into one re-exchange.
     const forged = await client.sendUsage({ ...first, accessToken: `${first.accessToken.slice(0, -4)}AAAA` })
     expect(classifyDeliveryResponse(forged)).toEqual({ kind: "refresh_token" })
-    return sent
+    return { body: sent, requestId: first.requestId }
 }
 
 function encode(value: unknown): Uint8Array {

@@ -23,8 +23,25 @@ export interface DeviceGrantPort {
     readActive(now: number): Promise<AtomicDeviceGrant | null>
 }
 
+export type DeviceGrantRefusal =
+    | { readonly kind: "reset_credential"; readonly code: string }
+    | { readonly kind: "stop"; readonly scope: "profile" | "all"; readonly code: string }
+
+/** Determinate refusal from the recoverable endpoint; transient/unknown outcomes return no grant instead. */
+export class DeviceGrantRefusalError extends Error {
+    constructor(readonly refusal: DeviceGrantRefusal) {
+        super(`Device grant refused: ${refusal.code}`)
+        this.name = "DeviceGrantRefusalError"
+    }
+}
+
 /** Adapter contract consumed by Usage; Phase E replaces the bootstrap implementation through the registry. */
 export interface DeviceGrantClient {
+    /**
+     * Phase U may fall back to the legacy device exchange when its bootstrap endpoint is unavailable.
+     * A recoverable owner sets this to false because replaying through another issuer could mint a second token.
+     */
+    readonly allowsLegacyFallback?: boolean
     /** Optional no-network projection used before taking the machine-wide acquisition claim. */
     readActiveGrant?(now: number): Promise<AtomicDeviceGrant | null>
     ensureActiveGrant(deviceSecret: string, signal?: AbortSignal): Promise<AtomicDeviceGrant | null>

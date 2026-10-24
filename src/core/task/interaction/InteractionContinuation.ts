@@ -44,6 +44,8 @@ export function interactionKindForToolName(name: string): InteractionKind | unde
             return "completion"
         case DlineDefaultTool.NEW_TASK:
             return "new_task"
+        case DlineDefaultTool.REPORT_BUG:
+            return "report_bug"
         default:
             return undefined
     }
@@ -123,6 +125,8 @@ function projectResponseContent(input: InteractionContinuationInput, fileContent
             return input.actionId === "approve"
                 ? newTaskCreatedResponse()
                 : declinedNewTaskResponse(text ?? "", images, fileContent)
+        case "report_bug":
+            return input.actionId === "approve" ? formatResponse.reportBugOpened(false) : formatResponse.reportBugCancelled()
         case "followup":
         default:
             return formatResponse.toolResult(`<feedback>\n${text ?? ""}\n</feedback>`, images, fileContent)

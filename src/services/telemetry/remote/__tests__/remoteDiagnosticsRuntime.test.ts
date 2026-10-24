@@ -81,8 +81,9 @@ describe("remote diagnostics runtime", () => {
         })
     }
 
-    it("registers a remote sink for the error and runtime channels only", () => {
+    it("registers one remote sink for production and issue-overlay diagnostics", () => {
         expect(registration?.sink).toEqual({ kind: "remote", origin: "user", channels: ["error", "runtime"] })
+        expect(registration?.capabilities.map((capability) => capability.kind)).toEqual(["journal", "trace"])
     })
 
     it("writes gathered failures to the shared outbox without identity attributes", async () => {

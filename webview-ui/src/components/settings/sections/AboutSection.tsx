@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useExtensionState } from "@/context/ExtensionStateContext"
 import { StateServiceClient } from "@/services/grpc-client"
 import Section from "../Section"
+import { SupportTelemetryStatus } from "../SupportTelemetryStatus"
 import { updateSetting } from "../utils/settingsHandlers"
 
 interface AboutSectionProps {
@@ -217,6 +218,7 @@ const AboutSection = ({ version, renderSectionHeader }: AboutSectionProps) => {
                     </p>
 
                     <ReportingConsent />
+                    <SupportTelemetryStatus />
                     {isDiagnosticsEnabled && <DiagnosticBundleExport />}
                 </div>
             </Section>

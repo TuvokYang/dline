@@ -26,8 +26,9 @@ function approval(
     block: ToolUse,
     result: ReturnType<ToolExecutorCoordinator["prepareAdmission"]>,
     aiApproverAvailable: boolean,
+    ownsInteractionConfirmation: boolean,
 ): ProviderTurnApproval {
-    if (result.outcome === "rejected" || result.decision.kind === "none") return { kind: "none" }
+    if (result.outcome === "rejected" || result.decision.kind === "none" || ownsInteractionConfirmation) return { kind: "none" }
     const interactionId = approvalInteractionId(block.dline_tid)
     if (result.decision.kind === "automatic" || (result.decision.kind === "ai_approver" && aiApproverAvailable)) {
         return {
@@ -62,6 +63,11 @@ export function planProductionTool(
         attempt: randomUUID(),
         lanes: preflight.outcome === "admitted" ? preflight.lanes : resolveToolLanes(block.name, resolveLaneContext(block)),
         turnEnding: isTurnEndingToolUse(block),
-        approval: approval(block, preflight, options.aiApproverAvailable === true),
+        approval: approval(
+            block,
+            preflight,
+            options.aiApproverAvailable === true,
+            coordinator.ownsInteractionConfirmation(block.name),
+        ),
     }
 }

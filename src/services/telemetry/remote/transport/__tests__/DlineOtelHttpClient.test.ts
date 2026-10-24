@@ -39,9 +39,9 @@ function failure(promise: Promise<unknown>): Promise<DlineOtelTransportError> {
 }
 
 describe("DlineOtelHttpClient", () => {
-    it("posts the exact usage bytes with the version's user agent, bearer, request ID and contract version and refuses to follow redirects", async () => {
+    it("posts exact schema 4 Usage bytes with the fixed contract header and refuses redirects", async () => {
         const captured: Captured[] = []
-        const body = new TextEncoder().encode('{"schema_version":2}')
+        const body = new TextEncoder().encode('{"schema_version":4,"buckets":[]}')
         const ok = () =>
             new Response(JSON.stringify({ ok: true, disposition: "duplicate", next_eligible_at: 5 }), {
                 status: 200,
@@ -64,29 +64,10 @@ describe("DlineOtelHttpClient", () => {
             authorization: `Bearer ${TOKEN}`,
             "content-type": "application/json",
             "x-dline-request-id": REQUEST_ID,
-            "x-dline-contract": "3",
+            "x-dline-contract": "4",
         })
         expect(classifyDeliveryResponse(response)).toEqual({ kind: "acknowledged", disposition: "duplicate", nextEligibleAt: 5 })
         expect(response.retryAfter).toBe("3")
-    })
-
-    it("sends schema 4 Usage with its negotiated contract header without changing the exact bytes", async () => {
-        const captured: Captured[] = []
-        const body = new TextEncoder().encode('{"schema_version":4,"buckets":[]}')
-
-        await mockFetchForTesting(
-            respondWith(() => new Response("{}", { status: 503 }), captured),
-            () =>
-                new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "https://otel.example.test" }).sendUsage({
-                    accessToken: TOKEN,
-                    requestId: REQUEST_ID,
-                    body,
-                    contractVersion: 4,
-                }),
-        )
-
-        expect(captured[0].init).toMatchObject({ body })
-        expect(new Headers(captured[0].init.headers).get("x-dline-contract")).toBe("4")
     })
 
     it("keeps the OTLP specification path for logs and leaves Dline's own paths unprefixed", async () => {
@@ -106,6 +87,38 @@ describe("DlineOtelHttpClient", () => {
         // the unprefixed spelling. `/usage` is Dline's own protocol and takes none.
         expect(captured[0].url).toBe("https://otel.example.test/v1/logs")
         expect(captured[1].url).toBe("https://otel.example.test/usage")
+    })
+
+    it("routes issue-only OTLP streams with the issue token and contract 4", async () => {
+        const captured: Captured[] = []
+        const client = new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "https://otel.example.test" })
+        const body = new TextEncoder().encode("{}")
+
+        await mockFetchForTesting(
+            respondWith(() => new Response(JSON.stringify({ ok: true, disposition: "accepted" }), { status: 200 }), captured),
+            async () => {
+                for (const stream of ["logs", "metrics", "traces"] as const) {
+                    await client.sendIssueDiagnostics({
+                        stream,
+                        accessToken: TOKEN,
+                        requestId: `${REQUEST_ID}-${stream}`,
+                        body,
+                    })
+                }
+            },
+        )
+
+        expect(captured.map((request) => request.url)).toEqual([
+            "https://otel.example.test/v1/logs",
+            "https://otel.example.test/v1/metrics",
+            "https://otel.example.test/v1/traces",
+        ])
+        for (const request of captured) {
+            const headers = new Headers(request.init.headers)
+            expect(headers.get("authorization")).toBe(`Bearer ${TOKEN}`)
+            expect(headers.get("x-dline-contract")).toBe("4")
+            expect(request.init.redirect).toBe("error")
+        }
     })
 
     it("posts the device exchange as JSON to its own path", async () => {
@@ -157,6 +170,52 @@ describe("DlineOtelHttpClient", () => {
             "x-dline-request-id": REQUEST_ID,
         })
         expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
+    })
+
+    it("sends the server-owned issue exchange body with matching header identity and transport-only bearer", async () => {
+        const captured: Captured[] = []
+        const deviceToken = "d".repeat(43)
+        const request = {
+            operation: "issue.exchange" as const,
+            request_id: REQUEST_ID,
+            issue: { owner: "TuvokYang", repo: "dline", number: 123 },
+            pairing_secret: "p".repeat(43),
+            client_version: VERSION,
+            platform: "win32",
+        }
+
+        await mockFetchForTesting(
+            respondWith(() => new Response("{}", { status: 503 }), captured),
+            () =>
+                new DlineOtelHttpClient({
+                    clientVersion: VERSION,
+                    endpoint: "http://127.0.0.1:8787",
+                }).requestRecoverableIssueExchange(request, deviceToken),
+        )
+
+        expect(captured[0].url).toBe("http://127.0.0.1:8787/auth/exchange")
+        expect(captured[0].init.headers).toEqual({
+            "User-Agent": `Dline/${VERSION}`,
+            authorization: `Bearer ${deviceToken}`,
+            "content-type": "application/json",
+            "x-dline-contract": "4",
+            "x-dline-request-id": REQUEST_ID,
+        })
+        expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
+        expect(String(captured[0].init.body)).not.toContain(deviceToken)
+    })
+
+    it("refuses to send issue exchange through the unauthenticated device-grant transport", async () => {
+        const client = new DlineOtelHttpClient({ clientVersion: VERSION })
+        const request = {
+            operation: "issue.exchange" as const,
+            request_id: REQUEST_ID,
+            issue: { owner: "TuvokYang", repo: "dline", number: 123 },
+            pairing_secret: "p".repeat(43),
+            client_version: VERSION,
+            platform: "win32",
+        }
+        expect(() => client.requestRecoverableDeviceOrIssueExchange(request)).toThrow("authenticated issue transport")
     })
 
     it("reports an edge page that is not JSON so the classifier stops every profile", async () => {

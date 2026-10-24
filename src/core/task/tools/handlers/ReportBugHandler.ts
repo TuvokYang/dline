@@ -1,22 +1,18 @@
 import { resolveProvider } from "@core/api"
 import type { ToolUse } from "@core/assistant-message"
 import { formatResponse } from "@core/prompts/responses"
-import {
-    appendReportBugSupplement,
-    collectReportBugEnvironment,
-    openReportBugIssue,
-    type ReportBugContent,
-    reportBugPresentation,
-} from "@core/reporting/ReportBugIssue"
+import { collectReportBugEnvironment, type ReportBugContent } from "@core/reporting/ReportBugIssue"
+import { openReportBugPreview } from "@core/reporting/ReportBugWorkflow"
 import { Logger } from "@/shared/services/Logger"
 import { DlineDefaultTool } from "@/shared/tools"
-import type { IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
+import type { IInteractionOwningToolHandler, IPartialBlockHandler, IToolHandler } from "../ToolExecutorCoordinator"
 import type { ToolResponse } from "../ToolResponse"
-import type { TaskConfig } from "../types/TaskConfig"
+import { interactionId, interactionTurnId, type TaskConfig } from "../types/TaskConfig"
 import type { StronglyTypedUIHelpers } from "../types/UIHelpers"
 
-export class ReportBugHandler implements IToolHandler, IPartialBlockHandler {
+export class ReportBugHandler implements IToolHandler, IPartialBlockHandler, IInteractionOwningToolHandler {
     readonly name = DlineDefaultTool.REPORT_BUG
+    readonly ownsInteractionConfirmation = true as const
 
     getDescription(block: ToolUse): string {
         return `[${block.name}]`
@@ -59,16 +55,21 @@ export class ReportBugHandler implements IToolHandler, IPartialBlockHandler {
         const apiConfig = config.services.stateManager.getApiConfiguration()
         const apiProvider = resolveProvider(apiConfig, config.mode) ?? "unknown"
         const environment = await collectReportBugEnvironment(`${apiProvider} / ${config.api.getModel().id}`)
-        await config.callbacks.say("tool", reportBugPresentation(content, environment), undefined, undefined, false, block.ts)
-
-        const draft = config.admissionOutcome?.draft
-        const hasAttachments = Boolean(draft && (draft.images.length > 0 || draft.files.length > 0))
-        const supplemented = appendReportBugSupplement(content, draft?.text)
         try {
-            await openReportBugIssue(supplemented, environment)
+            const outcome = await openReportBugPreview({
+                interactions: config.interactions,
+                turnId: interactionTurnId(block),
+                interactionId: interactionId(block),
+                content,
+                environment,
+                existingTs: block.ts,
+            })
+            if (outcome === "cancelled") return formatResponse.reportBugCancelled()
+            if (outcome === "invalid") return formatResponse.toolError("The confirmed bug report draft could not be read.")
         } catch (error) {
             Logger.error(`An error occurred while attempting to report the bug: ${error}`)
+            return formatResponse.toolError("The GitHub issue form could not be opened.")
         }
-        return formatResponse.reportBugOpened(hasAttachments)
+        return formatResponse.reportBugOpened(false)
     }
 }

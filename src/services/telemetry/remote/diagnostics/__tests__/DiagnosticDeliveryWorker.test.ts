@@ -13,7 +13,7 @@ import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutb
 import type { TokenAcquisition } from "../../auth/DeviceTokenBroker"
 import type { WireResponse } from "../../contracts/classification"
 import { GATE_MARGIN_MS } from "../../contracts/pacing"
-import type { UsageDelivery } from "../../transport/DlineOtelHttpClient"
+import type { DiagnosticDelivery } from "../../transport/DlineOtelHttpClient"
 import { DlineOtelTransportError } from "../../transport/DlineOtelHttpClient"
 import { DiagnosticDeliveryWorker } from "../DiagnosticDeliveryWorker"
 import { type DiagnosticRecord, encodeDiagnosticLogs } from "../diagnosticRecord"
@@ -85,7 +85,7 @@ describe("DiagnosticDeliveryWorker (contract v2.1 §1.5-§1.7, §3.3)", () => {
                     },
             },
             transport: {
-                sendLogs: async (delivery: UsageDelivery) => {
+                sendLogs: async (delivery: DiagnosticDelivery) => {
                     const text = new TextDecoder().decode(delivery.body)
                     const body = JSON.parse(text)
                     const [resourceLogs] = body.resourceLogs
@@ -224,11 +224,12 @@ describe("DiagnosticDeliveryWorker (contract v2.1 §1.5-§1.7, §3.3)", () => {
         await worker().deliverOnce()
 
         const usage = new UsageOutboxRepository(resolveOtelStorageLayout(path.join(root, "data")), { clock: () => now })
-        const grant = await usage.claim("window-a")
+        await usage.activateAttempts(7)
+        const grant = await usage.claimAttempts("window-a")
 
         expect((await outbox().read()).pacing.wait_until).toBe(START + 60_000)
         expect(grant).toBeDefined()
-        expect((await usage.read())?.pacing.waitUntil ?? 0).toBe(0)
+        expect((await usage.readAttempts())?.pacing.waitUntil ?? 0).toBe(0)
     })
 
     it("on 413 resends the first half at once under a new id and returns the rest to the queue", async () => {

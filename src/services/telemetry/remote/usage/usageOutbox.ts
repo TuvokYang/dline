@@ -15,19 +15,13 @@ import {
     mayStartBatch,
     replayBudgetExhausted,
     replayDelayMs,
-    reserveInterval,
 } from "../contracts/pacing"
 import {
     buildUsageAttemptBody,
-    USAGE_BODY_LIMIT_BYTES,
-    USAGE_MAX_ACTIVE_SECONDS,
-    USAGE_SECOND_MS,
     type UsageAttemptBodyValidation,
     type UsageAttemptBodyWire,
-    type UsageBodyWire,
     type UsageClientWire,
     validateUsageAttemptBody,
-    validateUsageBody,
 } from "../contracts/usageBody"
 import {
     type AttemptBucket,
@@ -37,70 +31,6 @@ import {
     sealOpenAttemptBucket,
     sealOpenAttemptBucketIfDue,
 } from "./attemptBucket"
-import { buildUsageBody, mergeSeconds, secondStartOf, selectBatchSeconds, type UsageSecond } from "./usageBatch"
-import { type UsageTally, UsageTallyReductionError } from "./usageTally"
-
-/** One settled request or activation as it waits in a process shard. */
-export interface PendingUsageObservation {
-    readonly id: string
-    /** Local receipt time, epoch milliseconds; the sender assigns the UTC second. */
-    readonly receivedAt: number
-    /** Policy epoch the observation was admitted under; any other epoch is dropped unsent. */
-    readonly policyEpoch: number
-    readonly tally: UsageTally
-}
-
-/** A sealed shard that settled, as read by the sender. */
-export interface SettledUsageShard {
-    readonly name: string
-    readonly observations: readonly PendingUsageObservation[]
-}
-
-/** The batch the server may already hold. Its exact bytes live beside the outbox under `requestId`. */
-export interface UsageInflight {
-    readonly requestId: string
-    readonly bodySha256: string
-    /** The seconds inside the body, counted as lost when the batch is abandoned. */
-    readonly seconds: readonly UsageSecond[]
-    /** Active seconds lost before this body and reported by it. */
-    readonly droppedSeconds: number
-    /** Start of the replay window, moved later by every 429 wait so a wait never ages the batch. */
-    readonly createdAt: number
-    /** Replays after a timeout or a retryable failure; a 429 is not one. */
-    readonly attempts: number
-    readonly notBefore: number
-}
-
-/** Machine-wide usage delivery state; one sender at a time changes it under a fenced lease. */
-export interface UsageOutboxState {
-    /** Lowest policy epoch still legal in this uninterrupted allowed period. */
-    readonly policyEpoch: number
-    /** Server gate and 429 wait of the usage channel; they survive a restart and a consent change. */
-    readonly pacing: ChannelPacing
-    /** End of the newest second already placed in a body; later arrivals for older seconds move here. */
-    readonly sealedThrough: number
-    /** Active seconds lost before reaching a body, reported with the next one. */
-    readonly droppedSeconds: number
-    readonly seconds: readonly UsageSecond[]
-    /** Sealed shards already folded, so a crash before their removal does not count them twice. */
-    readonly foldedShards: readonly string[]
-    readonly inflight?: UsageInflight
-}
-
-export function emptyUsageOutbox(
-    policyEpoch: number,
-    carried: Pick<Partial<UsageOutboxState>, "pacing" | "foldedShards"> = {},
-): UsageOutboxState {
-    return {
-        policyEpoch,
-        pacing: carried.pacing ?? INITIAL_PACING,
-        sealedThrough: 0,
-        droppedSeconds: 0,
-        seconds: [],
-        foldedShards: carried.foldedShards ?? [],
-    }
-}
-
 export interface UsageAttemptInflight {
     readonly requestId: string
     readonly bodySha256: string
@@ -128,6 +58,10 @@ export interface UsageAttemptOutboxState {
     readonly observationRevisions: Readonly<Record<string, UsageAttemptObservationCheckpoint>>
     readonly inflight?: UsageAttemptInflight
 }
+
+export type UsageInflightResolution =
+    | Extract<DeliveryOutcome, { kind: "acknowledged" | "replay" | "wait" | "too_large" | "discard" }>
+    | { readonly kind: "body_lost" }
 
 /** A 7-day service wait plus the 24-hour unknown-outcome replay budget. */
 export const USAGE_ATTEMPT_BACKLOG_MAX_AGE_MS = MAX_WAIT_MS + MAX_REPLAY_AGE_MS
@@ -528,283 +462,6 @@ export function settleUsageAttemptInflight(
  * repository reset path and advances the floor; a stale lower revision cannot
  * reopen an older admission period.
  */
-export function alignUsagePolicyEpoch(state: UsageOutboxState, policyEpoch: number): UsageOutboxState {
-    if (!Number.isSafeInteger(policyEpoch) || policyEpoch < 0) throw new Error("Usage policy epoch is invalid")
-    // A missing document starts at epoch zero. Its continuity is unknown, so the first real policy decision
-    // establishes the floor without adopting observations admitted under an earlier epoch. Once established,
-    // allowed-to-allowed revisions preserve pending/inflight facts; revocation advances the floor through reset().
-    if (state.policyEpoch === 0 && policyEpoch > 0) return emptyUsageOutbox(policyEpoch, state)
-    return state
-}
-
-/**
- * Fold settled shards into pending seconds.
- *
- * `shards` must list every settled shard still on disk: a name folded earlier
- * and absent now was removed, so it is forgotten. An observation lands in the
- * second it was received, never earlier than a second already sent and never
- * later than the current one. At most 3600 pending seconds wait, one hour of
- * contiguous activity inside the contract's window; the oldest beyond that are
- * dropped and counted.
- */
-export interface UsageObservationRejection {
-    readonly shardName: string
-    readonly observation: PendingUsageObservation
-    readonly violations: readonly string[]
-}
-
-export interface UsageFoldOptions {
-    readonly client?: UsageClientWire
-    readonly currentPolicyEpoch?: number
-    readonly onRejected?: (rejection: UsageObservationRejection) => void
-}
-
-export function foldUsageShards(
-    state: UsageOutboxState,
-    shards: readonly SettledUsageShard[],
-    now: number,
-    options: UsageFoldOptions = {},
-): UsageOutboxState {
-    const folded = new Set(state.foldedShards)
-    const currentSecond = secondStartOf(now)
-    const policyCeiling = options.currentPolicyEpoch ?? state.policyEpoch
-    let seconds = state.seconds
-    for (const shard of shards) {
-        if (folded.has(shard.name)) continue
-        for (const observation of shard.observations) {
-            if (observation.policyEpoch < state.policyEpoch || observation.policyEpoch > policyCeiling) continue
-            const startedAt = Math.max(Math.min(secondStartOf(observation.receivedAt), currentSecond), state.sealedThrough)
-            try {
-                const candidate = mergeSeconds(seconds, [{ startedAt, tally: observation.tally }])
-                if (options.client) {
-                    const candidateSecond = candidate.find((second) => second.startedAt === startedAt)
-                    const prepared = candidateSecond ? prepareUsageBody([candidateSecond], options.client, 0) : undefined
-                    if (!prepared || prepared.violations.length > 0) {
-                        options.onRejected?.({
-                            shardName: shard.name,
-                            observation,
-                            violations: prepared?.violations ?? ["no_activity"],
-                        })
-                        continue
-                    }
-                }
-                seconds = candidate
-            } catch (error) {
-                options.onRejected?.({ shardName: shard.name, observation, violations: reductionViolations(error) })
-            }
-        }
-    }
-    const capped = capPendingSeconds(seconds)
-    return {
-        ...state,
-        seconds: capped.seconds,
-        droppedSeconds: checkedDroppedAdd(state.droppedSeconds, capped.dropped),
-        foldedShards: shards.map((shard) => shard.name),
-    }
-}
-
-export type UsageBatchDecision =
-    | { readonly kind: "none" }
-    | {
-          readonly kind: "batch"
-          readonly state: UsageOutboxState
-          readonly inflight: UsageInflight
-          readonly body: UsageBodyWire
-          readonly bytes: Uint8Array
-      }
-    /** The batch broke a service rule; it is dropped and counted rather than sent and lost to a 422. */
-    | { readonly kind: "rejected"; readonly state: UsageOutboxState; readonly violations: readonly string[] }
-
-export interface UsageBatchInput {
-    readonly now: number
-    readonly requestId: string
-    readonly client: UsageClientWire
-    /** How long after a second ends its observations may still be arriving from other shards. */
-    readonly settleMs: number
-}
-
-/**
- * Take the oldest complete seconds, up to a 60-minute span, into a new batch
- * once the gate opened and no wait is running.
- *
- * The gate moves a default interval ahead as soon as the batch exists, so a
- * batch that is dropped without an acknowledgement still leaves the cadence in
- * place; the acknowledgement then sets the gate the service named.
- */
-export function takeUsageBatch(state: UsageOutboxState, input: UsageBatchInput): UsageBatchDecision {
-    const { now } = input
-    if (state.inflight || !mayStartBatch(state.pacing, now)) return { kind: "none" }
-    const complete = state.seconds.filter((second) => second.startedAt + USAGE_SECOND_MS + input.settleMs <= now)
-    const eligible = selectBatchSeconds(complete)
-    if (eligible.length === 0) return { kind: "none" }
-
-    const reportedDropped = Math.min(state.droppedSeconds, USAGE_MAX_ACTIVE_SECONDS)
-    let selected: UsageSecond[] = []
-    let prepared: PreparedUsageBody | undefined
-    for (const second of eligible) {
-        const candidate = [...selected, second]
-        const next = prepareUsageBody(candidate, input.client, reportedDropped)
-        if (next.violations.length > 0) {
-            if (selected.length > 0) break
-            const remaining = state.seconds.filter((entry) => entry !== second)
-            const sealedThrough = Math.max(state.sealedThrough, second.startedAt + USAGE_SECOND_MS)
-            return {
-                kind: "rejected",
-                violations: next.violations,
-                state: {
-                    ...state,
-                    seconds: remaining,
-                    sealedThrough,
-                    droppedSeconds: checkedDroppedAdd(state.droppedSeconds, 1),
-                },
-            }
-        }
-        selected = candidate
-        prepared = next
-    }
-    if (!prepared || selected.length === 0) return { kind: "none" }
-
-    const taken = new Set(selected.map((second) => second.startedAt))
-    const remaining = state.seconds.filter((second) => !taken.has(second.startedAt))
-    const sealedThrough = Math.max(state.sealedThrough, (selected.at(-1) as UsageSecond).startedAt + USAGE_SECOND_MS)
-    const inflight: UsageInflight = {
-        requestId: input.requestId,
-        bodySha256: sha256Hex(prepared.bytes),
-        seconds: selected,
-        droppedSeconds: reportedDropped,
-        createdAt: now,
-        attempts: 0,
-        notBefore: now,
-    }
-    return {
-        kind: "batch",
-        inflight,
-        body: prepared.body,
-        bytes: prepared.bytes,
-        state: {
-            ...state,
-            seconds: remaining,
-            sealedThrough,
-            droppedSeconds: state.droppedSeconds - reportedDropped,
-            inflight,
-            pacing: reserveInterval(state.pacing, "usage", now),
-        },
-    }
-}
-
-interface PreparedUsageBody {
-    readonly body: UsageBodyWire
-    readonly bytes: Uint8Array
-    readonly violations: readonly string[]
-}
-
-function prepareUsageBody(seconds: readonly UsageSecond[], client: UsageClientWire, droppedSeconds: number): PreparedUsageBody {
-    let body: UsageBodyWire | undefined
-    try {
-        body = buildUsageBody(seconds, client, droppedSeconds)
-    } catch (error) {
-        return {
-            body: emptyRejectedBody(client),
-            bytes: new Uint8Array(),
-            violations: reductionViolations(error),
-        }
-    }
-    if (!body) return { body: emptyRejectedBody(client), bytes: new Uint8Array(), violations: ["no_activity"] }
-    const bytes = new TextEncoder().encode(JSON.stringify(body))
-    const violations = validateUsageBody(body)
-    if (bytes.byteLength > USAGE_BODY_LIMIT_BYTES) violations.push("body_size")
-    return { body, bytes, violations: [...new Set(violations)] }
-}
-
-function emptyRejectedBody(client: UsageClientWire): UsageBodyWire {
-    return {
-        schema_version: 3,
-        client,
-        window: { started_at: 0, ended_at: USAGE_SECOND_MS, active_seconds: 0, dropped_seconds: 0 },
-        sessions_started: 0,
-        facts: [],
-    }
-}
-
-function reductionViolations(error: unknown): readonly string[] {
-    if (error instanceof UsageTallyReductionError) return [`${error.code}:${error.path}`]
-    return ["reduction_failed"]
-}
-
-function checkedDroppedAdd(left: number, right: number): number {
-    const sum = left + right
-    if (!Number.isSafeInteger(sum) || sum < 0) throw new UsageTallyReductionError("integer_overflow", "dropped_seconds")
-    return sum
-}
-
-/** The inflight, when it is due for another attempt and no wait holds the channel. */
-export function dueUsageReplay(state: UsageOutboxState, now: number): UsageInflight | undefined {
-    const inflight = state.inflight
-    if (!inflight || now < inflight.notBefore || isWaiting(state.pacing, now)) return undefined
-    return inflight
-}
-
-export type UsageInflightResolution =
-    | Extract<DeliveryOutcome, { kind: "acknowledged" | "replay" | "wait" | "too_large" | "discard" }>
-    /** The exact bytes are gone or corrupt; re-serialising could count twice, so the batch is dropped. */
-    | { readonly kind: "body_lost" }
-
-/** Apply what the service said about the inflight. A different request ID means another sender moved on. */
-export function settleUsageInflight(
-    state: UsageOutboxState,
-    requestId: string,
-    resolution: UsageInflightResolution,
-    now: number,
-    random: () => number = Math.random,
-): UsageOutboxState {
-    const inflight = state.inflight
-    if (!inflight || inflight.requestId !== requestId) return state
-    const { inflight: _settled, ...rest } = state
-    switch (resolution.kind) {
-        case "acknowledged":
-            return { ...rest, pacing: afterAcknowledged(state.pacing, "usage", resolution.nextEligibleAt, now) }
-        case "wait": {
-            // An earlier timed-out attempt may already be stored, so the batch keeps its request ID and bytes and
-            // is replayed first once the wait ends. The wait is the service's, not a failed attempt: it neither
-            // consumes a replay nor ages the batch towards its discard limit.
-            const pacing = afterRateLimited(state.pacing, resolution.retryAfterMs, now, random)
-            const waited = Math.max(0, pacing.waitUntil - now)
-            return {
-                ...state,
-                inflight: { ...inflight, createdAt: inflight.createdAt + waited, notBefore: pacing.waitUntil },
-                pacing,
-            }
-        }
-        case "replay": {
-            const attempts = inflight.attempts + 1
-            if (replayBudgetExhausted(attempts, inflight.createdAt, now)) return abandon(rest, inflight)
-            const notBefore = now + replayDelayMs(attempts, resolution.retryAfterMs)
-            return { ...state, inflight: { ...inflight, attempts, notBefore } }
-        }
-        case "too_large":
-        case "discard":
-        case "body_lost":
-            return abandon(rest, inflight)
-    }
-}
-
-function abandon(state: Omit<UsageOutboxState, "inflight">, inflight: UsageInflight): UsageOutboxState {
-    return {
-        ...state,
-        droppedSeconds: checkedDroppedAdd(
-            checkedDroppedAdd(state.droppedSeconds, inflight.droppedSeconds),
-            inflight.seconds.length,
-        ),
-    }
-}
-
-/** Keep the newest 3600 pending seconds in order; older ones are dropped and counted. */
-function capPendingSeconds(seconds: readonly UsageSecond[]): { seconds: UsageSecond[]; dropped: number } {
-    const sorted = [...seconds].sort((left, right) => left.startedAt - right.startedAt)
-    const kept = sorted.slice(-USAGE_MAX_ACTIVE_SECONDS)
-    return { seconds: kept, dropped: sorted.length - kept.length }
-}
-
 export function sha256Hex(bytes: Uint8Array): string {
     return createHash("sha256").update(bytes).digest("hex")
 }

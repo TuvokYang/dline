@@ -15,6 +15,7 @@ import { type ApprovalPolicyPort, PolicyCommandExecutor } from "../executors/pol
 import {
     ProviderCommandExecutor,
     type ProviderExecutionPort,
+    type ProviderFailureReportPort,
     type ProviderRequestLifecyclePort,
     type ProviderRoundCheckpointPort,
     type ProviderTextPresentationPort,
@@ -36,6 +37,8 @@ export interface ProviderPorts {
     readonly checkpoint?: ProviderRoundCheckpointPort
     /** Starts request-adjacent maintenance only after provider transport has begun. */
     readonly lifecycle?: ProviderRequestLifecyclePort
+    /** Opens the canonical ReportBug preview after a terminal provider failure. */
+    readonly failureReport?: ProviderFailureReportPort
 }
 
 /** Everything the dialog domain needs: how a question is asked, and who awaits it. */
@@ -117,6 +120,7 @@ export function createTaskExecutorAssembly(options: TaskExecutorAssemblyOptions)
         options.execution.provider.report,
         options.execution.provider.checkpoint,
         options.execution.provider.lifecycle,
+        options.execution.provider.failureReport,
     )
     const tool = new ToolCommandExecutor(options.execution.tool, events)
     const dialog = new DialogCommandExecutor(

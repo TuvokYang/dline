@@ -8,7 +8,7 @@ import type {
 import { classifyExchangeResponse, type StopScope, type WireResponse } from "../contracts/classification"
 import type { AtomicDeviceGrant } from "../contracts/deviceGrant"
 import { buildDeviceExchangeRequest, type DeviceExchangeRequest, type DeviceGrant, type RemoteProfile } from "../contracts/wire"
-import type { DeviceGrantClient } from "./DeviceGrantPort"
+import { type DeviceGrantClient, DeviceGrantRefusalError } from "./DeviceGrantPort"
 
 /** How long one window may hold the refresh before another may take over; bounds a crashed or hung exchange. */
 export const REFRESH_CLAIM_TTL_MS = 30_000
@@ -98,10 +98,27 @@ export class DeviceTokenBroker {
 
             const claim = await this.claimRefresh(profile, options.rejectedAccessToken, true)
             if (claim.kind === "settled") return claim.acquisition
-            let grant
+            let grant: AtomicDeviceGrant | null
             try {
                 grant = await this.options.grantClient.ensureActiveGrant(claim.document.deviceSecret, options.signal)
             } catch (error) {
+                if (error instanceof DeviceGrantRefusalError) {
+                    if (error.refusal.kind === "reset_credential") {
+                        await this.mutateSameDevice(claim.document.deviceSecret, (current) => ({
+                            ...current,
+                            tokens: {},
+                            grants: {},
+                            refreshClaim: undefined,
+                        }))
+                        return { status: "stopped", scope: "all", code: error.refusal.code }
+                    }
+                    await this.releaseClaim(claim.document.deviceSecret)
+                    return {
+                        status: "stopped",
+                        scope: error.refusal.scope,
+                        code: error.refusal.code,
+                    }
+                }
                 await this.releaseClaim(claim.document.deviceSecret)
                 throw error
             }
@@ -113,6 +130,9 @@ export class DeviceTokenBroker {
             if (cached) {
                 await this.releaseClaim(claim.document.deviceSecret)
                 return { status: "ready", token: cached }
+            }
+            if (this.options.grantClient.allowsLegacyFallback === false) {
+                return this.backOff(claim.document.deviceSecret, undefined)
             }
             return this.exchange(profile, claim.document, options)
         }
@@ -202,6 +222,7 @@ export class DeviceTokenBroker {
                 await this.mutateSameDevice(claimed.deviceSecret, (current) => ({
                     ...current,
                     tokens: {},
+                    grants: {},
                     refreshClaim: undefined,
                 }))
                 return { status: "stopped", scope: "all", code: outcome.code }

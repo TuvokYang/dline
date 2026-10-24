@@ -129,4 +129,32 @@ describe("ProductionToolHandlerRuntime approval facts", () => {
 
         expect(plan.approval.kind).toBe("manual")
     })
+
+    it("leaves confirmation to report_bug without changing approval for other tools", () => {
+        const toolRuntime = runtime()
+        vi.spyOn(toolRuntime.coordinator, "prepareAdmission").mockReturnValue({
+            outcome: "admitted",
+            decision: { kind: "manual", scope: "explicit" },
+            lanes: ["interaction"],
+            presentation: { ask: "tool", body: "confirm", notify: false },
+            confirm: vi.fn(),
+        } as never)
+        const reportBug = {
+            type: "tool_use",
+            name: DlineDefaultTool.REPORT_BUG,
+            dline_tid: "report-bug-1",
+            params: {
+                title: "Provider failed",
+                what_happened: "Request failed",
+                steps_to_reproduce: "Send request",
+                api_request_output: "safe output",
+                additional_context: "context",
+            },
+            partial: false,
+        } as unknown as ToolUse
+
+        expect(toolRuntime.coordinator.ownsInteractionConfirmation(DlineDefaultTool.REPORT_BUG)).toBe(true)
+        expect(planProductionTool(toolRuntime.coordinator, reportBug, snapshot({})).approval.kind).toBe("none")
+        expect(planProductionTool(toolRuntime.coordinator, commandBlock("true"), snapshot({})).approval.kind).toBe("manual")
+    })
 })

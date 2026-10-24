@@ -1,11 +1,7 @@
 import { ApiProfile } from "@shared/proto/dline/profile"
 import { describe, expect, it } from "vitest"
 import { isCustomModel } from "@/core/api/model-origin"
-import type { UsageBodyWire } from "@/services/telemetry/remote/contracts/usageBody"
-import { buildUsageBody } from "@/services/telemetry/remote/usage/usageBatch"
-import { projectUsageSettlement } from "@/services/telemetry/remote/usage/usageTally"
 import { servedModelOf } from "../UsageServedModel"
-import type { UsageSettlement } from "../UsageSettlement"
 
 /** A handler as the factory builds it: the custom-model answer comes from the Profile it was built for. */
 function handlerFor(profile: ApiProfile) {
@@ -14,30 +10,6 @@ function handlerFor(profile: ApiProfile) {
         getProviderId: () => profile.provider,
         isCustomModel: () => isCustomModel(profile),
     }
-}
-
-/** The body the service would receive for one request served by this Profile. */
-function sentBody(profile: ApiProfile): UsageBodyWire {
-    const settlement: UsageSettlement = {
-        observationId: "o",
-        purpose: "task",
-        outcome: "completed",
-        inputTokens: 10,
-        outputTokens: 5,
-        cacheReadTokens: 3,
-        cacheWriteTokens: 0,
-        durationMs: 700,
-        streamTiming: { ttftMs: 200, generationMs: 500 },
-        servedBy: servedModelOf(handlerFor(profile)),
-    }
-    const second = { startedAt: 1_900_000_020_000, tally: projectUsageSettlement(settlement) }
-    const body = buildUsageBody([second], { version: "0.11.1" }, 0)
-    if (!body) throw new Error("expected a usage body")
-    return body
-}
-
-function reportedModels(body: UsageBodyWire) {
-    return body.facts.map(({ provider, model, custom }) => ({ provider, model, ...(custom === undefined ? {} : { custom }) }))
 }
 
 describe("servedModelOf", () => {
@@ -64,14 +36,14 @@ describe("servedModelOf", () => {
                 modelId: "my-namespace/my-custom-model",
                 bedrock: { awsBedrockCustomSelected: true },
             }),
-            "my-namespace_my-custom-model",
+            "my-namespace/my-custom-model",
         ],
     ])("reports %s under its own name, marked custom", (_case, profile, reported) => {
-        expect(reportedModels(sentBody(profile))).toEqual([{ provider: profile.provider, model: reported, custom: true }])
+        expect(servedModelOf(handlerFor(profile))).toEqual({ provider: profile.provider, model: reported, custom: true })
     })
 
     it.each<[string, ApiProfile, string]>([
-        ["a local Ollama model", ApiProfile.create({ provider: "ollama", modelId: "qwen3:8b" }), "qwen3_8b"],
+        ["a local Ollama model", ApiProfile.create({ provider: "ollama", modelId: "qwen3:8b" }), "qwen3:8b"],
         ["an LM Studio model", ApiProfile.create({ provider: "lmstudio", modelId: "acme-private-7b" }), "acme-private-7b"],
         [
             "a model picked from the list behind a custom base URL",
@@ -98,7 +70,7 @@ describe("servedModelOf", () => {
             "anthropic.claude-sonnet-4-6",
         ],
     ])("reports %s by its ID when the custom switch is off", (_case, profile, reported) => {
-        expect(reportedModels(sentBody(profile))).toEqual([{ provider: profile.provider, model: reported, custom: false }])
+        expect(servedModelOf(handlerFor(profile))).toEqual({ provider: profile.provider, model: reported })
     })
 
     it("counts a handler that cannot say under its model ID", () => {

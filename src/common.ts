@@ -22,6 +22,7 @@ import { loopbackFeaturesEndpointOverride } from "./services/feature-flags/remot
 import { rolloutChannelOpen } from "./services/feature-flags/remote/remoteFeatureFlagsRuntime"
 import { getDistinctId } from "./services/logging/distinctId"
 import { DlineRuntimeFileManager } from "./services/runtime-files"
+import { configureSupportTelemetryService } from "./services/support/SupportTelemetryService"
 import { disposeTelemetryService, telemetryService } from "./services/telemetry"
 import { isTelemetryDevelopmentMode } from "./services/telemetry/development-mode"
 import { recordPerfPhase } from "./services/telemetry/instrumentation/duration-recorder"
@@ -217,6 +218,13 @@ export async function initialize(storageContext: StorageContext): Promise<Webvie
             onError: (error) => Logger.error("[Dline] Failed to start runtime telemetry:", error),
         },
     )
+    configureSupportTelemetryService({
+        dataDir: storageContext.dataDir,
+        clientVersion: ExtensionRegistryInfo.version,
+        platform: process.platform,
+        supportEndpoint: process.env.DLINE_SUPPORT_ENDPOINT,
+        otelEndpoint: loopbackEndpointOverride(process.env.DLINE_OTEL_ENDPOINT),
+    })
     // Remote usage reporting is a machine-wide side path; it stays off until its policy allows it.
     const remoteUsageStarted = startRemoteUsageReporting(storageContext.dataDir).catch((error) =>
         Logger.warn("[Dline] Failed to start remote usage reporting:", error),

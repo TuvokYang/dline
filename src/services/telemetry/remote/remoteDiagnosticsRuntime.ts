@@ -16,6 +16,7 @@ import {
     encodeDiagnosticLogs,
     toDiagnosticRecord,
 } from "./diagnostics/diagnosticRecord"
+import { IssueDiagnosticsOverlay } from "./diagnostics/IssueDiagnosticsOverlay"
 import { DlineOtelHttpClient } from "./transport/DlineOtelHttpClient"
 
 /** Records gathered in memory are written to the shared outbox this often. */
@@ -50,6 +51,7 @@ interface RunningDiagnostics {
     readonly outbox: DiagnosticOutboxRepository
     readonly credentials: DeviceCredentialRepository
     readonly worker: DiagnosticDeliveryWorker
+    readonly overlay: IssueDiagnosticsOverlay
     readonly allowed: () => boolean
     readonly timers: ReturnType<typeof setInterval>[]
     readonly abort: AbortController
@@ -96,10 +98,12 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
         ownerId: owner,
     })
     const worker = new DiagnosticDeliveryWorker({ outbox, tokens, transport, owner, log: options.log })
+    const overlay = new IssueDiagnosticsOverlay({ layout, resource, transport, allowed: options.allowed })
     const state: RunningDiagnostics = {
         outbox,
         credentials,
         worker,
+        overlay,
         allowed: options.allowed,
         timers: [],
         abort: new AbortController(),
@@ -117,7 +121,10 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
             name: "dline-remote-diagnostics",
             isEnabled: options.allowed,
             getSettings: options.hostSettings,
-            forceFlush: () => flush(state),
+            forceFlush: async () => {
+                await flush(state)
+                await state.overlay.flush()
+            },
             dispose: async () => undefined,
         },
         sink: { kind: "remote", origin: "user", channels: ["error", "runtime"] },
@@ -125,6 +132,7 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
             {
                 kind: "journal",
                 append: (signal) => {
+                    state.overlay.append(signal)
                     const record = toDiagnosticRecord(signal, Date.now())
                     if (!record || !state.allowed()) return
                     // A storm of one failure stays one record; the outbox applies the device limits.
@@ -134,6 +142,7 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
                     state.bufferDropped += merged.refused
                 },
             },
+            { kind: "trace", startSpan: state.overlay.startSpan },
         ],
     })
     const every = (intervalMs: number, work: () => Promise<void>) => {
@@ -143,8 +152,15 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
         timer.unref?.()
         state.timers.push(timer)
     }
-    every(DIAGNOSTICS_FLUSH_INTERVAL_MS, () => flush(state))
-    every(DIAGNOSTICS_DELIVERY_INTERVAL_MS, () => deliver(state))
+    every(DIAGNOSTICS_FLUSH_INTERVAL_MS, async () => {
+        await flush(state)
+        await state.overlay.flush()
+    })
+    every(DIAGNOSTICS_DELIVERY_INTERVAL_MS, async () => {
+        await deliver(state)
+        await state.overlay.deliver()
+    })
+    void state.overlay.refresh().catch((error: unknown) => options.log?.(`[RemoteDiagnostics] ${describe(error)}`))
 }
 
 /**
@@ -153,7 +169,21 @@ export function startRemoteDiagnostics(options: RemoteDiagnosticsRuntimeOptions)
  * production token; the usage token is left alone.
  */
 export async function refreshRemoteDiagnostics(): Promise<void> {
-    if (running) await reconcileConsent(running)
+    if (!running) return
+    await reconcileConsent(running)
+    await running.overlay.refresh()
+}
+
+/** Re-read the owner-only approved grant after status/exchange publication. */
+export async function refreshIssueDiagnosticsOverlay(): Promise<void> {
+    await running?.overlay.refresh()
+}
+
+/** Local-first terminal boundary used before issue token removal or remote revoke. */
+export async function purgeIssueDiagnosticsOverlay(
+    reason: "revoked" | "expired" | "revision_changed" | "deleted",
+): Promise<void> {
+    await running?.overlay.deactivate(reason)
 }
 
 /** Stop the timers and write what was gathered; bounded, safe to call twice. */
@@ -163,6 +193,7 @@ export async function stopRemoteDiagnostics(): Promise<void> {
     running = undefined
     for (const timer of state.timers) clearInterval(timer)
     state.abort.abort()
+    await state.overlay.stop()
     await state.retiring?.catch(() => undefined)
     await flush(state).catch(() => undefined)
 }

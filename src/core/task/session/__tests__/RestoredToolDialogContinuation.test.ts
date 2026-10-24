@@ -1,4 +1,5 @@
 import type { SemanticInputDocument } from "@shared/input-semantics/document"
+import { createReportBugDraft, reportBugDraftSelection } from "@shared/report-bug"
 import { describe, expect, it, vi } from "vitest"
 import { createInitialTaskState, type TaskState } from "../../kernel"
 import { NEW_TASK_FEEDBACK_CONTINUATION_MARKER } from "../../new-task/new-task-continuation"
@@ -39,6 +40,7 @@ function harness(options: {
     readonly presentedCompletion?: boolean
     readonly input?: Readonly<Record<string, unknown>>
     readonly publishPostCommit?: RestoredToolDialogPorts["publishPostCommit"]
+    readonly reportBug?: RestoredToolDialogPorts["reportBug"]
 }) {
     const interruption: ToolResultEnvelope = { kind: "tool_result", blockId: TID, content: "interrupted", failed: true }
     const stored = new Map<string, unknown>([
@@ -118,6 +120,7 @@ function harness(options: {
             nextPresentationId: () => 100,
             publishRow,
             ...(options.publishPostCommit ? { publishPostCommit: options.publishPostCommit } : {}),
+            ...(options.reportBug ? { reportBug: options.reportBug } : {}),
         },
         resumption,
         fallback,
@@ -127,6 +130,44 @@ function harness(options: {
 }
 
 describe("RestoredToolDialogContinuation", () => {
+    it("runs a restored ReportBug effect only before its first durable result", async () => {
+        const reportBug = vi.fn(async () => true)
+        const h = harness({
+            toolName: "report_bug",
+            reportBug,
+            input: {
+                title: "Provider failed",
+                what_happened: "Request failed",
+                steps_to_reproduce: "Send request",
+                api_request_output: "safe output",
+                additional_context: "context",
+            },
+        })
+        const draft = createReportBugDraft(
+            {
+                title: "Provider failed",
+                whatHappened: "Request failed",
+                stepsToReproduce: "Send request",
+                apiRequestOutput: "safe output",
+                additionalContext: "context",
+            },
+            { providerAndModel: "test", operatingSystem: "test", systemInfo: "test", dlineVersion: "1.2.3" },
+            false,
+        )
+        const resolution = {
+            interactionId: TID,
+            kind: "report_bug",
+            outcome: { actionId: "approve" as const, selection: { values: reportBugDraftSelection(draft) } },
+        }
+
+        await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+        await expect(h.continuation.continue(resolution)).resolves.toBe("continued")
+
+        expect(reportBug).toHaveBeenCalledTimes(1)
+        expect(h.journal.append).toHaveBeenCalledTimes(1)
+        expect(h.resumption.submit).toHaveBeenCalledTimes(2)
+    })
+
     it("records a restored follow-up answer as the tool's result and resumes once", async () => {
         const question = { question: "Which one?", options: ["OPTION_A", "OPTION_B"] }
         const h = harness({ toolName: "ask_followup_question", askText: JSON.stringify(question) })

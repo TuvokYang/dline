@@ -1,71 +1,116 @@
 import { StringRequest } from "@shared/proto/dline/common"
+import { createReportBugDraft, reportBugDraftSelection } from "@shared/report-bug"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { reportBug } from "./reportBug"
 
+const environment = {
+    providerAndModel: "unavailable / unavailable",
+    operatingSystem: "test",
+    systemInfo: "test",
+    dlineVersion: "test",
+}
 const reporting = vi.hoisted(() => ({
-    collect: vi.fn(async () => ({
-        providerAndModel: "unavailable / unavailable",
-        operatingSystem: "test",
-        systemInfo: "test",
-        dlineVersion: "test",
-    })),
+    collect: vi.fn(async () => environment),
     open: vi.fn(async () => undefined),
     recent: vi.fn((error: string | undefined) => error && `safe:${error}`),
 }))
+const support = vi.hoisted(() => ({ create: vi.fn(async () => undefined) }))
 
-vi.mock("@core/reporting/ReportBugIssue", () => ({
-    collectReportBugEnvironment: reporting.collect,
-    openReportBugIssue: reporting.open,
-    recentReportBugError: reporting.recent,
+vi.mock("@core/reporting/ReportBugIssue", async () => {
+    const actual = await vi.importActual<typeof import("@core/reporting/ReportBugIssue")>("@core/reporting/ReportBugIssue")
+    return {
+        ...actual,
+        collectReportBugEnvironment: reporting.collect,
+        openReportBugIssue: reporting.open,
+        recentReportBugError: reporting.recent,
+    }
+})
+vi.mock("@/services/support/SupportTelemetryService", () => ({
+    getSupportTelemetryService: () => ({ createAuthorizationAndOpenIssue: support.create }),
 }))
+
+function controller(error: string, consent = false) {
+    const draft = createReportBugDraft(
+        {
+            title: "Edited local title",
+            whatHappened: "Edited local details",
+            stepsToReproduce: "Edited steps",
+            apiRequestOutput: `safe:${error}`,
+            additionalContext: "Edited local context",
+        },
+        environment,
+        consent,
+    )
+    const open = vi.fn(async () => ({ actionId: "approve", selection: { values: reportBugDraftSelection(draft) } }))
+    return {
+        open,
+        value: {
+            stateManager: { getGlobalSettingsKey: () => "act", getApiConfiguration: () => ({}) },
+            task: {
+                state: () => ({ flow: { error } }),
+                owners: { interactions: { open } },
+            },
+        },
+    }
+}
 
 describe("reportBug local fallback", () => {
     beforeEach(() => vi.clearAllMocks())
 
-    it("opens an editable local issue draft with command details and a recent kernel error", async () => {
-        const controller = {
-            stateManager: {
-                getGlobalSettingsKey: () => "act",
-                getApiConfiguration: () => ({}),
-            },
-            task: { state: () => ({ flow: { error: "profile parse failed" } }) },
-        }
+    it("opens the durable preview before an ordinary local issue", async () => {
+        const test = controller("profile parse failed")
 
-        await reportBug(controller as never, StringRequest.create({ value: "/cmd:reportbug cannot select profile" }))
+        await reportBug(test.value as never, StringRequest.create({ value: "/cmd:reportbug cannot select profile" }))
 
         expect(reporting.recent).toHaveBeenCalledWith("profile parse failed")
-        expect(reporting.open).toHaveBeenCalledWith(
-            expect.objectContaining({
-                whatHappened: "cannot select profile",
-                apiRequestOutput: "safe:profile parse failed",
-                additionalContext:
-                    "Opened by Dline's local report fallback because no usable Provider request was available. Images and files selected in Dline are not uploaded; add them manually in this GitHub form.",
-            }),
-            expect.any(Object),
+        expect(test.open).toHaveBeenCalledWith(
+            expect.objectContaining({ kind: "report_bug", placement: "interrupt", presentation: expect.any(String) }),
         )
+        expect(reporting.open).toHaveBeenCalledWith(
+            expect.objectContaining({ title: "Edited local title", whatHappened: "Edited local details" }),
+            environment,
+        )
+        expect(support.create).not.toHaveBeenCalled()
     })
 
-    it("prefers the current provider failure presentation over the generic executor summary", async () => {
-        const presentation = '{"message":"401 rejected key","status":401,"code":"invalid_api_key"}'
-        const controller = {
-            stateManager: {
-                getGlobalSettingsKey: () => "act",
-                getApiConfiguration: () => ({}),
+    it("routes local consent through support without opening the ordinary issue path", async () => {
+        const test = controller("provider execution failed", true)
+
+        await reportBug(test.value as never, StringRequest.create({ value: "/reportbug provider failed" }))
+
+        expect(support.create).toHaveBeenCalledWith(expect.objectContaining({ temporaryTelemetryConsent: true }))
+        expect(reporting.open).not.toHaveBeenCalled()
+    })
+
+    it("creates an empty durable task owner before opening a no-profile preview", async () => {
+        const draft = createReportBugDraft(
+            {
+                title: "Edited no-profile title",
+                whatHappened: "No profile was available",
+                stepsToReproduce: "Open Dline and submit /reportbug",
+                apiRequestOutput: "No recent task error was available.",
+                additionalContext: "Edited before confirmation",
             },
-            task: {
-                state: () => ({
-                    flow: { error: "provider execution failed (Error)" },
-                    dialog: { primary: { kind: "profile_failure", presentationRef: presentation } },
-                }),
-            },
+            environment,
+            false,
+        )
+        const open = vi.fn(async () => ({ actionId: "approve", selection: { values: reportBugDraftSelection(draft) } }))
+        const value = {
+            stateManager: { getGlobalSettingsKey: () => "act", getApiConfiguration: () => ({}) },
+            task: undefined as unknown,
+            initTask: vi.fn(async function (this: { task: unknown }) {
+                this.task = {
+                    state: () => ({ flow: {} }),
+                    owners: { interactions: { open } },
+                }
+                return "report-bug-task"
+            }),
         }
 
-        await reportBug(controller as never, StringRequest.create({ value: "/cmd:reportbug credentials failed" }))
+        await reportBug(value as never, StringRequest.create({ value: "/reportbug no profile" }))
 
-        expect(reporting.recent).toHaveBeenCalledWith(presentation)
-        expect(reporting.open).toHaveBeenCalledWith(
-            expect.objectContaining({ apiRequestOutput: `safe:${presentation}` }),
-            expect.any(Object),
-        )
+        expect(value.initTask).toHaveBeenCalledWith()
+        expect(open).toHaveBeenCalledWith(expect.objectContaining({ kind: "report_bug", placement: "interrupt" }))
+        expect(reporting.open).toHaveBeenCalledWith(expect.objectContaining({ title: "Edited no-profile title" }), environment)
     })
 })
