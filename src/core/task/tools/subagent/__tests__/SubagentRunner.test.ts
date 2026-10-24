@@ -103,7 +103,6 @@ type TaskConfigOptions = {
     autoCondenseMaxReserveTokens?: number
     autoCondenseMaxContextTokens?: number
     webToolsEnabled?: boolean
-    providerRequestRounds?: TaskConfig["providerRequestRounds"]
     contextWindow?: number
     remoteSkillsToggles?: Record<string, boolean>
     localSkillsToggles?: Record<string, boolean>
@@ -140,7 +139,6 @@ function createTaskConfig(nativeToolCallEnabled: boolean, options: TaskConfigOpt
         enableParallelToolCalling: false,
         isSubagentExecution: false,
         webToolsEnabled: options.webToolsEnabled,
-        providerRequestRounds: options.providerRequestRounds,
         context: {},
         taskState: new DefaultToolHandlerState(),
         messageState: {},
@@ -646,7 +644,14 @@ describe("SubagentRunner", () => {
         )
 
         assert.equal(result.status, "completed", result.error)
-        assert.deepEqual(createMessage.mock.calls[0][3], { serverTools: [], retryOwner: "subagent" })
+        assert.deepEqual(createMessage.mock.calls[0][3], {
+            serverTools: [],
+            taskNamespace: "task-1",
+            retryOwner: "subagent",
+            telemetryRole: "subagent",
+            telemetryRequestId: "subagent:1",
+            telemetryAttempt: 0,
+        })
     })
 
     it("uses the request-frozen Web Tools switch when the live setting changes", async () => {
@@ -679,7 +684,11 @@ describe("SubagentRunner", () => {
         assert.equal(result.status, "completed", result.error)
         assert.deepEqual(createMessage.mock.calls[0][3], {
             serverTools: [ServerTool.WEB_SEARCH],
+            taskNamespace: "task-1",
             retryOwner: "subagent",
+            telemetryRole: "subagent",
+            telemetryRequestId: "subagent:1",
+            telemetryAttempt: 0,
         })
     })
 
@@ -728,7 +737,11 @@ describe("SubagentRunner", () => {
         assert.equal(result.status, "completed", result.error)
         assert.deepEqual(createMessage.mock.calls[0][3], {
             serverTools: [ServerTool.WEB_SEARCH],
+            taskNamespace: "task-1",
             retryOwner: "subagent",
+            telemetryRole: "subagent",
+            telemetryRequestId: "subagent:1",
+            telemetryAttempt: 0,
         })
         const hostedEvents = progress.mock.calls
             .map(([update]) => update.event)
@@ -1059,7 +1072,14 @@ describe("SubagentRunner", () => {
         }).run("Use only the allowed web tool", () => {})
 
         assert.equal(result.status, "completed", result.error)
-        assert.deepEqual(createMessage.mock.calls[0][3], { serverTools, retryOwner: "subagent" })
+        assert.deepEqual(createMessage.mock.calls[0][3], {
+            serverTools,
+            taskNamespace: "task-1",
+            retryOwner: "subagent",
+            telemetryRole: "subagent",
+            telemetryRequestId: "subagent:1",
+            telemetryAttempt: 0,
+        })
     })
 
     it("keeps hosted web tools when the web ceiling reserves local tools for manual approval", async () => {
@@ -1099,7 +1119,11 @@ describe("SubagentRunner", () => {
         assert.equal(result.status, "completed", result.error)
         assert.deepEqual(createMessage.mock.calls[0][3], {
             serverTools: [ServerTool.WEB_SEARCH, ServerTool.WEB_FETCH],
+            taskNamespace: "task-1",
             retryOwner: "subagent",
+            telemetryRole: "subagent",
+            telemetryRequestId: "subagent:1",
+            telemetryAttempt: 0,
         })
     })
 
@@ -2782,7 +2806,7 @@ describe("SubagentRunner", () => {
         assert.equal(createMessage.mock.calls.length, 2)
     })
 
-    it("observes initial stream retries as attempts of one logical request and attaches final exact usage", async () => {
+    it("keeps initial stream retries under one semantic telemetry request", async () => {
         const createMessage = vi.fn()
         createMessage.mockImplementationOnce(async function* () {
             yield* []
@@ -2802,21 +2826,6 @@ describe("SubagentRunner", () => {
                 },
             }
         })
-        const attempts: number[] = []
-        const exactUsages: unknown[] = []
-        const completeProviderOnly = vi.fn()
-        const completeTools = vi.fn()
-        const completeTurnEndAwaitingUser = vi.fn()
-        const admit = vi.fn(() => ({
-            bindAttempt: <T>(stream: AsyncIterable<T>, taskAttempt: number) => {
-                attempts.push(taskAttempt)
-                return stream
-            },
-            attachExactUsage: (usage: unknown) => exactUsages.push(usage),
-            completeProviderOnly,
-            completeTools,
-            completeTurnEndAwaitingUser,
-        }))
         const setTimeoutSpy = vi.spyOn(global, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void) => {
             queueMicrotask(callback)
             return {} as NodeJS.Timeout
@@ -2827,41 +2836,26 @@ describe("SubagentRunner", () => {
         stubApiHandler(createMessage, 200_000, false, vi.fn(), "CNY")
         initializeHostProvider()
 
-        const result = await new SubagentRunner(createTaskConfig(false, { providerRequestRounds: { admit } })).run(
-            "Retry the provider request",
-            () => {},
-        )
+        const result = await new SubagentRunner(createTaskConfig(false)).run("Retry the provider request", () => {})
 
         assert.equal(result.status, "completed")
-        assert.equal(admit.mock.calls.length, 1)
-        assert.deepEqual(attempts, [0, 1])
-        assert.deepEqual(exactUsages, [
-            {
-                inputTokens: 100,
-                outputTokens: 20,
-                cacheWriteTokens: 0,
-                cacheReadTokens: 0,
-                cacheUsageReported: true,
-                totalCost: 0,
-                currency: "CNY",
-            },
+        assert.equal(createMessage.mock.calls.length, 2)
+        expect(createMessage.mock.calls.map((call) => call[3])).toEqual([
+            expect.objectContaining({
+                telemetryRole: "subagent",
+                telemetryRequestId: "subagent:1",
+                telemetryAttempt: 0,
+            }),
+            expect.objectContaining({
+                telemetryRole: "subagent",
+                telemetryRequestId: "subagent:1",
+                telemetryAttempt: 1,
+            }),
         ])
         assert.deepEqual(
             setTimeoutSpy.mock.calls.map(([, timeout]) => timeout),
             [5_000],
         )
-        assert.equal(completeProviderOnly.mock.calls.length, 0)
-        assert.deepEqual(completeTools.mock.calls, [
-            [
-                {
-                    toolCount: 1,
-                    completedToolCount: 1,
-                    failedToolCount: 0,
-                    cancelledToolCount: 0,
-                },
-            ],
-        ])
-        assert.equal(completeTurnEndAwaitingUser.mock.calls.length, 0)
     })
 
     // BUGFIX-112: the Anthropic endpoint re-emits cumulative snapshots, so summing raw

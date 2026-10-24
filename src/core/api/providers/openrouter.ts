@@ -9,7 +9,7 @@ import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/com
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient, getAxiosSettings } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { createOpenRouterStream } from "../transform/openrouter-stream"
 import { ApiStream, ApiStreamUsageChunk } from "../transform/stream"
@@ -18,11 +18,13 @@ import { OpenRouterErrorResponse } from "./types"
 
 const OPENROUTER_PROVIDER_ID = "openrouter"
 
-export class OpenRouterHandler implements ApiHandler {
+export class OpenRouterHandler extends ApiHandler {
     private client: OpenAI | undefined
     lastGenerationId?: string
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.openrouter
@@ -185,7 +187,7 @@ export class OpenRouterHandler implements ApiHandler {
         }
     }
 
-    async getApiStreamUsage(): Promise<ApiStreamUsageChunk | undefined> {
+    override async getApiStreamUsage(): Promise<ApiStreamUsageChunk | undefined> {
         if (this.lastGenerationId) {
             await setTimeoutPromise(500) // FIXME: necessary delay to ensure generation endpoint is ready
             try {

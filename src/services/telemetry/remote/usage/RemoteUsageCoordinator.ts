@@ -3,11 +3,13 @@ import type { DeviceCredentialRepository } from "@/core/storage/telemetry-remote
 import type { LocalUsagePolicyInputs, RemotePolicyRepository } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
 import type { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import type { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
+import type { FinalizedProviderAttempt, FinalizedProviderAttemptPort } from "@/core/task/performance/provider-request-round-port"
 import type { UsageSettlement, UsageSettlementPort } from "@/core/task/telemetry/UsageSettlement"
 import { describeUsagePolicyDecision, type UsagePolicyRecord } from "../policy/usagePolicy"
+import { projectFinalizedAttempt } from "./attemptProjection"
 import type { UsageCycleResult, UsageDeliveryWorker } from "./UsageDeliveryWorker"
 import { describeUsageCycle, type RemoteUsageLog, type RemoteUsageLogLevel } from "./usageCycleLog"
-import { projectUsageSettlement, sessionStartedTally, type UsageTally } from "./usageTally"
+import { projectUsageSettlement, sessionStartedTally, type UsageTally, UsageTallyReductionError } from "./usageTally"
 
 /** How often the lease holder seals shards and checks whether a batch or replay is due. */
 export const USAGE_CYCLE_INTERVAL_MS = 30_000
@@ -22,9 +24,9 @@ export interface UsageScheduler {
 export interface RemoteUsageCoordinatorOptions {
     readonly policy: Pick<RemotePolicyRepository, "resolveUsage" | "recordServerStop">
     readonly credentials: Pick<DeviceCredentialRepository, "clearTokens">
-    readonly outbox: Pick<UsageOutboxRepository, "reset">
-    readonly spool: Pick<UsageObservationSpool, "append" | "purge">
-    readonly worker: Pick<UsageDeliveryWorker, "runCycle" | "release">
+    readonly outbox: Pick<UsageOutboxRepository, "reset" | "resetAttempts">
+    readonly spool: Pick<UsageObservationSpool, "append" | "appendAttempt" | "purge">
+    readonly worker: Pick<UsageDeliveryWorker, "attemptAuthorityActive" | "refreshAttemptAuthority" | "runCycle" | "release">
     /** Current consent, organization, host and build inputs; read again before every decision. */
     readonly readPolicyInputs: () => Promise<LocalUsagePolicyInputs>
     readonly clock?: () => number
@@ -49,7 +51,7 @@ export interface RemoteUsageCoordinatorOptions {
  * allowed. Remote failures stay here: they never reach the Task or the local
  * telemetry pipeline.
  */
-export class RemoteUsageCoordinator implements UsageSettlementPort {
+export class RemoteUsageCoordinator implements UsageSettlementPort, FinalizedProviderAttemptPort {
     private readonly clock: () => number
     private readonly scheduler: UsageScheduler
     private readonly cycleIntervalMs: number
@@ -61,6 +63,8 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
     private cycleAbort: AbortController | undefined
     private refreshing: Promise<void> | undefined
     private readonly appends = new Set<Promise<void>>()
+    /** Activation deltas wait for the next final result-producing attempt in schema 4. */
+    private pendingSessionStarts = 0
     /** Last steady cycle state printed, so a state that holds for hours is logged once. */
     private loggedSteadyState: string | undefined
     private ownedByNewerBuild = false
@@ -78,9 +82,19 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
         return !this.disposed && this.current?.decision.allowed === true
     }
 
+    /** Synchronous admission snapshot; absent unless the current machine policy allows Usage. */
+    get activePolicyGeneration(): number | undefined {
+        return this.reportingAllowed ? this.current?.epoch : undefined
+    }
+
     /** Resolve the policy, open intake, and schedule the first cycle. */
     async start(): Promise<void> {
         await this.refresh()
+        try {
+            await this.options.worker.refreshAttemptAuthority()
+        } catch (error) {
+            this.log("warn", `usage authority could not be read before intake: ${describe(error)}`)
+        }
         if (this.disposed) return
         this.accepting = true
         this.scheduleCycle(this.cycleIntervalMs)
@@ -91,7 +105,43 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
      * the append runs in the background and a lost append is only logged.
      */
     record(settlement: UsageSettlement): void {
+        if (this.options.worker.attemptAuthorityActive) return
         this.admit(settlement.observationId, () => projectUsageSettlement(settlement))
+    }
+
+    /** Project and reduce one exact-handle terminal revision; malformed or incomplete identity fails closed. */
+    recordFinalizedAttempt(attempt: FinalizedProviderAttempt): void {
+        const current = this.current
+        if (!this.accepting || !current?.decision.allowed) return
+        const sessionsStarted = attempt.logicalExecution ? this.pendingSessionStarts : 0
+        if (sessionsStarted > 0) this.pendingSessionStarts = 0
+        let observation
+        try {
+            observation = projectFinalizedAttempt(
+                attempt.handle,
+                attempt.record,
+                attempt.logicalExecution,
+                attempt.logicalToolCalls,
+                sessionsStarted,
+            )
+        } catch (error) {
+            this.pendingSessionStarts = addSessionStarts(this.pendingSessionStarts, sessionsStarted)
+            this.log("warn", `finalized usage attempt was rejected before storage: ${describe(error)}`)
+            return
+        }
+        const append = this.options.spool
+            .appendAttempt({
+                id: observation.attemptObservationId,
+                revision: attempt.record.revision,
+                receivedAt: this.clock(),
+                observation,
+            })
+            .catch((error: unknown) => {
+                this.pendingSessionStarts = addSessionStarts(this.pendingSessionStarts, sessionsStarted)
+                this.log("warn", `finalized usage attempt was not stored: ${describe(error)}`)
+            })
+            .finally(() => this.appends.delete(append))
+        this.appends.add(append)
     }
 
     /**
@@ -100,18 +150,32 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
      * reporting is allowed.
      */
     recordSessionStarted(): void {
+        const current = this.current
+        if (!this.accepting || !current?.decision.allowed) return
+        if (this.options.worker.attemptAuthorityActive) {
+            this.pendingSessionStarts = addSessionStarts(this.pendingSessionStarts, 1)
+            return
+        }
         this.admit(`session-${randomUUID()}`, sessionStartedTally)
     }
 
     private admit(id: string, observe: () => UsageTally): void {
         const current = this.current
         if (!this.accepting || !current?.decision.allowed) return
+        let tally: UsageTally
+        try {
+            tally = observe()
+        } catch (error) {
+            const reason = error instanceof UsageTallyReductionError ? `${error.code} at ${error.path}` : describe(error)
+            this.log("warn", `usage observation was rejected before storage: ${reason}`)
+            return
+        }
         const append = this.options.spool
             .append({
                 id,
                 receivedAt: this.clock(),
                 policyEpoch: current.epoch,
-                tally: observe(),
+                tally,
             })
             .catch((error: unknown) => this.log("warn", `usage observation was not stored: ${describe(error)}`))
             .finally(() => this.appends.delete(append))
@@ -180,6 +244,10 @@ export class RemoteUsageCoordinator implements UsageSettlementPort {
         // A newer Dline owns the policy document: it also owns the data, so nothing is touched.
         if (!next || next.decision.allowed || previous?.epoch === next.epoch) return
         this.cycleAbort?.abort()
+        this.pendingSessionStarts = 0
+        // Either schema may be persisted before the first sender cycle of this host.
+        // Each reset fails closed on the other schema, so both authorities are purged without guessing.
+        await this.options.outbox.resetAttempts(next.epoch)
         await this.options.outbox.reset(next.epoch)
         await this.options.spool.purge()
         // Only the usage token: error diagnostics follow their own consent and keep theirs.
@@ -273,6 +341,12 @@ async function withinBound(work: Promise<unknown> | undefined): Promise<void> {
 }
 
 /** Error class and code only: messages may carry paths or server text. */
+function addSessionStarts(left: number, right: number): number {
+    const total = left + right
+    if (!Number.isSafeInteger(total) || total < 0) throw new Error("Usage session start count overflow")
+    return total
+}
+
 function describe(error: unknown): string {
     if (!(error instanceof Error)) return typeof error
     const code = (error as NodeJS.ErrnoException).code

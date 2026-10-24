@@ -4,7 +4,7 @@ import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch, providerFetch } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
 
-import { ApiHandler, ApiHandlerContext } from "../index"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { ApiStream } from "../transform/stream"
 
 // Dify API Response Types
@@ -69,11 +69,12 @@ interface DifyConversationResponse {
     updated_at: number
 }
 
-export class DifyHandler implements ApiHandler {
+export class DifyHandler extends ApiHandler {
     private conversationId: string | null = null
     private currentTaskId: string | null = null
 
     constructor(private ctx: ApiHandlerContext) {
+        super()
         const apiKey = this.ctx.profile.apiKey
         const baseUrl = this.ctx.profile.baseUrl
 

@@ -6,7 +6,7 @@ import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/com
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext } from "../index"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { ApiStream } from "../transform/stream"
 import { ToolCallProcessor } from "../transform/tool-call-processor"
@@ -20,10 +20,12 @@ function getCacheWriteTokens(usage: any): number {
     return usage?.prompt_tokens_details?.cache_write_tokens || usage?.cache_creation_input_tokens || 0
 }
 
-export class VercelAIGatewayHandler implements ApiHandler {
+export class VercelAIGatewayHandler extends ApiHandler {
     private client: OpenAI | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.vercelAiGateway

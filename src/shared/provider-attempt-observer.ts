@@ -1,9 +1,28 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 
 export type ProviderAttemptTerminalStatus = "completed" | "failed" | "cancelled" | "aborted"
+export type ProviderAttemptThinking = string | number
+export type ProviderTelemetryRole = "task" | "subagent" | "compaction" | "reviewer" | "other"
+
+/** Map a resolved subagent identity to a bounded role; never expose the free-form name as telemetry. */
+export function providerTelemetryRoleForSubagent(name: string): "subagent" | "reviewer" {
+    const normalized = name.trim().toLowerCase()
+    return /(?:^|[._-])reviewer(?:$|[._-])/.test(normalized) ? "reviewer" : "subagent"
+}
+
+/** Identity known only after the Provider-specific encoder has formed the real wire request. */
+export interface ProviderAttemptIdentity {
+    readonly provider: string
+    readonly modelId: string
+    readonly thinking: ProviderAttemptThinking
+}
+
+export interface ProviderAttemptAdapterIdentity {
+    readonly provider: string
+}
 
 export interface ProviderAttemptObserver<THandle = unknown> {
-    beginAttempt(): THandle | Promise<THandle>
+    beginAttempt(identity?: ProviderAttemptIdentity): THandle | Promise<THandle>
     finishAttempt(handle: THandle, status: ProviderAttemptTerminalStatus): void | Promise<void>
 }
 
@@ -13,28 +32,65 @@ export interface ProviderAttemptObservationOptions {
 }
 
 const providerAttemptContext = new AsyncLocalStorage<ProviderAttemptObserver>()
+const providerAttemptIdentityContext = new AsyncLocalStorage<ProviderAttemptIdentity>()
+const providerAttemptAdapterContext = new AsyncLocalStorage<ProviderAttemptAdapterIdentity>()
+
+/** Bind the effective Provider/model/thinking values around the actual SDK or fetch send. */
+export function withProviderAttemptIdentity<T>(identity: ProviderAttemptIdentity, operation: () => T): T {
+    return providerAttemptIdentityContext.run(identity, operation)
+}
 
 /** Preserve one logical Provider request scope across lazy AsyncIterator calls. */
-export function bindProviderAttemptScope<T>(iterable: AsyncIterable<T>, observer: ProviderAttemptObserver): AsyncIterable<T> {
+export function bindProviderAttemptScope<T>(
+    iterable: AsyncIterable<T>,
+    observer: ProviderAttemptObserver,
+    adapter?: ProviderAttemptAdapterIdentity,
+): AsyncIterable<T> {
+    const run = <R>(operation: () => R): R =>
+        adapter
+            ? providerAttemptAdapterContext.run(adapter, () => providerAttemptContext.run(observer, operation))
+            : providerAttemptContext.run(observer, operation)
     return {
         [Symbol.asyncIterator](): AsyncIterator<T> {
             const iterator = iterable[Symbol.asyncIterator]()
             return {
-                next: (value?: unknown) => providerAttemptContext.run(observer, () => iterator.next(value as never)),
+                next: (value?: unknown) => run(() => iterator.next(value as never)),
                 return: iterator.return
-                    ? (value?: unknown) =>
-                          providerAttemptContext.run(
-                              observer,
-                              () => iterator.return?.(value as never) as Promise<IteratorResult<T>>,
-                          )
+                    ? (value?: unknown) => run(() => iterator.return?.(value as never) as Promise<IteratorResult<T>>)
                     : undefined,
                 throw: iterator.throw
-                    ? (error?: unknown) =>
-                          providerAttemptContext.run(observer, () => iterator.throw?.(error) as Promise<IteratorResult<T>>)
+                    ? (error?: unknown) => run(() => iterator.throw?.(error) as Promise<IteratorResult<T>>)
                     : undefined,
             }
         },
     }
+}
+
+/** Build identity from a Provider SDK's final encoded request object; incomplete requests stay unidentifiable. */
+export function providerAttemptIdentityFromEncodedRequest(provider: string, body: unknown): ProviderAttemptIdentity | undefined {
+    if (!provider || !isRecord(body) || typeof body.model !== "string" || body.model.length === 0) return undefined
+    const thinking = encodedThinking(body)
+    return thinking === undefined ? undefined : { provider, modelId: body.model, thinking }
+}
+
+/** Read model and thinking from the final JSON body handed to fetch; unsupported bodies stay unidentifiable. */
+export function providerAttemptIdentityFromFetch(init?: RequestInit): ProviderAttemptIdentity | undefined {
+    const adapter = providerAttemptAdapterContext.getStore()
+    if (!adapter || !init?.body) return undefined
+    const text =
+        typeof init.body === "string"
+            ? init.body
+            : ArrayBuffer.isView(init.body)
+              ? new TextDecoder().decode(init.body)
+              : undefined
+    if (!text) return undefined
+    let body: unknown
+    try {
+        body = JSON.parse(text)
+    } catch {
+        return undefined
+    }
+    return providerAttemptIdentityFromEncodedRequest(adapter.provider, body)
 }
 
 /** Observe one non-streaming SDK send until its promise settles. */
@@ -44,7 +100,7 @@ export async function observeProviderCall<T>(
 ): Promise<T> {
     const observer = providerAttemptContext.getStore()
     if (!observer) return send()
-    const handle = await observer.beginAttempt()
+    const handle = await observer.beginAttempt(providerAttemptIdentityContext.getStore())
     try {
         const result = await send()
         await observer.finishAttempt(handle, options.signal?.aborted ? "aborted" : "completed")
@@ -66,7 +122,7 @@ export async function observeProviderStreamResponse<TResponse, TChunk>(
         const response = await send()
         return { response, stream: selectStream(response) }
     }
-    const handle = await observer.beginAttempt()
+    const handle = await observer.beginAttempt(providerAttemptIdentityContext.getStore())
     try {
         const response = await send()
         const stream = selectStream(response)
@@ -88,7 +144,7 @@ export async function observeProviderStream<T>(
 ): Promise<AsyncIterable<T>> {
     const observer = providerAttemptContext.getStore()
     if (!observer) return send()
-    const handle = await observer.beginAttempt()
+    const handle = await observer.beginAttempt(providerAttemptIdentityContext.getStore())
     try {
         const stream = await send()
         return wrapProviderStream(stream, observer, handle, options)
@@ -105,7 +161,7 @@ export async function observeProviderResponse(
 ): Promise<Response> {
     const observer = providerAttemptContext.getStore()
     if (!observer) return send()
-    const handle = await observer.beginAttempt()
+    const handle = await observer.beginAttempt(providerAttemptIdentityContext.getStore())
     try {
         const response = await send()
         if (!response.body) {
@@ -245,6 +301,29 @@ function createSseDoneDetector(contentType: string | null): { observe(chunk: Uin
         },
         completed: () => done,
     }
+}
+
+function encodedThinking(body: Record<string, unknown>): ProviderAttemptThinking | undefined {
+    if (typeof body.reasoning_effort === "string") return `level:${body.reasoning_effort}`
+    if (typeof body.thinking === "number" || typeof body.thinking === "string") return body.thinking
+    const config = isRecord(body.config) ? body.config : undefined
+    const nestedThinking = config && isRecord(config.thinkingConfig) ? config.thinkingConfig : undefined
+    for (const value of [body.thinking, body.reasoning, nestedThinking]) {
+        if (!isRecord(value)) continue
+        for (const key of ["budget_tokens", "max_tokens", "thinkingBudget"]) {
+            if (typeof value[key] === "number") return value[key] as number
+        }
+        for (const key of ["effort", "thinkingLevel"]) {
+            if (typeof value[key] === "string") return `level:${value[key]}`
+        }
+        if (typeof value.type === "string") return `state:${value.type}`
+        if (typeof value.includeThoughts === "boolean") return value.includeThoughts ? "state:enabled" : "state:disabled"
+    }
+    return "state:disabled"
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function classifyCancellation(reason: unknown, signal?: AbortSignal, protocolCompleted = false): ProviderAttemptTerminalStatus {

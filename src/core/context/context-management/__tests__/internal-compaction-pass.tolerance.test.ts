@@ -93,16 +93,17 @@ describe("internal compaction Pass reply tolerance", () => {
         })
     })
 
-    it("continues before the Provider usage tail arrives and attaches that usage afterwards", async () => {
+    it("continues before a delayed Provider usage tail while the canonical stream observer keeps draining", async () => {
         let releaseTail = (): void => {}
+        let tailConsumed = false
         const tailGate = new Promise<void>((resolve) => {
             releaseTail = resolve
         })
-        const attachExactUsage = vi.fn()
         const stream = (async function* () {
             yield text(`<summarize_task>\n<context>\n${SUMMARY}\n</context>\n</summarize_task>`)
             await tailGate
             yield usageChunk("end_turn")
+            tailConsumed = true
         })()
         const result = runInternalCompactionPass({
             api: { createMessage: vi.fn(() => stream) } as never,
@@ -112,15 +113,12 @@ describe("internal compaction Pass reply tolerance", () => {
                 createConsumePort: () => ({ consumeTool: () => ({ ok: true as const }) }),
             } as never,
             attemptId: "attempt-0",
-            providerRequestRound: { bindAttempt: (source: unknown) => source, attachExactUsage } as never,
         })
 
         await expect(result).resolves.toMatchObject({ summary: SUMMARY })
-        expect(attachExactUsage).not.toHaveBeenCalled()
+        expect(tailConsumed).toBe(false)
         releaseTail()
-        await vi.waitFor(() =>
-            expect(attachExactUsage).toHaveBeenCalledWith(expect.objectContaining({ inputTokens: 9_000, outputTokens: 1_200 })),
-        )
+        await vi.waitFor(() => expect(tailConsumed).toBe(true))
     })
 
     it("keeps closing tags quoted inside the summary because only the final close terminates the call", async () => {

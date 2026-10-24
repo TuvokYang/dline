@@ -1,10 +1,6 @@
+import { ApiHandler, type ProviderAttemptObserver, type ProviderAttemptTerminalStatus } from "@core/api"
 import { mockFetchForTesting } from "@shared/net"
 import { ApiProfile } from "@shared/proto/dline/profile"
-import {
-    bindProviderAttemptScope,
-    type ProviderAttemptObserver,
-    type ProviderAttemptTerminalStatus,
-} from "@shared/provider-attempt-observer"
 import { describe, expect, it, vi } from "vitest"
 import { DifyHandler } from "../dify"
 
@@ -37,7 +33,7 @@ describe("DifyHandler", () => {
 
         await expect(
             mockFetchForTesting(transport, async () => {
-                const stream = bindProviderAttemptScope(
+                const stream = ApiHandler.bindProviderAttemptScope(
                     handler.createMessage("system prompt", [{ role: "user", content: "Hello" }]),
                     observer,
                 )
@@ -69,7 +65,7 @@ describe("DifyHandler", () => {
         const { observer, statuses } = createObserver()
 
         await mockFetchForTesting(transport, async () => {
-            const stream = bindProviderAttemptScope(
+            const stream = ApiHandler.bindProviderAttemptScope(
                 handler.createMessage("system prompt", [{ role: "user", content: "Hello" }]),
                 observer,
             )
@@ -100,7 +96,7 @@ describe("DifyHandler", () => {
         const chunks: unknown[] = []
 
         await mockFetchForTesting(transport, async () => {
-            const stream = bindProviderAttemptScope(
+            const stream = ApiHandler.bindProviderAttemptScope(
                 handler.createMessage("system prompt", [{ role: "user", content: "Hello" }]),
                 observer,
             )

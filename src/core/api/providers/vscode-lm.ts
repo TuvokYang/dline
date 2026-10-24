@@ -1,11 +1,10 @@
 import { ModelInfo, openAiModelInfoSaneDefaults } from "@shared/api"
-import { observeProviderStreamResponse } from "@shared/provider-attempt-observer"
 import { SELECTOR_SEPARATOR, stringifyVsCodeLmModelSelector } from "@shared/vsCodeSelectorUtils"
 import { calculateApiCostAnthropic } from "@utils/cost"
 import * as vscode from "vscode"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext, SingleCompletionHandler } from "../"
+import { ApiHandler, ApiHandlerContext, SingleCompletionHandler } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { ApiStream } from "../transform/stream"
 import { convertToVsCodeLmMessages } from "../transform/vscode-lm-format"
@@ -125,12 +124,13 @@ declare module "vscode" {
  * }
  * ```
  */
-export class VsCodeLmHandler implements ApiHandler, SingleCompletionHandler {
+export class VsCodeLmHandler extends ApiHandler implements SingleCompletionHandler {
     private client: vscode.LanguageModelChat | null
     private disposable: vscode.Disposable | null
     private currentRequestCancellation: vscode.CancellationTokenSource | null
 
     constructor(private ctx: ApiHandlerContext) {
+        super()
         this.client = null
         this.disposable = null
         this.currentRequestCancellation = null
@@ -403,7 +403,8 @@ export class VsCodeLmHandler implements ApiHandler, SingleCompletionHandler {
             // Note: Tool support is currently provided by the VSCode Language Model API directly
             // Extensions can register tools using vscode.lm.registerTool()
 
-            const { stream } = await observeProviderStreamResponse(
+            const { stream } = await ApiHandler.observeProviderStreamResponse(
+                undefined,
                 () => client.sendRequest(vsCodeLmMessages, requestOptions, requestCancellation.token),
                 (response) => response.stream,
             )
@@ -578,7 +579,8 @@ export class VsCodeLmHandler implements ApiHandler, SingleCompletionHandler {
         try {
             const client = await this.getClient()
             const requestCancellation = new vscode.CancellationTokenSource()
-            const { stream } = await observeProviderStreamResponse(
+            const { stream } = await ApiHandler.observeProviderStreamResponse(
+                undefined,
                 () => client.sendRequest([vscode.LanguageModelChatMessage.User(prompt)], {}, requestCancellation.token),
                 (response) => response.stream,
             )

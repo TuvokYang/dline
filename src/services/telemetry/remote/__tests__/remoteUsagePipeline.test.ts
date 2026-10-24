@@ -213,6 +213,46 @@ describe("remote usage pipeline", () => {
         await host.coordinator.dispose()
     })
 
+    it("quarantines only the ninth model identity and still delivers the valid prefix", async () => {
+        const transport = new FakeTransport()
+        const host = extensionHost("window-a", transport)
+        await host.coordinator.start()
+
+        for (let index = 0; index < 9; index += 1) {
+            host.coordinator.record(
+                settlement(`capacity-${index}`, {
+                    servedBy: { provider: "anthropic", model: `model-${index}` },
+                }),
+            )
+        }
+        await waitFor(async () => (await spooledLines()) === 9)
+        await deliverFirstMinute(host)
+
+        expect(transport.deliveries).toHaveLength(1)
+        const sent = JSON.parse(transport.deliveries[0].body) as UsageBodyWire
+        expect(validateUsageBody(sent)).toEqual([])
+        expect(sent.facts).toHaveLength(8)
+        const sentModels = sent.facts.map((fact) => fact.model)
+        expect(new Set(sentModels).size).toBe(8)
+        const quarantine = (await fs.readdir(layout.remoteQuarantineDir)).filter((name) => name.startsWith("usage-observation-"))
+        expect(quarantine).toHaveLength(1)
+        const evidence = JSON.parse(await fs.readFile(path.join(layout.remoteQuarantineDir, quarantine[0]), "utf8")) as {
+            kind: string
+            observation: { id: string }
+            violations: string[]
+        }
+        expect(evidence).toMatchObject({
+            kind: "usage_observation_rejected",
+            observation: { id: expect.stringMatching(/^capacity-[0-8]$/u) },
+            violations: expect.arrayContaining([expect.any(String)]),
+        })
+        const rejectedModel = `model-${Number(evidence.observation.id.slice("capacity-".length))}`
+        expect([...sentModels, rejectedModel].sort()).toEqual(Array.from({ length: 9 }, (_, index) => `model-${index}`))
+        expect(await fs.readdir(layout.usageObservationsDir)).toEqual([])
+        expect(await fs.readdir(layout.usageInflightDir)).toEqual([])
+        await host.coordinator.dispose()
+    })
+
     it("replays the exact bytes from a host that died mid-send once another host takes over the lease", async () => {
         const transport = new FakeTransport()
         transport.replies.push(new DlineOtelTransportError("network"))

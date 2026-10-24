@@ -7,15 +7,17 @@ import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/com
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { providerFetch } from "@/shared/net"
-import { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToMistralMessages } from "../transform/mistral-format"
 import { ApiStream } from "../transform/stream"
 
-export class MistralHandler implements ApiHandler {
+export class MistralHandler extends ApiHandler {
     private client: Mistral | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.mistral

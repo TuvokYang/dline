@@ -9,8 +9,8 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
 import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
+import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../ApiHandler"
 import { anthropicMessagesDocumentLimits } from "../document-input-limits"
-import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
 import { withRetry } from "../retry"
 import { ApiStream } from "../transform/stream"
 import { streamAnthropicMessagesEndpoint } from "../utils/anthropic-messages-endpoint"
@@ -23,11 +23,13 @@ import { TokenCountGate } from "./token-count-gate"
 
 export { ANTHROPIC_FAST_MODE_BETA } from "./anthropic/transport"
 
-export class AnthropicHandler implements ApiHandler {
+export class AnthropicHandler extends ApiHandler {
     private client: Anthropic | undefined
     private readonly tokenCount = new TokenCountGate("Anthropic")
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.anthropic
@@ -67,20 +69,20 @@ export class AnthropicHandler implements ApiHandler {
     }
 
     /** This handler always speaks the Anthropic Messages protocol. */
-    getSelectedApiFormat(): ApiFormat {
+    override getSelectedApiFormat(): ApiFormat {
         return ApiFormat.ANTHROPIC_CHAT
     }
 
-    supportsServerTool(tool: ServerTool): boolean {
+    override supportsServerTool(tool: ServerTool): boolean {
         return tool === ServerTool.WEB_SEARCH || tool === ServerTool.CODE_EXECUTION || tool === ServerTool.WEB_FETCH
     }
 
     /** Hosted calls this endpoint ran must come back verbatim for the model to keep their results. */
-    getHostedToolReplayProtocol(): HostedToolReplayProtocol {
+    override getHostedToolReplayProtocol(): HostedToolReplayProtocol {
         return "anthropic_messages"
     }
 
-    getDocumentInputLimits(): DocumentInputLimits | undefined {
+    override getDocumentInputLimits(): DocumentInputLimits | undefined {
         return anthropicMessagesDocumentLimits(this.getModel().info)
     }
 
@@ -189,7 +191,7 @@ export class AnthropicHandler implements ApiHandler {
         })
     }
 
-    async countInputTokens(input: {
+    override async countInputTokens(input: {
         readonly systemPrompt: string
         readonly messages: ClineStorageMessage[]
         readonly tools?: AnthropicTool[]

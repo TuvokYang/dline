@@ -6,23 +6,76 @@ import {
     observeProviderCall,
     observeProviderResponse,
     observeProviderStream,
+    type ProviderAttemptIdentity,
     type ProviderAttemptObserver,
     type ProviderAttemptTerminalStatus,
+    providerAttemptIdentityFromEncodedRequest,
+    withProviderAttemptIdentity,
 } from "./provider-attempt-observer"
 
 function createObserver() {
     const statuses: ProviderAttemptTerminalStatus[] = []
+    const identities: Array<ProviderAttemptIdentity | undefined> = []
     let nextHandle = 0
     const observer: ProviderAttemptObserver<number> = {
-        beginAttempt: vi.fn(() => nextHandle++),
+        beginAttempt: vi.fn((identity) => {
+            identities.push(identity)
+            return nextHandle++
+        }),
         finishAttempt: vi.fn((_handle, status) => {
             statuses.push(status)
         }),
     }
-    return { observer, statuses }
+    return { observer, statuses, identities }
 }
 
 describe("provider attempt observer", () => {
+    it("projects typed thinking from final SDK request objects without Profile inference", () => {
+        expect(
+            providerAttemptIdentityFromEncodedRequest("gemini", {
+                model: "gemini-2.5-pro",
+                config: { thinkingConfig: { thinkingBudget: 4096, includeThoughts: true } },
+            }),
+        ).toEqual({ provider: "gemini", modelId: "gemini-2.5-pro", thinking: 4096 })
+        expect(
+            providerAttemptIdentityFromEncodedRequest("gemini", {
+                model: "gemini-3-pro",
+                config: { thinkingConfig: { thinkingLevel: "HIGH", includeThoughts: true } },
+            }),
+        ).toEqual({ provider: "gemini", modelId: "gemini-3-pro", thinking: "level:HIGH" })
+        expect(providerAttemptIdentityFromEncodedRequest("ollama", { model: "qwen", options: {} })).toEqual({
+            provider: "ollama",
+            modelId: "qwen",
+            thinking: "state:disabled",
+        })
+        expect(providerAttemptIdentityFromEncodedRequest("gemini", { config: {} })).toBeUndefined()
+    })
+
+    it("freezes the encoder-bound provider model and typed thinking for each real send", async () => {
+        const { observer, identities, statuses } = createObserver()
+        const first: ProviderAttemptIdentity = {
+            provider: "anthropic",
+            modelId: "catalog:claude-opus-4-1",
+            thinking: "level:high",
+        }
+        const second: ProviderAttemptIdentity = {
+            provider: "anthropic",
+            modelId: "catalog:claude-opus-4-1",
+            thinking: 2048,
+        }
+        const source = (async function* () {
+            yield await withProviderAttemptIdentity(first, () => observeProviderCall(async () => "first"))
+            yield await withProviderAttemptIdentity(second, () => observeProviderCall(async () => "second"))
+        })()
+
+        const values: string[] = []
+        for await (const value of bindProviderAttemptScope(source, observer)) values.push(value)
+
+        expect(values).toEqual(["first", "second"])
+        expect(identities).toEqual([first, second])
+        expect(statuses).toEqual(["completed", "completed"])
+    })
+
     it("settles a non-streaming SDK send when its promise resolves", async () => {
         const { observer, statuses } = createObserver()
         const source = (async function* () {
@@ -69,7 +122,7 @@ describe("provider attempt observer", () => {
     })
 
     it("classifies the OpenAI SDK DONE protocol terminal as completed", async () => {
-        const { observer, statuses } = createObserver()
+        const { observer, statuses, identities } = createObserver()
         const transportCancelled = vi.fn()
         const body = new ReadableStream<Uint8Array>({
             start(controller) {
@@ -106,15 +159,17 @@ describe("provider attempt observer", () => {
                 const stream = await client.chat.completions.create({
                     model: "test-model",
                     messages: [{ role: "user", content: "Hello" }],
+                    reasoning_effort: "high",
                     stream: true,
                 })
                 for await (const chunk of stream) yield chunk
             })()
-            for await (const chunk of bindProviderAttemptScope(source, observer)) chunks.push(chunk)
+            for await (const chunk of bindProviderAttemptScope(source, observer, { provider: "openai" })) chunks.push(chunk)
         })
 
         expect(chunks).toHaveLength(1)
         expect(transportCancelled).toHaveBeenCalledTimes(1)
+        expect(identities).toEqual([{ provider: "openai", modelId: "test-model", thinking: "level:high" }])
         expect(statuses).toEqual(["completed"])
     })
 

@@ -7,7 +7,7 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient, fetch } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext } from ".."
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
@@ -91,13 +91,15 @@ export async function fetchLiteLlmModelsInfo(baseUrl: string, apiKey: string): P
     }
 }
 
-export class LiteLlmHandler implements ApiHandler {
+export class LiteLlmHandler extends ApiHandler {
     private client: OpenAI | undefined
     private modelInfoCache: LiteLlmModelInfoResponse | undefined
     private modelInfoCacheTimestamp = 0
     private readonly modelInfoCacheTTL = 5 * 60 * 1000 // 5 minutes
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.litellm

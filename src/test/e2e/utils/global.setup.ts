@@ -7,6 +7,7 @@ import {
     E2E_EXTENSIONS_ROOT,
     E2E_VSIX_INSTALL_TIMEOUT_MS,
     ensureDlineVsixInstalled,
+    resolveDlineVsixPath,
     shouldPreinstallDlineVsix,
 } from "./vscode-launch-isolation"
 import {
@@ -42,7 +43,7 @@ setup("setup test environment", async ({}, testInfo) => {
         reporter: new SilentReporter(),
         timeout: E2E_VSCODE_DOWNLOAD_TIMEOUT_MS,
     })
-    const vsixPath = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "dist", "e2e.vsix")
+    const vsixPath = resolveDlineVsixPath(E2ETestHelper.CODEBASE_ROOT_DIR)
 
     for (let workerSlot = 0; workerSlot < testInfo.config.workers; workerSlot++) {
         ensureDlineVsixInstalled(executablePath, createWorkerExtensionsDir(workerSlot), vsixPath)

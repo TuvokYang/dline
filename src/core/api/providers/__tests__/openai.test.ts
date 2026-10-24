@@ -1,13 +1,9 @@
+import { ApiHandler, type ProviderAttemptObserver, type ProviderAttemptTerminalStatus } from "@core/api"
 import { ApiFormat, type ModelCapabilities, ServerTool } from "@shared/proto/dline/models/metadata"
 import { ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
 import { OpenAiPromptCacheMode, OpenAiProviderConfig } from "@shared/proto/dline/provider/openai"
 import { OpenAiCodexProviderConfig } from "@shared/proto/dline/provider/openai_codex"
-import {
-    bindProviderAttemptScope,
-    type ProviderAttemptObserver,
-    type ProviderAttemptTerminalStatus,
-} from "@shared/provider-attempt-observer"
 import { expect } from "chai"
 import OpenAI from "openai"
 import should from "should"
@@ -839,7 +835,7 @@ describe("OpenAiHandler", () => {
             const { observer, statuses } = createProviderAttemptObserver()
 
             await mockFetchForTesting(transport, async () => {
-                const stream = bindProviderAttemptScope(
+                const stream = ApiHandler.bindProviderAttemptScope(
                     handler.createMessage("system prompt", [{ role: "user", content: "Hello" }]),
                     observer,
                 )
@@ -1062,7 +1058,7 @@ describe("OpenAiHandler", () => {
             const { observer, statuses } = createProviderAttemptObserver()
 
             await mockFetchForTesting(transport, async () => {
-                const stream = bindProviderAttemptScope(
+                const stream = ApiHandler.bindProviderAttemptScope(
                     handler.createMessage("system prompt", [{ role: "user", content: "Hello" }]),
                     observer,
                 )

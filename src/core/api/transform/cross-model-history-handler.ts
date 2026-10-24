@@ -1,5 +1,5 @@
 import { projectCrossModelHistory } from "@shared/messages/cross-model-history"
-import type { ApiHandler } from "../index"
+import type { ApiHandler } from "../ApiHandler"
 
 /**
  * Project stored history for the model this handler actually sends to.

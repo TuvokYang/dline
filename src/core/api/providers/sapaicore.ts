@@ -7,7 +7,6 @@ import {
 import { ChatMessage, OrchestrationClient, OrchestrationModuleConfig } from "@sap-ai-sdk/orchestration"
 import { HttpDestination, transformServiceBindingToDestination } from "@sap-cloud-sdk/connectivity"
 import { ModelInfo, SapAiCoreModelId, sapAiCoreDefaultModelId, sapAiCoreModels } from "@shared/api"
-import { observeProviderCall, observeProviderStreamResponse } from "@shared/provider-attempt-observer"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import axios from "axios"
 import JSON5 from "json5"
@@ -16,7 +15,7 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { type ClineReplayImageSource, ClineStorageMessage } from "@/shared/messages/content"
 import { getAxiosSettings } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
@@ -360,13 +359,15 @@ namespace Gemini {
     }
 }
 
-export class SapAiCoreHandler implements ApiHandler {
+export class SapAiCoreHandler extends ApiHandler {
     private token?: Token
     private deployments?: Deployment[]
     private aiCoreDestination?: HttpDestination
     private destinationExpiresAt?: number
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.sapaicore
@@ -573,7 +574,8 @@ export class SapAiCoreHandler implements ApiHandler {
             // Unlike the `messages` field that validates input, this does not validate
             // template placeholders such as {{?userResponse}}, allowing content to be
             // sent directly to the LLM with the Cline system prompt without validation errors.
-            const { response, stream } = await observeProviderStreamResponse(
+            const { response, stream } = await ApiHandler.observeProviderStreamResponse(
+                undefined,
                 () => orchestrationClient.stream({ messagesHistory: sapMessages }),
                 (response) => response.stream.toContentStream(),
             )
@@ -780,7 +782,7 @@ export class SapAiCoreHandler implements ApiHandler {
 
         try {
             if (model.id === "o3-mini") {
-                const response = await observeProviderCall(() =>
+                const response = await ApiHandler.observeProviderCall(undefined, () =>
                     axios.post(url, JSON.stringify(payload, null, 2), { headers, ...getAxiosSettings() }),
                 )
 
@@ -812,7 +814,8 @@ export class SapAiCoreHandler implements ApiHandler {
                 return
             }
 
-            const { stream } = await observeProviderStreamResponse(
+            const { stream } = await ApiHandler.observeProviderStreamResponse(
+                undefined,
                 () =>
                     axios.post(url, JSON.stringify(payload, null, 2), {
                         headers,

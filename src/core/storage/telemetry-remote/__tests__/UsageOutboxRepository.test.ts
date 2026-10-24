@@ -3,7 +3,12 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { emptyUsageOutbox, sha256Hex, type UsageOutboxState } from "@/services/telemetry/remote/usage/usageOutbox"
+import {
+    emptyUsageOutbox,
+    foldUsageAttemptShards,
+    sha256Hex,
+    type UsageOutboxState,
+} from "@/services/telemetry/remote/usage/usageOutbox"
 import { projectUsageSettlement, sessionStartedTally } from "@/services/telemetry/remote/usage/usageTally"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
 import {
@@ -16,6 +21,25 @@ import { USAGE_SENDER_TAKEOVER_GRACE_MS, USAGE_SENDER_TURN_MS } from "../usageSe
 
 const REQUEST_ID = "0b4f8a52-5d0e-4e55-9a0c-5a1f1e7c0a01"
 const OTHER_REQUEST_ID = "0b4f8a52-5d0e-4e55-9a0c-5a1f1e7c0a02"
+
+function attemptObservation(id: string, admittedAt: number, durationMs: number, revision = 1) {
+    return {
+        id,
+        revision,
+        receivedAt: admittedAt + durationMs,
+        observation: {
+            attemptObservationId: id,
+            logicalRequestId: `logical-${id}`,
+            identity: { role: "task" as const, provider: "anthropic", modelId: "catalog:claude-opus-4-1", thinking: 2048 },
+            policyGeneration: 7,
+            admittedAt,
+            outcome: "completed" as const,
+            durationMs,
+            tokens: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 1 },
+            tokenUsageReported: true,
+        },
+    }
+}
 
 function pendingState(policyEpoch = 1): UsageOutboxState {
     const tally = projectUsageSettlement({
@@ -190,6 +214,23 @@ describe("UsageOutboxRepository", () => {
         expect(await repository().claim("window-b")).toBeUndefined()
     })
 
+    it("refuses a stale policy reset without clearing newer state or inflight bytes", async () => {
+        const grant = await repository().claim("window-a")
+        if (!grant) throw new Error("expected a lease")
+        const state = pendingState(9)
+        await repository().transact(grant, () => ({ state, result: undefined }))
+        await repository().writeBody(REQUEST_ID, new Uint8Array([1, 2, 3]))
+
+        expect(await repository().reset(8)).toBe(false)
+        expect(await repository().reset(9)).toBe(false)
+        expect(await repository().read()).toEqual(state)
+        expect(await fs.readdir(layout.usageInflightDir)).toEqual([`${REQUEST_ID}.bin`])
+
+        expect(await repository().reset(10)).toBe(true)
+        expect(await repository().read()).toEqual({ ...emptyUsageOutbox(10), pacing: state.pacing })
+        expect(await fs.readdir(layout.usageInflightDir)).toEqual([])
+    })
+
     it("quarantines an outbox from an earlier schema instead of migrating facts it cannot hold", async () => {
         await fs.mkdir(layout.usageDir, { recursive: true })
         // A purpose-and-model outbox cannot be expressed as fact-keyed seconds, and a
@@ -236,6 +277,95 @@ describe("UsageOutboxRepository", () => {
         expect(await repository().read()).toBeUndefined()
         expect(await fs.readFile(layout.usageOutboxPath, "utf8")).toBe(newer)
         expect(await fs.readdir(layout.usageInflightDir)).toEqual([`${REQUEST_ID}.bin`])
+    })
+
+    describe("schema 4 attempt authority", () => {
+        it("destructively activates schema 4 and durably folds a settled shard exactly once", async () => {
+            const legacy = repository()
+            const legacyGrant = await legacy.claim("legacy-window")
+            if (!legacyGrant) throw new Error("expected legacy lease")
+            await legacy.transact(legacyGrant, () => ({ state: pendingState(), result: undefined }))
+            await legacy.writeBody(REQUEST_ID, new Uint8Array([1, 2, 3]))
+
+            expect(await legacy.activateAttempts(7)).toBe("activated")
+            expect(await legacy.read()).toBeUndefined()
+            expect(await fs.readdir(layout.usageInflightDir)).toEqual([])
+            expect(await legacy.claim("legacy-window")).toBeUndefined()
+
+            const grant = await legacy.claimAttempts("window-a")
+            if (!grant) throw new Error("expected schema 4 lease")
+            const shards = [
+                {
+                    name: "host-a.1.attempts.sealed.jsonl",
+                    observations: [attemptObservation("a", now, 58_400), attemptObservation("b", now + 1, 18_500)],
+                },
+            ]
+            let nextBucket = 0
+            const fold = (state: Parameters<typeof foldUsageAttemptShards>[0]) =>
+                foldUsageAttemptShards(state, shards, {
+                    currentPolicyGeneration: 7,
+                    newBucketId: () => `bucket-${++nextBucket}`,
+                    sealedAt: now + 100_000,
+                })
+
+            expect(await legacy.transactAttempts(grant, (state) => ({ state: fold(state), result: undefined }))).toEqual({
+                status: "committed",
+                result: undefined,
+            })
+            const persisted = await repository().readAttempts()
+            if (!persisted) throw new Error("expected schema 4 state")
+            expect(persisted.buckets.open).toBeUndefined()
+            expect(persisted.buckets.sealed).toHaveLength(1)
+            expect(persisted.buckets.sealed[0].durationMs).toBe(76_900)
+            expect(persisted.observationRevisions).toEqual({
+                a: { revision: 1, bucketId: "bucket-1" },
+                b: { revision: 1, bucketId: "bucket-1" },
+            })
+            expect(persisted.foldedShards).toEqual(["host-a.1.attempts.sealed.jsonl"])
+
+            await legacy.transactAttempts(grant, (state) => ({ state: fold(state), result: undefined }))
+            expect(await repository().readAttempts()).toEqual(persisted)
+        })
+
+        it("fences schema 4 body cleanup so an expired holder cannot delete the takeover generation", async () => {
+            const outbox = repository()
+            await outbox.activateAttempts(7)
+            const stale = await outbox.claimAttempts("window-a")
+            if (!stale) throw new Error("expected schema 4 lease")
+            await outbox.writeBody(REQUEST_ID, new Uint8Array([1]))
+
+            now += USAGE_SENDER_LEASE_MS
+            const current = await repository().claimAttempts("window-b")
+            if (!current) throw new Error("expected schema 4 takeover")
+            await outbox.writeBody(OTHER_REQUEST_ID, new Uint8Array([2]))
+
+            expect(await outbox.removeAttemptBodies(stale)).toBe(false)
+            expect((await fs.readdir(layout.usageInflightDir)).sort()).toEqual(
+                [`${OTHER_REQUEST_ID}.bin`, `${REQUEST_ID}.bin`].sort(),
+            )
+            expect(await outbox.removeAttemptBodies(current, OTHER_REQUEST_ID)).toBe(true)
+            expect(await fs.readdir(layout.usageInflightDir)).toEqual([`${OTHER_REQUEST_ID}.bin`])
+        })
+
+        it("uses the existing generation fence for schema 4 transactions and resets only on a newer policy generation", async () => {
+            const outbox = repository()
+            await outbox.activateAttempts(7)
+            const stale = await outbox.claimAttempts("window-a")
+            if (!stale) throw new Error("expected schema 4 lease")
+            now += USAGE_SENDER_LEASE_MS
+            const current = await repository().claimAttempts("window-b")
+            if (!current) throw new Error("expected schema 4 takeover")
+
+            expect(await outbox.transactAttempts(stale, (state) => ({ state, result: "stale" }))).toEqual({ status: "fenced" })
+            expect(await outbox.resetAttempts(7)).toBe(false)
+            expect(await outbox.resetAttempts(8)).toBe(true)
+            expect(await outbox.readAttempts()).toMatchObject({
+                policyGeneration: 8,
+                buckets: { sealed: [] },
+                foldedShards: [],
+                observationRevisions: {},
+            })
+        })
     })
 
     describe("sender rotation", () => {

@@ -3,13 +3,12 @@
 import type { GenerateContentConfig, GenerateContentResponseUsageMetadata } from "@google/genai"
 import { ApiError, FunctionCallingConfigMode, GoogleGenAI, FunctionDeclaration as GoogleTool } from "@google/genai"
 import { GeminiModelId, geminiDefaultModelId, geminiModels, ModelInfo } from "@shared/api"
-import { observeProviderStream } from "@shared/provider-attempt-observer"
 import { GEMINI_FLASH_MAX_OUTPUT_TOKENS, isGeminiFlashModel } from "@utils/model-utils"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { telemetryService } from "@/services/telemetry"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { RetriableError, withRetry } from "../retry"
 import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
 import { ApiStream } from "../transform/stream"
@@ -30,11 +29,13 @@ function getGeminiMaxOutputTokens(modelId: string, modelMaxTokens?: number): num
     return GEMINI_FLASH_MAX_OUTPUT_TOKENS
 }
 
-export class GeminiHandler implements ApiHandler {
+export class GeminiHandler extends ApiHandler {
     private client: GoogleGenAI | undefined
     private readonly tokenCount = new TokenCountGate("Gemini")
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.provider === "vertex" ? this.ctx.profile.vertex : this.ctx.profile.gemini
@@ -142,13 +143,13 @@ export class GeminiHandler implements ApiHandler {
         }
 
         try {
-            const result = await observeProviderStream(() =>
-                client.models.generateContentStream({
-                    model: modelId,
-                    contents: contents,
-                    config: { ...requestConfig },
-                }),
-            )
+            const request = {
+                model: modelId,
+                contents,
+                config: { ...requestConfig },
+            }
+            const identity = ApiHandler.identifyProviderAttempt("gemini", request)
+            const result = await ApiHandler.observeProviderStream(identity, () => client.models.generateContentStream(request))
 
             let isFirstSdkChunk = true
             for await (const chunk of result) {
@@ -347,7 +348,7 @@ export class GeminiHandler implements ApiHandler {
         return { id: geminiDefaultModelId, info: geminiModels[geminiDefaultModelId] }
     }
 
-    async countInputTokens(input: {
+    override async countInputTokens(input: {
         readonly systemPrompt: string
         readonly messages: ClineStorageMessage[]
         readonly tools?: GoogleTool[]

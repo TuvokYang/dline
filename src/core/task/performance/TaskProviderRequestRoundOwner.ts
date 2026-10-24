@@ -1,25 +1,27 @@
-import type { ProviderAttemptObserver } from "@shared/provider-attempt-observer"
-import { bindProviderAttemptScope } from "@shared/provider-attempt-observer"
+import type { ProviderAttemptIdentity, ProviderAttemptObserver } from "@shared/provider-attempt-observer"
+import { Logger } from "@shared/services/Logger"
 import { ulid } from "ulid"
 import type { BlockPhase, KernelBlock } from "../kernel"
+import type { UsageToolCall } from "../telemetry/UsageToolCalls"
 import type { ApiRequestRoundScopeInput } from "./api-request-round-lifecycle"
+import type { ApiRequestRoundHandle } from "./api-request-round-tracker"
 import type { ApiRequestRoundUsage } from "./api-request-round-types"
 import type { ApiResponseExecutionToolSummary } from "./api-response-execution-types"
-import type {
-    ProviderRequestRoundAdmission,
-    ProviderRequestRoundAdmissionInput,
-    ProviderRequestRoundPort,
-} from "./provider-request-round-port"
+import type { ProviderRequestRoundAdmission, ProviderRequestRoundAdmissionInput } from "./provider-request-round-port"
 
 interface ProviderRequestRoundLifecyclePort {
-    createObserver(input: ApiRequestRoundScopeInput): ProviderAttemptObserver
-    attachExactUsage(logicalRequestId: string, usage: ApiRequestRoundUsage): void
+    createObserver(input: ApiRequestRoundScopeInput): ProviderAttemptObserver<ApiRequestRoundHandle>
+    attachExactUsage(handle: ApiRequestRoundHandle, usage: ApiRequestRoundUsage): void
     completeProviderOnly(logicalRequestId: string): void
-    completeTools(logicalRequestId: string, summary: ApiResponseExecutionToolSummary): void
-    completeTurnEndAwaitingUser(logicalRequestId: string, summary: ApiResponseExecutionToolSummary): void
+    completeTools(logicalRequestId: string, summary: ApiResponseExecutionToolSummary, toolCalls?: readonly UsageToolCall[]): void
+    completeTurnEndAwaitingUser(
+        logicalRequestId: string,
+        summary: ApiResponseExecutionToolSummary,
+        toolCalls?: readonly UsageToolCall[],
+    ): void
 }
 
-type ProviderExecutionBlock = Pick<KernelBlock, "blockId" | "phase">
+export type ProviderExecutionBlock = Pick<KernelBlock, "blockId" | "phase"> & { readonly invocationRef?: string }
 
 export interface ProviderExecutionRegistration {
     readonly turnId: string
@@ -31,6 +33,12 @@ export interface TaskProviderRequestRoundOwnerOptions {
     readonly lifecycle: ProviderRequestRoundLifecyclePort
     readonly readExecutionBlocks: (turnId: string) => readonly ProviderExecutionBlock[]
     readonly isExecutionCancelling: () => boolean
+    readonly resolveExecutionToolCalls?: (
+        blocks: readonly ProviderExecutionBlock[],
+        awaitingBlockId?: string,
+    ) => Promise<readonly UsageToolCall[]>
+    readonly readPolicyGeneration?: () => number | undefined
+    readonly projectUsageModelId?: (provider: string, wireModelId: string) => string
 }
 
 type ActiveProviderExecution = ProviderExecutionRegistration
@@ -43,10 +51,12 @@ interface TurnEndProviderExecution {
 }
 
 /** Owns logical Provider request rounds and their response-execution completion lifecycle. */
-export class TaskProviderRequestRoundOwner implements ProviderRequestRoundPort {
+export class TaskProviderRequestRoundOwner {
     private readonly ordinaryRounds = new Map<number, ProviderRequestRoundAdmission>()
     private readonly activeExecutions = new Map<ProviderRequestRoundAdmission, ActiveProviderExecution>()
     private readonly turnEndExecutions = new Map<string, TurnEndProviderExecution>()
+    private readonly completedAdmissions = new Set<ProviderRequestRoundAdmission>()
+    private readonly pendingCompletions = new Set<Promise<void>>()
     private nextAuxiliaryApiIndex = 0
 
     constructor(private readonly options: TaskProviderRequestRoundOwnerOptions) {}
@@ -54,17 +64,36 @@ export class TaskProviderRequestRoundOwner implements ProviderRequestRoundPort {
     admit(input: ProviderRequestRoundAdmissionInput): ProviderRequestRoundAdmission {
         const apiIndex = input.apiIndex ?? this.nextAuxiliaryApiIndex++
         const logicalRequestId = `${input.source}:${ulid()}`
+        let latestTerminal: ApiRequestRoundHandle | undefined
+        const createAttemptObserver = (
+            taskAttempt: number,
+            _adapter = input.servedBy ? { provider: input.servedBy.provider } : undefined,
+        ): ProviderAttemptObserver<ApiRequestRoundHandle> => {
+            const policyGeneration = this.options.readPolicyGeneration?.()
+            const observer = this.options.lifecycle.createObserver({
+                logicalRequestId,
+                apiIndex,
+                taskAttempt,
+                role: input.source,
+                ...(policyGeneration === undefined ? {} : { policyGeneration }),
+            })
+            return {
+                beginAttempt: (identity) => observer.beginAttempt(this.projectIdentity(identity)),
+                finishAttempt: async (handle, status) => {
+                    await observer.finishAttempt(handle, status)
+                    latestTerminal = handle
+                },
+            }
+        }
         return {
-            bindAttempt: <T>(stream: AsyncIterable<T>, taskAttempt: number) =>
-                bindProviderAttemptScope(
-                    stream,
-                    this.options.lifecycle.createObserver({ logicalRequestId, apiIndex, taskAttempt }),
-                ),
-            attachExactUsage: (usage) => this.options.lifecycle.attachExactUsage(logicalRequestId, usage),
+            createAttemptObserver,
+            attachExactUsage: (usage) => {
+                if (latestTerminal) this.options.lifecycle.attachExactUsage(latestTerminal, usage)
+            },
             completeProviderOnly: () => this.options.lifecycle.completeProviderOnly(logicalRequestId),
-            completeTools: (summary) => this.options.lifecycle.completeTools(logicalRequestId, summary),
-            completeTurnEndAwaitingUser: (summary) =>
-                this.options.lifecycle.completeTurnEndAwaitingUser(logicalRequestId, summary),
+            completeTools: (summary, toolCalls) => this.options.lifecycle.completeTools(logicalRequestId, summary, toolCalls),
+            completeTurnEndAwaitingUser: (summary, toolCalls) =>
+                this.options.lifecycle.completeTurnEndAwaitingUser(logicalRequestId, summary, toolCalls),
         }
     }
 
@@ -73,7 +102,7 @@ export class TaskProviderRequestRoundOwner implements ProviderRequestRoundPort {
             const existing = this.ordinaryRounds.get(apiIndex)
             if (existing) return existing
         }
-        const admission = this.admit({ source: "ordinary", apiIndex })
+        const admission = this.admit({ source: "task", apiIndex })
         this.ordinaryRounds.set(apiIndex, admission)
         return admission
     }
@@ -99,27 +128,49 @@ export class TaskProviderRequestRoundOwner implements ProviderRequestRoundPort {
     }
 
     completeAtAwaitingUser(turnId: string, interactionId: string): void {
-        const execution = this.turnEndExecutions.get(interactionId)
-        if (!execution || execution.turnId !== turnId) return
-        execution.admission.completeTurnEndAwaitingUser(
-            this.summarizeExecutionTools(turnId, execution.blockId, execution.toolCount),
-        )
-        this.turnEndExecutions.delete(interactionId)
+        const terminal = this.turnEndExecutions.get(interactionId)
+        if (!terminal || terminal.turnId !== turnId || this.completedAdmissions.has(terminal.admission)) return
+        const execution = this.activeExecutions.get(terminal.admission) ?? {
+            turnId: terminal.turnId,
+            toolCount: terminal.toolCount,
+            turnEndInteractions: [],
+        }
+        this.completeWithTools(terminal.admission, execution, "turn_end_awaiting_user", terminal.blockId)
+        this.clearExecution(terminal.admission, execution)
     }
 
     completeTurn(admission?: ProviderRequestRoundAdmission): void {
         if (!admission) return
         const execution = this.activeExecutions.get(admission)
+        if (this.completedAdmissions.has(admission)) {
+            if (execution) this.clearExecution(admission, execution)
+            return
+        }
         if (this.options.isExecutionCancelling()) {
             if (execution) this.clearExecution(admission, execution)
             return
         }
         if (!execution) {
+            this.completedAdmissions.add(admission)
             admission.completeProviderOnly()
             return
         }
-        admission.completeTools(this.summarizeExecutionTools(execution.turnId, undefined, execution.toolCount))
+        this.completeWithTools(admission, execution, "tools_settled")
         this.clearExecution(admission, execution)
+    }
+
+    async waitForCompletions(): Promise<void> {
+        while (this.pendingCompletions.size > 0) await Promise.allSettled([...this.pendingCompletions])
+    }
+
+    private projectIdentity(identity: ProviderAttemptIdentity | undefined): ProviderAttemptIdentity | undefined {
+        const projector = this.options.projectUsageModelId
+        if (!identity || !projector) return identity
+        try {
+            return { ...identity, modelId: projector(identity.provider, identity.modelId) }
+        } catch {
+            return { ...identity, modelId: "state:unknown" }
+        }
     }
 
     private clearExecution(admission: ProviderRequestRoundAdmission, execution: ActiveProviderExecution): void {
@@ -127,12 +178,46 @@ export class TaskProviderRequestRoundOwner implements ProviderRequestRoundPort {
         this.activeExecutions.delete(admission)
     }
 
+    private completeWithTools(
+        admission: ProviderRequestRoundAdmission,
+        execution: ActiveProviderExecution,
+        terminalKind: "tools_settled" | "turn_end_awaiting_user",
+        awaitingBlockId?: string,
+    ): void {
+        if (this.completedAdmissions.has(admission)) return
+        this.completedAdmissions.add(admission)
+        const blocks = [...this.options.readExecutionBlocks(execution.turnId)]
+        const summary = this.summarizeExecutionTools(blocks, awaitingBlockId, execution.toolCount)
+        const complete = (toolCalls?: readonly UsageToolCall[]) => {
+            if (terminalKind === "turn_end_awaiting_user") {
+                if (toolCalls) admission.completeTurnEndAwaitingUser(summary, toolCalls)
+                else admission.completeTurnEndAwaitingUser(summary)
+            } else if (toolCalls) admission.completeTools(summary, toolCalls)
+            else admission.completeTools(summary)
+        }
+        const resolver = this.options.resolveExecutionToolCalls
+        if (!resolver || blocks.length === 0) {
+            complete()
+            return
+        }
+        const pending = resolver(blocks, awaitingBlockId)
+            .then(
+                (toolCalls) => complete(toolCalls.length === summary.toolCount ? toolCalls : undefined),
+                (error) => {
+                    Logger.debug(`[usage] logical execution tool names could not be resolved: ${String(error)}`)
+                    complete()
+                },
+            )
+            .catch((error) => Logger.debug(`[usage] logical execution could not be finalized: ${String(error)}`))
+            .finally(() => this.pendingCompletions.delete(pending))
+        this.pendingCompletions.add(pending)
+    }
+
     private summarizeExecutionTools(
-        turnId: string,
+        blocks: readonly ProviderExecutionBlock[],
         awaitingBlockId?: string,
         fallbackToolCount = 0,
     ): ApiResponseExecutionToolSummary {
-        const blocks = this.options.readExecutionBlocks(turnId)
         let completedToolCount = 0
         let failedToolCount = 0
         let cancelledToolCount = 0

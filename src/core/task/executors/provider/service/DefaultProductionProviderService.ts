@@ -158,13 +158,6 @@ export interface DefaultProductionProviderServiceOptions {
     readonly nextPresentationId?: () => number
     readonly onUsage?: (usage: Readonly<Record<string, number>>) => void
     readonly retry?: ProviderRetryPolicy
-    /**
-     * Binds each attempt of a turn's request to that turn's logical request
-     * round, so the rates count rounds rather than raw sends.
-     */
-    readonly rounds?: {
-        bindOrdinaryAttempt<T>(turnId: string, attempt: number, stream: AsyncIterable<T>): AsyncIterable<T>
-    }
     readonly serverTools?: ProviderServerToolPresentationPort
     /** Resolve the server key and tool segment encoded in an advertised native MCP function name. */
     readonly resolveMcpTool?: McpToolResolver
@@ -760,11 +753,12 @@ export class DefaultProductionProviderService implements ProductionProviderServi
             try {
                 clock.providerRequestStartedAtMs = performance.now()
                 clock.firstContentAtMs = undefined
-                const apiStream = this.bindRound(
-                    request.turnId,
-                    budget.attempts,
-                    request.api.createMessage(request.systemPrompt, messages, request.tools, request.options),
-                )
+                const apiStream = request.api.createMessage(request.systemPrompt, messages, request.tools, {
+                    ...request.options,
+                    telemetryRole: "task",
+                    telemetryRequestId: request.turnId,
+                    telemetryAttempt: budget.attempts,
+                })
                 const normalizer = createStreamNormalizer(this.identities, {
                     carriedServerToolTraceId: (functionId) => turn.carriedServerToolTraceIds.get(functionId),
                 })
@@ -826,16 +820,6 @@ export class DefaultProductionProviderService implements ProductionProviderServi
                 messages = messagesOf(turn.request)
             }
         }
-    }
-
-    /** Count this send toward the turn's logical request round; a retry joins the round it retries. */
-    private bindRound<T>(turnId: string, attempt: number, stream: AsyncGenerator<T>): AsyncGenerator<T> {
-        const rounds = this.options.rounds
-        if (!rounds) return stream
-        const bound = rounds.bindOrdinaryAttempt(turnId, attempt, stream)
-        return (async function* () {
-            yield* bound
-        })()
     }
 
     private consumeNativeTool(tools: Map<string, PendingNativeTool>, chunk: ApiStreamToolCallsChunk): void {

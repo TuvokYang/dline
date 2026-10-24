@@ -41,6 +41,26 @@ function streamingState(turnId: string, revision: number): TaskState {
 }
 
 describe("TaskTurnTelemetry", () => {
+    it("forwards committed canonical state even when diagnostic recording is disabled", () => {
+        configureSignalRecording({ enabled: () => false })
+        const state = streamingState("turn-a", 1)
+        const committed = vi.fn()
+        const timeline = new TaskTurnTelemetry(
+            "task-1",
+            () => state,
+            () => ({ cacheUsageAvailable: false }),
+            undefined,
+            committed,
+        )
+        cleanup.push(() => timeline.dispose())
+
+        timeline.committed("TURN_CREATED", state)
+
+        expect(committed).toHaveBeenCalledOnce()
+        expect(committed).toHaveBeenCalledWith(state)
+        expect(timeline.currentSpan()).toBeUndefined()
+    })
+
     it("accepts a delayed failure from an older segment of the same real turn", async () => {
         const { exporter, provider } = setupTraceExporter()
         const state = streamingState("turn-a", 1)

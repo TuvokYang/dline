@@ -6,7 +6,6 @@ import type { CatalogConflict, InputSemanticCatalog } from "@shared/input-semant
 import type { GetHostVersionResponse } from "@shared/proto/dline/host/env"
 import type { TaskCollaborationRuntime } from "../collaboration/TaskCollaborationRuntime"
 import type { NewTaskHandoff } from "../new-task/new-task-handoff"
-import type { UsageSettlementPort } from "../telemetry/UsageSettlement"
 
 /** Capability discovery needed to build one request's prompt context. */
 export interface TaskPromptContextHost {
@@ -73,6 +72,4 @@ export interface TaskSessionPorts {
     readonly semanticCatalog: TaskSessionSemanticCatalogPort
     readonly successor: TaskSessionSuccessorPort
     readonly profileUsage: TaskSessionProfileUsagePort
-    /** Receives every settled provider request for remote usage; absent where usage is not reported. */
-    readonly usageSettlement?: UsageSettlementPort
 }

@@ -156,6 +156,12 @@ describe("building a batch", () => {
         expect(countFactIdentities(secondsOf(tallyOf(factTally()), tallyOf(factTally())))).toBe(1)
     })
 
+    it("counts role as part of the full fact identity", () => {
+        const seconds = secondsOf(tallyOf(factTally()), tallyOf(factTally({ role: "subagent" })))
+
+        expect(countFactIdentities(seconds)).toBe(2)
+    })
+
     it("fits the byte bound for the largest batch the identity bounds allow", () => {
         // Role, provider and model-identity bounds are tighter than the fact bound,
         // so the largest legal batch is their product rather than USAGE_MAX_FACTS.

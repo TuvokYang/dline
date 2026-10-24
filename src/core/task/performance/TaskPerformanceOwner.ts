@@ -1,5 +1,7 @@
 import { findExistingTaskMetricsDatabase } from "@core/storage/task-metrics-database"
 import type { UiMessage } from "@shared/ExtensionMessage"
+import type { ProviderAttemptObserver } from "@shared/provider-attempt-observer"
+import type { ProviderAttemptScopeInput, ProviderAttemptUsageInput } from "@/services/telemetry/service/task-trace-context"
 import type { TaskState } from "../kernel"
 import type { ChecklistChange } from "../telemetry/ChecklistDiff"
 import { toolCallOutcome, type UsageToolCall } from "../telemetry/UsageToolCalls"
@@ -9,8 +11,8 @@ import { TaskApiRequestRoundRepository } from "./api-request-round-repository"
 import { ApiRequestRoundTracker } from "./api-request-round-tracker"
 import { ApiResponseExecutionLifecycle } from "./api-response-execution-lifecycle"
 import { TaskApiResponseExecutionRepository } from "./api-response-execution-repository"
-import type { ProviderRequestRoundPort } from "./provider-request-round-port"
-import { TaskProviderRequestRoundOwner } from "./TaskProviderRequestRoundOwner"
+import type { FinalizedProviderAttemptPort } from "./provider-request-round-port"
+import { type ProviderExecutionBlock, TaskProviderRequestRoundOwner } from "./TaskProviderRequestRoundOwner"
 import { TaskApiRateMetricsRepository } from "./task-api-rate-metrics-repository"
 import { TaskApiRateMetricsService } from "./task-api-rate-metrics-service"
 import { TaskRateMetricsQueryService } from "./task-rate-metrics-query-service"
@@ -21,6 +23,10 @@ export interface TaskPerformanceOwnerOptions {
     readonly readState: () => Readonly<TaskState>
     readonly legacyMessages: () => readonly UiMessage[]
     readonly onChanged?: () => void
+    readonly finalizedAttempts?: FinalizedProviderAttemptPort
+    /** Current allowed remote Usage generation, sampled once at each real Provider send admission. */
+    readonly readUsagePolicyGeneration?: () => number | undefined
+    readonly projectUsageModelId?: (provider: string, wireModelId: string) => string
     /** An explicit metrics database, used as is instead of the task's own layout. */
     readonly location?: string
     /**
@@ -40,14 +46,18 @@ export interface TaskPerformanceOwnerOptions {
 
 /** Owns every task-local rate metric lifecycle and its durable repositories. */
 export class TaskPerformanceOwner {
-    readonly providerRequestRounds: ProviderRequestRoundPort
-    /** The same owner as `providerRequestRounds`, with the ordinary-round lifecycle only this class drives. */
     private readonly rounds: TaskProviderRequestRoundOwner
     private readonly activeMetrics: TaskApiRateMetricsService
     private readonly roundLifecycle: ApiRequestRoundLifecycle
     private readonly queryService: TaskRateMetricsQueryService
     /** The logical round of each turn whose provider request is still open, keyed by turn. */
     private readonly ordinaryRounds = new Map<string, number>()
+    /** Non-task ApiHandler invocations keyed by their stable semantic request identity. */
+    private readonly auxiliaryAdmissions = new Map<string, ReturnType<TaskProviderRequestRoundOwner["admit"]>>()
+    /** Turns whose canonical kernel blocks have been attached to their logical Provider request. */
+    private readonly registeredExecutions = new Set<string>()
+    /** Turns whose turn-ending interaction already terminalled the logical execution at the user boundary. */
+    private readonly awaitingUserTerminals = new Set<string>()
     /** The turn whose request was bound last; its round is open until the run rests. */
     /** Tool identities of settled calls, resolved once per invocation for usage. */
     private readonly callToolNames = new Map<string, string | undefined>()
@@ -84,6 +94,7 @@ export class TaskPerformanceOwner {
         this.roundLifecycle = new ApiRequestRoundLifecycle(
             new ApiRequestRoundTracker({ taskId: options.taskId, repository: roundRepository, onChanged: options.onChanged }),
             executions,
+            options.finalizedAttempts,
         )
         this.rounds = new TaskProviderRequestRoundOwner({
             lifecycle: this.roundLifecycle,
@@ -92,8 +103,10 @@ export class TaskPerformanceOwner {
                 return turn.turnId === turnId ? turn.blocks : []
             },
             isExecutionCancelling: () => options.readState().halt.status === "stopping",
+            resolveExecutionToolCalls: (blocks, awaitingBlockId) => this.toolCallsOfBlocks(blocks, awaitingBlockId),
+            readPolicyGeneration: options.readUsagePolicyGeneration,
+            projectUsageModelId: options.projectUsageModelId,
         })
-        this.providerRequestRounds = this.rounds
         this.queryService = new TaskRateMetricsQueryService({
             activeMetrics: this.activeMetrics,
             roundRepository,
@@ -143,23 +156,57 @@ export class TaskPerformanceOwner {
     committed(state: Readonly<TaskState>, runAtRest = false): void {
         const loopActive = LOOP_ACTIVE_PHASES.has(state.flow.phase)
         this.activeMetrics.setTaskLoopActive(loopActive)
+        this.observeCommittedExecution(state)
         this.completeSettledRounds(state.turn.turnId, loopActive && !runAtRest)
     }
 
-    /**
-     * Bind one attempt of a turn's provider request to the turn's logical round.
-     *
-     * Retries of a turn share its round, so the rates count one request however
-     * often it was sent, as dev's request rounds did.
-     */
-    bindOrdinaryAttempt<T>(turnId: string, attempt: number, stream: AsyncIterable<T>): AsyncIterable<T> {
+    /** Mandatory ApiHandler boundary: obtain the observer without exposing Usage policy or storage to the caller. */
+    providerAttemptObserver(input: ProviderAttemptScopeInput): ProviderAttemptObserver {
+        const admission =
+            input.role === "task" && input.logicalRequestId
+                ? this.ordinaryAdmission(input.logicalRequestId, input.taskAttempt)
+                : this.auxiliaryAdmission(input)
+        return admission.createAttemptObserver(input.taskAttempt, input.adapter)
+    }
+
+    private ordinaryAdmission(turnId: string, attempt: number): ReturnType<TaskProviderRequestRoundOwner["admitOrdinary"]> {
         this.latestOrdinaryTurnId = turnId
         let apiIndex = this.ordinaryRounds.get(turnId)
         if (apiIndex === undefined) {
             apiIndex = this.nextOrdinaryApiIndex++
             this.ordinaryRounds.set(turnId, apiIndex)
         }
-        return this.rounds.admitOrdinary(apiIndex, attempt).bindAttempt(stream, attempt)
+        return this.rounds.admitOrdinary(apiIndex, attempt)
+    }
+
+    private auxiliaryAdmission(input: ProviderAttemptScopeInput): ReturnType<TaskProviderRequestRoundOwner["admit"]> {
+        const key = input.logicalRequestId ? `${input.role}:${input.logicalRequestId}` : undefined
+        const existing = key ? this.auxiliaryAdmissions.get(key) : undefined
+        if (existing) return existing
+        const admission = this.rounds.admit({ source: input.role })
+        if (key) this.auxiliaryAdmissions.set(key, admission)
+        return admission
+    }
+
+    /** Attach usage observed by the mandatory ApiHandler wrapper to its existing attempt admission. */
+    providerAttemptUsage(input: ProviderAttemptUsageInput): void {
+        if (input.role === "task" && input.logicalRequestId) {
+            const apiIndex = this.ordinaryRounds.get(input.logicalRequestId)
+            if (apiIndex !== undefined) this.rounds.attachOrdinaryExactUsage(apiIndex, input.usage)
+            return
+        }
+        if (!input.logicalRequestId) return
+        this.auxiliaryAdmissions.get(`${input.role}:${input.logicalRequestId}`)?.attachExactUsage(input.usage)
+    }
+
+    /** Complete an auxiliary logical request at the mandatory ApiHandler terminal boundary. */
+    providerRequestCompleted(input: ProviderAttemptScopeInput): void {
+        if (input.role === "task" || !input.logicalRequestId) return
+        const key = `${input.role}:${input.logicalRequestId}`
+        const admission = this.auxiliaryAdmissions.get(key)
+        if (!admission) return
+        admission.completeProviderOnly()
+        this.auxiliaryAdmissions.delete(key)
     }
 
     /**
@@ -192,11 +239,17 @@ export class TaskPerformanceOwner {
 
     async settledToolCalls(turnId: string): Promise<readonly UsageToolCall[]> {
         const turn = this.options.readState().turn
-        if (turn.turnId !== turnId) return []
+        return turn.turnId === turnId ? this.toolCallsOfBlocks(turn.blocks) : []
+    }
+
+    private async toolCallsOfBlocks(
+        blocks: readonly ProviderExecutionBlock[],
+        awaitingBlockId?: string,
+    ): Promise<readonly UsageToolCall[]> {
         const calls: UsageToolCall[] = []
-        for (const block of turn.blocks) {
-            const toolName = await this.toolNameOf(block.invocationRef)
-            const outcome = toolCallOutcome(block.phase, false)
+        for (const block of blocks) {
+            const toolName = block.invocationRef ? await this.toolNameOf(block.invocationRef) : undefined
+            const outcome = toolCallOutcome(block.phase, block.blockId === awaitingBlockId)
             calls.push(toolName === undefined ? { outcome } : { outcome, toolName })
         }
         return calls
@@ -223,24 +276,43 @@ export class TaskPerformanceOwner {
         this.activeMetrics.recordRequestStarted()
     }
 
-    requestSettled(usage?: Readonly<Record<string, number>>, turnId?: string): void {
+    requestSettled(usage?: Readonly<Record<string, number>>): void {
         this.activeMetrics.recordProviderRequestFinished()
         if (!usage) return
-        const apiIndex = turnId === undefined ? undefined : this.ordinaryRounds.get(turnId)
-        if (apiIndex !== undefined) {
-            this.rounds.attachOrdinaryExactUsage(apiIndex, {
-                inputTokens: finiteUsage(usage.inputTokens),
-                outputTokens: finiteUsage(usage.outputTokens),
-                thoughtsTokens: finiteUsage(usage.thoughtsTokenCount),
-                cacheWriteTokens: finiteUsage(usage.cacheWriteTokens),
-                cacheReadTokens: finiteUsage(usage.cacheReadTokens),
-                // A provider that says nothing about its cache must not read as a cold one.
-                cacheUsageReported: usage.cacheWriteTokens !== undefined || usage.cacheReadTokens !== undefined,
-                totalCost: Number.isFinite(usage.totalCost) ? usage.totalCost : undefined,
-            })
-        }
-        // TPM is a generation rate, so only generated output feeds it.
+        // TPM is a generation rate, so only generated output feeds it. Exact per-attempt
+        // usage is attached by the mandatory ApiHandler observation boundary.
         this.activeMetrics.recordExactUsage({ outputTokens: finiteUsage(usage.outputTokens) })
+    }
+
+    /** Attach logical execution and tool terminal facts from the canonical committed Task state. */
+    private observeCommittedExecution(state: Readonly<TaskState>): void {
+        const turnId = state.turn.turnId
+        if (!turnId) return
+        const apiIndex = this.ordinaryRounds.get(turnId)
+        if (apiIndex === undefined) return
+        const admission = this.rounds.getOrdinary(apiIndex)
+        if (!admission) return
+
+        if (state.turn.blocks.length > 0 && !this.registeredExecutions.has(turnId)) {
+            this.rounds.registerExecution(admission, {
+                turnId,
+                toolCount: state.turn.blocks.length,
+                turnEndInteractions: state.turn.blocks
+                    .filter((block) => block.turnEnding)
+                    .map((block) => ({ interactionId: block.blockId, blockId: block.blockId })),
+            })
+            this.registeredExecutions.add(turnId)
+        }
+
+        const interaction = state.dialog.primary
+        if (interaction?.turnId !== turnId || interaction.status !== "awaiting" || this.awaitingUserTerminals.has(turnId)) {
+            return
+        }
+        const blockId = interaction.blockId ?? interaction.interactionId
+        const terminalBlock = state.turn.blocks.find((block) => block.blockId === blockId && block.turnEnding)
+        if (!terminalBlock) return
+        this.rounds.completeAtAwaitingUser(turnId, terminalBlock.blockId)
+        this.awaitingUserTerminals.add(turnId)
     }
 
     /**
@@ -255,6 +327,8 @@ export class TaskPerformanceOwner {
             if (running && (turnId === currentTurnId || turnId === this.latestOrdinaryTurnId)) continue
             this.rounds.completeTurn(this.rounds.getOrdinary(apiIndex))
             this.ordinaryRounds.delete(turnId)
+            this.registeredExecutions.delete(turnId)
+            this.awaitingUserTerminals.delete(turnId)
         }
     }
 
@@ -285,6 +359,10 @@ export class TaskPerformanceOwner {
     async release(): Promise<void> {
         if (this.closed) return
         this.closed = true
+        this.auxiliaryAdmissions.clear()
+        this.registeredExecutions.clear()
+        this.awaitingUserTerminals.clear()
+        await this.rounds.waitForCompletions()
         await Promise.allSettled([this.activeMetrics.dispose(), this.roundLifecycle.close()])
     }
 }

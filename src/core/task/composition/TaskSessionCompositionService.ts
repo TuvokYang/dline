@@ -93,9 +93,6 @@ import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
 import type { ToolInvocationEnvelope } from "../stores/payload/TaskPayloadEnvelopes"
 import { TaskStateManager } from "../TaskStateManager"
 import { withTerminateTimeout } from "../TaskTerminateTimeout"
-import { settleSubagentRoundUsage } from "../telemetry/NestedUsageSettlement"
-import { servedModelOf } from "../telemetry/UsageServedModel"
-import { settleUsageAround } from "../telemetry/UsageSettlementRequestReporter"
 import { DefaultToolHandlerState } from "../tools/state/ToolHandlerState"
 import { ToolValidator } from "../tools/ToolValidator"
 import type { TaskSessionHostFactory } from "./TaskSessionHostFactory"
@@ -392,11 +389,26 @@ export class TaskSessionCompositionService {
             warn: (message) => Logger.warn(message),
         })
         const readState = (): Readonly<TaskState> => this.requireSession(session).state()
-        const performance = await TaskPerformanceOwner.open({
+        let performance: TaskPerformanceOwner | undefined
+        const taskTelemetry = new TaskTurnTelemetry(
+            options.taskId,
+            readState,
+            () => performance?.getSnapshot() ?? { cacheUsageAvailable: false },
+            (input) => performance?.providerAttemptObserver(input),
+            (state) => performance?.committed(state, isRunAtRest(state)),
+            (input) => performance?.providerAttemptUsage(input),
+            (input) => performance?.providerRequestCompleted(input),
+        )
+        taskTelemetry.registerAlias(taskIncarnationId)
+        resources.add({ release: async () => taskTelemetry.dispose() })
+        performance = await TaskPerformanceOwner.open({
             taskId: options.taskId,
             readState,
             legacyMessages: () => messages.clineMessages,
             onChanged: () => void options.publishState().catch(() => undefined),
+            finalizedAttempts: taskTelemetry,
+            readUsagePolicyGeneration: () => taskTelemetry.usagePolicyGeneration(),
+            projectUsageModelId: (provider, wireModelId) => taskTelemetry.projectUsageModelId(provider, wireModelId),
             // Usage reports which tool each settled call ran. The kernel keeps the
             // call, not its tool, so the name comes from the stored invocation.
             resolveInvocationToolName: async (invocationRef) => {
@@ -404,14 +416,7 @@ export class TaskSessionCompositionService {
                 return envelope.kind === "tool_invocation" ? envelope.toolName : undefined
             },
         })
-        resources.add({ release: () => performance.release() })
-        const taskTelemetry = new TaskTurnTelemetry(options.taskId, readState, () => performance.getSnapshot())
-        taskTelemetry.registerAlias(taskIncarnationId)
-        resources.add({
-            release: async () => {
-                taskTelemetry.dispose()
-            },
-        })
+        resources.add({ release: () => performance?.release() })
         const runtimePersistence: TaskPersistenceAssembly = {
             ...persistence,
             ports: { ...persistence.ports, vault: observeTaskStateVault(persistence.ports.vault, taskTelemetry) },
@@ -620,10 +625,6 @@ export class TaskSessionCompositionService {
             readCapabilityToggles: options.prompt.readCapabilityToggles,
             readTurnAuthority: (turnId) => turnAuthority.read(turnId),
             workspaceManager: options.prompt.workspaceManager,
-            providerRequestRounds: settleSubagentRoundUsage(
-                performance.providerRequestRounds,
-                options.prompt.ports.usageSettlement,
-            ),
             peerTaskSpawner: tool.peerTaskSpawner,
             terminalExecutionMode: options.prompt.terminalExecutionMode,
             usesNativeToolCalls: options.prompt.shouldUseNativeToolCalls,
@@ -809,7 +810,6 @@ export class TaskSessionCompositionService {
                     contextUsage.committed(state)
                     compaction.committed(state)
                     collaboration?.committed(state)
-                    performance.committed(state, isRunAtRest(state))
                     // The verdict reaches History before the view reads it back.
                     await completion?.sync(state).catch((error: unknown) => {
                         Logger.warn(
@@ -914,53 +914,42 @@ export class TaskSessionCompositionService {
             },
             // Every request records what it consumed, which is the only fact the
             // task has about context pressure, cache health and cost.
-            providerRequestReport: settleUsageAround(
-                new TaskPerformanceRequestReporter(
-                    new TaskProviderRequestReporter({
-                        // Compaction is the only consumer that acts on context pressure, and
-                        // it can only learn it from the request that reported its usage.
-                        pressure: compaction,
-                        usage: contextUsage,
-                        messages,
-                        nextPresentationId,
-                        api: () => api.current(),
-                        promptCache,
-                        compactTriggerOptions: readCompactTriggerOptions,
-                        admittedRequest: () => contextWindowGuard.admittedRequest(),
-                        // Retries happen before the stream says anything, so each attempt's
-                        // card has to be delivered to the chat rather than left for the countdown.
-                        // The state goes out immediately: a coalesced post would let the card's
-                        // partial row reach a Webview that has not yet adopted this opening.
-                        retryView: {
-                            showRow: (row) => options.prompt.ports.presentation.publish(row),
-                            publishState: () => options.publishState({ immediate: true }),
+            providerRequestReport: new TaskPerformanceRequestReporter(
+                new TaskProviderRequestReporter({
+                    // Compaction is the only consumer that acts on context pressure, and
+                    // it can only learn it from the request that reported its usage.
+                    pressure: compaction,
+                    usage: contextUsage,
+                    messages,
+                    nextPresentationId,
+                    api: () => api.current(),
+                    promptCache,
+                    compactTriggerOptions: readCompactTriggerOptions,
+                    admittedRequest: () => contextWindowGuard.admittedRequest(),
+                    // Retries happen before the stream says anything, so each attempt's
+                    // card has to be delivered to the chat rather than left for the countdown.
+                    // The state goes out immediately: a coalesced post would let the card's
+                    // partial row reach a Webview that has not yet adopted this opening.
+                    retryView: {
+                        showRow: (row) => options.prompt.ports.presentation.publish(row),
+                        publishState: () => options.publishState({ immediate: true }),
+                    },
+                    // Subscriptions report no token counts, so today's figures on the
+                    // usage surfaces are counted here, against the Profile that served the request.
+                    profileTokens: {
+                        activeProfileId: () => activeProfile().profileId,
+                        record: (profileId, increment) => {
+                            void options.prompt.ports.profileUsage
+                                .record(profileId, increment)
+                                .catch((error) =>
+                                    Logger.debug(
+                                        `[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
+                                    ),
+                                )
                         },
-                        // Subscriptions report no token counts, so today's figures on the
-                        // usage surfaces are counted here, against the Profile that served the request.
-                        profileTokens: {
-                            activeProfileId: () => activeProfile().profileId,
-                            record: (profileId, increment) => {
-                                void options.prompt.ports.profileUsage
-                                    .record(profileId, increment)
-                                    .catch((error) =>
-                                        Logger.debug(
-                                            `[Task ${options.taskId}] Failed to record daily Profile tokens: ${String(error)}`,
-                                        ),
-                                    )
-                            },
-                        },
-                    }),
-                    performance,
-                ),
-                options.prompt.ports.usageSettlement && {
-                    settlement: options.prompt.ports.usageSettlement,
-                    purpose: "task",
-                    servedBy: () => servedModelOf(api.current()),
-                    // The request is charged for the calls its own turn settled, so
-                    // the per-tool breakdown belongs to the same fact as its totals.
-                    toolCalls: (turnId) => performance.settledToolCalls(turnId),
-                    checklistChanges: () => performance.takeChecklistChanges(),
-                },
+                    },
+                }),
+                performance,
             ),
             services: {
                 // One sequence for both producers: chat rows are ordered by this id,
@@ -971,9 +960,6 @@ export class TaskSessionCompositionService {
                     nextPresentationId,
                     resolveMcpTool: (serverKey, toolSegment) => tool.services.mcpHub.resolveNativeTool(serverKey, toolSegment),
                     retry: providerRetry,
-                    // Each ordinary request is one logical round for the rate metrics,
-                    // however many transport attempts it takes to be answered.
-                    rounds: performance,
                     serverTools: new HostedServerToolPresenter(options.taskId, messages, nextPresentationId, realtimeMessages),
                     // A refusal for length means the request no longer fits, whether or
                     // not auto-compaction sized it beforehand, so the oldest history is
@@ -1040,7 +1026,6 @@ export class TaskSessionCompositionService {
                         passProjected: (compactionId, projection) =>
                             contextUsage.compactionPassProjected(compactionId, projection),
                     },
-                    usageSettlement: options.prompt.ports.usageSettlement,
                 }),
                 readApprovalPolicy: () =>
                     approvalPolicySnapshotOf(options.stateManager.getGlobalSettingsKey("autoApprovalSettings"), {

@@ -75,6 +75,19 @@ export const EMPTY_USAGE_TALLY: UsageTally = { sessions_started: 0, facts: [] }
 const MAX_PROVIDER_LENGTH = 32
 const MAX_MODEL_LENGTH = 64
 
+export type UsageTallyReductionCode = "invalid_integer" | "integer_overflow"
+
+/** A tally operation that cannot preserve an exact non-negative safe integer. */
+export class UsageTallyReductionError extends Error {
+    constructor(
+        readonly code: UsageTallyReductionCode,
+        readonly path: string,
+    ) {
+        super(`Usage tally ${code} at ${path}`)
+        this.name = "UsageTallyReductionError"
+    }
+}
+
 /** A provider and model reduced to the contract's vocabulary. */
 export interface UsageModelKey {
     readonly provider: string
@@ -122,13 +135,14 @@ export function sessionStartedTally(): UsageTally {
 /** Project one settled request into the fact it belongs to. */
 export function projectUsageSettlement(settlement: UsageSettlement): UsageTally {
     const identity = factIdentityOf(settlement)
-    const duration = milliseconds(settlement.durationMs)
+    const duration = milliseconds(settlement.durationMs, "duration_ms")
+    const outputTokens = count(settlement.outputTokens, "tokens.output")
     const tokens: UsageTokensWire = {
-        input: count(settlement.inputTokens),
-        output: count(settlement.outputTokens),
-        cache_read: count(settlement.cacheReadTokens),
-        cache_write: count(settlement.cacheWriteTokens),
-        ...reasoningTokens(settlement, count(settlement.outputTokens)),
+        input: count(settlement.inputTokens, "tokens.input"),
+        output: outputTokens,
+        cache_read: count(settlement.cacheReadTokens, "tokens.cache_read"),
+        cache_write: count(settlement.cacheWriteTokens, "tokens.cache_write"),
+        ...reasoningTokens(settlement, outputTokens),
     }
     const fact: UsageFactTally = {
         ...identity,
@@ -141,8 +155,8 @@ export function projectUsageSettlement(settlement: UsageSettlement): UsageTally 
         duration_ms: histogramOf([duration]),
         ...(settlement.streamTiming
             ? {
-                  ttft_ms: histogramOf([milliseconds(settlement.streamTiming.ttftMs)]),
-                  generation_ms: histogramOf([milliseconds(settlement.streamTiming.generationMs)]),
+                  ttft_ms: histogramOf([milliseconds(settlement.streamTiming.ttftMs, "ttft_ms")]),
+                  generation_ms: histogramOf([milliseconds(settlement.streamTiming.generationMs, "generation_ms")]),
               }
             : {}),
         errors: failureOf(settlement),
@@ -236,7 +250,7 @@ function sumNamed(byName: Readonly<Record<string, ToolOutcomeCounts>>, outcome: 
 function reasoningTokens(settlement: UsageSettlement, output: number): Pick<UsageTokensWire, "reasoning"> {
     if (settlement.reasoningTokens === undefined) return {}
     // Reasoning is a subset of output, so it never exceeds the output it explains.
-    return { reasoning: Math.min(count(settlement.reasoningTokens), output) }
+    return { reasoning: Math.min(count(settlement.reasoningTokens, "tokens.reasoning"), output) }
 }
 
 function failureOf(settlement: UsageSettlement): Readonly<Partial<Record<UsageErrorClass, number>>> {
@@ -249,7 +263,7 @@ function failureOf(settlement: UsageSettlement): Readonly<Partial<Record<UsageEr
 }
 
 function retryWaits(settlement: UsageSettlement): Pick<UsageFactTally, "retry_wait_ms"> {
-    const waits = (settlement.retries?.waitsMs ?? []).map(milliseconds)
+    const waits = (settlement.retries?.waitsMs ?? []).map((value) => milliseconds(value, "retry_wait_ms"))
     return waits.length === 0 ? {} : { retry_wait_ms: summaryOf(waits) }
 }
 
@@ -282,7 +296,7 @@ function factIdentityOf(settlement: UsageSettlement): UsageFactIdentity {
         : { role: "other" as UsageRole, provider: UNKNOWN_USAGE_ID, model: UNKNOWN_USAGE_ID, custom: false }
 }
 
-/** Add two tallies; every counter saturates at the largest safe integer instead of losing precision. */
+/** Add two tallies exactly; an invalid or overflowing counter is rejected instead of saturated. */
 export function mergeUsageTallies(left: UsageTally, right: UsageTally): UsageTally {
     return {
         sessions_started: add(left.sessions_started, right.sessions_started),
@@ -393,12 +407,12 @@ function addToolOutcomes(left: ToolOutcomeCounts, right: ToolOutcomeCounts): Too
 /**
  * Merge TODO counters.
  *
- * `declared` is the size of the union of declared items, not the sum: the same
- * item declared in two seconds is one declaration. Counting it twice would
- * inflate the denominator of every completion rate.
+ * Each settlement contributes transition deltas that its local TODO ledger has
+ * already de-duplicated. Distinct declarations therefore add across settlements;
+ * taking the maximum silently loses every additional item.
  */
 function mergeTodos(left: UsageTodosWire, right: UsageTodosWire): UsageTodosWire {
-    const declared = Math.max(left.declared, right.declared)
+    const declared = add(left.declared, right.declared)
     const completed = add(left.completed, right.completed)
     const reopened = add(left.reopened, right.reopened)
     const abandoned = add(left.abandoned, right.abandoned)
@@ -464,21 +478,28 @@ function addCounts<T extends Readonly<Partial<Record<string, number>>>>(left: T,
     return sum as T
 }
 
-function add(left: number, right: number): number {
-    return Math.min(Number.MAX_SAFE_INTEGER, left + right)
+function add(left: number, right: number, path = "aggregate"): number {
+    if (!isCountValue(left) || !isCountValue(right)) throw new UsageTallyReductionError("invalid_integer", path)
+    const sum = left + right
+    if (!Number.isSafeInteger(sum)) throw new UsageTallyReductionError("integer_overflow", path)
+    return sum
 }
 
-function count(value: number): number {
+function count(value: number, path: string): number {
+    if (!isCountValue(value)) throw new UsageTallyReductionError("invalid_integer", path)
+    return value
+}
+
+function milliseconds(value: number, path: string): number {
     const rounded = Math.round(value)
-    return Number.isSafeInteger(rounded) && rounded > 0 ? rounded : 0
-}
-
-function milliseconds(value: number): number {
-    return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
+    if (!Number.isFinite(value) || value < 0 || !Number.isSafeInteger(rounded)) {
+        throw new UsageTallyReductionError("invalid_integer", path)
+    }
+    return rounded
 }
 
 function summaryOf(values: readonly number[]): UsageSummaryWire {
-    const sum = values.reduce((total, value) => total + value, 0)
+    const sum = values.reduce((total, value) => add(total, value, "summary.sum"), 0)
     return { count: values.length, sum, min: Math.min(...values), max: Math.max(...values) }
 }
 
@@ -566,13 +587,9 @@ function isSummary(value: unknown): value is UsageSummaryWire {
     if (!isRecord(value)) return false
     const { count, sum, min, max } = value
     if (!isCountValue(count)) return false
-    if (!isFiniteNumber(sum) || !isFiniteNumber(min) || !isFiniteNumber(max)) return false
+    if (!isCountValue(sum) || !isCountValue(min) || !isCountValue(max)) return false
     if (count === 0) return sum === 0 && min === 0 && max === 0
     return min <= max && min * count <= sum && sum <= max * count
-}
-
-function isFiniteNumber(value: unknown): value is number {
-    return typeof value === "number" && Number.isFinite(value) && value >= 0
 }
 
 function isRequestOutcomes(value: unknown): value is UsageRequestOutcomeWire {
@@ -599,7 +616,7 @@ function isDistribution(value: unknown): value is UsageDistributionWire {
 }
 
 function isSummaryNumbers(value: Record<string, unknown>): boolean {
-    return ["sum", "min", "max"].every((key) => typeof value[key] === "number" && Number.isFinite(value[key]))
+    return ["sum", "min", "max"].every((key) => isCountValue(value[key]))
 }
 
 function isUsableTools(value: unknown): value is UsageToolsWire {

@@ -7,7 +7,7 @@ import {
     type UsageClientWire,
     type UsageFactWire,
 } from "../contracts/usageBody"
-import { usageModelIdentityKey } from "../contracts/usageIdentity"
+import { usageFactKey } from "../contracts/usageIdentity"
 import { EMPTY_USAGE_TALLY, hasUsageActivity, mergeUsageTallies, type UsageFactTally, type UsageTally } from "./usageTally"
 
 /**
@@ -115,7 +115,7 @@ function toFactWire(fact: UsageFactTally): UsageFactWire {
 export function countFactIdentities(seconds: readonly UsageSecond[]): number {
     const identities = new Set<string>()
     for (const second of seconds) {
-        for (const fact of second.tally.facts) identities.add(usageModelIdentityKey(fact))
+        for (const fact of second.tally.facts) identities.add(usageFactKey(fact))
     }
     return identities.size
 }

@@ -10,7 +10,7 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
@@ -48,11 +48,13 @@ function getQwenCachedCredentialPath(customPath?: string): string {
     return path.join(os.homedir(), QWEN_DIR, QWEN_CREDENTIAL_FILENAME)
 }
 
-export class QwenCodeHandler implements ApiHandler {
+export class QwenCodeHandler extends ApiHandler {
     private credentials: QwenOAuthCredentials | null = null
     private client: OpenAI | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.qwenCode

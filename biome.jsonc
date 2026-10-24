@@ -131,6 +131,8 @@
             "!!**/node_modules",
             "!!**/webview-ui/build",
             "!!**/generated",
+            // Vendored Tree-sitter runtime and grammar assets; verifier scripts and tests remain scanned.
+            "!!.agents/skills/verify-architecture-diagrams/runtime",
             "!!**/proto",
             "!!**/tests/specs",
             "!!**/tests/vscode/workspace*",

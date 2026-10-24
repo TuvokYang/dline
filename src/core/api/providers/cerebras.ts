@@ -3,7 +3,7 @@ import { createOpenAIClient } from "@shared/net"
 import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { ClineStorageMessage } from "@/shared/messages/content"
-import { ApiHandler, ApiHandlerContext } from "../index"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { ApiStream } from "../transform/stream"
 
@@ -13,10 +13,12 @@ import { ApiStream } from "../transform/stream"
 // 16K is sufficient for most agentic tool use while preserving rate limit headroom.
 const CEREBRAS_DEFAULT_MAX_TOKENS = 16_384
 
-export class CerebrasHandler implements ApiHandler {
+export class CerebrasHandler extends ApiHandler {
     private client: OpenAI | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.cerebras

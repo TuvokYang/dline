@@ -12,7 +12,7 @@ import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { prioritizeApiFormat, resolveApiFormat } from "@/shared/providers/api-format"
 import { resolveProfileModelId } from "@/shared/providers/profile-model-info"
 import { Logger } from "@/shared/services/Logger"
-import { AccountUsage, ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../"
+import { AccountUsage, ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { getOpenAIChatOutputLimitError } from "../stream/OutputLimitExceededError"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
@@ -29,14 +29,16 @@ import { convertOpenAIToolsToAnthropicTools, handleAnthropicMessagesApiStreamRes
 import { handleResponsesApiStreamResponse } from "../utils/responses_api_support"
 import { resolveDeepSeekReasoning } from "./deepseek/reasoning"
 
-export class DeepSeekHandler implements ApiHandler {
+export class DeepSeekHandler extends ApiHandler {
     private client: OpenAI | undefined
     private anthropicClient: Anthropic | undefined
     private requestController: AbortController | undefined
     private accountUsageController: AbortController | undefined
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
-    getProviderId(): string {
+    override getProviderId(): string {
         return this.ctx.profile.provider
     }
 
@@ -94,11 +96,11 @@ export class DeepSeekHandler implements ApiHandler {
     }
 
     /** Expose the negotiated protocol so routing judges the same wire format. */
-    getSelectedApiFormat(): ApiFormat {
+    override getSelectedApiFormat(): ApiFormat {
         return resolveApiFormat(this.config?.apiFormat, this.getBaseModel().info, ApiFormat.OPENAI_CHAT)
     }
 
-    supportsServerTool(tool: ServerTool): boolean {
+    override supportsServerTool(tool: ServerTool): boolean {
         const apiFormat = this.getSelectedApiFormat()
         return (
             tool === ServerTool.WEB_SEARCH && (apiFormat === ApiFormat.OPENAI_RESPONSES || apiFormat === ApiFormat.ANTHROPIC_CHAT)
@@ -355,7 +357,7 @@ export class DeepSeekHandler implements ApiHandler {
      * Returns AccountUsage with balance breakdown and today's usage for the current model.
      * @see https://api-docs.deepseek.com/zh-cn/api/get-user-balance
      */
-    async getAccountUsage(): Promise<AccountUsage | undefined> {
+    override async getAccountUsage(): Promise<AccountUsage | undefined> {
         if (!this.apiKey) {
             return undefined
         }
@@ -482,7 +484,7 @@ export class DeepSeekHandler implements ApiHandler {
         }
     }
 
-    abort(): void {
+    override abort(): void {
         this.requestController?.abort()
         this.accountUsageController?.abort()
     }
@@ -503,7 +505,7 @@ export class DeepSeekHandler implements ApiHandler {
      * @param modelId Optional model identifier
      * @returns ClineError with appropriate error type
      */
-    parseError(error: any, modelId?: string): ClineError {
+    override parseError(error: any, modelId?: string): ClineError {
         const status = error?.status || error?.statusCode || error?.response?.status
         const message = error?.message || String(error)
 

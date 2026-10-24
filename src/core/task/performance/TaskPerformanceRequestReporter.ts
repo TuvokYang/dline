@@ -20,7 +20,7 @@ export class TaskPerformanceRequestReporter implements ProviderRequestReportPort
         return {
             ...record,
             settle: async (settlement) => {
-                this.performance.requestSettled(settlement.usage, input.turnId)
+                this.performance.requestSettled(settlement.usage)
                 await record.settle(settlement)
             },
         }

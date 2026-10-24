@@ -110,6 +110,11 @@ export class ApiResponseExecutionLifecycle {
         this.finishAtCurrentTime(handle, "turn_end_awaiting_user", summary)
     }
 
+    /** Return the immutable terminal record after the owning completion boundary has run. */
+    terminal(handle: ApiRequestRoundHandle): ApiResponseExecutionRecord | undefined {
+        return this.requireState(handle).terminalRecord
+    }
+
     async waitForPersistence(): Promise<void> {
         await this.writeSequence
         try {

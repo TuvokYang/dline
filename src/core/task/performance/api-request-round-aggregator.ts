@@ -18,6 +18,7 @@ export interface DurationRpmAggregate {
 export interface RoundUsageAggregate {
     inputTokens?: number
     outputTokens?: number
+    tokensPerMinute?: number
     thoughtsTokens?: number
     cacheWriteTokens?: number
     cacheReadTokens?: number
@@ -77,6 +78,7 @@ export function aggregateRoundUsage(rounds: readonly ApiRequestRoundRecord[]): R
     let usageCount = 0
     let inputTokens = 0
     let outputTokens = 0
+    let outputDurationMs = 0
     let thoughtsTokens = 0
     let cacheWriteTokens = 0
     let cacheReadTokens = 0
@@ -94,6 +96,9 @@ export function aggregateRoundUsage(rounds: readonly ApiRequestRoundRecord[]): R
         usageCount += 1
         inputTokens += round.inputTokens
         outputTokens += round.outputTokens
+        if (round.providerDurationMs !== undefined && Number.isFinite(round.providerDurationMs) && round.providerDurationMs > 0) {
+            outputDurationMs += round.providerDurationMs
+        }
         thoughtsTokens += round.thoughtsTokens ?? 0
         cacheWriteTokens += round.cacheWriteTokens ?? 0
         cacheReadTokens += round.cacheReadTokens ?? 0
@@ -117,6 +122,9 @@ export function aggregateRoundUsage(rounds: readonly ApiRequestRoundRecord[]): R
 
     return {
         ...(usageCount > 0 ? { inputTokens, outputTokens, thoughtsTokens, cacheWriteTokens, cacheReadTokens } : {}),
+        ...(outputDurationMs > 0
+            ? { tokensPerMinute: Math.round((outputTokens * MILLISECONDS_PER_MINUTE) / outputDurationMs) }
+            : {}),
         ...(cacheDenominator > 0 ? { cacheHitRate: cacheNumerator / cacheDenominator } : {}),
         cacheUsageAvailable: cacheDenominator > 0,
         usageAvailable: usageCount > 0,
@@ -212,6 +220,7 @@ export function mergeActiveSecondAndRoundPoints(
             activeSeconds: active.activeSeconds,
             requestCount: active.requestCount,
             tokenCount: active.tokenCount,
+            // TPM remains owned by the provider-active-second series; round duration only supplies RPM and usage facets.
             tokensPerMinute: active.tokensPerMinute,
             tokenQuality: active.tokenQuality,
             provisional: active.provisional,

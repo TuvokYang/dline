@@ -70,6 +70,25 @@ describe("DlineOtelHttpClient", () => {
         expect(response.retryAfter).toBe("3")
     })
 
+    it("sends schema 4 Usage with its negotiated contract header without changing the exact bytes", async () => {
+        const captured: Captured[] = []
+        const body = new TextEncoder().encode('{"schema_version":4,"buckets":[]}')
+
+        await mockFetchForTesting(
+            respondWith(() => new Response("{}", { status: 503 }), captured),
+            () =>
+                new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "https://otel.example.test" }).sendUsage({
+                    accessToken: TOKEN,
+                    requestId: REQUEST_ID,
+                    body,
+                    contractVersion: 4,
+                }),
+        )
+
+        expect(captured[0].init).toMatchObject({ body })
+        expect(new Headers(captured[0].init.headers).get("x-dline-contract")).toBe("4")
+    })
+
     it("keeps the OTLP specification path for logs and leaves Dline's own paths unprefixed", async () => {
         const captured: Captured[] = []
         const client = new DlineOtelHttpClient({ clientVersion: VERSION, endpoint: "https://otel.example.test" })
@@ -105,6 +124,38 @@ describe("DlineOtelHttpClient", () => {
 
         expect(captured[0].url).toBe("http://127.0.0.1:8787/auth/device/exchange")
         expect(new Headers(captured[0].init.headers).get("user-agent")).toBe(`Dline/${VERSION}`)
+        expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
+    })
+
+    it("requests a bootstrap device grant with the same request ID in the header and schema 4 body", async () => {
+        const captured: Captured[] = []
+        const request = {
+            operation: "device.grant" as const,
+            request_id: REQUEST_ID,
+            device_secret: "s".repeat(43),
+            requested_profile: "usage" as const,
+            client_version: "0.12.0",
+            platform: "win32",
+            supported_usage_schema_versions: [4] as const,
+        }
+
+        await mockFetchForTesting(
+            respondWith(() => new Response("{}", { status: 503 }), captured),
+            () =>
+                new DlineOtelHttpClient({
+                    clientVersion: VERSION,
+                    endpoint: "http://127.0.0.1:8787",
+                }).requestBootstrapDeviceGrant(request),
+        )
+
+        expect(captured[0].url).toBe("http://127.0.0.1:8787/auth/device/grant")
+        expect(captured[0].init).toMatchObject({ method: "POST", redirect: "error" })
+        expect(captured[0].init.headers).toEqual({
+            "User-Agent": `Dline/${VERSION}`,
+            "content-type": "application/json",
+            "x-dline-contract": "4",
+            "x-dline-request-id": REQUEST_ID,
+        })
         expect(JSON.parse(String(captured[0].init.body))).toEqual(request)
     })
 

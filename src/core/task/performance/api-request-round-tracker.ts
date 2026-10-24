@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks"
+import type { ProviderAttemptIdentity, ProviderAttemptThinking } from "@shared/provider-attempt-observer"
 import { taskTraceSource } from "@/services/telemetry/service/task-trace-context"
 import { aggregateRoundUsage } from "./api-request-round-aggregator"
 import {
@@ -10,10 +11,14 @@ import {
     type ApiRequestRoundUsage,
 } from "./api-request-round-types"
 
-export interface BeginApiRequestRound {
+export type ProviderAttemptRole = "task" | "subagent" | "compaction" | "reviewer" | "other"
+
+export interface BeginApiRequestRound extends Partial<ProviderAttemptIdentity> {
     readonly logicalRequestId: string
     readonly apiIndex: number
     readonly taskAttempt: number
+    readonly role?: ProviderAttemptRole
+    readonly policyGeneration?: number
 }
 
 export interface ApiRequestRoundHandle {
@@ -22,6 +27,11 @@ export interface ApiRequestRoundHandle {
     readonly apiIndex: number
     readonly taskAttempt: number
     readonly providerAttempt: number
+    readonly role?: ProviderAttemptRole
+    readonly provider?: string
+    readonly modelId?: string
+    readonly thinking?: ProviderAttemptThinking
+    readonly policyGeneration?: number
     readonly startedAtMs: number
     readonly startedMonotonicMs: number
 }
@@ -101,6 +111,11 @@ export class ApiRequestRoundTracker {
             apiIndex: input.apiIndex,
             taskAttempt: input.taskAttempt,
             providerAttempt,
+            role: input.role ?? "task",
+            ...(input.provider === undefined ? {} : { provider: input.provider }),
+            ...(input.modelId === undefined ? {} : { modelId: input.modelId }),
+            ...(input.thinking === undefined ? {} : { thinking: input.thinking }),
+            policyGeneration: input.policyGeneration ?? 0,
             startedAtMs: readClock(this.wallClock, "wall clock"),
             startedMonotonicMs: readClock(this.monotonicClock, "monotonic clock"),
             latestRevision: -1,
@@ -140,7 +155,7 @@ export class ApiRequestRoundTracker {
         return record
     }
 
-    attachExactUsage(handle: ApiRequestRoundHandle, usage: ApiRequestRoundUsage): void {
+    attachExactUsage(handle: ApiRequestRoundHandle, usage: ApiRequestRoundUsage): ApiRequestRoundRecord {
         const state = this.requireState(handle)
         const terminal = state.terminalRecord
         if (!terminal) throw new Error("API request round usage cannot be attached before terminal status")
@@ -169,6 +184,18 @@ export class ApiRequestRoundTracker {
             provider_attempt: handle.providerAttempt,
             usage_quality: "exact",
         })
+        return record
+    }
+
+    /** Abort every still-open send and return the exact terminal handles and records for finalization. */
+    abortOpenRounds(): readonly { readonly handle: ApiRequestRoundHandle; readonly record: ApiRequestRoundRecord }[] {
+        const aborted: { handle: ApiRequestRoundHandle; record: ApiRequestRoundRecord }[] = []
+        for (const state of this.rounds.values()) {
+            if (state.terminalRecord) continue
+            const handle = toHandle(state)
+            aborted.push({ handle, record: this.finishRound(handle, "aborted") })
+        }
+        return aborted
     }
 
     getSnapshot(): ApiRequestRoundSnapshot {
@@ -209,9 +236,7 @@ export class ApiRequestRoundTracker {
     async close(): Promise<void> {
         if (!this.closing) {
             this.closing = true
-            for (const state of this.rounds.values()) {
-                if (!state.terminalRecord) this.finishRound(toHandle(state), "aborted")
-            }
+            this.abortOpenRounds()
         }
         await this.waitForPersistence()
         await this.options.repository.close()
@@ -294,6 +319,11 @@ function toHandle(state: MutableRoundState): ApiRequestRoundHandle {
         apiIndex: state.apiIndex,
         taskAttempt: state.taskAttempt,
         providerAttempt: state.providerAttempt,
+        role: state.role,
+        ...(state.provider === undefined ? {} : { provider: state.provider }),
+        ...(state.modelId === undefined ? {} : { modelId: state.modelId }),
+        ...(state.thinking === undefined ? {} : { thinking: state.thinking }),
+        policyGeneration: state.policyGeneration,
         startedAtMs: state.startedAtMs,
         startedMonotonicMs: state.startedMonotonicMs,
     }
@@ -305,6 +335,11 @@ function sameHandle(state: MutableRoundState, handle: ApiRequestRoundHandle): bo
         state.apiIndex === handle.apiIndex &&
         state.taskAttempt === handle.taskAttempt &&
         state.providerAttempt === handle.providerAttempt &&
+        state.role === handle.role &&
+        state.provider === handle.provider &&
+        state.modelId === handle.modelId &&
+        state.thinking === handle.thinking &&
+        state.policyGeneration === handle.policyGeneration &&
         state.startedAtMs === handle.startedAtMs &&
         state.startedMonotonicMs === handle.startedMonotonicMs
     )
@@ -315,6 +350,7 @@ function assertIdentity(input: BeginApiRequestRound): void {
     for (const [name, value] of [
         ["apiIndex", input.apiIndex],
         ["taskAttempt", input.taskAttempt],
+        ["policyGeneration", input.policyGeneration ?? 0],
     ] as const) {
         if (!Number.isSafeInteger(value) || value < 0) throw new Error(`API request round ${name} must be a non-negative integer`)
     }

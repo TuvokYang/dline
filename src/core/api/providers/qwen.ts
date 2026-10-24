@@ -14,7 +14,7 @@ import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/com
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { convertToR1Format } from "../transform/r1-format"
@@ -23,10 +23,12 @@ import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-p
 import { splitInclusiveInputUsage } from "../transform/usage-normalization"
 import { resolveQwenThinking } from "./qwen/reasoning"
 
-export class QwenHandler implements ApiHandler {
+export class QwenHandler extends ApiHandler {
     private client: OpenAI | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.qwen

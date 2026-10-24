@@ -38,7 +38,6 @@ import type {
     OpenInteractionRequest,
 } from "../../interaction/InteractionProtocol"
 import type { MessageStateHandler } from "../../message-state"
-import type { ProviderRequestRoundPort } from "../../performance/provider-request-round-port"
 import type { HookExecution } from "../../types/HookExecution"
 import type { ToolHandlerState } from "../state/ToolHandlerState"
 import type { SubagentFanoutBudget } from "../subagent/SubagentFanoutBudget"
@@ -130,8 +129,6 @@ export interface TaskConfig {
     identityFactory: IdentityFactory
     /** Task-local real-time activity state shared by chat and the Activity view. */
     activityStore?: TaskActivityStore
-    /** Task-owned Provider round admission for nested compaction and subagent requests. */
-    providerRequestRounds?: ProviderRequestRoundPort
 
     /** Host-owned peer-task launcher; absent on headless runtimes. */
     peerTaskSpawner?: PeerTaskSpawnPort

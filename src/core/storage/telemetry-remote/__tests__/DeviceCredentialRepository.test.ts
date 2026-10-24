@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import type { AtomicDeviceGrant } from "@/services/telemetry/remote/contracts/deviceGrant"
 import { DeviceCredentialRepository, type StoredDeviceToken } from "../DeviceCredentialRepository"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
 import { MAX_QUARANTINED_DOCUMENTS } from "../quarantine"
@@ -32,6 +33,42 @@ describe("DeviceCredentialRepository", () => {
 
     afterEach(async () => {
         await fs.rm(root, { recursive: true, force: true })
+    })
+
+    it("publishes and reads one complete schema 4 device grant atomically", async () => {
+        const repository = new DeviceCredentialRepository(layout, { clock: () => 1_900_000_000_000 })
+        await repository.ensure()
+        const grant: AtomicDeviceGrant = {
+            accessToken: TOKEN_A,
+            deviceId: "device-1",
+            profile: "usage",
+            scopes: ["usage"],
+            expiresAt: 2_000_000_000_000,
+            usageContract: {
+                schemaVersion: 4,
+                contractVersion: 4,
+                maxBodyBytes: 65_536,
+                maxBuckets: 8,
+                maxFacts: 32,
+                maxToolRows: 384,
+                maxWriteRows: 486,
+                eventWindowMs: 600_000,
+                defaultIntervalMs: 600_000,
+                newBatchJitterMaxMs: 300_000,
+            },
+        }
+
+        await repository.publishDeviceGrantAtomically(grant)
+
+        expect(await repository.readActiveDeviceGrant(1_999_999_999_999)).toEqual(grant)
+        expect(await repository.readActiveDeviceGrant(grant.expiresAt)).toBeNull()
+        const raw = await readRaw(layout)
+        expect(raw.generation).toBe(2)
+        expect(raw.grants).toMatchObject({ usage: { access_token: TOKEN_A, scopes: ["usage"], expires_at: grant.expiresAt } })
+
+        await repository.clearTokens(["usage"])
+        expect(await repository.readActiveDeviceGrant(1_999_999_999_999)).toBeNull()
+        expect(await readRaw(layout)).toMatchObject({ generation: 3, tokens: {}, grants: {} })
     })
 
     it("creates one machine secret under the data root that every instance shares", async () => {

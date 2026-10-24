@@ -2,11 +2,10 @@ import { Anthropic } from "@anthropic-ai/sdk"
 import { GenerateContentConfig, GoogleGenAI } from "@google/genai"
 import { ModelInfo } from "@shared/api"
 import { providerFetch } from "@shared/net"
-import { observeProviderStream } from "@shared/provider-attempt-observer"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import OpenAI from "openai"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
-import { ApiHandler, ApiHandlerContext } from "../index"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { convertAnthropicMessageToGemini } from "../transform/gemini-format"
@@ -14,12 +13,14 @@ import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
 import { resolveGeminiThinking } from "./gemini/reasoning"
 
-export class AIhubmixHandler implements ApiHandler {
+export class AIhubmixHandler extends ApiHandler {
     private anthropicClient: Anthropic | undefined
     private openaiClient: OpenAI | undefined
     private geminiClient: GoogleGenAI | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.aihubmix
@@ -305,13 +306,13 @@ export class AIhubmixHandler implements ApiHandler {
             requestConfig.thinkingConfig = thinkingConfig
         }
 
-        const stream = await observeProviderStream(() =>
-            client.models.generateContentStream({
-                model: modelId,
-                contents,
-                config: requestConfig,
-            }),
-        )
+        const request = {
+            model: modelId,
+            contents,
+            config: requestConfig,
+        }
+        const identity = ApiHandler.identifyProviderAttempt("aihubmix", request)
+        const stream = await ApiHandler.observeProviderStream(identity, () => client.models.generateContentStream(request))
 
         for await (const chunk of stream as any) {
             if (chunk?.text) {

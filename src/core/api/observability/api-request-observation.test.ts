@@ -95,6 +95,12 @@ function setup() {
     }
 }
 
+async function drain(stream: ApiStream): Promise<void> {
+    for await (const _chunk of stream) {
+        // Consume the complete instrumented stream.
+    }
+}
+
 function handler(send: () => ApiStream, taskId: string, abort?: () => void): ApiHandler {
     return instrumentApiHandler(
         {
@@ -165,6 +171,98 @@ describe("API and Task turn trace correlation", () => {
         expect(turn.events.map((event) => event.name)).toContain("task.error")
         const exported = JSON.stringify(env.logs.getFinishedLogRecords().map((log) => log.attributes))
         expect(exported).not.toMatch(/DO_NOT_EXPORT_PROMPT|SECRET_SYSTEM/)
+    })
+
+    it("attaches exact mixed-mode usage on failure but completes the logical request only after a natural retry terminal", async () => {
+        setup()
+        const { timeline } = task("task-usage")
+        const usage = vi.spyOn(timeline, "providerAttemptUsage")
+        const completed = vi.spyOn(timeline, "providerRequestCompleted")
+        const failure = new Error("retry")
+        let invocation = 0
+        const api = handler(async function* () {
+            if (invocation++ === 0) {
+                yield {
+                    type: "usage",
+                    usageMode: "snapshot",
+                    inputTokens: 100,
+                    outputTokens: 10,
+                    cacheReadTokens: 5,
+                    thoughtsTokenCount: 2,
+                    totalCost: 0.1,
+                }
+                yield {
+                    type: "usage",
+                    usageMode: "delta",
+                    inputTokens: 0,
+                    outputTokens: 4,
+                    thoughtsTokenCount: 3,
+                    totalCost: 0.12,
+                }
+                throw failure
+            }
+            yield {
+                type: "usage",
+                usageMode: "snapshot",
+                inputTokens: 120,
+                outputTokens: 20,
+                cacheWriteTokens: 2,
+                thoughtsTokenCount: 4,
+                totalCost: 0.2,
+            }
+            yield {
+                type: "usage",
+                usageMode: "delta",
+                inputTokens: 0,
+                outputTokens: 3,
+                thoughtsTokenCount: 2,
+                totalCost: 0.25,
+            }
+        }, "task-usage")
+        const request = {
+            taskNamespace: "task-usage",
+            retryOwner: "subagent" as const,
+            telemetryRole: "subagent" as const,
+            telemetryRequestId: "subagent:request-1",
+        }
+        const scope = {
+            role: "subagent",
+            logicalRequestId: "subagent:request-1",
+            adapter: { provider: "openai" },
+        }
+
+        await expect(drain(api.createMessage("", [], undefined, { ...request, telemetryAttempt: 0 }))).rejects.toBe(failure)
+        expect(usage).toHaveBeenLastCalledWith({
+            ...scope,
+            taskAttempt: 0,
+            usage: {
+                inputTokens: 100,
+                outputTokens: 14,
+                cacheWriteTokens: 0,
+                cacheReadTokens: 5,
+                thoughtsTokens: 5,
+                cacheUsageReported: true,
+                totalCost: 0.12,
+            },
+        })
+        expect(completed).not.toHaveBeenCalled()
+
+        await drain(api.createMessage("", [], undefined, { ...request, telemetryAttempt: 1 }))
+        expect(usage).toHaveBeenLastCalledWith({
+            ...scope,
+            taskAttempt: 1,
+            usage: {
+                inputTokens: 120,
+                outputTokens: 23,
+                cacheWriteTokens: 2,
+                cacheReadTokens: 0,
+                thoughtsTokens: 6,
+                cacheUsageReported: true,
+                totalCost: 0.25,
+            },
+        })
+        expect(completed).toHaveBeenCalledOnce()
+        expect(completed).toHaveBeenCalledWith({ ...scope, taskAttempt: 1 })
     })
 
     it("isolates interleaved lazy streams and preserves correlation after delayed drain", async () => {

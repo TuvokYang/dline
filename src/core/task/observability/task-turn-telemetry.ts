@@ -1,3 +1,4 @@
+import type { ProviderAttemptObserver } from "@shared/provider-attempt-observer"
 import { normalizeRuntimeError } from "@/services/telemetry/runtime/error-normalizer"
 import { exceptionAttributes } from "@/services/telemetry/runtime/exception-attributes"
 import {
@@ -8,10 +9,17 @@ import {
     type SignalSpanHandle,
     startSignalSpan,
 } from "@/services/telemetry/service/pipeline-port"
-import { registerTaskTraceSource, type TaskTraceSource } from "@/services/telemetry/service/task-trace-context"
+import {
+    type ProviderAttemptScopeInput,
+    type ProviderAttemptUsageInput,
+    registerTaskTraceSource,
+    type TaskTraceSource,
+} from "@/services/telemetry/service/task-trace-context"
 import type { TaskState } from "../kernel"
 import type { ApiRateSnapshot } from "../performance/api-rate-tracker"
+import type { FinalizedProviderAttempt } from "../performance/provider-request-round-port"
 import type { DurableTaskSnapshot, StateVault } from "../stores"
+import { taskUsageAccounting } from "./task-usage-accounting"
 
 const SEGMENT_EVENT_LIMIT = 96
 
@@ -49,12 +57,47 @@ export class TaskTurnTelemetry implements TaskTraceSource {
         private readonly taskId: string,
         private readonly readState: () => Readonly<TaskState>,
         private readonly readUsage: () => ApiRateSnapshot,
+        private readonly observeProviderAttempt?: (input: ProviderAttemptScopeInput) => ProviderAttemptObserver | undefined,
+        private readonly observeCommittedState?: (state: Readonly<TaskState>) => void,
+        private readonly observeProviderUsage?: (input: ProviderAttemptUsageInput) => void,
+        private readonly completeProviderRequest?: (input: ProviderAttemptScopeInput) => void,
     ) {
         this.registerAlias(taskId)
     }
 
     registerAlias(identity: string): void {
         this.unregister.push(registerTaskTraceSource(identity, this))
+    }
+
+    providerAttemptObserver(input: ProviderAttemptScopeInput): ProviderAttemptObserver | undefined {
+        if (this.disposed) return undefined
+        try {
+            return this.observeProviderAttempt?.(input)
+        } catch {
+            return undefined
+        }
+    }
+
+    providerAttemptUsage(input: ProviderAttemptUsageInput): void {
+        if (this.disposed) return
+        this.safely(() => this.observeProviderUsage?.(input))
+    }
+
+    providerRequestCompleted(input: ProviderAttemptScopeInput): void {
+        if (this.disposed) return
+        this.safely(() => this.completeProviderRequest?.(input))
+    }
+
+    usagePolicyGeneration(): number | undefined {
+        return taskUsageAccounting.currentPolicyGeneration()
+    }
+
+    projectUsageModelId(provider: string, wireModelId: string): string {
+        return taskUsageAccounting.projectModelId(provider, wireModelId)
+    }
+
+    recordFinalizedAttempt(attempt: FinalizedProviderAttempt): void {
+        taskUsageAccounting.recordFinalizedAttempt(attempt)
     }
 
     currentSpan(): SignalSpanHandle | undefined {
@@ -106,6 +149,7 @@ export class TaskTurnTelemetry implements TaskTraceSource {
 
     /** Called synchronously at state commit, before effects or persistence can delay the observation. */
     committed(event: string, state: Readonly<TaskState>): void {
+        this.safely(() => this.observeCommittedState?.(state))
         this.safely(() => {
             if (!this.enabled()) return
             const key = state.turn.turnId ?? `pre-turn:${state.revision}`

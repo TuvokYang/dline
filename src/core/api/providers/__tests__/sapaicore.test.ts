@@ -1,13 +1,9 @@
 import "should"
 import { Anthropic } from "@anthropic-ai/sdk"
+import { ApiHandler, type ProviderAttemptTerminalStatus } from "@core/api"
 import type { ModelCapabilities } from "@shared/proto/dline/models/metadata"
 import { ApiProfile } from "@shared/proto/dline/profile"
 import type { ReasoningConfig } from "@shared/proto/dline/provider/common"
-import {
-    bindProviderAttemptScope,
-    observeProviderStreamResponse,
-    type ProviderAttemptTerminalStatus,
-} from "@shared/provider-attempt-observer"
 import axios from "axios"
 import { afterEach, expect, vi } from "vitest"
 import { SapAiCoreHandler } from "../sapaicore"
@@ -111,7 +107,8 @@ describe("SapAiCoreHandler", () => {
                 selectDeploymentStream(value: typeof response): AsyncIterable<unknown> | undefined
             }
             const source = (async function* () {
-                const { stream } = await observeProviderStreamResponse(
+                const { stream } = await ApiHandler.observeProviderStreamResponse(
+                    undefined,
                     async () => response,
                     (value) => privateHandler.selectDeploymentStream(value),
                 )
@@ -121,7 +118,7 @@ describe("SapAiCoreHandler", () => {
             let caught: unknown
 
             try {
-                for await (const _chunk of bindProviderAttemptScope(source, observer)) {
+                for await (const _chunk of ApiHandler.bindProviderAttemptScope(source, observer)) {
                     // The failed stream does not produce model chunks.
                 }
             } catch (error) {

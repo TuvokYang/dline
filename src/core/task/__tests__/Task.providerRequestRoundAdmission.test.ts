@@ -1,18 +1,58 @@
-import type { ProviderAttemptObserver } from "@shared/provider-attempt-observer"
+import {
+    bindProviderAttemptScope,
+    observeProviderCall,
+    type ProviderAttemptIdentity,
+    type ProviderAttemptObserver,
+    type ProviderTelemetryRole,
+    providerTelemetryRoleForSubagent,
+    withProviderAttemptIdentity,
+} from "@shared/provider-attempt-observer"
 import { describe, expect, it, vi } from "vitest"
 import type { BlockPhase } from "../kernel"
+import type { ApiRequestRoundScopeInput } from "../performance/api-request-round-lifecycle"
+import type { ApiRequestRoundHandle } from "../performance/api-request-round-tracker"
 import type { ApiRequestRoundUsage } from "../performance/api-request-round-types"
-import type { ProviderRequestRoundAdmission } from "../performance/provider-request-round-port"
+import { type ProviderRequestRoundAdmission, projectProviderUsageModelId } from "../performance/provider-request-round-port"
 import { TaskProviderRequestRoundOwner } from "../performance/TaskProviderRequestRoundOwner"
+import type { UsageToolCall } from "../telemetry/UsageToolCalls"
 
 interface ProviderExecutionBlock {
     readonly blockId: string
     readonly phase: BlockPhase
+    readonly invocationRef?: string
+}
+
+function attemptHandle(input: ApiRequestRoundScopeInput, providerAttempt = 0): ApiRequestRoundHandle {
+    return {
+        roundId: `${input.logicalRequestId}:provider:${providerAttempt}`,
+        logicalRequestId: input.logicalRequestId,
+        apiIndex: input.apiIndex,
+        taskAttempt: input.taskAttempt,
+        providerAttempt,
+        role: input.role ?? "task",
+        policyGeneration: input.policyGeneration ?? 0,
+        startedAtMs: 1,
+        startedMonotonicMs: 1,
+    }
+}
+
+async function drain(stream: AsyncIterable<unknown>): Promise<void> {
+    for await (const _ of stream) {
+        // Drain the observed send.
+    }
+}
+
+async function* observedSend(): AsyncGenerator<never> {
+    await observeProviderCall(async () => undefined)
+}
+
+async function* identifiedSend(identity: ProviderAttemptIdentity): AsyncGenerator<never> {
+    await withProviderAttemptIdentity(identity, () => observeProviderCall(async () => undefined))
 }
 
 function createAdmission(): ProviderRequestRoundAdmission {
     return {
-        bindAttempt: (stream) => stream,
+        createAttemptObserver: () => ({ beginAttempt: () => undefined, finishAttempt: () => undefined }),
         attachExactUsage: vi.fn(),
         completeProviderOnly: vi.fn(),
         completeTools: vi.fn(),
@@ -22,12 +62,15 @@ function createAdmission(): ProviderRequestRoundAdmission {
 
 function createOwner(
     blocks: readonly ProviderExecutionBlock[] = [],
-    options: { readonly cancelling?: boolean } = {},
+    options: {
+        readonly cancelling?: boolean
+        readonly resolveExecutionToolCalls?: () => Promise<readonly UsageToolCall[]>
+    } = {},
 ): TaskProviderRequestRoundOwner {
     return new TaskProviderRequestRoundOwner({
         lifecycle: {
-            createObserver: vi.fn(() => ({
-                beginAttempt: () => undefined,
+            createObserver: vi.fn((input) => ({
+                beginAttempt: () => attemptHandle(input),
                 finishAttempt: () => undefined,
             })),
             attachExactUsage: vi.fn(),
@@ -37,25 +80,27 @@ function createOwner(
         },
         readExecutionBlocks: () => blocks,
         isExecutionCancelling: () => options.cancelling ?? false,
+        resolveExecutionToolCalls: options.resolveExecutionToolCalls,
     })
 }
 
 describe("Task Provider request round admission", () => {
-    it("creates a new logical request for task attempt zero and reuses it only for recursive retries", () => {
-        const observedScopes: Array<{ logicalRequestId: string; apiIndex: number; taskAttempt: number }> = []
-        const attachedUsage: Array<{ logicalRequestId: string; usage: ApiRequestRoundUsage }> = []
-        const observer: ProviderAttemptObserver<number> = {
-            beginAttempt: () => 1,
-            finishAttempt: () => undefined,
-        }
+    it("creates a new logical request for task attempt zero and attaches usage by its exact terminal handle", async () => {
+        const observedScopes: ApiRequestRoundScopeInput[] = []
+        const attachedUsage: Array<{ handle: ApiRequestRoundHandle; usage: ApiRequestRoundUsage }> = []
+        let providerAttempt = 0
         const owner = new TaskProviderRequestRoundOwner({
             lifecycle: {
                 createObserver: vi.fn((input) => {
                     observedScopes.push(input)
+                    const observer: ProviderAttemptObserver<ApiRequestRoundHandle> = {
+                        beginAttempt: () => attemptHandle(input, providerAttempt++),
+                        finishAttempt: () => undefined,
+                    }
                     return observer
                 }),
-                attachExactUsage: vi.fn((logicalRequestId, usage) => {
-                    attachedUsage.push({ logicalRequestId, usage })
+                attachExactUsage: vi.fn((handle, usage) => {
+                    attachedUsage.push({ handle, usage })
                 }),
                 completeProviderOnly: vi.fn(),
                 completeTools: vi.fn(),
@@ -64,17 +109,15 @@ describe("Task Provider request round admission", () => {
             readExecutionBlocks: () => [],
             isExecutionCancelling: () => false,
         })
-        const emptyStream = (async function* () {})()
-
         const first = owner.admitOrdinary(7, 0)
         const retry = owner.admitOrdinary(7, 1)
         expect(retry).toBe(first)
-        first.bindAttempt(emptyStream, 0)
-        retry.bindAttempt(emptyStream, 1)
+        await drain(bindProviderAttemptScope(observedSend(), first.createAttemptObserver(0)))
+        await drain(bindProviderAttemptScope(observedSend(), retry.createAttemptObserver(1)))
 
         const restored = owner.admitOrdinary(7, 0)
         expect(restored).not.toBe(first)
-        restored.bindAttempt(emptyStream, 0)
+        await drain(bindProviderAttemptScope(observedSend(), restored.createAttemptObserver(0)))
 
         const [firstScope, retryScope, restoredScope] = observedScopes
         expect(firstScope).toMatchObject({ apiIndex: 7, taskAttempt: 0 })
@@ -90,7 +133,85 @@ describe("Task Provider request round admission", () => {
             cacheUsageReported: true,
         }
         owner.attachOrdinaryExactUsage(7, usage)
-        expect(attachedUsage).toEqual([{ logicalRequestId: restoredScope?.logicalRequestId, usage }])
+        expect(attachedUsage).toEqual([
+            { handle: expect.objectContaining({ logicalRequestId: restoredScope?.logicalRequestId }), usage },
+        ])
+    })
+
+    it("projects only explicit public catalog entries and never exposes private or untrusted model IDs", async () => {
+        const catalog = {
+            getProviderModels: (provider: string) =>
+                provider === "openai"
+                    ? {
+                          models: {
+                              "gpt-public": { id: "gpt-public", userDefined: false },
+                              "secret-tuned-model": { id: "secret-tuned-model", userDefined: true },
+                              "legacy-unclassified": { id: "legacy-unclassified" },
+                          },
+                      }
+                    : undefined,
+        }
+        expect(projectProviderUsageModelId(catalog, "openai", "gpt-public")).toBe("catalog:gpt-public")
+        expect(projectProviderUsageModelId(catalog, "openai", "secret-tuned-model")).toBe("state:private")
+        expect(projectProviderUsageModelId(catalog, "openai", "legacy-unclassified")).toBe("state:unknown")
+        expect(projectProviderUsageModelId(catalog, "openai", "raw-private-model")).toBe("state:unknown")
+
+        const observedIdentities: Array<ProviderAttemptIdentity | undefined> = []
+        const owner = new TaskProviderRequestRoundOwner({
+            lifecycle: {
+                createObserver: vi.fn((input) => ({
+                    beginAttempt: (identity: ProviderAttemptIdentity | undefined) => {
+                        observedIdentities.push(identity)
+                        return attemptHandle(input)
+                    },
+                    finishAttempt: () => undefined,
+                })),
+                attachExactUsage: vi.fn(),
+                completeProviderOnly: vi.fn(),
+                completeTools: vi.fn(),
+                completeTurnEndAwaitingUser: vi.fn(),
+            },
+            readExecutionBlocks: () => [],
+            isExecutionCancelling: () => false,
+            projectUsageModelId: (provider, wireModelId) => projectProviderUsageModelId(catalog, provider, wireModelId),
+        })
+
+        const admission = owner.admit({ source: "task" })
+        await drain(
+            bindProviderAttemptScope(
+                identifiedSend({ provider: "openai", modelId: "gpt-public", thinking: "state:disabled" }),
+                admission.createAttemptObserver(0),
+            ),
+        )
+
+        expect(observedIdentities).toEqual([{ provider: "openai", modelId: "catalog:gpt-public", thinking: "state:disabled" }])
+        expect(JSON.stringify(observedIdentities)).not.toContain("secret-tuned-model")
+    })
+
+    it("passes the frozen five-role catalog into every attempt scope and recognizes reviewer subagents", () => {
+        const observedRoles: string[] = []
+        const owner = new TaskProviderRequestRoundOwner({
+            lifecycle: {
+                createObserver: vi.fn((input) => {
+                    observedRoles.push(input.role ?? "missing")
+                    return { beginAttempt: () => attemptHandle(input), finishAttempt: () => undefined }
+                }),
+                attachExactUsage: vi.fn(),
+                completeProviderOnly: vi.fn(),
+                completeTools: vi.fn(),
+                completeTurnEndAwaitingUser: vi.fn(),
+            },
+            readExecutionBlocks: () => [],
+            isExecutionCancelling: () => false,
+        })
+        const sources: ProviderTelemetryRole[] = ["task", "subagent", "compaction", "reviewer", "other"]
+
+        for (const source of sources) owner.admit({ source }).createAttemptObserver(0)
+
+        expect(observedRoles).toEqual(sources)
+        expect(providerTelemetryRoleForSubagent("reviewer-opus")).toBe("reviewer")
+        expect(providerTelemetryRoleForSubagent("code_reviewer")).toBe("reviewer")
+        expect(providerTelemetryRoleForSubagent("web-researcher")).toBe("subagent")
     })
 
     it("completes a Provider-only execution when no tool turn was registered", () => {
@@ -125,6 +246,42 @@ describe("Task Provider request round admission", () => {
             failedToolCount: 1,
             cancelledToolCount: 2,
         })
+    })
+
+    it("waits for name-safe tool resolution and forwards one call per settled block", async () => {
+        const admission = createAdmission()
+        const toolCalls: readonly UsageToolCall[] = [
+            { outcome: "completed", toolName: "read_file" },
+            { outcome: "failed", toolName: "execute_command" },
+            { outcome: "cancelled" },
+        ]
+        const owner = createOwner(
+            [
+                { blockId: "read", phase: "completed", invocationRef: "invocation:read" },
+                { blockId: "exec", phase: "failed", invocationRef: "invocation:exec" },
+                { blockId: "pending", phase: "pending", invocationRef: "invocation:private" },
+            ],
+            { resolveExecutionToolCalls: async () => toolCalls },
+        )
+        owner.registerExecution(admission, {
+            turnId: "turn:named-tools",
+            toolCount: 3,
+            turnEndInteractions: [],
+        })
+
+        owner.completeTurn(admission)
+        expect(admission.completeTools).not.toHaveBeenCalled()
+        await owner.waitForCompletions()
+
+        expect(admission.completeTools).toHaveBeenCalledWith(
+            {
+                toolCount: 3,
+                completedToolCount: 1,
+                failedToolCount: 1,
+                cancelledToolCount: 1,
+            },
+            toolCalls,
+        )
     })
 
     it("leaves Task-aborted executions for lifecycle abort instead of writing tools-settled", () => {
