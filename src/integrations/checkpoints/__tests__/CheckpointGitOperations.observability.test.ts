@@ -175,10 +175,14 @@ describe("checkpoint add observability", () => {
             taskId: "task-1",
         })
 
-        expect(result.success).toBe(false)
+        expect(result).toEqual({ success: true, stagedCount: 0, unstageableFiles: [outsidePath] })
         const phase = recorded.phases.find((entry) => entry.phase === "add")
-        expect(phase?.dimensions).toMatchObject({ mode: "tracked", outcome: "failure", reason: "path_outside_worktree" })
-        // The rejected path is unbounded and must stay out of the dimensions.
+        expect(phase?.dimensions).toMatchObject({ mode: "tracked", outcome: "nothing_to_stage" })
+        expect(recorded.diagnostics.find((entry) => entry.kind === "paths_unstageable")?.dimensions).toMatchObject({
+            outside: 1,
+            total: 1,
+        })
+        // The excluded path is unbounded and must stay out of metric dimensions.
         for (const value of Object.values(phase?.dimensions ?? {})) {
             expect(String(value)).not.toContain("elsewhere")
         }

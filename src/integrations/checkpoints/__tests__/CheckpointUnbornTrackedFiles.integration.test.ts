@@ -328,7 +328,7 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
                 // ruleset changed, so match on that role rather than one mode name.
                 const isRefreshStaging = options.mode === "baseline" || options.mode === "workspace-scan"
                 return options.taskId === failedTaskId && isRefreshStaging
-                    ? { success: false, stagedCount: 0, rejectedPaths: [] }
+                    ? { success: false, stagedCount: 0, unstageableFiles: [] }
                     : result
             })
 
@@ -713,6 +713,40 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
         }
     })
 
+    it("drops an external pending path and creates the next workspace checkpoint normally", async () => {
+        const sandbox = await createUnbornSandbox()
+        const taskId = "task-external-path-recovery"
+        const outsideFile = path.join(sandbox.sandbox, "outside.txt")
+        try {
+            const tracker = await CheckpointTracker.create(taskId, true, sandbox.workspacePath)
+            if (!tracker) throw new Error("checkpoint_tracker_missing")
+            const taskFiles = new TaskFileTracker(taskId)
+            tracker.setTaskFileTracker(taskFiles)
+            const shadowGit = simpleGit(path.dirname(await getShadowGitPath(hashWorkingDir(sandbox.workspacePath))))
+            const initialHash = (await shadowGit.revparse(["HEAD"])).trim()
+
+            await fs.writeFile(outsideFile, "outside task edit")
+            taskFiles.trackModification(outsideFile)
+            const outsideOnlyHash = await tracker.commit()
+
+            expect(outsideOnlyHash).toBe(initialHash)
+            expect(taskFiles.hasPendingChanges()).toBe(false)
+            expect(taskFiles.getAllModifiedFiles()).toEqual([outsideFile])
+
+            await fs.writeFile(sandbox.trackedFile, "workspace checkpoint after outside edit")
+            taskFiles.trackModification(sandbox.trackedFile)
+            const workspaceHash = await tracker.commit()
+
+            expectCheckpointHash(workspaceHash)
+            expect(workspaceHash).not.toBe(initialHash)
+            expect(await shadowGit.show([`${workspaceHash}:write_test.txt`])).toBe("workspace checkpoint after outside edit")
+            expect(taskFiles.hasPendingChanges()).toBe(false)
+        } finally {
+            WorkspaceFileRegistry.getInstance().releaseTask(taskId)
+            await disposeSandbox(sandbox)
+        }
+    })
+
     it("limits completion diffs to checkpoint commits owned by the requesting task", async () => {
         const sandbox = await createUnbornSandbox()
         const taskAId = "task-completion-owner-a"
@@ -895,7 +929,7 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
         }
     })
 
-    it("rejects a tracked path outside the checkpoint worktree before invoking git add", async () => {
+    it("skips a tracked path outside the checkpoint worktree before invoking git add", async () => {
         const workspacePath = path.resolve("checkpoint-owned-worktree")
         const outsidePath = path.resolve("outside-worktree", "write_test.txt")
         const operations = new GitOperations(workspacePath)
@@ -908,7 +942,7 @@ describe("CheckpointTracker with tracked files in an unborn user repository", ()
             taskId: "task-path-mismatch",
         })
 
-        expect(result).toMatchObject({ success: false })
+        expect(result).toEqual({ success: true, stagedCount: 0, unstageableFiles: [outsidePath] })
         expect(add).not.toHaveBeenCalled()
     })
 })

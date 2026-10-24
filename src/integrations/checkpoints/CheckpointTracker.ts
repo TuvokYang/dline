@@ -740,10 +740,10 @@ class CheckpointTracker {
             fileList: stageFiles,
             taskId: this.taskId,
         })
-        // Paths Git cannot stage must leave the pending set even when the whole
-        // attempt failed. Retaining them replays the same rejected batch on every
-        // later checkpoint and disables checkpoints for the rest of the task.
-        this.dropUnstageablePaths(addFilesResult.rejectedPaths)
+        // Paths this worktree cannot own must leave the pending set even when the
+        // whole attempt failed. Retaining them replays the same poisoned batch on
+        // every later checkpoint and disables checkpoints for the rest of the task.
+        this.dropUnstageablePaths(addFilesResult.unstageableFiles)
         if (!addFilesResult.success) {
             this.consecutiveStagingFailures += 1
             Logger.error(
@@ -780,17 +780,16 @@ class CheckpointTracker {
     }
 
     /**
-     * Remove worktree-relative paths the shadow repository refused to stage.
+     * Remove absolute caller paths this checkpoint worktree cannot stage.
      *
-     * Rejections are permanent for the current worktree state — a nested
-     * repository path or a deleted file will not become stageable by retrying —
-     * so they are dropped rather than carried into the next checkpoint.
+     * Rejections are permanent for the current ownership boundary — an outside,
+     * nested-repository or absent path will not become stageable by retrying — so
+     * it is dropped from pending work while lifetime task edit history is kept.
      */
-    private dropUnstageablePaths(relativePaths: string[]): void {
-        if (relativePaths.length === 0 || !this.taskFileTracker) {
+    private dropUnstageablePaths(absolutePaths: string[]): void {
+        if (absolutePaths.length === 0 || !this.taskFileTracker) {
             return
         }
-        const absolutePaths = relativePaths.map((relativePath) => path.resolve(this.cwd, relativePath))
         const dropped = this.taskFileTracker.dropModifiedFiles(absolutePaths)
         if (dropped > 0) {
             Logger.warn(

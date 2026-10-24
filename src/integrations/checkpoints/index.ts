@@ -33,6 +33,7 @@ import { getApiMetrics } from "@shared/getApiMetrics"
 import { HistoryItem } from "@shared/HistoryItem"
 import { ClineCheckpointRestore } from "@shared/WebviewMessage"
 import pTimeout from "p-timeout"
+import * as path from "path"
 import { HostProvider } from "@/hosts/host-provider"
 import { DiagnosticDomain, DiagnosticOutcome } from "@/services/telemetry/instrumentation/diagnostic-events"
 import { recordDiagnostic } from "@/services/telemetry/instrumentation/diagnostic-recorder"
@@ -1245,14 +1246,18 @@ export class TaskCheckpointManager implements ICheckpointManager {
         try {
             const taskFiles = this.services.taskFileTracker?.getAllModifiedFiles() ?? []
             const changedFiles = await this.currentWorkspaceDelta(checkpointReferences)
+            const taskFileKeys = new Set(taskFiles.map((file) => this.normalizeWorkspacePath(file)))
             const effectiveFiles =
-                taskFiles.length === 0 ? changedFiles : changedFiles.filter((file) => taskFiles.includes(file.absolutePath))
-            if (effectiveFiles.length === 0) {
+                taskFiles.length === 0
+                    ? changedFiles
+                    : changedFiles.filter((file) => taskFileKeys.has(this.normalizeWorkspacePath(file.absolutePath)))
+            const effectivePaths = effectiveFiles.map((file) => file.absolutePath)
+            if (effectivePaths.length === 0) {
                 return { status: "failed", error: "No workspace changes to restore" }
             }
             const coordinator = this.state.checkpointUnitCoordinator
             if (coordinator) {
-                const outcome = await coordinator.restore(checkpointReferences, taskFiles)
+                const outcome = await coordinator.restore(checkpointReferences, effectivePaths)
                 if (outcome.restoredWorkspacePaths.length === 0) {
                     const errorMessage = outcome.failures[0]?.reason ?? "No matching workspace checkpoint could be restored"
                     return { status: "failed", error: `Failed to restore checkpoint: ${errorMessage}` }
@@ -1273,9 +1278,9 @@ export class TaskCheckpointManager implements ICheckpointManager {
             }
             if (taskFiles.length > 0) {
                 Logger.debug(
-                    `[TaskCheckpointManager] Restoring ${taskFiles.length} task-owned file(s) for task ${this.task.taskId}`,
+                    `[TaskCheckpointManager] Restoring ${effectivePaths.length} workspace-owned task file(s) for task ${this.task.taskId}`,
                 )
-                await this.state.checkpointTracker.restoreFiles(checkpointHash, taskFiles)
+                await this.state.checkpointTracker.restoreFiles(checkpointHash, effectivePaths)
             } else {
                 await this.state.checkpointTracker.resetHead(checkpointHash)
             }
@@ -1755,6 +1760,11 @@ export class TaskCheckpointManager implements ICheckpointManager {
      * Gets the workspace path from WorkspaceRootManager when available, otherwise falls back to CheckpointUtils
      * @returns Promise<string> The workspace path to use for checkpoint operations
      */
+    private normalizeWorkspacePath(filePath: string): string {
+        const resolved = path.resolve(filePath)
+        return process.platform === "win32" ? resolved.toLowerCase() : resolved
+    }
+
     private async getCurrentWorkspaceHash(referenceSet: CheckpointReferenceSet): Promise<string | undefined> {
         if (referenceSet.workspaceRoots.length === 0) {
             const legacyHash = referenceSet.hashes[0]

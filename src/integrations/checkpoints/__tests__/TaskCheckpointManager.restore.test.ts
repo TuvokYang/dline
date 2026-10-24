@@ -283,6 +283,25 @@ describe("TaskCheckpointManager restore isolation", () => {
         expect(harness.resetHead).not.toHaveBeenCalled()
     })
 
+    it("does not pass external lifetime task paths to workspace restore", async () => {
+        const workspacePath = path.resolve("C:/workspace")
+        const insideFile = path.join(workspacePath, "inside.ts")
+        const outsideFile = path.resolve("C:/outside", "outside.ts")
+        const harness = createHarness(
+            [{ ts: 42, type: "say", say: "checkpoint_created", lastCheckpointHash: ["hash-1"] }],
+            [insideFile, outsideFile],
+            2,
+            undefined,
+            undefined,
+            workspacePath,
+        )
+
+        await harness.manager.restoreCheckpoint(42, "workspace")
+
+        expect(harness.restoreFiles).toHaveBeenCalledWith("hash-1", [insideFile])
+        expect(harness.restoreFiles).not.toHaveBeenCalledWith("hash-1", expect.arrayContaining([outsideFile]))
+    })
+
     it("restores chat into a canonical paused runtime without auto-resuming", async () => {
         const harness = createHarness([
             { ts: 42, type: "say", say: "text", conversationHistoryIndex: 0 },

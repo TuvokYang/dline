@@ -1,5 +1,5 @@
 import type CheckpointTracker from "@integrations/checkpoints/CheckpointTracker"
-import type { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
+import { TaskFileTracker } from "@integrations/checkpoints/TaskFileTracker"
 import { VcsType, type WorkspaceRoot } from "@shared/multi-root/types"
 import * as path from "path"
 import { describe, expect, it, vi } from "vitest"
@@ -74,6 +74,41 @@ describe("CheckpointUnitCoordinator", () => {
             observedFiles: [],
         })
         expect(trackedFiles.settlePending).toHaveBeenCalledWith(expect.arrayContaining([fileA, fileB]), 7)
+    })
+
+    it("clears paths outside every root without losing owned pending changes", async () => {
+        const rootA = path.resolve("C:/workspace-a")
+        const rootB = path.resolve("C:/workspace-b")
+        const ownedFile = path.join(rootA, "..cache", "owned.ts")
+        const outsideModified = path.resolve("C:/outside", "modified.ts")
+        const outsideObserved = path.resolve("C:/outside", "observed.ts")
+        const trackerA = tracker("hash-a")
+        const trackerB = tracker("hash-b")
+        const trackedFiles = new TaskFileTracker("task-unowned-paths")
+        trackedFiles.trackModification(ownedFile)
+        trackedFiles.trackModification(outsideModified)
+        trackedFiles.notePendingChange(outsideObserved)
+        const coordinator = new CheckpointUnitCoordinator({
+            taskId: "task-unowned-paths",
+            enableCheckpoints: true,
+            roots: [root(rootA, "a"), root(rootB, "b")],
+            primaryRootIndex: 0,
+            taskFileTracker: trackedFiles,
+            createCheckpointTracker: vi.fn(async (_taskId, _enabled, workspacePath) =>
+                workspacePath === rootA ? trackerA : trackerB,
+            ),
+        })
+
+        await coordinator.commit()
+
+        expect(trackerA.commitForFiles).toHaveBeenCalledWith([ownedFile], {
+            forceWorkspaceScan: false,
+            attributeScanToTask: false,
+            observedFiles: [],
+        })
+        expect(trackedFiles.getModifiedFiles()).toEqual([])
+        expect(trackedFiles.getObservedFiles()).toEqual([])
+        expect(trackedFiles.getAllModifiedFiles()).toEqual([ownedFile, outsideModified])
     })
 
     it("routes watched changes to the root that owns them", async () => {

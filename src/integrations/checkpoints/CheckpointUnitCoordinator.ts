@@ -124,9 +124,15 @@ export class CheckpointUnitCoordinator {
         const scanRequired = this.options.taskFileTracker?.isWorkspaceScanRequired() ?? false
         // Only a scan this task's own command asked for finds files the task wrote.
         const attributeScan = this.options.taskFileTracker?.isScanAttributedToTask?.() ?? scanRequired
-        const filesByRoot = this.groupFilesByRoot(modifiedFiles)
-        const observedByRoot = this.groupFilesByRoot(observedFiles)
-        const hasPendingPaths = modifiedFiles.length > 0 || observedFiles.length > 0
+        const modifiedPartition = this.groupFilesByRoot(modifiedFiles)
+        const observedPartition = this.groupFilesByRoot(observedFiles)
+        const filesByRoot = modifiedPartition.grouped
+        const observedByRoot = observedPartition.grouped
+        const unownedFiles = [...modifiedPartition.unowned, ...observedPartition.unowned]
+        if (unownedFiles.length > 0) {
+            this.options.taskFileTracker?.dropModifiedFiles(unownedFiles)
+        }
+        const hasPendingPaths = filesByRoot.size > 0 || observedByRoot.size > 0
         const successfullyRecordedFiles: string[] = []
         const scannedOwnedFiles: string[] = []
         const checkpointHashes = this.units.map(() => "")
@@ -192,7 +198,7 @@ export class CheckpointUnitCoordinator {
 
     async restore(referenceSet: CheckpointReferenceSet, taskFiles: readonly string[]): Promise<CheckpointRestoreOutcome> {
         await this.initialize()
-        const filesByRoot = this.groupFilesByRoot(taskFiles)
+        const filesByRoot = this.groupFilesByRoot(taskFiles).grouped
         const restoreTrackedFilesOnly = taskFiles.length > 0
         const restoredWorkspacePaths: string[] = []
         const restoredHashes = this.units.map(() => "")
@@ -331,20 +337,22 @@ export class CheckpointUnitCoordinator {
         return process.platform === "win32" ? resolved.toLowerCase() : resolved
     }
 
-    private groupFilesByRoot(files: readonly string[]): Map<number, string[]> {
+    private groupFilesByRoot(files: readonly string[]): { grouped: Map<number, string[]>; unowned: string[] } {
         const grouped = new Map<number, string[]>()
+        const unowned: string[] = []
         for (const file of files) {
             const resolvedFile = path.resolve(file)
             const ownerIndex = this.findOwnerIndex(resolvedFile)
             if (ownerIndex < 0) {
-                Logger.warn(`[CheckpointUnitCoordinator] Ignoring tracked path outside every workspace root: ${resolvedFile}`)
+                unowned.push(resolvedFile)
+                Logger.warn(`[CheckpointUnitCoordinator] Excluding tracked path outside every workspace root: ${resolvedFile}`)
                 continue
             }
             const existing = grouped.get(ownerIndex)
             if (existing) existing.push(resolvedFile)
             else grouped.set(ownerIndex, [resolvedFile])
         }
-        return grouped
+        return { grouped, unowned }
     }
 
     private findOwnerIndex(filePath: string): number {
@@ -354,7 +362,8 @@ export class CheckpointUnitCoordinator {
         for (let index = 0; index < this.units.length; index++) {
             const rootPath = this.units[index].root.path
             const relative = path.relative(rootPath, resolvedFile)
-            if (!relative.startsWith("..") && !path.isAbsolute(relative) && rootPath.length > ownerLength) {
+            const outsideRoot = relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+            if (!outsideRoot && rootPath.length > ownerLength) {
                 ownerIndex = index
                 ownerLength = rootPath.length
             }
