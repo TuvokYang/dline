@@ -15,6 +15,15 @@ vi.mock("@/components/chat/ChatTextArea", () => {
         text: "captured",
         images: ["image"],
         files: ["file"],
+        semanticDocument: {
+            schemaVersion: 1,
+            parserVersion: "test",
+            catalogRevision: "1",
+            documentId: "captured-document",
+            rawText: "captured",
+            nodes: [{ kind: "text", text: "captured" }],
+            resources: [],
+        },
     } as unknown as ComposerSendDraft
     const modeSwitch = {
         segments: [{ kind: "text", text: "mode switch", source: "typed" }],
@@ -640,6 +649,60 @@ describe("InputSection deferred task submission", () => {
         fireEvent.click(submit)
 
         await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2))
+    })
+
+    it("handles a local report fallback before ordinary submission and clears only the accepted draft", async () => {
+        const onReportBugFallback = vi.fn(async () => true)
+        const onSubmit = vi.fn(async () => undefined)
+        const current = props(draft("report this locally"))
+        render(
+            <InputSection
+                {...current}
+                enabled={true}
+                onReportBugFallback={onReportBugFallback}
+                onSubmit={onSubmit}
+                submissionScope="task-1"
+            />,
+        )
+
+        fireEvent.click(screen.getByRole("button", { name: "Submit" }))
+
+        await waitFor(() => expect(onReportBugFallback).toHaveBeenCalledOnce())
+        expect(onReportBugFallback).toHaveBeenCalledWith(
+            {
+                text: "captured",
+                images: ["image"],
+                files: ["file"],
+                activeQuote: null,
+                ownerRevision: 1,
+            },
+            expect.objectContaining({ documentId: "captured-document", rawText: "captured" }),
+        )
+        expect(onSubmit).not.toHaveBeenCalled()
+        expect(current.chatState.composer.retire).toHaveBeenCalledOnce()
+        expect(current.chatState.setActiveQuote).toHaveBeenCalledWith(null)
+    })
+
+    it("keeps the draft and continues ordinary submission when the local fallback declines", async () => {
+        const onReportBugFallback = vi.fn(async () => false)
+        const onSubmit = vi.fn(async () => undefined)
+        const current = props(draft("send normally"))
+        render(
+            <InputSection
+                {...current}
+                enabled={true}
+                onReportBugFallback={onReportBugFallback}
+                onSubmit={onSubmit}
+                submissionScope="task-1"
+            />,
+        )
+
+        fireEvent.click(screen.getByRole("button", { name: "Submit" }))
+
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce())
+        expect(onReportBugFallback).toHaveBeenCalledOnce()
+        expect(current.chatState.composer.retire).not.toHaveBeenCalled()
+        expect(current.chatState.setActiveQuote).not.toHaveBeenCalled()
     })
 
     // An enabled composer must still submit normally; removing the replay path

@@ -1,5 +1,7 @@
+import { DlineDefaultTool } from "@shared/tools"
 import { describe, expect, it, vi } from "vitest"
 import type { ProviderRequestFrame } from "../../executors/provider/service/ProviderRequest"
+import type { ExplicitInstructionDeclaration } from "../../explicit-instructions/types"
 import type { ProviderDraftEnvelope } from "../../stores/payload/TaskPayloadEnvelopes"
 import { TaskProviderRequestFactory, type TaskProviderRequestFactoryOptions } from "../TaskProviderRequestFactory"
 
@@ -10,6 +12,9 @@ function harness() {
     }
     const rebuild = vi.fn(async () => undefined)
     const current = vi.fn(() => api)
+    const collectAuthority = vi.fn(async (): Promise<readonly ExplicitInstructionDeclaration[]> => [])
+    const entries = vi.fn(async () => [])
+    const grant = vi.fn(() => undefined)
     let pendingRefresh: string | undefined
     const options = {
         taskId: "task-1",
@@ -21,9 +26,9 @@ function harness() {
         api: { rebuild, current },
         promptContext: {},
         prompt: { getPendingRefreshReason: () => pendingRefresh, getLastTools: () => undefined },
-        conversation: { providerMessages: vi.fn(async () => []) },
-        messages: { collectAuthority: vi.fn(async () => []) },
-        authority: { grant: vi.fn(() => undefined) },
+        conversation: { providerMessages: vi.fn(async () => []), entries },
+        messages: { collectAuthority },
+        authority: { grant },
         tools: { plan: vi.fn(async () => undefined) },
         readAdmissionSnapshot: vi.fn(() => ({})),
         usesNativeToolCalls: vi.fn(() => false),
@@ -54,6 +59,9 @@ function harness() {
         draft,
         rebuild,
         buildFrame,
+        collectAuthority,
+        entries,
+        grant,
         setPendingRefresh: (value: string | undefined) => {
             pendingRefresh = value
         },
@@ -71,6 +79,52 @@ describe("TaskProviderRequestFactory frame candidate", () => {
         expect(prepared.api).toBe(frame.api)
         expect(buildFrame).toHaveBeenCalledTimes(1)
         expect(rebuild).toHaveBeenCalledWith({ validateCredentials: true })
+    })
+
+    it("grants the draft turn the report_bug authority collected from its durable inputs", async () => {
+        const { factory, draft, collectAuthority, grant } = harness()
+        const declaration: ExplicitInstructionDeclaration = {
+            type: "report_bug",
+            source: "slash_command",
+            targetTool: DlineDefaultTool.REPORT_BUG,
+        }
+        collectAuthority.mockResolvedValueOnce([declaration])
+        const inputPayloadRefs = ["payload:reportbug"]
+
+        await factory.prepare({ ...draft, inputPayloadRefs }, new AbortController().signal)
+
+        expect(collectAuthority).toHaveBeenCalledWith(inputPayloadRefs)
+        expect(grant).toHaveBeenCalledWith("turn-1", [declaration])
+    })
+
+    it("re-authorizes report_bug on a later turn while the durable intent is still unfinished", async () => {
+        const { factory, draft, entries, grant } = harness()
+        entries.mockResolvedValueOnce([
+            {
+                entry: { payloadRef: "payload:reportbug" },
+                kind: "user_input",
+                messages: [],
+                explicitInstructions: [
+                    {
+                        type: "report_bug",
+                        source: "slash_command",
+                        targetTool: DlineDefaultTool.REPORT_BUG,
+                    },
+                ],
+            },
+        ] as never)
+
+        await factory.prepare({ ...draft, turnId: "turn-followup" }, new AbortController().signal)
+
+        expect(grant).toHaveBeenCalledWith("turn-followup", [
+            {
+                type: "report_bug",
+                source: "internal_continuation",
+                targetTool: DlineDefaultTool.REPORT_BUG,
+                operationId: "report-bug-continuation:payload:reportbug",
+                metadata: { sourcePayloadRef: "payload:reportbug" },
+            },
+        ])
     })
 
     it("invalidates the preview when a prompt refresh becomes pending", async () => {

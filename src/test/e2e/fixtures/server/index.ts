@@ -109,6 +109,13 @@ export interface MockWebFetchPageRequest {
     authorization?: string
 }
 
+export interface MockExternalUrlVisit {
+    receivedAtMs: number
+    rawUrl: string
+    path: string
+    query: Readonly<Record<string, string>>
+}
+
 interface MockResponseOptions {
     reasoning?: string
     hiddenReasoning?: string
@@ -348,7 +355,7 @@ function getResponseToolCalls(response: Exclude<OpenAiMockResponse, { type: "err
  * XML documented in the explicit instruction into its reply. A scripted call to one of them is therefore rendered
  * as assistant text, while the consumption record keeps the scripted tool identity.
  */
-const EXPLICIT_INSTRUCTION_TOOL_NAMES: ReadonlySet<string> = new Set(["summarize_task"])
+const EXPLICIT_INSTRUCTION_TOOL_NAMES: ReadonlySet<string> = new Set(["report_bug", "summarize_task"])
 
 function isExplicitInstructionCall(tool: MockToolCall): boolean {
     return EXPLICIT_INSTRUCTION_TOOL_NAMES.has(tool.name)
@@ -673,6 +680,7 @@ export class ClineApiServerMock {
     private mockModelListRequests: MockModelListRequest[] = []
     private mockSearxngSearchRequests: MockSearxngSearchRequest[] = []
     private mockWebFetchPageRequests: MockWebFetchPageRequest[] = []
+    private mockExternalUrlVisits: MockExternalUrlVisit[] = []
     private readonly openAiCacheDiagnostics = new OpenAiCacheDiagnostics()
     public generationCounter = 0
 
@@ -762,6 +770,7 @@ export class ClineApiServerMock {
         this.mockModelListRequests = []
         this.mockSearxngSearchRequests = []
         this.mockWebFetchPageRequests = []
+        this.mockExternalUrlVisits = []
         this.openAiCacheDiagnostics.reset()
     }
 
@@ -775,6 +784,10 @@ export class ClineApiServerMock {
 
     public getWebFetchPageRequests(): readonly MockWebFetchPageRequest[] {
         return this.mockWebFetchPageRequests
+    }
+
+    public getExternalUrlVisits(): readonly MockExternalUrlVisit[] {
+        return this.mockExternalUrlVisits
     }
 
     public get openAiRequestCount(): number {
@@ -1164,6 +1177,18 @@ export class ClineApiServerMock {
 
                 const { baseRoute, endpoint, params = {} } = routeMatch
                 const controller = ClineApiServerMock.globalSharedServer!
+
+                if (baseRoute === "/.test" && endpoint === "/external-url" && method === "GET") {
+                    controller.mockExternalUrlVisits.push({
+                        receivedAtMs: Date.now(),
+                        rawUrl: req.url ?? path,
+                        path,
+                        query,
+                    })
+                    res.writeHead(204)
+                    res.end()
+                    return
+                }
 
                 if (baseRoute === "/mock/web-fetch" && endpoint === "/page" && method === "GET") {
                     const pageRequest: MockWebFetchPageRequest = {

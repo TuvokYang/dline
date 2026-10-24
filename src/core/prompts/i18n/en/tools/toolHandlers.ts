@@ -105,6 +105,11 @@ Always adhere to this format for all tool uses to ensure proper parsing and exec
     newTaskCreated: "The user has created a new task with the provided context.",
     newTaskDeclinedFeedback: "The user provided feedback instead of creating a new task:\n<feedback>\n@FEEDBACK@\n</feedback>",
 
+    // ReportBugHandler
+    reportBugOpened: "The editable GitHub issue form was opened for the user to review and submit.",
+    reportBugOpenedWithAttachmentNotice:
+        "The editable GitHub issue form was opened. Attachments were not uploaded by Dline; the user must add them in the GitHub form before submitting.",
+
     // ApprovedToolBoundary
     toolScopeWidened:
         "[scope_widened] Tool execution was refused because the canonical target escapes the scope approved for this call. Retry with the canonical external path so the correct approval can be requested.",

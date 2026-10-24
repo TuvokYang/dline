@@ -1,6 +1,7 @@
 import { BUILTIN_INPUT_SEMANTICS, type InputSemanticCatalog, type InputSemanticDescriptor } from "@shared/input-semantics/catalog"
 import type { MentionInputNode } from "@shared/input-semantics/document"
 import * as lexer from "@shared/input-semantics/lexer"
+import { DlineDefaultTool } from "@shared/tools"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { LegacyInputAdapter } from "../LegacyInputAdapter"
 import { SemanticInputAdmissionService } from "../SemanticInputAdmissionService"
@@ -15,7 +16,20 @@ const catalog: InputSemanticCatalog = { revision: 7, descriptors: BUILTIN_INPUT_
 const RAW = "/explain-changes then read @/src/index.ts"
 
 function harness() {
-    const expand = vi.fn(async (_descriptor: InputSemanticDescriptor) => ({ text: "<instructions>" }))
+    const expand = vi.fn(async (descriptor: InputSemanticDescriptor) => ({
+        text: descriptor.id === "command.report_bug" ? "<report-bug-instructions>" : "<instructions>",
+        ...(descriptor.id === "command.report_bug"
+            ? {
+                  explicitInstructions: [
+                      {
+                          type: "report_bug" as const,
+                          source: "slash_command" as const,
+                          targetTool: DlineDefaultTool.REPORT_BUG,
+                      },
+                  ],
+              }
+            : {}),
+    }))
     const resolve = vi.fn(async (_node: MentionInputNode) => "<resolved>")
     const admission = new TaskSemanticInputAdmission(
         new LegacyInputAdapter(
@@ -88,6 +102,24 @@ describe("TaskSemanticInputAdmission scanner budget", () => {
         expect(lex).toHaveBeenCalledTimes(1)
         expect(expand).toHaveBeenCalledTimes(1)
         expect(resolve).toHaveBeenCalledTimes(1)
+    })
+
+    it("admits /cmd:reportbug with one report_bug declaration for the same turn", async () => {
+        const { admission, expand } = harness()
+
+        const result = await admission.admit({ text: "/cmd:reportbug provider failed" })
+
+        expect(result.ok).toBe(true)
+        if (!result.ok) return
+        expect(expand.mock.calls.map(([descriptor]) => descriptor.id)).toEqual(["command.report_bug"])
+        expect(result.admitted.authorizedTools).toEqual([DlineDefaultTool.REPORT_BUG])
+        expect(result.admitted.explicitInstructions).toEqual([
+            {
+                type: "report_bug",
+                source: "slash_command",
+                targetTool: DlineDefaultTool.REPORT_BUG,
+            },
+        ])
     })
 })
 

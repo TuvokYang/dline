@@ -48,6 +48,24 @@ describe("ToolExecutorCoordinator explicit authority", () => {
         })
     })
 
+    it("consumes report_bug authority before the report handler runs", async () => {
+        const authority = new TaskTurnAuthority()
+        authority.grant("turn-report", [{ type: "report_bug", source: "slash_command", targetTool: DlineDefaultTool.REPORT_BUG }])
+        const recording = recordingHandler(DlineDefaultTool.REPORT_BUG)
+        const coordinator = coordinatorWith(recording.handler)
+
+        await coordinator.execute(
+            { explicitInstructions: authority.read("turn-report") } as TaskConfig,
+            block(DlineDefaultTool.REPORT_BUG),
+        )
+
+        expect(recording.lastConfig().explicitInstructionAuthorization).toMatchObject({
+            type: "report_bug",
+            targetTool: DlineDefaultTool.REPORT_BUG,
+            state: "consumed",
+        })
+    })
+
     it("consumes the authority once, so a second call is refused before its handler runs", async () => {
         const authority = new TaskTurnAuthority()
         authority.grant("turn-1", [

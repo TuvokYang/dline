@@ -46,8 +46,14 @@ describe("captureComposerSend", () => {
         const segments = [typed("hello")]
         const capture = captureComposerSend(segments, { catalog: CATALOG, documentId: "doc-1" })
 
-        expect(capture).toEqual({ ok: true, draft: { segments, text: "hello", images: [], files: [] } })
-        if (capture.ok) expect(capture.draft.segments).toBe(segments)
+        expect(capture).toEqual({
+            ok: true,
+            draft: expect.objectContaining({ segments, text: "hello", images: [], files: [] }),
+        })
+        if (capture.ok) {
+            expect(capture.draft.segments).toBe(segments)
+            expect(capture.draft.semanticDocument?.rawText).toBe("hello")
+        }
     })
 
     it("sends a typed command as text alone, since the host reads the same command from it", () => {

@@ -36,6 +36,24 @@ describe("LegacyInputAdapter", () => {
         expect(node.commandId).toBe("command.compact")
     })
 
+    it("resolves the namespaced report bug entry through the built-in compatibility descriptor", async () => {
+        const namespaced = await adapter().adapt({ text: "/cmd:reportbug provider failed" })
+        const compatible = await adapter().adapt({ text: "/reportbug provider failed" })
+        const commandOf = (document: typeof namespaced.document) =>
+            document.nodes.find((candidate): candidate is SlashCommandInputNode => candidate.kind === "slash_command")
+
+        expect(commandOf(namespaced.document)).toMatchObject({
+            commandId: "command.report_bug",
+            sourceText: "/cmd:reportbug",
+            state: "recognized",
+        })
+        expect(commandOf(compatible.document)).toMatchObject({
+            commandId: "command.report_bug",
+            sourceText: "/reportbug",
+            state: "recognized",
+        })
+    })
+
     it("admits plain text from the current snapshot without starting capability discovery", async () => {
         let discoveryRequested = false
         const pendingDiscovery = new Promise<InputSemanticCatalog>(() => undefined)

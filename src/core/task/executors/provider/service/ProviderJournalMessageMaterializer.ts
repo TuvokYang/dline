@@ -80,6 +80,8 @@ function appendSubmissionContext(text: string | undefined, context: string | und
 export interface MaterializedPayload {
     /** Payload kind, which is what says who wrote a user-role message. */
     readonly kind: string
+    /** Trusted declarations carried by this durable input, never reconstructed from rendered text. */
+    readonly explicitInstructions?: readonly ExplicitInstructionDeclaration[]
     /**
      * Usually one message. A summary carrying a reply the model has not
      * answered yields that reply as well; a payload that renders nothing yields none.
@@ -138,9 +140,12 @@ export class ProviderJournalMessageMaterializer {
             payload.kind === "tool_terminal_manifest"
                 ? (payload as ToolTerminalManifestEnvelope).supersededPayloadRefs
                 : undefined
+        const explicitInstructions =
+            payload.kind === "user_input" ? (payload as UserInputEnvelope).explicitInstructions : undefined
         return {
             kind: payload.kind,
             messages,
+            ...(explicitInstructions?.length ? { explicitInstructions } : {}),
             ...(continuation === undefined ? {} : { continuation }),
             ...(supersededPayloadRefs === undefined ? {} : { supersededPayloadRefs }),
         }

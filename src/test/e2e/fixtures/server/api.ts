@@ -103,7 +103,7 @@ export const E2E_REGISTERED_MOCK_ENDPOINTS = {
         PUT: ["/users/active-account"],
     },
     "/.test": {
-        GET: [],
+        GET: ["/external-url"],
         POST: ["/auth", "/setUserBalance", "/setUserHasOrganization", "/setOrgBalance", "/setSpendLimitExceeded"],
         PUT: [],
     },

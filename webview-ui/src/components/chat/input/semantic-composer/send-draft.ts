@@ -19,6 +19,13 @@ export interface ComposerSendDraft {
     text: string
     images: string[]
     files: string[]
+    /**
+     * Complete semantic meaning frozen for local pre-dispatch decisions.
+     *
+     * Unlike `semanticInput`, this is present on a real capture even when Core
+     * can reconstruct the same meaning from typed text and needs no document.
+     */
+    semanticDocument?: SemanticInputDocument
     semanticInput?: SemanticInputDocument
 }
 
@@ -67,7 +74,7 @@ export function composerSendBlock(segments: readonly ComposerSegment[]): Compose
 export function captureComposerSend(segments: readonly ComposerSegment[], context: ComposerSendContext): ComposerSendCapture {
     const block = composerSendBlock(segments)
     if (block) return { ok: false, block }
-    const { text, semanticInput } = composeComposerSubmission(segments, context)
+    const { text, semanticInput, projection } = composeComposerSubmission(segments, context)
     return {
         ok: true,
         draft: {
@@ -75,6 +82,7 @@ export function captureComposerSend(segments: readonly ComposerSegment[], contex
             text,
             images: [],
             files: [],
+            semanticDocument: projection.document,
             ...(semanticInput === undefined ? {} : { semanticInput }),
         },
     }
