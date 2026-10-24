@@ -71,6 +71,42 @@ describe("tool name counters", () => {
         expect(violations).toContain("tools_by_name_limit")
     })
 
+    it("keeps twelve names and folds the thirteenth into the conserved remainder", () => {
+        const candidates = Array.from({ length: MAX_TOOL_NAMES_PER_FACT + 1 }, (_, index) =>
+            candidate(`tool_${index.toString().padStart(2, "0")}`, 1),
+        )
+        const { selected, unlisted } = selectToolNames(candidates, MAX_TOOL_NAMES_PER_FACT)
+        const byName = Object.fromEntries(
+            selected.map((entry) => [
+                entry.toolName,
+                { completed: entry.completed, failed: entry.failed, cancelled: entry.cancelled },
+            ]),
+        )
+
+        expect(selected).toHaveLength(12)
+        expect(unlisted).toHaveLength(1)
+        expect(sumOutcomeCounts(unlisted)).toEqual({ completed: 1, failed: 0, cancelled: 0 })
+        expect(
+            validateTools({
+                completed: 13,
+                failed: 0,
+                cancelled: 0,
+                by_name: byName,
+                unlisted: sumOutcomeCounts(unlisted),
+            }),
+        ).toEqual([])
+        expect(
+            validateTools({
+                completed: 13,
+                failed: 0,
+                cancelled: 0,
+                by_name: Object.fromEntries(
+                    candidates.map((entry) => [entry.toolName, { completed: 1, failed: 0, cancelled: 0 }]),
+                ),
+            }),
+        ).toContain("tools_by_name_limit")
+    })
+
     it("does not treat a missing by_name as an error but refuses an unlisted-only claim", () => {
         expect(validateTools({ completed: 0, failed: 0, cancelled: 0 })).toEqual([])
         expect(

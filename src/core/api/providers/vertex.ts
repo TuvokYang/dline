@@ -2,12 +2,11 @@ import { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/index"
 import { AnthropicVertex } from "@anthropic-ai/vertex-sdk"
 import { FunctionDeclaration as GoogleTool } from "@google/genai"
 import { CLAUDE_SONNET_1M_SUFFIX, ModelInfo, VertexModelId, vertexDefaultModelId, vertexModels } from "@shared/api"
-import { observeProviderStream } from "@shared/provider-attempt-observer"
 import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { ClineTool } from "@/shared/tools"
-import { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
 import { ApiStream } from "../transform/stream"
@@ -15,11 +14,13 @@ import { getThinkingTokens } from "../utils/messages_api_support"
 import { resolveAnthropicReasoning } from "./anthropic/reasoning"
 import { GeminiHandler } from "./gemini"
 
-export class VertexHandler implements ApiHandler {
+export class VertexHandler extends ApiHandler {
     private geminiHandler: GeminiHandler | undefined
     private clientAnthropic: AnthropicVertex | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.vertex
@@ -135,7 +136,9 @@ export class VertexHandler implements ApiHandler {
             requestBody.output_config = reasoning.outputConfig
         }
 
-        const stream = await observeProviderStream(
+        const identity = ApiHandler.identifyProviderAttempt("vertex", requestBody)
+        const stream = await ApiHandler.observeProviderStream(
+            identity,
             () => clientAnthropic.beta.messages.create(requestBody as any) as unknown as PromiseLike<AsyncIterable<any>>,
         )
 

@@ -1,4 +1,5 @@
 import { fetch } from "@shared/net"
+import type { BootstrapDeviceGrantRequest, DeviceGrantTransport } from "../auth/DeviceGrantPort"
 import type { DeviceExchangeTransport } from "../auth/DeviceTokenBroker"
 import type { WireResponse } from "../contracts/classification"
 import type { DeviceExchangeRequest } from "../contracts/wire"
@@ -9,6 +10,8 @@ export const DLINE_OTEL_REQUEST_TIMEOUT_MS = 15_000
 /** Responses of the service are a few hundred bytes; anything larger is not the service and is not parsed. */
 const MAX_RESPONSE_BYTES = 16 * 1024
 const DEVICE_EXCHANGE_PATH = "/auth/device/exchange"
+const BOOTSTRAP_DEVICE_GRANT_PATH = "/auth/device/grant"
+const BOOTSTRAP_DEVICE_GRANT_CONTRACT = "4"
 /** Dline's own protocol paths carry no `/v1`: that segment belongs to OTLP alone. */
 const USAGE_PATH = "/usage"
 /**
@@ -48,6 +51,8 @@ export interface UsageDelivery {
     readonly requestId: string
     /** Exact bytes, sent unchanged on every attempt so a replay is answered as a duplicate (§1.7). */
     readonly body: Uint8Array
+    /** Usage schema contract; diagnostics and legacy callers default to the current contract 3. */
+    readonly contractVersion?: 3 | 4
 }
 
 /** Sends one `/usage` request. */
@@ -81,7 +86,9 @@ export interface DlineOtelHttpClientOptions {
  * `json: undefined` for the classifiers. It does not retry: retry policy
  * belongs to the delivery layer, which knows whether a replay is safe.
  */
-export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransport, DiagnosticLogsTransport {
+export class DlineOtelHttpClient
+    implements DeviceExchangeTransport, DeviceGrantTransport, UsageTransport, DiagnosticLogsTransport
+{
     private readonly endpoint: URL
     private readonly timeoutMs: number
     private readonly userAgent: string
@@ -99,6 +106,19 @@ export class DlineOtelHttpClient implements DeviceExchangeTransport, UsageTransp
 
     exchange(request: DeviceExchangeRequest, signal?: AbortSignal): Promise<WireResponse> {
         return this.post(DEVICE_EXCHANGE_PATH, { "content-type": "application/json" }, JSON.stringify(request), signal)
+    }
+
+    requestBootstrapDeviceGrant(request: BootstrapDeviceGrantRequest, signal?: AbortSignal): Promise<WireResponse> {
+        return this.post(
+            BOOTSTRAP_DEVICE_GRANT_PATH,
+            {
+                "content-type": "application/json",
+                "x-dline-contract": BOOTSTRAP_DEVICE_GRANT_CONTRACT,
+                "x-dline-request-id": request.request_id,
+            },
+            JSON.stringify(request),
+            signal,
+        )
     }
 
     sendUsage(delivery: UsageDelivery, signal?: AbortSignal): Promise<WireResponse> {
@@ -152,7 +172,7 @@ function deliveryHeaders(delivery: UsageDelivery): Record<string, string> {
         authorization: `Bearer ${delivery.accessToken}`,
         "content-type": "application/json",
         "x-dline-request-id": delivery.requestId,
-        "x-dline-contract": DLINE_TELEMETRY_CONTRACT,
+        "x-dline-contract": String(delivery.contractVersion ?? DLINE_TELEMETRY_CONTRACT),
     }
 }
 

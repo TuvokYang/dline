@@ -1,6 +1,6 @@
 // @ts-nocheck -- test file accesses private class members intentionally
 import { ConverseStreamCommand } from "@aws-sdk/client-bedrock-runtime"
-import type { ApiHandlerContext } from "@core/api"
+import { ApiHandler, type ApiHandlerContext } from "@core/api"
 import { bedrockModels, ModelInfo } from "@shared/api"
 import should from "should"
 import { Readable } from "stream"
@@ -25,12 +25,34 @@ describe("AwsBedrockHandler", () => {
     }
 
     // Helper function to collect generator results
-    async function collectGeneratorResults(generator: AsyncGenerator<any>): Promise<any[]> {
+    async function collectGeneratorResults(generator: AsyncIterable<any>): Promise<any[]> {
         const results: any[] = []
         for await (const item of generator) {
             results.push(item)
         }
         return results
+    }
+
+    function observeAttempt(stream: AsyncIterable<any>) {
+        const identities: any[] = []
+        const terminals: string[] = []
+        return {
+            identities,
+            terminals,
+            stream: ApiHandler.bindProviderAttemptScope(
+                stream,
+                {
+                    beginAttempt(identity) {
+                        identities.push(identity)
+                        return identities.length
+                    },
+                    finishAttempt(_handle, status) {
+                        terminals.push(status)
+                    },
+                },
+                { provider: "bedrock" },
+            ),
+        }
     }
 
     // Mock AWS Bedrock client
@@ -273,6 +295,33 @@ describe("AwsBedrockHandler", () => {
         const client = await handler.getBedrockClient()
 
         ;(await client.config.maxAttempts()).should.equal(1)
+    })
+
+    it("settles a DeepSeek protocol error as failed inside the observed stream", async () => {
+        const handler = new AwsBedrockHandler(mockContext)
+        const protocolError = { message: "DeepSeek model stream failed" }
+        handler.getBedrockClient = async () =>
+            ({
+                send: async () => ({ body: createMockStream([{ modelStreamErrorException: protocolError }]) }),
+            }) as any
+        const observation = observeAttempt(
+            handler.createDeepseekMessage("system", [], "deepseek.r1-v1:0", {
+                id: "deepseek.r1-v1:0",
+                info: mockModelInfo,
+            }),
+        )
+
+        try {
+            await collectGeneratorResults(observation.stream)
+            should.fail(null, null, "Expected Bedrock protocol error", "throw")
+        } catch (error) {
+            error.should.equal(protocolError)
+        }
+
+        observation.identities.should.deepEqual([
+            { provider: "bedrock", modelId: "deepseek.r1-v1:0", thinking: "state:disabled" },
+        ])
+        observation.terminals.should.deepEqual(["failed"])
     })
 
     describe("executeConverseStream", () => {
@@ -637,14 +686,8 @@ describe("AwsBedrockHandler", () => {
 
         describe("error handling", () => {
             it("should handle internalServerException", async () => {
-                const mockChunks = [
-                    { messageStart: { role: "assistant" } },
-                    {
-                        internalServerException: {
-                            message: "Internal server error occurred",
-                        },
-                    },
-                ]
+                const protocolError = { message: "Internal server error occurred" }
+                const mockChunks = [{ messageStart: { role: "assistant" } }, { internalServerException: protocolError }]
 
                 const mockClient = new MockBedrockClient(mockChunks)
                 const command = new ConverseStreamCommand({
@@ -656,23 +699,25 @@ describe("AwsBedrockHandler", () => {
                 const originalGetBedrockClient = handler.getBedrockClient
                 handler.getBedrockClient = async () => mockClient as any
 
-                const generator = handler.executeConverseStream(command, mockModelInfo)
-                const results = await collectGeneratorResults(generator)
+                const observation = observeAttempt(handler.executeConverseStream(command, mockModelInfo))
+                try {
+                    await collectGeneratorResults(observation.stream)
+                    should.fail(null, null, "Expected Bedrock protocol error", "throw")
+                } catch (error) {
+                    error.should.equal(protocolError)
+                } finally {
+                    handler.getBedrockClient = originalGetBedrockClient
+                }
 
-                // Restore original method
-                handler.getBedrockClient = originalGetBedrockClient
-
-                // Verify error was handled
-                results.should.have.length(1)
-                results[0].type.should.equal("text")
-                results[0].text.should.equal("[ERROR] Internal server error: Internal server error occurred")
+                observation.identities.should.deepEqual([
+                    { provider: "bedrock", modelId: "test-model", thinking: "state:disabled" },
+                ])
+                observation.terminals.should.deepEqual(["failed"])
             })
 
             it("should handle throttlingException", async () => {
-                const mockChunks = [
-                    { messageStart: { role: "assistant" } },
-                    { throttlingException: { message: "Rate limit exceeded" } },
-                ]
+                const protocolError = { message: "Rate limit exceeded" }
+                const mockChunks = [{ messageStart: { role: "assistant" } }, { throttlingException: protocolError }]
 
                 const mockClient = new MockBedrockClient(mockChunks)
                 const command = new ConverseStreamCommand({
@@ -684,16 +729,20 @@ describe("AwsBedrockHandler", () => {
                 const originalGetBedrockClient = handler.getBedrockClient
                 handler.getBedrockClient = async () => mockClient as any
 
-                const generator = handler.executeConverseStream(command, mockModelInfo)
-                const results = await collectGeneratorResults(generator)
+                const observation = observeAttempt(handler.executeConverseStream(command, mockModelInfo))
+                try {
+                    await collectGeneratorResults(observation.stream)
+                    should.fail(null, null, "Expected Bedrock protocol error", "throw")
+                } catch (error) {
+                    error.should.equal(protocolError)
+                } finally {
+                    handler.getBedrockClient = originalGetBedrockClient
+                }
 
-                // Restore original method
-                handler.getBedrockClient = originalGetBedrockClient
-
-                // Verify error was handled
-                results.should.have.length(1)
-                results[0].type.should.equal("text")
-                results[0].text.should.equal("[ERROR] Throttling error: Rate limit exceeded")
+                observation.identities.should.deepEqual([
+                    { provider: "bedrock", modelId: "test-model", thinking: "state:disabled" },
+                ])
+                observation.terminals.should.deepEqual(["failed"])
             })
         })
 

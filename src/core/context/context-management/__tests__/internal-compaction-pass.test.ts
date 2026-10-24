@@ -3,12 +3,13 @@ import type { ApiStream } from "@core/api/transform/stream"
 import { ExplicitInstructionRegistry } from "@core/task/explicit-instructions/ExplicitInstructionRegistry"
 import { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
 import { DlineDefaultTool } from "@shared/tools"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { runInternalCompactionPass } from "../internal-compaction-pass"
 
 function createApi(stream: ApiStream): ApiHandler {
     return {
         createMessage: () => stream,
+        getProviderId: () => "openai",
         getModel: () => ({ id: "test-model", info: { id: "test-model" } }),
     }
 }
@@ -65,13 +66,14 @@ describe("internal compaction Pass", () => {
         expect(instructions.getPendingToolAuthorization(DlineDefaultTool.SUMMARIZE_TASK)).toBeUndefined()
     })
 
-    it("binds the Provider attempt and attaches exact usage only after the stream reaches terminal", async () => {
+    it("passes stable semantic telemetry metadata and drains the Provider usage tail", async () => {
         const events: string[] = []
         async function* stream(): ApiStream {
             yield { type: "text", text: summaryBlock("Observed summary") }
             events.push("tail")
             yield { type: "usage", inputTokens: 100, outputTokens: 20, cacheReadTokens: 0 }
         }
+        const createMessage = vi.fn<ApiHandler["createMessage"]>(() => stream())
         const registry = new ExplicitInstructionRegistry()
         const instructions = new ExplicitInstructionRequestScope(registry, {
             requestId: "request-observed",
@@ -85,7 +87,11 @@ describe("internal compaction Pass", () => {
         })
 
         const result = await runInternalCompactionPass({
-            api: createApi(stream()),
+            api: {
+                createMessage,
+                getProviderId: () => "openai",
+                getModel: () => ({ id: "test-model", info: { id: "test-model" } }),
+            },
             providerInput: {
                 systemPrompt: "system",
                 messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
@@ -94,25 +100,21 @@ describe("internal compaction Pass", () => {
                 providerOutputCap: 1_000,
             },
             explicitInstructions: instructions,
+            attemptId: "attempt-2",
+            telemetryRequestId: "compaction-request-1",
             taskAttempt: 2,
-            providerRequestRound: {
-                bindAttempt: (providerStream, taskAttempt) => {
-                    events.push(`bind:${taskAttempt}`)
-                    return providerStream
-                },
-                attachExactUsage: (usage) => events.push(`usage:${JSON.stringify(usage)}`),
-                completeProviderOnly: () => undefined,
-                completeTools: () => undefined,
-                completeTurnEndAwaitingUser: () => undefined,
-            },
         })
 
-        expect(result.summary).toBe("Observed summary")
-        expect(events).toEqual([
-            "bind:2",
-            "tail",
-            'usage:{"inputTokens":100,"outputTokens":20,"cacheWriteTokens":0,"cacheReadTokens":0,"cacheUsageReported":true}',
-        ])
+        expect(result).toMatchObject({
+            summary: "Observed summary",
+            usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0 },
+        })
+        expect(events).toEqual(["tail"])
+        expect(createMessage.mock.calls[0]?.[3]).toMatchObject({
+            telemetryRole: "compaction",
+            telemetryRequestId: "compaction-request-1",
+            telemetryAttempt: 2,
+        })
     })
 
     it("returns one authorized summary and reliable usage without UI or canonical-history ports", async () => {

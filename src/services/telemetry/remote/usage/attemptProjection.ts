@@ -8,7 +8,211 @@
  * cannot answer.
  */
 
-import { EMPTY_EXECUTION_SUMMARY, type ExecutionSummary, type UsageTaskAttemptsWire } from "../contracts/usageExecution"
+import type { ProviderAttemptThinking } from "@shared/provider-attempt-observer"
+import type { ApiRequestRoundHandle, ProviderAttemptRole } from "@/core/task/performance/api-request-round-tracker"
+import type { ApiRequestRoundRecord } from "@/core/task/performance/api-request-round-types"
+import type { ApiResponseExecutionRecord } from "@/core/task/performance/api-response-execution-types"
+import type { UsageToolCall } from "@/core/task/telemetry/UsageToolCalls"
+import {
+    EMPTY_EXECUTION_SUMMARY,
+    type ExecutionSummary,
+    foldToolsToBound,
+    isRegisteredToolName,
+    type ToolOutcomeCounts,
+    type UsageTaskAttemptsWire,
+    type UsageToolsWire,
+} from "../contracts/usageExecution"
+
+export interface UsageAttemptIdentity {
+    readonly role: ProviderAttemptRole
+    readonly provider: string
+    readonly modelId: string
+    readonly thinking: ProviderAttemptThinking
+}
+
+export interface UsageAttemptTokens {
+    readonly input: number
+    readonly output: number
+    readonly cacheRead: number
+    readonly cacheWrite: number
+    readonly reasoning: number
+}
+
+export interface UsageLogicalExecutionObservation {
+    readonly logicalRequests: {
+        readonly completed: number
+        readonly failed: number
+        readonly cancelled: number
+        readonly aborted: number
+    }
+    readonly turnDurationMs: ExecutionSummary
+    readonly tools?: UsageToolsWire
+    readonly taskAttempts: UsageTaskAttemptsWire
+}
+
+export interface UsageAttemptObservation {
+    readonly attemptObservationId: string
+    readonly logicalRequestId: string
+    readonly identity: UsageAttemptIdentity
+    readonly policyGeneration: number
+    readonly admittedAt: number
+    readonly outcome: ApiRequestRoundRecord["status"]
+    readonly durationMs: number
+    readonly tokens: UsageAttemptTokens
+    readonly tokenUsageReported: boolean
+    readonly ttftMs?: number
+    readonly generationMs?: number
+    readonly generationOutputTokens?: number
+    /** Activation delta attached only to a final result-producing attempt. */
+    readonly sessionsStarted?: number
+    readonly logicalExecution?: UsageLogicalExecutionObservation
+}
+
+/** Convert the highest revision of one terminal attempt into the sole schema 4 observation for that handle. */
+export function projectFinalizedAttempt(
+    handle: ApiRequestRoundHandle,
+    record: ApiRequestRoundRecord,
+    execution?: ApiResponseExecutionRecord,
+    logicalToolCalls?: readonly UsageToolCall[],
+    sessionsStarted = 0,
+): UsageAttemptObservation {
+    if (handle.roundId !== record.roundId || handle.logicalRequestId !== record.logicalRequestId) {
+        throw new Error("Attempt handle and revision identity do not match")
+    }
+    const identity = readIdentity(handle)
+    const policyGeneration = requireCount(handle.policyGeneration, "policy generation")
+    const admittedAt = requireCount(handle.startedAtMs, "admittedAt")
+    const durationMs = requireCount(Math.round(record.providerDurationMs ?? 0), "duration")
+    const tokenUsageReported = record.usageQuality === "exact"
+    const activationCount = requireCount(sessionsStarted, "sessions started")
+    if (activationCount > 0 && !execution) throw new Error("Session starts require a final logical execution")
+    const tokens: UsageAttemptTokens = tokenUsageReported
+        ? {
+              input: requireCount(record.inputTokens, "input tokens"),
+              output: requireCount(record.outputTokens, "output tokens"),
+              cacheRead: requireCount(record.cacheReadTokens ?? 0, "cache read tokens"),
+              cacheWrite: requireCount(record.cacheWriteTokens ?? 0, "cache write tokens"),
+              reasoning: requireCount(record.thoughtsTokens ?? 0, "reasoning tokens"),
+          }
+        : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }
+    if (tokens.reasoning > tokens.output) throw new Error("Attempt reasoning tokens exceed output tokens")
+    return {
+        attemptObservationId: handle.roundId,
+        logicalRequestId: handle.logicalRequestId,
+        identity,
+        policyGeneration,
+        admittedAt,
+        outcome: record.status,
+        durationMs,
+        tokens,
+        tokenUsageReported,
+        ...(activationCount > 0 ? { sessionsStarted: activationCount } : {}),
+        ...(execution ? { logicalExecution: projectLogicalExecution(handle, execution, logicalToolCalls) } : {}),
+    }
+}
+
+function projectLogicalExecution(
+    handle: ApiRequestRoundHandle,
+    execution: ApiResponseExecutionRecord,
+    logicalToolCalls?: readonly UsageToolCall[],
+): UsageLogicalExecutionObservation {
+    if (execution.roundId !== handle.roundId || execution.logicalRequestId !== handle.logicalRequestId) {
+        throw new Error("Logical execution does not match finalized attempt")
+    }
+    const duration = requireCount(Math.round(execution.executionDurationMs), "logical execution duration")
+    const attempts = requireCount(handle.taskAttempt + 1, "logical task attempts")
+    const logicalRequests = { completed: 0, failed: 0, cancelled: 0, aborted: 0 }
+    logicalRequests[execution.status] = 1
+    const tools = projectLogicalTools(execution, logicalToolCalls)
+    return {
+        logicalRequests,
+        turnDurationMs: { count: 1, sum: duration, min: duration, max: duration },
+        ...(tools ? { tools } : {}),
+        taskAttempts: { count: 1, sum: attempts, min: attempts, max: attempts },
+    }
+}
+
+function projectLogicalTools(
+    execution: ApiResponseExecutionRecord,
+    logicalToolCalls?: readonly UsageToolCall[],
+): UsageToolsWire | undefined {
+    const toolCount = requireCount(execution.toolCount, "logical tool count")
+    const totals: ToolOutcomeCounts = {
+        completed: requireCount(execution.completedToolCount, "completed logical tools"),
+        failed: requireCount(execution.failedToolCount, "failed logical tools"),
+        cancelled: requireCount(execution.cancelledToolCount, "cancelled logical tools"),
+    }
+    if (totals.completed + totals.failed + totals.cancelled !== toolCount) {
+        throw new Error("Logical tool outcomes do not conserve")
+    }
+    if (toolCount === 0) {
+        if (logicalToolCalls && logicalToolCalls.length > 0)
+            throw new Error("Provider-only logical execution cannot carry tool calls")
+        return undefined
+    }
+    if (!logicalToolCalls) return { ...totals, by_name: {}, unlisted: totals }
+    if (logicalToolCalls.length !== toolCount) throw new Error("Logical tool call count does not match execution")
+
+    const byName = new Map<string, MutableToolOutcomeCounts>()
+    const unlisted: MutableToolOutcomeCounts = { completed: 0, failed: 0, cancelled: 0 }
+    const observed: MutableToolOutcomeCounts = { completed: 0, failed: 0, cancelled: 0 }
+    for (const call of logicalToolCalls) {
+        observed[call.outcome] = incrementCount(observed[call.outcome], "logical tool outcome")
+        if (!call.toolName || !isRegisteredToolName(call.toolName)) {
+            unlisted[call.outcome] = incrementCount(unlisted[call.outcome], "logical unlisted tool")
+            continue
+        }
+        const counts = byName.get(call.toolName) ?? { completed: 0, failed: 0, cancelled: 0 }
+        counts[call.outcome] = incrementCount(counts[call.outcome], `logical tool ${call.toolName}`)
+        byName.set(call.toolName, counts)
+    }
+    if (observed.completed !== totals.completed || observed.failed !== totals.failed || observed.cancelled !== totals.cancelled) {
+        throw new Error("Logical named tool outcomes do not match execution totals")
+    }
+    const orderedByName = Object.fromEntries([...byName.entries()].sort(([left], [right]) => left.localeCompare(right)))
+    const unlistedTotal = unlisted.completed + unlisted.failed + unlisted.cancelled
+    return foldToolsToBound({
+        ...totals,
+        by_name: orderedByName,
+        ...(unlistedTotal > 0 ? { unlisted } : {}),
+    })
+}
+
+type MutableToolOutcomeCounts = { -readonly [K in keyof ToolOutcomeCounts]: ToolOutcomeCounts[K] }
+
+function incrementCount(value: number, label: string): number {
+    const next = value + 1
+    if (!Number.isSafeInteger(next)) throw new Error(`Attempt ${label} overflow`)
+    return next
+}
+
+function readIdentity(handle: ApiRequestRoundHandle): UsageAttemptIdentity {
+    const { role, provider, modelId, thinking } = handle
+    if (!role || !provider || !modelId || thinking === undefined)
+        throw new Error("Complete schema 4 attempt identity is required")
+    if (!/^[a-z0-9_-]{1,32}$/u.test(provider)) throw new Error("Attempt provider identity is invalid")
+    if (!isThinking(thinking)) throw new Error("Attempt thinking identity is invalid")
+    return { role, provider, modelId: projectModelIdentity(modelId), thinking }
+}
+
+function projectModelIdentity(modelId: string): string {
+    if (/^(?:catalog:[a-z0-9][a-z0-9_.:/-]{0,95}|state:(?:private|unknown))$/u.test(modelId)) return modelId
+    // A final wire model is known to exist, but without a trusted catalog/custom classification its raw value is private.
+    return "state:unknown"
+}
+
+function isThinking(value: ProviderAttemptThinking): boolean {
+    if (typeof value === "number") {
+        return Number.isSafeInteger(value) && !Object.is(value, -0) && (value === -1 || value >= 0)
+    }
+    return /^(?:level:[a-z0-9_.-]{1,32}|state:(?:enabled|disabled|off|dynamic|default|unknown))$/u.test(value)
+}
+
+function requireCount(value: number | undefined, label: string): number {
+    if (!Number.isSafeInteger(value) || (value as number) < 0)
+        throw new Error(`Attempt ${label} must be a non-negative safe integer`)
+    return value as number
+}
 
 /** Mutable accumulator of attempt samples for one fact. */
 export interface AttemptAccumulator {

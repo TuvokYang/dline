@@ -5,7 +5,6 @@ import type { ApiProviderStreamChunk } from "@core/api/transform/stream"
 import { parseAssistantMessage, type ToolUse } from "@core/assistant-message"
 import type { CompactionProviderInput } from "@core/task/compaction/CompactionProviderInput"
 import type { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
-import type { ProviderRequestRoundAdmission } from "@core/task/performance/provider-request-round-port"
 import { TaskRequestUsageTracker } from "@core/task/TaskRequestUsageTracker"
 import type { CompactionSummaryFailureKind } from "@shared/context-compaction-failure"
 import { DlineDefaultTool } from "@shared/tools"
@@ -48,7 +47,8 @@ export interface RunInternalCompactionPassInput {
     explicitInstructions: ExplicitInstructionRequestScope
     taskNamespace?: string
     attemptId?: string
-    providerRequestRound?: ProviderRequestRoundAdmission
+    /** Stable identity shared by retries of one semantic compaction request. */
+    telemetryRequestId?: string
     taskAttempt?: number
     /** Every accepted Provider chunk, before summary parsing, for request lifecycle observers. */
     onChunk?(chunk: unknown): void | Promise<void>
@@ -163,6 +163,9 @@ export async function runInternalCompactionPass(input: RunInternalCompactionPass
             serverTools: input.providerInput.serverTools,
             taskNamespace: input.taskNamespace,
             retryOwner: "compaction",
+            telemetryRole: "compaction",
+            telemetryRequestId: input.telemetryRequestId ?? input.attemptId,
+            telemetryAttempt: input.taskAttempt ?? 0,
             ...(input.providerInput.providerOutputCap === undefined
                 ? {}
                 : {
@@ -173,7 +176,7 @@ export async function runInternalCompactionPass(input: RunInternalCompactionPass
                   }),
         },
     )
-    const stream = input.providerRequestRound?.bindAttempt(providerStream, input.taskAttempt ?? 0) ?? providerStream
+    const stream = providerStream
 
     const observation = new CompactionReplyObservation(input.providerInput.tools)
     const usageTracker = new TaskRequestUsageTracker()
@@ -222,19 +225,6 @@ export async function runInternalCompactionPass(input: RunInternalCompactionPass
         }
     }
 
-    const attachUsage = (): void => {
-        if (!usageReported) return
-        const snapshot = usageTracker.getSnapshot()
-        input.providerRequestRound?.attachExactUsage({
-            inputTokens: snapshot.inputTokens,
-            outputTokens: snapshot.outputTokens,
-            cacheWriteTokens: snapshot.cacheWriteTokens,
-            cacheReadTokens: snapshot.cacheReadTokens,
-            ...(snapshot.thoughtsTokens === undefined ? {} : { thoughtsTokens: snapshot.thoughtsTokens }),
-            cacheUsageReported: snapshot.cacheUsageReported,
-        })
-    }
-
     let streamError: unknown
     let closedBeforeStreamEnd = false
     const iterator = stream[Symbol.asyncIterator]()
@@ -255,17 +245,12 @@ export async function runInternalCompactionPass(input: RunInternalCompactionPass
         // Within the grace period the tail is observed like the rest of the reply; after it, usage is only recorded.
         let applyTailUsage = (chunk: Extract<ApiProviderStreamChunk, { type: "usage" }>): void => processChunk(chunk)
         const tail = drainUsageTail(iterator, (chunk) => applyTailUsage(chunk))
-        if (await settlesWithin(tail, USAGE_TAIL_GRACE_MS)) {
-            attachUsage()
-        } else {
+        if (!(await settlesWithin(tail, USAGE_TAIL_GRACE_MS))) {
             applyTailUsage = (chunk) => {
                 usageTracker.apply(chunk)
                 usageReported = true
             }
-            void tail.then(attachUsage)
         }
-    } else {
-        attachUsage()
     }
 
     const settledAtMs = performance.now()
@@ -363,7 +348,7 @@ export async function runInternalCompactionPassWithRetry(
                 explicitInstructions: input.explicitInstructions,
                 taskNamespace: input.taskNamespace,
                 attemptId: attempt.authorizationAttemptId,
-                providerRequestRound: input.providerRequestRound,
+                telemetryRequestId: input.telemetryRequestId,
                 taskAttempt: attempt.attemptIndex,
                 onChunk: (chunk) => input.onChunk?.(chunk, attempt),
                 onSummaryUpdate: (context) => input.onSummaryUpdate?.(context, attempt),

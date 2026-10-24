@@ -1,6 +1,6 @@
 import { apiFormatToJSON } from "@shared/proto/dline/models/metadata"
 import type { ObservabilityAttributes } from "@/services/telemetry/service/pipeline-port"
-import type { ApiHandler, ApiHandlerContext, ApiRequestOptions } from "../index"
+import type { ApiHandler, ApiHandlerContext, ApiRequestOptions } from "../ApiHandler"
 import type { ApiProviderStreamChunk } from "../transform/stream"
 
 /** Only counts and declared configuration cross the telemetry boundary, never request content. */

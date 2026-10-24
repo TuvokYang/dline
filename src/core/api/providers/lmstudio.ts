@@ -4,17 +4,19 @@ import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
-import type { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, type ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import type { ApiStream } from "../transform/stream"
 import { getOpenAIToolParams, ToolCallProcessor } from "../transform/tool-call-processor"
 import { splitInclusiveInputUsage } from "../transform/usage-normalization"
 
-export class LmStudioHandler implements ApiHandler {
+export class LmStudioHandler extends ApiHandler {
     private client: OpenAI | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.lmstudio

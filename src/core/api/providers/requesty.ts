@@ -5,7 +5,7 @@ import OpenAI from "openai"
 import { toRequestyServiceStringUrl } from "@/shared/clients/requesty"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
-import { ApiHandler, ApiHandlerContext } from "../index"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
@@ -23,10 +23,12 @@ interface RequestyUsage extends OpenAI.CompletionUsage {
     total_cost?: number
 }
 
-export class RequestyHandler implements ApiHandler {
+export class RequestyHandler extends ApiHandler {
     private client: OpenAI | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.requesty

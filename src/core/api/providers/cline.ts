@@ -13,7 +13,7 @@ import { CLINE_ACCOUNT_AUTH_ERROR_MESSAGE } from "@/shared/ClineAccount"
 import type { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch, getAxiosSettings } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import type { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, type ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { createOpenRouterStream } from "../transform/openrouter-stream"
 import type { ApiStream, ApiStreamUsageChunk } from "../transform/stream"
@@ -28,7 +28,7 @@ function getCacheWriteTokens(usage: any): number {
     return usage?.prompt_tokens_details?.cache_write_tokens || usage?.cache_creation_input_tokens || 0
 }
 
-export class ClineHandler implements ApiHandler {
+export class ClineHandler extends ApiHandler {
     private clineAccountService = ClineAccountService.getInstance()
     private _authService: AuthService
     private client: OpenAI | undefined
@@ -40,6 +40,7 @@ export class ClineHandler implements ApiHandler {
     }
 
     constructor(private ctx: ApiHandlerContext) {
+        super()
         this._authService = AuthService.getInstance()
     }
 
@@ -248,7 +249,7 @@ export class ClineHandler implements ApiHandler {
         }
     }
 
-    async getApiStreamUsage(): Promise<ApiStreamUsageChunk | undefined> {
+    override async getApiStreamUsage(): Promise<ApiStreamUsageChunk | undefined> {
         if (this.lastGenerationId) {
             try {
                 const clineAccountAuthToken = await this._authService.getAuthToken()

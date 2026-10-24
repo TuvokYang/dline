@@ -9,7 +9,6 @@ import type { FocusChainInstructionPort } from "../focus-chain"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
 import type { ApiRateSnapshot } from "../performance/api-rate-tracker"
-import type { ProviderRequestRoundPort } from "../performance/provider-request-round-port"
 import type { TaskRateMetricsQuery, TaskRateMetricsQueryResult } from "../performance/task-rate-metrics-types"
 import type { TaskPromptLifecycle } from "../prompt/TaskPromptLifecycle"
 import type { PromptCacheHealthTracker } from "../prompt-cache/PromptCacheHealthTracker"
@@ -83,7 +82,6 @@ export interface TaskSessionHostResources {
     readonly checkpoints?: ICheckpointManager
     readonly surface: ToolDomainSurface
     readonly peerTaskSpawner: PeerTaskSpawnPort
-    readonly providerRequestRounds?: ProviderRequestRoundPort
     readonly apiRateSnapshot?: () => ApiRateSnapshot
     readonly queryRateMetrics?: (query: TaskRateMetricsQuery) => Promise<TaskRateMetricsQueryResult>
     readonly releases?: readonly { release(): Promise<void> }[]

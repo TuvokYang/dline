@@ -17,7 +17,7 @@ import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch, providerFetch } from "@/shared/net"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, type ApiHandlerContext, type ApiRequestOptions } from ".."
+import { ApiHandler, type ApiHandlerContext, type ApiRequestOptions } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { getOpenAIChatOutputLimitError } from "../stream/OutputLimitExceededError"
 import { sanitizeAnthropicMessages } from "../transform/anthropic-format"
@@ -31,13 +31,15 @@ import { handleResponsesApiStreamResponse } from "../utils/responses_api_support
 import { resolveAnthropicReasoning } from "./anthropic/reasoning"
 import { encodeOpenAIResponsesReasoning, resolveOpenAIReasoning, resolveOpenAIReasoningEffort } from "./openai/reasoning"
 
-export class OcaHandler implements ApiHandler {
+export class OcaHandler extends ApiHandler {
     protected openAIClient: OpenAI | undefined
     protected anthropicClient: Anthropic | undefined
     protected externalHeaders: Record<string, string> = {}
     private costRatesPromise: Promise<{ inputCostPerMillion: number; outputCostPerMillion: number }> | undefined
 
-    constructor(protected ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     protected get config() {
         return this.ctx.profile.oca
@@ -248,7 +250,7 @@ export class OcaHandler implements ApiHandler {
         return this.costRatesPromise
     }
 
-    supportsServerTool(tool: ServerTool): boolean {
+    override supportsServerTool(tool: ServerTool): boolean {
         const apiFormat = this.modelInfo?.apiFormats?.[0]
         return (
             tool === ServerTool.WEB_SEARCH && (apiFormat === ApiFormat.OPENAI_RESPONSES || apiFormat === ApiFormat.ANTHROPIC_CHAT)

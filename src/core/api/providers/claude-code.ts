@@ -11,7 +11,7 @@ import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
 import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { getClaudeCodeClientVersionResolver } from "../../model-registry/remote/vendors/claude-code-client-version"
-import { type ApiHandler, type ApiHandlerContext, type ApiRequestOptions } from ".."
+import { ApiHandler, type ApiHandlerContext, type ApiRequestOptions } from "../ApiHandler"
 import { anthropicMessagesDocumentLimits } from "../document-input-limits"
 import { withRetry } from "../retry"
 import { type ApiStream } from "../transform/stream"
@@ -31,13 +31,15 @@ import { ClaudeCodeSubscriptionTransport } from "./anthropic/transport"
  * identity is declared unconditionally here, because a subscription token is
  * only accepted from something that presents itself as the Claude Code client.
  */
-export class ClaudeCodeHandler implements ApiHandler {
+export class ClaudeCodeHandler extends ApiHandler {
     private client: Anthropic | undefined
     /** Token the cached client was constructed with, so rotation can be detected. */
     private clientAccessToken: string | undefined
     private readonly usageClient = new ClaudeCodeUsageClient()
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.claudeCode
@@ -56,7 +58,7 @@ export class ClaudeCodeHandler implements ApiHandler {
     }
 
     /** This handler always speaks the Anthropic Messages protocol. */
-    getSelectedApiFormat(): ApiFormat {
+    override getSelectedApiFormat(): ApiFormat {
         return ApiFormat.ANTHROPIC_CHAT
     }
 
@@ -65,16 +67,16 @@ export class ClaudeCodeHandler implements ApiHandler {
      * anthropic provider uses, so the model's declared `tools` decide whether
      * either one is used.
      */
-    supportsServerTool(tool: ServerTool): boolean {
+    override supportsServerTool(tool: ServerTool): boolean {
         return tool === ServerTool.WEB_SEARCH || tool === ServerTool.WEB_FETCH
     }
 
     /** Hosted calls this endpoint ran must come back verbatim for the model to keep their results. */
-    getHostedToolReplayProtocol(): HostedToolReplayProtocol {
+    override getHostedToolReplayProtocol(): HostedToolReplayProtocol {
         return "anthropic_messages"
     }
 
-    getDocumentInputLimits(): DocumentInputLimits | undefined {
+    override getDocumentInputLimits(): DocumentInputLimits | undefined {
         return anthropicMessagesDocumentLimits(this.getModel().info)
     }
 
@@ -178,9 +180,9 @@ export class ClaudeCodeHandler implements ApiHandler {
      * subscription's own request budget to render a number the user may not be
      * looking at. The value stays reachable through the explicit refresh.
      */
-    readonly supportsAccountUsagePolling = false
+    override readonly supportsAccountUsagePolling = false
 
-    async getAccountUsage(): Promise<AccountUsageData> {
+    override async getAccountUsage(): Promise<AccountUsageData> {
         const accessToken = await this.resolveAccessToken()
         const clientVersion = (await getClaudeCodeClientVersionResolver().resolve()).version
         return toAccountUsage(await this.usageClient.fetchUsage(accessToken, clientVersion))

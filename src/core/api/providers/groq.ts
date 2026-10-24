@@ -6,7 +6,7 @@ import OpenAI from "openai"
 import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/completions"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
-import { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
@@ -82,10 +82,12 @@ const MODEL_FAMILIES: Record<string, GroqModelFamily> = {
     },
 }
 
-export class GroqHandler implements ApiHandler {
+export class GroqHandler extends ApiHandler {
     private client: OpenAI | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.groq

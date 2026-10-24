@@ -1,15 +1,9 @@
 import { findEnabledProfileByName } from "@core/controller/file/getApiProfiles"
-import { ApiConfiguration, ModelInfo } from "@shared/api"
-import type { AccountUsageData, AccountUsageQuotaData } from "@shared/ExtensionMessage"
-import type { ApiFormat, ServerTool } from "@shared/proto/dline/models/metadata"
-import type { ApiProfile, ImageGenerationSource } from "@shared/proto/dline/profile"
-import type { WebToolsMode } from "@shared/proto/dline/provider/common"
+import type { ApiConfiguration } from "@shared/api"
+import type { ApiProfile } from "@shared/proto/dline/profile"
 import { resolveProfileDisabledServerTools } from "@shared/providers/profile-model-info"
-import { Mode } from "@shared/storage/types"
-import { ClineError } from "@/services/error"
-import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
-import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
-import { ClineTool } from "@/shared/tools"
+import type { Mode } from "@shared/storage/types"
+import { ApiHandler, type ApiHandlerContext } from "./ApiHandler"
 import { getProfileModelInfo } from "./model-info"
 import { isCustomModel } from "./model-origin"
 import { instrumentApiHandler } from "./observability/instrument-api-handler"
@@ -56,156 +50,8 @@ import { XAIHandler } from "./providers/xai"
 import { ZAiHandler } from "./providers/zai"
 import { applyTaskRuntimeOverrides } from "./runtime-profile"
 import { withCrossModelHistory } from "./transform/cross-model-history-handler"
-import { ApiStream, ApiStreamUsageChunk } from "./transform/stream"
 
-/**
- * Context passed to every API handler. Contains the full ApiProfile
- * so handlers can read model capabilities from profile.modelInfo and
- * runtime reasoning config from profile.[provider].reasoning directly.
- */
-export interface ApiHandlerContext {
-    profile: ApiProfile
-    mode: Mode
-    workspaceId?: string
-    ulid?: string
-    onRetryAttempt?: (attempt: number, maxRetries: number, delay: number, error: unknown) => void
-    requestTimeoutMs?: number
-    enableParallelToolCalling?: boolean
-    onStreamEstimatedTokens?: (tokens: number) => void
-}
-
-/**
- * Re-export shared types for account usage.
- * Single source of truth: @shared/ExtensionMessage.
- */
-export type UsageQuota = AccountUsageQuotaData
-export type AccountUsage = AccountUsageData
-
-/** Provider-neutral result of consuming one account usage reset credit. */
-export interface AccountUsageResetResult {
-    readonly outcome: string
-    readonly quotaTypesReset: readonly string[]
-}
-
-/** Request-scoped generation controls resolved above provider adapters. */
-export interface ApiGenerationOptions {
-    readonly purpose: "compaction"
-    readonly maxOutputTokens: number
-}
-
-/** Owner responsible for retrying one logical Provider request. */
-export type ApiRetryOwner = "task" | "subagent" | "compaction"
-
-export interface ApiImageArtifactReference {
-    readonly artifactId: string
-    readonly mimeType: string
-    readonly base64: string
-}
-
-export interface ApiImageGenerationOptions {
-    readonly references: readonly ApiImageArtifactReference[]
-    readonly size?: { readonly width: number; readonly height: number }
-    readonly partialImages?: number
-}
-
-/** Immutable request-level capabilities resolved before entering a provider adapter. */
-export interface ApiRequestOptions {
-    /** Provider-hosted tools selected for this request. Local tools remain in `tools`. */
-    readonly serverTools?: readonly ServerTool[]
-    /** Stable Task identity used to isolate provider-side prompt cache routing. */
-    readonly taskNamespace?: string
-    /** Upper layer that owns retry orchestration; omitted requests use the Provider decorator. */
-    readonly retryOwner?: ApiRetryOwner
-    /** Optional generation policy for internal requests; ordinary requests omit this field. */
-    readonly generation?: ApiGenerationOptions
-    /** Ephemeral task-owned image inputs for provider-hosted generation/editing. */
-    readonly imageGeneration?: ApiImageGenerationOptions
-}
-
-export interface ApiHandler {
-    createMessage(
-        systemPrompt: string,
-        messages: ClineStorageMessage[],
-        tools?: ClineTool[],
-        options?: ApiRequestOptions,
-    ): ApiStream
-    /**
-     * Count one complete provider input with the provider's official tokenizer.
-     *
-     * Implementations return undefined when the endpoint is unavailable so
-     * request-scoped calibrated estimation can remain the bounded fallback.
-     */
-    countInputTokens?(input: {
-        readonly systemPrompt: string
-        readonly messages: ClineStorageMessage[]
-        readonly tools?: ClineTool[]
-        readonly options?: ApiRequestOptions
-    }): Promise<number | undefined>
-    getModel(): ApiHandlerModel
-    /** Report protocol-adapter support without consulting provider or model identifiers. */
-    supportsServerTool?(tool: ServerTool): boolean
-    /**
-     * Protocol of the provider-hosted tool blocks this handler accepts back verbatim on later requests.
-     * Hosted blocks stored from any other protocol are dropped before the handler sees the history.
-     */
-    getHostedToolReplayProtocol?(): HostedToolReplayProtocol | undefined
-    /** Native PDF capacity of one request; absent when the endpoint cannot read PDFs natively. */
-    getDocumentInputLimits?(): DocumentInputLimits | undefined
-    getApiStreamUsage?(): Promise<ApiStreamUsageChunk | undefined>
-    /** Query account-level usage/balance from the provider. Returns undefined if not supported. */
-    getAccountUsage?(): Promise<AccountUsage | undefined>
-    /**
-     * Whether background polling may call `getAccountUsage()`.
-     *
-     * Defaults to true. A provider sets this to false when its usage endpoint is
-     * metered, rate limited, or otherwise too costly to query on a timer; the
-     * value then stays available through an explicit user refresh instead of
-     * being fetched once per interval per window.
-     */
-    readonly supportsAccountUsagePolling?: boolean
-    /** Consume one opaque reset-credit ID exposed by getAccountUsage(). */
-    consumeAccountUsageResetCredit?(creditId: string): Promise<AccountUsageResetResult>
-    abort?(): void
-    /** Parse a provider-specific error into a ClineError. Falls back to generic ClineError.transform if not implemented. */
-    parseError?(error: any, modelId?: string): ClineError
-    /** Return the provider ID this handler was built for (from profile.provider). */
-    getProviderId?(): string
-    /**
-     * Whether the Profile runs a free-form model ID ("Use custom model ID", or
-     * Bedrock's "Custom" model). Telemetry marks such a model as custom.
-     */
-    isCustomModel?(): boolean
-    /** Return the web-tools routing mode captured by this handler's profile. */
-    getWebToolsMode?(): WebToolsMode | undefined
-    /**
-     * Return the wire protocol this handler will actually use.
-     *
-     * Routing has to judge hosted transport against the same format the request
-     * is sent with. A model's declared formats are only a fallback, and a profile
-     * running a free-form model id declares none at all.
-     */
-    getSelectedApiFormat?(): ApiFormat | undefined
-    /** Return the hosted server tools this handler's profile switched off. */
-    getDisabledServerTools?(): readonly ServerTool[] | undefined
-    /** Return the image source captured by this handler's profile when Image use is enabled. */
-    getImageGenerationSource?(): ImageGenerationSource | undefined
-}
-
-export interface ApiHandlerModel {
-    id: string
-    info: ModelInfo
-}
-
-export interface ApiProviderInfo {
-    providerId: string
-    model: ApiHandlerModel
-    mode: Mode
-    customPrompt?: string // "compact"
-}
-
-export interface SingleCompletionHandler {
-    completePrompt(prompt: string): Promise<string>
-}
+export * from "./ApiHandler"
 
 /**
  * Pure dispatch — each handler receives the full ApiHandlerContext and reads

@@ -832,7 +832,6 @@ function scripted(
     attempts: readonly Attempt[],
     retry: Partial<ProviderRetryPolicy> = {},
     contextRecovery?: ProviderContextRecoveryPort,
-    rounds?: ConstructorParameters<typeof DefaultProductionProviderService>[0]["rounds"],
 ) {
     const sent: ClineStorageMessage[][] = []
     let call = 0
@@ -843,6 +842,7 @@ function scripted(
             if ("error" in attempt) throw attempt.error
             for (const chunk of attempt.chunks) yield chunk
         }),
+        getProviderId: () => "openai",
         getModel: () => ({ id: "test-model", info: {} }),
     } as unknown as ApiHandler
     const request = {
@@ -874,7 +874,6 @@ function scripted(
         nextPresentationId: () => ++id,
         retry: policy,
         contextRecovery,
-        rounds,
     })
     return { service, api, request, prepare, sent, waits }
 }
@@ -1202,7 +1201,11 @@ describe("DefaultProductionProviderService request retry", () => {
         expect(prepare.mock.calls[1][0]).toMatchObject({ turnId: "turn-1" })
         expect(sourceApi.createMessage).toHaveBeenCalledOnce()
         expect(targetApi.createMessage).toHaveBeenCalledOnce()
-        expect(targetApi.createMessage).toHaveBeenCalledWith("target prompt", FROZEN_MESSAGES, targetTools, undefined)
+        expect(targetApi.createMessage).toHaveBeenCalledWith("target prompt", FROZEN_MESSAGES, targetTools, {
+            telemetryRole: "task",
+            telemetryRequestId: "turn-1",
+            telemetryAttempt: 1,
+        })
         const final = chunks.find((chunk) => chunk.kind === "final")
         if (final?.kind !== "final") throw new Error("missing final chunk")
         // Read with the target request's native tools, not the source's markup reading.
@@ -1454,29 +1457,6 @@ describe("DefaultProductionProviderService request retry", () => {
 
         expect(await failureOf(harness.service)).toBe(failure)
         expect(call).toBe(2)
-    })
-
-    // The rate metrics count logical requests: every send of the turn's request,
-    // retries included, belongs to the one round the turn opened.
-    it("binds every send of a turn's request to the turn's round with its attempt number", async () => {
-        const bound: Array<[string, number]> = []
-        const bindOrdinaryAttempt = <T>(turnId: string, attempt: number, stream: AsyncIterable<T>): AsyncIterable<T> => {
-            bound.push([turnId, attempt])
-            return stream
-        }
-        const harness = scripted(
-            [{ error: httpError(503, "Service Unavailable") }, { chunks: [text("Recovered answer.")] }],
-            {},
-            undefined,
-            { bindOrdinaryAttempt },
-        )
-
-        await collect(harness.service)
-
-        expect(bound).toEqual([
-            ["turn-1", 0],
-            ["turn-1", 1],
-        ])
     })
 })
 

@@ -42,7 +42,6 @@ import {
 } from "@core/context/context-management/target-window-fitting"
 import type { CompactionProviderInput } from "@core/task/compaction/CompactionProviderInput"
 import type { ExplicitInstructionRequestScope } from "@core/task/explicit-instructions/ExplicitInstructionRequestScope"
-import type { ProviderRequestRoundAdmission, ProviderRequestRoundPort } from "@core/task/performance/provider-request-round-port"
 import type { ChatContent } from "@shared/ChatContent"
 import type { CompactionFailureKind } from "@shared/context-compaction-failure"
 import type { ClineContent, ClineStorageMessage } from "@shared/messages/content"
@@ -285,7 +284,6 @@ export interface ContextCompactionSessionPorts {
     recordTiming?(timing: ContextCompactionPhaseTiming): void
     /** Content-free outcome of every Provider attempt, accepted or failed, for logs and telemetry. */
     recordCompactionAttempt?(input: ContextCompactionSessionInput, diagnostics: CompactionAttemptDiagnostics): void
-    providerRequestRounds?: ProviderRequestRoundPort
 }
 
 /** Facts from the accepted Passes that the commit applies beside the compacted history. */
@@ -474,13 +472,12 @@ export class ContextCompactionSession {
                     let projection: ContextCompactionReprojection | undefined
                     try {
                         while (true) {
-                            const providerRequestRound = this.ports.providerRequestRounds?.admit({ source: "compaction" })
-                            const result = await this.runProviderAttempts(providerRequestRound, {
+                            const result = await this.runProviderAttempts({
                                 api: input.compactionApi,
                                 providerInput: request.providerInput,
                                 explicitInstructions: request.explicitInstructions,
                                 taskNamespace: input.taskNamespace,
-                                providerRequestRound,
+                                telemetryRequestId: request.initialAttemptId,
                                 passIdentity,
                                 ...createPassRetryScope(input.trigger, this.options.maxRetryAttempts),
                                 onAttemptSettled: (diagnostics) => this.ports.recordCompactionAttempt?.(input, diagnostics),
@@ -782,13 +779,12 @@ export class ContextCompactionSession {
             carryLimitTokens,
         })
         try {
-            const providerRequestRound = this.ports.providerRequestRounds?.admit({ source: "compaction" })
-            const result = await this.runProviderAttempts(providerRequestRound, {
+            const result = await this.runProviderAttempts({
                 api: input.compactionApi,
                 providerInput: request.providerInput,
                 explicitInstructions: request.explicitInstructions,
                 taskNamespace: input.taskNamespace,
-                providerRequestRound,
+                telemetryRequestId: request.initialAttemptId,
                 passIdentity,
                 ...createPassRetryScope(input.trigger, this.options.maxRetryAttempts),
                 onAttemptSettled: (diagnostics) => this.ports.recordCompactionAttempt?.(input, diagnostics),
@@ -862,14 +858,8 @@ export class ContextCompactionSession {
         }
     }
 
-    /**
-     * Run every attempt of one Pass inside its Provider execution round.
-     *
-     * The round is completed whether the attempts produce a summary or fail, so a failed
-     * compaction never leaves a pending execution behind in the usage store.
-     */
+    /** Run every attempt of one Pass while retaining the terminal Provider failure classification. */
     private async runProviderAttempts(
-        providerRequestRound: ProviderRequestRoundAdmission | undefined,
         passInput: RunInternalCompactionPassWithRetryInput,
     ): Promise<InternalCompactionPassAttemptResult> {
         if (this.active) this.active.attemptFailure = undefined
@@ -878,8 +868,6 @@ export class ContextCompactionSession {
         } catch (error) {
             if (this.active) this.active.attemptFailure = { error, kind: classifyCompactionFailure(error) }
             throw error
-        } finally {
-            providerRequestRound?.completeProviderOnly()
         }
     }
 

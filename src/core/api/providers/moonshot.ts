@@ -4,7 +4,7 @@ import type { ChatCompletionTool as OpenAITool } from "openai/resources/chat/com
 import { ModelInfo, moonshotDefaultModelId, moonshotModels } from "@/shared/api"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { createOpenAIClient } from "@/shared/net"
-import { ApiHandler, ApiHandlerContext } from "../index"
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOpenAiMessages } from "../transform/openai-format"
 import { ApiStream } from "../transform/stream"
@@ -16,10 +16,12 @@ interface MoonshotUsage extends OpenAI.CompletionUsage {
     cached_tokens?: number
 }
 
-export class MoonshotHandler implements ApiHandler {
+export class MoonshotHandler extends ApiHandler {
     private client: OpenAI | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.moonshot

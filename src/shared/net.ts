@@ -96,7 +96,11 @@
 import OpenAI, { ClientOptions as OpenAIClientOptions } from "openai"
 import { EnvHttpProxyAgent, setGlobalDispatcher, fetch as undiciFetch } from "undici"
 import { buildExternalBasicHeaders } from "@/services/EnvUtils"
-import { observeProviderResponse } from "./provider-attempt-observer"
+import {
+    observeProviderResponse,
+    providerAttemptIdentityFromFetch,
+    withProviderAttemptIdentity,
+} from "./provider-attempt-observer"
 
 let mockFetch: typeof globalThis.fetch | undefined
 
@@ -130,7 +134,9 @@ export const fetch: typeof globalThis.fetch = (() => {
 /** Fetch transport reserved for model sends observed inside a Provider attempt scope. */
 export const providerFetch: typeof globalThis.fetch = (input, init) => {
     const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
-    return observeProviderResponse(() => fetch(input, init), signal ? { signal } : {})
+    const send = () => observeProviderResponse(() => fetch(input, init), signal ? { signal } : {})
+    const identity = providerAttemptIdentityFromFetch(init)
+    return identity ? withProviderAttemptIdentity(identity, send) : send()
 }
 
 /**

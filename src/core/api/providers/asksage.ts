@@ -4,7 +4,7 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch, providerFetch } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import { ApiHandler, ApiHandlerContext } from ".."
+import { ApiHandler, ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { ApiStream } from "../transform/stream"
 
@@ -49,8 +49,9 @@ type AskSageResponse = {
     tool_calls_unified: any[]
 }
 
-export class AskSageHandler implements ApiHandler {
+export class AskSageHandler extends ApiHandler {
     constructor(private ctx: ApiHandlerContext) {
+        super()
         if (!this.apiKey) {
             throw new Error("AskSage API key is required")
         }
@@ -158,7 +159,7 @@ export class AskSageHandler implements ApiHandler {
         }
     }
 
-    async getApiStreamUsage() {
+    override async getApiStreamUsage() {
         if (!this.apiKey) {
             return undefined
         }

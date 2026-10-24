@@ -24,7 +24,6 @@ import { TurnToolScheduler } from "../executors/tool/TurnToolScheduler"
 import type { ExplicitInstructionConsumePort } from "../explicit-instructions/types"
 import type { TaskState } from "../kernel"
 import type { MessageStateHandler } from "../message-state"
-import type { ProviderRequestRoundPort } from "../performance/provider-request-round-port"
 import { createRequestApiScope, type NativeToolCallsPredicate } from "../RequestApiScope"
 import type { TaskPayloadStore } from "../stores"
 import { decodeTaskPayload } from "../stores/payload/TaskPayloadCodec"
@@ -57,7 +56,6 @@ export interface TaskToolExecutionOwnerOptions {
     /** One-shot authority granted by the turn a block belongs to, if any. */
     readonly readTurnAuthority: (turnId: string | undefined) => ExplicitInstructionConsumePort | undefined
     readonly workspaceManager?: WorkspaceRootManager
-    readonly providerRequestRounds?: ProviderRequestRoundPort
     readonly peerTaskSpawner: PeerTaskSpawnPort
     readonly terminalExecutionMode: "vscodeTerminal" | "backgroundExec"
     readonly toolRuntime: ProductionToolHandlerRuntime
@@ -213,7 +211,6 @@ export class TaskToolExecutionOwner implements ProductionToolConfigFactory {
             identityFactory: this.identities,
             activityStore: this.options.activities,
             backgroundResults: this.options.backgroundResults,
-            providerRequestRounds: this.options.providerRequestRounds,
             peerTaskSpawner: this.options.peerTaskSpawner,
             subagentJobManager: this.subagentJobManager,
             subagentFanoutBudget: this.subagentFanoutBudget,

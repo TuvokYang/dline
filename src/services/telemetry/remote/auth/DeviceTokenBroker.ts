@@ -6,7 +6,9 @@ import type {
     StoredDeviceToken,
 } from "@/core/storage/telemetry-remote/DeviceCredentialRepository"
 import { classifyExchangeResponse, type StopScope, type WireResponse } from "../contracts/classification"
+import type { AtomicDeviceGrant } from "../contracts/deviceGrant"
 import { buildDeviceExchangeRequest, type DeviceExchangeRequest, type DeviceGrant, type RemoteProfile } from "../contracts/wire"
+import type { DeviceGrantClient } from "./DeviceGrantPort"
 
 /** How long one window may hold the refresh before another may take over; bounds a crashed or hung exchange. */
 export const REFRESH_CLAIM_TTL_MS = 30_000
@@ -45,6 +47,8 @@ export interface DeviceTokenBrokerOptions {
     readonly clock?: () => number
     /** Identity of this process in refresh claims; tests inject one per simulated window. */
     readonly ownerId?: string
+    /** Phase U capability acquisition; Phase E replaces its adapter through the stable registry. */
+    readonly grantClient?: DeviceGrantClient
 }
 
 type Claim =
@@ -88,6 +92,30 @@ export class DeviceTokenBroker {
     private async acquireOnce(profile: RemoteProfile, options: AcquireOptions): Promise<TokenAcquisition> {
         const ensured = await this.options.repository.ensure()
         if (ensured.status !== "valid") return { status: "unavailable" }
+        if (profile === "usage" && this.options.grantClient) {
+            const active = await this.options.grantClient.readActiveGrant?.(this.clock())
+            if (active && active.accessToken !== options.rejectedAccessToken) return this.fromAtomicGrant(active)
+
+            const claim = await this.claimRefresh(profile, options.rejectedAccessToken, true)
+            if (claim.kind === "settled") return claim.acquisition
+            let grant
+            try {
+                grant = await this.options.grantClient.ensureActiveGrant(claim.document.deviceSecret, options.signal)
+            } catch (error) {
+                await this.releaseClaim(claim.document.deviceSecret)
+                throw error
+            }
+            if (grant && grant.accessToken !== options.rejectedAccessToken) {
+                await this.releaseClaim(claim.document.deviceSecret)
+                return this.fromAtomicGrant(grant)
+            }
+            const cached = this.usableToken(claim.document, profile, options.rejectedAccessToken)
+            if (cached) {
+                await this.releaseClaim(claim.document.deviceSecret)
+                return { status: "ready", token: cached }
+            }
+            return this.exchange(profile, claim.document, options)
+        }
         const cached = this.usableToken(ensured.document, profile, options.rejectedAccessToken)
         if (cached) return { status: "ready", token: cached }
 
@@ -96,11 +124,27 @@ export class DeviceTokenBroker {
         return this.exchange(profile, claim.document, options)
     }
 
+    private fromAtomicGrant(grant: AtomicDeviceGrant): TokenAcquisition {
+        return {
+            status: "ready",
+            token: {
+                accessToken: grant.accessToken,
+                deviceId: grant.deviceId,
+                expiresAt: grant.expiresAt,
+                obtainedAt: this.clock(),
+            },
+        }
+    }
+
     /** Decide from the latest document whether this window exchanges, waits, or can use another window's token. */
-    private async claimRefresh(profile: RemoteProfile, rejectedAccessToken: string | undefined): Promise<Claim> {
+    private async claimRefresh(
+        profile: RemoteProfile,
+        rejectedAccessToken: string | undefined,
+        ignoreCachedToken = false,
+    ): Promise<Claim> {
         const result = await this.options.repository.mutate<Claim | undefined>((current) => {
             const now = this.clock()
-            const refreshed = this.usableToken(current, profile, rejectedAccessToken)
+            const refreshed = ignoreCachedToken ? undefined : this.usableToken(current, profile, rejectedAccessToken)
             if (refreshed) return { value: { kind: "settled", acquisition: { status: "ready", token: refreshed } } }
             if (current.enrollment && current.enrollment.notBefore > now) {
                 return {

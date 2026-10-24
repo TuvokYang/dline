@@ -1,5 +1,4 @@
 import { type ModelInfo } from "@shared/api"
-import { observeProviderStream } from "@shared/provider-attempt-observer"
 import { resolveRuntimeModel } from "@shared/providers/profile-model-info"
 import { type Config, type Message, Ollama } from "ollama"
 import type { ChatCompletionTool } from "openai/resources/chat/completions"
@@ -7,7 +6,7 @@ import { buildExternalBasicHeaders } from "@/services/EnvUtils"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { fetch } from "@/shared/net"
 import { Logger } from "@/shared/services/Logger"
-import type { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, type ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToOllamaMessages } from "../transform/ollama-format"
 import type { ApiStream } from "../transform/stream"
@@ -15,10 +14,12 @@ import { ToolCallProcessor } from "../transform/tool-call-processor"
 
 const DEFAULT_CONTEXT_WINDOW = 32768
 
-export class OllamaHandler implements ApiHandler {
+export class OllamaHandler extends ApiHandler {
     private client: Ollama | undefined
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.ollama
@@ -75,19 +76,19 @@ export class OllamaHandler implements ApiHandler {
             const timeoutError = new Error(`Ollama request timed out after ${timeoutMs / 1000} seconds`)
             let timedOut = false
 
-            const apiPromise = observeProviderStream(
-                () =>
-                    client.chat({
-                        model: this.getModel().id,
-                        messages: ollamaMessages,
-                        stream: true,
-                        options: {
-                            num_ctx: Number(this.ollamaApiOptionsCtxNum),
-                        },
-                        tools: tools as any,
-                    }),
-                { classifyError: () => (timedOut ? "failed" : undefined) },
-            )
+            const request = {
+                model: this.getModel().id,
+                messages: ollamaMessages,
+                stream: true as const,
+                options: {
+                    num_ctx: Number(this.ollamaApiOptionsCtxNum),
+                },
+                tools: tools as any,
+            }
+            const identity = ApiHandler.identifyProviderAttempt("ollama", request)
+            const apiPromise = ApiHandler.observeProviderStream(identity, () => client.chat(request), {
+                classifyError: () => (timedOut ? "failed" : undefined),
+            })
             void apiPromise
                 .then(async (lateStream) => {
                     if (!timedOut) return
@@ -190,7 +191,7 @@ export class OllamaHandler implements ApiHandler {
         }
     }
 
-    abort(): void {
+    override abort(): void {
         this.client?.abort()
     }
 }

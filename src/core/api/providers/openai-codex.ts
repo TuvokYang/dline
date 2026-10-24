@@ -8,7 +8,6 @@ import {
 } from "@core/context/context-management/compaction-dev-diagnostics"
 import { ModelInfo, OpenAiCodexModelId, openAiCodexDefaultModelId, openAiCodexModels } from "@shared/api"
 import { providerFetch } from "@shared/net"
-import { observeProviderStream } from "@shared/provider-attempt-observer"
 import { normalizeOpenAiServiceTier } from "@shared/storage/types"
 import OpenAI from "openai"
 import type { ChatCompletionTool } from "openai/resources/chat/completions"
@@ -23,7 +22,7 @@ import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/mes
 import { ApiFormat, ServerTool } from "@/shared/proto/dline/models/metadata"
 import { Logger } from "@/shared/services/Logger"
 import { redactDiagnosticString } from "@/shared/services/logging/safe-diagnostic-value"
-import { AccountUsage, type AccountUsageResetResult, ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../"
+import { AccountUsage, type AccountUsageResetResult, ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../ApiHandler"
 import { isOutputLimitExceededError, OutputLimitExceededError } from "../stream/OutputLimitExceededError"
 import { projectOpenAIResponsesPromptCache } from "../transform/openai-prompt-cache"
 import { convertToOpenAIResponsesInput, declaredResponsesHostedToolNames } from "../transform/openai-response-format"
@@ -57,7 +56,7 @@ const SAFE_CODEX_ERROR_CODES = new Set([
  * - Limited model subset
  * - Custom headers for Codex backend
  */
-export class OpenAiCodexHandler implements ApiHandler {
+export class OpenAiCodexHandler extends ApiHandler {
     private client?: OpenAI
     private responsesWs: UndiciWebSocket | undefined
     private responsesWsCredentialContext: OpenAiCodexCredentialContext | undefined
@@ -77,6 +76,7 @@ export class OpenAiCodexHandler implements ApiHandler {
     private readonly runtimeConfig = resolveOpenAiCodexRuntimeConfig()
 
     constructor(private ctx: ApiHandlerContext) {
+        super()
         if (!ctx.profile.id?.trim()) throw new Error("OpenAI Codex requires a non-empty Profile ID.")
         this.profileId = ctx.profile.id
     }
@@ -271,7 +271,7 @@ export class OpenAiCodexHandler implements ApiHandler {
         return /unauthorized|invalid token|not authenticated|authentication|401/i.test(message)
     }
 
-    supportsServerTool(tool: ServerTool): boolean {
+    override supportsServerTool(tool: ServerTool): boolean {
         if (tool !== ServerTool.WEB_SEARCH) {
             return false
         }
@@ -279,7 +279,7 @@ export class OpenAiCodexHandler implements ApiHandler {
     }
 
     /** Hosted Web Search calls this endpoint ran go back verbatim on later requests, as Codex replays them. */
-    getHostedToolReplayProtocol(): HostedToolReplayProtocol | undefined {
+    override getHostedToolReplayProtocol(): HostedToolReplayProtocol | undefined {
         return this.usesResponsesApi() ? "openai_responses" : undefined
     }
 
@@ -292,10 +292,10 @@ export class OpenAiCodexHandler implements ApiHandler {
      * The usage endpoint is served by the same subscription as conversations,
      * so it is read once per Profile and then only on an explicit refresh.
      */
-    readonly supportsAccountUsagePolling = false
+    override readonly supportsAccountUsagePolling = false
 
     /** Fetch current ChatGPT Codex quota windows for this OAuth account. */
-    async getAccountUsage(): Promise<AccountUsage | undefined> {
+    override async getAccountUsage(): Promise<AccountUsage | undefined> {
         const releaseRuntime = this.beginRuntimeOperation()
         this.accountUsageController?.abort()
         const controller = new AbortController()
@@ -310,7 +310,7 @@ export class OpenAiCodexHandler implements ApiHandler {
         }
     }
 
-    async consumeAccountUsageResetCredit(creditId: string): Promise<AccountUsageResetResult> {
+    override async consumeAccountUsageResetCredit(creditId: string): Promise<AccountUsageResetResult> {
         const releaseRuntime = this.beginRuntimeOperation()
         this.accountUsageActionController?.abort()
         const controller = new AbortController()
@@ -772,7 +772,9 @@ export class OpenAiCodexHandler implements ApiHandler {
         signal.addEventListener("abort", handleAbort, { once: true })
 
         try {
-            const responseEvents = await observeProviderStream(
+            const identity = ApiHandler.identifyProviderAttempt("openai-codex", params)
+            const responseEvents = await ApiHandler.observeProviderStream(
+                identity,
                 () =>
                     (async function* () {
                         signal.throwIfAborted()
@@ -926,7 +928,7 @@ export class OpenAiCodexHandler implements ApiHandler {
         }
     }
 
-    abort(): void {
+    override abort(): void {
         this.closeResponsesWebsocket()
         this.abortController?.abort()
         this.accountUsageController?.abort()
@@ -935,7 +937,7 @@ export class OpenAiCodexHandler implements ApiHandler {
         this.runtimeMutationDispose = undefined
     }
 
-    getSelectedApiFormat(): ApiFormat {
+    override getSelectedApiFormat(): ApiFormat {
         return this.getModel().info.apiFormats?.[0] ?? ApiFormat.OPENAI_RESPONSES
     }
 

@@ -27,6 +27,7 @@ import {
     ensureDlineVsixInstalled,
     FULL_RATE_RENDERING_ARGUMENTS,
     portableEnvironment,
+    resolveDlineVsixPath,
     resolveWorkerExtensionsSlot,
     shouldPreinstallDlineVsix,
     type VSCodeLaunchIsolation,
@@ -804,7 +805,7 @@ export const e2e = test
                 }
             }
 
-            const vsixPath = path.join(E2ETestHelper.CODEBASE_ROOT_DIR, "dist", "e2e.vsix")
+            const vsixPath = resolveDlineVsixPath(E2ETestHelper.CODEBASE_ROOT_DIR)
             await use(async (workspacePath: string, environmentOverrides = {}, launchOptions = {}) => {
                 if (installVsix) ensureDlineVsixInstalled(executablePath, extensionsDir, vsixPath)
                 const extensionLaunchArguments = createVSCodeExtensionLaunchArguments(

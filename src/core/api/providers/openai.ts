@@ -21,8 +21,8 @@ import type { DocumentInputLimits } from "@/shared/messages/attached-documents"
 import { ClineStorageMessage, type HostedToolReplayProtocol } from "@/shared/messages/content"
 import { isO1Model } from "@/shared/resolve-prompt-profile"
 import { Logger } from "@/shared/services/Logger"
+import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../ApiHandler"
 import { openAiResponsesDocumentLimits } from "../document-input-limits"
-import { ApiHandler, ApiHandlerContext, type ApiRequestOptions } from "../index"
 import { withRetry } from "../retry"
 import { getOpenAIChatOutputLimitError } from "../stream/OutputLimitExceededError"
 import { OpenAIResponsesStreamMonitor } from "../stream/openai-responses-stream-monitor"
@@ -74,13 +74,15 @@ function isUnsupportedPromptCacheControlError(error: unknown): boolean {
     return diagnostic.includes("prompt_cache_breakpoint") || diagnostic.includes("prompt_cache_options")
 }
 
-export class OpenAiHandler implements ApiHandler {
+export class OpenAiHandler extends ApiHandler {
     private client: OpenAI | undefined
     private requestController: AbortController | undefined
     private explicitPromptCacheRejected = false
     private latestOrdinaryResponsesDiagnostic?: CompactionWireDiagnosticSnapshot
 
-    constructor(private ctx: ApiHandlerContext) {}
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get routingHeaders(): Record<string, string> | undefined {
         const headers: Record<string, string> = {}
@@ -175,21 +177,21 @@ export class OpenAiHandler implements ApiHandler {
         }
     }
 
-    getSelectedApiFormat(): ApiFormat {
+    override getSelectedApiFormat(): ApiFormat {
         return this.apiFormat
     }
 
-    supportsServerTool(tool: ServerTool): boolean {
+    override supportsServerTool(tool: ServerTool): boolean {
         return tool === ServerTool.WEB_SEARCH && this.usesResponsesApi()
     }
 
     /** Hosted Web Search calls this endpoint ran go back verbatim; Chat Completions has no hosted call to replay. */
-    getHostedToolReplayProtocol(): HostedToolReplayProtocol | undefined {
+    override getHostedToolReplayProtocol(): HostedToolReplayProtocol | undefined {
         return this.usesResponsesApi() ? "openai_responses" : undefined
     }
 
     /** Responses accepts inline PDFs as `input_file`; Chat Completions keeps extracted text. */
-    getDocumentInputLimits(): DocumentInputLimits | undefined {
+    override getDocumentInputLimits(): DocumentInputLimits | undefined {
         return this.usesResponsesApi() ? openAiResponsesDocumentLimits(this.getModel().info) : undefined
     }
 
@@ -202,7 +204,7 @@ export class OpenAiHandler implements ApiHandler {
      *
      * @returns Effective model metadata for requests and cost calculation.
      */
-    getImageGenerationSource(): ImageGenerationSource | undefined {
+    override getImageGenerationSource(): ImageGenerationSource | undefined {
         return this.ctx.profile.imageSource
     }
 
@@ -541,7 +543,7 @@ export class OpenAiHandler implements ApiHandler {
         )
     }
 
-    abort(): void {
+    override abort(): void {
         this.requestController?.abort()
     }
 

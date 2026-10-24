@@ -6,7 +6,7 @@ describe("production task observability wiring", () => {
     it("connects task turns, durable snapshots, tool spans, and native MCP resolution in composition", async () => {
         const source = await readFile(path.join(__dirname, "..", "composition", "TaskSessionCompositionService.ts"), "utf8")
 
-        expect(source).toContain("new TaskTurnTelemetry(options.taskId")
+        expect(source).toMatch(/new TaskTurnTelemetry\(\s*options\.taskId/u)
         expect(source).toContain("taskTelemetry.registerAlias(taskIncarnationId)")
         expect(source).toContain("observeTaskStateVault(persistence.ports.vault, taskTelemetry)")
         expect(source).toContain('taskTelemetry.committed("runtime.state.committed", state)')

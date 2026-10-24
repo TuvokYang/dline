@@ -26,10 +26,8 @@ import {
     type TurnFailureKind,
 } from "@core/prompts/turn-diagnosis"
 import { isRetryableProviderError } from "@core/task/auto-retry"
-import type { ProviderRequestRoundAdmission } from "@core/task/performance/provider-request-round-port"
 import { resolveRequestWebSearchRoutingPlan } from "@core/task/RequestApiScope"
 import { StreamResponseHandler } from "@core/task/StreamResponseHandler"
-import { servedModelOf } from "@core/task/telemetry/UsageServedModel"
 import { DEFAULT_API_PROVIDER } from "@shared/api"
 import {
     ClineAssistantContent,
@@ -40,6 +38,7 @@ import {
     projectInternalMessagesForProvider,
 } from "@shared/messages"
 import { splitResumedHostedResults } from "@shared/messages/hosted-tool-deferral"
+import { type ProviderTelemetryRole, providerTelemetryRoleForSubagent } from "@shared/provider-attempt-observer"
 import { resolvePromptProfile } from "@shared/resolve-prompt-profile"
 import { Logger } from "@shared/services/Logger"
 import { ClineTool, DlineDefaultTool } from "@shared/tools"
@@ -113,46 +112,6 @@ const MAX_INITIAL_STREAM_ATTEMPTS = INITIAL_STREAM_RETRY_DELAYS_MS.length + 1
 export interface SubagentRunnerOptions {
     /** Keep ordinary subagents coupled to parent Task cancellation unless an explicit Activity owns their lifecycle. */
     inheritTaskAbort?: boolean
-}
-
-class ProviderExecutionCompletion {
-    private toolCount = 0
-    private completedToolCount = 0
-    private failedToolCount = 0
-    private toolsKnown = false
-    private finished = false
-
-    constructor(private readonly admission?: ProviderRequestRoundAdmission) {}
-
-    setToolCount(toolCount: number): void {
-        this.toolCount = toolCount
-        this.toolsKnown = true
-    }
-
-    completeTool(): void {
-        this.completedToolCount += 1
-    }
-
-    failTool(): void {
-        this.failedToolCount += 1
-    }
-
-    finish(): void {
-        if (this.finished) return
-        this.finished = true
-        if (!this.admission) return
-        if (!this.toolsKnown || this.toolCount === 0) {
-            this.admission.completeProviderOnly()
-            return
-        }
-        const cancelledToolCount = Math.max(0, this.toolCount - this.completedToolCount - this.failedToolCount)
-        this.admission.completeTools({
-            toolCount: this.toolCount,
-            completedToolCount: this.completedToolCount,
-            failedToolCount: this.failedToolCount,
-            cancelledToolCount,
-        })
-    }
 }
 
 function formatApiFormat(apiFormat: ApiFormat | undefined): string | undefined {
@@ -521,6 +480,7 @@ export class SubagentRunner {
     private readonly apiHandler: ApiHandler
     private readonly allowedTools: DlineDefaultTool[]
     private readonly identityFactory = createIdentityFactory()
+    private readonly providerRequestSource: Extract<ProviderTelemetryRole, "subagent" | "reviewer">
     private activeApiAbort: (() => void) | undefined
     private activeRetryAbortController: AbortController | undefined
     private abortRequested = false
@@ -564,6 +524,7 @@ export class SubagentRunner {
         agentConfig?: AgentBaseConfig,
         private readonly options: SubagentRunnerOptions = {},
     ) {
+        this.providerRequestSource = providerTelemetryRoleForSubagent(agentConfig?.name ?? subagentName)
         this.agent = new SubagentBuilder(baseConfig, subagentName, agentConfig)
         this.apiHandler = this.agent.getApiHandler()
         this.allowedTools = this.agent.getAllowedTools()
@@ -843,7 +804,6 @@ export class SubagentRunner {
         let activeHostedServerToolLifecycle: ServerToolLifecycle | undefined
         // Hosted calls a response deferred behind its client tools; the next request of this run may resume them.
         let deferredHostedCalls: DeferredServerToolCall[] = []
-        let activeProviderExecution: ProviderExecutionCompletion | undefined
 
         try {
             const mode = "act" as const
@@ -1007,10 +967,6 @@ export class SubagentRunner {
                 return { status: "cancelled", error, retryable: true, stats }
             }
 
-            const finishProviderExecution = () => {
-                activeProviderExecution?.finish()
-                activeProviderExecution = undefined
-            }
             const conversation: ClineStorageMessage[] = [
                 {
                     role: "user",
@@ -1036,7 +992,6 @@ export class SubagentRunner {
             let hostedServerToolRecoveries = 0
 
             while (true) {
-                finishProviderExecution()
                 if (this.shouldAbort()) {
                     await this.abort()
                     const error = "Subagent run cancelled."
@@ -1168,18 +1123,7 @@ export class SubagentRunner {
                 for (const call of deferral.carried) countedHostedServerToolIds.add(call.dlineTid)
                 const carriedTraceIds = new Map(deferral.carried.map((call) => [call.functionId, call.dlineTid]))
 
-                const providerRequestRound = this.baseConfig.providerRequestRounds?.admit({
-                    source: "subagent",
-                    servedBy: servedModelOf(api),
-                })
-                const providerExecution = new ProviderExecutionCompletion(providerRequestRound)
-                activeProviderExecution = providerExecution
                 const roundUsageAccumulator = new ApiUsageAccumulator()
-                let roundUsageReported = false
-                let roundCacheUsageReported = false
-                let roundThoughtsTokens = 0
-                let roundThoughtsReported = false
-                let roundTotalCost: number | undefined
                 let roundStopReason: ApiStopReason | undefined
                 // This request carries every tool result produced so far.
                 toolBudget.clearStaged()
@@ -1206,7 +1150,6 @@ export class SubagentRunner {
                     contextState,
                     roundContext,
                     requestWebSearchRoutingPlan,
-                    providerRequestRound,
                     () => {
                         reasonsHandler.reset()
                         assistantText = ""
@@ -1229,23 +1172,9 @@ export class SubagentRunner {
                         switch (chunk.type) {
                             case "usage":
                                 requestId = requestId ?? chunk.provider_metadata?.response_id
-                                roundUsageReported = true
-                                roundCacheUsageReported ||=
-                                    chunk.cacheWriteTokens !== undefined || chunk.cacheReadTokens !== undefined
                                 // Providers may resend cumulative usage snapshots; only the
                                 // accumulator's delta is new and may be added to running totals.
                                 const { delta: usageDelta } = roundUsageAccumulator.apply(chunk)
-                                if (chunk.thoughtsTokenCount !== undefined) {
-                                    roundThoughtsReported = true
-                                    const thoughtsTokens = Math.max(0, Math.floor(chunk.thoughtsTokenCount))
-                                    roundThoughtsTokens =
-                                        chunk.usageMode === "delta"
-                                            ? roundThoughtsTokens + thoughtsTokens
-                                            : Math.max(roundThoughtsTokens, thoughtsTokens)
-                                }
-                                if (chunk.totalCost !== undefined && Number.isFinite(chunk.totalCost) && chunk.totalCost >= 0) {
-                                    roundTotalCost = Math.max(roundTotalCost ?? 0, chunk.totalCost)
-                                }
                                 if (chunk.stopReason) roundStopReason = chunk.stopReason
                                 stats.inputTokens += usageDelta.inputTokens
                                 stats.outputTokens += usageDelta.outputTokens
@@ -1362,29 +1291,6 @@ export class SubagentRunner {
                     Logger.warn(
                         `[SubagentRunner] Provider stream failed after ${failedHostedServerTools.length} hosted tool failure(s); returning control to the subagent model.`,
                     )
-                } finally {
-                    if (roundUsageReported && providerRequestRound) {
-                        const roundUsage = roundUsageAccumulator.getUsage()
-                        const calculatedRoundCost =
-                            roundTotalCost ??
-                            calculateApiCostAnthropic(
-                                providerInfo.model.info,
-                                roundUsage.inputTokens,
-                                roundUsage.outputTokens,
-                                roundUsage.cacheWriteTokens,
-                                roundUsage.cacheReadTokens,
-                            )
-                        providerRequestRound.attachExactUsage({
-                            inputTokens: roundUsage.inputTokens,
-                            outputTokens: roundUsage.outputTokens,
-                            ...(roundThoughtsReported ? { thoughtsTokens: roundThoughtsTokens } : {}),
-                            cacheWriteTokens: roundUsage.cacheWriteTokens,
-                            cacheReadTokens: roundUsage.cacheReadTokens,
-                            cacheUsageReported: roundCacheUsageReported,
-                            ...(calculatedRoundCost === undefined ? {} : { totalCost: calculatedRoundCost }),
-                            currency: stats.currency || "USD",
-                        })
-                    }
                 }
                 contextState.roundContexts.commit(roundContext)
                 // Settle before looping so the recovered turn is billed and sampled
@@ -1444,7 +1350,6 @@ export class SubagentRunner {
                     usedStructuredNonNativeFallback = true
                     finalizedToolCalls = fallbackNonNativeToolCalls
                 }
-                providerExecution.setToolCount(finalizedToolCalls.length)
                 if (this.finishRequested && !this.completionOnly) {
                     const validCompletion = finalizedToolCalls.some((call) => {
                         if (call.name !== DlineDefaultTool.ATTEMPT) return false
@@ -1561,7 +1466,6 @@ export class SubagentRunner {
                     canonicalizeAttemptCompletionParams(toolCallBlock)
 
                     if (this.completionOnly && toolName !== DlineDefaultTool.ATTEMPT) {
-                        providerExecution.failTool()
                         const feedback = recordResponseFailure("convergence_violation")
                         if (turnFailures.exhausted) return failAfterConsecutiveTurnFailures()
                         pushSubagentToolResultBlock(
@@ -1576,7 +1480,6 @@ export class SubagentRunner {
                     if (toolName === DlineDefaultTool.ATTEMPT) {
                         const completionResult = toolCallParams.result?.trim()
                         if (!completionResult) {
-                            providerExecution.failTool()
                             const feedback = recordResponseFailure("missing_completion_result")
                             if (turnFailures.exhausted) return failAfterConsecutiveTurnFailures()
                             pushSubagentToolResultBlock(
@@ -1603,7 +1506,6 @@ export class SubagentRunner {
                                 summary: latestToolCall,
                             },
                         })
-                        providerExecution.completeTool()
                         stats.toolCalls += 1
                         onProgress({ stats: { ...stats } })
                         onProgress({ status: "completed", result: boundedCompletionResult, stats: { ...stats } })
@@ -1611,7 +1513,6 @@ export class SubagentRunner {
                     }
 
                     if (!this.allowedTools.includes(toolName)) {
-                        providerExecution.failTool()
                         const deniedResult = formatResponse.toolError(`Tool '${toolName}' is not available inside subagent runs.`)
                         pushSubagentToolResultBlock(toolResultBlocks, call, toolName, deniedResult)
                         continue
@@ -1699,9 +1600,7 @@ export class SubagentRunner {
                     onProgress({ stats: { ...stats } })
 
                     if (toolError) {
-                        providerExecution.failTool()
                     } else {
-                        providerExecution.completeTool()
                         turnFailures.reset()
                     }
                     const serializedToolResult = serializeToolResult(toolResult)
@@ -1747,7 +1646,6 @@ export class SubagentRunner {
                     content: toolResultBlocks,
                 })
 
-                finishProviderExecution()
                 await Promise.resolve()
             }
         } catch (error) {
@@ -1772,7 +1670,6 @@ export class SubagentRunner {
         } finally {
             parentSignal?.removeEventListener("abort", onParentAbort)
             try {
-                activeProviderExecution?.finish()
                 await activeHostedServerToolLifecycle?.finalizeOpen(HOSTED_SERVER_TOOL_STREAM_ENDED_REASON)
                 // The run makes no further request, so nothing can resume what is still deferred.
                 await activeHostedServerToolLifecycle?.failDeferred(HOSTED_SERVER_TOOL_DEFERRED_ABANDONED_REASON)
@@ -1965,15 +1862,13 @@ export class SubagentRunner {
         contextState: SubagentContextState,
         roundContext: FrozenSubagentRoundContext | undefined,
         webSearchRoutingPlan: WebSearchRoutingPlan,
-        providerRequestRound: ProviderRequestRoundAdmission | undefined,
         onReplayableAttemptDiscarded: () => void,
         onProgress: (update: SubagentProgressUpdate) => void,
     ) {
         let cumulativeRetryDelayMs = 0
+        const telemetryRequestId = `${this.providerRequestSource}:${this.apiLogRequestIndex + 1}`
         for (let attempt = 1; attempt <= MAX_INITIAL_STREAM_ATTEMPTS; attempt += 1) {
-            // A finish request aborts the attempt in flight, and that abort is expected. An
-            // attempt started after the request is the finish turn itself: its failure is the
-            // real outcome and must be reported, not read as an empty response.
+            // Only a pre-finish abort is expected; a later attempt is the finish turn and reports its real failure.
             const startedBeforeFinish = this.finishRequested === undefined
             const truncatedConversation = contextState.roundContexts.project(
                 contextManager
@@ -1987,10 +1882,10 @@ export class SubagentRunner {
                 requestIndex: ++this.apiLogRequestIndex,
                 provider: providerId,
                 model: modelId,
+                // Adapter logs stay coarse; semantic role is carried by the ApiHandler metadata below.
                 source: "subagent" as const,
             }
-            // Same endpoint projection as the parent task: hosted blocks only reach the protocol that
-            // can replay them, and attached PDFs only reach endpoints that read them natively.
+            // Match the parent endpoint projection for hosted replay and native document input.
             const providerConversation = projectInternalMessagesForProvider(truncatedConversation, {
                 hostedToolReplayProtocol: api.getHostedToolReplayProtocol?.(),
                 documentInput: api.getDocumentInputLimits?.(),
@@ -2000,18 +1895,20 @@ export class SubagentRunner {
                 messages: providerConversation,
                 tools: nativeTools,
             })
-            const providerStream = recordProviderAdapterOutput(
+            const stream = recordProviderAdapterOutput(
                 adapterRoundContext,
                 api.createMessage(systemPrompt, providerConversation, nativeTools, {
                     serverTools: webSearchRoutingPlan.serverTools,
+                    taskNamespace: this.baseConfig.taskId,
                     retryOwner: "subagent",
+                    telemetryRole: this.providerRequestSource,
+                    telemetryRequestId,
+                    telemetryAttempt: attempt - 1,
                 }),
             )
-            const stream = providerRequestRound?.bindAttempt(providerStream, attempt - 1) ?? providerStream
             const iterator = stream[Symbol.asyncIterator]()
             const bufferedCommitChunks: Array<Extract<ApiProviderStreamChunk, { type: "usage" | "tool_calls" }>> = []
             let didYieldUnreplayableOutput = false
-
             try {
                 while (true) {
                     const nextChunk = await iterator.next()

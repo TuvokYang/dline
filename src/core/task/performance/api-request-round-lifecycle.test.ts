@@ -1,10 +1,11 @@
-import { bindProviderAttemptScope, observeProviderStream } from "@shared/provider-attempt-observer"
+import { bindProviderAttemptScope, observeProviderStream, type ProviderAttemptIdentity } from "@shared/provider-attempt-observer"
 import { describe, expect, it } from "vitest"
 import { ApiRequestRoundLifecycle } from "./api-request-round-lifecycle"
-import { ApiRequestRoundTracker } from "./api-request-round-tracker"
+import { type ApiRequestRoundHandle, ApiRequestRoundTracker } from "./api-request-round-tracker"
 import type { ApiRequestRoundRecord, ApiRequestRoundRepository } from "./api-request-round-types"
 import { ApiResponseExecutionLifecycle } from "./api-response-execution-lifecycle"
 import type { ApiResponseExecutionRecord, ApiResponseExecutionRepository } from "./api-response-execution-types"
+import type { FinalizedProviderAttempt } from "./provider-request-round-port"
 
 class MemoryExecutionRepository implements ApiResponseExecutionRepository {
     readonly records: ApiResponseExecutionRecord[] = []
@@ -71,6 +72,49 @@ class MemoryRoundRepository implements ApiRequestRoundRepository {
 }
 
 describe("ApiRequestRoundLifecycle", () => {
+    it("attaches late exact usage through the exact attempt handle and finalizes only its highest revision", async () => {
+        const repository = new MemoryRoundRepository()
+        const finalized: FinalizedProviderAttempt[] = []
+        const lifecycle = new ApiRequestRoundLifecycle(new ApiRequestRoundTracker({ taskId: "task-a", repository }), undefined, {
+            recordFinalizedAttempt: (attempt) => finalized.push(attempt),
+        })
+        const identity: ProviderAttemptIdentity = {
+            provider: "anthropic",
+            modelId: "catalog:claude-opus-4-1",
+            thinking: "level:high",
+        }
+        const observer = lifecycle.createObserver({
+            logicalRequestId: "review-request",
+            apiIndex: 4,
+            taskAttempt: 2,
+            role: "reviewer",
+            policyGeneration: 12,
+        })
+        const handle = await observer.beginAttempt(identity)
+        await observer.finishAttempt(handle, "completed")
+
+        lifecycle.attachExactUsage(handle, {
+            inputTokens: 1200,
+            outputTokens: 300,
+            thoughtsTokens: 40,
+            cacheReadTokens: 54_000,
+            cacheWriteTokens: 2_100,
+            cacheUsageReported: true,
+        })
+        lifecycle.completeProviderOnly("review-request")
+        await lifecycle.close()
+
+        expect(handle).toMatchObject({ role: "reviewer", policyGeneration: 12, ...identity })
+        expect(repository.records).toHaveLength(2)
+        expect(repository.records.at(-1)).toMatchObject({ revision: 1, inputTokens: 1200, outputTokens: 300 })
+        expect(finalized).toEqual([
+            expect.objectContaining({ handle, record: expect.objectContaining({ revision: 1, inputTokens: 1200 }) }),
+        ])
+        expect(() => lifecycle.attachExactUsage(handle, { inputTokens: 1, outputTokens: 1, cacheUsageReported: false })).toThrow(
+            /finalized/i,
+        )
+    })
+
     it("persists transport retries separately and attaches exact usage to the last completed send", async () => {
         const repository = new MemoryRoundRepository()
         let wall = 1_000
@@ -79,7 +123,17 @@ describe("ApiRequestRoundLifecycle", () => {
             new ApiRequestRoundTracker({ taskId: "task-a", repository, wallClock: () => wall, monotonicClock: () => monotonic }),
         )
         const logicalRequestId = "task-a:api:7"
-        const observer = lifecycle.createObserver({ logicalRequestId, apiIndex: 7, taskAttempt: 2 })
+        const handles: ApiRequestRoundHandle[] = []
+        const lifecycleObserver = lifecycle.createObserver({ logicalRequestId, apiIndex: 7, taskAttempt: 2 })
+        const observer = {
+            beginAttempt: async (identity?: ProviderAttemptIdentity) => {
+                const handle = await lifecycleObserver.beginAttempt(identity)
+                handles.push(handle)
+                return handle
+            },
+            finishAttempt: (handle: ApiRequestRoundHandle, status: "completed" | "failed" | "cancelled" | "aborted") =>
+                lifecycleObserver.finishAttempt(handle, status),
+        }
         const source = (async function* () {
             await expect(
                 observeProviderStream(async () => {
@@ -98,7 +152,9 @@ describe("ApiRequestRoundLifecycle", () => {
         for await (const _value of bindProviderAttemptScope(source, observer)) {
             // Drain the scoped Provider request.
         }
-        lifecycle.attachExactUsage(logicalRequestId, {
+        const finalHandle = handles.at(-1)
+        if (!finalHandle) throw new Error("Expected final Provider attempt handle")
+        lifecycle.attachExactUsage(finalHandle, {
             inputTokens: 100,
             outputTokens: 20,
             cacheWriteTokens: 10,
@@ -107,6 +163,7 @@ describe("ApiRequestRoundLifecycle", () => {
             totalCost: 0.01,
             currency: "USD",
         })
+        lifecycle.completeProviderOnly(logicalRequestId)
         await lifecycle.close()
 
         expect(repository.records).toHaveLength(3)
@@ -132,6 +189,7 @@ describe("ApiRequestRoundLifecycle", () => {
             wallClock: () => wall,
             monotonicClock: () => monotonic,
         })
+        const finalized: FinalizedProviderAttempt[] = []
         const lifecycle = new ApiRequestRoundLifecycle(
             new ApiRequestRoundTracker({
                 taskId: "task-a",
@@ -140,6 +198,7 @@ describe("ApiRequestRoundLifecycle", () => {
                 monotonicClock: () => monotonic,
             }),
             executions,
+            { recordFinalizedAttempt: (attempt) => finalized.push(attempt) },
         )
         const logicalRequestId = "task-a:api:9"
         const observer = lifecycle.createObserver({ logicalRequestId, apiIndex: 9, taskAttempt: 0 })
@@ -157,12 +216,16 @@ describe("ApiRequestRoundLifecycle", () => {
         await observer.finishAttempt(second, "completed")
         wall = 23_000
         monotonic = 22_100
-        lifecycle.completeTools(logicalRequestId, {
-            toolCount: 1,
-            completedToolCount: 1,
-            failedToolCount: 0,
-            cancelledToolCount: 0,
-        })
+        lifecycle.completeTools(
+            logicalRequestId,
+            {
+                toolCount: 1,
+                completedToolCount: 1,
+                failedToolCount: 0,
+                cancelledToolCount: 0,
+            },
+            [{ outcome: "completed", toolName: "read_file" }],
+        )
         await lifecycle.close()
 
         expect(executionRepository.records).toEqual([
@@ -179,7 +242,41 @@ describe("ApiRequestRoundLifecycle", () => {
                 executionDurationMs: 10_000,
             }),
         ])
+        expect(finalized).toHaveLength(2)
+        expect(finalized[0]).toMatchObject({ handle: first, record: { roundId: first.roundId } })
+        expect(finalized[0].logicalExecution).toBeUndefined()
+        expect(finalized[1]).toMatchObject({
+            handle: second,
+            record: { roundId: second.roundId },
+            logicalExecution: {
+                executionId: second.roundId,
+                terminalKind: "tools_settled",
+                toolCount: 1,
+                completedToolCount: 1,
+            },
+            logicalToolCalls: [{ outcome: "completed", toolName: "read_file" }],
+        })
         expect(executionRepository.closed).toBe(true)
+    })
+
+    it("finalizes an open send as one aborted attempt during close", async () => {
+        const repository = new MemoryRoundRepository()
+        const finalized: FinalizedProviderAttempt[] = []
+        const lifecycle = new ApiRequestRoundLifecycle(new ApiRequestRoundTracker({ taskId: "task-a", repository }), undefined, {
+            recordFinalizedAttempt: (attempt) => finalized.push(attempt),
+        })
+        const observer = lifecycle.createObserver({ logicalRequestId: "open-request", apiIndex: 5, taskAttempt: 0 })
+        const handle = await observer.beginAttempt({
+            provider: "openai",
+            modelId: "catalog:gpt-5",
+            thinking: "level:high",
+        })
+
+        await lifecycle.close()
+
+        expect(finalized).toEqual([
+            { handle, record: expect.objectContaining({ roundId: handle.roundId, revision: 0, status: "aborted" }) },
+        ])
     })
 
     it("recovers round usage independently when execution recovery fails", async () => {
@@ -214,7 +311,7 @@ describe("ApiRequestRoundLifecycle", () => {
             wall += 100
             monotonic += 25
             await observer.finishAttempt(handle, status)
-            lifecycle.attachExactUsage(logicalRequestId, {
+            lifecycle.attachExactUsage(handle, {
                 inputTokens: 100 + index,
                 outputTokens: 20 + index,
                 cacheUsageReported: false,

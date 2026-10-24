@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, it, vi } from "vitest"
 import "should"
+import { ApiHandler, type ProviderAttemptTerminalStatus } from "@core/api"
 import { ApiProfile } from "@shared/proto/dline/profile"
-import { bindProviderAttemptScope, type ProviderAttemptTerminalStatus } from "@shared/provider-attempt-observer"
 import axios from "axios"
 import { ClineStorageMessage } from "@/shared/messages/content"
 import { OllamaHandler } from "../ollama"
@@ -104,7 +104,7 @@ describe("OllamaHandler", () => {
                     statuses.push(status)
                 },
             }
-            const stream = bindProviderAttemptScope(
+            const stream = ApiHandler.bindProviderAttemptScope(
                 (testHandler.createMessage as any)("system", [{ role: "user", content: "Hello" }], undefined, {
                     generation: { purpose: "compaction" },
                 }),

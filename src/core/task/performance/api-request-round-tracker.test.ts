@@ -82,6 +82,29 @@ function recoveredRound(index: number, overrides: Partial<ApiRequestRoundRecord>
 }
 
 describe("ApiRequestRoundTracker", () => {
+    it("freezes role provider model thinking and policy generation on the attempt handle", () => {
+        const tracker = new ApiRequestRoundTracker({ taskId: "task-a", repository: new MemoryRoundRepository() })
+
+        const handle = tracker.beginRound({
+            logicalRequestId: "request-review",
+            apiIndex: 3,
+            taskAttempt: 1,
+            role: "reviewer",
+            provider: "anthropic",
+            modelId: "catalog:claude-opus-4-1",
+            thinking: 2048,
+            policyGeneration: 12,
+        })
+
+        expect(handle).toMatchObject({
+            role: "reviewer",
+            provider: "anthropic",
+            modelId: "catalog:claude-opus-4-1",
+            thinking: 2048,
+            policyGeneration: 12,
+        })
+    })
+
     it("persists one terminal duration revision and one late exact usage revision", async () => {
         const repository = new MemoryRoundRepository()
         let wall = 1_000

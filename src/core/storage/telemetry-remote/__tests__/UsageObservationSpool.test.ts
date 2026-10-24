@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { PendingUsageObservation, SettledUsageShard } from "@/services/telemetry/remote/usage/usageOutbox"
 import { projectUsageSettlement } from "@/services/telemetry/remote/usage/usageTally"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "../OtelStorageLayout"
-import { SEALED_SHARD_SETTLE_MS, UsageObservationSpool } from "../UsageObservationSpool"
+import { type PendingUsageAttemptObservation, SEALED_SHARD_SETTLE_MS, UsageObservationSpool } from "../UsageObservationSpool"
 
 function observation(id: string, inputTokens = 10): PendingUsageObservation {
     const tally = projectUsageSettlement({
@@ -23,6 +23,25 @@ function observation(id: string, inputTokens = 10): PendingUsageObservation {
 
 function ids(shards: readonly SettledUsageShard[]): string[] {
     return shards.flatMap((shard) => shard.observations.map((entry) => entry.id)).sort()
+}
+
+function attemptObservation(id: string, revision = 1): PendingUsageAttemptObservation {
+    return {
+        id,
+        revision,
+        receivedAt: 1_900_000_000_000,
+        observation: {
+            attemptObservationId: id,
+            logicalRequestId: "request-1",
+            identity: { role: "task", provider: "openai", modelId: "state:unknown", thinking: "state:disabled" },
+            policyGeneration: 7,
+            admittedAt: 1_900_000_000_000,
+            outcome: "completed",
+            durationMs: 250,
+            tokens: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0 },
+            tokenUsageReported: true,
+        },
+    }
 }
 
 describe("UsageObservationSpool", () => {
@@ -133,6 +152,22 @@ describe("UsageObservationSpool", () => {
 
         expect(ids(settled.shards)).toEqual(["obs-1", "obs-2"])
         expect(settled.skipped).toBe(4)
+        expect(await fs.readdir(layout.remoteQuarantineDir)).toHaveLength(4)
+    })
+
+    it("does not remember an observation until its append is durable", async () => {
+        const spool = new UsageObservationSpool(layout, "host-a")
+        const activePath = path.join(layout.usageObservationsDir, "host-a.jsonl")
+        await fs.mkdir(activePath, { recursive: true })
+
+        await expect(spool.append(observation("obs-retry"))).rejects.toThrow()
+        await fs.rm(activePath, { recursive: true, force: true })
+        await spool.append(observation("obs-retry"))
+
+        const sealedAt = futureSeal()
+        await spool.sealActive(sealedAt)
+        const settled = await spool.readSettled(sealedAt + SEALED_SHARD_SETTLE_MS)
+        expect(ids(settled.shards)).toEqual(["obs-retry"])
     })
 
     it("reports an observation that appears in two sealed shards once", async () => {
@@ -152,6 +187,54 @@ describe("UsageObservationSpool", () => {
             `host-a.${sealedAt}.sealed.jsonl`,
             `host-b.${sealedAt}.sealed.jsonl`,
         ])
+    })
+
+    it("keeps schema 4 attempt revisions in a separate durable shard and deduplicates exact retries", async () => {
+        const spool = new UsageObservationSpool(layout, "host-a")
+        await spool.appendAttempt(attemptObservation("attempt-1"))
+        await spool.appendAttempt(attemptObservation("attempt-1"))
+        const sealedAt = futureSeal()
+
+        await spool.sealActive(sealedAt)
+        await spool.sealActiveAttempts(sealedAt)
+        const settled = await spool.readSettledAttempts(sealedAt + SEALED_SHARD_SETTLE_MS)
+
+        expect(settled.skipped).toBe(0)
+        expect(settled.shards.flatMap((shard) => shard.observations)).toEqual([attemptObservation("attempt-1")])
+        await spool.discardAttempts(settled.shards.map((shard) => shard.name))
+        expect(await fs.readdir(layout.usageObservationsDir)).toEqual([])
+    })
+
+    it("selects only the highest attempt revision across settled process shards", async () => {
+        const first = new UsageObservationSpool(layout, "host-a")
+        const second = new UsageObservationSpool(layout, "host-b")
+        await first.appendAttempt(attemptObservation("attempt-1", 1))
+        await first.appendAttempt(attemptObservation("attempt-1", 2))
+        await second.appendAttempt(attemptObservation("attempt-1", 2))
+        const sealedAt = futureSeal()
+
+        await first.sealActiveAttempts(sealedAt)
+        const settled = await second.readSettledAttempts(sealedAt + SEALED_SHARD_SETTLE_MS)
+
+        expect(settled.skipped).toBe(0)
+        expect(settled.shards).toHaveLength(2)
+        expect(settled.shards.flatMap((shard) => shard.observations)).toEqual([attemptObservation("attempt-1", 2)])
+    })
+
+    it("purges only legacy shards at schema 4 clean-cut and preserves attempt revisions", async () => {
+        const spool = new UsageObservationSpool(layout, "host-a")
+        await spool.append(observation("legacy"))
+        await spool.appendAttempt(attemptObservation("attempt-1"))
+        const sealedAt = futureSeal()
+        await spool.sealActive(sealedAt)
+        await spool.sealActiveAttempts(sealedAt)
+
+        await spool.purgeLegacy()
+
+        const names = await fs.readdir(layout.usageObservationsDir)
+        expect(names).toEqual([`host-a.${sealedAt}.attempts.sealed.jsonl`])
+        const settled = await spool.readSettledAttempts(sealedAt + SEALED_SHARD_SETTLE_MS)
+        expect(settled.shards.flatMap((shard) => shard.observations)).toEqual([attemptObservation("attempt-1")])
     })
 
     it("purges unsent observations and forgets which IDs it appended", async () => {

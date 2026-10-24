@@ -5,6 +5,7 @@ import {
     createVSCodeExtensionInstallArguments,
     createVSCodeExtensionLaunchArguments,
     E2E_EXTENSIONS_ROOT,
+    resolveDlineVsixPath,
     resolveWorkerExtensionsSlot,
     shouldPreinstallDlineVsix,
 } from "@e2e/utils/vscode-launch-isolation"
@@ -40,6 +41,16 @@ test("E2E fixture installs the packaged extension before launching VS Code", () 
         "--install-extension",
         vsixPath,
     ])
+})
+
+test("E2E fixture resolves an explicit dev VSIX relative to the checkout", () => {
+    const root = path.resolve("checkout")
+
+    expect(resolveDlineVsixPath(root, {})).toBe(path.join(root, "dist", "e2e.vsix"))
+    expect(resolveDlineVsixPath(root, { DLINE_E2E_VSIX_PATH: "dline-dev.vsix" })).toBe(path.join(root, "dline-dev.vsix"))
+    expect(resolveDlineVsixPath(root, { DLINE_E2E_VSIX_PATH: path.resolve("exact-dev.vsix") })).toBe(
+        path.resolve("exact-dev.vsix"),
+    )
 })
 
 test("E2E fixture launches exactly one extension source", () => {

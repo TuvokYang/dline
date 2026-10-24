@@ -23,7 +23,7 @@
  * prefix, so a user-configured MCP server name can never reach the wire.
  */
 export const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_.-]{1,47}$/
-export const MAX_TOOL_NAMES_PER_FACT = 8
+export const MAX_TOOL_NAMES_PER_FACT = 12
 /** Stable category used instead of a user-chosen MCP server name. */
 export const MCP_TOOL_CATEGORY = "mcp.remote"
 

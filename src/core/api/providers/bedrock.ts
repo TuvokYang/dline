@@ -11,20 +11,27 @@ import {
 } from "@aws-sdk/client-bedrock-runtime"
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers"
 import { type BedrockModelId, bedrockDefaultModelId, bedrockModels, CLAUDE_SONNET_1M_SUFFIX, type ModelInfo } from "@shared/api"
-import { observeProviderCall, observeProviderStreamResponse } from "@shared/provider-attempt-observer"
 import { resolveProfileModelId } from "@shared/providers/profile-model-info"
 import { calculateApiCostOpenAI, calculateApiCostQwen } from "@utils/cost"
 import { ExtensionRegistryInfo } from "@/registry"
 import type { ClineStorageMessage } from "@/shared/messages/content"
 import { Logger } from "@/shared/services/Logger"
 import type { ClineTool } from "@/shared/tools"
-import type { ApiHandler, ApiHandlerContext } from "../"
+import { ApiHandler, type ApiHandlerContext } from "../ApiHandler"
 import { withRetry } from "../retry"
 import { convertToR1Format } from "../transform/r1-format"
 import type { ApiStream } from "../transform/stream"
 import { resolveAnthropicReasoning } from "./anthropic/reasoning"
 
 // Extend AWS SDK types to include additionalModelResponseFields
+function bedrockAttemptIdentity(command: { input: { modelId?: string; additionalModelRequestFields?: unknown } }) {
+    const additional = command.input.additionalModelRequestFields as { thinking?: unknown } | undefined
+    return ApiHandler.identifyProviderAttempt("bedrock", {
+        model: command.input.modelId,
+        ...(additional?.thinking === undefined ? {} : { thinking: additional.thinking }),
+    })
+}
+
 interface ExtendedMetadata {
     usage?: {
         inputTokens?: number
@@ -129,8 +136,10 @@ const JP_SUPPORTED_CRIS_MODELS = [
 ]
 
 // https://docs.anthropic.com/en/api/claude-on-amazon-bedrock
-export class AwsBedrockHandler implements ApiHandler {
-    constructor(private ctx: ApiHandlerContext) {}
+export class AwsBedrockHandler extends ApiHandler {
+    constructor(private ctx: ApiHandlerContext) {
+        super()
+    }
 
     private get config() {
         return this.ctx.profile.bedrock
@@ -407,9 +416,11 @@ export class AwsBedrockHandler implements ApiHandler {
         const TOKEN_REPORT_THRESHOLD = 100 // Report usage after accumulating this many tokens
 
         // Execute the streaming request
-        const { stream } = await observeProviderStreamResponse(
+        const identity = bedrockAttemptIdentity(command)
+        const { stream } = await ApiHandler.observeProviderStreamResponse(
+            identity,
             () => client.send(command),
-            (response) => response.body,
+            (response) => (response.body ? this.failOnBedrockProtocolErrors(response.body) : undefined),
         )
 
         if (stream) {
@@ -611,9 +622,11 @@ export class AwsBedrockHandler implements ApiHandler {
      */
     private async *executeConverseStream(command: ConverseStreamCommand, modelInfo: ModelInfo): ApiStream {
         const client = await this.getBedrockClient()
-        const { stream } = await observeProviderStreamResponse(
+        const identity = bedrockAttemptIdentity(command)
+        const { stream } = await ApiHandler.observeProviderStreamResponse(
+            identity,
             () => client.send(command),
-            (response) => response.stream,
+            (response) => (response.stream ? this.failOnBedrockProtocolErrors(response.stream) : undefined),
         )
 
         if (stream) {
@@ -805,53 +818,30 @@ export class AwsBedrockHandler implements ApiHandler {
                         activeToolCalls.delete(blockIndex)
                     }
                 }
-
-                // Handle errors with unified error handling
-                yield* this.handleBedrockStreamError(chunk)
             }
         }
     }
 
-    /**
-     * Handles Bedrock stream errors in a unified way
-     */
-    private *handleBedrockStreamError(chunk: any): Generator<{ type: "text"; text: string }> {
-        if (chunk.internalServerException) {
-            yield {
-                type: "text",
-                text: `[ERROR] Internal server error: ${chunk.internalServerException.message}`,
+    /** Validate protocol events inside the observed iterable so terminal errors settle the exact attempt as failed. */
+    private failOnBedrockProtocolErrors<T>(stream: AsyncIterable<T>): AsyncIterable<T> {
+        const throwProtocolError = (chunk: T) => this.throwBedrockStreamError(chunk)
+        return (async function* () {
+            for await (const chunk of stream) {
+                throwProtocolError(chunk)
+                yield chunk
             }
-        } else if (chunk.modelStreamErrorException) {
-            yield {
-                type: "text",
-                text: `[ERROR] Model stream error: ${chunk.modelStreamErrorException.message}`,
-            }
-        } else if (chunk.validationException) {
-            // Check if this is a context window error - if so, throw it
-            // so the retry mechanism can handle truncation
-            const message = chunk.validationException.message || ""
-            const isContextError = /input.*too long|context.*exceed|maximum.*token|input length.*max.*tokens/i.test(message)
+        })()
+    }
 
-            if (isContextError) {
-                // Throw as exception so context management can handle it
-                throw chunk.validationException
-            }
-
-            // Otherwise yield as error text
-            yield {
-                type: "text",
-                text: `[ERROR] Validation error: ${message}`,
-            }
-        } else if (chunk.throttlingException) {
-            yield {
-                type: "text",
-                text: `[ERROR] Throttling error: ${chunk.throttlingException.message}`,
-            }
-        } else if (chunk.serviceUnavailableException) {
-            yield {
-                type: "text",
-                text: `[ERROR] Service unavailable: ${chunk.serviceUnavailableException.message}`,
-            }
+    private throwBedrockStreamError(chunk: any): void {
+        for (const key of [
+            "internalServerException",
+            "modelStreamErrorException",
+            "validationException",
+            "throttlingException",
+            "serviceUnavailableException",
+        ] as const) {
+            if (chunk[key]) throw chunk[key]
         }
     }
 
@@ -1195,7 +1185,8 @@ export class AwsBedrockHandler implements ApiHandler {
             let outputTokens = 0
 
             // Execute the non-streaming request
-            const response = await observeProviderCall(() => client.send(command))
+            const identity = bedrockAttemptIdentity(command)
+            const response = await ApiHandler.observeProviderCall(identity, () => client.send(command))
 
             // Extract the complete response text and reasoning content
             let fullText = ""
@@ -1333,7 +1324,8 @@ export class AwsBedrockHandler implements ApiHandler {
             let outputTokens = 0
 
             // Execute the non-streaming request
-            const response = await observeProviderCall(() => client.send(command))
+            const identity = bedrockAttemptIdentity(command)
+            const response = await ApiHandler.observeProviderCall(identity, () => client.send(command))
 
             // Extract the complete response text and reasoning content
             let fullText = ""

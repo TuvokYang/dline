@@ -4,8 +4,10 @@ import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { type OtelStorageLayout, resolveOtelStorageLayout } from "@/core/storage/telemetry-remote/OtelStorageLayout"
 import { type LocalUsagePolicyInputs, RemotePolicyRepository } from "@/core/storage/telemetry-remote/RemotePolicyRepository"
-import { UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
+import { type PendingUsageAttemptObservation, UsageObservationSpool } from "@/core/storage/telemetry-remote/UsageObservationSpool"
 import { UsageOutboxRepository } from "@/core/storage/telemetry-remote/UsageOutboxRepository"
+import { API_REQUEST_ROUND_SCHEMA_VERSION } from "@/core/task/performance/api-request-round-types"
+import type { FinalizedProviderAttempt } from "@/core/task/performance/provider-request-round-port"
 import type { UsageSettlement } from "@/core/task/telemetry/UsageSettlement"
 import { SERVER_STOP_RETRY_INTERVAL_MS } from "../../policy/usagePolicy"
 import { RemoteUsageCoordinator, type UsageScheduler } from "../RemoteUsageCoordinator"
@@ -32,6 +34,76 @@ function settlement(observationId: string): UsageSettlement {
     }
 }
 
+function finalizedLogicalAttempt(): FinalizedProviderAttempt {
+    const attempt = finalizedAttempt()
+    return {
+        ...attempt,
+        logicalExecution: {
+            schemaVersion: 1,
+            taskId: "task-1",
+            executionId: attempt.handle.roundId,
+            revision: 0,
+            roundId: attempt.handle.roundId,
+            logicalRequestId: attempt.handle.logicalRequestId,
+            apiIndex: attempt.handle.apiIndex,
+            taskAttempt: attempt.handle.taskAttempt,
+            providerAttempt: attempt.handle.providerAttempt,
+            startedAtMs: attempt.handle.startedAtMs,
+            providerCompletedAtMs: attempt.record.completedAtMs,
+            completedAtMs: attempt.record.completedAtMs,
+            providerDurationMs: attempt.record.providerDurationMs ?? 1,
+            executionDurationMs: attempt.record.providerDurationMs ?? 1,
+            status: "completed",
+            terminalKind: "provider_only",
+            toolCount: 0,
+            completedToolCount: 0,
+            failedToolCount: 0,
+            cancelledToolCount: 0,
+        },
+    }
+}
+
+function finalizedAttempt(): FinalizedProviderAttempt {
+    const roundId = "task-1:request-1:provider:0"
+    return {
+        handle: {
+            roundId,
+            logicalRequestId: "request-1",
+            apiIndex: 0,
+            taskAttempt: 0,
+            providerAttempt: 0,
+            role: "task",
+            provider: "openai",
+            modelId: "gpt-5-private-wire-id",
+            thinking: "state:disabled",
+            policyGeneration: 7,
+            startedAtMs: 1_899_999_999_000,
+            startedMonotonicMs: 100,
+        },
+        record: {
+            schemaVersion: API_REQUEST_ROUND_SCHEMA_VERSION,
+            taskId: "task-1",
+            roundId,
+            revision: 1,
+            logicalRequestId: "request-1",
+            apiIndex: 0,
+            taskAttempt: 0,
+            providerAttempt: 0,
+            startedAtMs: 1_899_999_999_000,
+            completedAtMs: 1_899_999_999_400,
+            providerDurationMs: 400,
+            status: "completed",
+            inputTokens: 10,
+            outputTokens: 2,
+            thoughtsTokens: 1,
+            cacheWriteTokens: 0,
+            cacheReadTokens: 0,
+            cacheUsageReported: true,
+            usageQuality: "exact",
+        },
+    }
+}
+
 class ManualScheduler implements UsageScheduler {
     readonly pending: { callback: () => void; delayMs: number }[] = []
 
@@ -53,9 +125,14 @@ class ManualScheduler implements UsageScheduler {
 class FakeWorker {
     readonly epochs: number[] = []
     readonly signals: AbortSignal[] = []
+    attemptAuthorityActive = false
     releases = 0
     next: UsageCycleResult = { kind: "idle" }
     hold: Promise<void> | undefined
+
+    async refreshAttemptAuthority(): Promise<boolean> {
+        return this.attemptAuthorityActive
+    }
 
     async runCycle(policyEpoch: number, signal?: AbortSignal): Promise<UsageCycleResult> {
         this.epochs.push(policyEpoch)
@@ -124,9 +201,19 @@ describe("RemoteUsageCoordinator", () => {
     async function spooled(): Promise<{ id: string; policyEpoch: number; tally: UsageTally }[]> {
         const names = await fs.readdir(layout.usageObservationsDir).catch(() => [] as string[])
         const lines: string[] = []
-        for (const name of names)
+        for (const name of names.filter((name) => name.endsWith(".jsonl") && !name.endsWith(".attempts.jsonl"))) {
             lines.push(...(await fs.readFile(path.join(layout.usageObservationsDir, name), "utf8")).split("\n"))
+        }
         return lines.filter((line) => line.trim()).map((line) => JSON.parse(line))
+    }
+
+    async function spooledAttempts(): Promise<PendingUsageAttemptObservation[]> {
+        const names = await fs.readdir(layout.usageObservationsDir).catch(() => [] as string[])
+        const lines: string[] = []
+        for (const name of names.filter((name) => name.endsWith(".attempts.jsonl"))) {
+            lines.push(...(await fs.readFile(path.join(layout.usageObservationsDir, name), "utf8")).split("\n"))
+        }
+        return lines.filter((line) => line.trim()).map((line) => JSON.parse(line) as PendingUsageAttemptObservation)
     }
 
     /** Wait for background appends or the cycle chain, which run on real file I/O. */
@@ -177,16 +264,97 @@ describe("RemoteUsageCoordinator", () => {
         })
     })
 
-    it("counts one session start, and none while reporting is not allowed", async () => {
+    it("rejects an unsafe projection without throwing into the task or writing a shard", async () => {
+        const logs: { level: RemoteUsageLogLevel; message: string }[] = []
+        const usage = coordinator((level, message) => logs.push({ level, message }))
+        await usage.start()
+
+        expect(() => usage.record({ ...settlement("unsafe"), inputTokens: Number.MAX_SAFE_INTEGER + 1 })).not.toThrow()
+        await usage.dispose()
+
+        expect(await spooled()).toEqual([])
+        expect(logs).toContainEqual({
+            level: "warn",
+            message: expect.stringContaining("invalid_integer"),
+        })
+    })
+
+    it("projects each finalized Provider attempt into the separate durable attempt shard", async () => {
+        const usage = coordinator()
+        await usage.start()
+
+        usage.recordFinalizedAttempt(finalizedAttempt())
+        await usage.dispose()
+
+        const attempts = await spooledAttempts()
+        expect(await spooled()).toEqual([])
+        expect(attempts).toEqual([
+            expect.objectContaining({
+                id: "task-1:request-1:provider:0",
+                revision: 1,
+                receivedAt: now,
+                observation: expect.objectContaining({
+                    attemptObservationId: "task-1:request-1:provider:0",
+                    logicalRequestId: "request-1",
+                    identity: {
+                        role: "task",
+                        provider: "openai",
+                        modelId: "state:unknown",
+                        thinking: "state:disabled",
+                    },
+                    policyGeneration: 7,
+                    durationMs: 400,
+                    tokens: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 1 },
+                    tokenUsageReported: true,
+                }),
+            }),
+        ])
+        expect(JSON.stringify(attempts)).not.toContain("gpt-5-private-wire-id")
+    })
+
+    it("does not spool finalized attempts while the resolved policy denies reporting", async () => {
+        inputs = { ...ALLOWED, usageConsent: "disabled" }
+        const usage = coordinator()
+        await usage.start()
+
+        usage.recordFinalizedAttempt(finalizedAttempt())
+        await usage.dispose()
+
+        expect(await spooledAttempts()).toEqual([])
+    })
+
+    it("fails closed without a shard when finalized attempt identity is incomplete", async () => {
+        const logs: { level: RemoteUsageLogLevel; message: string }[] = []
+        const usage = coordinator((level, message) => logs.push({ level, message }))
+        await usage.start()
+        const attempt = finalizedAttempt()
+
+        usage.recordFinalizedAttempt({ ...attempt, handle: { ...attempt.handle, modelId: undefined } })
+        await usage.dispose()
+
+        expect(await spooledAttempts()).toEqual([])
+        expect(logs).toContainEqual({
+            level: "warn",
+            message: expect.stringContaining("finalized usage attempt was rejected before storage"),
+        })
+    })
+
+    it("keeps schema 3 session authority before capability clean-cut", async () => {
         const usage = coordinator()
         await usage.start()
         usage.recordSessionStarted()
+        usage.recordFinalizedAttempt(finalizedLogicalAttempt())
         await waitFor(spooledCount(1))
 
         expect(await spooled()).toEqual([
             expect.objectContaining({
                 policyEpoch: now,
                 tally: { sessions_started: 1, facts: [] },
+            }),
+        ])
+        expect(await spooledAttempts()).toEqual([
+            expect.objectContaining({
+                observation: expect.not.objectContaining({ sessionsStarted: expect.any(Number) }),
             }),
         ])
 
@@ -202,23 +370,46 @@ describe("RemoteUsageCoordinator", () => {
         expect(await spooled()).toEqual([])
     })
 
+    it("retires schema 3 logical and session intake once schema 4 is the active authority", async () => {
+        worker.attemptAuthorityActive = true
+        const usage = coordinator()
+        await usage.start()
+
+        usage.record(settlement("legacy-logical"))
+        usage.recordSessionStarted()
+        usage.recordFinalizedAttempt(finalizedLogicalAttempt())
+        await usage.dispose()
+
+        expect(await spooled()).toEqual([])
+        expect(await spooledAttempts()).toEqual([
+            expect.objectContaining({
+                observation: expect.objectContaining({ sessionsStarted: 1, logicalExecution: expect.any(Object) }),
+            }),
+        ])
+    })
+
     it("reports whether usage may be reported, which services riding on the consent follow", async () => {
         const usage = coordinator()
         expect(usage.reportingAllowed).toBe(false)
+        expect(usage.activePolicyGeneration).toBeUndefined()
 
         await usage.start()
         expect(usage.reportingAllowed).toBe(true)
+        expect(usage.activePolicyGeneration).toBe(now)
 
         inputs = { ...ALLOWED, usageConsent: "disabled" }
         await usage.refresh()
         expect(usage.reportingAllowed).toBe(false)
+        expect(usage.activePolicyGeneration).toBeUndefined()
 
         inputs = ALLOWED
         await usage.refresh()
         expect(usage.reportingAllowed).toBe(true)
+        expect(usage.activePolicyGeneration).toBe(now + 2)
 
         await usage.dispose()
         expect(usage.reportingAllowed).toBe(false)
+        expect(usage.activePolicyGeneration).toBeUndefined()
     })
 
     it("announces every change of reporting permission, including one its own cycle finds", async () => {
