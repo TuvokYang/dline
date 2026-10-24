@@ -66,6 +66,33 @@ describe("GitOperations repository boundaries", () => {
         vi.restoreAllMocks()
     })
 
+    it("stages workspace files while excluding tracked paths outside the worktree", async () => {
+        const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "dline-checkpoint-outside-"))
+        const workspacePath = path.join(sandbox, "workspace")
+        const workspaceFile = path.join(workspacePath, "src", "inside.ts")
+        const outsideFile = path.join(sandbox, "outside.ts")
+        await fs.mkdir(path.dirname(workspaceFile), { recursive: true })
+        await fs.writeFile(workspaceFile, "inside")
+        await fs.writeFile(outsideFile, "outside")
+        try {
+            const operations = new GitOperations(workspacePath)
+            const harness = createGitHarness()
+
+            const result = await operations.addCheckpointFiles({
+                git: harness.git,
+                mode: "tracked",
+                fileList: [workspaceFile, outsideFile],
+                taskId: "task-external-path",
+            })
+
+            expect(result).toEqual({ success: true, stagedCount: 1, unstageableFiles: [outsideFile] })
+            expect(harness.add).toHaveBeenCalledOnce()
+            expect(harness.add).toHaveBeenCalledWith(["-A", "-f", "--", ":(literal)src/inside.ts"])
+        } finally {
+            await fs.rm(sandbox, { recursive: true, force: true })
+        }
+    })
+
     it("stages root files while excluding tracked files owned by a nested repository", async () => {
         const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "dline-checkpoint-boundary-"))
         const workspacePath = path.join(sandbox, "workspace")
@@ -88,7 +115,7 @@ describe("GitOperations repository boundaries", () => {
             })
 
             expect(result).toMatchObject({ success: true, stagedCount: 1 })
-            expect(result.rejectedPaths).toEqual(["packages/nested/src/owned.ts"])
+            expect(result.unstageableFiles).toEqual([nestedFile])
             expect(harness.add).toHaveBeenCalledOnce()
             expect(harness.add).toHaveBeenCalledWith(["-A", "-f", "--", ":(literal)src/root.ts"])
         } finally {
@@ -121,14 +148,14 @@ describe("GitOperations repository boundaries", () => {
             })
 
             expect(result).toMatchObject({ success: true, stagedCount: 1 })
-            expect(result.rejectedPaths).toEqual([".worktree/feature/src/owned.ts"])
+            expect(result.unstageableFiles).toEqual([lateFile])
             expect(harness.add).toHaveBeenCalledWith(["-A", "-f", "--", ":(literal)src/root.ts"])
         } finally {
             await fs.rm(sandbox, { recursive: true, force: true })
         }
     })
 
-    it("reports nested files as rejected instead of failing when every tracked file is nested", async () => {
+    it("reports nested files as unstageable instead of failing when every tracked file is nested", async () => {
         const workspacePath = path.resolve("checkpoint-test-workspace")
         const operations = new GitOperations(workspacePath)
         configureNestedRepositoryBoundary(operations, "packages/nested")
@@ -145,7 +172,7 @@ describe("GitOperations repository boundaries", () => {
         expect(result).toEqual({
             success: true,
             stagedCount: 0,
-            rejectedPaths: ["packages/nested/src/owned.ts"],
+            unstageableFiles: [nestedFile],
         })
         expect(harness.add).not.toHaveBeenCalled()
     })
@@ -176,7 +203,7 @@ describe("GitOperations repository boundaries", () => {
             })
 
             expect(result).toMatchObject({ success: true, stagedCount: 1 })
-            expect(result.rejectedPaths).toEqual(["src/poisoned.ts"])
+            expect(result.unstageableFiles).toEqual([poisonedFile])
             expect(add).toHaveBeenCalledWith(["-A", "-f", "--", ":(literal)src/good.ts"])
         } finally {
             await fs.rm(sandbox, { recursive: true, force: true })
@@ -196,14 +223,15 @@ describe("GitOperations repository boundaries", () => {
             const operations = new GitOperations(workspacePath)
             const harness = createGitHarness()
 
+            const linkedFile = path.join(linkedPath, "owned.ts")
             const result = await operations.addCheckpointFiles({
                 git: harness.git,
                 mode: "tracked",
-                fileList: [path.join(linkedPath, "owned.ts")],
+                fileList: [linkedFile],
                 taskId: "task-symlink",
             })
 
-            expect(result).toEqual({ success: false, stagedCount: 0, rejectedPaths: [] })
+            expect(result).toEqual({ success: true, stagedCount: 0, unstageableFiles: [linkedFile] })
             expect(harness.add).not.toHaveBeenCalled()
         } finally {
             await fs.rm(sandbox, { recursive: true, force: true })
@@ -227,7 +255,7 @@ describe("GitOperations repository boundaries", () => {
                 taskId: "task-dot-segment",
             })
 
-            expect(result).toMatchObject({ success: true, stagedCount: 1, rejectedPaths: [] })
+            expect(result).toMatchObject({ success: true, stagedCount: 1, unstageableFiles: [] })
             expect(harness.add).toHaveBeenCalledOnce()
             expect(harness.add).toHaveBeenCalledWith(["-A", "-f", "--", ":(literal)..cache/tracked.ts"])
         } finally {
@@ -253,7 +281,7 @@ describe("GitOperations repository boundaries", () => {
                 taskId: `task-realpath-${code.toLowerCase()}`,
             })
 
-            expect(result).toEqual({ success: false, stagedCount: 0, rejectedPaths: [] })
+            expect(result).toEqual({ success: false, stagedCount: 0, unstageableFiles: [] })
             expect(harness.add).not.toHaveBeenCalled()
         } finally {
             await fs.rm(sandbox, { recursive: true, force: true })
@@ -270,7 +298,7 @@ describe("GitOperations repository boundaries", () => {
             taskId: "task-1",
         })
 
-        expect(result).toEqual({ success: true, stagedCount: 0, rejectedPaths: [] })
+        expect(result).toEqual({ success: true, stagedCount: 0, unstageableFiles: [] })
         expect(harness.add).toHaveBeenCalledWith([".", "--ignore-errors"])
     })
 
@@ -296,7 +324,7 @@ describe("GitOperations repository boundaries", () => {
                 taskId: "task-batching",
             })
 
-            expect(result).toMatchObject({ success: true, stagedCount: 250, rejectedPaths: [] })
+            expect(result).toMatchObject({ success: true, stagedCount: 250, unstageableFiles: [] })
             expect(harness.add).toHaveBeenCalledTimes(3)
             for (const call of harness.add.mock.calls) {
                 expect((call[0] as string[]).length - 3).toBeLessThanOrEqual(100)

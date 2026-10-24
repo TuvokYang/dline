@@ -23,8 +23,6 @@ import { NestedRepositoryBoundaryDetector } from "./NestedRepositoryBoundaryDete
 type CheckpointAddFailureReason =
     /** A caller passed an explicit file list to a mode that stages the whole workspace. */
     | "invalid_request"
-    /** A tracked path resolved outside the worktree that owns this checkpoint. */
-    | "path_outside_worktree"
     /** Git refused every batch, so nothing could be staged. */
     | "staging_rejected"
     /** Git or the filesystem raised an error that this layer does not classify. */
@@ -51,10 +49,11 @@ export interface CheckpointAddResult {
     /** Number of paths handed to Git for staging. */
     stagedCount: number
     /**
-     * Worktree-relative paths Git refused to stage. The caller must stop
-     * retrying them, otherwise one poisoned path replays on every checkpoint.
+     * Absolute caller paths that cannot belong to this checkpoint worktree.
+     * The caller must stop retrying them, otherwise one poisoned path replays
+     * on every checkpoint. Lifetime task edit history remains independent.
      */
-    rejectedPaths: string[]
+    unstageableFiles: string[]
 }
 
 /**
@@ -450,12 +449,12 @@ export class GitOperations {
             if (error !== undefined) {
                 Logger.error(`[Task ${taskId}] Checkpoint add operation failed (${mode}, ${reason}):`, error)
             }
-            return { success: false, stagedCount: 0, rejectedPaths: [] }
+            return { success: false, stagedCount: 0, unstageableFiles: [] }
         }
         // Staging nothing is a normal outcome rather than a failure, but it still
         // has to be reported: without it the add metric loses calls entirely and
         // the failure ratio is computed against an incomplete denominator.
-        const reportNothingToStage = (rejectedPaths: string[]): CheckpointAddResult => {
+        const reportNothingToStage = (unstageableFiles: string[]): CheckpointAddResult => {
             recordPerfPhase(
                 PerfDomain.Checkpoint,
                 "add",
@@ -463,7 +462,7 @@ export class GitOperations {
                 { mode, outcome: "nothing_to_stage" satisfies CheckpointAddOutcome },
                 { taskId },
             )
-            return { success: true, stagedCount: 0, rejectedPaths }
+            return { success: true, stagedCount: 0, unstageableFiles }
         }
         if (mode === "tracked" && explicitFiles.length === 0) {
             Logger.error(`[Task ${taskId}] tracked checkpoint add requires explicit files`)
@@ -476,14 +475,30 @@ export class GitOperations {
         Logger.info(`[Task ${taskId}] Starting checkpoint add operation (${mode})...`)
         try {
             if (mode === "tracked") {
-                const resolvedFiles = await Promise.all(
-                    explicitFiles.map((file) => resolveCheckpointWorktreePath(this.cwd, file)),
+                const resolvedEntries = await Promise.all(
+                    explicitFiles.map(async (file) => ({
+                        input: path.resolve(file),
+                        resolved: await resolveCheckpointWorktreePath(this.cwd, file),
+                    })),
                 )
-                if (resolvedFiles.some((file) => file === undefined)) {
-                    Logger.error(`[Task ${taskId}] Checkpoint add rejected a tracked path outside ${this.cwd}`)
-                    return reportFailure("path_outside_worktree")
+                const outsideFiles = resolvedEntries.filter((entry) => entry.resolved === undefined).map((entry) => entry.input)
+                const ownedFiles = resolvedEntries.flatMap((entry) => (entry.resolved ? [entry.resolved] : []))
+                if (outsideFiles.length > 0) {
+                    recordDiagnostic(
+                        DiagnosticDomain.Checkpoint,
+                        "paths_unstageable",
+                        DiagnosticOutcome.Degraded,
+                        { outside: outsideFiles.length, total: explicitFiles.length },
+                        { taskId },
+                    )
+                    Logger.warn(
+                        `[Task ${taskId}] Checkpoint add excluded ${outsideFiles.length} tracked path(s) outside ${this.cwd}`,
+                    )
                 }
-                const ownedFiles = resolvedFiles as CheckpointWorktreePath[]
+                if (ownedFiles.length === 0) {
+                    return reportNothingToStage(outsideFiles)
+                }
+
                 const nestedOwnership = await Promise.all(
                     ownedFiles.map((file) => this.boundaryDetector.isInsideNestedRepository(file.absolute)),
                 )
@@ -499,14 +514,12 @@ export class GitOperations {
                     )
                     Logger.warn(`[Task ${taskId}] Checkpoint add excluded ${nestedFiles.length} nested repository file(s)`)
                 }
+                const nestedAbsoluteFiles = nestedFiles.map((file) => file.absolute)
                 if (safeFiles.length === 0) {
-                    // Every tracked file lives in a submodule or linked worktree.
-                    // That is a normal situation, not a staging failure: the caller
-                    // must be able to drop these paths and continue.
                     Logger.debug(
-                        `[Task ${taskId}] Checkpoint add staged nothing: all tracked files belong to nested repositories`,
+                        `[Task ${taskId}] Checkpoint add staged nothing: all tracked files belong outside this checkpoint worktree`,
                     )
-                    return reportNothingToStage(nestedFiles.map((file) => file.relative))
+                    return reportNothingToStage([...outsideFiles, ...nestedAbsoluteFiles])
                 }
 
                 const existence = await Promise.all(safeFiles.map((file) => fileExistsAtPath(file.absolute)))
@@ -524,42 +537,44 @@ export class GitOperations {
                 const stageFiles = safeFiles.filter(
                     (file, index) => existence[index] || indexedPaths.has(this.normalizeGitPath(file.relative)),
                 )
-                const absentPaths = safeFiles.filter((file) => !stageFiles.includes(file)).map((file) => file.relative)
-                if (absentPaths.length > 0) {
+                const absentFiles = safeFiles.filter((file) => !stageFiles.includes(file)).map((file) => file.absolute)
+                if (absentFiles.length > 0) {
                     recordDiagnostic(
                         DiagnosticDomain.Checkpoint,
                         "paths_unstageable",
                         DiagnosticOutcome.Degraded,
-                        { absent: absentPaths.length, total: safeFiles.length },
+                        { absent: absentFiles.length, total: safeFiles.length },
                         { taskId },
                     )
                     Logger.warn(
-                        `[Task ${taskId}] Checkpoint add ignored ${absentPaths.length} path(s) absent from both worktree and shadow index`,
+                        `[Task ${taskId}] Checkpoint add ignored ${absentFiles.length} path(s) absent from both worktree and shadow index`,
                     )
                 }
-                // Absent and nested paths can never be staged; reporting them lets the
-                // caller drop them instead of replaying the same batch forever.
-                const unstageablePaths = [...nestedFiles.map((file) => file.relative), ...absentPaths]
+                const unstageableFiles = [...outsideFiles, ...nestedAbsoluteFiles, ...absentFiles]
                 if (stageFiles.length === 0) {
                     Logger.debug(
                         `[Task ${taskId}] Checkpoint add staged nothing: no tracked path exists in the worktree or shadow index`,
                     )
-                    return reportNothingToStage(unstageablePaths)
+                    return reportNothingToStage(unstageableFiles)
                 }
                 const staging = await this.stageInBatches(
                     git,
                     stageFiles.map((file) => file.relative),
                     taskId,
                 )
+                const absoluteByRelative = new Map(
+                    stageFiles.map((file) => [this.normalizeGitPath(file.relative), file.absolute] as const),
+                )
+                const gitRejectedFiles = staging.rejectedPaths.map(
+                    (relativePath) =>
+                        absoluteByRelative.get(this.normalizeGitPath(relativePath)) ?? path.resolve(this.cwd, relativePath),
+                )
+                const rejectedFiles = [...unstageableFiles, ...gitRejectedFiles]
                 const durationMs = performance.now() - startTime
-                // A batch Git refused still yields a usable checkpoint from the
-                // paths that did stage, so the two are reported as different
-                // outcomes rather than both as plain success.
-                const rejectedPaths = [...unstageablePaths, ...staging.rejectedPaths]
                 const outcome: CheckpointAddOutcome =
-                    staging.stagedCount === 0 && rejectedPaths.length > 0
+                    staging.stagedCount === 0 && gitRejectedFiles.length > 0
                         ? "failure"
-                        : rejectedPaths.length > 0
+                        : rejectedFiles.length > 0
                           ? "partial"
                           : "success"
                 recordPerfPhase(
@@ -586,11 +601,11 @@ export class GitOperations {
                     Logger.debug(`Checkpoint add operation completed in ${Math.round(durationMs)}ms`)
                 }
                 return {
-                    // Only a total staging failure is a failure: partial progress still
-                    // produces a usable checkpoint once the bad paths are dropped.
-                    success: staging.stagedCount > 0 || staging.rejectedPaths.length === 0,
+                    // Paths outside this worktree never make a legal staged path fail.
+                    // A true failure means Git rejected every path it was asked to stage.
+                    success: staging.stagedCount > 0 || gitRejectedFiles.length === 0,
                     stagedCount: staging.stagedCount,
-                    rejectedPaths,
+                    unstageableFiles: rejectedFiles,
                 }
             }
             if (mode === "baseline") {
@@ -614,7 +629,7 @@ export class GitOperations {
                 Logger.debug(`[Task ${taskId}] Checkpoint add operation: staged workspace via ${mode}`)
                 Logger.debug(`Checkpoint add operation completed in ${Math.round(durationMs)}ms`)
             }
-            return { success: true, stagedCount: 0, rejectedPaths: [] }
+            return { success: true, stagedCount: 0, unstageableFiles: [] }
         } catch (error) {
             return reportFailure("git_error", error)
         }
