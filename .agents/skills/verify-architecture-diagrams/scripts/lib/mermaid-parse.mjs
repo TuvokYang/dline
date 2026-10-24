@@ -1,6 +1,9 @@
 // Mermaid flowchart parser for the declared subset.
 // Anything outside the subset is reported as a tooling problem, never as a design finding.
 
+import { normalizeArchitectureIdentity } from "./architecture-identity.mjs"
+import { ARTIFACT_EXPECTATIONS, ARTIFACT_ROLES } from "./evidence-model.mjs"
+
 const NODE_ID = /^[A-Za-z0-9_][A-Za-z0-9_.-]*/
 
 const SHAPES = [
@@ -36,9 +39,7 @@ export function unescapeLabel(raw) {
 }
 
 export function normalizeLabel(raw) {
-    return unescapeLabel(raw ?? "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "")
+    return normalizeArchitectureIdentity(unescapeLabel(raw ?? ""))
 }
 
 export function parseAttributes(text) {
@@ -258,6 +259,11 @@ export function createDiagram(file, line) {
         ignoreReason: null,
         cycleAllowed: [],
         modules: new Map(),
+        // Repeatable node-to-code bindings. %% module: is projected into this
+        // collection as declaration/present for backward compatibility.
+        artifacts: new Map(),
+        annotationFindings: [],
+        annotationTargets: [],
         // nodeId -> concept name: the stable identity of a node across diagrams
         // whose authors chose different ids or label suffixes.
         concepts: new Map(),
@@ -282,7 +288,29 @@ export function conceptOf(diagram, nodeId) {
     return diagram.concepts.get(nodeId) ?? null
 }
 
-function applyAnnotation(diagram, text) {
+function annotationFinding(diagram, line, rule, message) {
+    diagram.annotationFindings.push({
+        severity: "blocking",
+        attribution: "diagram",
+        stage: "0",
+        file: diagram.file,
+        line,
+        diagram: diagram.id ?? diagram.answers ?? null,
+        rule,
+        message,
+    })
+}
+
+function addArtifact(diagram, nodeId, artifact) {
+    if (!diagram.artifacts.has(nodeId)) diagram.artifacts.set(nodeId, [])
+    diagram.artifacts.get(nodeId).push(artifact)
+}
+
+function trackAnnotationTarget(diagram, nodeId, kind, line) {
+    diagram.annotationTargets.push({ nodeId, kind, line })
+}
+
+function applyAnnotation(diagram, text, line) {
     const body = text.replace(/^%%\s*/, "").trim()
     if (body.startsWith("{")) return
     const idMatch = /^id:\s*([A-Za-z0-9_][A-Za-z0-9_.-]*)\s*$/i.exec(body)
@@ -320,26 +348,91 @@ function applyAnnotation(diagram, text) {
     const conceptMatch = /^concept:\s*([A-Za-z0-9_][A-Za-z0-9_.-]*)\s*=\s*(.+)$/i.exec(body)
     if (conceptMatch) {
         diagram.concepts.set(conceptMatch[1], conceptMatch[2].trim())
+        trackAnnotationTarget(diagram, conceptMatch[1], "concept", line)
         return
     }
     const noteNodeMatch = /^note-node:\s*([A-Za-z0-9_][A-Za-z0-9_.-]*)/i.exec(body)
     if (noteNodeMatch) {
         diagram.noteNodes.add(noteNodeMatch[1])
+        trackAnnotationTarget(diagram, noteNodeMatch[1], "note-node", line)
         return
     }
     if (/^cycle:\s*allowed\b/i.test(body)) {
         const attrs = parseAttributes(body)
-        diagram.cycleAllowed.push({ owner: attrs.owner ?? null, reason: attrs.reason ?? null })
+        const nodes = (attrs.nodes ?? "")
+            .split("|")
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+        diagram.cycleAllowed.push({ owner: attrs.owner ?? null, reason: attrs.reason ?? null, nodes, line })
         return
     }
     const moduleMatch = /^module:\s*([A-Za-z0-9_][A-Za-z0-9_.-]*)\s*=\s*(.+)$/i.exec(body)
     if (moduleMatch) {
-        diagram.modules.set(moduleMatch[1], moduleMatch[2].trim())
+        const nodeId = moduleMatch[1]
+        const modulePath = moduleMatch[2].trim()
+        diagram.modules.set(nodeId, modulePath)
+        addArtifact(diagram, nodeId, {
+            role: "declaration",
+            path: modulePath,
+            symbol: null,
+            expectation: "present",
+            line,
+            source: "module",
+        })
+        trackAnnotationTarget(diagram, nodeId, "module", line)
+        return
+    }
+    const artifactMatch = /^artifact:\s*([A-Za-z0-9_][A-Za-z0-9_.-]*)\s*(.*)$/i.exec(body)
+    if (artifactMatch) {
+        const nodeId = artifactMatch[1]
+        const attrs = parseAttributes(artifactMatch[2])
+        const role = attrs.role ?? ""
+        const expectation = attrs.expect ?? attrs.expectation ?? "present"
+        const artifact = {
+            role,
+            path: attrs.path ?? "",
+            symbol: attrs.symbol ?? null,
+            expectation,
+            canonicalSource: attrs.source ?? null,
+            provenance: attrs.provenance ?? null,
+            line,
+            source: "artifact",
+        }
+        addArtifact(diagram, nodeId, artifact)
+        trackAnnotationTarget(diagram, nodeId, "artifact", line)
+        if (!ARTIFACT_ROLES.has(role)) {
+            annotationFinding(
+                diagram,
+                line,
+                "artifact-role-unknown",
+                `%% artifact: ${nodeId} uses unknown role "${role || "missing"}"`,
+            )
+        }
+        if (!ARTIFACT_EXPECTATIONS.has(expectation)) {
+            annotationFinding(
+                diagram,
+                line,
+                "artifact-expectation-unknown",
+                `%% artifact: ${nodeId} uses unknown expectation "${expectation}"`,
+            )
+        }
+        if (!artifact.path) {
+            annotationFinding(diagram, line, "artifact-path-missing", `%% artifact: ${nodeId} requires path=<path>`)
+        }
+        if (expectation === "generated" && (!artifact.canonicalSource || !artifact.provenance)) {
+            annotationFinding(
+                diagram,
+                line,
+                "generated-provenance-missing",
+                `%% artifact: ${nodeId} expect=generated requires source= and provenance=`,
+            )
+        }
         return
     }
     const localMatch = /^local-only:\s*([A-Za-z0-9_][A-Za-z0-9_.-]*)/i.exec(body)
     if (localMatch) {
         diagram.localOnly.add(localMatch[1])
+        trackAnnotationTarget(diagram, localMatch[1], "local-only", line)
         return
     }
     if (/^ignore:/i.test(body)) {
@@ -373,7 +466,7 @@ export function parseFlowchart(lines, { file, firstLine }) {
         const text = raw.trim()
         if (text.length === 0) continue
         if (text.startsWith("%%")) {
-            applyAnnotation(diagram, text)
+            applyAnnotation(diagram, text, line)
             continue
         }
         if (/^subgraph\b/.test(text)) {
@@ -404,6 +497,15 @@ export function parseFlowchart(lines, { file, firstLine }) {
 
     if (diagram.subgraphStack.length > 0) {
         problems.push({ file, line: firstLine + lines.length - 1, message: "unclosed subgraph" })
+    }
+    for (const target of diagram.annotationTargets) {
+        if (diagram.nodes.has(target.nodeId)) continue
+        annotationFinding(
+            diagram,
+            target.line,
+            `${target.kind}-node-unknown`,
+            `%% ${target.kind}: names node ${target.nodeId}, but the diagram does not draw it`,
+        )
     }
     diagram.subgraphStack = []
     return { diagram, problems }

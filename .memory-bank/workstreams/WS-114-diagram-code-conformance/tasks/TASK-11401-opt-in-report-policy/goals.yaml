@@ -1,0 +1,55 @@
+schema_version: 2
+id: TASK-11401
+objective: "建立 exact diagram-driven-v1 admission、target-only filesystem boundary、aggregate invocation，以及 finding/verdict/exit policy。"
+acceptance:
+  - WS-114/AC-01
+  - WS-114/AC-02
+  - WS-114/AC-03
+  - WS-114/AC-04
+  - WS-114/AC-15
+owns:
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/ws-model.mjs
+    boundary:
+      kind: symbol
+      selector: readArchitectureMode, readSpecModel
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/invocation.mjs
+    boundary:
+      kind: whole_file
+      selector: admitted target-only scope and run-all orchestration
+  - path: .agents/skills/verify-architecture-diagrams/scripts/verify-diagrams.mjs
+    boundary:
+      kind: structured_node
+      selector: thin CLI entry and admission short circuit
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/status-model.mjs
+    boundary:
+      kind: module
+      selector: remove root status dependency from verifier conclusions
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/report.mjs
+    boundary:
+      kind: module
+      selector: warning not-applicable verdict and exit semantics
+  - path: .agents/skills/verify-architecture-diagrams/scripts/tests/admission-report.test.mjs
+    boundary:
+      kind: whole_file
+      selector: whole file
+reads:
+  - .agents/skills/verify-architecture-diagrams/SKILL.md
+  - .memory-bank/workstreams/WS-114-diagram-code-conformance/spec.md
+produces:
+  - ArchitectureAdmission
+  - TargetWorkstreamInvocation
+  - FindingClassificationPolicy
+  - AggregateVerificationVerdict
+required_verification:
+  VER-TASK-11401-ADMISSION:
+    required_result: passed
+    claim: "exactly placed mode admits; missing mode is not_applicable; unknown mode warns; duplicate misplaced or malformed mode is tooling"
+  VER-TASK-11401-REPORT:
+    required_result: passed
+    claim: "text and JSON expose seven finding classes plus conformant incomplete not_applicable failed and tooling_error verdicts with fixed exit semantics"
+  VER-TASK-11401-SCOPE:
+    required_result: passed
+    claim: "filesystem tripwire proves invocation reads only the target Workstream and explicit code projects, never root status execution.md or sibling Workstreams"
+  VER-TASK-11401-AGGREGATE:
+    required_result: passed
+    claim: "scope all runs Workstream every Task cross-task and code conformance once, deduplicates findings and computes one summary and exit code"

@@ -1,0 +1,84 @@
+schema_version: 2
+id: TASK-11403
+objective: "建立机器可读 artifact/evidence 与统一 identity，把当前 WS diagrams/tasks 和 CodeFactSnapshot 做双向 conformance。"
+acceptance:
+  - WS-114/AC-06
+  - WS-114/AC-07
+  - WS-114/AC-08
+  - WS-114/AC-09
+  - WS-114/AC-10
+  - WS-114/AC-11
+  - WS-114/AC-12
+  - WS-114/AC-13
+  - WS-114/AC-14
+  - WS-114/AC-15
+owns:
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/evidence-model.mjs
+    boundary:
+      kind: whole_file
+      selector: schema-v2 stable artifact and endpoint identity parser and validator
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/architecture-identity.mjs
+    boundary:
+      kind: whole_file
+      selector: canonical Unicode concept id and label identity
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/mermaid-parse.mjs
+    boundary:
+      kind: structured_node
+      selector: repeatable artifact annotations and unknown-node validation
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/checks-code-conformance.mjs
+    boundary:
+      kind: whole_file
+      selector: diagram task evidence and code comparison
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/checks-b2.mjs
+    boundary:
+      kind: structured_node
+      selector: checkTaskAgainstWorkstream identity resolution and ambiguity branch
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/checks-b3.mjs
+    boundary:
+      kind: module
+      selector: merged task SCC nonzero reachability and authority claims
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/checks-interlevel.mjs
+    boundary:
+      kind: symbol
+      selector: resolveNode, checkLayerSequence
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/checks-depends.mjs
+    boundary:
+      kind: module
+      selector: owned-node nonzero task reachability
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/task-model.mjs
+    boundary:
+      kind: structured_node
+      selector: owns reads status and Architecture Evidence model
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/yaml-lite.mjs
+    boundary:
+      kind: structured_node
+      selector: parseSequence inline collection handling required by Architecture Evidence
+  - path: .agents/skills/verify-architecture-diagrams/scripts/tests/conformance.test.mjs
+    boundary:
+      kind: whole_file
+      selector: whole file
+reads:
+  - .memory-bank/workstreams/WS-114-diagram-code-conformance/spec.md
+  - .agents/skills/verify-architecture-diagrams/scripts/lib/code-facts.mjs
+  - .agents/workflows/executing-diagram-task.md
+produces:
+  - DiagramCodeConformanceReport
+  - ArchitectureEvidenceModel
+  - CanonicalArchitectureIdentity
+  - current-Workstream ownership and cycle findings
+required_verification:
+  VER-TASK-11403-EVIDENCE:
+    required_result: passed
+    claim: "schema-v2 stable artifact ids and node-bound endpoint references map diagram nodes and edges without a second free-text fact source while schema v1 remains migration-only"
+  VER-TASK-11403-SEVERITY:
+    required_result: passed
+    claim: "classification matrix makes actual undeclared and unfinished implementation warnings while completed expectation or record contradictions block"
+  VER-TASK-11403-GRAPH:
+    required_result: passed
+    claim: "canonical Unicode identity arbitrary-length SCC and owned-node nonzero Depends On detect cycles ambiguity and zero-hop false dependencies"
+  VER-TASK-11403-BINDING:
+    required_result: passed
+    claim: "direct import injected port composition event callback and RPC adapters prove both sides without false dependency-inversion failures"
+  VER-TASK-11403-OWNERSHIP:
+    required_result: passed
+    claim: "owns remains write permission while explicit authority claims and computable boundary lattice detect completed conflicts and warn on unknown selectors"

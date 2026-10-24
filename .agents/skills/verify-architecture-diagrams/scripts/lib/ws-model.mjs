@@ -7,6 +7,66 @@ import { extractMermaidBlocks, parseFlowchart } from "./mermaid-parse.mjs"
 
 const LABEL_SENTENCE = /Arrow labels are normative:\s*(.+)/i
 const INLINE_LABEL = /`([^`]+)`/g
+const ARCHITECTURE_MODE_PREFIX = "Architecture-Mode:"
+const SUPPORTED_ARCHITECTURE_MODE = "diagram-driven-v1"
+
+function linesOutsideFences(specText) {
+    const lines = specText.replace(/^\uFEFF/, "").split(/\r?\n/)
+    let fenced = false
+    return lines.map((line, index) => {
+        if (/^\s*```/.test(line)) {
+            fenced = !fenced
+            return null
+        }
+        return fenced ? null : { text: line, line: index + 1 }
+    })
+}
+
+export function readArchitectureMode(specText) {
+    const visible = linesOutsideFences(specText)
+    const title = visible.find((entry) => entry && entry.text.trim().length > 0)
+    if (!title || title.line !== 1 || !/^#\s+\S/.test(title.text)) {
+        return { state: "tooling", reason: "spec.md must start with one Workstream H1 title", line: title?.line ?? 1 }
+    }
+    const firstBody = visible.find((entry) => entry && entry.line > title.line && entry.text.trim().length > 0)
+    const candidates = visible.filter((entry) => entry && entry.text.trimStart().startsWith(ARCHITECTURE_MODE_PREFIX))
+    if (candidates.length > 1) {
+        return { state: "tooling", reason: "Architecture-Mode must be declared exactly once", line: candidates[1].line }
+    }
+    if (firstBody?.text === `${ARCHITECTURE_MODE_PREFIX} ${SUPPORTED_ARCHITECTURE_MODE}`) {
+        return { state: "admitted", mode: SUPPORTED_ARCHITECTURE_MODE, line: firstBody.line }
+    }
+    if (candidates.length === 1) {
+        const candidate = candidates[0]
+        if (candidate !== firstBody) {
+            return {
+                state: "tooling",
+                reason: "Architecture-Mode must be the first non-empty line after the title",
+                line: candidate.line,
+            }
+        }
+        if (candidate.text !== candidate.text.trim()) {
+            return {
+                state: "tooling",
+                reason: "Architecture-Mode must not have leading or trailing whitespace",
+                line: candidate.line,
+            }
+        }
+        const mode = candidate.text.slice(ARCHITECTURE_MODE_PREFIX.length).trim()
+        if (!mode) {
+            return { state: "tooling", reason: "Architecture-Mode requires a non-empty value", line: candidate.line }
+        }
+        if (mode === SUPPORTED_ARCHITECTURE_MODE) {
+            return {
+                state: "tooling",
+                reason: `Architecture-Mode must be exactly: ${ARCHITECTURE_MODE_PREFIX} ${SUPPORTED_ARCHITECTURE_MODE}`,
+                line: candidate.line,
+            }
+        }
+        return { state: "unsupported", mode, line: candidate.line }
+    }
+    return { state: "not-applicable" }
+}
 
 // The normative sentence lists meaningful solid-edge categories; dotted labels are not part of it.
 export function readLabelVocabulary(specText) {

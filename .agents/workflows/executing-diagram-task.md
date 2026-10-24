@@ -20,8 +20,8 @@ Load this workflow from step 7 of `diagram-driven-task`, never as a substitute f
 
 All four must hold. If any fails, return to `diagram-driven-task` instead of implementing.
 
-1. The task diagram exists in the task's `plan.md` and is annotated with `%% id:`, `%% layer:`, `%% kind:` and `%% refines:`.
-2. `--scope task:<TASK-ID>` was run and its exit code is recorded. Exit `0` proceeds. Exit `1` proceeds only when every blocking or unverifiable finding is either Workstream-attributed and already routed to the Workstream, or accepted by the user as postponed. Exit `2` stops: the tool is unsound.
+1. The Workstream is explicitly opted in with exact `Architecture-Mode: diagram-driven-v1`, and the task diagram exists in `plan.md` with `%% id:`, `%% layer:`, `%% kind:` and `%% refines:`.
+2. `--scope task:<TASK-ID>` was run as a diagnostic and its exit code is recorded. Exit `0` may start implementation but is not completion evidence. Exit `1` proceeds only when every blocking or unverifiable finding is Workstream-attributed and already routed to the Workstream; exit `2` stops because the tool is unsound.
 3. Any required Workstream diagram change is confirmed.
 4. `progress.md` has no unresolved `blockers`. A non-empty `waiting_for` fences only the regions it names; the ledger rows that touch those regions wait, the rest proceed.
 
@@ -36,9 +36,11 @@ Record into the task's `plan.md` before writing code, by reference rather than b
 
 Freeze means later steps compare against this reference. A diagram edited mid-execution changes the recorded hash, invalidates the ledger and forces a re-verify. Copying the diagram or the contracts into the plan creates a second fact source that drifts; the memory rules forbid it.
 
-## 2. Build the execution ledger
+## 2. Build Architecture Evidence
 
-The ledger is the bridge from diagram to code. Write it into `plan.md` as two tables. Do not start coding before both exist. Keep each table to the columns below; a ledger that restates the diagram is the write amplification §1 forbids.
+The bridge from diagram to code is one YAML block under `## Architecture Evidence` with `architecture_evidence.schema_version: 2`. It is the sole machine fact source. Node and edge tables may be rendered views, but never independent ledgers that can drift. Schema v1 is migration-only and cannot establish completed conformance.
+
+Bind every node to one or more role artifacts (`declaration|assembly|writer|reader|emitter|receiver|generated`) with a Workstream-stable artifact `id` and `present|absent|generated` expectation. Bind every implemented edge with a Workstream-unique id, exact diagram from/to/style/label, required-verification proof ids, and one supported kind: `direct_import`, `injected_port`, `composition`, `event`, `callback` or `rpc`. `emit: {node, artifact}` must reference an `emitter` artifact owned by `from`; `receive` must reference a `receiver` owned by `to`; optional `contract` and `assembly` endpoints require `declaration` and `assembly` roles. Do not restate path or symbol on an endpoint.
 
 ### Node ledger
 
@@ -69,7 +71,7 @@ Rules:
 Rules:
 
 - **An edge is implemented only when both sides exist.** A call with no receiver, a published event with no consumer, or a declared port nobody calls is a half edge. Half edges are the most common false "done"; they compile and do nothing.
-- `Emit side` and `Receive side` must be different locations. If they are the same line, you have not implemented a relation, you have annotated one.
+- `Emit side` and `Receive side` must reference different stable artifact ids. If they resolve to the same location, you have not implemented a relation, you have annotated one.
 - A solid edge must name a concrete interface crossing. "A knows about B" is not an edge implementation.
 - A dotted edge must name the condition under which the fact appears and the place that observes it. A fact nobody reads is dead wiring.
 
@@ -77,7 +79,7 @@ Rules:
 
 Implement in the diagram's topological order, then respect write boundaries.
 
-1. Order nodes by the topological order of solid edges: producers before consumers.
+1. Order nodes by the topological order of solid edges: producers before consumers. Depends On requires at least one solid hop between artifact-owned nodes; a shared node is zero-hop and does not establish order.
 2. Within one node, implement its writer path before its projection or reporting paths.
 3. Group nodes whose artifacts live in the same file region, and implement them together to avoid repeated partial rewrites.
 4. Dotted edges never determine order. They are the checks you run after the solid graph works; a fact cannot be observed before its producer exists.
@@ -159,7 +161,7 @@ Report three separate lists. Do not merge them:
 2. **implemented but deferred** — the exact edge or node, the downstream owner, and why it cannot be closed now;
 3. **not verified** — what is unproven and what would prove it.
 
-Then re-run `--scope task:<TASK-ID>` and report its exit code unchanged. A task can be complete with exit `1` when the remaining findings are Workstream-attributed; say so explicitly instead of implying a clean pass. An `implemented-edge-without-direct-import` entry is not a finding against the task: the edge is proven by the ledger's emit side, receive side and breaking test, which is exactly what dependency inversion looks like in code.
+Then run `node .agents/skills/verify-architecture-diagrams/scripts/verify-diagrams.mjs --workstream .memory-bank/workstreams/<WS>` and report verdict, coverage, self-test status, warning count and exit code unchanged. Completion requires full delivery coverage. Direct imports and observable composition can be machine-proven; injected-port/event/callback/RPC semantics remain unverifiable unless a stronger project-specific proof source establishes runtime delivery.
 
 ## Stop conditions
 

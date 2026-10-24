@@ -7,6 +7,8 @@ description: Design a Workstream spec as a layered, top-down set of architecture
 
 Use this skill to turn a Workstream into a diagram set that a reader can follow top-down and that a verifier can check. The diagram set is the architecture contract; prose explains it, and no code is written until the relevant layer is settled.
 
+A Workstream opts in only when the first non-empty body line after its H1 is exactly `Architecture-Mode: diagram-driven-v1`. Do not add this marker to another owner's Workstream, a historical object, or a non-diagram-driven spec.
+
 Sibling split:
 
 | Artifact | Owns |
@@ -56,7 +58,7 @@ A diagram is either a **structure** diagram or a **flow** diagram, and the two o
 
 | Kind | Describes | Solid edges | Cycle rule |
 | --- | --- | --- | --- |
-| `structure` | who depends on whom, who composes what, who writes which store | dependency and composition | must be acyclic; a required pair is declared with `%% cycle: allowed` |
+| `structure` | who depends on whom, who composes what, who writes which store | dependency and composition | must be acyclic; a required solid SCC is declared with its exact node set |
 | `flow` | a protocol, state progression or decision sequence over time | the step order of the protocol | loops are allowed, but every loop must have a solid edge leaving it; a loop with no exit cannot converge |
 
 L0 and L1 are structure. L2 to L5 are usually flow, but a hot-path diagram that only names modules is structure. A diagram without `%% kind:` is checked as structure, so a protocol drawn without the annotation will be reported as cyclic until it declares itself.
@@ -72,7 +74,6 @@ flowchart TB
     %% kind: structure
     %% refines: L0-ownership
     %% answers: control and data direction
-    %% cycle: allowed owner=TASK-10609 reason=RPC request/response pair
     %% module: TaskRuntime = src/core/task/runtime
     %% concept: Sched = TaskOperationCoordinator
     %% local-only: RetryBudget
@@ -89,8 +90,9 @@ flowchart TB
 | `%% kind: structure\|flow` | which cycle rule applies; omitted means structure |
 | `%% refines: <id>[, <id>]` | the coarser diagram(s) this one refines; without it the verifier guesses by node overlap and reports the inter-level findings for review only |
 | `%% answers: <question>` | the question this diagram answers; repeat the line for a cross-cutting diagram |
-| `%% cycle: allowed owner=<task> reason=<why>` | exempt one structure cycle; owner and reason are mandatory |
-| `%% module: <nodeId> = <path>` | binds a diagram node to a real module for the implementation gate |
+| `%% cycle: allowed nodes=A|B owner=<task> reason="<why>"` | exempt exactly one structure SCC; the node set must exactly match the SCC, and nodes, owner and reason are mandatory |
+| `%% module: <nodeId> = <path>` | compatibility shorthand for one declaration/present artifact |
+| `%% artifact: <nodeId> role=<role> path=<path> [symbol=<symbol>] [expect=present\|absent\|generated]` | repeatable artifact binding; roles are declaration, assembly, writer, reader, emitter, receiver or generated |
 | `%% concept: <nodeId> = <ConceptName>` | names the architectural concept a node stands for, so differently named nodes in other diagrams resolve to one thing |
 | `%% local-only: <nodeId>` | this node is a task-local detail, not a Workstream authority |
 | `%% note-node: <nodeId>` | this node renders a visible constraint and asserts no relation; it is excluded from graph checks |
@@ -121,7 +123,7 @@ The two edge styles carry different semantics, and the verifier checks them sepa
 3. A dotted edge may not carry a command. If the label is an instruction, use a solid edge and fix the direction.
 4. A dotted edge may not carry a pure annotation. Use `%% note:`. An edge that expresses nothing is a false relation.
 5. Every edge states its meaning. An unlabeled solid edge is unverifiable because the effect is not written down.
-6. A cycle that is genuinely required, such as a request/response pair, must be declared with `%% cycle: allowed` plus an owner task and a reason. An undeclared cyclic dependency fails verification.
+6. A solid structure SCC that is genuinely required must be declared as `%% cycle: allowed nodes=A|B owner=<task> reason="<why>"`. The node set must exactly match one SCC; one exemption cannot cover another cycle. A normal request/response pair uses a solid command plus a dotted fact and needs no exemption.
 7. Label vocabulary: the spec's normative label sentence lists the solid meaning categories. Dotted labels use fact nouns (`fact`, `readiness`, `failure`, `published`, `rejected`, `durability`, `released`, `unavailable`, `completion`, `pending`, `superseded`, `adopted`, `held`) or an explicit constraint (`no new …`, `remains …`, `must not …`).
 
 ## 5. Authority rules
@@ -138,9 +140,11 @@ Cut tasks from the graph, not from the file tree.
 
 1. One task owns one coherent authority or one coherent stage transition.
 2. The task's `owns` boundaries name the modules and symbols that realize its nodes.
-3. The Workstream plan's Task Graph mirrors the diagram dependencies. `Depends On` must be a subset of the diagram's solid reachability: when B depends on A, a solid Workstream path must lead from a node A draws to a node B draws. The verifier checks this in `--scope cross-task` once both tasks have diagrams.
+3. The Workstream plan's Task Graph mirrors the diagram dependencies. `Depends On` requires a nonzero solid Workstream path from an artifact-owned node of A to an artifact-owned node of B; a shared node alone is not reachability.
 4. If a task needs an edge that no diagram declares, the diagram is wrong. Fix the diagram before the task.
 5. A task diagram lives in the task's `plan.md` under `## Architecture Design`; that is the only place the verifier reads task diagrams from.
+6. Put the single machine source under `## Architecture Evidence` as one YAML block with `architecture_evidence.schema_version: 2`. Give every node artifact a stable `id`, role, path, optional symbol and expectation. Edge endpoints are `{node, artifact}` references: `emit` must bind the edge source to an `emitter`, `receive` the target to a `receiver`, and optional contract/assembly endpoints to `declaration`/`assembly` artifacts. Endpoint-local paths or symbols are forbidden. Tables may render this data but must not become a second fact source; schema v1 is migration-only and cannot establish completed conformance.
+7. `owns` grants write permission only. Declare artifact expectation and writer authority in artifact/evidence records; never infer them from `owns` or imports.
 
 ## 7. Flow
 

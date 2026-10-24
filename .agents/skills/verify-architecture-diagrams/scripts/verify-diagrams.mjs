@@ -10,18 +10,20 @@ import { checkAstForTask, selfTestAst } from "./lib/checks-ast.mjs"
 import { checkTaskAgainstWorkstream } from "./lib/checks-b2.mjs"
 import { checkTaskHorizontally } from "./lib/checks-b3.mjs"
 import { checkDependsOnReachability } from "./lib/checks-depends.mjs"
-import { checkInterLevel, resolveNode } from "./lib/checks-interlevel.mjs"
+import { checkInterLevel, checkLayerSequence, resolveNode } from "./lib/checks-interlevel.mjs"
 import { checkCycles, checkIntraLayer } from "./lib/checks-intra.mjs"
+import { checkTaskGraph } from "./lib/checks-task-graph.mjs"
 import { evaluateAllGates } from "./lib/gate.mjs"
-import { computeExitCode, renderJsonReport, renderTextReport } from "./lib/report.mjs"
-import { findStaleProjections, readRootStatus, readWorkstreamStatus } from "./lib/status-model.mjs"
+import { CODE_CONFORMANCE_SCOPE, dedupeFindings, runCodeConformanceScope, scopeSequence } from "./lib/invocation.mjs"
+import { computeExitCode, computeVerdict, renderJsonReport, renderTextReport } from "./lib/report.mjs"
+import { findStaleProjections, readWorkstreamStatus } from "./lib/status-model.mjs"
 import { findRecordContradictions, readPlanGraph, readTasks } from "./lib/task-model.mjs"
-import { readSpecModel } from "./lib/ws-model.mjs"
+import { readArchitectureMode, readSpecModel } from "./lib/ws-model.mjs"
 
 function parseArgs(argv) {
     // The mutation self-test runs by default: a verdict from an unsound verifier
     // is not evidence, so soundness is checked unless the caller opts out.
-    const options = { scope: "workstream", json: false, selfTest: true }
+    const options = { scope: "all", json: false, selfTest: true }
     for (let index = 0; index < argv.length; index += 1) {
         const arg = argv[index]
         switch (arg) {
@@ -52,7 +54,7 @@ function parseArgs(argv) {
 }
 
 const USAGE = `Usage:
-  verify-diagrams.mjs --workstream <dir> [--scope workstream|task:<TASK-ID>|cross-task]
+  verify-diagrams.mjs --workstream <dir> [--scope all|workstream|task:<TASK-ID>|cross-task|code-conformance]
                       [--json] [--no-self-test]
 
 Exit codes:
@@ -272,6 +274,7 @@ function runWorkstreamScope({ spec, findings }) {
     }
 
     reportSetAnnotations(checked, findings)
+    findings.push(...checkLayerSequence(checked))
 
     for (const diagram of checked) {
         findings.push(...checkCycles(diagram))
@@ -284,7 +287,7 @@ function runWorkstreamScope({ spec, findings }) {
     return checked
 }
 
-function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoot }) {
+async function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoot }) {
     const task = tasks.get(scopeTaskId)
     if (!task) {
         findings.push(toolingFinding(null, null, `task ${scopeTaskId} has no directory under tasks/`, "check the task id"))
@@ -310,6 +313,7 @@ function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoot }) {
         if (ignoring(findings, parsed.diagram)) continue
         checked.push(parsed.diagram)
     }
+    findings.push(...checkLayerSequence(checked, { scope: "task" }))
 
     for (const diagram of checked) {
         findings.push(...checkCycles(diagram))
@@ -347,7 +351,9 @@ function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoot }) {
                 task: task.id,
             })
         } else {
-            findings.push(...checkAstForTask({ task: { ...task, diagrams: checked }, wsModules: spec.moduleTable, repoRoot }))
+            findings.push(
+                ...(await checkAstForTask({ task: { ...task, diagrams: checked }, wsModules: spec.moduleTable, repoRoot })),
+            )
         }
     } else {
         findings.push({
@@ -366,6 +372,7 @@ function runTaskScope({ spec, tasks, gates, scopeTaskId, findings, repoRoot }) {
 }
 
 function runCrossTaskScope({ spec, tasks, gates, planGraph, planPath, findings }) {
+    findings.push(...checkTaskGraph(planGraph, planPath))
     const wsDiagrams = spec.diagrams
         .filter((parsed) => parsed.problems.length === 0 && !parsed.diagram.ignored)
         .map((parsed) => parsed.diagram)
@@ -411,24 +418,141 @@ function runCrossTaskScope({ spec, tasks, gates, planGraph, planPath, findings }
     }
 }
 
-function main() {
+async function main() {
     const options = parseArgs(process.argv.slice(2))
+    const findings = []
+    const executedScopes = []
+    let selfTestEvidence = options.selfTest
+        ? { status: "not_run", message: "mutation self-test has not run" }
+        : { status: "skipped", message: "disabled by --no-self-test" }
     if (options.help) {
         process.stdout.write(`${USAGE}\n`)
         return 0
     }
     if (options.problem || !options.workstream) {
-        process.stderr.write(`${options.problem ?? "missing --workstream"}\n\n${USAGE}\n`)
-        return 2
+        const message = options.problem ?? "missing --workstream"
+        if (!options.json) {
+            process.stderr.write(`${message}\n\n${USAGE}\n`)
+            return 2
+        }
+        findings.push(toolingFinding(null, null, message, "use --help to inspect the supported invocation"))
+        const summary = buildSummary({
+            options,
+            spec: null,
+            tasks: new Map(),
+            gates: new Map(),
+            findings,
+            stale: [],
+            applicable: true,
+            executedScopes,
+            selfTestEvidence,
+        })
+        process.stdout.write(`${renderJsonReport({ findings, summary })}\n`)
+        return summary.exitCode
     }
 
     const workstreamDir = path.resolve(process.cwd(), options.workstream)
     const repoRoot = process.cwd()
-    const findings = []
 
     if (!fs.existsSync(workstreamDir)) {
-        process.stderr.write(`workstream directory not found: ${options.workstream}\n`)
-        return 2
+        const message = `workstream directory not found: ${options.workstream}`
+        if (!options.json) {
+            process.stderr.write(`${message}\n`)
+            return 2
+        }
+        findings.push(
+            toolingFinding(options.workstream, null, message, "pass --workstream pointing at an existing Workstream directory"),
+        )
+        const summary = buildSummary({
+            options,
+            spec: null,
+            tasks: new Map(),
+            gates: new Map(),
+            findings,
+            stale: [],
+            applicable: true,
+            executedScopes,
+            selfTestEvidence,
+        })
+        process.stdout.write(`${renderJsonReport({ findings, summary })}\n`)
+        return summary.exitCode
+    }
+
+    const specPath = path.join(workstreamDir, "spec.md")
+    if (!fs.existsSync(specPath)) {
+        findings.push(
+            toolingFinding(
+                path.relative(repoRoot, specPath),
+                null,
+                "spec.md not found",
+                "pass --workstream pointing at a Workstream directory",
+            ),
+        )
+        const summary = buildSummary({
+            options,
+            spec: null,
+            tasks: new Map(),
+            gates: new Map(),
+            findings,
+            stale: [],
+            applicable: true,
+            executedScopes,
+            selfTestEvidence,
+        })
+        process.stdout.write(
+            options.json ? `${renderJsonReport({ findings, summary })}\n` : `${renderTextReport({ findings, summary })}\n`,
+        )
+        return summary.exitCode
+    }
+
+    const admission = readArchitectureMode(fs.readFileSync(specPath, "utf8"))
+    if (admission.state !== "admitted") {
+        if (admission.state === "tooling") {
+            findings.push(
+                toolingFinding(
+                    path.relative(repoRoot, specPath),
+                    admission.line,
+                    admission.reason,
+                    "fix the Architecture-Mode declaration",
+                ),
+            )
+        } else if (admission.state === "unsupported") {
+            findings.push({
+                severity: "warning",
+                attribution: "diagram",
+                stage: "0",
+                file: path.relative(repoRoot, specPath),
+                line: admission.line,
+                rule: "architecture-mode-unsupported",
+                message: `unsupported Architecture-Mode: ${admission.mode}; supported: diagram-driven-v1`,
+            })
+        } else {
+            findings.push({
+                severity: "not-applicable",
+                attribution: "diagram",
+                stage: "0",
+                file: path.relative(repoRoot, specPath),
+                line: null,
+                rule: "architecture-mode-missing",
+                message: "Workstream does not opt in with Architecture-Mode: diagram-driven-v1; verification was skipped",
+            })
+        }
+        const applicable = admission.state !== "not-applicable"
+        const summary = buildSummary({
+            options,
+            spec: null,
+            tasks: new Map(),
+            gates: new Map(),
+            findings,
+            stale: [],
+            applicable,
+            executedScopes,
+            selfTestEvidence,
+        })
+        process.stdout.write(
+            options.json ? `${renderJsonReport({ findings, summary })}\n` : `${renderTextReport({ findings, summary })}\n`,
+        )
+        return summary.exitCode
     }
 
     const spec = readSpecModel(workstreamDir)
@@ -436,7 +560,16 @@ function main() {
         findings.push(
             toolingFinding(spec.error.file, null, spec.error.message, "pass --workstream pointing at a Workstream directory"),
         )
-        const summary = buildSummary({ options, spec: null, tasks: new Map(), gates: new Map(), findings, stale: [] })
+        const summary = buildSummary({
+            options,
+            spec: null,
+            tasks: new Map(),
+            gates: new Map(),
+            findings,
+            stale: [],
+            executedScopes,
+            selfTestEvidence,
+        })
         process.stdout.write(
             options.json ? `${renderJsonReport({ findings, summary })}\n` : `${renderTextReport({ findings, summary })}\n`,
         )
@@ -503,33 +636,51 @@ function main() {
         }
     }
 
-    if (options.scope === "workstream") {
-        runWorkstreamScope({ spec, findings })
-    } else if (options.scope === "cross-task") {
-        runCrossTaskScope({
-            spec,
-            tasks: taskModel.tasks,
-            gates,
-            planGraph,
-            planPath: path.relative(repoRoot, planPath),
-            findings,
-        })
-    } else if (options.scope.startsWith("task:")) {
-        runTaskScope({
-            spec,
-            tasks: taskModel.tasks,
-            gates,
-            scopeTaskId: options.scope.slice("task:".length),
-            findings,
-            repoRoot,
-        })
-    } else {
-        process.stderr.write(`unknown --scope value: ${options.scope}\n\n${USAGE}\n`)
-        return 2
+    const requestedScopes = scopeSequence(options.scope, [...taskModel.tasks.keys()])
+    for (const scope of requestedScopes) {
+        let executed = true
+        if (scope === "workstream") {
+            runWorkstreamScope({ spec, findings })
+        } else if (scope === "cross-task") {
+            runCrossTaskScope({
+                spec,
+                tasks: taskModel.tasks,
+                gates,
+                planGraph,
+                planPath: path.relative(repoRoot, planPath),
+                findings,
+            })
+        } else if (scope.startsWith("task:") && scope.length > "task:".length) {
+            await runTaskScope({
+                spec,
+                tasks: taskModel.tasks,
+                gates,
+                scopeTaskId: scope.slice("task:".length),
+                findings,
+                repoRoot,
+            })
+        } else if (scope === CODE_CONFORMANCE_SCOPE) {
+            findings.push(
+                ...(await runCodeConformanceScope({
+                    spec,
+                    tasks: taskModel.tasks,
+                    gates,
+                    planGraph,
+                    planPath: path.relative(repoRoot, planPath),
+                    repoRoot,
+                    workstreamDir,
+                })),
+            )
+        } else {
+            executed = false
+            findings.push(toolingFinding(null, null, `unknown --scope value: ${scope}`, "use --help to inspect supported scopes"))
+        }
+        if (executed) executedScopes.push(scope)
     }
 
     if (options.selfTest) {
-        const result = selfTestAst(repoRoot)
+        const result = await selfTestAst()
+        selfTestEvidence = { status: result.ok ? "passed" : "failed", message: result.message }
         if (!result.ok) {
             findings.push(
                 toolingFinding(
@@ -539,62 +690,109 @@ function main() {
                     "node .agents/skills/verify-architecture-diagrams/scripts/verify-diagrams.mjs --workstream <dir>",
                 ),
             )
-        } else {
-            findings.push({
-                severity: "not-checked",
-                attribution: "diagram",
-                stage: "6",
-                file: null,
-                line: null,
-                diagram: null,
-                rule: "self-test-passed",
-                message: result.message,
-            })
         }
     }
 
-    const memoryBankRoot = path.resolve(workstreamDir, "..", "..")
-    const stale = findStaleProjections(taskModel.tasks, readWorkstreamStatus(workstreamDir), readRootStatus(memoryBankRoot))
-
-    const summary = buildSummary({ options, spec, tasks: taskModel.tasks, gates, findings, stale })
-    summary.exitCode = computeExitCode(findings)
+    const stale = findStaleProjections(taskModel.tasks, readWorkstreamStatus(workstreamDir))
+    const finalFindings = dedupeFindings(findings)
+    const summary = buildSummary({
+        options,
+        spec,
+        tasks: taskModel.tasks,
+        gates,
+        findings: finalFindings,
+        stale,
+        applicable: true,
+        executedScopes,
+        selfTestEvidence,
+    })
 
     process.stdout.write(
-        options.json ? `${renderJsonReport({ findings, summary })}\n` : `${renderTextReport({ findings, summary })}\n`,
+        options.json
+            ? `${renderJsonReport({ findings: finalFindings, summary })}\n`
+            : `${renderTextReport({ findings: finalFindings, summary })}\n`,
     )
     return summary.exitCode
 }
 
-function buildSummary({ options, spec, tasks, gates, findings, stale }) {
+function buildSummary({
+    options,
+    spec,
+    tasks,
+    gates,
+    findings,
+    stale,
+    applicable = true,
+    executedScopes = [],
+    selfTestEvidence = null,
+}) {
     const diagramCount = spec ? spec.diagrams.filter((parsed) => parsed.problems.length === 0).length : 0
     const taskDiagramCount = [...tasks.values()].reduce(
         (total, task) => total + task.diagrams.filter((parsed) => parsed.problems.length === 0).length,
         0,
     )
+    const requiredScopes = applicable ? scopeSequence("all", [...tasks.keys()]) : []
+    const executed = [...new Set(executedScopes)]
+    const executedSet = new Set(executed)
+    const missingScopes = requiredScopes.filter((scope) => !executedSet.has(scope))
+    const selfTest =
+        selfTestEvidence ??
+        (options.selfTest
+            ? { status: "not_run", message: "mutation self-test has not run" }
+            : { status: "skipped", message: "disabled by --no-self-test" })
+    const coverage = {
+        mode: options.scope === "all" ? "delivery" : "diagnostic",
+        complete: Boolean(applicable && options.scope === "all" && missingScopes.length === 0 && selfTest.status === "passed"),
+        requiredScopes,
+        executedScopes: executed,
+        missingScopes,
+    }
     return {
-        workstream: options.workstream,
+        workstream: options.workstream ?? null,
         scope: options.scope,
         diagramCount,
         taskDiagramCount,
         taskCount: tasks.size,
         astGatedCount: [...gates.values()].filter((gate) => gate.astAllowed).length,
         staleProjections: stale,
+        applicable,
+        coverage,
+        evidence: { selfTest },
+        verdict: computeVerdict(findings, { applicable, coverageComplete: coverage.complete }),
         exitCode: computeExitCode(findings),
     }
 }
 
 // A crash inside the verifier is a tooling problem, never a design verdict.
 try {
-    process.exitCode = main()
+    process.exitCode = await main()
 } catch (error) {
-    process.stderr.write(
-        [
-            "## Tooling problem",
-            `The verifier crashed and no design verdict could be produced: ${error?.message ?? String(error)}`,
-            error?.stack ? `${error.stack}` : "",
-            "Report this as a tool defect; do not read it as a passing or failing design result.",
-            "",
-        ].join("\n"),
-    )
+    const options = parseArgs(process.argv.slice(2))
+    const message = `The verifier crashed and no design verdict could be produced: ${error?.message ?? String(error)}`
+    if (options.json) {
+        const findings = [toolingFinding(null, null, message, "report this as a tool defect; do not infer a design result")]
+        const summary = buildSummary({
+            options,
+            spec: null,
+            tasks: new Map(),
+            gates: new Map(),
+            findings,
+            stale: [],
+            applicable: true,
+            executedScopes: [],
+            selfTestEvidence: { status: "failed", message: "verifier crashed before evidence completion" },
+        })
+        process.stdout.write(`${renderJsonReport({ findings, summary })}\n`)
+    } else {
+        process.stderr.write(
+            [
+                "## Tooling problem",
+                message,
+                error?.stack ? `${error.stack}` : "",
+                "Report this as a tool defect; do not read it as a passing or failing design result.",
+                "",
+            ].join("\n"),
+        )
+    }
     process.exitCode = 2
 }

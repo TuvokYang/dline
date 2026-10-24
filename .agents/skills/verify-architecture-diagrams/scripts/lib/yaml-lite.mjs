@@ -185,6 +185,13 @@ function parseSequence(state, indent) {
             items.push(next && next.indent > indent ? parseBlock(state, next.indent) : null)
             continue
         }
+        // Inline collections are complete scalar values. Looking for a colon
+        // first would misread `- {role: declaration, ...}` as a block mapping
+        // whose key is `{role`.
+        if (rest.startsWith("{") || rest.startsWith("[")) {
+            items.push(parseScalar(rest))
+            continue
+        }
         const pair = splitKeyValue(rest)
         if (!pair) {
             items.push(parseScalar(rest))

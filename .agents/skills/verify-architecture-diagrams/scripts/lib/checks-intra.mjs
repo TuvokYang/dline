@@ -193,20 +193,6 @@ export function checkCycles(diagram) {
         )
     }
 
-    for (const loop of selfLoops) {
-        if (kind === "flow") continue
-        findings.push(
-            finding(
-                "blocking",
-                "1",
-                diagram,
-                loop,
-                "solid-self-loop",
-                `solid edge ${loop.from} --> ${loop.from} forms a self dependency`,
-            ),
-        )
-    }
-
     if (kind === "flow") {
         let accepted = 0
         for (const component of components) {
@@ -241,39 +227,76 @@ export function checkCycles(diagram) {
         return findings
     }
 
-    const exemption = diagram.cycleAllowed[0] ?? null
-    for (const component of components) {
-        const hasSelfLoop = selfLoops.some((edge) => component.includes(edge.from))
-        if (component.length === 1 && hasSelfLoop) continue
-        const path = cyclePath(component, solids)
-        const message = `solid dependency cycle: ${path.join(" --> ")}`
-        if (exemption && (!exemption.owner || !exemption.reason)) {
+    const componentKey = (nodes) => [...nodes].sort().join("|")
+    const exemptions = new Map()
+    for (const exemption of diagram.cycleAllowed) {
+        const key = componentKey(exemption.nodes ?? [])
+        if (!exemption.owner || !exemption.reason || !key) {
             findings.push(
                 finding(
                     "blocking",
                     "1",
                     diagram,
-                    { line: diagram.line },
+                    { line: exemption.line ?? diagram.line },
                     "cycle-exemption-incomplete",
-                    `${message}; %% cycle: allowed requires owner and reason`,
+                    "%% cycle: allowed requires nodes=A|B, owner and reason",
                 ),
             )
             continue
         }
+        if (exemptions.has(key)) {
+            findings.push(
+                finding(
+                    "blocking",
+                    "1",
+                    diagram,
+                    { line: exemption.line ?? diagram.line },
+                    "cycle-exemption-duplicate",
+                    `cycle exemption for ${key} is declared more than once`,
+                ),
+            )
+            continue
+        }
+        exemptions.set(key, exemption)
+    }
+
+    const matched = new Set()
+    for (const component of components) {
+        const path = cyclePath(component, solids)
+        const key = componentKey(component)
+        const exemption = exemptions.get(key)
+        const message = `solid dependency cycle: ${path.join(" --> ")}`
         if (exemption) {
-            findings.push({
-                ...finding(
+            matched.add(key)
+            findings.push(
+                finding(
                     "not-checked",
                     "1",
                     diagram,
-                    { line: diagram.line },
+                    { line: exemption.line ?? diagram.line },
                     "cycle-exempted",
                     `${message}; exempted by owner=${exemption.owner} reason=${exemption.reason}`,
                 ),
-            })
+            )
             continue
         }
-        findings.push(finding("blocking", "1", diagram, { line: diagram.line }, "solid-cycle", message))
+        const selfLoop = component.length === 1 && selfLoops.some((edge) => edge.from === component[0])
+        findings.push(
+            finding("blocking", "1", diagram, { line: diagram.line }, selfLoop ? "solid-self-loop" : "solid-cycle", message),
+        )
+    }
+    for (const [key, exemption] of exemptions) {
+        if (matched.has(key)) continue
+        findings.push(
+            finding(
+                "blocking",
+                "1",
+                diagram,
+                { line: exemption.line ?? diagram.line },
+                "cycle-exemption-unmatched",
+                `cycle exemption for ${key} does not match exactly one detected SCC`,
+            ),
+        )
     }
 
     return findings
@@ -327,6 +350,20 @@ export function checkIntraLayer(diagram, labelVocabulary) {
                     { line: diagram.line },
                     "note-node-unknown",
                     `%% note-node: ${noteId} names a node the diagram does not draw`,
+                ),
+            )
+            continue
+        }
+        const attached = diagram.edges.filter((edge) => edge.from === noteId || edge.to === noteId)
+        if (attached.length > 0) {
+            findings.push(
+                finding(
+                    "blocking",
+                    "2",
+                    diagram,
+                    attached[0],
+                    "note-node-has-edge",
+                    `note node ${noteId} participates in ${attached.length} edge(s); note nodes assert no relation`,
                 ),
             )
         }

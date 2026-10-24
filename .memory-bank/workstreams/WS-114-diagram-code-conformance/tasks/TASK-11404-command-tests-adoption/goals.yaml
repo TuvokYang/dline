@@ -1,0 +1,55 @@
+schema_version: 2
+id: TASK-11404
+objective: "提供 Skill 私有 aggregate CLI、hermetic tests 与隔离门禁，并更新图驱动 skills/workflows；产品 package、主 CI、源码与产品测试不得依赖 Skill。"
+acceptance:
+  - WS-114/AC-04
+  - WS-114/AC-15
+  - WS-114/AC-16
+  - WS-114/AC-17
+  - WS-114/AC-18
+owns:
+  - path: .agents/skills/verify-architecture-diagrams/SKILL.md
+    boundary:
+      kind: section
+      selector: opt-in aggregate conformance warning verdict direct Skill command and exit behavior
+  - path: .agents/skills/designing-workstream-diagrams/SKILL.md
+    boundary:
+      kind: section
+      selector: Architecture-Mode and Architecture Evidence authoring contract
+  - path: .agents/workflows/diagram-driven-task.md
+    boundary:
+      kind: section
+      selector: Skill-local aggregate verification flow
+  - path: .agents/workflows/executing-diagram-task.md
+    boundary:
+      kind: section
+      selector: Skill-local schema-v2 Architecture Evidence execution flow
+  - path: .agents/skills/verify-architecture-diagrams/scripts/tests/integration.test.mjs
+    boundary:
+      kind: whole_file
+      selector: temporary fixtures and product isolation contracts
+reads:
+  - package.json
+  - .github/workflows/test.yml
+  - src/core/task/__tests__/architecture/import-graph.ts
+  - .agents/skills/verify-architecture-diagrams/scripts/verify-diagrams.mjs
+  - .agents/skills/verify-architecture-diagrams/scripts/lib/report.mjs
+  - .memory-bank/workstreams/WS-114-diagram-code-conformance/spec.md
+produces:
+  - Skill-local explicit-target aggregate CLI
+  - Skill-private hermetic fixture and mutation gate
+  - product source test package and CI isolation assertions
+  - updated diagram-driven authoring and execution contract
+required_verification:
+  VER-TASK-11404-FIXTURES:
+    required_result: passed
+    claim: "Skill-private hermetic fixture suite catches admission scope resolver protocol SCC writer severity evidence and generated defects without reading real Memory Workstreams"
+  VER-TASK-11404-COMMAND:
+    required_result: passed
+    claim: "the Skill-local aggregate CLI verifies one explicit Workstream and reports conformant incomplete not_applicable failed or tooling_error"
+  VER-TASK-11404-ISOLATION:
+    required_result: passed
+    claim: "product package main CI source and architecture tests do not depend on the Skill or a scripts/architecture layer created for it"
+  VER-TASK-11404-DOCS:
+    required_result: passed
+    claim: "skills and workflows define exact opt-in schema-v2 stable artifact and endpoint evidence plus direct Skill-local aggregate verification while each Workstream owner controls its marker"

@@ -1,0 +1,50 @@
+schema_version: 2
+id: TASK-11402
+objective: "在 verify-architecture-diagrams Skill 内建立可复制的 vendored Tree-sitter 多语言事实、bounded dependency closure、Proto 与显式 generated provenance，不依赖目标项目 package、tsconfig 或 Dline 产品源码。"
+acceptance:
+  - WS-114/AC-05
+  - WS-114/AC-08
+  - WS-114/AC-16
+owns:
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/tree-sitter-runtime.mjs
+    boundary: {kind: whole_file, selector: Skill-local parser and grammar loading}
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/tree-sitter-facts.mjs
+    boundary: {kind: whole_file, selector: deterministic multi-language architecture facts}
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/tree-sitter-dependencies.mjs
+    boundary: {kind: whole_file, selector: bounded dependency closure and runtime SCC}
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/proto-facts.mjs
+    boundary: {kind: whole_file, selector: Skill-private Proto service and method facts}
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/generated-provenance.mjs
+    boundary: {kind: whole_file, selector: explicit generated source provenance facts}
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/checks-ast.mjs
+    boundary: {kind: whole_file, selector: Tree-sitter Stage 6 implementation gate}
+  - path: .agents/skills/verify-architecture-diagrams/scripts/lib/code-facts.mjs
+    boundary: {kind: whole_file, selector: Proto and generated snapshot adapter}
+  - path: .agents/skills/verify-architecture-diagrams/runtime/tree-sitter
+    boundary: {kind: whole_file, selector: vendored runtime grammars queries and licenses}
+  - path: .agents/skills/verify-architecture-diagrams/scripts/tests/code-facts.test.mjs
+    boundary: {kind: whole_file, selector: protocol and generated fixtures}
+  - path: .agents/skills/verify-architecture-diagrams/scripts/tests/stage6-tree-sitter.test.mjs
+    boundary: {kind: whole_file, selector: cross-language Stage 6 fixtures}
+reads: []
+produces:
+  - SkillLocalTreeSitterRuntime
+  - DeterministicArchitectureFacts
+  - BoundedDependencyClosure
+  - RuntimeTypeClassification
+  - RuntimeCouplingScc
+  - SkillPrivateProtoServiceFactProvider
+  - ExplicitGeneratedArtifactProvenance
+required_verification:
+  VER-TASK-11402-RESOLUTION:
+    required_result: passed
+    claim: "explicit artifact seeds recursively resolve provable workspace dependencies with maxFiles/maxDepth bounds and runtime/type/mixed/unknown classification"
+  VER-TASK-11402-SYNTAX:
+    required_result: passed
+    claim: "vendored grammars and queries emit deterministic imports declarations calls writes boundaries and fail closed on unsupported or malformed source"
+  VER-TASK-11402-PROTOCOL:
+    required_result: passed
+    claim: "Proto service and method facts are canonical and generated provenance is inspected only for explicitly declared artifacts without running generators"
+  VER-TASK-11402-PARITY:
+    required_result: passed
+    claim: "a copied Skill runs in a non-Node project without package tsconfig product source or external language providers"
